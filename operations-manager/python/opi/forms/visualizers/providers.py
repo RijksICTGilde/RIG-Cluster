@@ -170,14 +170,18 @@ class ServiceOptionsProvider:
     services that can be enabled for projects.
     """
 
-    def __init__(self, include_empty: bool = False) -> None:
+    def __init__(self, include_empty: bool = False, project_services: list[str] | None = None) -> None:
         """
         Initialize the service options provider.
 
         Args:
             include_empty: Whether to include an empty "select" option
+            project_services: The services the project ALREADY has, from the project
+                file. Only a replaced service reads it: its card stays for a project
+                that has it and is left out for one that has not.
         """
         self.include_empty = include_empty
+        self.project_services = project_services or []
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
@@ -205,7 +209,15 @@ class ServiceOptionsProvider:
             # is presentation only: the refusal that counts is at save time, in
             # validate_service_availability, since the API and a hand-written project
             # file never see a card.
-            if not get_service(service_type).available_on_cluster(settings.CLUSTER_MANAGER):
+            service = get_service(service_type)
+            if not service.available_on_cluster(settings.CLUSTER_MANAGER):
+                continue
+
+            # Een vervangen dienst is geen kaart meer voor wie hem nog niet heeft, maar
+            # blijft staan voor een project dat hem al draait: dat moet te bewerken en uit
+            # te zetten blijven. De weigering die telt staat in validate_service_availability.
+            replaced = service.replaced_on_cluster(settings.CLUSTER_MANAGER)
+            if replaced and service_type.value not in self.project_services:
                 continue
 
             option: dict[str, Any] = {
@@ -233,6 +245,11 @@ class ServiceOptionsProvider:
 
             if get_service(service_type).enabling_needs_approval():
                 option["requires_approval"] = True
+
+            if replaced and service.replaced_by is not None:
+                # De dienstNAAM en niet de weergavenaam: de melding op de kaart is een korte
+                # pil, en dit is ook wat je in het projectbestand of de API invult.
+                option["replaced_by"] = service.replaced_by.value
 
             options.append(option)
 

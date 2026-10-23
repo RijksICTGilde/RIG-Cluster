@@ -33,6 +33,8 @@ class MinioStorageService(BackupsPageMixin, Service):
     )
     config_model = MinioStorageConfig
     config_schema_version = "1.0"
+    # Succeeded by SeaweedFS on clusters where it's available; see ``replaced_on_cluster``.
+    replaced_by = ServiceType.SEAWEEDFS_STORAGE
     # May enrol itself (RC-84): a bucket needs no project-level choice. enable-versioning
     # falls back to the platform default and the rest of the model is clone state the
     # platform writes itself.

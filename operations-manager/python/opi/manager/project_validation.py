@@ -21,6 +21,7 @@ from opi.core.cluster_config import CLUSTER_CONFIG, is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
+from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.services import ServiceAdapter
 from opi.services.approvals import collect_approval_items
@@ -740,18 +741,27 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
     return errors
 
 
-def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
-    """Services this project selected that its deployments' clusters cannot deliver.
+def validate_service_availability(
+    project_data: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+) -> list[str]:
+    """Services this project selected that its deployments may not have on their cluster.
 
-    Asked of each service (``Service.available_on_cluster``), so no cluster name and no
-    service name appears in this module. Measured per DEPLOYMENT cluster rather than
-    against the managing cluster: that is the cluster the pods will actually run on, and
-    it keeps the verdict the same file-in, file-out no matter which OPI instance reads
-    the project.
+    Two rules, both asked of the service itself, so no cluster name and no service name
+    appears in this module. Measured per DEPLOYMENT cluster rather than against the
+    managing cluster: that is the cluster the pods will actually run on, and it keeps the
+    verdict the same file-in, file-out no matter which OPI instance reads the project.
 
-    This is the refusal that counts. Leaving an unavailable service out of the wizard's
-    cards hides it from one of three roads; the API and a hand-written project file never
-    pass a card at all.
+    ``Service.available_on_cluster`` is the hard one: the cluster cannot deliver the
+    service at all, so nobody may have it. ``Service.replaced_on_cluster`` is the softer
+    one: the service has a successor there, so a deployment that already runs it keeps
+    it, and only a deployment that would get it NEW is refused. Which is why this rule
+    needs ``previous``, the version this save replaces; a create has none, and then every
+    choice is new.
+
+    This is the refusal that counts. Leaving a service out of the wizard's cards hides it
+    from one of three roads; the API and a hand-written project file never pass a card at
+    all.
     """
     selected = ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []) or [])
     if not selected:
@@ -764,6 +774,7 @@ def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
         cluster = deployment.get("cluster")
         if not cluster or cluster not in CLUSTER_CONFIG:
             continue
+        dep_name = deployment.get("name")
         for name in selected:
             try:
                 service_type = ServiceType(name)
@@ -771,11 +782,30 @@ def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
                 # An unknown service name is another check's verdict, not this one's.
                 continue
             service = SERVICES.get(service_type)
-            if service is None or service.available_on_cluster(cluster):
+            if service is None:
                 continue
+            if not service.available_on_cluster(cluster):
+                errors.append(
+                    f"deployment '{dep_name}' draait op cluster '{cluster}', en daar is de dienst "
+                    f"'{name}' niet beschikbaar"
+                )
+                continue
+            if not service.replaced_on_cluster(cluster):
+                continue
+            # Via de handler en niet via de componentenlijst zelf: die kent ook de
+            # helm-charts en helmfiles van een deployment, en het v1-sleutelwoord
+            # ``uses-services``.
+            handler = ProjectFileHandler()
+            if previous is not None and not handler.deployment_uses_service(project_data, str(dep_name), [name]):
+                # De dienst staat wel in de projectlijst maar deze deployment gebruikt hem
+                # niet, dus deze deployment krijgt er niets bij.
+                continue
+            if previous is not None and handler.deployment_uses_service(previous, str(dep_name), [name]):
+                continue
+            successor = service.replaced_by.value if service.replaced_by else ""
             errors.append(
-                f"deployment '{deployment.get('name')}' draait op cluster '{cluster}', en daar is de dienst "
-                f"'{name}' niet beschikbaar"
+                f"de dienst '{name}' is op cluster '{cluster}' vervangen door '{service.replacement_name()}'. "
+                f"Deployment '{dep_name}' had hem niet; gebruik '{successor}' in plaats daarvan"
             )
     return errors
 
@@ -1015,7 +1045,7 @@ async def validate_project_structure(
     # A service is only usable where the cluster can deliver it. Here rather than at the
     # form field because a project reaches this point from the wizard, the API and a
     # hand-edited file alike.
-    availability_errors = validate_service_availability(project_data)
+    availability_errors = validate_service_availability(project_data, previous)
     if availability_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 

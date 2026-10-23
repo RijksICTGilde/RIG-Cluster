@@ -880,6 +880,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
 | `available_on_cluster(cluster)` | whether a cluster can deliver this service at all; read by the wizard's card list AND by `validate_service_availability` at save time |
+| `replaced_by` / `replaced_on_cluster(cluster)` | whether this service has a SUCCESSOR on that cluster. Same two readers as `available_on_cluster`, with a softer verdict: the card goes only for a project that does not have the service yet, and the save is refused only for a deployment that would GET it. See `features/dienst-vervangen-door-een-opvolger.md` |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `validate_project(project_data)` | this service's rules on a WHOLE project, as messages, for what `validate_config` cannot judge from one config block. `validate_project_structure` refuses the write when any service returns one. Runs for EVERY project, also one that does not declare the service |
 | `validate_project_change(previous, project_data)` | the sibling of `validate_project` for a rule that needs the version the save REPLACES: a stricter bound on a NEW value, where a value already in the project file has to keep validating (the invite key's minimum length). `previous` is `{}` on a create. For a scalar with a numeric bound, `ConfigSetting`'s `grow_only` already covers it |
@@ -1262,6 +1263,13 @@ its four wiring points are listed under "Forms and wizard screens".
   out, and `validate_service_availability` (`opi/manager/project_validation.py`) refuses
   the save. The API and a hand-written project file never pass a card at all. vlam is the
   first inhabitant.
+- **A replaced service is not an unavailable one.** `available_on_cluster` is all-or-nothing
+  and refuses a project that already exists; a service that is merely SUPERSEDED declares
+  `replaced_by` instead, and then the two readers above are softer: the card goes only for a
+  project that does not have it yet, and the refusal hits only a deployment that is getting
+  it new (measured against `previous`). `minio-storage` to `seaweedfs-storage` is the first
+  inhabitant. Do not reach for `superseded_by_component_details` for this: that is a fact on
+  the deployment card about a component, not about the catalog.
 - **A registered service has no UI.** The registry drives behaviour, not screens. A service
   without form hooks is invisible in the wizard, and `hidden=True` removes even its card.
   Neither is reported by any test, because "no UI" is a valid configuration for some services.

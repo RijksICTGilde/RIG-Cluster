@@ -219,6 +219,9 @@ class FieldWidgetAdapter(WidgetAdapter):
                     "help_template": str(help_template) if help_template else None,
                     "config_hint": config_hint,
                     "requires_approval": bool(option.get("requires_approval")),
+                    # Alleen gevuld voor een vervangen dienst, en die kaart staat er alleen
+                    # nog voor een project dat hem al heeft (ServiceOptionsProvider).
+                    "replaced_by": option.get("replaced_by"),
                 }
             )
 

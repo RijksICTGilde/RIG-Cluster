@@ -1,6 +1,9 @@
 # SeaweedFS-objectopslag (proef)
 
-Een tweede object-storage-service naast `minio-storage`, met SeaweedFS 4.48 erachter.
+De opvolger van `minio-storage`, met SeaweedFS 4.48 erachter. Sinds RC-382 draagt
+`minio-storage` een `replaced_by` naar deze dienst, dus op een cluster waar SeaweedFS er is
+(vandaag: de sandbox) ziet een nieuw project de MinIO-kaart niet meer, en houdt een
+deployment die MinIO al heeft hem. Zie `features/dienst-vervangen-door-een-opvolger.md`.
 Een deployment krijgt een eigen bucket, een eigen identiteit met rechten op alleen die
 bucket, en precies dezelfde omgevingsvariabelen als bij MinIO: een applicatie wisselt dus
 alleen van endpoint.
