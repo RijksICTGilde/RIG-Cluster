@@ -232,7 +232,7 @@ def authorize_claims(claims: dict[str, Any]) -> dict[str, Any]:
 #: and got a 401 it could not explain (RC-113, bevinding 1). Reading the marker rather than
 #: listing paths keeps that from happening again: the next route that takes this decorator
 #: is documented correctly without anyone remembering to update a list.
-REQUIRES_USER_TOKEN = "zad_requires_user_token"
+REQUIRES_USER_TOKEN = "zad_requires_user_token"  # noqa: S105  # naam van de OpenAPI-marker, geen secret
 
 
 def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:

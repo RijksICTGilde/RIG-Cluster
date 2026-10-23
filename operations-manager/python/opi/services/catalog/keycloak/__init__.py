@@ -34,7 +34,7 @@ class KeycloakService(Service):
         help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
-        secret_class="KeycloakSecret",
+        secret_class="KeycloakSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in KeycloakVariables],
         requires=["services/publish-on-web"],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,

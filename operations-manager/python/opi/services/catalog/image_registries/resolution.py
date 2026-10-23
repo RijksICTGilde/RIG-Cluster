@@ -11,7 +11,7 @@ from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 
 #: Dockerconfigjson-secret in de namespace, image ongewijzigd.
-BACKEND_DIRECT_SECRET = "direct-secret"
+BACKEND_DIRECT_SECRET = "direct-secret"  # noqa: S105  # naam van de backendkeuze, geen secret
 #: ``Organization`` met proxyCache in RCR, image herschreven naar die organisatie.
 BACKEND_QUAY_PROXY = "quay-proxy-organization"
 

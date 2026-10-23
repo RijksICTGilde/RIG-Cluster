@@ -1487,8 +1487,8 @@ def _compute_ca_hash(cert_path: str) -> str | None:
         return None
 
     try:
-        result = subprocess.run(
-            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],
+        result = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
             capture_output=True,
             text=True,
             check=True,

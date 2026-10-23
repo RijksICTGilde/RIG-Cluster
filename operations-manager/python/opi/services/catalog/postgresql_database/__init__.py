@@ -44,7 +44,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         icon="database",
         color="donkerblauw",
         shared_per_deployment=True,
-        secret_class="DatabaseSecret",
+        secret_class="DatabaseSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in DatabaseVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="database",
@@ -213,7 +213,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             SecretFileSpec(
                 secret_name=DatabaseSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="database",
+                secret_type="database",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
                 resolve_aliases=True,
                 register_secret=secret,
             )

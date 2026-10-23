@@ -32,7 +32,7 @@ _SOPS_STORE_RETRY_DELAY_SECONDS = 1.5
 
 #: Secret en Role voor het sleutel-secret. De Role gaat alleen mee bij plaatsen, niet
 #: bij reprocess (het secret klopt al).
-SOPS_SECRET_NAME = "sops-age-key"
+SOPS_SECRET_NAME = "sops-age-key"  # noqa: S105  # naam van het secret, geen secret
 CMP_SOPS_ROLE_NAME = "cmp-sops-key-reader"
 CMP_SERVICE_ACCOUNT = "argocd-cmp"
 

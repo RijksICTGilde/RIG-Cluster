@@ -73,7 +73,7 @@ class MinioConnector:
         try:
             import subprocess
 
-            result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)
+            result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
             if result.returncode == 0:
                 logger.info("MinIO CLI (mc) is available")
                 MinioConnector.is_mc_available = True

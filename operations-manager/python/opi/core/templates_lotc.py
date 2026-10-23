@@ -194,7 +194,7 @@ def process_components_lotc(html: object) -> markupsafe.Markup:
     plaats van de lege uitvoer die overal elders de gewoonte is.
     """
     rendered = templates_lotc.env.from_string(str(html)).render()
-    return markupsafe.Markup(rendered)  # noqa: S704
+    return markupsafe.Markup(rendered)  # noqa: S704  # de bron is een constante uit de componentlaag, geen invoer
 
 
 templates_lotc.env.filters["process_components"] = process_components_lotc

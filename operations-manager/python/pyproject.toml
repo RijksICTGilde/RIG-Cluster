@@ -164,7 +164,6 @@ ignore = [
     # S rules - security
     "S104",     # Binding to all interfaces (intentional server config)
     "S108",     # Probable insecure temp file (intentional config paths)
-    "S701",     # Jinja2 autoescape
     # ERA rules
     "ERA001",   # Commented out code
     # PT rules - pytest
@@ -173,10 +172,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions
-"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "ANN201", "ANN401", "TRY300", "S106"]
-"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "ANN201", "ANN401", "TRY300", "S106"]
-# OPI code has pre-existing issues to be fixed separately
-"opi/**.py" = ["S105", "S106", "S603", "S607", "S608", "C901"]
+"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+# C901 blijft: de complexiteitsdrempel van bestaande orchestratiefuncties is een eigen
+# opruimtaak, niet een beveiligingsregel.
+"opi/**.py" = ["C901"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 30

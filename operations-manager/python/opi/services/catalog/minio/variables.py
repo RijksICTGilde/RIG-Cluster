@@ -16,14 +16,14 @@ class MinIOVariables(Enum):
         name="OBJECT_STORE_HOST",
         description="MinIO server hostname",
         source="secret",
-        secret_key="host",
+        secret_key="host",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_OBJECT_STORE_HOST"],
     )
     PORT = VariableDefinition(
         name="OBJECT_STORE_PORT",
         description="MinIO server port",
         source="secret",
-        secret_key="port",
+        secret_key="port",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_OBJECT_STORE_PORT"],
     )
     # URL and ENDPOINT_URL are computed in MinIOSecret._get_additional_keys()
@@ -31,27 +31,27 @@ class MinIOVariables(Enum):
         name="OBJECT_STORE_USER",
         description="MinIO toegangssleutel/gebruikersnaam",
         source="secret",
-        secret_key="access_key",
+        secret_key="access_key",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_OBJECT_STORE_USER"],
     )
     PASSWORD = VariableDefinition(
         name="OBJECT_STORE_PASSWORD",
         description="MinIO geheime sleutel/wachtwoord",
         source="secret",
-        secret_key="secret_key",
+        secret_key="secret_key",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_OBJECT_STORE_PASSWORD"],
     )
     BUCKET_NAME = VariableDefinition(
         name="OBJECT_STORE_BUCKET_NAME",
         description="MinIO bucket naam",
         source="secret",
-        secret_key="bucket_name",
+        secret_key="bucket_name",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_OBJECT_STORE_BUCKET_NAME"],
     )
     REGION = VariableDefinition(
         name="OBJECT_STORE_REGION",
         description="MinIO regio configuratie",
         source="secret",
-        secret_key="region",
+        secret_key="region",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_OBJECT_STORE_REGION"],
     )

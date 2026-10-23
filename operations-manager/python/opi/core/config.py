@@ -236,7 +236,7 @@ class Settings(BaseSettings):
     # authorization-code + PKCE loopback flow (RFC 8252), and the audience its
     # access tokens must carry for this API to accept them.
     CLI_CLIENT_ID: str = "zad-cli"
-    CLI_TOKEN_AUDIENCE: str = "zad-api"
+    CLI_TOKEN_AUDIENCE: str = "zad-api"  # noqa: S105  # audience van het CLI-token, geen secret
 
     # Invite system settings
     INVITE_CLIENT_ID: str = "operations-manager-invites"
@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     MANIFESTS_PATH: str = "manifests"
 
     # API security
-    API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development
+    API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     USE_UNSAFE_API_KEY: bool = False  # Use hardcoded "secret" API key for development (set to True in .env.local)
     MASTER_API_KEY: str | None = None  # Master API key for admin operations (backups, etc.)
     ADMIN_API_KEY: str | None = None  # Admin API key for cleanup, reconciliation, and maintenance operations
@@ -344,7 +344,7 @@ class Settings(BaseSettings):
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
     # Tijdelijke bestanden met platte geheimen. In de pod een tmpfs, zodat platte
     # SOPS-inhoud niet op de schijf van de node landt zoals in TEMP_DIR.
-    SECRET_TEMP_DIR: str = "/tmp"
+    SECRET_TEMP_DIR: str = "/tmp"  # noqa: S105  # pad naar een map, geen secret
 
     # GPG-privésleutel (ASCII-armored, zonder passphrase) voor commits in de GitOps-repo's.
     # Zie features/opi-ondertekent-zijn-commits.md.
@@ -372,7 +372,7 @@ class Settings(BaseSettings):
     # Keycloak configuration
     KEYCLOAK_URL: str = "https://keycloak.kind"
     KEYCLOAK_ADMIN_USERNAME: str = "admin"
-    KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"
+    KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
 
     # OPI's own client-credentials service account for Keycloak admin operations.
     # When the secret is set, OPI authenticates with this confidential master
@@ -420,14 +420,14 @@ class Settings(BaseSettings):
 
     # Master OIDC provider configuration (to be added to shared realm)
     KEYCLOAK_MASTER_OIDC_CLIENT_ID: str = "dummy-client-id"
-    KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"
+    KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     KEYCLOAK_MASTER_OIDC_DISCOVERY_URL: str = "https://keycloak.kind/realms/master/.well-known/openid-configuration"
 
     # Database configuration
     DATABASE_HOST: str = "postgresql.kind"
     DATABASE_NAME: str = "operations_manager"
     DATABASE_ADMIN_NAME: str = "postgres"
-    DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
+    DATABASE_ADMIN_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     # libpq sslmode voor OPI's verbindingen naar databases van het platform. require
     # versleutelt zonder het servercertificaat te toetsen (CNPG's interne CA). Local dev:
     # zet op disable. Zie features/postgresql-tls.md.
@@ -472,7 +472,7 @@ class Settings(BaseSettings):
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"
     MINIO_ADMIN_ACCESS_KEY: str = "admin"
-    MINIO_ADMIN_SECRET_KEY: str = "changeMe123!"
+    MINIO_ADMIN_SECRET_KEY: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     MINIO_USE_TLS: bool = False
     MINIO_REGION: str = "us-east-1"  # AWS region for S3 compatibility
 
@@ -482,7 +482,7 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_HOST: str = "rig-redis.rig-system.svc.cluster.local"
     REDIS_PORT: int = 6379
-    REDIS_PASSWORD: str = "changeMe123!"
+    REDIS_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
 
     # SMTP relay configuration (send-email service).
     # The relay is the only thing on the platform that talks to the upstream mail
@@ -515,7 +515,7 @@ class Settings(BaseSettings):
     # A Secret and not an environment variable: OPI generates this password itself, and a
     # pod reads its environment once at start, so a value made after that start would only
     # arrive on a restart -- a boot order nobody can follow afterwards.
-    MAIL_PLATFORM_SECRET_NAME: str = "zad-platform-mail-account"
+    MAIL_PLATFORM_SECRET_NAME: str = "zad-platform-mail-account"  # noqa: S105  # naam van het secret, geen secret
 
     # KEYCLOAK's own account on the relay. A SECOND platform account next to zad-platform,
     # and not the same one, because the two send different post: ZAD writes to a project's
@@ -534,13 +534,13 @@ class Settings(BaseSettings):
     MAIL_KEYCLOAK_ACCOUNT: str = "zad-keycloak"
     MAIL_KEYCLOAK_MESSAGES_PER_DAY: int = 2000
     #: The bootstrap Secret in OPI's own namespace holding Keycloak's mail password.
-    MAIL_KEYCLOAK_SECRET_NAME: str = "keycloak-mail-credentials"
+    MAIL_KEYCLOAK_SECRET_NAME: str = "keycloak-mail-credentials"  # noqa: S105  # naam van het secret, geen secret
     #: The KEY inside that Secret. Load-bearing on two sides: it is the ``key`` in the
     #: secretKeyRef of the Keycloak deployment (which reads it as ZAD_MAIL_RELAY_PASSWORD)
     #: and the key OPI reads here. That secretKeyRef is ``optional: true``, so a rename on
     #: one side does not stop anything -- it just makes every login mail fail authentication
     #: at the relay, far away from the rename.
-    MAIL_KEYCLOAK_SECRET_KEY: str = "smtp-password"
+    MAIL_KEYCLOAK_SECRET_KEY: str = "smtp-password"  # noqa: S105  # naam van de sleutel in het secret, geen secret
     #: The display name in front of the sender address of login mail.
     #:
     #: There is no own local part any more: login mail leaves under the cluster's BARE
@@ -636,7 +636,7 @@ class Settings(BaseSettings):
     BACKUP_S3_BUCKET_MODE: str = "per-project"  # "single" = use BACKUP_S3_BUCKET, "per-project" = auto-generate
     BACKUP_S3_ORG_PREFIX: str = "rig"  # Organization prefix for per-project bucket names
     BACKUP_S3_ACCESS_KEY: str = "backup-admin"
-    BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"
+    BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     BACKUP_S3_USE_TLS: bool = False  # Use HTTP (False) or HTTPS (True) for S3 endpoint
     BACKUP_SNAPSHOT_CLASS: str = "ocs-storagecluster-rbdplugin-snapclass"
     BACKUP_TIMEOUT_SECONDS: int = 3600

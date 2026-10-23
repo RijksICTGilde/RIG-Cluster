@@ -51,7 +51,7 @@ SAFE_FALLBACK_FORMAT = "component-deployment-project"
 # already imports that one -- taking it from here would be an import cycle. It is re-exported
 # here so every existing reader keeps its import, and the assertion that it matches the
 # templates stays where the templates are.
-assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
+assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101  # importtijdcontrole op twee lijsten die gelijk moeten blijven
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
 

@@ -125,7 +125,7 @@ def _omgeving() -> Environment:
         lstrip_blocks=True,
         # Houdt de slotnewline van een ingesloten partial, anders plakt de volgende regel eraan vast.
         keep_trailing_newline=True,
-        autoescape=False,
+        autoescape=False,  # noqa: S701  # uitvoer is YAML, escaping via yaml_scalar
     )
     env.filters.update(MANIFEST_FILTERS)
     return env

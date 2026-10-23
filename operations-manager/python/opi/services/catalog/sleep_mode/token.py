@@ -18,7 +18,7 @@ from opi.utils.age import decrypt_age_content, encrypt_age_content_sync, get_dec
 from opi.utils.api_keys import generate_api_key
 
 #: The env-var the waker reads its token from (matches the Secret key in secret.py).
-WAKE_TOKEN_ENV = "ZAD_WAKE_TOKEN"
+WAKE_TOKEN_ENV = "ZAD_WAKE_TOKEN"  # noqa: S105  # naam van de env-var, geen secret
 
 
 def mint() -> str:

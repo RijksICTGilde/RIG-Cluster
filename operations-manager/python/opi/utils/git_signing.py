@@ -94,8 +94,8 @@ def _secret_key_fingerprint(key_file: str, gnupg_home: str) -> str:
 
 def _run_gpg(args: list[str], gnupg_home: str) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(
-            ["gpg", "--homedir", gnupg_home, "--batch", "--no-tty", *args],
+        return subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+            ["gpg", "--homedir", gnupg_home, "--batch", "--no-tty", *args],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
             capture_output=True,
             text=True,
             check=False,

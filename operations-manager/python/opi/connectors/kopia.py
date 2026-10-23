@@ -243,7 +243,7 @@ class KopiaConnector:
         # Test Kopia CLI availability synchronously during initialization
         try:
             result = subprocess.run(
-                ["kopia", "--version"],
+                ["kopia", "--version"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
                 capture_output=True,
                 text=True,
                 env=self.env,

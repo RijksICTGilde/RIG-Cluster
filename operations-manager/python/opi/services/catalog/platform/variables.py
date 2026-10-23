@@ -16,11 +16,11 @@ class PlatformVariables(Enum):
         name="DEPLOYMENT_NAME",
         description="Naam van het huidige deployment",
         source="secret",
-        secret_key="deployment_name",
+        secret_key="deployment_name",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     COMPONENT_NAME = VariableDefinition(
         name="COMPONENT_NAME",
         description="Naam van het huidige component",
         source="secret",
-        secret_key="component_name",
+        secret_key="component_name",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )

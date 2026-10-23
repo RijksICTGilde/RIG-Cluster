@@ -115,7 +115,7 @@ class ChiselConnector:
 
         # AUTH in plaats van --auth: een commandoregel is leesbaar voor elk proces in
         # de container via /proc/<pid>/cmdline.
-        self.process = subprocess.Popen(
+        self.process = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

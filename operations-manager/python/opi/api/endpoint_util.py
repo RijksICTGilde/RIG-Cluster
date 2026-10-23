@@ -26,7 +26,7 @@ REQUIRES_ADMIN_API_KEY = "zad_requires_admin_api_key"
 REQUIRES_MASTER_API_KEY = "zad_requires_master_api_key"
 """Markering op een route die met MASTER_API_KEY wordt afgeschermd."""
 
-REQUIRES_METRICS_SCRAPE_TOKEN = "zad_requires_metrics_scrape_token"
+REQUIRES_METRICS_SCRAPE_TOKEN = "zad_requires_metrics_scrape_token"  # noqa: S105  # markering op een route, geen secret
 """Markering op een route die met PROMETHEUS_METRICS_AUTH_TOKEN wordt afgeschermd."""
 
 

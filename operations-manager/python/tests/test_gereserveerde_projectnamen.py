@@ -225,7 +225,11 @@ class TestDeSleutelLandtNooitInEenPlatformnamespace:
         handler = SopsHandler(kubectl_connector=kubectl)
 
         assert await handler.store_project_sops_key_in_namespace("rig-prd-demo", "AGE-SECRET-KEY-1x", "age1x") is True
-        kubectl.apply_manifest.assert_awaited_once()
+        # Het secret, en daarna de Role die de CMP-sidecar precies dat secret laat lezen.
+        assert [aanroep.args[0] for aanroep in kubectl.apply_manifest.await_args_list] == [
+            "manifests/generic-secret.yaml.to-sops.jinja",
+            "manifests/cmp-sops-key-reader.yaml.jinja",
+        ]
 
 
 class TestEenPlatformnamespaceWordtNooitVerwijderd:

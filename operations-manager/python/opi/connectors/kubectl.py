@@ -146,7 +146,11 @@ class KubectlConnector:
             import subprocess
 
             result = subprocess.run(
-                ["kubectl", "auth", "whoami"], capture_output=True, text=True, env=self.env, timeout=10
+                ["kubectl", "auth", "whoami"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                capture_output=True,
+                text=True,
+                env=self.env,
+                timeout=10,
             )
             if result.returncode == 0:
                 logger.info("Kubectl connection successful")
