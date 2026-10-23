@@ -5,7 +5,7 @@ Wat hier gemeten wordt, in de termen van het plan:
 * elk veld dat op de OUDE projectsleutel stond gaat naar de nieuwe, met dezelfde plaintext;
 * de velden op de platformsleutel en de platte waarden blijven byte voor byte gelijk;
 * een veld dat na de omzetting nog met de oude sleutel opengaat breekt de hele omzetting af;
-* de route zit achter de ADMIN_API_KEY en zet een taak in de wachtrij;
+* de route zit achter het token van een platformbeheerder en zet een taak in de wachtrij;
 * de taak slaat een projectbestand op met een andere ``age-public-key`` en verwerkt daarna;
 * een onbekend project, een mislukte omzetting, een mislukte opslag of een mislukte
   herverwerking laat niets half achter en meldt de stap waarin het misging (plan, punt 5).
@@ -14,6 +14,7 @@ Wat hier gemeten wordt, in de termen van het plan:
 from __future__ import annotations
 
 import copy
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,7 +22,6 @@ import opi.core.config
 import opi.utils.age as age_module
 import pytest
 from fastapi import HTTPException
-from opi.api import endpoint_util
 from opi.api.v2 import router as v2_router_module
 from opi.connectors.kopia import KopiaConnector, KopiaExecutionError, KopiaRepositoryConfig, _is_missing_repository
 from opi.core import task_handlers_operations as handlers
@@ -135,21 +135,8 @@ async def test_een_veld_dat_de_oude_sleutel_nog_opent_is_een_fout(
         await rotate_project_key(project_data, project_pair[0], new_public)
 
 
-@pytest.fixture
-def admin_key(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Zet de ADMIN_API_KEY op het levende settings-object.
-
-    ``endpoint_util`` bindt ``settings`` bij import, dus in een volle run kan het naar de
-    mock van een andere toets wijzen; dezelfde guard als in test_admin_projects_reconcile.
-    """
-    real_settings = opi.core.config.settings
-    monkeypatch.setattr(endpoint_util, "settings", real_settings)
-    monkeypatch.setattr(real_settings, "ADMIN_API_KEY", "test-admin-key")
-    return "test-admin-key"
-
-
 @pytest.mark.asyncio
-async def test_de_route_weigert_zonder_admin_sleutel(admin_key: str) -> None:
+async def test_de_route_weigert_de_projectsleutel_van_een_lid(platformbeheerder_token) -> None:
     request = AsyncMock()
     request.headers = {"X-API-Key": "de-projectsleutel-van-een-lid"}
 
@@ -161,9 +148,10 @@ async def test_de_route_weigert_zonder_admin_sleutel(admin_key: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_de_route_zet_met_de_admin_sleutel_een_taak_in_de_wachtrij(admin_key: str) -> None:
+async def test_de_route_zet_met_het_beheerderstoken_een_taak_in_de_wachtrij(platformbeheerder_token, verse_otp) -> None:
     request = AsyncMock()
-    request.headers = {"X-API-Key": admin_key}
+    request.headers = platformbeheerder_token["headers"] | verse_otp["headers"]
+    request.url = SimpleNamespace(path="/api/v2/projects/demo/:rotate-project-key")
 
     with patch.object(v2_router_module, "create_async_task", AsyncMock(return_value={"task_id": "taak-1"})) as create:
         response = await v2_router_module.rotate_project_key_v2(request=request, project_name="demo")
@@ -174,9 +162,13 @@ async def test_de_route_zet_met_de_admin_sleutel_een_taak_in_de_wachtrij(admin_k
 
 
 @pytest.mark.asyncio
-async def test_de_route_weigert_een_ongeldige_projectnaam_ook_met_de_admin_sleutel(admin_key: str) -> None:
+async def test_de_route_weigert_een_ongeldige_projectnaam_ook_met_het_beheerderstoken(
+    platformbeheerder_token,
+    verse_otp,
+) -> None:
     request = AsyncMock()
-    request.headers = {"X-API-Key": admin_key}
+    request.headers = platformbeheerder_token["headers"] | verse_otp["headers"]
+    request.url = SimpleNamespace(path="/api/v2/projects/demo/:rotate-project-key")
 
     with (
         patch.object(v2_router_module, "create_async_task", AsyncMock()) as create,

@@ -29,7 +29,9 @@ from alembic.runtime.environment import EnvironmentContext
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from opi.api.otp_step_up import OTP_CODE_HEADER
 from opi.core.db import Base
+from opi.services.user_otp_service import OtpStatus, OtpVerification
 from opi.utils.sops import generate_sops_key_pair
 from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
@@ -750,3 +752,65 @@ def pytest_runtest_logreport(report: Any) -> None:
     )
     with open(_VOORTGANG_PAD, "a", encoding="utf-8") as bestand:
         bestand.write(regel)
+
+
+PLATFORMBEHEERDER_EMAIL = "beheerder@example.test"
+
+
+@pytest.fixture
+def platformbeheerder_token() -> Iterator[dict[str, Any]]:
+    """Laat ``validate_platform_admin_token`` een vast e-mailadres aannemen.
+
+    De tokenverificatie zelf staat in ``tests/test_user_token_auth.py``; een route achter
+    de decorator heeft alleen de uitkomst nodig. ``headers`` legitimeert een
+    platformbeheerder, ``headers_gewone_gebruiker`` een ingelogde niet-beheerder.
+    """
+    claims = {
+        "sub": "beheerder-1",
+        "email": PLATFORMBEHEERDER_EMAIL,
+        "email_verified": True,
+        "preferred_username": "beheerder",
+    }
+
+    def _claims_van(token: str) -> dict[str, Any]:
+        return claims if token == "beheerder-token" else {**claims, "email": "iemand@example.test"}
+
+    with (
+        patch("opi.api.user_token_auth.verify_user_token", AsyncMock(side_effect=_claims_van)),
+        patch("opi.api.user_token_auth.get_user_service") as get_service,
+    ):
+        get_service.return_value.is_email_allowed.return_value = True
+        get_service.return_value.is_platform_admin.side_effect = lambda email: email == PLATFORMBEHEERDER_EMAIL
+        yield {
+            "email": PLATFORMBEHEERDER_EMAIL,
+            "headers": {"Authorization": "Bearer beheerder-token"},
+            "headers_gewone_gebruiker": {"Authorization": "Bearer gewone-gebruiker-token"},
+        }
+
+
+#: De enige code die :func:`verse_otp` aanneemt, en maar een keer.
+OTP_CODE = "123456"
+
+
+@pytest.fixture
+def verse_otp() -> Iterator[dict[str, Any]]:
+    """Laat de step-up van de API een code eenmalig aannemen.
+
+    De OTP-dienst zelf staat in ``tests/test_user_otp_service.py``; een route achter
+    ``requires_step_up`` heeft alleen de uitkomst nodig. Een tweede aanroep met dezelfde
+    code is ongeldig, zoals bij een echte authenticator.
+    """
+    gebruikt: set[tuple[str, str]] = set()
+
+    async def _verify(email: str, code: str) -> OtpVerification:
+        if code != OTP_CODE or (email, code) in gebruikt:
+            return OtpVerification.INVALID
+        gebruikt.add((email, code))
+        return OtpVerification.OK
+
+    service = MagicMock(
+        verify=AsyncMock(side_effect=_verify),
+        status=AsyncMock(return_value=OtpStatus(registered=True)),
+    )
+    with patch("opi.api.otp_step_up.UserOtpService", return_value=service):
+        yield {"headers": {OTP_CODE_HEADER: OTP_CODE}, "code": OTP_CODE}

@@ -14,6 +14,8 @@ class ActorKind(StrEnum):
     USER = "user"
     PROJECT_API_KEY = "project-api-key"
     PLATFORM_API_KEY = "platform-api-key"
+    # Geen ingang zet deze soort nog; hij bestaat om opgeslagen created_by-waarden van
+    # voor RC-377 terug te lezen (actor_from_stored).
     ADMIN_API_KEY = "admin-api-key"
     SCHEDULER = "scheduler"
     UNKNOWN = "onbekend"
@@ -44,9 +46,6 @@ ACTOR_UNKNOWN = Actor(ActorKind.UNKNOWN)
 
 ACTOR_PLATFORM_API_KEY = Actor(ActorKind.PLATFORM_API_KEY)
 """Platforminstantie of operator, geen persoon."""
-
-ACTOR_ADMIN_API_KEY = Actor(ActorKind.ADMIN_API_KEY)
-"""Voor onderhoudsoperaties."""
 
 actor: contextvars.ContextVar[Actor] = contextvars.ContextVar("actor", default=ACTOR_UNKNOWN)
 

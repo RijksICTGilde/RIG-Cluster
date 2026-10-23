@@ -1,10 +1,10 @@
-"""De step-up bij een API-aanroep die productie raakt (RC-332).
+"""De step-up bij een API-aanroep die productie raakt of het platform beheert (RC-332).
 
-Buiten ``productie`` verandert er niets: de projectsleutel en de bearer-tokens werken
-zoals ze werkten. Raakt een handeling productie, dan vraagt ze een verse tweede factor
-van de AANROEPER zelf: een persoonlijk token hoort bij een gebruiker, dus de code wordt
-getoetst tegen de factor van de eigenaar van dat token. Er is geen manier om de code van
-iemand anders aan een aanroep te hangen.
+Sinds RC-377 vraagt ook elke wijzigende beheerroute er een; wat de aanleiding was staat in
+``reason``, niet in ``detail``. Buiten die twee verandert er niets: de projectsleutel en de
+bearer-tokens werken zoals ze werkten. Elke step-up is een verse factor van de AANROEPER zelf:
+een persoonlijk token hoort bij een gebruiker, dus de code wordt getoetst tegen de factor van
+de eigenaar van dat token. Er is geen manier om de code van iemand anders aan een aanroep te hangen.
 
 Met de projectsleutel kan zo'n handeling niet: die hoort bij geen enkele gebruiker en een
 machine heeft geen tweede factor. Dat is altijd een 403, ook met een code erbij.
@@ -84,7 +84,9 @@ class StepUpProblem(BaseModel):
 
 
 _DETAIL = {
-    StepUpCause.OTP_ONTBREEKT: "Deze handeling raakt productie en vraagt een verse code uit je tweede factor.",
+    # Niet "raakt productie": sinds RC-377 vraagt ook platformbeheer een step-up. Waarom
+    # DEZE aanroep er een vraagt staat in ``reason``.
+    StepUpCause.OTP_ONTBREEKT: "Deze handeling vraagt een verse code uit je tweede factor.",
     StepUpCause.FACTOR_ONTBREEKT: "Je hebt nog geen tweede factor ingericht, en deze handeling vraagt er een.",
     StepUpCause.CODE_ONGELDIG: "De meegestuurde code is niet aanvaard.",
     StepUpCause.GEBLOKKEERD: "Je tweede factor is tijdelijk geblokkeerd na te veel mislukte pogingen.",
@@ -116,7 +118,7 @@ _CAUSE_PER_UITKOMST = {
 def _token_owner(request: Request) -> str | None:
     """Het e-mailadres van de eigenaar van het token, of None bij een projectsleutel.
 
-    Op ``/api/``-paden zet alleen ``validate_user_token`` ``request.state.user``; de
+    Op ``/api/``-paden zetten alleen de bearer-decorators ``request.state.user``; de
     sessiemiddleware leegt hem daar juist. Een gevulde waarde is dus een persoon.
     """
     user = getattr(request.state, "user", None) or {}

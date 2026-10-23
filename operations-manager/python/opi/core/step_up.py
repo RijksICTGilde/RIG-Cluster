@@ -1,5 +1,8 @@
 """Een handeling in productie vraagt een verse step-up (RC-332).
 
+Sinds RC-377 vraagt ook elke wijzigende beheerroute er een, ongeacht de omgeving: een
+handeling van platformbeheer raakt het hele cluster.
+
 Hier staat WANNEER een handeling er een vraagt en of er een verse is. Hoe het portaal
 erom vraagt staat in ``opi/web/router_step_up.py``; hoe een handeling hem oplegt in
 :func:`opi.core.auth_decorators.requires_step_up`.
@@ -56,6 +59,12 @@ class StepUpActie(StrEnum):
     DEPLOYMENT_VERWIJDEREN = "deployment-verwijderen"
     COMPONENT_VERWIJDEREN = "component-verwijderen"
     MARKERING_VERLAGEN = "markering-verlagen"
+    OPRUIMING_STARTEN = "opruiming-starten"
+    RECONCILIATIE_STARTEN = "reconciliatie-starten"
+    MARKERING_INTREKKEN = "markering-intrekken"
+    WEZEN_BEVESTIGEN = "wezen-bevestigen"
+    PROJECTEN_HERINLEZEN = "projecten-herinlezen"
+    PROJECTSLEUTEL_VERVANGEN = "projectsleutel-vervangen"
 
     @property
     def handeling(self) -> str:
@@ -72,6 +81,12 @@ _HANDELING = {
     StepUpActie.DEPLOYMENT_VERWIJDEREN: "deze deployment te verwijderen",
     StepUpActie.COMPONENT_VERWIJDEREN: "dit component te verwijderen",
     StepUpActie.MARKERING_VERLAGEN: "de markering productie te verlagen",
+    StepUpActie.OPRUIMING_STARTEN: "de opruiming te starten",
+    StepUpActie.RECONCILIATIE_STARTEN: "een reconciliatie te starten",
+    StepUpActie.MARKERING_INTREKKEN: "deze verwijdermarkering in te trekken",
+    StepUpActie.WEZEN_BEVESTIGEN: "deze wezen te bevestigen",
+    StepUpActie.PROJECTEN_HERINLEZEN: "de projects-repo nu in te lezen",
+    StepUpActie.PROJECTSLEUTEL_VERVANGEN: "de projectsleutel te vervangen",
 }
 
 _REDEN = {
@@ -79,6 +94,14 @@ _REDEN = {
     StepUpActie.DEPLOYMENT_VERWIJDEREN: "de deployment '{doelwit}' staat op productie",
     StepUpActie.COMPONENT_VERWIJDEREN: "het component '{doelwit}' wordt gebruikt door een deployment op productie",
     StepUpActie.MARKERING_VERLAGEN: "de wijziging haalt een deployment van '{doelwit}' van productie af",
+    StepUpActie.OPRUIMING_STARTEN: "de opruiming verwijdert resources van '{doelwit}' waarvan de genadeperiode voorbij is",
+    StepUpActie.RECONCILIATIE_STARTEN: "een reconciliatie over het hele platform kan resources verwijderen",
+    StepUpActie.MARKERING_INTREKKEN: "de markering '{doelwit}' vervalt, en de geplande verwijdering ermee",
+    StepUpActie.WEZEN_BEVESTIGEN: "bevestigde wezen worden na de genadeperiode van het platform verwijderd",
+    StepUpActie.PROJECTEN_HERINLEZEN: "het inlezen vervangt de projectstore van dit cluster",
+    StepUpActie.PROJECTSLEUTEL_VERVANGEN: (
+        "de sleutel van '{doelwit}' wordt vervangen en elke versleutelde waarde opnieuw versleuteld"
+    ),
 }
 
 

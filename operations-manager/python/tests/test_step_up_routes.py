@@ -1,4 +1,7 @@
-"""Elke verwijderroute die productie kan raken draagt de step-up (RC-332).
+"""Elke route die een verse step-up vraagt draagt hem ook (RC-332, RC-377).
+
+Twee soorten: een verwijderroute die productie kan raken, en sinds RC-377 elke
+beheerroute die iets verandert.
 
 Een eigen lijst en niet de route-enumeratie van RC-295: die is nog niet gemerged. Komt hij
 binnen, dan kan deze test erop aansluiten.
@@ -28,6 +31,20 @@ ROUTES_MET_STEP_UP = {
     ("DELETE", "/api/v2/projects/{project_name}/components/{component_name}"): StepUpActie.COMPONENT_VERWIJDEREN,
     ("POST", "/api/projects/{project_name}/:upsert-deployment"): StepUpActie.MARKERING_VERLAGEN,
     ("POST", "/api/v2/projects/{project_name}/:upsert-deployment"): StepUpActie.MARKERING_VERLAGEN,
+    # Platformbeheer (RC-377): elke beheerroute die iets verandert. De twee leesroutes
+    # (GET /marked-for-deletion en GET /orphans/report) staan er met opzet niet bij.
+    ("POST", "/api/v2/admin/cleanup/trigger"): StepUpActie.OPRUIMING_STARTEN,
+    ("POST", "/api/v2/admin/reconciliation/trigger"): StepUpActie.RECONCILIATIE_STARTEN,
+    ("DELETE", "/api/v2/admin/marked-for-deletion/{mark_id}"): StepUpActie.MARKERING_INTREKKEN,
+    ("POST", "/api/v2/admin/orphans/confirm"): StepUpActie.WEZEN_BEVESTIGEN,
+    ("POST", "/api/v2/admin/projects/:reconcile"): StepUpActie.PROJECTEN_HERINLEZEN,
+    ("POST", "/api/v2/projects/{project_name}/:rotate-project-key"): StepUpActie.PROJECTSLEUTEL_VERVANGEN,
+}
+
+#: De beheerroutes die ALLEEN lezen en dus geen step-up dragen (RC-377).
+BEHEERROUTES_ZONDER_STEP_UP = {
+    ("GET", "/api/v2/admin/marked-for-deletion"),
+    ("GET", "/api/v2/admin/orphans/report"),
 }
 
 
@@ -49,6 +66,19 @@ def test_elke_route_uit_de_lijst_draagt_de_step_up(app: Any) -> None:
         "@requires_step_up terug, of pas de lijst aan als de route verhuisd is:\n  "
         + "\n  ".join(f"{m} {p}" for m, p in zonder)
     )
+
+
+def test_een_leesroute_van_platformbeheer_draagt_geen_step_up(app: Any) -> None:
+    """Alleen lezen vraagt alleen het token: een OTP erop zou een handeling verzinnen."""
+    met_step_up = [
+        (methode, route.path)
+        for route in app.routes
+        if hasattr(route, "methods") and hasattr(route, "endpoint")
+        for methode in route.methods
+        if (methode, route.path) in BEHEERROUTES_ZONDER_STEP_UP
+        and getattr(route.endpoint, REQUIRES_STEP_UP, None) is not None
+    ]
+    assert met_step_up == [], f"Deze leesroutes vragen een step-up: {met_step_up}"
 
 
 def test_elke_step_up_route_in_de_api_is_gedocumenteerd(app: Any) -> None:

@@ -10,12 +10,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 
 from opi.api.endpoint_util import (
-    REQUIRES_ADMIN_API_KEY,
     REQUIRES_MASTER_API_KEY,
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
 )
-from opi.api.user_token_auth import REQUIRES_USER_TOKEN
+from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from starlette.routing import WebSocketRoute
 
 if TYPE_CHECKING:
@@ -28,7 +27,7 @@ MARKERINGEN: dict[str, str] = {
     "sso-sessie": "_requires_sso",
     "projectsleutel": REQUIRES_PROJECT_NAME,
     "sso-bearertoken": REQUIRES_USER_TOKEN,
-    "admin-sleutel": REQUIRES_ADMIN_API_KEY,
+    "platformbeheerder-token": REQUIRES_PLATFORM_ADMIN_TOKEN,
     "master-sleutel": REQUIRES_MASTER_API_KEY,
     "metrics-token": REQUIRES_METRICS_SCRAPE_TOKEN,
 }

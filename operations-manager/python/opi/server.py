@@ -33,7 +33,7 @@ from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
-from opi.api.user_token_auth import REQUIRES_USER_TOKEN
+from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
@@ -540,7 +540,8 @@ def create_app() -> FastAPI:
                 "description": (
                     "SSO access token, for the endpoints that cannot use a project's API key "
                     "because they are not about one project yet: listing the projects you may "
-                    "see, and creating a project. Send it as 'Authorization: Bearer <token>'."
+                    "see, creating a project, and platform maintenance by a platform admin. "
+                    "Send it as 'Authorization: Bearer <token>'."
                 ),
             },
         }
@@ -552,7 +553,11 @@ def create_app() -> FastAPI:
         bearer_operations = {
             (route.path, method.lower())
             for route in app.routes
-            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_USER_TOKEN, False)
+            if getattr(route, "endpoint", None) is not None
+            and any(
+                getattr(route.endpoint, marker, False)
+                for marker in (REQUIRES_USER_TOKEN, REQUIRES_PLATFORM_ADMIN_TOKEN)
+            )
             for method in getattr(route, "methods", None) or []
         }
 
@@ -584,14 +589,14 @@ def create_app() -> FastAPI:
             "schema": {"type": "string"},
             "description": (
                 "Een verse code uit de authenticator van de aanroeper, voor een handeling die "
-                "productie raakt. Alleen nodig als deze aanroep dat echt doet, en alleen te "
+                "productie raakt of het platform beheert. Alleen nodig als deze aanroep dat echt doet, en alleen te "
                 "gebruiken met een persoonlijk token: de code wordt getoetst tegen de tweede "
                 "factor van de eigenaar van dat token. Met een projectsleutel kan de handeling niet."
             ),
         }
         step_up_403 = {
             "description": (
-                "Deze handeling raakt productie en vraagt een verse tweede factor. Het antwoord "
+                "Deze handeling vraagt een verse tweede factor. Het antwoord "
                 f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
                 f"'remedy' wat er moet gebeuren. Herhaal de aanroep met '{OTP_CODE_HEADER}'."
             ),

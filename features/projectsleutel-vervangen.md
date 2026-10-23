@@ -8,12 +8,11 @@ Die sleutel is zichtbaar voor elke `admin` en `owner` van het project. Vertrekt 
 
 ```bash
 curl -X POST "https://zad.sandbox.rijksapp.dev/api/v2/projects/demo/:rotate-project-key" \
-  -H "X-API-Key: $ADMIN_API_KEY"
+  -H "Authorization: Bearer $ZAD_TOKEN" \
+  -H "X-ZAD-OTP: 123456"
 ```
 
-Alleen met de `ADMIN_API_KEY`: een projectlid kan zijn eigen sleutel niet vervangen. Het antwoord is `202` met een `task_id`; de voortgang staat op `/api/tasks/{task_id}`.
-
-**Op productie staat deze route uit** (antwoord `501`). De `ADMIN_API_KEY` staat alleen in de overlay `sandboxed-local`.
+Alleen met het token van een platformbeheerder, plus een verse code uit zijn authenticator: een projectlid kan zijn eigen sleutel niet vervangen. Zonder token `401`, met het token van een gewone gebruiker `403`, zonder code `403` met `type: urn:zad:step-up-required` en `action: projectsleutel-vervangen`. Zie `features/platformbeheer-via-de-api.md`. Het antwoord is `202` met een `task_id`; de voortgang staat op `/api/tasks/{task_id}`.
 
 Het resultaat van de taak:
 
@@ -107,7 +106,7 @@ Het verwerken zet het namespace-Secret eerst en pusht daarna de nieuwe `*.sops.y
 
 Het venster duurt ongeveer twintig seconden (sandbox-meting). Na tien seconden staat de nieuwe sleutel in het namespace-Secret terwijl zad-deployments nog de OUDE recipient noemt. Na twintig seconden (taak-einde) noemde dat bestand alleen de nieuwe recipient en waren beide Applications (`<project>-project`, `<project>-productie`) `Synced / Healthy` op de rotatie-commit.
 
-Het volgen van de taak gaat niet met de admin-sleutel: `/api/tasks/{task_id}` wil de api-key van het project zelf of het bearertoken van wie de taak startte. Wie de rotatie met de admin-sleutel start krijgt dus wel het taaknummer terug, maar leest de afloop in de takentabel van het project of in de logs van OPI.
+Het volgen van de taak gaat met hetzelfde token: `/api/tasks/{task_id}` wil de api-key van het project zelf of het bearertoken van wie de taak startte, en dat laatste is hier het e-mailadres van de platformbeheerder in `created_by`. Die route vraagt geen `X-ZAD-OTP`; alleen de rotatie zelf doet dat.
 
 ## Terugzetten
 
@@ -121,5 +120,5 @@ Faalt de taak halverwege, dan noemt hij de stap waarin het misging. Is het proje
 
 - `age-keygen` in de OPI-image, voor `generate_sops_key_pair`.
 - De project-KEK (`PROJECT_KEK_FILE`) om de huidige projectsleutel te openen en de nieuwe in te pakken, met de platformsleutel (`SOPS_AGE_PRIVATE_KEY`) als terugval zolang niet elk projectbestand is omgezet. Draait de rotatie met een KEK, dan staat de nieuwe projectsleutel onder de KEK en opent de platformsleutel hem niet meer.
-- `ADMIN_API_KEY` geconfigureerd; zonder die staat de route dicht (`501`).
+- Een platformbeheerder met een geldig SSO-token; zie `features/platformbeheer-via-de-api.md`.
 - `kopia` in de OPI-image, voor het meeverhuizen van het backupwachtwoord.
