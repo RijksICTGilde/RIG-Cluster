@@ -1,5 +1,7 @@
 # YAML Diff-Driven Deletion & Resource Cleanup
 
+> The whole of the deletion paths, with the invariants and the October 2026 cases, is mapped in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 ## What It Is
 
 When a user removes a deployment or a service from their project YAML file, the system automatically detects the change and cleans up the associated infrastructure resources. Persistent data resources (databases, MinIO buckets) are protected by a two-phase deletion process with a configurable grace period, allowing accident recovery via git revert.

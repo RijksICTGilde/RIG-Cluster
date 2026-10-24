@@ -1,5 +1,7 @@
 # Manifest Inventory Cleanup
 
+> The whole of the deletion paths, with the invariants and the October 2026 cases, is mapped in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 ## Problem
 
 When deployment configuration changes (e.g. `publish-on-web` removed from a component, domain/path changed, component removed from a deployment), OPI generates new manifests but never cleans up stale files from previous runs. This leaves orphaned manifests (ingresses, services, network policies, secrets) in the git repo, causing ArgoCD sync failures.

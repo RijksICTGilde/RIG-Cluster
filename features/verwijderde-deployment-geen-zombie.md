@@ -1,5 +1,7 @@
 # Een verwijderde deployment komt niet terug als zombie
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 Een deployment verwijderen kon een zombie opleveren: de deployment stond niet meer in het
 projectbestand, maar zijn ArgoCD Application en manifestmap stonden nog in git, en ArgoCD
 hield hem draaiend. Er wees niets meer naar, dus niemand ruimde hem op. In productie

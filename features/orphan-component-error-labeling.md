@@ -1,5 +1,7 @@
 # Orphan Component Error Labeling
 
+> The whole of the deletion paths, with the invariants and the October 2026 cases, is mapped in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 ## What it is
 
 The project-details page shows a per-deployment status card with a live error
