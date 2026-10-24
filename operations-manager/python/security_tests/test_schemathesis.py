@@ -58,11 +58,25 @@ PROEFINSTELLINGEN = settings(
 )
 
 #: Het project waar de brede fuzz op los mag. Het andere blijft heel voor de gerichte proeven.
-FUZZPROJECT = "proef-beta"
+#: Een doel zonder proefprojecten (een sandbox in het cluster die er geen meekreeg) heeft hier
+#: niets, en dan slaan de passen met een sleutel zich over in plaats van op een KeyError om te
+#: vallen.
+FUZZPROJECT = DOEL.projecten[-1] if DOEL.projecten else ""
+VREEMD_PROJECT = DOEL.projecten[0] if DOEL.projecten else ""
 
 #: De headers waarmee schemathesis zelf een herkenning meegeeft: het securityschema uit de
 #: OpenAPI. Zonder ze weg te halen is "ongeauthenticeerd" een verzoek met een verzonnen sleutel.
 HERKENNINGSHEADERS = ("x-api-key", "authorization", "cookie")
+
+
+def _niet_geremd(status: int) -> None:
+    """Een 429 voor een aanroeper die juist door hoort te komen is niets gemeten.
+
+    De ratelimiter weigert voor de handler, dus er is geen antwoord om tegen het schema te
+    houden. De brede fuzz doet duizenden verzoeken, dus dit komt voor.
+    """
+    if status == 429:
+        pytest.skip("de ratelimiter weigerde dit verzoek, dus er is geen antwoord gemeten")
 
 
 def _is_publiek(case: Case) -> bool:
@@ -82,6 +96,12 @@ def _zonder_herkenning(case: Case) -> None:
 def _zonder_project(case: Case) -> bool:
     """Of deze operatie geen project in haar pad heeft, en dus buiten de matrix valt."""
     return "{project_name}" not in case.operation.path
+
+
+def _vraagt_een_proefproject() -> None:
+    """Een pas met een projectsleutel vraagt twee proefprojecten op dit doel."""
+    if len(DOEL.projecten) < 2:
+        pytest.skip("dit doel heeft geen twee proefprojecten met een sleutel (ZAD_PROEF_SLEUTELS)")
 
 
 def _op_fuzzproject(case: Case) -> None:
@@ -113,12 +133,13 @@ def test_de_sleutel_van_een_ander_project_komt_niets_door(case: Case) -> None:
     """
     if _zonder_project(case):
         pytest.skip("geen projectpad, dus geen matrix")
+    _vraagt_een_proefproject()
     _zonder_herkenning(case)
     _op_fuzzproject(case)
-    vreemde_sleutel = DOEL.sleutels["proef-alfa"]
+    vreemde_sleutel = DOEL.sleutels[VREEMD_PROJECT]
     antwoord = case.call(headers={"X-API-Key": vreemde_sleutel})
     melding = beoordeel_weigering(
-        antwoord.status_code, case.operation.label, f"de sleutel van proef-alfa op {FUZZPROJECT}"
+        antwoord.status_code, case.operation.label, f"de sleutel van {VREEMD_PROJECT} op {FUZZPROJECT}"
     )
     assert melding is None, melding
 
@@ -129,9 +150,11 @@ def test_de_eigen_sleutel_krijgt_zijn_eigen_responsschema(case: Case) -> None:
     """Faalconditie: het antwoord wijkt af van het schema, of lekt een stacktrace of een pad."""
     if _zonder_project(case) or case.method.upper() != "GET":
         pytest.skip("alleen leesacties op het eigen project")
+    _vraagt_een_proefproject()
     _zonder_herkenning(case)
     _op_fuzzproject(case)
     antwoord = case.call(headers={"X-API-Key": DOEL.sleutels[FUZZPROJECT]})
+    _niet_geremd(antwoord.status_code)
     lek = bevat_lek(antwoord.text)
     assert lek is None, f"{case.operation.label}: {lek}"
     case.validate_response(antwoord, checks=[schemathesis.checks.response_schema_conformance])
@@ -143,8 +166,11 @@ def test_de_zad_admin_krijgt_zijn_eigen_responsschema(case: Case) -> None:
     """Dezelfde toets met een ingelogde ZAD-admin in plaats van een projectsleutel."""
     if case.method.upper() != "GET":
         pytest.skip("alleen leesacties")
+    if "zad-admin" not in DOEL.sessies:
+        pytest.skip("dit doel heeft geen ondertekende sessie voor rol zad-admin")
     _zonder_herkenning(case)
     antwoord = case.call(cookies={"session": DOEL.sessies["zad-admin"]})
+    _niet_geremd(antwoord.status_code)
     lek = bevat_lek(antwoord.text)
     assert lek is None, f"{case.operation.label}: {lek}"
     case.validate_response(antwoord, checks=[schemathesis.checks.response_schema_conformance])

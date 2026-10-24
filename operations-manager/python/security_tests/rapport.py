@@ -15,7 +15,10 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from opi.tools.biv_render import aanvalsproef_doelen, load_inventaris
 
-from security_tests.sandboxlog import Record, junit_sleutel, route_uit, waarom
+from security_tests.baseline import lees_baseline
+from security_tests.doel import LOKAAL, SANDBOX
+from security_tests.sandboxlog import Record, bestand_van, junit_sleutel, route_uit, toetsnaam, waarom
+from security_tests.zap_scan import proefnaam
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,6 +44,7 @@ class Proef(NamedTuple):
     as_naam: str
     componenten: tuple[str, ...]
     impact: str
+    doelen: tuple[str, ...] = (LOKAAL, SANDBOX)
 
 
 #: Per proefbestand de BIV-as en de componenten die hij raakt. Dit is de enige plek waar die
@@ -64,7 +68,34 @@ PROEVEN: dict[str, Proef] = {
         "vertrouwelijkheid", ("opi",), "een operatie zonder grendel geeft een vreemde toegang tot een project"
     ),
     "test_zap": Proef("vertrouwelijkheid", ("opi",), "de bekende webkwetsbaarheden van OWASP"),
+    "test_sandboxdoel": Proef(
+        "vertrouwelijkheid",
+        ("keycloak", "object-storage", "registry", "argocd", "tenant-namespaces"),
+        "een tenant of een vreemde komt bij een dienst van een ander project",
+        doelen=(SANDBOX,),
+    ),
 }
+
+#: De lagen in de groene lijst. Alles wat niet in deze tabel staat is een gerichte proef.
+LAAG_PER_PROEF = {"test_schemathesis": "schemathesis", "test_zap": "ZAP-lezing"}
+
+#: De uitkomsten die een regel kan hebben. Elke regel heeft er een: een regel zonder uitkomst
+#: zou precies de stille waarschuwing zijn die de groene lijst uitsluit. ``INFORMATIE`` is de
+#: uitkomst van een ZAP-alert onder de risicodrempel, die geen uitspraak over de gate doet.
+GROEN = "groen"
+AFWIJKING = "afwijking met uitleg"
+BEVINDING_REGEL = "bevinding"
+NIET_GEMETEN = "niet gemeten"
+INFORMATIE = "informatie"
+
+
+class Regel(NamedTuple):
+    """Een gemeten regel in de groene lijst: wat er gemeten is, en wat eruit kwam."""
+
+    laag: str
+    regel: str
+    uitkomst: str
+    toelichting: str = ""
 
 
 @dataclass(frozen=True)
@@ -103,7 +134,7 @@ def uit_junit(pad: Path, vensters: dict[str, list[Record]] | None = None) -> lis
         mislukt = [kind for kind in geval if kind.tag in ("failure", "error")]
         if not mislukt:
             continue
-        bestand = (geval.get("classname") or "").split(".")[-1]
+        bestand = bestand_van(geval.get("classname") or "")
         naam = geval.get("name") or "?"
         melding = (mislukt[0].get("message") or mislukt[0].text or "").strip()
         venster = (vensters or {}).get(junit_sleutel(geval.get("classname") or "", naam), [])
@@ -138,16 +169,111 @@ def telling_uit_junit(pad: Path) -> Telling:
     )
 
 
-def dekkingstabel() -> list[str]:
-    """Per doel uit de BIV-inventaris welke proef het beproeft."""
+def laag_van(proefbestand: str) -> str:
+    """De laag waarin deze proef in de groene lijst staat."""
+    return LAAG_PER_PROEF.get(proefbestand, "gerichte proeven")
+
+
+def regels_uit_junit(pad: Path) -> list[Regel]:
+    """Elke toets uit het junit-rapport als regel in de groene lijst.
+
+    Een overgeslagen toets is "niet gemeten" met de reden van de skip, niet groen: dat is het
+    verschil tussen een proef die iets heeft beproefd en een proef die er niet aan toe kwam.
+    """
+    if not pad.exists():
+        return []
+    boom = ET.parse(pad)  # noqa: S314 - ons eigen junit-rapport uit dezelfde run
+    regels = []
+    for geval in boom.iter("testcase"):
+        bestand = bestand_van(geval.get("classname") or "")
+        naam = geval.get("name") or "?"
+        mislukt = [kind for kind in geval if kind.tag in ("failure", "error")]
+        overgeslagen = [kind for kind in geval if kind.tag == "skipped"]
+        if mislukt:
+            uitkomst, toelichting = BEVINDING_REGEL, (mislukt[0].get("message") or "").splitlines()[:1]
+        elif overgeslagen:
+            uitkomst, toelichting = NIET_GEMETEN, (overgeslagen[0].get("message") or "").splitlines()[:1]
+        else:
+            uitkomst, toelichting = GROEN, []
+        regel = toetsnaam(geval.get("classname") or "", naam)
+        regels.append(Regel(laag_van(bestand), regel, uitkomst, " ".join(toelichting)))
+    return regels
+
+
+def regels_uit_zap(zap: ZapUitkomst, doelsoort: str = "") -> list[Regel]:
+    """De ZAP-alerts als regels: elke WARN met zijn uitleg, en de informatie eronder.
+
+    Een WARN met een reden in de baseline is een afwijking met uitleg; een WARN zonder reden is
+    een bevinding. Zo staat geen enkele alert van ZAP nog buiten de lijst.
+    """
+    if not zap.gemeten:
+        return [Regel("ZAP", "alle passen", NIET_GEMETEN, zap.reden)]
+    regels = []
+    for sleutel, melding in sorted(zap.bevindingen.items()):
+        pas, _, kenmerk = sleutel.partition("/")
+        reden = lees_baseline(proefnaam(pas), doelsoort).get(kenmerk, "")
+        uitkomst = AFWIJKING if reden else BEVINDING_REGEL
+        regels.append(Regel("ZAP", f"{pas} {kenmerk}", uitkomst, reden or melding))
+    regels += [
+        Regel("ZAP", f"{sleutel.replace('/', ' ', 1)}", INFORMATIE, melding)
+        for sleutel, melding in sorted(zap.informatie.items())
+    ]
+    # Een uitleg die niets meer dekt laat de run falen, dus hij hoort in de lijst te staan.
+    regels += [
+        Regel("ZAP", sleutel.replace("/", " ", 1), BEVINDING_REGEL, f"OPGELOST, dekt niets meer: {reden}")
+        for sleutel, reden in sorted(zap.verouderd.items())
+    ]
+    # Een pas zonder herkenning op dit doel heeft niets beproefd. Dat is geen groen en geen
+    # bevinding, dus staat hij met zijn reden als NIET GEMETEN in de lijst.
+    regels += [
+        Regel("ZAP", f"{pas} alle regels", NIET_GEMETEN, reden) for pas, reden in sorted(zap.niet_gemeten.items())
+    ]
+    return regels
+
+
+def groene_lijst(regels: list[Regel]) -> list[str]:
+    """De groene lijst: per laag elke gemeten regel met zijn uitkomst."""
+    uitvoer = [
+        "## Groene lijst",
+        "",
+        "Per laag elke regel die gemeten is. Een afwijking staat erbij met de reden uit"
+        " `bekende-bevindingen.tsv`; een bevinding en een regel die niets meer dekt laten de"
+        " run falen.",
+        "",
+    ]
+    for laag in sorted({regel.laag for regel in regels}):
+        van_de_laag = [regel for regel in regels if regel.laag == laag]
+        groen = len([regel for regel in van_de_laag if regel.uitkomst == GROEN])
+        uitvoer += [
+            f"### {laag} ({groen} groen van {len(van_de_laag)})",
+            "",
+            "| regel | uitkomst | toelichting |",
+            "|---|---|---|",
+            *(f"| {regel.regel} | {regel.uitkomst} | {regel.toelichting or '-'} |" for regel in van_de_laag),
+            "",
+        ]
+    return uitvoer
+
+
+def dekkingstabel(doelsoort: str = "") -> list[str]:
+    """Per doel uit de BIV-inventaris welke proef het beproeft, en tegen welk doel."""
     per_component: dict[str, list[str]] = {}
+    doelen_per_component: dict[str, set[str]] = {}
     for naam, proef in PROEVEN.items():
         for component in proef.componenten:
             per_component.setdefault(component, []).append(naam)
-    regels = ["| component | beproefd door |", "|---|---|"]
+            doelen_per_component.setdefault(component, set()).update(proef.doelen)
+    regels = [
+        f"Deze run beproefde het doel: {doelsoort or 'onbekend'}. Staging is een handrun met"
+        " hetzelfde harnas; zie features/aanvalsproef-staging.md.",
+        "",
+        "| component | beproefd door | beproefbaar tegen |",
+        "|---|---|---|",
+    ]
     for doel in aanvalsproef_doelen(load_inventaris()):
         proeven = ", ".join(sorted(per_component.get(doel, []))) or "nog niet beproefd"
-        regels.append(f"| {doel} | {proeven} |")
+        doelen = ", ".join(sorted(doelen_per_component.get(doel, set()))) or "-"
+        regels.append(f"| {doel} | {proeven} | {doelen} |")
     return regels
 
 
@@ -214,13 +340,15 @@ def render(
     telling: Telling,
     asgi: list[AsgiFout] | None = None,
     crash: Crash | None = None,
+    lijst: list[Regel] | None = None,
+    doelsoort: str = "",
 ) -> str:
     """Het rapport als markdown."""
     nu = datetime.datetime.now(tz=datetime.UTC).isoformat(timespec="seconds")
     regels = [
         "# Aanvalsproef ZAD Attack Proxy",
         "",
-        f"Gedraaid op {nu} tegen de eigen wegwerp-sandbox.",
+        f"Gedraaid op {nu} tegen doel: {doelsoort or 'onbekend'}.",
         "",
         "## Uitkomst",
         "",
@@ -250,5 +378,6 @@ def render(
     regels += _asgi_sectie(asgi or [])
     if zap.meldingen:
         regels += ["## ZAP", "", *(f"- {melding}" for melding in zap.meldingen), ""]
-    regels += ["## Dekking van de aanvalsproef-doelen", "", *dekkingstabel(), ""]
+    regels += [*groene_lijst(lijst or []), ""] if lijst else []
+    regels += ["## Dekking van de aanvalsproef-doelen", "", *dekkingstabel(doelsoort), ""]
     return "\n".join(regels)

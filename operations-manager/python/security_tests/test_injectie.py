@@ -93,9 +93,9 @@ def beoordeel_aanroepen(regels: list[dict]) -> list[str]:
 
 
 @pytest.fixture(scope="module")
-def ronde(doel: Doel) -> Uitslag:
+def ronde(doel: Doel, proefproject: str) -> Uitslag:
     """Stuur elke payload naar elk veld, en houd bij wat de binaries daarna zagen."""
-    project = doel.projecten[0]
+    project = proefproject
     voor = len(aanroepen(doel.aanroeplog))
     statussen: dict[str, int] = {}
     with sleutelclient(doel, project) as client:

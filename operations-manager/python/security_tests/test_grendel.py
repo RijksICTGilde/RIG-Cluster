@@ -11,11 +11,13 @@ import httpx
 import pytest
 
 from security_tests.doel import (
+    LOKAAL,
+    SANDBOX,
     Doel,
     OnveiligDoel,
-    host_is_lokaal,
     lees_runbestand,
     main,
+    soort_doel,
     verifieer_doel,
     verifieer_host,
 )
@@ -23,12 +25,14 @@ from security_tests.doel import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-#: Adressen die er plausibel uitzien en die de grendel moet weigeren.
+#: Adressen die er plausibel uitzien en die de grendel moet weigeren. Staging en productie
+#: staan erbij: die zijn geen doel van dit harnas, hoe erop het runbestand ook wijst.
 EXTERNE_DOELEN = (
     "https://zad.rijksapps.nl",
-    "https://zad.sandbox.rijksapp.dev",
+    "https://zad.staging.rijksapp.dev",
     "http://10.0.0.5:8311",
     "http://127.0.0.1.aanvaller.example",
+    "https://zad.sandbox.rijksapp.dev.aanvaller.example",
 )
 
 
@@ -40,7 +44,7 @@ def test_een_extern_doel_wordt_geweigerd_zonder_een_verzoek(url: str, monkeypatc
         raise AssertionError(f"de grendel stuurde een verzoek naar {url}")
 
     monkeypatch.setattr(httpx, "get", niet_versturen)
-    with pytest.raises(OnveiligDoel, match="geen lokale sandbox"):
+    with pytest.raises(OnveiligDoel, match="geen beproefbare sandbox"):
         verifieer_doel(url, "een-token")
 
 
@@ -59,18 +63,34 @@ def test_de_grendel_als_commando_eindigt_niet_nul(
 
 
 @pytest.mark.parametrize(
-    ("url", "lokaal"),
+    ("url", "verwacht"),
     [
-        ("http://127.0.0.1:8311", True),
-        ("http://localhost:8311", True),
-        ("http://[::1]:8311", True),
-        ("https://zad.rijksapps.nl", False),
-        ("http://127.0.0.1.aanvaller.example", False),
-        ("http://192.168.1.10", False),
+        ("http://127.0.0.1:8311", LOKAAL),
+        ("http://localhost:8311", LOKAAL),
+        ("http://[::1]:8311", LOKAAL),
+        ("https://zad.sandbox.rijksapp.dev", SANDBOX),
+        ("https://forgejo.sandbox.rijksapp.dev", SANDBOX),
+        ("https://zad.rijksapps.nl", None),
+        ("https://zad.staging.rijksapp.dev", None),
+        ("http://127.0.0.1.aanvaller.example", None),
+        ("http://192.168.1.10", None),
+        # Op naam en niet op bereikbaarheid: het IP van de sandbox is geen toegestaan doel.
+        ("http://172.18.0.2", None),
     ],
 )
-def test_alleen_de_eigen_machine_is_een_toegestane_host(url: str, lokaal: bool) -> None:
-    assert host_is_lokaal(url) is lokaal
+def test_alleen_de_eigen_machine_en_het_sandboxdomein_zijn_een_doel(url: str, verwacht: str | None) -> None:
+    assert soort_doel(url) == verwacht
+
+
+def test_een_sandboxhost_die_het_token_niet_terugkaatst_wordt_geweigerd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Het derde slot geldt ook voor de sandbox: zonder het token van deze run is het geen doel."""
+
+    def zonder_token(*_: object, **__: object) -> httpx.Response:
+        return httpx.Response(200, headers={})
+
+    monkeypatch.setattr(httpx, "get", zonder_token)
+    with pytest.raises(OnveiligDoel, match="kaatst token"):
+        verifieer_doel("https://zad.sandbox.rijksapp.dev", "het-token-van-deze-run")
 
 
 def test_zonder_runbestand_is_er_geen_doel(tmp_path: Path) -> None:

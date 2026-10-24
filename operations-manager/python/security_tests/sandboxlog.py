@@ -186,9 +186,32 @@ def vensters(records: list[Record]) -> dict[str, list[Record]]:
     return per_proef
 
 
+def _module_en_klassen(classname: str) -> tuple[list[str], list[str]]:
+    """De classname van junit gesplitst in paddelen en klassen.
+
+    Pytest collecteert alleen klassen met het prefix Test, dus daar begint het klassedeel.
+    """
+    delen = [deel for deel in classname.split(".") if deel]
+    grens = next((plek for plek, deel in enumerate(delen) if deel.startswith("Test")), len(delen))
+    return delen[:grens], delen[grens:]
+
+
+def bestand_van(classname: str) -> str:
+    """Het toetsbestand uit een junit-classname, zonder de klassen erachter."""
+    module, _ = _module_en_klassen(classname)
+    return module[-1] if module else ""
+
+
+def toetsnaam(classname: str, naam: str) -> str:
+    """De toets zoals hij in de groene lijst staat: bestand, eventuele klasse, en de toets."""
+    _, klassen = _module_en_klassen(classname)
+    return "::".join([bestand_van(classname), *klassen, naam])
+
+
 def junit_sleutel(classname: str, naam: str) -> str:
     """De nodeid waarmee een junit-testcase in de vensters terug te vinden is."""
-    return f"{classname.replace('.', '/')}.py::{naam}"
+    module, klassen = _module_en_klassen(classname)
+    return "::".join(["/".join(module) + ".py", *klassen, naam])
 
 
 def waarom(records: list[Record]) -> tuple[str, ...]:

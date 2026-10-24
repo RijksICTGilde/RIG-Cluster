@@ -1,14 +1,24 @@
 # ZAD Attack Proxy: de aanvalsproef op onze eigen sandbox
 
-Dit is een **verdedigingsinstrument**. Het zet een wegwerp-instantie van de Operations
-Manager (OPI) op je eigen machine op, legt die onder bekende aanvalspatronen, en faalt zodra
-OPI zwicht: een route zonder herkenning, een upload die in het geheugen landt, invoer die op
-een argumentenlijst terechtkomt, een foutmelding die te veel zegt, of een stortvloed die de
-pod plat legt. Groen betekent: de sandbox heeft de patronen die we kennen doorstaan.
+Dit is een **verdedigingsinstrument**. Het legt een instantie van de Operations Manager (OPI)
+onder bekende aanvalspatronen en faalt zodra OPI zwicht: een route zonder herkenning, een
+upload die in het geheugen landt, invoer die op een argumentenlijst terechtkomt, een
+foutmelding die te veel zegt, of een stortvloed die de pod plat legt.
 
-Het draait **uitsluitend tegen een instantie die het zelf opzet en afbreekt**, nooit tegen
-productie, nooit tegen de gedeelde sandbox, nooit tegen een omgeving van iemand anders. Die
-grens is geen afspraak maar een grendel in de code: zie "De grendel" hieronder.
+Elke run levert een **groene lijst**: per laag staat elke regel die gemeten is erop met zijn
+uitkomst, en elke afwijking staat erop met een uitleg (comply or explain). Een afwijking zonder
+uitleg laat de run falen, ook als het hulpmiddel zelf het een waarschuwing noemt; een uitleg
+die niets meer dekt laat de run ook falen.
+
+## De twee doelen die de code kent
+
+| doel | wat het is | hoe |
+|---|---|---|
+| **lokaal** | een wegwerp-instantie die dit harnas zelf opzet en afbreekt, op `127.0.0.1:8311` | `task -x security-proof` |
+| **sandbox** | de geclaimde sandbox in het kind-cluster, met de echte keten: ingress, Keycloak, rig-db, object storage, registry | `task security-proof:sandbox`, dan `task -x security-proof` |
+
+Staging is geen doel van de code: dat is een afgestemde handrun met zijn eigen runbestand, zie
+`features/aanvalsproef-staging.md`. Productie is nooit een doel, ook niet via de grendel.
 
 ## Draaien
 
@@ -17,6 +27,8 @@ task -x security-proof         # alles: sandbox op, beproeven, rapport, sandbox 
 task security-proof:up         # alleen de wegwerp-sandbox, op http://127.0.0.1:8311
 task security-proof:fuzzers    # de gerichte proeven tegen een al draaiende sandbox
 task security-proof:down       # de wegwerp-sandbox afbreken
+task security-proof:sandbox    # maak de geclaimde sandbox het doel van deze run
+task security-proof:sandbox-af # haal het proeftoken uit de sandbox en gooi het runbestand weg
 ```
 
 De proef kan als gate draaien, en zegt met zijn exitcode wat eruit kwam:
@@ -51,11 +63,28 @@ Zonder draaiende sandbox slaan de proeven zichzelf over met de reden; ze verzinn
 `security_tests/doel.py` is de enige plek waar een doel-URL vandaan komt, en hij staat op drie
 sloten:
 
-1. de URL komt uit het runbestand dat `:up` schrijft, niet uit een argument of een env-var;
-2. de host moet de eigen machine zijn (`127.0.0.1`, `localhost`, `::1`); alles daarbuiten is
-   een directe afbreek, zonder dat er een verzoek naartoe gaat;
+1. de URL komt uit het runbestand dat `:up` of `:sandbox` schrijft, niet uit een argument of
+   een env-var;
+2. de host staat op de vaste lijst: de eigen machine (`127.0.0.1`, `localhost`, `::1`) of een
+   host op `sandbox.rijksapp.dev`. Alles daarbuiten is een directe afbreek, zonder dat er een
+   verzoek naartoe gaat. Op naam en niet op bereikbaarheid, dus een IP-adres van de sandbox
+   komt er niet door, en `zad.sandbox.rijksapp.dev.aanvaller.example` ook niet;
 3. de instantie moet het token van dat runbestand terugkaatsen in de header `X-Zad-Proef`. Dat
-   token wordt per run gemunt, dus alleen de sandbox die dit harnas zelf opzette komt erdoor.
+   token wordt per run gemunt. De wegwerp-sandbox zet die header op elk antwoord; een sandbox
+   in het cluster doet het op `/health`, en alleen als `SECURITY_PROOF_TOKEN` gezet is.
+
+### Het proeftoken in het cluster
+
+`SECURITY_PROOF_TOKEN` (`opi/core/config.py`) maakt een instantie een doel van de proef, en OPI
+**weigert te starten** met een gezet token op elk cluster behalve `sandboxed-local`. Het token
+staat nergens in git: `task security-proof:sandbox` munt het per run en patcht het in het
+env-secret `operations-manager-env-secrets`, dat geen ArgoCD-eigenaar heeft en dus niet uit git
+komt. `task security-proof:sandbox-af` maakt het weer leeg en haalt het runbestand weg.
+
+Wat er op het sandboxdoel te meten valt, hangt af van wat de run meekreeg: zonder
+`ZAD_PROEF_SLEUTELS` (JSON van project naar API-sleutel) en `ZAD_PROEF_SESSIE_SECRET` plus
+`ZAD_PROEF_ADMIN` slaan de proeven die een sleutel of een sessie nodig hebben zich over met de
+reden, en staan ze als NIET GEMETEN in de groene lijst.
 
 `uv run python -m security_tests.doel <url>` is de grendel als commando: niet-nul en een
 melding zodra het doel niet mag. `security_tests/test_grendel.py` bewijst dat voor een reeks
@@ -130,6 +159,7 @@ en dat is precies wat de proef zoekt.
 | `test_stortvloed.py` | foute sleutels en een ruwe stortvloed | elke poging wordt vol verwerkt, of de pod valt om |
 | `test_schemathesis.py` | property-based verzoeken uit `/openapi.json` | een vreemde komt door, of een antwoord schendt zijn eigen schema |
 | `test_zap.py` | de lezing van het ZAP-rapport | een bevinding boven de drempel valt weg |
+| `test_sandboxdoel.py` | wat alleen in het cluster te meten is: het client-IP achter de ingress, en Keycloak, de registry, de object storage en ArgoCD vanaf de gebruikerskant | een vervalste `X-Forwarded-For` verschuift de limiter, of een dienst geeft een vreemde antwoord |
 
 Elke proef heeft een **tegenproef of een negatief voorbeeld** naast zich: een kwetsbare
 stand-in app, een verzonnen antwoord, of een route die de weigering wel heeft. Zonder die
@@ -206,14 +236,46 @@ Komt dat token niet terug, dan draait er geen enkele pas en meldt de laag NIET G
 reden. De grendel uit `doel.py` blijft onaangeroerd op de loopback; de vertaling geldt alleen
 voor de container, en het token moet er ook daar terugkomen.
 
+## De groene lijst
+
+Het rapport bevat per laag een tabel met elke regel die gemeten is en wat eruit kwam:
+
+| uitkomst | betekent |
+|---|---|
+| groen | gemeten, en in orde |
+| afwijking met uitleg | gemeten, wijkt af, en staat met een reden in `bekende-bevindingen.tsv` |
+| bevinding | gemeten, wijkt af, en er is geen uitleg: de run faalt |
+| niet gemeten | de laag of de toets kwam er niet aan toe, met de reden erbij |
+
+Een overgeslagen toets staat er dus als "niet gemeten" met de reden van de skip, en niet als
+groen: dat is het verschil tussen een proef die iets beproefd heeft en een proef die er niet aan
+toe kwam. De regels komen uit het junit-rapport van de lagen zelf en uit de alerts van ZAP, dus
+er is geen tweede lijst die kan afwijken van wat er gedraaid is.
+
+### De WARN's van ZAP
+
+Elke alert van ZAP vanaf riskcode 1 (WARN) is een bevinding, tenzij hij in de baseline staat:
+proefnaam `zap-<pas>` en kenmerk `<pluginid>:<route>`, met het pad en niet de volledige URL, zodat
+dezelfde regel geldt achter een ingress. Een INFO (riskcode 0) blijft informatie en staat in de
+lijst als zodanig.
+
+Dat was eerder anders: de drempel stond op risico midden, dus een WARN liet de gate niet falen
+en stond nergens als geaccepteerd. Dat is precies de stille waarschuwing die de groene lijst
+uitsluit.
+
 ## Bekende bevindingen
 
-`bekende-bevindingen.tsv` is de ingecheckte lijst met wat we nu accepteren, per proef en per
-kenmerk, met de reden en de bron. Twee richtingen:
+`bekende-bevindingen.tsv` is de ingecheckte lijst met wat we nu accepteren, per proef, per doel
+en per kenmerk, met de reden en de bron. Twee richtingen:
 
 * een bevinding die **niet** in de lijst staat laat de proef falen;
 * een regel die **niets meer dekt** laat de proef ook falen, met "OPGELOST: haal de regel
   weg". Zo loopt de lijst niet vol met regels voor problemen die al verholpen zijn.
+
+De kolom `doel` begrenst een regel tot een soort doel: leeg geldt op elk doel, `lokaal` alleen
+in de wegwerp-sandbox en `sandbox` alleen tegen een geclaimde sandbox in het cluster. Een reden
+als "draait niet in de wegwerp-sandbox" staat dus op `lokaal`, en neemt tegen de cluster-sandbox
+geen bevinding weg en levert daar ook geen OPGELOST op.
 
 Wat hier bij komt, is wat we bewust open laten staan: dat is de plek waar een reviewer naar
 kijkt.
@@ -247,5 +309,10 @@ kijkt.
 * De vier voortgangsroutes (`.../progress/{task_id}`, `.../task-progress/{task_id}`) zoeken de
   taakdienst op en geven in de wegwerp-sandbox 503. Ze staan daarom in
   `bekende-bevindingen.tsv`: 503 is daar de goede uitkomst en zegt niets over hun veiligheid.
-* Een proef tegen een gedeelde omgeving is een aparte, afgestemde activiteit met een venster
-  en een aanspreekpunt. Die valt buiten deze code, en de grendel houdt hem daar.
+* De gedeelde sandbox is wel een doel, en wordt per run geclaimd; staging en productie niet.
+  Een stagingrun is een afgestemde activiteit met een venster en een aanspreekpunt, buiten
+  deze code, en de grendel houdt hem daar: `features/aanvalsproef-staging.md`.
+* In de wegwerp-sandbox is er geen database, dus de routes die er een opzoeken (de vier
+  voortgangsroutes en `POST /step-up`) geven daar 500 of 503. Tegen een sandbox in het cluster
+  zijn dat wel echte metingen, en daarom staan die zes baselineregels op doel `lokaal`: daar
+  nemen ze geen bevinding weg.

@@ -12,11 +12,19 @@ import xml.etree.ElementTree as ET
 from typing import TYPE_CHECKING
 
 from security_tests.rapport import (
+    AFWIJKING,
+    BEVINDING_REGEL,
+    GROEN,
+    NIET_GEMETEN,
     PROEVEN,
     Bevinding,
     Crash,
+    Regel,
     Telling,
     dekkingstabel,
+    groene_lijst,
+    regels_uit_junit,
+    regels_uit_zap,
     render,
     telling_uit_junit,
     uit_junit,
@@ -51,6 +59,8 @@ def _schrijf_junit(pad: Path, testsuites: list[dict]) -> None:
                     fout.text = geval["failure"]["text"]
             if "error" in geval:
                 fout = ET.SubElement(testcase, "error", {"message": geval["error"]})
+            if "skipped" in geval:
+                ET.SubElement(testcase, "skipped", {"message": geval["skipped"]})
     ET.ElementTree(wortel).write(pad)
 
 
@@ -156,7 +166,8 @@ def test_dekkingstabel_noemt_elk_doel_van_de_aanvalsproef_uit_de_inventaris() ->
     """De dekkingstabel leest dezelfde doelenlijst als de BIV-inventaris, niet een eigen kopie."""
     regels = dekkingstabel()
     inhoud = "\n".join(regels)
-    assert regels[:2] == ["| component | beproefd door |", "|---|---|"]
+    kop = regels.index("| component | beproefd door | beproefbaar tegen |")
+    assert regels[kop + 1] == "|---|---|---|"
     # "opi" wordt door meerdere proeven gedekt volgens PROEVEN; die namen staan alfabetisch.
     opi_regel = next(regel for regel in regels if regel.startswith("| opi "))
     for naam, proef in PROEVEN.items():
@@ -288,3 +299,97 @@ def test_render_meldt_een_crash_met_exitcode_en_de_laatste_logregels() -> None:
     assert "## Crash van de proef zelf" in tekst
     assert "exitcode 2" in tekst
     assert "laatste woord" in tekst
+
+
+def test_de_groene_lijst_zegt_per_toets_wat_eruit_kwam(tmp_path: Path) -> None:
+    """Een geslaagde toets is groen, een overgeslagen toets is niet gemeten met de reden."""
+    pad = tmp_path / "fuzzers.xml"
+    _schrijf_junit(
+        pad,
+        [
+            {
+                "tests": 3,
+                "skipped": 1,
+                "gevallen": [
+                    {"classname": "security_tests.test_uploads", "name": "test_groot"},
+                    {
+                        "classname": "security_tests.test_sandboxdoel",
+                        "name": "test_netpol",
+                        "skipped": "te meten met task netpol:meet",
+                    },
+                    {
+                        "classname": "security_tests.test_schemathesis",
+                        "name": "test_vreemde",
+                        "failure": {"message": "laat een vreemde door met 200"},
+                    },
+                ],
+            }
+        ],
+    )
+    regels = regels_uit_junit(pad)
+    assert Regel("gerichte proeven", "test_uploads::test_groot", GROEN, "") in regels
+    niet_gemeten = next(regel for regel in regels if regel.uitkomst == NIET_GEMETEN)
+    assert niet_gemeten.toelichting == "te meten met task netpol:meet", "een skip zonder reden leest als groen"
+    bevinding = next(regel for regel in regels if regel.uitkomst == BEVINDING_REGEL)
+    assert bevinding.laag == "schemathesis"
+
+
+def test_een_warn_van_zap_staat_in_de_lijst_met_zijn_uitleg() -> None:
+    """Faalconditie: een WARN met een reden in de baseline staat nergens, of leest als groen."""
+    zap = ZapUitkomst(
+        gemeten=True,
+        bevindingen={
+            "ongeauthenticeerd/10023:/openapi.json": "Information Disclosure (risico Low)",
+            "ongeauthenticeerd/90004:/version": "Cross-Origin-Resource-Policy (risico Low)",
+        },
+        informatie={"ongeauthenticeerd/10015:/about": "Cache-control (risico Informational)"},
+    )
+    regels = {regel.regel: regel for regel in regels_uit_zap(zap)}
+    # 10023 staat met een reden in bekende-bevindingen.tsv, 90004 niet (die is opgelost).
+    assert regels["ongeauthenticeerd 10023:/openapi.json"].uitkomst == AFWIJKING
+    assert regels["ongeauthenticeerd 10023:/openapi.json"].toelichting, "een afwijking zonder reden is geen uitleg"
+    assert regels["ongeauthenticeerd 90004:/version"].uitkomst == BEVINDING_REGEL
+    assert regels["ongeauthenticeerd 10015:/about"].uitkomst == "informatie"
+
+
+def test_een_niet_gemeten_zaplaag_staat_als_regel_in_de_lijst() -> None:
+    zap = ZapUitkomst(gemeten=False, reden="docker staat niet op het PATH")
+    assert regels_uit_zap(zap) == [Regel("ZAP", "alle passen", NIET_GEMETEN, "docker staat niet op het PATH")]
+
+
+def test_de_groene_lijst_telt_per_laag_hoeveel_groen_is() -> None:
+    regels = [
+        Regel("ZAP", "a", GROEN),
+        Regel("ZAP", "b", BEVINDING_REGEL, "iets"),
+        Regel("gerichte proeven", "c", GROEN),
+    ]
+    tekst = "\n".join(groene_lijst(regels))
+    assert "### ZAP (1 groen van 2)" in tekst
+    assert "### gerichte proeven (1 groen van 1)" in tekst
+
+
+def test_een_pas_zonder_herkenning_staat_als_niet_gemeten_in_de_lijst() -> None:
+    """Faalconditie: een bewust ongemeten pas staat nergens, of staat er als bevinding."""
+    zap = ZapUitkomst(gemeten=True, niet_gemeten={"projectlid": "geen proefproject met een API-sleutel"})
+    regels = regels_uit_zap(zap)
+    assert regels == [Regel("ZAP", "projectlid alle regels", NIET_GEMETEN, "geen proefproject met een API-sleutel")]
+
+
+def test_een_uitleg_die_niets_dekt_staat_met_zijn_kenmerk_in_de_lijst() -> None:
+    """Faalconditie: de regel noemt alleen de pasnaam, dus een lezer ziet niet welke uitleg weg moet."""
+    zap = ZapUitkomst(gemeten=True, verouderd={"ongeauthenticeerd/10038:/weg": "deze bevinding is er niet meer"})
+    regels = regels_uit_zap(zap)
+    assert len(regels) == 1
+    assert regels[0].regel == "ongeauthenticeerd 10038:/weg"
+    assert regels[0].uitkomst == BEVINDING_REGEL
+    assert "OPGELOST" in regels[0].toelichting
+
+
+def test_een_toets_in_een_klasse_staat_in_de_laag_van_zijn_bestand(tmp_path: Path) -> None:
+    """Faalconditie: de klasse wordt voor het bestand aangezien, en dan valt de laag weg."""
+    pad = tmp_path / "fuzzers.xml"
+    _schrijf_junit(
+        pad,
+        [{"tests": 1, "gevallen": [{"classname": "security_tests.test_zap.TestPas", "name": "test_actief"}]}],
+    )
+    assert regels_uit_junit(pad) == [Regel("ZAP-lezing", "test_zap::TestPas::test_actief", GROEN, "")]

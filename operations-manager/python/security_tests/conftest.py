@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -110,6 +111,14 @@ def doel() -> Doel:
         pytest.skip(f"geen proefsandbox: {fout}")
 
 
+@pytest.fixture(scope="session")
+def proefproject(doel: Doel) -> str:
+    """Het eerste proefproject met een API-sleutel, of skip als dit doel er geen heeft."""
+    if not doel.projecten:
+        pytest.skip("dit doel heeft geen proefproject met een API-sleutel (ZAD_PROEF_SLEUTELS)")
+    return doel.projecten[0]
+
+
 @pytest.fixture
 def anoniem(doel: Doel) -> Iterator[httpx.Client]:
     """Een aanroeper zonder enige herkenning."""
@@ -139,8 +148,11 @@ def zad_admin(doel: Doel) -> Iterator[httpx.Client]:
 
 
 def _sessieclient(doel: Doel, rol: str) -> httpx.Client:
+    """Een aanroeper met de ondertekende sessie van een rol, of een skip als die er niet is."""
+    if rol not in doel.sessies:
+        pytest.skip(f"dit doel heeft geen ondertekende sessie voor rol {rol}")
     client = proefclient(doel)
-    client.cookies.set("session", doel.sessies[rol], domain="127.0.0.1")
+    client.cookies.set("session", doel.sessies[rol], domain=urlparse(doel.url).hostname or "")
     return client
 
 

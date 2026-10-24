@@ -146,15 +146,17 @@ def _seed_projecten() -> dict[str, str]:
     return sleutels
 
 
-def _sessiekoekje(email: str, naam: str) -> str:
+def sessiekoekje(email: str, naam: str, secret: str = SECRET_KEY) -> str:
     """Een ondertekend sessiekoekje, zoals SessionMiddleware het schrijft.
 
     Dezelfde opzet als ``tests/e2e/conftest.py`` en ``scripts/sandbox_project_tool.py``: er is
     geen gedeelde helper voor, en een sessie namaken is het enige dat hier van de app nodig is.
+    Het geheim is een argument, want een doel in het cluster ondertekent met zijn eigen
+    SECRET_KEY en niet met die van de wegwerp-sandbox.
     """
     gebruiker = {"sub": email, "email": email, "name": naam, "login_at": time.time()}
     payload = base64.b64encode(json.dumps({"user": gebruiker}).encode()).decode()
-    return TimestampSigner(SECRET_KEY).sign(payload).decode()
+    return TimestampSigner(secret).sign(payload).decode()
 
 
 def _schrijf_runbestand(url: str, token: str, sleutels: dict[str, str]) -> None:
@@ -167,9 +169,9 @@ def _schrijf_runbestand(url: str, token: str, sleutels: dict[str, str]) -> None:
                 "pid": os.getpid(),
                 "sleutels": sleutels,
                 "sessies": {
-                    "projectlid": _sessiekoekje(PROJECTLID, "Proef Projectlid"),
-                    "zad-admin": _sessiekoekje(ZAD_ADMIN, "Proef ZAD-admin"),
-                    "project-developer": _sessiekoekje(PROJECT_DEVELOPER, "Proef Developer"),
+                    "projectlid": sessiekoekje(PROJECTLID, "Proef Projectlid"),
+                    "zad-admin": sessiekoekje(ZAD_ADMIN, "Proef ZAD-admin"),
+                    "project-developer": sessiekoekje(PROJECT_DEVELOPER, "Proef Developer"),
                 },
                 "aanroeplog": str(AANROEPLOG),
                 "gestart": time.time(),

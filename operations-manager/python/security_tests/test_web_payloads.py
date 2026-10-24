@@ -9,6 +9,8 @@ foutmelding die meer zegt dan de aanroeper mag weten.
 from __future__ import annotations
 
 import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -62,6 +64,11 @@ SWEEP_ONBEKEND = "proef-bestaat-niet"
 SESSIEVERNIETIGERS = frozenset({"/auth/logout"})
 
 _MUTATIES = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+#: Uvicorn sluit de keep-alive-verbinding na een onafgehandelde exceptie, dus het verzoek NA
+#: een 5xx viel om op een verbinding die al dood was. Met een eigen verbinding per route meet
+#: elke route zichzelf, in plaats van de route ervoor.
+GEEN_HERGEBRUIK = {"Connection": "close"}
 
 
 def ongeescapet(inhoud: str) -> bool:
@@ -134,7 +141,7 @@ def test_een_mutatie_met_geldig_csrf_token_komt_wel_langs_de_grendel(projectlid:
 
 
 @pytest.mark.parametrize("rol", ["projectlid", "zad_admin"])
-def test_geen_pagina_lekt_of_valt_om(rol: str, request: pytest.FixtureRequest) -> None:
+def test_geen_pagina_lekt_of_valt_om(rol: str, doel: Doel, request: pytest.FixtureRequest) -> None:
     """Faalconditie: een pagina geeft 5xx of lekt een stacktrace of een pad.
 
     De tegenproef zit in dezelfde toets: /dashboard moet voor en na de lus 200 geven. Zonder
@@ -142,7 +149,7 @@ def test_geen_pagina_lekt_of_valt_om(rol: str, request: pytest.FixtureRequest) -
     oppervlakte laten meten, en dan verbergt een groene sweep een echte 500.
     """
     client: httpx.Client = request.getfixturevalue(rol)
-    headers = met_csrf(client)
+    headers = {**met_csrf(client), **GEEN_HERGEBRUIK}
     assert client.get("/dashboard").status_code == 200, "de sessie werkt niet voor de sweep begint"
     bevindingen: dict[str, str] = {}
     for route in sweeproutes():
@@ -154,16 +161,21 @@ def test_geen_pagina_lekt_of_valt_om(rol: str, request: pytest.FixtureRequest) -
             # beschikbaarheidsas, geen fout van het harnas.
             bevindingen[f"{route.methode} {route.pad}"] = f"geen antwoord binnen {TIJDBUDGET}s"
             continue
+        except httpx.TransportError as fout:
+            # Een verbinding die de server verbreekt is ook een bevinding op die as, en met
+            # hetzelfde kenmerk, zodat de baseline hem met een reden kan dekken.
+            bevindingen[f"{route.methode} {route.pad}"] = f"geen antwoord: {type(fout).__name__}"
+            continue
         melding = beoordeel_antwoord(antwoord.status_code, antwoord.text)
         if melding:
             bevindingen[f"{route.methode} {route.pad}"] = melding
     assert client.get("/dashboard").status_code == 200, "de sweep heeft zijn eigen sessie weggehaald"
-    meldingen = toets_tegen_baseline(PROEF, bevindingen)
+    meldingen = toets_tegen_baseline(PROEF, bevindingen, doel.soort)
     assert not meldingen, "\n".join(meldingen)
 
 
 def test_de_sleutels_van_een_project_blijven_achter_de_rolpoort(
-    projectlid: httpx.Client, project_developer: httpx.Client, doel: Doel
+    projectlid: httpx.Client, project_developer: httpx.Client, proefproject: str
 ) -> None:
     """Faalconditie: een lid zonder beheerrecht krijgt de privesleutel van het project te zien.
 
@@ -171,7 +183,7 @@ def test_de_sleutels_van_een_project_blijven_achter_de_rolpoort(
     owner; dat is de rolpoort uit ``opi/web/router.py`` (PROJECT_EDIT_ROLES). Daarom meet deze
     proef het verschil tussen de twee rollen en niet de aanwezigheid van de sleutel.
     """
-    pad = GEHEIMENPAGINA.format(project=doel.projecten[0])
+    pad = GEHEIMENPAGINA.format(project=proefproject)
     assert PROJECTGEHEIM.search(projectlid.get(pad).text), (
         "de admin ziet geen sleutel op de detailpagina, dus deze proef kan geen lek zien"
     )
@@ -204,3 +216,37 @@ def test_de_webproef_merkt_een_lek_en_een_reflectie_op() -> None:
     assert PROJECTGEHEIM.search("AGE-SECRET-KEY-1" + "B" * 58)
     assert not PROJECTGEHEIM.search('placeholder="AGE-SECRET-KEY-1..."')
     assert "/auth/logout" not in {route.pad for route in sweeproutes()}
+
+
+def test_de_sweep_vraagt_een_eigen_verbinding_per_route() -> None:
+    """Tegenproef op GEEN_HERGEBRUIK: een verzoek na een 5xx landt niet op de dode verbinding.
+
+    De server hier doet wat uvicorn doet na een onafgehandelde exceptie: 500 en de verbinding
+    dicht. Zonder de header hergebruikt httpx die verbinding en valt het volgende verzoek om.
+    """
+    poorten: set[int] = set()
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            poorten.add(self.client_address[1])
+            stuk = self.path == "/stuk"
+            self.send_response(500 if stuk else 200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            self.close_connection = stuk
+
+        def log_message(self, *_: object) -> None:
+            """Houd de uitvoer van de toets leeg."""
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{server.server_port}", timeout=5.0) as client:
+            assert client.get("/stuk", headers=GEEN_HERGEBRUIK).status_code == 500
+            assert client.get("/heel", headers=GEEN_HERGEBRUIK).status_code == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert len(poorten) == 2, f"de twee verzoeken deelden een verbinding: {poorten}"

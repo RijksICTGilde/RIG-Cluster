@@ -9,6 +9,7 @@ from unittest.mock import mock_open, patch
 
 import pytest
 from opi.core.config import (
+    PROEFBAAR_CLUSTER,
     Settings,
     _check_env_file_for_environment_var,
     _get_env_files,
@@ -289,3 +290,21 @@ class TestTaskCleanupRetentionWindows:
 
         assert settings.TASK_WORKER_CLEANUP_RETENTION_HOURS == 1
         assert settings.TASK_WORKER_HEADER_RETENTION_DAYS == 90
+
+
+class TestProeftokenAlleenOpDeSandbox:
+    """SECURITY_PROOF_TOKEN maakt een instantie een doel van de aanvalsproef."""
+
+    def test_de_sandbox_mag_een_proeftoken_dragen(self):
+        settings = Settings(CLUSTER_MANAGER=PROEFBAAR_CLUSTER, SECURITY_PROOF_TOKEN="een-token-van-deze-run")
+        assert settings.SECURITY_PROOF_TOKEN == "een-token-van-deze-run"
+
+    @pytest.mark.parametrize("cluster", ["odcn-production", "odcn-staging", "local"])
+    def test_elk_ander_cluster_weigert_te_starten(self, cluster):
+        """Faalconditie: een gezet token op staging of productie laat OPI gewoon starten."""
+        with pytest.raises(RuntimeError, match="SECURITY_PROOF_TOKEN"):
+            Settings(CLUSTER_MANAGER=cluster, SECURITY_PROOF_TOKEN="een-token-van-deze-run")
+
+    @pytest.mark.parametrize("cluster", ["odcn-production", "sandboxed-local"])
+    def test_zonder_token_verandert_er_niets(self, cluster):
+        assert Settings(CLUSTER_MANAGER=cluster).SECURITY_PROOF_TOKEN == ""

@@ -85,19 +85,19 @@ def beoordeel_reeks(pogingen: list[Poging], kenmerk: str) -> dict[str, str]:
     return bevindingen
 
 
-def test_een_reeks_foute_sleutels_loopt_tegen_een_weigering(doel: Doel) -> None:
+def test_een_reeks_foute_sleutels_loopt_tegen_een_weigering(doel: Doel, proefproject: str) -> None:
     """Faalconditie: elke foute poging wordt vol verwerkt, of de weigering is duur."""
-    pad = f"/api/v2/projects/{doel.projecten[0]}/deployments"
+    pad = f"/api/v2/projects/{proefproject}/deployments"
     with proefclient(doel, timeout=TIJDBUDGET_POGING, headers={"X-API-Key": "fout"}) as client:
         pogingen = doe_pogingen(client, pad, DREMPEL)
     assert all(poging.status in (401, 429) for poging in pogingen), f"statussen: {[p.status for p in pogingen]}"
-    meldingen = toets_tegen_baseline(PROEF, beoordeel_reeks(pogingen, "foute-sleutel"))
+    meldingen = toets_tegen_baseline(PROEF, beoordeel_reeks(pogingen, "foute-sleutel"), doel.soort)
     assert not meldingen, "\n".join(meldingen)
 
 
-def test_de_limiter_die_er_is_wordt_gezien(doel: Doel) -> None:
+def test_de_limiter_die_er_is_wordt_gezien(doel: Doel, proefproject: str) -> None:
     """Tegenproef: op de subdomeincontrole zit wel een limiter, en die hoort de proef te zien."""
-    project = doel.projecten[0]
+    project = proefproject
     pad = f"/api/v2/projects/{project}/subdomains/check/proefnaam?base_domain=rijksapp.nl"
     # Deze route zoekt eerst in de database, die in de wegwerp-sandbox niet bestaat; de
     # limiter staat ervoor. Een poging die op de klok afloopt is dus geen uitspraak, een 429 wel.

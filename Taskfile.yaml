@@ -1607,6 +1607,36 @@ tasks:
     cmds:
       - uv run python -m security_tests.sandbox stop
 
+  security-proof:sandbox:
+    desc: "Maak de geclaimde sandbox het doel van de aanvalsproef (token in de pod, runbestand erbij)"
+    dir: operations-manager/python
+    vars:
+      DOELURL: '{{default "https://zad.sandbox.rijksapp.dev" .DOELURL}}'
+      KUBECTL: kubectl --context kind-rig-sandbox -n rig-system --request-timeout=60s
+    cmds:
+      # Het token gaat in het env-secret van OPI en niet in git: dat secret heeft geen
+      # ArgoCD-eigenaar, dus een patch blijft staan tot security-proof:sandbox-af hem leegt.
+      - |
+        TOKEN=$(uv run python -c 'import secrets; print(secrets.token_urlsafe(24))')
+        {{.KUBECTL}} patch secret operations-manager-env-secrets --type merge \
+          -p "{\"stringData\":{\"SECURITY_PROOF_TOKEN\":\"$TOKEN\"}}"
+        {{.KUBECTL}} rollout restart deployment/operations-manager
+        {{.KUBECTL}} rollout status deployment/operations-manager --timeout=300s
+        ZAD_PROEF_TOKEN="$TOKEN" uv run python -m security_tests.sandboxdoel {{.DOELURL}}
+
+  security-proof:sandbox-af:
+    desc: "Haal het proeftoken uit de sandbox en gooi het runbestand weg"
+    dir: operations-manager/python
+    vars:
+      KUBECTL: kubectl --context kind-rig-sandbox -n rig-system --request-timeout=60s
+    cmds:
+      - |
+        {{.KUBECTL}} patch secret operations-manager-env-secrets --type merge \
+          -p '{"stringData":{"SECURITY_PROOF_TOKEN":""}}'
+        {{.KUBECTL}} rollout restart deployment/operations-manager
+        {{.KUBECTL}} rollout status deployment/operations-manager --timeout=300s
+        rm -f ../security-proof/.proef/sandbox.json
+
   security-proof:fuzzers:
     desc: "Draai alleen de gerichte proeven tegen een al draaiende wegwerp-sandbox"
     dir: operations-manager/python
