@@ -53,9 +53,28 @@ def oordeel_tegen_baseline(
     """De bevindingen zonder uitleg, en de uitleg die niets meer dekt."""
     baseline = lees_baseline(proef, doelsoort, pad)
     return BaselineOordeel(
-        nieuw={kenmerk: melding for kenmerk, melding in bevindingen.items() if kenmerk not in baseline},
-        verouderd={kenmerk: reden for kenmerk, reden in baseline.items() if kenmerk not in bevindingen},
+        nieuw={kenmerk: melding for kenmerk, melding in bevindingen.items() if not _gedekt(kenmerk, baseline)},
+        verouderd={kenmerk: reden for kenmerk, reden in baseline.items() if not _dekt_iets(kenmerk, bevindingen)},
     )
+
+
+def _past(regel: str, kenmerk: str) -> bool:
+    """Of een baselineregel een kenmerk dekt: letterlijk, of ``<plugin>:*`` voor elke route van die plugin.
+
+    De plugin-regel is er voor een heuristiek die per run op andere routes valt (ZAP 40018 op
+    24-10); hij geldt alleen met een reden die voor elke route opgaat.
+    """
+    if regel.endswith(":*"):
+        return kenmerk.startswith(regel[:-1])
+    return regel == kenmerk
+
+
+def _gedekt(kenmerk: str, baseline: dict[str, str]) -> bool:
+    return any(_past(regel, kenmerk) for regel in baseline)
+
+
+def _dekt_iets(regel: str, bevindingen: dict[str, str]) -> bool:
+    return any(_past(regel, kenmerk) for kenmerk in bevindingen)
 
 
 def meldingen_van(oordeel: BaselineOordeel) -> list[str]:

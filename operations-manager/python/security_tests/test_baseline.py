@@ -59,3 +59,18 @@ def test_een_bevinding_zonder_uitleg_op_dit_doel_blijft_een_melding(tmp_path: Pa
     pad = _baseline(tmp_path, f"web-payloads\t{LOKAAL}\tGET /x\talleen lokaal\tREADME.md")
     assert toets_tegen_baseline("web-payloads", {"GET /x": "500"}, LOKAAL, pad) == []
     assert toets_tegen_baseline("web-payloads", {"GET /x": "500"}, SANDBOX, pad) == ["NIEUW GET /x: 500"]
+
+
+def test_een_pluginregel_dekt_elke_route_van_die_plugin_en_niets_anders(tmp_path: Path) -> None:
+    """Faalconditie: 40018 valt per run op andere routes, en een regel per route klopt nooit (24-10)."""
+    pad = _baseline(tmp_path, "zap-x\tsandbox\t40018:*\theuristiek\tbron")
+    bevindingen = {"40018:/api/a": "SQL Injection", "40018:/api/b": "SQL Injection", "10021:/api/a": "iets anders"}
+    meldingen = toets_tegen_baseline("zap-x", bevindingen, SANDBOX, pad)
+    assert meldingen == ["NIEUW 10021:/api/a: iets anders"]
+
+
+def test_een_pluginregel_die_niets_dekt_is_verouderd(tmp_path: Path) -> None:
+    pad = _baseline(tmp_path, "zap-x\tsandbox\t40018:*\theuristiek\tbron")
+    meldingen = toets_tegen_baseline("zap-x", {}, SANDBOX, pad)
+    assert meldingen
+    assert meldingen[0].startswith("OPGELOST 40018:*")

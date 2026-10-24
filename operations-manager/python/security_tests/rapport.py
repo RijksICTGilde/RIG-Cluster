@@ -68,6 +68,11 @@ PROEVEN: dict[str, Proef] = {
         "vertrouwelijkheid", ("opi",), "een operatie zonder grendel geeft een vreemde toegang tot een project"
     ),
     "test_zap": Proef("vertrouwelijkheid", ("opi",), "de bekende webkwetsbaarheden van OWASP"),
+    "test_sql_injectie": Proef(
+        "vertrouwelijkheid",
+        ("opi", "gedeelde-postgresql"),
+        "een injectie in een filter leest taken van een ander project",
+    ),
     "test_sandboxdoel": Proef(
         "vertrouwelijkheid",
         ("keycloak", "object-storage", "registry", "argocd", "tenant-namespaces"),
