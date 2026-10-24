@@ -170,7 +170,9 @@ def _eerste_deployment(doel: Doel, project: str) -> str | None:
     """De eerste deployment van een proefproject, gevraagd met zijn eigen sleutel."""
     try:
         antwoord = httpx.get(
-            f"{doel.url}/api/v2/projects/{project}", headers={"X-API-Key": doel.sleutels[project]}, timeout=30
+            f"{doel.url}/api/v2/projects/{project}/deployments",
+            headers={"X-API-Key": doel.sleutels[project]},
+            timeout=30,
         )
         deployments = antwoord.json().get("deployments") or []
     except httpx.HTTPError, ValueError:
