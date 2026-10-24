@@ -458,14 +458,30 @@ class KubectlConnector:
             None  - the check itself failed; existence is unknown, so the caller must not
                     conclude the Secret is gone
         """
+        return await self.resource_exists("secret", secret_name, namespace)
+
+    async def resource_exists(self, resource_type: str, resource_name: str, namespace: str) -> bool | None:
+        """
+        Ground-truth existence check for a namespaced resource.
+
+        Args:
+            resource_type: Resource type as kubectl names it (e.g. 'secret', 'role')
+            resource_name: Name of the resource
+            namespace: The namespace that would contain it
+
+        Returns:
+            True  - the resource exists
+            False - the resource is confirmed absent (NotFound)
+            None  - the check itself failed; existence is unknown
+        """
         stdout, stderr, code = await self._run_kubectl_command(
-            ["get", "secret", secret_name, "-n", namespace, "-o", "name"]
+            ["get", resource_type, resource_name, "-n", namespace, "-o", "name"]
         )
         if code == 0:
             return True
         if "notfound" in stderr.lower().replace(" ", ""):
             return False
-        logger.warning(f"Could not determine existence of secret '{secret_name}' in '{namespace}': {stderr}")
+        logger.warning(f"Could not determine existence of {resource_type} '{resource_name}' in '{namespace}': {stderr}")
         return None
 
     async def get_sops_secret_from_namespace(self, namespace: str) -> str | None:

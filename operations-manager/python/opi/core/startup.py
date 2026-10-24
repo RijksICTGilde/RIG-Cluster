@@ -35,7 +35,7 @@ from opi.connectors.mail import MailRelayError
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.caa_reconciler import reconcile_caa_records
-from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespace
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
@@ -43,6 +43,7 @@ from opi.core.no_mail_reconciler import reconcile_no_mail_records
 from opi.core.platform_database_access import restrict_platform_databases
 from opi.core.project_schema import check_schema_versions
 from opi.core.version import set_running_image
+from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, SopsHandler
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
@@ -55,6 +56,10 @@ logger = logging.getLogger(__name__)
 
 # Name of this application's container in its own pod (bootstrap/rig-system deployment).
 CONTAINER_NAME = "operations-manager"
+
+#: Grens op de opstartronde van de sleutellezer: na deze tijd stopt de ronde en logt ze
+#: wat ze tot dan toe deed, zodat een traag of onbereikbaar cluster niet eindeloos doorloopt.
+CMP_KEY_READER_ROUND_TIMEOUT_SECONDS = 600
 
 
 def _run_alembic_migrations() -> None:
@@ -348,6 +353,117 @@ async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnect
         logger.info(f"All SOPS secrets verified for project: {project_name}")
 
     return True
+
+
+def _cluster_deployment_namespaces() -> dict[str, str]:
+    """De deployment-namespaces van dit cluster, met de projectnaam per namespace."""
+    namespaces: dict[str, str] = {}
+    for project in get_project_store().get_all():
+        data = project.data or {}
+        for deployment in data.get("deployments", []) or []:
+            if deployment.get("cluster") != settings.CLUSTER_MANAGER:
+                continue
+            namespace = deployment.get("namespace")
+            if not namespace:
+                continue
+            prefixed = get_prefixed_namespace(settings.CLUSTER_MANAGER, namespace)
+            # De gedeclareerde namespace is tenant-invoer en staat hier niet onder
+            # enforce_namespace_pin: die draait pas bij het verwerken. Een project dat
+            # 'operations' declareert komt anders uit op de platformnamespace, waar
+            # 'sops-age-key' de platformsleutel is.
+            if is_platform_namespace(prefixed):
+                logger.warning(
+                    f"Project {project.name} declares platform namespace {prefixed}; "
+                    f"skipped in the CMP key reader round"
+                )
+                continue
+            namespaces[prefixed] = project.name
+    return namespaces
+
+
+async def _ensure_cmp_key_reader_in_namespace(
+    namespace: str, project_name: str, kubectl: KubectlConnector, sops_handler: SopsHandler, telling: dict[str, int]
+) -> None:
+    """Zet de sleutellezer in een namespace en werkt de telling bij."""
+    role_present = await kubectl.resource_exists("role", CMP_SOPS_ROLE_NAME, namespace)
+    if role_present is None:
+        telling["gefaald"] += 1
+        logger.error(f"Could not read the CMP key reader role in namespace {namespace} (project {project_name})")
+        return
+    if role_present:
+        telling["aanwezig"] += 1
+        logger.debug(f"CMP key reader role already present in namespace {namespace}")
+        return
+
+    secret_present = await kubectl.secret_exists(SOPS_SECRET_NAME, namespace)
+    if secret_present is None:
+        telling["gefaald"] += 1
+        logger.error(f"Could not read secret {SOPS_SECRET_NAME} in namespace {namespace} (project {project_name})")
+        return
+    if not secret_present:
+        if not await kubectl.namespace_exists(namespace):
+            telling["gefaald"] += 1
+            logger.error(f"Namespace {namespace} of project {project_name} does not exist on this cluster")
+            return
+        telling["overgeslagen"] += 1
+        logger.info(f"No {SOPS_SECRET_NAME} in namespace {namespace} yet, so no CMP key reader role either")
+        return
+
+    try:
+        await sops_handler.ensure_cmp_key_reader(namespace)
+    except (KubectlExecutionError, KubectlConnectionError) as e:
+        telling["gefaald"] += 1
+        logger.error(f"Failed to apply the CMP key reader role in namespace {namespace}: {e}")
+        return
+    telling["gezet"] += 1
+    logger.info(f"Applied the missing CMP key reader role in namespace {namespace} (project {project_name})")
+
+
+async def ensure_cmp_key_readers() -> dict[str, int]:
+    """
+    Geef elke projectnamespace van dit cluster met een sleutel-secret de CMP-sleutellezer.
+
+    Projecten van voor RC-303 hebben het secret maar niet de Role, en zonder die Role
+    rendert ArgoCD ze niet meer. Deze ronde herstelt dat zonder dat een project opnieuw
+    verwerkt hoeft te worden.
+
+    Naast de projectronde van `_setup_projects`, die de Role per project al meeneemt: die
+    slaat een project over zodra een eerdere stap erin faalt, en geeft geen telling waarop
+    de release kan controleren dat geen enkele namespace is overgebleven.
+
+    Returns:
+        De telling: gezet, aanwezig, overgeslagen en gefaald
+    """
+    kubectl = create_kubectl_connector()
+    sops_handler = SopsHandler(kubectl)
+    telling = {"gezet": 0, "aanwezig": 0, "overgeslagen": 0, "gefaald": 0}
+
+    namespaces = _cluster_deployment_namespaces()
+    logger.info(f"Checking the CMP key reader role in {len(namespaces)} project namespaces")
+
+    try:
+        async with asyncio.timeout(CMP_KEY_READER_ROUND_TIMEOUT_SECONDS):
+            for namespace in sorted(namespaces):
+                # Een kubectl die wegvalt mag de ronde niet zonder samenvatting laten
+                # eindigen: de release controleert juist op die ene regel.
+                try:
+                    await _ensure_cmp_key_reader_in_namespace(
+                        namespace, namespaces[namespace], kubectl, sops_handler, telling
+                    )
+                except (KubectlExecutionError, KubectlConnectionError) as e:
+                    telling["gefaald"] += 1
+                    logger.error(f"CMP key reader check failed in namespace {namespace}: {e}")
+    except TimeoutError:
+        logger.error(
+            f"CMP key reader round stopped after {CMP_KEY_READER_ROUND_TIMEOUT_SECONDS}s, "
+            f"{len(namespaces)} namespaces were in scope"
+        )
+
+    logger.info(
+        f"CMP key reader round: {telling['gezet']} applied, {telling['aanwezig']} already present, "
+        f"{telling['overgeslagen']} without a key secret, {telling['gefaald']} failed"
+    )
+    return telling
 
 
 async def register_oauth_client_after_keycloak_setup(app) -> None:
@@ -858,6 +974,11 @@ async def run_startup_tasks(app: FastAPI) -> bool:
 
     # Phase 2b: de platformdatabases alleen voor hun eigen rol
     await restrict_platform_databases()
+
+    # Phase 2c: de CMP-sleutellezer in bestaande namespaces, op de achtergrond zodat de
+    # readiness er niet op wacht.
+    if readiness.projects.ready and not skip_checks:
+        app.state.cmp_key_reader_task = asyncio.create_task(ensure_cmp_key_readers())
 
     # Resolve which image this pod runs, so /version can say who is answering.
     await _resolve_running_image()

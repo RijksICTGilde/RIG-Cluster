@@ -28,9 +28,42 @@ De platformsleutel staat nog maar op één plek. Tot RC-351 stond hij ook in `ri
 
 ### Waarom de Role naast het secret staat
 
-De repo-server draait onder zijn eigen ServiceAccount `argocd-cmp`, niet onder die van de ArgoCD-server. Die SA heeft uit zichzelf niets. OPI zet daarom samen met het sleutel-secret een Role `cmp-sops-key-reader` in dezelfde namespace, met `resourceNames: [sops-age-key]` en `verbs: [get]`, plus een RoleBinding naar `argocd-cmp` in de ArgoCD-namespace. De twee komen en gaan samen: plaatst OPI het secret niet (omdat het er al staat en klopt), dan raakt hij de Role ook niet aan. Voor namespaces van vóór RC-351 haalt `task cmp-sops-role-backfill` die achterstand in; `DRY_RUN=true` telt alleen.
+De repo-server draait onder zijn eigen ServiceAccount `argocd-cmp`, niet onder die van de ArgoCD-server. Die SA heeft uit zichzelf niets. OPI zet daarom samen met het sleutel-secret een Role `cmp-sops-key-reader` in dezelfde namespace, met `resourceNames: [sops-age-key]` en `verbs: [get]`, plus een RoleBinding naar `argocd-cmp` in de ArgoCD-namespace.
 
 De platform-sidecar heeft geen token en geen Role: zijn sleutel is een mount. Een nieuw platform-Secret (bijvoorbeeld de infrasleutel uit RC-222) vraagt dus een mount erbij in de component, niet een recht erbij.
+
+### Wie de sleutellezer zet, en wanneer
+
+Sinds RC-384 zet OPI hem overal waar het secret staat, niet alleen waar hij het secret zelf plaatst. Dat is `SopsHandler.ensure_cmp_key_reader(namespace)`, en er is maar die ene weg:
+
+| wanneer | wat |
+|---|---|
+| bij het plaatsen of vervangen van het secret | `store_project_sops_key_in_namespace` zet de Role erbij; faalt dat, dan faalt het plaatsen |
+| bij elke verwerking van een project | `_ensure_sops_secret_in_namespace` zet hem ook als het secret klopt; faalt het, dan faalt de verwerking met de namespace in de melding |
+| bij het opstarten van OPI | `ensure_cmp_key_readers` in `opi/core/startup.py` loopt alle deployment-namespaces langs en zet de Role waar hij ontbreekt. Op de achtergrond, dus de readiness wacht er niet op. Logt een telling: gezet, al aanwezig, overgeslagen, gefaald. |
+
+`task cmp-sops-role-backfill` doet hetzelfde met de hand en blijft bestaan voor een cluster waar OPI nog niet is uitgerold; `DRY_RUN=true` telt alleen.
+
+Een namespace die het secret heeft maar niet de Role laat zich kennen aan de Applications van dat project: `sync.status = Unknown` met een `ComparisonError`
+
+```
+ERROR: cannot read secret 'sops-age-key' in namespace 'rig-<project>':
+the namespace or the secret does not exist, or the repo-server may not read it
+```
+
+De draaiende pods blijven staan, want een mislukte vergelijking verwijdert niets, maar niets synct meer en elke wijziging blijft hangen.
+
+### De volgorde bij een release
+
+Rol eerst OPI met de sleutellezer-ronde uit en laat die ronde lopen (in de log: de samenvatting, nul gefaald), en doe daarna `task bootstrap-argo-system` die de CMP op de eigen ServiceAccount zet. Controle na de omzetting:
+
+```bash
+kubectl get applications -A -o json | grep -c "cannot read secret 'sops-age-key'"   # 0
+```
+
+ArgoCD bewaart een mislukte vergelijking, dus direct na de omzetting kan deze telling nog een rest tonen. Die gaat bij de volgende reconciliatie vanzelf weg, of meteen met `argocd app get <app> --hard-refresh`.
+
+Omgekeerd kan ook, maar dan staan alle Applications tussen de twee stappen op `Unknown`; ze herstellen zodra de opstartronde gelopen heeft.
 
 ## Wat dit betekent als je de platformsleutel vervangt
 

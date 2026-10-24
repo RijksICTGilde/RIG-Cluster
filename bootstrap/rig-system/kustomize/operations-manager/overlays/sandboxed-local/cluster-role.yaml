@@ -16,7 +16,7 @@ rules:
     resources: [secrets]
     verbs: [create, get, list, patch, delete]
   # De Role cmp-sops-key-reader die OPI naast elk sleutel-secret zet
-  # (sops.py, _apply_cmp_key_reader_role). Zonder deze regel geeft elke
+  # (sops.py, ensure_cmp_key_reader). Zonder deze regel geeft elke
   # plaatsing van een sleutel Forbidden en faalt een nieuw project.
   - apiGroups: [rbac.authorization.k8s.io]
     resources: [roles, rolebindings]

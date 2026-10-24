@@ -35,7 +35,7 @@ from opi.connectors.git import (
     create_git_connector_for_argocd,
     create_git_connector_from_repo_config,
 )
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.subdomain import (
     ensure_domain_requests,
     get_supported_base_domains,
@@ -95,7 +95,7 @@ from opi.handlers.project_file_handler import (
     remove_attachment_references,
     remove_component,
 )
-from opi.handlers.sops import SopsHandler
+from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SopsHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
     ARGOCD_HERSTEL_BUDGET_SECONDEN,
@@ -2328,6 +2328,14 @@ class ProjectManager:
                     )
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
+            # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
+            # hem niet, en dan rendert ArgoCD dit project niet meer.
+            try:
+                await self._sops_handler.ensure_cmp_key_reader(namespace)
+            except KubectlExecutionError as e:
+                raise RuntimeError(
+                    f"Failed to apply the CMP key reader role ({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {e}"
+                ) from e
 
     @staticmethod
     async def _test_infrastructure_database_connection(username: str, password: str, host: str) -> tuple[bool, str]:

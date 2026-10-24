@@ -124,6 +124,42 @@ async def test_a_namespace_without_the_label_is_present_with_an_empty_value(conn
         }
 
 
+async def test_resource_exists_true_when_kubectl_finds_it(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("role.rbac.authorization.k8s.io/cmp-sops-key-reader", "", 0)
+
+        assert await connector.resource_exists("role", "cmp-sops-key-reader", "rig-demo") is True
+        args = mock_run_cmd.call_args[0][0]
+        assert args == ["get", "role", "cmp-sops-key-reader", "-n", "rig-demo", "-o", "name"]
+
+
+async def test_resource_exists_false_on_notfound(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = (
+            "",
+            'Error from server (NotFound): roles.rbac.authorization.k8s.io "cmp-sops-key-reader" not found',
+            1,
+        )
+
+        assert await connector.resource_exists("role", "cmp-sops-key-reader", "rig-demo") is False
+
+
+async def test_resource_exists_none_on_an_unexpected_error(connector):
+    """RC-384: onbekend moet onbekend blijven, een caller mag hier geen 'bestaat niet' van maken."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): roles is forbidden", 1)
+
+        assert await connector.resource_exists("role", "cmp-sops-key-reader", "rig-demo") is None
+
+
+async def test_secret_exists_delegates_to_resource_exists_with_secret_as_the_type(connector):
+    with patch.object(connector, "resource_exists", new_callable=AsyncMock) as mock_resource_exists:
+        mock_resource_exists.return_value = True
+
+        assert await connector.secret_exists("sops-age-key", "rig-demo") is True
+        mock_resource_exists.assert_awaited_once_with("secret", "sops-age-key", "rig-demo")
+
+
 async def test_encrypt_file_with_sops_gebruikt_de_gefilterde_omgeving(connector, tmp_path, monkeypatch):
     """RC-279: deze aanroep had geen env, en erfde dus de volle omgeving van OPI zelf."""
     monkeypatch.setenv("DATABASE_ADMIN_PASSWORD", "geheim")
