@@ -157,6 +157,7 @@ en dat is precies wat de proef zoekt.
 | `test_injectie.py` | metatekens en pad-escapes via de API | een payload bereikt een argumentenlijst |
 | `test_web_payloads.py` | XSS, CSRF, de rolpoort op projectgeheimen, en wat een foutmelding prijsgeeft | een payload komt ongeescapet terug, een mutatie zonder token slaagt, een pagina lekt of hangt, of een developer ziet de privesleutel van zijn project |
 | `test_stortvloed.py` | foute sleutels en een ruwe stortvloed | elke poging wordt vol verwerkt, of de pod valt om |
+| `test_sql_injectie.py` | booleaanse SQL-varianten op het filter van de takenlijst, met de sleutel van een proefproject | een variant geeft andere taken, een 5xx, of taken van een ander project |
 | `test_schemathesis.py` | property-based verzoeken uit `/openapi.json` | een vreemde komt door, of een antwoord schendt zijn eigen schema |
 | `test_zap.py` | de lezing van het ZAP-rapport | een bevinding boven de drempel valt weg |
 | `test_sandboxdoel.py` | wat alleen in het cluster te meten is: het client-IP achter de ingress, en Keycloak, de registry, de object storage en ArgoCD vanaf de gebruikerskant | een vervalste `X-Forwarded-For` verschuift de limiter, of een dienst geeft een vreemde antwoord |

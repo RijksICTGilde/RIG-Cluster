@@ -90,7 +90,12 @@ def test_het_commando_richt_zich_op_de_eigen_sandbox(doel: Doel, proefproject: s
     regels = commando(doel, "projectlid", Path("/tmp/zap.json"))
     assert ZAP_IMAGE in regels
     # Op macOS ziet de container de host als host.docker.internal; containerdoel kiest dat per platform.
-    assert f"{containerdoel(doel.url)[0]}/openapi.json" in regels
+    url = containerdoel(doel.url)[0]
+    if f"/zap/wrk/{zap_scan.GEZAAIDE_OPENAPI}" in regels:
+        # Met proefprojecten krijgt ZAP de ingevulde OpenAPI, met het doel als host.
+        assert regels[regels.index("-O") + 1] == url
+    else:
+        assert f"{url}/openapi.json" in regels
     assert any(doel.sleutels[doel.projecten[0]] in regel for regel in regels)
 
 
@@ -464,3 +469,13 @@ def test_zaai_openapi_vult_de_padparameters_met_het_proefproject() -> None:
     assert pad["parameters"][0]["schema"]["default"] == "zap0-abc"
     assert pad["get"]["parameters"][0]["example"] == "productie"
     assert "example" not in pad["get"]["parameters"][1], "een queryparameter blijft wat ZAP zelf kiest"
+
+
+def test_een_ingevulde_waarde_komt_terug_als_de_naam_van_de_parameter() -> None:
+    """Faalconditie: elk kenmerk bevat de projectnaam van deze run, en de baseline klopt nooit."""
+    waarden = {"project_name": "zap05-m6j", "deployment_name": "productie", "component_name": "web"}
+    pad = "/api/v2/projects/zap05-m6j/deployments/productie/components/web"
+    assert zap_scan.terug_naar_namen(pad, waarden) == (
+        "/api/v2/projects/project_name/deployments/deployment_name/components/component_name"
+    )
+    assert zap_scan.terug_naar_namen("/api/v2/services", waarden) == "/api/v2/services"

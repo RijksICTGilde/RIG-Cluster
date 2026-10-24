@@ -162,6 +162,9 @@ PROEFCOMPONENT = "web"
 #: De ingevulde OpenAPI in de rapportmap, die de container als /zap/wrk ziet.
 GEZAAIDE_OPENAPI = "openapi-gezaaid.json"
 
+#: Welke waarde voor welke padparameter is ingevuld, zodat een kenmerk terug naar de naam kan.
+ZAAIWAARDEN = "openapi-gezaaid.waarden.json"
+
 
 def _eerste_deployment(doel: Doel, project: str) -> str | None:
     """De eerste deployment van een proefproject, gevraagd met zijn eigen sleutel."""
@@ -209,6 +212,7 @@ def _zaad(doel: Doel, map_: Path) -> list[str]:
         # Dan kent ZAP het schema van het doel zelf, zoals voor het zaaien.
         return ["-t", f"{url}/openapi.json"]
     (map_ / GEZAAIDE_OPENAPI).write_text(json.dumps(zaai_openapi(spec, waarden)))
+    (map_ / ZAAIWAARDEN).write_text(json.dumps(waarden))
     return ["-t", f"/zap/wrk/{GEZAAIDE_OPENAPI}", "-O", url]
 
 
@@ -239,13 +243,27 @@ def commando(doel: Doel, pas: str, rapport: Path) -> list[str]:
     ]
 
 
-def _routes(alarm: dict) -> list[str]:
+def terug_naar_namen(pad: str, waarden: dict[str, str]) -> str:
+    """Het pad met elke ingevulde waarde terug als de naam van zijn parameter.
+
+    De proefprojecten heten elke run anders; zonder dit krijgt hetzelfde alarm op dezelfde
+    route elke run een ander kenmerk, en klopt de baseline nooit.
+    """
+    delen = pad.split("/")
+    terug = {waarde: naam for naam, waarde in waarden.items()}
+    return "/".join(terug.get(deel, deel) for deel in delen)
+
+
+def _routes(alarm: dict, waarden: dict[str, str] | None = None) -> list[str]:
     """De routes waarop dit alarm viel: het pad, niet de volledige URL.
 
     Het pad en niet de URL, want hetzelfde alarm op hetzelfde pad is dezelfde regel, ook als
     de sandbox op een andere poort of achter een ingress staat.
     """
-    paden = {urlparse(geval.get("uri", "")).path or "/" for geval in alarm.get("instances", [])}
+    paden = {
+        terug_naar_namen(urlparse(geval.get("uri", "")).path or "/", waarden or {})
+        for geval in alarm.get("instances", [])
+    }
     return sorted(paden) or ["?"]
 
 
@@ -255,12 +273,14 @@ def lees_alerts(rapport: Path, drempel: int = RISICODREMPEL) -> tuple[dict[str, 
     Het kenmerk is ``<pluginid>:<route>``, dus dezelfde vorm als in de baseline.
     """
     inhoud = json.loads(rapport.read_text())
+    zaad = rapport.parent / ZAAIWAARDEN
+    waarden = json.loads(zaad.read_text()) if zaad.exists() else {}
     bevindingen: dict[str, str] = {}
     informatie: dict[str, str] = {}
     for site in inhoud.get("site", []):
         for alarm in site.get("alerts", []):
             doel = bevindingen if int(alarm.get("riskcode", 0)) >= drempel else informatie
-            for route in _routes(alarm):
+            for route in _routes(alarm, waarden):
                 doel[f"{alarm.get('pluginid', '?')}:{route}"] = (
                     f"{alarm.get('name', '?')} (risico {alarm.get('riskdesc', '?')})"
                 )
