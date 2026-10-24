@@ -474,9 +474,14 @@ class AsyncTaskService:
                     await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
 
     async def get_task(self, task_id: str) -> dict | None:
-        """Retrieve a single task by ID."""
+        """Retrieve a single task by ID, or None when there is none (also for an id that is no UUID)."""
+        # Het id komt uit een URL: een id die geen UUID is, is een taak die niet bestaat en geen 500.
+        try:
+            key = uuid.UUID(task_id)
+        except ValueError:
+            return None
         async with session_scope() as session:
-            row = await session.get(AsyncTask, uuid.UUID(task_id))
+            row = await session.get(AsyncTask, key)
             return row.to_dict() if row else None
 
     async def update_task_status(self, task_id: str, status: str) -> None:
