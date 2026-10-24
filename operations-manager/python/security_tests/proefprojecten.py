@@ -13,8 +13,10 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from urllib.parse import urlparse
 
+import httpx
 from playwright.sync_api import sync_playwright
 from tests.e2e.conftest import (
     E2E_SECRET_KEY,
@@ -90,6 +92,27 @@ def maak(aantal: int) -> int:
     return 0 if len(sleutels) == aantal else 1
 
 
+#: Hoe lang ruim-op wacht tot een projectbestand uit zad-projects weg is.
+WACHT_OP_WEG_SECONDEN = 600
+
+
+def _projectbestand_weg(naam: str) -> bool:
+    """Of het projectbestand uit zad-projects weg is, binnen de wachttijd."""
+    url = f"{FORGEJO_URL}/api/v1/repos/{FORGEJO_PROJECTS_REPO}/contents/projects/{naam}.yaml"
+    einde = time.monotonic() + WACHT_OP_WEG_SECONDEN
+    while time.monotonic() < einde:
+        try:
+            if (
+                httpx.get(url, auth=(FORGEJO_USER, FORGEJO_PASSWORD), verify=FORGEJO_VERIFY_SSL, timeout=30).status_code
+                == 404
+            ):
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(5)
+    return False
+
+
 def ruim_op() -> int:
     """Verwijder de proefprojecten van deze run via hun eigen sleutel."""
     if not SLEUTELBESTAND.exists():
@@ -100,10 +123,15 @@ def ruim_op() -> int:
     for naam, sleutel in sleutels.items():
         try:
             sandbox_api.delete_project_via_api(_basis(), naam, sleutel, verify_ssl=False)
-            print(f"opgeruimd: {naam}")
         except (AssertionError, OSError, RuntimeError) as reden:
+            print(f"verwijderen gaf een fout voor {naam}: {reden}")
+        # Pas weg als het projectbestand weg is: delete_project_via_api slikt fouten, en op
+        # 24-10 meldde dit "opgeruimd" terwijl het bestand bleef staan.
+        if _projectbestand_weg(naam):
+            print(f"opgeruimd: {naam}")
+        else:
             fout = 1
-            print(f"NIET opgeruimd: {naam}: {reden}")
+            print(f"NIET opgeruimd: {naam}: het projectbestand staat er na {WACHT_OP_WEG_SECONDEN}s nog")
     if not fout:
         SLEUTELBESTAND.unlink()
     return fout
