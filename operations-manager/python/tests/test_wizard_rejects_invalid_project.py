@@ -49,7 +49,6 @@ def _valid_project(name: str = "nep-wfo") -> dict[str, Any]:
         "users": [{"email": OWNER_EMAIL, "role": "owner"}],
         "components": [{"name": "frontend", "image": "nginx:latest"}],
         "config": {
-            "api-key": AGE_BLOB,
             "age-public-key": "age1publicpublicpublic",
             "age-private-key": AGE_BLOB,
         },

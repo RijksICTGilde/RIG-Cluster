@@ -312,10 +312,10 @@ class TestDisplayCardRendering:
             editables=editables,
             yaml_data=SAMPLE_YAML,
         )
-        api_key_field = fields["config/api-key"]
-        assert api_key_field.widget_type == "display_card"
-        assert api_key_field.readonly is True
-        assert "Versleuteld" in str(api_key_field.value)
+        age_private_field = fields["config/age-private-key"]
+        assert age_private_field.widget_type == "display_card"
+        assert age_private_field.readonly is True
+        assert "Versleuteld" in str(age_private_field.value)
 
     def test_truncated_field_shows_ellipsis(self):
         renderer = _create_renderer()

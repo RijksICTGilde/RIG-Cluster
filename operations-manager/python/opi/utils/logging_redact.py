@@ -68,6 +68,12 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(?i)(password\s*+=?\s*+)'[^']*'"), rf"\1'{_REDACTED}'"),
     # Een AGE-privésleutel, waar hij ook in de regel staat.
     (re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]+"), f"AGE-SECRET-KEY-{_REDACTED}"),
+    # Een API-token (RC-322): ``zad_`` plus 43 url-veilige tekens. Het voorvoegsel maakt de
+    # vorm zelfstandig herkenbaar, dus dit vangnet werkt ook waar het token NIET in een
+    # bekende header staat. Vandaag logt niets de waarde; dit is er voor de volgende
+    # logregel die hem per ongeluk meeneemt. De 40 is lager dan de 43 van
+    # ``secrets.token_urlsafe(32)``, zodat een afgekapte waarde ook valt.
+    (re.compile(r"zad_[A-Za-z0-9_-]{40,}"), f"zad_{_REDACTED}"),
 )
 
 

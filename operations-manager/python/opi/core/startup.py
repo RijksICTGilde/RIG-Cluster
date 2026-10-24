@@ -28,6 +28,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from opi.api.endpoint_util import controleer_handelingen
 from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
@@ -957,6 +958,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # Zonder sleutel commit OPI zoals altijd, met alleen een WARNING. Een sleutel die gpg
     # niet kan importeren is een configuratiefout en stopt de opstart.
     load_git_signing_identity()
+
+    # Een route die met een token bereikbaar is maar geen handeling noemt zou stilzwijgend
+    # alles openen wat het token mag. Dat stopt de start hier, niet een 403 die ontbreekt.
+    controleer_handelingen(app.routes)
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")

@@ -35,6 +35,7 @@ from opi.forms.visualizers.wizard_sections import (
     _extract_services,
 )
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.leden import leden_voor_formulier
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -757,6 +758,13 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             ", ".join(redacted_paths),
         )
 
+    # De teamvorm rendert alleen de MENSEN en hun rol, dus hij draagt ook alleen die het
+    # formulier in; de tokens en de service accounts zet ``zet_verborgen_leden_terug`` bij
+    # het opslaan terug.
+    owned = _fully_owned_list_keys(flow)
+    if "users" in owned:
+        session_data = leden_voor_formulier(session_data)
+
     step_data = _split_data_across_sections(flow, session_data)
 
     # Resolve active sections with pre-filled data.
@@ -794,7 +802,6 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # own that list — step_data already carries the complete value. Keeping
     # a copy in base_data would cause get_merged_data's merge-by-index
     # to silently retain items the user removed in the UI.
-    owned = _fully_owned_list_keys(flow)
     # ``session_data``, not ``project_data``: base_data is persisted to disk like
     # step_data is, so it needs the same attachment strip and secret redaction. It read
     # from the raw project before, which left the encrypted blocks in the session even

@@ -140,6 +140,9 @@ def mock_project_service() -> Any:
         def __init__(self, name: str, api_key: str = "test-api-key-12345") -> None:
             self.name = name
             self.api_key = api_key
+            # Leden en hun tokens (RC-322): het handhavingspunt zoekt hier eerst, en valt
+            # pas daarna terug op de oude projectsleutel hierboven.
+            self.users: list[Any] = []
             self.data = {
                 "deployments": [
                     {

@@ -28,6 +28,7 @@ from opi.forms.editables.service_path import (
 )
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -563,8 +564,16 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     for section in flow.sections:
         processor.populate_deferred_fields(project_data, section.editables)
 
-    # Pre-fill step data from existing project
-    step_data = _split_data_across_sections(flow, project_data)
+    # Lokale import: ``router_detail_edit`` importeert deze module.
+    from opi.web.router_detail_edit import _fully_owned_list_keys
+
+    # Pre-fill step data from existing project. Alleen de mensen, zoals in
+    # ``modal_wizard_init``: zonder dit schuift de merge-per-index de tokenhash van een
+    # weggehaald lid naar de rij die zijn plaats inneemt.
+    form_data = project_data
+    if "users" in _fully_owned_list_keys(flow):
+        form_data = leden_voor_formulier(project_data)
+    step_data = _split_data_across_sections(flow, form_data)
 
     # Resolve active sections with pre-filled data
     active_section_ids = resolve_active_section_ids(flow, step_data)
@@ -2598,6 +2607,11 @@ async def _save_existing_project(
 
         # Form path bypasses set_service_config, so guard platform fields here (RC-286).
         ServiceAdapter.enforce_platform_managed_fields(existing_data, stored_data)
+
+        # Hetzelfde voor de ledenlijst, op dezelfde plek als op de modaalweg: het
+        # teamformulier bezit ``users`` als geheel maar rendert alleen de mensen en hun rol.
+        zet_verborgen_leden_terug(existing_data, stored_data)
+
         ensure_approval_requests(existing_data)
 
         # Een kale 403 en niet de dialoog uit bg/_step-up.html.j2: die hangt aan de

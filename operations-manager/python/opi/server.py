@@ -33,6 +33,7 @@ from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
+from opi.api.token_router import token_router
 from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
@@ -823,6 +824,7 @@ def create_app() -> FastAPI:
     app.include_router(sleep_mode_router, include_in_schema=True)  # Sleep-mode wake/status (waker pod + projectsleutel)
     app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
+    app.include_router(token_router, include_in_schema=True)  # API-tokens en service accounts
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
     app.include_router(admin_router, include_in_schema=True)  # Admin cleanup/reconciliation API
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint

@@ -396,6 +396,10 @@
             </c-table>
         {% endcall %}
 
+        {# Tokens en service accounts horen bij hetzelfde onderwerp als de ledenlijst
+           hierboven: wie mag wat in dit project. Zie bg/_tokens.html.j2. #}
+        {% include "bg/_tokens.html.j2" %}
+
     </c-stack>
 
     {% elif active_tab == 'componenten' %}

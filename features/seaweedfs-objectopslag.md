@@ -355,7 +355,7 @@ gRPC-poort er zelf uit af, dus de Service en de NetworkPolicy houden 8888 en 933
 ### Het uitzetten liep eerst stuk op de dienstenmodal
 
 De eerste gang van deze meting faalde, en niet in het opruimpad van deze dienst. De
-deselectie landde niet in het projectbestand, dus de reprocess provisioneerde gewoon door
+deselectie landde niet in het projectbestand, dus de reprocess provisioneerde door
 (`bucket ... already exists`), en een verwijderpad werd nooit aangeroepen.
 
 De oorzaak, gemeten met een reproductie in de browser tegen de lokale testserver: **een

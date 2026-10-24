@@ -27,6 +27,7 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.visualizers.flows import COMPONENTS_SELECTABLE
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.forms.wizard.leden import zet_verborgen_leden_terug
 from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.selection import selectable_names, splice_selection
 from opi.forms.wizard.state import _strip_cleared_fields
@@ -347,6 +348,11 @@ async def apply_modal_edit(
 
     # Platform-managed fields are not the form's to set, just like the API rejects them.
     ServiceAdapter.enforce_platform_managed_fields(merged_data, existing_data)
+
+    # Hetzelfde voor de ledenlijst: het teamformulier rendert alleen het adres en de rol
+    # van een mens, maar bezit het pad ``users`` als geheel. Zonder deze stap gooit het
+    # bewerken van het Team-blok elk API-token en elk service account van het project weg.
+    zet_verborgen_leden_terug(merged_data, existing_data)
 
     # A new list item has no stored version to protect, so it is appended
     # whole: the empty slot the wizard was seeded with carries fields no form

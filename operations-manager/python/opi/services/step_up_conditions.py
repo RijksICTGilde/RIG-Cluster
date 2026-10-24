@@ -23,8 +23,9 @@ def _project_data(request: Request, project_name: str) -> dict[str, Any]:
     """Het projectbestand, of leeg voor een gebruiker die er niet bij mag.
 
     Leeg leest als "vraagt geen step-up", zodat de route zelf zijn eigen 403 of 404 geeft.
-    Anders zou de dialoog aan iedereen verklappen dat dit project productie raakt. Een
-    API-aanroep heeft geen sessiegebruiker; daar is de projectsleutel al gecontroleerd.
+    Anders zou de dialoog aan iedereen verklappen dat dit project productie raakt. Op een
+    ``/api/``-pad vult alleen ``handhaaf`` dit veld, met de eigenaar van een persoonlijk
+    token, en dat lid is daar al tegen dit project gelegd (RC-322).
     """
     email = str((get_current_user(request) or {}).get("email", ""))
     if email and not is_user_authorized_for_project(project_name, email):

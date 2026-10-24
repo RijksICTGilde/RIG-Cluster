@@ -56,7 +56,7 @@ def _project(name: str, deployments: list[str]) -> dict[str, Any]:
         "deployments": [
             {"name": dep, "cluster": "odcn-production", "namespace": name, "components": []} for dep in deployments
         ],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
 
 

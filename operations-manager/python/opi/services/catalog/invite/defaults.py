@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.services.project_leden import menselijke_leden_uit_data
+
 
 def _project_label(yaml_data: dict[str, Any]) -> str:
     """The name to show a human: the display name, falling back to the technical name.
@@ -38,15 +40,14 @@ def default_contact_email(yaml_data: dict[str, Any]) -> str | None:
     Deliberately the first one and not, say, the first admin: the field is a "who do I
     mail when this does not work" hint that the project is expected to adjust, and
     picking by role would suggest an authority the value does not carry.
+
+    Alleen de MENSEN: een service account heeft geen postvak, dus mailen naar een
+    service-accountnaam zou een adres opleveren dat nergens aankomt.
     """
-    users = yaml_data.get("users")
-    if not isinstance(users, list):
-        return None
-    for user in users:
-        if isinstance(user, dict):
-            email = user.get("email")
-            if email:
-                return str(email)
+    for user in menselijke_leden_uit_data(yaml_data):
+        email = user.get("email")
+        if email:
+            return str(email)
     return None
 
 

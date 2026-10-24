@@ -118,8 +118,9 @@ _CAUSE_PER_UITKOMST = {
 def _token_owner(request: Request) -> str | None:
     """Het e-mailadres van de eigenaar van het token, of None bij een projectsleutel.
 
-    Op ``/api/``-paden zetten alleen de bearer-decorators ``request.state.user``; de
-    sessiemiddleware leegt hem daar juist. Een gevulde waarde is dus een persoon.
+    Op ``/api/``-paden zetten alleen de bearer-decorators en ``handhaaf`` (voor een
+    persoonlijk token) ``request.state.user``; de sessiemiddleware leegt hem daar juist.
+    Een gevulde waarde is dus een persoon.
     """
     user = getattr(request.state, "user", None) or {}
     return str(user.get("email") or "").strip().lower() or None

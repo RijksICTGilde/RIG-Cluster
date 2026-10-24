@@ -13,6 +13,7 @@ class ActorKind(StrEnum):
 
     USER = "user"
     PROJECT_API_KEY = "project-api-key"
+    SERVICE_ACCOUNT = "service-account"
     PLATFORM_API_KEY = "platform-api-key"
     # Geen ingang zet deze soort nog; hij bestaat om opgeslagen created_by-waarden van
     # voor RC-377 terug te lezen (actor_from_stored).
@@ -68,6 +69,11 @@ def user_actor(email: str) -> Actor:
 def project_api_key_actor(project_name: str) -> Actor:
     """Een projectsleutel legitimeert een project, geen persoon."""
     return Actor(ActorKind.PROJECT_API_KEY, project_name)
+
+
+def service_account_actor(project_name: str, naam: str) -> Actor:
+    """Een service account van een project, met een naam die het logboek kan noemen."""
+    return Actor(ActorKind.SERVICE_ACCOUNT, f"{project_name}/{naam}")
 
 
 def scheduler_actor(name: str) -> Actor:
