@@ -123,6 +123,14 @@ INVENTARIS: dict[str, Schrijver] = {
         "het projectbestand zoals een zelfbedieningsaanvraag het aanlevert",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
     ),
+    "opi/services/api_token_service.py": Schrijver(
+        "leden onder users: een service account toevoegen of verwijderen, een rol wijzigen, "
+        "en per lid een token uitgeven of intrekken",
+        None,
+        "De schrijfweg is enforce=True, dus een lid of token dat niet aan het schema voldoet blokkeert de "
+        "wijziging in plaats van stil te landen; de vorm zelf staat in tests/test_leden_en_tokens_projectbestand.py "
+        "en de regels eromheen in tests/test_api_token_service.py.",
+    ),
 }
 
 
@@ -149,7 +157,7 @@ HANDLER_MUTATOREN: dict[str, str] = {
     "set_clone_status": "test_de_kloonstatus_blijft_geldig",
     "remove_attachment_references": "test_het_verwijderen_van_verwijzingen_blijft_geldig",
     "remove_component_references": "test_het_verwijderen_van_verwijzingen_blijft_geldig",
-    "remove_component": "test_het_verwijderen_van_een_component_blijft_geldig",
+    "remove_component": "test_een_component_verwijderen_laat_een_geldig_bestand_achter",
 }
 
 

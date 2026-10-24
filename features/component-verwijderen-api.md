@@ -56,7 +56,7 @@ curl -X DELETE -H "X-API-Key: $KEY" \
 
 `confirm_in_use` is genoemd naar wat de aanroeper *verklaart*, niet naar wat het
 overrulet: dat hij de lijst uit de 409 gezien heeft. Het opruimen is één opslag, nooit
-twee die half kunnen slagen — een verwijzing naar een component dat niet meer bestaat
+twee die half kunnen slagen. Een verwijzing naar een component dat niet meer bestaat
 maakt het projectbestand ongeldig.
 
 ### De ene uitzondering
@@ -69,7 +69,7 @@ publish-on-web-certificaat bij bijlagen krijgt.
 
 ## Uitrol
 
-De taak verwerkt het project altijd opnieuw — anders blijft het component in het cluster
+De taak verwerkt het project altijd opnieuw, anders blijft het component in het cluster
 draaien terwijl het uit het projectbestand weg is. `rollout=false` wordt daarom met 422
 geweigerd in plaats van stilzwijgend genegeerd.
 
@@ -95,7 +95,7 @@ veranderd is.
 ## In het portaal
 
 Het bevestigingsvenster noemt de deployments en componenten die meeveranderen, en post
-daarna mét de bevestiging — de gebruiker heeft de lijst immers gezien. Voor een component
+daarna mét de bevestiging: de gebruiker heeft de lijst immers gezien. Voor een component
 waar een webadres omheen gebouwd is toont het venster de reden en geen knop, zoals het dat
 voor een bijlage in gebruik al deed.
 
@@ -117,7 +117,7 @@ het component op productie, dan vraagt de opslag bovendien een verse OTP
 
 | | |
 |---|---|
-| route | `opi/api/v2/router.py` — `delete_component_v2` |
+| route | `opi/api/v2/router.py`: `delete_component_v2` |
 | de verwijderregel | `remove_component` in `opi/handlers/project_file_handler.py` |
 | guard + opslaan | `ProjectManager.delete_component` |
 | de wandeling | `component_usage_sites` / `remove_component_references` in `opi/handlers/project_file_handler.py` |

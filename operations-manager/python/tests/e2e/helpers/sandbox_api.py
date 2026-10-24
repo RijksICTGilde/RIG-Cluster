@@ -1,11 +1,11 @@
 """
-Sandbox API helpers: read a project's API key from the UI and drive the
-component-add REST endpoint.
+Sandbox API helpers: geef een project een API-token en drijf de REST-endpoints aan.
 
-The component-add endpoint (`POST /api/v2/projects/{name}/components`) is
-authenticated with the project's own `X-API-Key`. That key is generated at
-project creation and is only exposed decrypted on the project-details page, so
-we scrape it from there, then use it for the async API call.
+De endpoints hieronder legitimeren zich met ``X-API-Key``. Sinds schemaversie 2.12 is dat
+geen ``config.api-key`` meer die van de detailpagina te lezen is, maar een TOKEN van het
+service account ``project-api``, waarvan alleen de hash in het projectbestand staat. Een
+bestaand token is dus niet op te halen: de weg is er een UITGEVEN, en dat doet
+:func:`geef_projecttoken` over het tabblad Team met de sessiecookie van de e2e-gebruiker.
 """
 
 from __future__ import annotations
@@ -13,59 +13,101 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import secrets
 import time
-from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import httpx
 from tests.e2e.helpers import cluster
 
-if TYPE_CHECKING:
-    from playwright.sync_api import Page
-
-
 logger = logging.getLogger(__name__)
 
 
-#: Hoe een projectsleutel eruitziet: 32 tekens uit het tokenalfabet.
-_API_KEY_VORM = re.compile(r"[A-Za-z0-9_-]{32}")
+#: De namen uit het portaal die de uitgifte hieronder nodig heeft: het service account dat
+#: de API-toegang van een project draagt (``opi/services/schema_migration.py``) en de
+#: CSRF-cookie en -header (``opi/utils/csrf.py``). Letterlijk en niet geimporteerd, want dit
+#: bestand moet importeerbaar blijven ZONDER de OPI-config: ``scripts/sandbox_project_tool.py``
+#: praat tegen een sandbox op afstand en heeft geen platformsleutel, en een import van
+#: ``opi.core.config`` beeindigt daar het proces. Dat ze gelijk blijven staat in
+#: ``tests/test_e2e_helpers.py``.
+PROJECT_API_ACCOUNT = "project-api"
+CSRF_COOKIE_NAME = "csrf_token"
+CSRF_HEADER_NAME = "x-csrf-token"
+
+#: Hoe een uitgegeven token eruitziet: het voorvoegsel plus de willekeurige waarde.
+_TOKEN_VORM = re.compile(r'value="(zad_[A-Za-z0-9_-]+)"')
 
 
-def read_api_key(page: Page, base_url: str, project_name: str) -> str:
-    """Scrape the decrypted project API key from the project-details page.
+def geef_projecttoken(
+    base_url: str,
+    project_name: str,
+    *,
+    sessie_cookie: str,
+    lid: str = PROJECT_API_ACCOUNT,
+    tokennaam: str | None = None,
+    dagen: int = 1,
+    verify_ssl: bool = True,
+    timeout: float = 60.0,
+) -> str:
+    """Geef een nieuw API-token uit voor ``lid`` en geef de waarde terug.
 
-    The details page renders the key in a LOTC secret-field: the element TEXT is a row
-    of bullets and the plaintext sits in the `value` attribute of the
-    `<lotc-secret-field>` host, so the attribute is what we read. Until NLDD 0.8.83 that
-    was `data-value` on an inner `.lotc-secret__value`; the component became a custom
-    element and moved the value to the host.
+    Zonder browser: het tabblad Team is een formulier, dus een sessiecookie, de
+    ``csrf_token``-cookie terug in de header en een ``Origin`` op dezelfde host zijn alles
+    wat het nodig heeft (dezelfde drie eisen als ``weesprojecten.start_verwijdering``).
 
-    HET VELD MOET PRECIES AANGEWEZEN WORDEN. Hier stond
-    ``.lotc-stack:has(h3:text-is("API Key")) .lotc-secret__value`` met ``.first``. De kop
-    staat in de sandbox in VIER geneste ``.lotc-stack``-divs, dus die selector matcht ze
-    alle vier en ``.first`` is de BUITENSTE - en het eerste geheimveld daarbinnen is de
-    projectnaam. Deze functie gaf dus de projectnaam terug als sleutel, en elke
-    API-aanroep in de opruiming kreeg daarop 401. Zo bleven er projecten op de sandbox
-    achter. Vandaar de xpath naar de DICHTSTBIJZIJNDE omhullende stack, plus de controle
-    op de vorm eronder: een verkeerde waarde hoort hier hard te falen en niet stil door
-    te gaan.
+    De uitgegeven waarde staat EEN keer op de pagina waar de 303 naartoe gaat, dus hij
+    komt hier uit het antwoord op de POST nadat de omleiding gevolgd is. Wie hem kwijt is
+    geeft een nieuwe uit; teruglezen kan niemand, ook de uitgever niet.
     """
-    page.goto(f"{base_url.rstrip('/')}/projects/{project_name}/details")
-    page.wait_for_load_state("networkidle")
-    stack = (
-        "xpath=(//h3[normalize-space(text())='API Key']"
-        "/ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' lotc-stack ')])[last()]"
-    )
-    value = page.locator(stack).locator("lotc-secret-field").first
-    value.wait_for(state="attached", timeout=10000)
-    api_key = (value.get_attribute("value") or "").strip()
-    if not api_key:
-        raise AssertionError(f"Could not read API key for project '{project_name}' from details page")
-    if not _API_KEY_VORM.fullmatch(api_key):
-        raise AssertionError(
-            f"Wat op de detailpagina van '{project_name}' als API-sleutel stond heeft niet de vorm "
-            f"van een sleutel: {api_key!r}. Waarschijnlijk wijst de selector het verkeerde veld aan."
+    basis = base_url.rstrip("/")
+    host = urlparse(basis).hostname or ""
+    # Met een willekeurig staartje: twee pogingen binnen dezelfde seconde zouden op
+    # dezelfde naam botsen, en dan weigert de dienst de tweede.
+    tokennaam = tokennaam or f"e2e-{int(time.time())}-{secrets.token_hex(3)}"
+    # De client volgt GEEN omleidingen: een sessie die niet aanvaard wordt loopt naar de
+    # inlogpagina van Keycloak, en die antwoordt zelf 200. Een gevolgde omleiding zou hier
+    # dus als een geslaagd tabblad lezen. De POST volgt zijn 303 wel, want daar staat de
+    # waarde.
+    with httpx.Client(verify=verify_ssl, timeout=timeout, follow_redirects=False) as client:
+        client.cookies.set("session", sessie_cookie, domain=host)
+        antwoord = client.get(f"{basis}/projects/{project_name}/team")
+        if antwoord.status_code != 200:
+            raise AssertionError(
+                f"het tabblad Team van '{project_name}' gaf HTTP {antwoord.status_code} "
+                f"({antwoord.headers.get('location', 'geen omleiding')}); klopt de "
+                f"sessiecookie met de SECRET_KEY van het cluster?"
+            )
+        csrf = client.cookies.get(CSRF_COOKIE_NAME)
+        if not csrf:
+            raise AssertionError(f"geen {CSRF_COOKIE_NAME}-cookie na GET van het tabblad Team van '{project_name}'")
+        antwoord = client.post(
+            f"{basis}/projects/{project_name}/leden/{lid}/tokens",
+            data={"tokennaam": tokennaam, "dagen": str(dagen)},
+            headers={CSRF_HEADER_NAME: csrf, "Origin": basis},
+            follow_redirects=True,
         )
-    return api_key
+    if antwoord.status_code != 200:
+        raise AssertionError(
+            f"het uitgeven van een token voor '{lid}' op '{project_name}' gaf HTTP "
+            f"{antwoord.status_code}: {antwoord.text[:300]}"
+        )
+    treffer = _TOKEN_VORM.search(antwoord.text)
+    if not treffer:
+        # De pagina draagt in dit geval de weigering van de dienst in een alert.
+        raise AssertionError(
+            f"geen uitgegeven token op het tabblad Team van '{project_name}' na het aanmaken; "
+            f"de pagina zei: {_melding(antwoord.text)}"
+        )
+    return treffer.group(1)
+
+
+def _melding(html: str) -> str:
+    """De weigering die de pagina draagt, voor een leesbare mislukking."""
+    treffer = re.search(r'type="error" heading="([^"]+)">\s*<c-paragraph>([^<]*)', html)
+    if treffer:
+        return f"{treffer.group(1)}: {treffer.group(2).strip()}"
+    kop = re.findall(r'heading="([^"]+)"', html)
+    return kop[-1] if kop else "niets bruikbaars"
 
 
 def start_task(

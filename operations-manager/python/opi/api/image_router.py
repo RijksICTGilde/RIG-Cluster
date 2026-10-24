@@ -15,6 +15,7 @@ from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.manager.project_manager import ProjectManager
 from opi.utils.uploads import spill_capped, upload_slot
 from starlette.requests import Request
@@ -25,6 +26,7 @@ image_router = APIRouter(prefix="/api/v1/projects", tags=["images"])
 
 
 @image_router.post("/{project_name}/images/push")
+@handeling(Handeling.IMAGE_PUSHEN)
 @validate_api_token
 async def push_image(
     project_name: ProjectNamePath,

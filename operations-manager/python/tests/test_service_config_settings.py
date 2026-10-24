@@ -189,7 +189,7 @@ def _project(config: dict[str, Any], **extra: Any) -> dict[str, Any]:
                 "components": [{"reference": "backend"}],
             }
         ],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
     data.update(extra)
     return data
@@ -748,7 +748,7 @@ def _redis_project(dep_config: dict[str, Any] | None, *, in_deployment: bool = T
         "services": [_REDIS.value],
         "components": [{"name": "backend", "type": "single", "services": [_REDIS.value]}],
         "deployments": [deployment],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
 
 
@@ -812,7 +812,7 @@ def _mount_project(mounts: dict[str, str] | None) -> dict[str, Any]:
                 "components": [component],
             }
         ],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
 
 

@@ -13,6 +13,7 @@ reach a project file.
 import logging
 from typing import TYPE_CHECKING
 
+from opi.services.project_leden import human_members
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
@@ -32,13 +33,19 @@ PROJECT_OPERATE_ROLES: tuple[str, ...] = ("admin", "owner", "developer")
 
 
 def get_project_users(project_name: str) -> list[ProjectUser] | None:
-    """Return the members of a project, or None when the project is unknown."""
+    """De MENSEN in een project, of None als het project onbekend is.
+
+    Alleen de mensen: deze twee functies beantwoorden "mag deze aanmelding dit project
+    openen", en een service account meldt zich nergens aan. Wat een service account mag
+    loopt langs :mod:`opi.api.principaal`, dat de hele ledenlijst leest.
+    """
     project = get_project_store().get(project_name)
     if project is None:
         logger.debug(f"No project found: {project_name}")
         return None
-    logger.debug(f"Retrieved {len(project.users) if project.users else 0} users for project: {project_name}")
-    return project.users
+    mensen = human_members(project)
+    logger.debug(f"Retrieved {len(mensen)} users for project: {project_name}")
+    return mensen
 
 
 def is_user_authorized_for_project(project_name: str, user_email: str, audit: bool = True) -> bool:
@@ -60,7 +67,7 @@ def is_user_authorized_for_project(project_name: str, user_email: str, audit: bo
         return False
 
     for user in users:
-        if user.email.lower() == user_email.lower():
+        if (user.email or "").lower() == user_email.lower():
             logger.debug(f"User {user_email} authorized for project {project_name} with role: {user.role}")
             return True
 
@@ -78,7 +85,7 @@ def get_user_role_for_project(project_name: str, user_email: str) -> str | None:
         return None
 
     for user in users:
-        if user.email.lower() == user_email.lower():
+        if (user.email or "").lower() == user_email.lower():
             return user.role
 
     return None

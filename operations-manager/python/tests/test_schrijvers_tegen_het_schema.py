@@ -266,23 +266,29 @@ def test_het_verwijderen_van_verwijzingen_blijft_geldig() -> None:
     poorten(project)
 
 
-def test_het_verwijderen_van_een_component_blijft_geldig() -> None:
-    """``remove_component`` haalt definitie en verwijzingen samen weg; wat achterblijft is geldig."""
+def test_een_component_verwijderen_laat_een_geldig_bestand_achter() -> None:
+    """``remove_component`` (RC-378) haalt de definitie EN elke verwijzing weg.
+
+    Blijft er een verwijzing staan naar een component dat niet meer bestaat, dan is het
+    bestand ongeldig, en dat is precies wat deze poort meet.
+    """
     from opi.handlers.project_file_handler import remove_component
 
     project = _basis_project()
     project["components"].append(
         {
-            "name": "web",
-            "type": "frontend",
+            "name": "worker",
+            "type": "single",
             "ports": {"inbound": [8080], "outbound": [443]},
-            "services": ["publish-on-web"],
+            "uses-components": [],
         }
     )
-    project["deployments"][0]["components"].append({"reference": "web", "image": "nginx:1.25"})
+    project["deployments"][0]["components"].append({"reference": "worker", "image": "nginx:1.25"})
+    poorten(project)
 
-    remove_component(project, "api", confirm_in_use=True)
+    remove_component(project, "worker", confirm_in_use=True)
 
+    assert [c["name"] for c in project["components"]] == ["api"]
     poorten(project)
 
 

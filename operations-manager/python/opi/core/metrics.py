@@ -101,6 +101,24 @@ class OPICollector(Collector):
         yield ws_global
         yield ws_users
 
+        # --- Bewijsmiddelen per project (RC-322) ---
+        # Zonder deze telling is "de projectsleutel verdwijnt zodra niemand hem meer
+        # gebruikt" een wens. De labelwaarde ``projectsleutel`` is de oude weg; een token
+        # telt mee onder ``persoon`` of ``service-account`` en dus niet als oud.
+        credentials = CounterMetricFamily(
+            "opi_api_credential_calls",
+            "Geslaagde legitimaties per project en per soort bewijsmiddel",
+            labels=["project", "credential"],
+        )
+        try:
+            from opi.api.principaal import gebruik_per_project
+
+            for (project, soort), aantal in gebruik_per_project().items():
+                credentials.add_metric([project, soort], aantal)
+        except Exception:
+            logger.debug("Failed to collect credential metrics", exc_info=True)
+        yield credentials
+
         # --- Rate limiter ---
         rl_clients = GaugeMetricFamily(
             "opi_rate_limiter_tracked_clients",

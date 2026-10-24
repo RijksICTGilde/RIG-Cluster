@@ -37,7 +37,10 @@ cycle; a later cleanup may relocate it out of ``forms/``.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
 
 from opi.forms.editables.service_path import (
     find_service_in_list,
@@ -50,7 +53,9 @@ from opi.forms.editables.service_path import (
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from opi.services.project_service import ProjectSummary
+    from opi.services.project_service import ProjectSummary, ProjectUser
+
+logger = logging.getLogger(__name__)
 
 
 class Project:
@@ -163,35 +168,50 @@ class Project:
 
     # --- typed projection --------------------------------------------------------
     def get_summary(self, filename: str) -> ProjectSummary | None:
-        """Lightweight typed projection of this project (name, api-key, users).
+        """Lightweight typed projection of this project (name, members, api-key).
 
         This is the aggregate root producing its edge DTO: consumers that only need
         the summary fields (the store's cache index, API responses) call this instead
-        of a separate parallel model. Returns None when the project lacks a name or
-        api-key (nothing to index).
+        of a separate parallel model. Returns None when the project lacks a name.
 
-        The api-key is returned **as stored** (possibly AGE-encrypted); plaintext
-        resolution is a crypto concern that stays with the caller (ProjectService),
-        not the aggregate root -- keeping this projection pure.
+        De api-key komt terug ZOALS OPGESLAGEN (dus mogelijk AGE-versleuteld); het
+        ontsleutelen is een cryptozorg die bij de aanroeper blijft (ProjectService). Vanaf
+        schemaversie 2.12 staat hij er niet meer en is het veld None: de sleutel is dan een
+        token van het service account ``project-api``.
         """
         # Lazy import avoids the project <-> project_service cycle.
-        from opi.services.project_service import ProjectSummary, ProjectUser
+        from opi.services.project_service import ProjectSummary
 
         name = self._data.get("name")
         config = self._data.get("config") or {}
         api_key = config.get("api-key")
-        if not name or not api_key:
+        if not name:
             return None
         users_data = self._data.get("users") or []
-        users = [
-            ProjectUser(email=user["email"], role=user["role"])
-            for user in users_data
-            if isinstance(user, dict) and "email" in user and "role" in user
-        ]
+        users = [lid for lid in (lid_uit(entry) for entry in users_data) if lid is not None]
         return ProjectSummary(
             name=str(name),
-            api_key=str(api_key),
+            api_key=str(api_key) if api_key else None,
             filename=filename,
             users=users or None,
             data=self._data,
         )
+
+
+def lid_uit(entry: Any) -> ProjectUser | None:
+    """Een lid uit de ruwe lijst, of None als het er geen is.
+
+    Een lid dat niet klopt wordt overgeslagen en niet opgeworpen: een halve regel in
+    ``users`` zou anders het HELE project uit de cache houden, en daarmee ook zijn API
+    onbereikbaar maken.
+    """
+    # Lazy import, zelfde cyclusreden als in get_summary.
+    from opi.services.project_service import ProjectUser
+
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return ProjectUser.model_validate(entry)
+    except ValidationError as e:
+        logger.warning("Lid in het projectbestand overgeslagen: %s", e)
+        return None

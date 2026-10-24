@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from opi.core.project_schema import find_plaintext_secret_violations, validate_project_schema
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
+from opi.services.project_leden import hash_van
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 from opi.utils.age import (
     decrypt_age_block_to_bytes_sync,
@@ -195,12 +196,27 @@ class TestEverythingOnTheNewKey:
                 continue
             assert decrypt_age_content_sync(block, new_private) is not None, path
 
-    def test_the_api_key_is_a_new_one(self, migrated: dict, keys: Keys) -> None:
-        new_private = self._new_private_key(migrated, keys)
-        api_key = decrypt_age_content_sync(migrated["config"]["api-key"], new_private)
+    def test_de_projectsleutel_wordt_een_vers_token(self, migrated: dict) -> None:
+        """De productiesleutel gaat niet mee: een token dat daar werkt hoort hier niet te werken."""
+        assert "api-key" not in migrated["config"]
 
-        assert api_key is not None
-        assert api_key != "0123456789abcdef0123456789abcdef"
+        account = next(lid for lid in migrated["users"] if lid.get("name") == "project-api")
+        hash_hex = account["tokens"][0]["hash"]
+        assert len(hash_hex) == 64
+        assert hash_hex != hash_van("0123456789abcdef0123456789abcdef")
+
+    def test_een_bestaand_token_wordt_opnieuw_gemunt(self, production_project: dict, keys: Keys) -> None:
+        production_project["users"] = [
+            {
+                "email": "lid@rijksoverheid.nl",
+                "role": "admin",
+                "tokens": [{"name": "cli", "expires": "2030-01-01T00:00:00+00:00", "hash": "a" * 64}],
+            }
+        ]
+        omgezet = migrate_project(production_project, keys.prod_private, keys.sandbox_public)
+
+        hashes = [t["hash"] for lid in omgezet["users"] for t in lid.get("tokens") or []]
+        assert "a" * 64 not in hashes
 
     def test_user_env_var_values_are_a_placeholder_with_the_keys_kept(self, migrated: dict, keys: Keys) -> None:
         new_private = self._new_private_key(migrated, keys)

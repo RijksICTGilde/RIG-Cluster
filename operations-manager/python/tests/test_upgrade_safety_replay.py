@@ -394,7 +394,7 @@ async def test_replay_reports_schema_failure() -> None:
     """A file that violates the JSON schema must be reported at the schema stage."""
     raw = _load(str(FIXTURES_DIR / "algor-odc.yaml"))
     # An encrypted field carrying a plaintext value fails the AGE pattern in the schema.
-    raw["config"]["api-key"] = "not-an-encrypted-value"
+    raw["config"]["age-private-key"] = "not-an-encrypted-value"
 
     outcome = await replay_project_data(raw, "broken-schema")
     assert outcome.stage == "schema", f"expected schema failure, got {outcome.stage}: {outcome.error}"

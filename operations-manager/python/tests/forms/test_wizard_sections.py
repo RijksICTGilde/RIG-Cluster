@@ -80,7 +80,7 @@ class TestCoreSections:
     def test_config_display_section_is_readonly(self):
         assert CONFIG_DISPLAY_SECTION.section_id == "config"
         assert CONFIG_DISPLAY_SECTION.is_readonly is True
-        assert len(CONFIG_DISPLAY_SECTION.editables) == 3
+        assert len(CONFIG_DISPLAY_SECTION.editables) == 2
 
 
 class TestConditionalSections:

@@ -8,9 +8,11 @@ dat bestand weghalen helpt: opruimen op het CLUSTER komt terug, ook met
 er al staan, en voor het venster dat daar overblijft: valt de aanmaak om voordat de
 voortgangspagina de naam toont, dan weet de helper niet wat hij moet opruimen.
 
-WAAROM DIT NIET DE API-ROUTE GEBRUIKT. ``DELETE /api/projects/{naam}`` wil de EIGEN
-API-sleutel van het project, en die staat alleen op de detailpagina (``sandbox_api.read_api_key``
-schraapt hem daar). Zonder browser is er dus geen sleutel. Blijft over de webroute
+WAAROM DIT NIET DE API-ROUTE GEBRUIKT. ``DELETE /api/projects/{naam}`` wil een bewijsmiddel
+van het project zelf. Sinds schemaversie 2.12 is dat een token van ``project-api``, en dat
+bestaat alleen als je er een uitgeeft (``sandbox_api.geef_projecttoken``), wat zelf al de drie
+eisen hieronder stelt. Voor een WEES is dat een omweg: zijn projectbestand staat er wel, maar
+het project is nooit afgemaakt. Blijft over de webroute
 ``POST /projects/delete/{naam}``, en die wil drie dingen TEGELIJK:
 
 1. een getekende sessiecookie, dezelfde ondertekening als de e2e-fixtures gebruiken

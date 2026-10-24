@@ -88,7 +88,7 @@ curl -X DELETE "https://zad.rijksapps.nl/api/v2/projects/mijnproject/productie" 
 Een geweigerde aanroep krijgt 403 met een problem-detail (`application/problem+json`)
 waarvan `type` op `urn:zad:step-up-required` staat. Daaraan hoort een client te zien dat
 hij om een code moet vragen en de aanroep moet herhalen. Een ontbrekend of ongeldig token
-blijft gewoon 401.
+blijft 401.
 
 | veld | wat het zegt |
 |---|---|

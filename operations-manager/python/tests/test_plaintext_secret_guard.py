@@ -18,16 +18,23 @@ from opi.core.project_schema import ProjectSchemaError, find_plaintext_secret_vi
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nc29tZQ==\n-----END AGE ENCRYPTED FILE-----"
 
 
-def _project(*, api_key: str = AGE_BLOCK, private_key: str = AGE_BLOCK) -> dict:
+def _project(*, repo_password: str = AGE_BLOCK, private_key: str = AGE_BLOCK) -> dict:
     return {
         "schema-version": 2,
         "name": "demo",
         "clusters": ["odcn-production"],
         "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "repositories": [
+            {
+                "name": "main-repo",
+                "url": "https://forgejo.example.test/org/repo.git",
+                "username": "git",
+                "password": repo_password,
+            }
+        ],
         "config": {
             "age-public-key": "age1qqqqqqqqqq",
             "age-private-key": private_key,
-            "api-key": api_key,
         },
     }
 
@@ -36,9 +43,9 @@ def test_encrypted_project_has_no_violations() -> None:
     assert find_plaintext_secret_violations(_project()) == []
 
 
-def test_decrypted_api_key_is_detected() -> None:
-    violations = find_plaintext_secret_violations(_project(api_key="sk-live-plaintext-secret"))
-    assert "config/api-key" in violations
+def test_decrypted_repository_password_is_detected() -> None:
+    violations = find_plaintext_secret_violations(_project(repo_password="sk-live-plaintext-secret"))
+    assert "repositories/0/password" in violations
 
 
 def test_decrypted_private_key_is_detected() -> None:
@@ -47,8 +54,8 @@ def test_decrypted_private_key_is_detected() -> None:
 
 
 def test_all_decrypted_secrets_are_reported_together() -> None:
-    violations = find_plaintext_secret_violations(_project(api_key="plain-key", private_key="plain-priv"))
-    assert set(violations) >= {"config/api-key", "config/age-private-key"}
+    violations = find_plaintext_secret_violations(_project(repo_password="plain-key", private_key="plain-priv"))
+    assert set(violations) >= {"repositories/0/password", "config/age-private-key"}
 
 
 async def test_store_refuses_plaintext_secret_even_without_enforcement() -> None:
@@ -56,7 +63,7 @@ async def test_store_refuses_plaintext_secret_even_without_enforcement() -> None
     from opi.services.project_store import GitProjectStore
 
     store = GitProjectStore(working_dir="/tmp/unused-by-this-test")
-    leaked = _project(api_key="sk-live-plaintext-secret")
+    leaked = _project(repo_password="sk-live-plaintext-secret")
 
     with pytest.raises(ProjectSchemaError, match="AGE-versleuteld"):
         await store._validate(leaked, enforce=False)

@@ -103,6 +103,7 @@ from opi.core.cluster_config import (
     supports_custom_domain_certificates,
 )
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.core.project_environment import deployment_environment, effective_environment
 from opi.core.step_up import StepUpActie
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
@@ -555,6 +556,7 @@ async def _deployment_details(project_name: str, project_data: dict[str, Any]) -
     tags=["deployments"],
     response_model=ClusterListResponse,
 )
+@handeling(Handeling.CLUSTER_LEZEN)
 @validate_api_token
 async def list_clusters_v2(
     request: Request,
@@ -639,6 +641,7 @@ async def list_clusters_v2(
         429: {"description": "Too many checks; wait before asking again"},
     },
 )
+@handeling(Handeling.SUBDOMEIN_LEZEN)
 @validate_api_token
 async def check_subdomain_availability_v2(
     request: Request,
@@ -740,6 +743,7 @@ async def check_subdomain_availability_v2(
     tags=["deployments"],
     response_model=DeploymentListResponse,
 )
+@handeling(Handeling.DEPLOYMENT_LEZEN)
 @validate_api_token
 async def list_deployments_v2(
     request: Request,
@@ -771,6 +775,7 @@ async def list_deployments_v2(
     tags=["deployments"],
     response_model=DeploymentDetail,
 )
+@handeling(Handeling.DEPLOYMENT_LEZEN)
 @validate_api_token
 async def get_deployment_v2(
     request: Request,
@@ -884,6 +889,7 @@ async def _pending_rollout_or_none(request: Request, project_name: str) -> Pendi
     summary="Saved changes that have not been rolled out",
     response_model=PendingRolloutResponse,
 )
+@handeling(Handeling.PROJECT_LEZEN)
 @validate_api_token
 async def pending_rollout_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
     """Report how far the project file runs ahead of the cluster.
@@ -970,6 +976,7 @@ class ProjectDetailResponse(BaseModel):
     summary="Which services this project uses",
     response_model=ProjectServicesResponse,
 )
+@handeling(Handeling.DIENST_LEZEN)
 @validate_api_token
 async def list_project_services_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
     """List every platform service the project uses, and on which layer.
@@ -1009,6 +1016,7 @@ async def list_project_services_v2(request: Request, project_name: ProjectNamePa
     summary="The component definitions of this project",
     response_model=ProjectComponentsResponse,
 )
+@handeling(Handeling.COMPONENT_LEZEN)
 @validate_api_token
 async def list_components_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
     """Read the components a project defines: ports, routing, resources and bindings.
@@ -1048,6 +1056,7 @@ async def list_components_v2(request: Request, project_name: ProjectNamePath) ->
     summary="The whole project in one answer",
     response_model=ProjectDetailResponse,
 )
+@handeling(Handeling.PROJECT_LEZEN)
 @validate_api_token
 async def get_project_v2(request: Request, project_name: ProjectNamePath) -> JSONResponse:
     """Describe a project as a whole: services, components, deployments and pending changes.
@@ -1105,6 +1114,7 @@ def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DEPLOYMENT_SCHRIJVEN)
 @validate_api_token
 @requires_step_up(deployment_environment_downgrade, actie=StepUpActie.MARKERING_VERLAGEN)
 async def upsert_deployment_v2(
@@ -1189,9 +1199,10 @@ async def upsert_deployment_v2(
         401: {"description": "No valid bearer token"},
     },
 )
+@handeling(Handeling.PROJECT_LIJSTEN)
 @validate_user_token
 async def list_projects_v2(request: Request, response: Response) -> ProjectListResponse:
-    """List the projects this caller may see, with the API key of the ones they administer.
+    """List the projects this caller may see.
 
     A CLI that starts up knows a token and nothing else: the per-project API key
     cannot be used to ask which projects exist, because you need the project name
@@ -1203,25 +1214,26 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     is a member of it. A project the caller may not see is absent entirely, name
     included.
 
-    **The response contains secrets.** An entry carries that project's API key
-    when the caller's role in it is ``admin`` or ``owner``, so the CLI can switch
-    context and act without a second call. That is exactly the gate the project
-    detail page uses for the same key, and exactly the gate the web UI puts in
-    front of every project mutation: the key itself carries no role, so handing
-    it to a ``developer`` would let them do through the API what the UI refuses
-    them. A ``developer`` therefore sees the project, its description and their
-    role, and ``api_key`` is ``null``. Do not log this response.
+    **``api_key`` is ``null`` on schema version 2.12.** The project key became a
+    token of the ``project-api`` service account, of which the project file holds
+    only the hash, so there is nothing left to hand out. A file whose old key the
+    migration could not decrypt keeps it in ``config.api-key``, but a key the
+    platform cannot read legitimates nobody and is registered nowhere, so it is
+    not handed out either. The role gate stays in front of the field for as long
+    as the field exists: a ``developer`` or ``member`` always gets ``null``, the
+    same gate the web UI puts in front of every project mutation, because that key
+    carries no role of its own. Whatever the field carries is a secret: do not log
+    this response.
 
-    **The ``api_key`` field is deprecated.** Ask for one project's key with
-    ``GET /api/v2/projects/{project_name}/api-key``, which hands out one key per
-    call and logs who got it. The field disappears from this list once the CLI
-    uses that route.
+    **The ``api_key`` field is deprecated** and goes away with the key itself. A
+    caller that needs a credential issues a token: ``POST
+    /api/v2/projects/{project_name}/leden/{naam}/tokens``, whose value is returned
+    once and never again.
 
-    **A platform administrator sees every project, with every key.** That is
-    deliberate and follows from the platform-admin rule the whole application
-    uses: an administrator can already open any project's page and read its key
-    there. It is not a separate "list everything" mode and there is no flag to
-    ask for one.
+    **A platform administrator sees every project.** That is deliberate and
+    follows from the platform-admin rule the whole application uses: an
+    administrator can already open any project's page. It is not a separate "list
+    everything" mode and there is no flag to ask for one.
 
     Headers:
         Authorization: Bearer <SSO access token> (required)
@@ -1266,8 +1278,10 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
         401: {"description": "No valid bearer token"},
         403: {"description": "The caller's role in this project may not hold its key"},
         404: {"description": "No such project, or the caller may not reach it"},
+        410: {"description": "Dit project heeft geen projectsleutel meer; gebruik een token"},
     },
 )
+@handeling(Handeling.PROJECTSLEUTEL_LEZEN)
 @validate_user_token
 async def get_project_api_key_v2(
     request: Request, response: Response, project_name: ProjectNamePath
@@ -1294,6 +1308,18 @@ async def get_project_api_key_v2(
             detail=f"Role '{role}' may not hold the API key of project '{project_name}'",
         )
 
+    if project.api_key is None:
+        # Sinds schemaversie 2.12 heeft een project geen eigen sleutel meer: die is een
+        # token van het service account ``project-api`` geworden. Er is hier dus niets meer
+        # te overhandigen, en een leeg antwoord zou dat verzwijgen.
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                f"Project '{project_name}' heeft geen projectsleutel meer. Geef een token uit met "
+                f"POST /api/v2/projects/{project_name}/leden/{{naam}}/tokens"
+            ),
+        )
+
     # The caller holds a secret after this; who asked for which key is the point
     # of the route, so it is logged. The key itself never is.
     logger.info("V2 API key of project %s handed to %s", project_name, caller_email)
@@ -1312,6 +1338,7 @@ async def get_project_api_key_v2(
         401: {"description": "No valid bearer token"},
     },
 )
+@handeling(Handeling.PROJECT_AANMAKEN)
 @validate_user_token
 async def create_project_v2(
     request: Request,
@@ -1413,6 +1440,7 @@ async def create_project_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.PROJECT_VERVERSEN)
 @validate_api_token
 async def refresh_project_v2(
     request: Request,
@@ -1497,6 +1525,7 @@ async def rotate_project_key_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DEPLOYMENT_VERWIJDEREN)
 @validate_api_token
 @requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
 async def delete_deployment_v2(
@@ -1537,6 +1566,7 @@ async def delete_deployment_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DEPLOYMENT_IMAGE_VERVANGEN)
 @validate_api_token
 async def update_image_v2(
     request: Request,
@@ -1592,6 +1622,7 @@ async def update_image_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DATABASE_KLONEN)
 @validate_api_token
 async def clone_database_v2(
     request: Request,
@@ -1643,6 +1674,7 @@ async def clone_database_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.BUCKET_KLONEN)
 @validate_api_token
 async def clone_bucket_v2(
     request: Request,
@@ -1694,6 +1726,7 @@ async def clone_bucket_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DEPLOYMENT_VERVERSEN)
 @validate_api_token
 async def refresh_deployment_v2(
     request: Request,
@@ -1759,6 +1792,7 @@ class RotateCredentialsRequest(BaseModel):
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DIENST_ACTIE)
 @validate_api_token
 async def rotate_credentials_v2(
     request: Request,
@@ -1829,6 +1863,7 @@ async def rotate_credentials_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.COMPONENT_TOEVOEGEN)
 @validate_api_token
 async def add_component_v2(
     request: Request,
@@ -1898,6 +1933,7 @@ async def add_component_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.COMPONENT_WIJZIGEN)
 @validate_api_token
 async def update_component_v2(
     request: Request,
@@ -1977,6 +2013,7 @@ ConfirmInUseQuery = Annotated[
         409: {"description": "The component is still in use; the body names every place"},
     },
 )
+@handeling(Handeling.COMPONENT_VERWIJDEREN)
 @validate_api_token
 @requires_step_up(component_in_production, actie=StepUpActie.COMPONENT_VERWIJDEREN)
 async def delete_component_v2(
@@ -2071,6 +2108,7 @@ async def delete_component_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.COMPONENT_KOPPELEN)
 @validate_api_token
 async def add_component_to_deployment_v2(
     request: Request,
@@ -2136,6 +2174,7 @@ async def add_component_to_deployment_v2(
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
     },
 )
+@handeling(Handeling.DIENST_TOEVOEGEN)
 @validate_api_token
 async def add_service_v2(
     request: Request,
@@ -2662,6 +2701,7 @@ def _collect_service_config(project_data: dict[str, Any], service_name: str, tar
 
 
 @v2_router.get("/projects/{project_name}/services/{service_name}/config", tags=["services"])
+@handeling(Handeling.DIENST_LEZEN)
 @validate_api_token
 async def get_service_config_v2(
     request: Request,
@@ -3197,8 +3237,10 @@ def _register_service_config_routes(router: APIRouter) -> None:
             body_model = singular_config_model(model, singular) if singular else model
             router.add_api_route(
                 path,
-                validate_api_token(
-                    _make_upsert_endpoint(service_name, target, name_param, body_model, managed, singular)
+                handeling(Handeling.DIENST_CONFIGUREREN)(
+                    validate_api_token(
+                        _make_upsert_endpoint(service_name, target, name_param, body_model, managed, singular)
+                    )
                 ),
                 methods=["PUT"],
                 tags=[service_name],
@@ -3208,7 +3250,9 @@ def _register_service_config_routes(router: APIRouter) -> None:
             )
             router.add_api_route(
                 path,
-                validate_api_token(_make_clear_endpoint(service_name, target, name_param)),
+                handeling(Handeling.DIENST_CONFIGUREREN)(
+                    validate_api_token(_make_clear_endpoint(service_name, target, name_param))
+                ),
                 methods=["DELETE"],
                 tags=[service_name],
                 responses=_CONFIG_WRITE_RESPONSES,
@@ -3228,7 +3272,11 @@ def _register_service_config_routes(router: APIRouter) -> None:
                 what = f"{service_name} {spec.name}" if spec.name else f"{service_name} config"
                 router.add_api_route(
                     path + spec.path_suffix,
-                    validate_api_token(_make_patch_endpoint(service_name, target, name_param, patch_body, spec.name)),
+                    handeling(Handeling.DIENST_CONFIGUREREN)(
+                        validate_api_token(
+                            _make_patch_endpoint(service_name, target, name_param, patch_body, spec.name)
+                        )
+                    ),
                     methods=["PATCH"],
                     tags=[service_name],
                     responses=_CONFIG_WRITE_RESPONSES,
@@ -3446,6 +3494,7 @@ def _schema_row(
     responses={404: {"description": "No such project, or the project does not use postgresql-database"}},
     summary="List the database schemas of a project",
 )
+@handeling(Handeling.DATABASE_SCHEMA_LEZEN)
 @validate_api_token
 async def list_database_schemas_v2(request: Request, project_name: ProjectNamePath) -> DatabaseSchemaListResponse:
     """The project's database schemas, with the names that follow from them.
@@ -3596,6 +3645,7 @@ async def _enqueue_schema_write(
         "result; the write and the rollout both happen inside that task."
     ),
 )
+@handeling(Handeling.DATABASE_SCHEMA_BEHEREN)
 @validate_api_token
 async def add_database_schema_v2(
     request: Request,
@@ -3667,6 +3717,7 @@ async def add_database_schema_v2(
         "result."
     ),
 )
+@handeling(Handeling.DATABASE_SCHEMA_BEHEREN)
 @validate_api_token
 async def remove_database_schema_v2(
     request: Request,
@@ -4028,7 +4079,9 @@ def _register_service_action_routes(router: APIRouter) -> None:
             for method, verbs in _action_routes(action):
                 router.add_api_route(
                     _action_path(service_type.value, action, verbs),
-                    validate_api_token(_make_action_endpoint(action, verbs)),
+                    handeling(Handeling.DIENST_LEZEN if method == "GET" else Handeling.DIENST_ACTIE)(
+                        validate_api_token(_make_action_endpoint(action, verbs))
+                    ),
                     methods=[method],
                     tags=[service_type.value],
                     summary=f"{action.summary} ({'/'.join(v.value for v in verbs)})",
@@ -4461,7 +4514,9 @@ def _register_service_values_routes(router: APIRouter) -> None:
             for route_path, method, operation, keyed, summary in routes:
                 router.add_api_route(
                     route_path,
-                    validate_api_token(_make_values_endpoint(service_name, service, layer, operation, keyed=keyed)),
+                    handeling(Handeling.DIENST_WAARDEN_SCHRIJVEN)(
+                        validate_api_token(_make_values_endpoint(service_name, service, layer, operation, keyed=keyed))
+                    ),
                     methods=[method],
                     tags=[service_name],
                     responses=_VALUES_RESPONSES,
@@ -4475,7 +4530,9 @@ def _register_service_values_routes(router: APIRouter) -> None:
             # could see THAT a component had variables and never which.
             router.add_api_route(
                 path,
-                validate_api_token(_make_values_read_endpoint(service_name, service, layer)),
+                handeling(Handeling.DIENST_LEZEN)(
+                    validate_api_token(_make_values_read_endpoint(service_name, service, layer))
+                ),
                 methods=["GET"],
                 tags=[service_name],
                 response_model=ServiceValuesRead,
