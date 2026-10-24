@@ -22,7 +22,7 @@ from tests.e2e.testserver import SECRET_KEY
 
 from security_tests import sandbox
 from security_tests.doel import TOKEN_HEADER
-from security_tests.sandbox import RouteLogApp, TokenHeaderApp, _sessiekoekje
+from security_tests.sandbox import RouteLogApp, TokenHeaderApp, sessiekoekje
 from security_tests.sandboxlog import asgi_fouten, laat_los, lees, route_uit, vang_op, vensters
 
 if TYPE_CHECKING:
@@ -180,7 +180,7 @@ async def test_route_log_app_bemoeit_zich_niet_met_lifespan() -> None:
 
 def test_sessiekoekje_is_een_geldig_starlette_sessiekoekje() -> None:
     """Zonder dit koekje leest OPI's SessionMiddleware een anonieme aanroeper in plaats van een rol."""
-    koekje = _sessiekoekje("proef-admin@example.nl", "Proef ZAD-admin")
+    koekje = sessiekoekje("proef-admin@example.nl", "Proef ZAD-admin")
     data = TimestampSigner(SECRET_KEY).unsign(koekje.encode())
     sessie = json.loads(b64decode(data))
     assert sessie["user"]["email"] == "proef-admin@example.nl"
@@ -190,7 +190,7 @@ def test_sessiekoekje_is_een_geldig_starlette_sessiekoekje() -> None:
 
 def test_sessiekoekje_met_een_ander_geheim_wordt_geweigerd() -> None:
     """Negatief voorbeeld: een koekje dat niet met OPI's eigen geheim is ondertekend, hoort te falen."""
-    koekje = _sessiekoekje("proef-admin@example.nl", "Proef ZAD-admin")
+    koekje = sessiekoekje("proef-admin@example.nl", "Proef ZAD-admin")
     with pytest.raises(Exception, match="Signature"):
         TimestampSigner("een-ander-geheim-dat-niet-klopt").unsign(koekje.encode())
 

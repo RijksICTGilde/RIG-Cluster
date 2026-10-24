@@ -91,10 +91,10 @@ def beoordeel_te_groot(status: int) -> str | None:
     return f"aangenomen met {status} waar 413 hoort"
 
 
-def test_een_te_grote_body_wordt_geweigerd(doel: Doel, anoniem: httpx.Client) -> None:
+def test_een_te_grote_body_wordt_geweigerd(proefproject: str, anoniem: httpx.Client) -> None:
     """Faalconditie: een body ver boven het plafond wordt aangenomen of geeft 5xx."""
     bevindingen = []
-    for methode, pad in bijlageroutes(doel.projecten[0]):
+    for methode, pad in bijlageroutes(proefproject):
         antwoord = anoniem.request(methode, pad, files=_multipart(TE_GROOT))
         melding = beoordeel_te_groot(antwoord.status_code)
         if melding:
@@ -102,9 +102,9 @@ def test_een_te_grote_body_wordt_geweigerd(doel: Doel, anoniem: httpx.Client) ->
     assert not bevindingen, "\n".join(bevindingen)
 
 
-def test_een_te_grote_body_met_projectsleutel_wordt_geweigerd(doel: Doel) -> None:
+def test_een_te_grote_body_met_projectsleutel_wordt_geweigerd(doel: Doel, proefproject: str) -> None:
     """Dezelfde grens, maar met een geldige sleutel: niet alleen de auth-laag weigert hem."""
-    project = doel.projecten[0]
+    project = proefproject
     bevindingen = []
     with sleutelclient(doel, project) as client:
         for methode, pad in bijlageroutes(project)[1:]:
@@ -115,7 +115,9 @@ def test_een_te_grote_body_met_projectsleutel_wordt_geweigerd(doel: Doel) -> Non
     assert not bevindingen, "\n".join(bevindingen)
 
 
-def test_de_image_push_weigert_zonder_sleutel_voor_de_body(doel: Doel, anoniem: httpx.Client) -> None:
+def test_de_image_push_weigert_zonder_sleutel_voor_de_body(
+    doel: Doel, proefproject: str, anoniem: httpx.Client
+) -> None:
     """Faalconditie: een push zonder geldige sleutel wordt pas na de body geweigerd.
 
     ``BodyLimitMiddleware`` doet deze controle vóór de multipart-parser, want een tarball van
@@ -123,20 +125,22 @@ def test_de_image_push_weigert_zonder_sleutel_voor_de_body(doel: Doel, anoniem: 
     er is en dat de pod er niet van groeit.
     """
     voor = geheugenbeeld(doel.pid)
-    antwoord = anoniem.post(image_pushroute(doel.projecten[0]), files=_multipart(PUSHBODY_BYTES))
-    assert antwoord.status_code == 401, f"image-push zonder sleutel gaf {antwoord.status_code}"
+    antwoord = anoniem.post(image_pushroute(proefproject), files=_multipart(PUSHBODY_BYTES))
+    # 429 ook: na een reeks mislukte pogingen weigert de limiter van RC-368 nog eerder dan de
+    # sleutelcontrole. Beide weigeren voor de body, en dat is wat deze proef meet.
+    assert antwoord.status_code in (401, 429), f"image-push zonder sleutel gaf {antwoord.status_code}"
     groei = geheugenbeeld(doel.pid) - voor
     assert groei < GROEIGRENS_BYTES, f"de pod groeide {groei // 1024 // 1024} MB van een geweigerde push"
 
 
-def test_de_image_push_weigert_voor_de_body_in_het_geheugen_landt(doel: Doel) -> None:
+def test_de_image_push_weigert_voor_de_body_in_het_geheugen_landt(doel: Doel, proefproject: str) -> None:
     """Deze route heeft een eigen plafond van gigabytes, dus een body erboven is niet te sturen.
 
     Wat hier wel te meten is: de weigering komt voor de body (in de proefsandbox is geen
     registry geconfigureerd, dus 501) en kost geen geheugen. Een echte push naar een registry
     valt buiten de proef: de skopeo-binary is nagebootst.
     """
-    project = doel.projecten[0]
+    project = proefproject
     voor = geheugenbeeld(doel.pid)
     with sleutelclient(doel, project) as client:
         begin = time.monotonic()

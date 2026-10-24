@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from security_tests.baseline import toets_tegen_baseline
+from security_tests.baseline import meldingen_van, oordeel_tegen_baseline
 from security_tests.doel import RAPPORTMAP, TOKEN_HEADER
 
 if TYPE_CHECKING:
@@ -26,14 +26,14 @@ if TYPE_CHECKING:
 
     from security_tests.doel import Doel
 
-PROEF = "zap"
-
 #: Het ZAP-image, op de bewegende stabiele tag van het project zelf. Geen digest-pin: dit
 #: is lokaal gereedschap en een vaste digest zou elke ZAP-uitgave met de hand vragen.
 ZAP_IMAGE = "ghcr.io/zaproxy/zaproxy:stable"
 
-#: Vanaf welk risiconiveau een bevinding meetelt. ZAP's riskcode: 0 info, 1 laag, 2 midden, 3 hoog.
-RISICODREMPEL = 2
+#: Vanaf welk risiconiveau een alert een bevinding is. ZAP's riskcode: 0 info, 1 laag (WARN),
+#: 2 midden, 3 hoog. Vanaf WARN, want een alert die de gate niet laat falen en nergens als
+#: geaccepteerd staat is precies de stille waarschuwing die de groene lijst uitsluit.
+RISICODREMPEL = 1
 
 #: Hoe lang een pas mag duren voordat we hem afbreken.
 TIJDBUDGET_SECONDEN = 900
@@ -47,12 +47,28 @@ HOSTNAAM_IN_CONTAINER = "host.docker.internal"
 
 @dataclass
 class ZapUitkomst:
-    """Wat een ZAP-ronde opleverde."""
+    """Wat een ZAP-ronde opleverde: de WARN's en hoger per pas, en wat ZAP informatie noemt.
+
+    ``niet_gemeten`` staat los van ``meldingen``: een pas zonder herkenning op dit doel heeft
+    niets beproefd, en dat is NIET GEMETEN en geen bevinding.
+    """
 
     gemeten: bool
     reden: str = ""
     bevindingen: dict[str, str] = field(default_factory=dict)
+    informatie: dict[str, str] = field(default_factory=dict)
     meldingen: list[str] = field(default_factory=list)
+    verouderd: dict[str, str] = field(default_factory=dict)
+    niet_gemeten: dict[str, str] = field(default_factory=dict)
+
+
+def proefnaam(pas: str) -> str:
+    """De naam waaronder de baseline de bevindingen van deze pas kent.
+
+    Per pas, want wat een naamloze aanroeper ziet is een andere uitspraak dan wat een
+    beheerder ziet.
+    """
+    return f"zap-{pas}"
 
 
 def zap_beschikbaar() -> tuple[bool, str]:
@@ -124,6 +140,15 @@ def _header_opties(naam: str, waarde: str) -> list[str]:
     ]
 
 
+def ontbrekende_herkenning(doel: Doel, pas: str) -> str:
+    """Leeg als deze pas zijn herkenning op dit doel heeft, anders waarom niet."""
+    if pas == "projectlid" and not doel.projecten:
+        return "dit doel heeft geen proefproject met een API-sleutel"
+    if pas == "zad-admin" and "zad-admin" not in doel.sessies:
+        return "dit doel heeft geen ondertekende sessie voor rol zad-admin"
+    return ""
+
+
 def commando(doel: Doel, pas: str, rapport: Path) -> list[str]:
     """Het docker-commando voor een pas, met de weg naar het doel uit ``containerdoel``."""
     opties: list[str] = []
@@ -152,18 +177,32 @@ def commando(doel: Doel, pas: str, rapport: Path) -> list[str]:
     ]
 
 
-def lees_bevindingen(rapport: Path, drempel: int = RISICODREMPEL) -> dict[str, str]:
-    """De bevindingen uit een ZAP-rapport vanaf de risicodrempel, als kenmerk naar melding."""
+def _routes(alarm: dict) -> list[str]:
+    """De routes waarop dit alarm viel: het pad, niet de volledige URL.
+
+    Het pad en niet de URL, want hetzelfde alarm op hetzelfde pad is dezelfde regel, ook als
+    de sandbox op een andere poort of achter een ingress staat.
+    """
+    paden = {urlparse(geval.get("uri", "")).path or "/" for geval in alarm.get("instances", [])}
+    return sorted(paden) or ["?"]
+
+
+def lees_alerts(rapport: Path, drempel: int = RISICODREMPEL) -> tuple[dict[str, str], dict[str, str]]:
+    """De alerts uit een ZAP-rapport: de bevindingen vanaf de drempel, en de informatie eronder.
+
+    Het kenmerk is ``<pluginid>:<route>``, dus dezelfde vorm als in de baseline.
+    """
     inhoud = json.loads(rapport.read_text())
     bevindingen: dict[str, str] = {}
+    informatie: dict[str, str] = {}
     for site in inhoud.get("site", []):
         for alarm in site.get("alerts", []):
-            if int(alarm.get("riskcode", 0)) < drempel:
-                continue
-            kenmerk = f"{alarm.get('pluginid', '?')} {alarm.get('name', '?')}"
-            urls = sorted({geval.get("uri", "") for geval in alarm.get("instances", [])})
-            bevindingen[kenmerk] = f"risico {alarm.get('riskdesc', '?')} op {', '.join(urls[:3])}"
-    return bevindingen
+            doel = bevindingen if int(alarm.get("riskcode", 0)) >= drempel else informatie
+            for route in _routes(alarm):
+                doel[f"{alarm.get('pluginid', '?')}:{route}"] = (
+                    f"{alarm.get('name', '?')} (risico {alarm.get('riskdesc', '?')})"
+                )
+    return bevindingen, informatie
 
 
 def draai(doel: Doel, passen: tuple[str, ...] = ("ongeauthenticeerd", "projectlid", "zad-admin")) -> ZapUitkomst:
@@ -183,7 +222,15 @@ def draai(doel: Doel, passen: tuple[str, ...] = ("ongeauthenticeerd", "projectli
     zapmap.mkdir(parents=True, exist_ok=True)
     zapmap.chmod(0o1777)
     alles: dict[str, str] = {}
+    info: dict[str, str] = {}
+    meldingen: list[str] = []
+    verouderd: dict[str, str] = {}
+    niet_gemeten: dict[str, str] = {}
     for pas in passen:
+        ontbreekt = ontbrekende_herkenning(doel, pas)
+        if ontbreekt:
+            niet_gemeten[pas] = ontbreekt
+            continue
         rapport = zapmap / f"zap-{pas}.json"
         log = RAPPORTMAP / f"zap-{pas}.log"
         # Elk rapport moet van deze pas zijn. Een oud rapport dat niet weg kan is NIET GEMETEN.
@@ -215,5 +262,17 @@ def draai(doel: Doel, passen: tuple[str, ...] = ("ongeauthenticeerd", "projectli
                     " het doel wel, dus ZAP brak op iets anders af"
                 ),
             )
-        alles.update({f"{pas}/{kenmerk}": melding for kenmerk, melding in lees_bevindingen(rapport).items()})
-    return ZapUitkomst(gemeten=True, bevindingen=alles, meldingen=toets_tegen_baseline(PROEF, alles))
+        bevindingen, informatief = lees_alerts(rapport)
+        alles.update({f"{pas}/{kenmerk}": melding for kenmerk, melding in bevindingen.items()})
+        info.update({f"{pas}/{kenmerk}": melding for kenmerk, melding in informatief.items()})
+        oordeel = oordeel_tegen_baseline(proefnaam(pas), bevindingen, doel.soort)
+        meldingen += [f"{pas}: {melding}" for melding in meldingen_van(oordeel)]
+        verouderd.update({f"{pas}/{kenmerk}": reden for kenmerk, reden in oordeel.verouderd.items()})
+    return ZapUitkomst(
+        gemeten=True,
+        bevindingen=alles,
+        informatie=info,
+        meldingen=meldingen,
+        verouderd=verouderd,
+        niet_gemeten=niet_gemeten,
+    )

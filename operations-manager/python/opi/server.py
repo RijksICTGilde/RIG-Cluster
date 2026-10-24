@@ -37,7 +37,7 @@ from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
-from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
+from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, SECURITY_PROOF_HEADER, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
 # Initialize logging first, before any other imports that might log
@@ -901,8 +901,10 @@ def create_app() -> FastAPI:
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)
     @app.get("/healthz", include_in_schema=False, response_class=JSONResponse)
     async def liveness_check():
-        """Liveness probe for Kubernetes - always returns OK."""
-        return {"status": "ok"}
+        """Liveness probe for Kubernetes; draagt het proefdoel-token terug (als gezet)."""
+        token = settings.SECURITY_PROOF_TOKEN
+        headers = {SECURITY_PROOF_HEADER: token} if token else None
+        return JSONResponse({"status": "ok"}, headers=headers)
 
     # Version info - public, so anyone (and the E2E suite) can see which build is running.
     @app.get("/version", include_in_schema=True, tags=["meta"], response_class=JSONResponse)

@@ -12,11 +12,13 @@ from typing import TYPE_CHECKING
 from security_tests.sandboxlog import (
     asgi_fouten,
     beoordeel,
+    bestand_van,
     junit_sleutel,
     laatste_regels,
     lees,
     markeer,
     route_uit,
+    toetsnaam,
     vensters,
     waarom,
 )
@@ -176,3 +178,11 @@ def test_laatste_regels_geeft_het_staartje_voor_een_crash(tmp_path: Path) -> Non
 
 def test_laatste_regels_zonder_logboek_is_leeg(tmp_path: Path) -> None:
     assert laatste_regels(tmp_path / "bestaat-niet.log") == ()
+
+
+def test_junit_sleutel_zet_een_klasse_niet_in_het_pad() -> None:
+    """Faalconditie: de klasse wordt een map, en dan vindt het venster zijn proef niet terug."""
+    assert junit_sleutel("security_tests.test_zap.TestPas", "test_a") == "security_tests/test_zap.py::TestPas::test_a"
+    assert bestand_van("security_tests.test_zap.TestPas") == "test_zap"
+    assert toetsnaam("security_tests.test_zap.TestPas", "test_a") == "test_zap::TestPas::test_a"
+    assert toetsnaam("security_tests.test_uploads", "test_a") == "test_uploads::test_a"

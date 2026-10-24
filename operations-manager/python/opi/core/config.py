@@ -20,6 +20,12 @@ VERSION: str = os.environ.get("ZAD_VERSION", "0.1.0")
 BUILD_DATE: str = os.environ.get("ZAD_BUILD_DATE", "")
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
 
+#: Het enige cluster dat een doel van de aanvalsproef mag zijn.
+PROEFBAAR_CLUSTER = "sandboxed-local"
+
+#: De header waarin een proefdoel het token van de lopende run terugkaatst, op /health.
+SECURITY_PROOF_HEADER = "X-Zad-Proef"
+
 
 def _check_env_file_for_environment_var(file_path: str) -> None:
     """
@@ -213,6 +219,9 @@ class Settings(BaseSettings):
     # hem op 1 in zijn eigen configmap, want daar is die ene proxy de enige ingang. Zie
     # features/futures/client-ip-vertrouwen-achter-de-router.md.
     TRUSTED_PROXY_HOPS: int = 0
+
+    # Het per-run gemunte token waarmee de aanvalsproef deze instantie als doel herkent (header X-Zad-Proef op /health).
+    SECURITY_PROOF_TOKEN: str = ""
 
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
     # Default "production": een vergeten instelling valt naar de dichte kant, zonder
@@ -739,6 +748,16 @@ class Settings(BaseSettings):
     def _enforce_secure_secret_key(self) -> Settings:
         """Fail closed when an explicitly-set SECRET_KEY is too short."""
         validate_secret_key(self.SECRET_KEY)
+        return self
+
+    @model_validator(mode="after")
+    def _alleen_de_sandbox_mag_een_proeftoken(self) -> Settings:
+        """Weiger een proeftoken op elk cluster behalve de sandbox."""
+        if self.SECURITY_PROOF_TOKEN and self.CLUSTER_MANAGER != PROEFBAAR_CLUSTER:
+            raise RuntimeError(
+                f"SECURITY_PROOF_TOKEN is gezet op cluster {self.CLUSTER_MANAGER!r};"
+                f" alleen {PROEFBAAR_CLUSTER} mag een doel van de aanvalsproef zijn"
+            )
         return self
 
 

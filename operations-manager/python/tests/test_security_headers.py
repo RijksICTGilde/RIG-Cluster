@@ -129,6 +129,7 @@ class TestSecurityHeadersIntegration:
         assert response.headers["X-Frame-Options"] == "DENY"
         assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
         assert "geolocation=()" in response.headers["Permissions-Policy"]
+        assert response.headers["Cross-Origin-Resource-Policy"] == "same-origin"
         assert "Content-Security-Policy" in response.headers
 
     def test_csp_header_value(self, client: TestClient):

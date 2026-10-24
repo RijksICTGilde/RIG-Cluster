@@ -11,6 +11,7 @@ Headers set:
 - X-Frame-Options
 - Referrer-Policy
 - Permissions-Policy
+- Cross-Origin-Resource-Policy
 - Content-Security-Policy
 - Content-Security-Policy-Report-Only
 
@@ -99,6 +100,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        # ZAP 90004: zonder deze header mag een andere site een antwoord van het portaal in
+        # een eigen document inladen. Het portaal levert niets voor derden.
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
         response.headers.setdefault(
             "Permissions-Policy",
             "geolocation=(), microphone=(), camera=()",

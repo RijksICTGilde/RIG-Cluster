@@ -1,7 +1,12 @@
-proef	kenmerk	reden	bron
-web-payloads	GET /auth/login	de inlogflow heeft een Keycloak nodig en die draait niet in de wegwerp-sandbox; de route valt om op het opzetten van de OAuth-redirect	security-proof/README.md
-stortvloed	foute-sleutel/geen-429	een foute projectsleutel wordt nu nog volledig verwerkt; de snelle weigering komt uit RC-368, en zodra die op main staat hoort deze regel weg	RC-368
-web-payloads	GET /projects/progress/{task_id}	de voortgangsroutes zoeken de taakdienst op, en die draait niet in de wegwerp-sandbox (geen database); 503 is daar de goede uitkomst	security-proof/README.md
-web-payloads	GET /projects/progress/{task_id}/fragment	zelfde reden: geen taakdienst in de wegwerp-sandbox	security-proof/README.md
-web-payloads	GET /projects/{project_name}/task-progress/{task_id}	zelfde reden: geen taakdienst in de wegwerp-sandbox	security-proof/README.md
-web-payloads	GET /projects/{project_name}/modal-wizard/progress/{task_id}	zelfde reden: geen taakdienst in de wegwerp-sandbox	security-proof/README.md
+proef	doel	kenmerk	reden	bron
+web-payloads	lokaal	GET /auth/login	de inlogflow heeft een Keycloak nodig en die draait niet in de wegwerp-sandbox; de route valt om op het opzetten van de OAuth-redirect	security-proof/README.md
+web-payloads	lokaal	GET /projects/progress/{task_id}	de voortgangsroutes zoeken de taakdienst op, en die draait niet in de wegwerp-sandbox (geen database); 503 is daar de goede uitkomst	security-proof/README.md
+web-payloads	lokaal	GET /projects/progress/{task_id}/fragment	zelfde reden: geen taakdienst in de wegwerp-sandbox	security-proof/README.md
+web-payloads	lokaal	GET /projects/{project_name}/task-progress/{task_id}	zelfde reden: geen taakdienst in de wegwerp-sandbox	security-proof/README.md
+web-payloads	lokaal	GET /projects/{project_name}/modal-wizard/progress/{task_id}	zelfde reden: geen taakdienst in de wegwerp-sandbox	security-proof/README.md
+zap-ongeauthenticeerd		10023:/openapi.json	"vals positief: ZAP's lijst met debug-foutmeldingen matcht op ""Internal server error"", en dat is 11 keer de beschrijving van de 500-respons in het schema zelf, geen foutmelding van een verzoek"	security-proof/README.md
+zap-projectlid		10023:/openapi.json	zelfde vals positief op dezelfde tekst in het schema	security-proof/README.md
+zap-zad-admin		10023:/openapi.json	zelfde vals positief op dezelfde tekst in het schema	security-proof/README.md
+zap-zad-admin		100001:/	het antwoord is text/html met nosniff: / is een webpagina en staat niet in de OpenAPI, dus de api-scan verwacht JSON omdat hij alleen het schema als zaad kent	security-proof/README.md
+zap-zad-admin		100001:/dashboard	zelfde reden: /dashboard is een webpagina (text/html, nosniff) buiten de OpenAPI	security-proof/README.md
+web-payloads	lokaal	POST /step-up	de step-up toetst de OTP-factor in de database, en die draait niet in de wegwerp-sandbox: gemeten als socket.gaierror uit asyncpg, dus 500 is daar de verwachte uitkomst	security-proof/README.md

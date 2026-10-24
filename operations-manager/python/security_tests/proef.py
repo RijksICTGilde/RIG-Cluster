@@ -7,13 +7,14 @@ laag niets heeft kunnen meten: NIET GEMETEN leest nooit als groen. De codes staa
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
 from pathlib import Path
 
 from security_tests import sandboxlog, zap_scan
-from security_tests.doel import OPILOG, RAPPORTMAP, huidig_doel
-from security_tests.rapport import Crash, render, telling_uit_junit, uit_junit
+from security_tests.doel import LOKAAL, OPILOG, RAPPORTMAP, SANDBOX, OnveiligDoel, huidig_doel, lees_runbestand
+from security_tests.rapport import Crash, regels_uit_junit, regels_uit_zap, render, telling_uit_junit, uit_junit
 from security_tests.sandbox import proefsandbox
 
 #: Waar het junit-rapport van de fuzzers landt, en het rapport voor een lezer.
@@ -50,22 +51,40 @@ def draai_fuzzers() -> int:
     return uitkomst.returncode
 
 
+def _doelcontext() -> contextlib.AbstractContextManager[str]:
+    """De wegwerp-sandbox, tenzij het runbestand al naar een cluster-sandbox wijst."""
+    try:
+        doel = lees_runbestand()
+    except OnveiligDoel:
+        return proefsandbox()
+    if doel.soort == SANDBOX:
+        return contextlib.nullcontext(doel.url)
+    return proefsandbox()
+
+
 def main() -> int:
-    with proefsandbox():
+    with _doelcontext():
         doel = huidig_doel()
         print(f"proefsandbox staat op {doel.url}", flush=True)
         fuzzercode = draai_fuzzers()
         zap = zap_scan.draai(doel)
 
-    logboek = sandboxlog.lees(OPILOG)
+    # Alleen de wegwerp-sandbox logt in dit proces. Draait het doel in het cluster, dan zou het
+    # logboek van een vorige lokale run als het WAAROM van deze bevindingen lezen.
+    logboek = sandboxlog.lees(OPILOG) if doel.soort == LOKAAL else []
     bevindingen = uit_junit(JUNIT, sandboxlog.vensters(logboek))
     telling = telling_uit_junit(JUNIT)
     asgi = sandboxlog.asgi_fouten(logboek)
     onverklaard = [fout for fout in asgi if not fout.verwacht]
     # Een pytest die niet op een uitslag eindigde is zelf omgevallen; de laatste logregels
     # van OPI zeggen waar het proces op strandde.
-    crash = Crash(fuzzercode, sandboxlog.laatste_regels(OPILOG)) if fuzzercode not in (0, 1) else None
-    RAPPORT.write_text(render(bevindingen, zap, telling, asgi, crash))
+    crash = (
+        Crash(fuzzercode, sandboxlog.laatste_regels(OPILOG) if doel.soort == LOKAAL else ())
+        if fuzzercode not in (0, 1)
+        else None
+    )
+    lijst = regels_uit_junit(JUNIT) + regels_uit_zap(zap, doel.soort)
+    RAPPORT.write_text(render(bevindingen, zap, telling, asgi, crash, lijst, doel.soort))
     print(f"rapport: {RAPPORT}")
     for bevinding in bevindingen:
         print(f"BEVINDING {bevinding.proef}::{bevinding.naam}")
@@ -78,6 +97,7 @@ def main() -> int:
     niet_gemeten = []
     if not zap.gemeten:
         niet_gemeten.append(f"de ZAP-basislaag ({zap.reden})")
+    niet_gemeten += [f"ZAP-pas {pas} ({reden})" for pas, reden in sorted(zap.niet_gemeten.items())]
     if telling.gemeten == 0:
         niet_gemeten.append(f"geen enkele gerichte proef heeft iets beproefd ({telling.overgeslagen} overgeslagen)")
     if fuzzercode not in (0, 1):

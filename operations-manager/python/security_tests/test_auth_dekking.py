@@ -58,12 +58,16 @@ def beoordeel(antwoord: Antwoord) -> Uitkomst:
     paginaroute. 400 en 422 zijn onbeslist: de parameter- of bodyvalidatie van FastAPI loopt
     voor de handler, dus de herkenning kwam niet aan de beurt. Die routes worden met een
     geldige body beproefd in ``test_schemathesis.py``.
+
+    429 is ook onbeslist, en om dezelfde reden: de ratelimiter van RC-368 weigert voor de
+    handler, dus over de herkenning van die route zegt het antwoord niets. Een sweep langs
+    alle routen gaat sneller dan de burst van API_RATE_LIMIT_PER_MINUTE, dus dit komt voor.
     """
     if antwoord.status in (401, 403):
         return Uitkomst.GEWEIGERD
     if antwoord.status in (301, 302, 303, 307, 308):
         return Uitkomst.GEWEIGERD if antwoord.location.startswith("/auth/login") else Uitkomst.BEVINDING
-    if antwoord.status in (400, 422):
+    if antwoord.status in (400, 422, 429):
         return Uitkomst.ONBESLIST
     return Uitkomst.BEVINDING
 
@@ -109,6 +113,12 @@ def test_geen_route_laat_een_naamloze_aanroeper_door(anoniem: httpx.Client, doel
         f"{len(bevindingen)} van {len(routes)} routes weigeren een naamloze aanroeper niet:\n"
         + "\n".join(sorted(bevindingen))
     )
+    # Zonder deze grens kan de sweep stil blind worden: als de ratelimiter de helft van de
+    # routes weigert, is er over hun eigen herkenning niets gemeten en leest dat als groen.
+    assert len(per_uitkomst[Uitkomst.GEWEIGERD]) > len(routes) // 2, (
+        f"maar {len(per_uitkomst[Uitkomst.GEWEIGERD])} van {len(routes)} routes weigerden op hun eigen"
+        " herkenning; de rest bleef onbeslist, dus deze sweep heeft te weinig gemeten"
+    )
 
 
 def test_de_dekkingsproef_merkt_een_open_route_op() -> None:
@@ -133,6 +143,7 @@ def test_de_dekkingsproef_merkt_een_open_route_op() -> None:
         (Antwoord(302, "/auth/login"), Uitkomst.GEWEIGERD),
         (Antwoord(302, "/dashboard"), Uitkomst.BEVINDING),
         (Antwoord(422), Uitkomst.ONBESLIST),
+        (Antwoord(429), Uitkomst.ONBESLIST),
         (Antwoord(200), Uitkomst.BEVINDING),
         (Antwoord(500), Uitkomst.BEVINDING),
     ],

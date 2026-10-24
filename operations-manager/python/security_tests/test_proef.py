@@ -201,3 +201,26 @@ def test_een_pytest_crash_komt_met_de_laatste_logregels_in_het_rapport(
     assert "Crash van de proef zelf" in rapport
     assert "exitcode 2" in rapport
     assert "laatste woord" in rapport
+
+
+def test_een_zap_pas_zonder_herkenning_eindigt_niet_gemeten(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Faalconditie: een bewust ongemeten pas geeft 1 (bevinding) in plaats van 3.
+
+    Tegen een cluster-sandbox zonder proefsleutels en zonder sessie slaan twee van de drie
+    passen over; die run hoort NIET GEMETEN te zijn en niet rood.
+    """
+    _stub(
+        monkeypatch,
+        tmp_path,
+        fuzzercode=0,
+        bevindingen=[],
+        telling=Telling(toetsen=12, overgeslagen=0),
+        zap=ZapUitkomst(
+            gemeten=True,
+            meldingen=[],
+            niet_gemeten={"projectlid": "dit doel heeft geen proefproject met een API-sleutel"},
+        ),
+    )
+    assert proef.main() == proef.NIET_GEMETEN
+    rapport = (tmp_path / "aanvalsproef.md").read_text()
+    assert "projectlid alle regels" in rapport, "de overgeslagen pas hoort in de groene lijst te staan"
