@@ -1,5 +1,7 @@
 # Alarmeren op een sync of een verwijdering die blijft staan
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](verwijderpaden-in-kaart.md).
+
 Status: ontwerp, niets gebouwd. Opgeschreven op 5 oktober 2026 naast RC-250, en gemeten op
 het sandboxcluster (ArgoCD `v3.5.1-rig1`, argocd-operator).
 

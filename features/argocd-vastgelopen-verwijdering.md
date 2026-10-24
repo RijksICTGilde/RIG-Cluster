@@ -1,5 +1,7 @@
 # Een Application die niet weg wil, en het forceren dat rommel achterlaat
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 Het verwijderen van een ArgoCD-Application kan blijven hangen achter een lopende
 sync-operatie. OPI haalt die operatie nu eerst weg, en forceert pas nadat het de resources
 zelf heeft verwijderd. Er is een veegactie voor wat er al ligt.

@@ -1,5 +1,7 @@
 # Service-orphan reconciliation (rapport-eerst opruiming van DB's, Keycloak-clients, MinIO-buckets)
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 ## Probleem
 
 Deletes uit het pre-#123 tijdperk rapporteerden succes terwijl service-resources

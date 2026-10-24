@@ -1,5 +1,7 @@
 # Fix clone-status zombie databases
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](verwijderpaden-in-kaart.md).
+
 **Status**: gebouwd in RC-203 als een aangepaste optie B, zie `features/kloonpoging.md`. Het opruimen van bestaande zombies is niet gedaan.
 
 ## Problem

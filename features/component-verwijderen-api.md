@@ -1,5 +1,7 @@
 # Een component verwijderen via de API
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 Een component kan via de REST-API weer weg. `DELETE` op hetzelfde pad waar `PATCH` al
 zat:
 
