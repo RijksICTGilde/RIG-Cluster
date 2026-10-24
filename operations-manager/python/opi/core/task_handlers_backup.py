@@ -27,7 +27,7 @@ from opi.manager.backup import (
 from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.utils.naming import generate_backup_run_id
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 
 if TYPE_CHECKING:
     from opi.core.persistent_task_progress import PersistentTaskProgressManager
@@ -157,18 +157,19 @@ async def handle_backup(
             progress.fail_subtask(db_subtask, str(e))
             logger.exception("Database backup failed for %s/%s", project_name, deployment_name)
 
-    # MinIO backup
-    minio_service_types = [ServiceType.MINIO_STORAGE.value]
+    # Objectopslag: minio-storage of seaweedfs-storage. Beide dragen het backup_label
+    # "minio", hebben hetzelfde secret en gaan via dezelfde bucket-back-up.
+    minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
     if "minio" in resource_types and project_file_handler.deployment_uses_service(
         project_data, deployment_name, minio_service_types
     ):
-        minio_subtask = progress.add_subtask(backup_task, "MinIO backup")
+        minio_subtask = progress.add_subtask(backup_task, "Objectopslag backup")
         try:
             kubectl = create_kubectl_connector()
             minio_components = project_file_handler.get_components_using_service(
                 project_data, deployment_name, minio_service_types
             )
-            minio_secret = await MinIOSecret.get_data(
+            minio_secret = await get_object_storage_secret(
                 kubectl_connector=kubectl,
                 namespace=app_namespace,
                 prefix=deployment_name,
@@ -201,7 +202,7 @@ async def handle_backup(
                 total_results += 1
                 if not bucket_result.success:
                     all_success = False
-                    progress.fail_subtask(minio_subtask, "MinIO backup mislukt")
+                    progress.fail_subtask(minio_subtask, "Backup van de objectopslag mislukt")
                 else:
                     progress.complete_subtask(minio_subtask)
             else:
@@ -209,7 +210,7 @@ async def handle_backup(
         except (ValueError, RuntimeError, OSError, ConnectionError) as e:
             all_success = False
             progress.fail_subtask(minio_subtask, str(e))
-            logger.exception("MinIO backup failed for %s/%s", project_name, deployment_name)
+            logger.exception("Backup van de objectopslag mislukte voor %s/%s", project_name, deployment_name)
 
     if all_success:
         progress.complete_task(backup_task)

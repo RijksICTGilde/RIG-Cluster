@@ -517,7 +517,7 @@ class TestHandleBackupExecution:
             patch(f"{_thb}.create_kubectl_connector") as mock_kubectl,
             patch(f"{_thb}.create_project_file_handler") as mock_pfh,
             patch(f"{_thb}.DatabaseSecret") as mock_db_secret,
-            patch(f"{_thb}.MinIOSecret") as mock_minio_secret,
+            patch(f"{_thb}.get_object_storage_secret", new_callable=AsyncMock) as mock_get_object_storage_secret,
             patch(f"{_thb}.generate_backup_run_id", return_value="20260325020000"),
         ):
             # Set up resolve to return a valid project/deployment
@@ -549,7 +549,7 @@ class TestHandleBackupExecution:
 
             # MinIO
             minio_secret = MagicMock(endpoint_url="http://minio", bucket_name="b", access_key="a", secret_key="s")
-            mock_minio_secret.get_data = AsyncMock(return_value=minio_secret)
+            mock_get_object_storage_secret.return_value = minio_secret
             mock_pfh.return_value.get_bucket_generation.return_value = 1
             mock_pfh.return_value.get_components_using_service.return_value = [
                 {"component_name": "web-app", "reference_name": "minio-storage"}
@@ -564,7 +564,7 @@ class TestHandleBackupExecution:
                 "bucket_backup_manager": mock_bbm,
                 "project_file_handler": mock_pfh,
                 "db_secret": mock_db_secret,
-                "minio_secret": mock_minio_secret,
+                "minio_secret": mock_get_object_storage_secret,
             }
 
     def test_all_resource_types_backed_up(self, backup_mocks) -> None:

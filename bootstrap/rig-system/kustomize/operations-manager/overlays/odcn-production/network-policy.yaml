@@ -98,6 +98,22 @@ spec:
       ports:
         - protocol: TCP
           port: 9090
+    # SeaweedFS: de S3-poort voor back-up, restore en kloon (mc), en de twee gRPC-poorten
+    # waarover `weed shell` het beheer doet. Bron: seaweedfs_host in
+    # opi/core/cluster_config.py en SEAWEEDFS_FILER_ADDRESS/SEAWEEDFS_MASTER_ADDRESS in
+    # configmap.yaml. De HTTP-adressen uit die variabelen zijn 8888 en 9333; weed telt daar
+    # zelf 10000 bij op, en alleen die twee staan open.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: seaweedfs
+      ports:
+        - protocol: TCP
+          port: 8333
+        - protocol: TCP
+          port: 18888
+        - protocol: TCP
+          port: 19333
     # Allow access to backup MinIO S3 API
     - to:
         - namespaceSelector:

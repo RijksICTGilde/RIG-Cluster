@@ -30,8 +30,9 @@ data:
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
 
-    # SeaweedFS (proef seaweedfs-storage, RC-331). Alleen hier: productie levert de dienst
-    # niet. Beide adressen zijn nodig, `weed shell` hangt zonder masteradres (rij G18).
+    # SeaweedFS (seaweedfs-storage, RC-331). Elk cluster met de dienst zet deze twee; de
+    # overlays van odcn-production en odcn-staging doen hetzelfde met hun eigen namespace.
+    # Beide adressen zijn nodig, `weed shell` hangt zonder masteradres (rij G18).
     # Dit zijn de HTTP-poorten: weed leidt de gRPC-poort er zelf uit af door 10000 op te
     # tellen, en dat zijn de twee die de Service en de NetworkPolicy openzetten.
     SEAWEEDFS_FILER_ADDRESS=seaweedfs.rig-system.svc.cluster.local:8888

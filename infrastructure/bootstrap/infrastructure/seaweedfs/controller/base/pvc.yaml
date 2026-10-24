@@ -7,6 +7,8 @@ metadata:
     # Niet automatisch opruimen: deze opslag gaat alleen met de hand weg, zoals bij
     # minio-storage-versioned.
     argocd.argoproj.io/sync-options: Prune=false
+  labels:
+    backup.rig.nl/enabled: "true"
 spec:
   storageClassName: csi-hostpath-sc
   accessModes:

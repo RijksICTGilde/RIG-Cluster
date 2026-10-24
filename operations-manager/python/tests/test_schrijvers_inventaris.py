@@ -149,6 +149,7 @@ HANDLER_MUTATOREN: dict[str, str] = {
     "set_clone_status": "test_de_kloonstatus_blijft_geldig",
     "remove_attachment_references": "test_het_verwijderen_van_verwijzingen_blijft_geldig",
     "remove_component_references": "test_het_verwijderen_van_verwijzingen_blijft_geldig",
+    "remove_component": "test_het_verwijderen_van_een_component_blijft_geldig",
 }
 
 

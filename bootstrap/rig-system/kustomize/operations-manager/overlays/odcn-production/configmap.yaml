@@ -30,6 +30,13 @@ data:
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
 
+    # SeaweedFS (seaweedfs-storage, RC-331). Beide adressen zijn nodig, `weed shell` hangt
+    # zonder masteradres. Dit zijn de HTTP-poorten: weed leidt de gRPC-poort er zelf uit af
+    # door 10000 op te tellen, en dat zijn de twee die de Service en de NetworkPolicy
+    # openzetten.
+    SEAWEEDFS_FILER_ADDRESS=seaweedfs.rig-prd-operations.svc.cluster.local:8888
+    SEAWEEDFS_MASTER_ADDRESS=seaweedfs.rig-prd-operations.svc.cluster.local:9333
+
     OWN_DOMAIN=zad.rijksapp.nl
     ADDITIONAL_DOMAINS="operations-manager.rig.prd1.gn2.quattro.rijksapps.nl"
 

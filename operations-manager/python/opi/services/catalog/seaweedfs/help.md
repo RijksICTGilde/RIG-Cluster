@@ -1,15 +1,14 @@
-# SeaweedFS Object Storage (proef)
+# SeaweedFS Object Storage
 
 S3-compatibele object storage voor documenten, afbeeldingen en grote bestanden, met
 SeaweedFS in plaats van MinIO. Je deployment krijgt een eigen bucket en een eigen
 sleutelpaar, en jouw sleutels komen nergens anders bij.
 
-Dit is een **proef**: de dienst staat alleen op de sandbox, zodat we kunnen zien of
-SeaweedFS kan wat MinIO bij ons doet. Op productie bestaat hij niet.
+MinIO krijgt geen security-fixes meer, en SeaweedFS is de opvolger. De twee staan naast
+elkaar en geven precies dezelfde variabelen, dus overstappen is een endpoint wisselen.
 
 ## Wanneer gebruik je dit?
 
-- Je wil op de sandbox toetsen of jouw applicatie het met SeaweedFS ook doet.
 - Je slaat bestanden op die niet in een database horen: uploads, exports, afbeeldingen.
 - Je wil de dienst niet samen met MinIO op dezelfde deployment: ze geven dezelfde
   variabelen, dus kies er een.
@@ -24,6 +23,10 @@ SeaweedFS kan wat MinIO bij ons doet. Op productie bestaat hij niet.
   `OBJECT_STORE_BUCKET_NAME`, `OBJECT_STORE_REGION`, plus `OBJECT_STORE_URL` en
   `OBJECT_STORE_ENDPOINT_URL`. Een applicatie wisselt dus alleen van endpoint.
 - **Versiebeheer** als je dat aanvinkt: oudere versies van een object blijven bewaard.
+- **Back-up en restore**, op de back-uptab, net als bij MinIO.
+- **Kloon** van de bucket van een andere deployment of uit een back-up.
+- **Uitgesteld opruimen.** Zet je de dienst uit, dan gaan bucket, identiteit en rechten
+  pas na de bewaartermijn weg, zodat terugzetten mogelijk blijft.
 
 ## Versiebeheer en oude versies
 
@@ -33,16 +36,13 @@ bucket met versiebeheer een grens: standaard bewaart hij **hoogstens 30 oude ver
 object**. Je kunt dat aantal per project zetten en per deployment overschrijven, en er een
 leeftijdsgrens in dagen bij kiezen. Verder terug dan de grens kan je applicatie dus niet.
 
-Let op, en dit is anders dan bij MinIO: de grens staat als lifecycle-regel op de bucket,
-maar SeaweedFS ruimt pas op in zijn eigen opruimronde, en die ronde draait op de sandbox
-nog niet vanzelf. De oude versies boven de grens kunnen er dus langer blijven staan dan de
-regel zegt.
+Anders dan bij MinIO ruimt SeaweedFS niet meteen op: de grens staat als lifecycle-regel op
+de bucket, en een opruimronde loopt eenmaal per nacht. Een versie boven de grens kan dus tot
+een dag langer blijven staan dan de regel zegt.
 
-Wat deze proef nog niet doet:
+Wat deze dienst niet doet:
 
-- **Geen back-up en geen restore.** De back-up-tab biedt deze bucket niet aan.
-- **Geen kloon.** Een deployment met `clone-from` kan deze dienst niet gebruiken.
-- **Opruimen is direct.** Zet je de dienst uit, dan zijn bucket, identiteit en rechten
-  meteen weg, zonder bewaartermijn. Bij MinIO is dat anders.
 - **Geen webconsole.** Gebruik de `aws`-CLI tegen `OBJECT_STORE_ENDPOINT_URL`.
-- **De opruimronde voor oude versies draait nog niet automatisch** (zie hierboven).
+- **Geen kloon van een opslag buiten het platform.** Een `clone-from` van een
+  `remote-source` beschrijft een MinIO-bucket; dat is een migratie en gaat met de hand.
+- **Geen objectaantal in de metrieken.** De grootte van je bucket is er wel.

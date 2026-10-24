@@ -1886,16 +1886,23 @@ class DeleteProjectManager:
 
             # Dezelfde tak voor seaweedfs-storage (RC-331): deze plek roept de manager
             # rechtstreeks aan en gaat niet via cleanup_manager_key, dus een tweede dienst
-            # moet er met de hand bij. Opruimen is hier altijd direct, ook met een
-            # marked_for_deletion_service: de proef kent geen uitgestelde verwijdering.
-            # De guard houdt het antwoord van een deployment zonder deze dienst gelijk,
-            # zoals de tweede plek met has_seaweedfs doet.
+            # moet er met de hand bij. De guard houdt het antwoord van een deployment
+            # zonder deze dienst gelijk, zoals de tweede plek met has_seaweedfs doet.
             if self.project_manager._project_file_handler.deployment_uses_service(
                 project_data, deployment_name, [ServiceType.SEAWEEDFS_STORAGE.value]
             ):
-                seaweedfs_results = await self.project_manager._seaweedfs_manager.delete_resources_for_deployment(
-                    project_data, deployment
-                )
+                if marked_for_deletion_service is not None:
+                    seaweedfs_results = await self.project_manager._seaweedfs_manager.handle_service_removal(
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        deployment_data=deployment,
+                        project_data=project_data,
+                        marked_for_deletion_service=marked_for_deletion_service,
+                    )
+                else:
+                    seaweedfs_results = await self.project_manager._seaweedfs_manager.delete_resources_for_deployment(
+                        project_data, deployment
+                    )
                 deletion_results["service_results"]["seaweedfs"] = seaweedfs_results
                 deletion_results["operations"].extend(seaweedfs_results.get("operations", []))
                 if seaweedfs_results.get("errors"):
@@ -2518,6 +2525,7 @@ class DeleteProjectManager:
                     deployment_name=deployment_name,
                     deployment_data=deployment_data,
                     project_data=service_check_yaml,
+                    marked_for_deletion_service=marked_for_deletion_service,
                 )
                 deletion_results["service_results"]["seaweedfs"] = seaweedfs_result
                 deletion_results["operations"].extend(seaweedfs_result.get("operations", []))
@@ -2527,7 +2535,7 @@ class DeleteProjectManager:
                 deletion_results["errors"].append(f"Error handling SeaweedFS service removal: {e}")
                 logger.exception("Error handling SeaweedFS service removal")
 
-        has_deferred = has_database or has_minio
+        has_deferred = has_database or has_minio or has_seaweedfs
 
         if marked_for_deletion_service is not None:
             # Mark backup data for deferred deletion

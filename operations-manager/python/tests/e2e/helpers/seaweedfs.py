@@ -1,24 +1,28 @@
 """Helpers to measure the SeaweedFS requirements table (RC-331).
 
 Sets up: `weed_shell` in the SeaweedFS pod, a client pod in a tenant namespace,
-and a weed pod in rig-system (without the OPI label, so it doesn't intercept
+and a weed pod in the operations namespace (without the OPI label, so it doesn't intercept
 the operations-manager Service endpoint).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 from dataclasses import dataclass
 
 from tests.e2e.helpers import cluster
 
-#: Waar het component draait, en waar het van buiten heet.
-NAMESPACE = "rig-system"
+#: Waar het component draait, en waar het van buiten heet. De namespace heet per cluster
+#: anders (rig-system op de sandbox, rig-prd-operations en rig-staging-operations op ODCN),
+#: dus hij komt uit de omgeving; zonder variabele meet je de sandbox, zoals altijd.
+NAMESPACE = os.environ.get("ZAD_OPS_NAMESPACE", "rig-system")
 SERVER_APP = "seaweedfs"
-S3_ENDPOINT = "http://seaweedfs.rig-system.svc.cluster.local:8333"
-METRICS_URL = "http://seaweedfs.rig-system.svc.cluster.local:9327/metrics"
+_SERVICE_HOST = f"seaweedfs.{NAMESPACE}.svc.cluster.local"
+S3_ENDPOINT = f"http://{_SERVICE_HOST}:8333"
+METRICS_URL = f"http://{_SERVICE_HOST}:9327/metrics"
 
 #: De twee adressen die `weed shell` meekrijgt. Binnen de pod 127.0.0.1 en niet
 #: `localhost`: weed bindt per adres (127.0.0.1 en het pod-IP, zie `netstat` in rij G16) en
@@ -28,12 +32,12 @@ FILER_IN_POD = "127.0.0.1:8888"
 MASTER_IN_POD = "127.0.0.1:9333"
 
 #: Het adres van buiten de pod, zoals OPI het zou gebruiken.
-FILER_SERVICE = "seaweedfs.rig-system.svc.cluster.local:8888"
-MASTER_SERVICE = "seaweedfs.rig-system.svc.cluster.local:9333"
+FILER_SERVICE = f"{_SERVICE_HOST}:8888"
+MASTER_SERVICE = f"{_SERVICE_HOST}:9333"
 
 #: De namespace waarin de clientpod staat, met het label dat de NetworkPolicy als tenant
-#: herkent.
-TENANT_NAMESPACE = "rc331-tenant"
+#: herkent. Op ODCN eist Capsule de clusterprefix, dus ook deze komt uit de omgeving.
+TENANT_NAMESPACE = os.environ.get("ZAD_TENANT_NAMESPACE", "rc331-tenant")
 CLIENT_POD = "rc331-s3-client"
 AWS_CONTAINER = "aws"
 MC_CONTAINER = "mc"
@@ -255,7 +259,7 @@ spec:
 
 
 def _weed_pod_manifest() -> str:
-    """Een pod met de `weed`-binary in rig-system, met zijn EIGEN label (zie de kop)."""
+    """Een pod met de `weed`-binary in de operations-namespace, met zijn EIGEN label (zie de kop)."""
     return f"""
 apiVersion: v1
 kind: Pod
@@ -397,6 +401,22 @@ def connector_in_opi_pod(aanroep: str, *, timeout: float = 120.0) -> Uitvoer:
         '"import asyncio;'
         "from opi.connectors.seaweedfs_shell import create_seaweedfs_connector;"
         f'print(asyncio.run(create_seaweedfs_connector().{aanroep}))" 2>&1'
+    )
+    return exec_in(NAMESPACE, opi_pod(), script, timeout=timeout)
+
+
+def markeringen_in_opi_pod(project: str, *, timeout: float = 120.0) -> Uitvoer:
+    """De regels van ``project`` in ``marked_for_deletion``, gelezen IN de OPI-pod.
+
+    De admin-API die deze lijst ook geeft vraagt sinds RC-377 het token van een
+    platformbeheerder met een OTP, en dat heeft deze suite niet. Dezelfde service,
+    dezelfde database.
+    """
+    script = (
+        "cd /app && PYTHONPATH=/app python3 -c "
+        '"import asyncio;'
+        "from opi.services.marked_for_deletion_service import MarkedForDeletionService;"
+        f"print(asyncio.run(MarkedForDeletionService().get_marks_for_project('{project}')))\" 2>&1"
     )
     return exec_in(NAMESPACE, opi_pod(), script, timeout=timeout)
 

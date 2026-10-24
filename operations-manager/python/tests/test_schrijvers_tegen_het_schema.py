@@ -266,6 +266,26 @@ def test_het_verwijderen_van_verwijzingen_blijft_geldig() -> None:
     poorten(project)
 
 
+def test_het_verwijderen_van_een_component_blijft_geldig() -> None:
+    """``remove_component`` haalt definitie en verwijzingen samen weg; wat achterblijft is geldig."""
+    from opi.handlers.project_file_handler import remove_component
+
+    project = _basis_project()
+    project["components"].append(
+        {
+            "name": "web",
+            "type": "frontend",
+            "ports": {"inbound": [8080], "outbound": [443]},
+            "services": ["publish-on-web"],
+        }
+    )
+    project["deployments"][0]["components"].append({"reference": "web", "image": "nginx:1.25"})
+
+    remove_component(project, "api", confirm_in_use=True)
+
+    poorten(project)
+
+
 # ---------------------------------------------------------------------------
 # De back-up- en herstelpaden: generatienummers en kloonstatus
 # ---------------------------------------------------------------------------

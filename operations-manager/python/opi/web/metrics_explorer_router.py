@@ -40,6 +40,15 @@ MONITORED_SERVICES: list[dict[str, str]] = [
         "range": "7d",
     },
     {
+        "id": "seaweedfs",
+        "name": "SeaweedFS",
+        # Het objectaantal per bucket bestaat niet in SeaweedFS, alleen de grootte; dat
+        # staat hier zodat een lezer niet naar een reeks zoekt die er niet is (RC-331, M1).
+        "description": "Object storage metrics (scrape: 2h); bucketgrootte per collection, objectaantal niet beschikbaar",
+        "match": '{job="seaweedfs"}',
+        "range": "7d",
+    },
+    {
         "id": "keycloak",
         "name": "Keycloak",
         "description": "Identity provider metrics (scrape: 2h)",

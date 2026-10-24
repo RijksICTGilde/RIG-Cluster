@@ -2,7 +2,7 @@
 
 Backups are not a service of their own: a project can back something up exactly when it
 uses a service that declares a ``backup_label`` (persistent-storage, both PostgreSQL
-services, minio-storage). So the block is owned jointly -- every such service mixes in
+services, minio-storage, seaweedfs-storage). So the block is owned jointly -- every such service mixes in
 ``BackupsPageMixin`` -- and the collector renders the section once and mounts the router
 once, because all owners hand back the same template and the same router object.
 

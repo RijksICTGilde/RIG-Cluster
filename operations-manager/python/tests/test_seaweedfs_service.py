@@ -1,8 +1,8 @@
 """De guards van de dienst seaweedfs-storage: waar hij bestaat, en wat hij weigert.
 
-Productie verandert niet, en dat is geen eigenschap van de code hier maar van de
-clusterconfiguratie: deze toetsen leggen vast dat beide consumenten van
-``available_on_cluster`` de dienst daar niet zien.
+Waar de dienst bestaat is geen eigenschap van de code hier maar van de clusterconfiguratie:
+deze toetsen leggen vast dat beide consumenten van ``available_on_cluster`` een cluster
+zonder ``seaweedfs_host`` overslaan, en dat is sinds RC-381 alleen nog ``local``.
 """
 
 from __future__ import annotations
@@ -33,14 +33,15 @@ def _project(deployments: list[dict[str, Any]], componenten: list[dict[str, Any]
 class TestBeschikbaarheid:
     def test_alleen_op_een_cluster_met_een_seaweedfs_adres(self) -> None:
         assert DIENST.available_on_cluster("sandboxed-local") is True
-        assert DIENST.available_on_cluster("odcn-production") is False
+        assert DIENST.available_on_cluster("odcn-production") is True
+        assert DIENST.available_on_cluster("odcn-staging") is True
         assert DIENST.available_on_cluster("local") is False
 
-    def test_opslaan_wordt_geweigerd_op_productie(self) -> None:
+    def test_opslaan_wordt_geweigerd_op_een_cluster_zonder_adres(self) -> None:
         # De tweede consument, en de weigering die telt: de API en een
         # handgeschreven projectbestand komen nooit langs een kaart.
         project = _project(
-            [{"name": "dep", "cluster": "odcn-production", "namespace": "proj", "components": [{"reference": "web"}]}],
+            [{"name": "dep", "cluster": "local", "namespace": "proj", "components": [{"reference": "web"}]}],
             [{"name": "web", "services": ["seaweedfs-storage"]}],
         )
         fouten = validate_service_availability(project)
@@ -67,7 +68,8 @@ class TestValidateProject:
         assert "minio-storage" in fouten[0]
         assert "dep" in fouten[0]
 
-    def test_geen_clone_from(self) -> None:
+    def test_clone_from_wordt_niet_meer_geweigerd(self) -> None:
+        # Tot RC-381 was dit een fout: de kloon was gemeten maar niet bedraad.
         project = _project(
             [
                 {
@@ -80,9 +82,7 @@ class TestValidateProject:
             ],
             [{"name": "web", "services": ["seaweedfs-storage"]}],
         )
-        fouten = DIENST.validate_project(project)
-        assert len(fouten) == 1
-        assert "clone-from" in fouten[0]
+        assert DIENST.validate_project(project) == []
 
     def test_een_project_zonder_de_dienst_levert_niets_op(self) -> None:
         project = _project(
@@ -141,7 +141,7 @@ class TestSecret:
             deployment_name="dep",
             unique_name="dep-web",
             project_data={},
-            cluster="odcn-production",
+            cluster="local",
             get_secret=lambda dep, soort, klasse: creds,
         )
         assert DIENST.build_secret_files(ctx) == []
@@ -165,10 +165,10 @@ class TestVervangenDoorEenOpvolger:
         assert MINIO.replaced_on_cluster("sandboxed-local") is True
 
     def test_niet_vervangen_waar_de_opvolger_ontbreekt(self) -> None:
-        # seaweedfs-storage is er niet op productie (TestBeschikbaarheid hierboven),
-        # dus er is niets om naar over te stappen.
-        assert MINIO.available_on_cluster("odcn-production") is True
-        assert MINIO.replaced_on_cluster("odcn-production") is False
+        # Sinds RC-381 is "local" het enige cluster zonder seaweedfs-storage
+        # (TestBeschikbaarheid hierboven), dus daar is niets om naar over te stappen.
+        assert MINIO.available_on_cluster("local") is True
+        assert MINIO.replaced_on_cluster("local") is False
 
     def test_replacement_name_is_de_weergavenaam_van_de_opvolger(self) -> None:
         assert MINIO.replacement_name() == DIENST.definition.name
@@ -224,9 +224,9 @@ class TestValidatieVanEenVervangenDienst:
         assert "nieuw" in fouten[0]
 
     def test_op_een_cluster_zonder_opvolger_verandert_er_niets(self) -> None:
-        # odcn-production heeft geen seaweedfs-storage, dus minio-storage is daar niet
-        # vervangen: zelfs zonder vorige versie mag een deployment hem gewoon krijgen.
-        project = _minio_project([self._dep(cluster="odcn-production")], self._comp())
+        # "local" heeft geen seaweedfs-storage, dus minio-storage is daar niet vervangen:
+        # zelfs zonder vorige versie mag een deployment hem gewoon krijgen.
+        project = _minio_project([self._dep(cluster="local")], self._comp())
         assert validate_service_availability(project, previous=None) == []
 
     @pytest.mark.asyncio

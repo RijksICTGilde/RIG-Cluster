@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import TYPE_CHECKING
 
 import pytest
@@ -52,7 +53,9 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.serial]
 
 _VERIFY_SSL = FORGEJO_VERIFY_SSL
 _SERVICE = ServiceType.SEAWEEDFS_STORAGE.value
-_CLUSTER = "sandboxed-local"
+#: Welk cluster deze meting doet. Uit de omgeving, want de dienst draait sinds RC-381 ook op
+#: odcn-staging en odcn-production; zonder variabele is het de sandbox.
+_CLUSTER = os.environ.get("ZAD_E2E_CLUSTER", "sandboxed-local")
 #: Zo lang mag het provisioneren plus de eerste probe-ronde duren.
 _PROVISION_TIMEOUT = 600.0
 
@@ -257,7 +260,7 @@ def test_de_sleutels_van_a_komen_niet_bij_de_bucket_van_b(
 
 
 @pytest.mark.timeout(900)
-def test_de_dienst_uitzetten_ruimt_alles_op(
+def test_de_dienst_uitzetten_markeert_voor_uitgesteld_opruimen(
     project_a: CreatedProject,
     project_b: CreatedProject,
     clientpod: None,
@@ -265,7 +268,11 @@ def test_de_dienst_uitzetten_ruimt_alles_op(
     sandbox_url: str,
     forgejo: ForgejoClient,
 ) -> None:
-    """Uitzetten is direct, zonder bewaartermijn: dat is de keuze van de proef.
+    """Uitzetten haalt de dienst van het project af en markeert de resources.
+
+    Bucket, identiteit en policy blijven staan tot de purge in de reconciliation ze na de
+    bewaartermijn opruimt, zoals bij ``minio-storage``. Een uitgezette dienst is daarmee
+    terug te draaien zonder dataverlies; de proef verwijderde ze nog direct (RC-381).
 
     Deze meting komt als laatste: hij haalt de dienst van A af, dus alles erboven heeft
     hem nog nodig.
@@ -301,16 +308,27 @@ def test_de_dienst_uitzetten_ruimt_alles_op(
     ), f"het projectbestand van {project_a.name} noemt {_SERVICE} nog: {_dienstnamen(forgejo, project_a.name)}"
 
     assert cluster.wait_for(
-        lambda: a_bucket not in seaweedfs.weed_shell("s3.bucket.list").stdout,
+        lambda: all(
+            naam in seaweedfs.markeringen_in_opi_pod(project_a.name).stdout for naam in (a_bucket, gebruiker, policy)
+        ),
         timeout=300,
         interval=5,
-    ), f"de bucket {a_bucket} staat er nog na het uitzetten van de dienst"
-    assert not seaweedfs.weed_shell(f"s3.user.show -name {gebruiker}").ok, f"de identiteit {gebruiker} bestaat nog"
-    assert policy not in seaweedfs.weed_shell("s3.policy -list").stdout, f"de policy {policy} staat er nog"
+    ), (
+        f"niet alle resources van {project_a.name} staan gemarkeerd: {seaweedfs.markeringen_in_opi_pod(project_a.name).rapport()}"
+    )
 
+    # De keerzijde van de markering: ze staan er nog, en de sleutels van A komen nog bij
+    # de data. Zonder deze vier zou de test ook groen zijn als het opruimen niet meer loopt.
+    assert a_bucket in seaweedfs.weed_shell("s3.bucket.list").stdout, f"de bucket {a_bucket} is al weg"
+    assert seaweedfs.weed_shell(f"s3.user.show -name {gebruiker}").ok, f"de identiteit {gebruiker} is al weg"
+    assert policy in seaweedfs.weed_shell("s3.policy -list").stdout, f"de policy {policy} is al weg"
     met_oude_sleutels = seaweedfs.aws("a", f"aws s3api list-objects-v2 --bucket {a_bucket}")
-    assert not met_oude_sleutels.ok, f"de sleutels van A werken nog: {met_oude_sleutels.rapport()}"
+    assert met_oude_sleutels.ok, f"de sleutels van A komen niet meer bij de bucket: {met_oude_sleutels.rapport()}"
+
     assert b_bucket in seaweedfs.weed_shell("s3.bucket.list").stdout, "de bucket van B is meegegaan"
+    assert b_bucket not in seaweedfs.markeringen_in_opi_pod(project_b.name).stdout, (
+        "de resources van B staan gemarkeerd terwijl alleen A werd uitgezet"
+    )
 
 
 @pytest.mark.timeout(600)

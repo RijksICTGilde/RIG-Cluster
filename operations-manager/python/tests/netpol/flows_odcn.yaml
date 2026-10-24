@@ -93,6 +93,17 @@ endpoints:
     namespace: rig-prd-operations
     labels: {app: minio}
 
+  seaweedfs:
+    namespace: rig-prd-operations
+    labels: {app: seaweedfs}
+
+  # De pod van de lifecycle-CronJob van het seaweedfs-component (RC-381). Eigen label,
+  # zodat allow-seaweedfs-access hem precies de beheerpoorten geeft die de ronde nodig
+  # heeft en geen andere pod in de namespace die meekrijgt.
+  seaweedfs-lifecycle:
+    namespace: rig-prd-operations
+    labels: {app: seaweedfs-lifecycle}
+
   backup-minio:
     namespace: rig-prd-backup
     labels: {app.kubernetes.io/name: minio}
@@ -198,6 +209,38 @@ flows:
     verwacht: open
     waarom: de S3-API; de console op 9001 is alleen voor de platform-namespace
 
+  # Sinds RC-381 draait SeaweedFS ook op odcn. De ops-egress van de tenant-baseline noemt
+  # hem alleen op 8333 (SEAWEEDFS_OPS_EGRESS, afgeleid van seaweedfs_host), en
+  # allow-seaweedfs-access laat tenant-namespaces ook alleen daar binnen.
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 8333
+    verwacht: open
+    waarom: de S3-API van seaweedfs-storage; de enige poort die een tenant nodig heeft
+
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 18333
+    verwacht: dicht
+    waarom: de gRPC-poort van de S3-gateway is beheer; alleen de lifecycle-pod mag erbij
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 18888
+    verwacht: dicht
+    waarom: de filer-gRPC is beheer; allow-seaweedfs-access laat die alleen de OPI-pod
+
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 19333
+    verwacht: dicht
+    waarom: de master-gRPC is beheer; allow-seaweedfs-access laat die alleen de OPI-pod
+
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 9327
+    verwacht: dicht
+    waarom: de metrics-poort is voor Prometheus in de eigen namespace, niet voor een tenant
+
   # Tot RC-336 stond deze op open: de ingress van MinIO liet de console alleen voor de
   # platform-namespace toe, maar emergency-restore-allow-all maskeerde dat. De egress
   # van de tenant is nu de grens die wel houdt, ongeacht wat er aan de andere kant ligt.
@@ -300,6 +343,46 @@ flows:
     poort: 9000
     verwacht: open
     waarom: MINIO_HOST=minio:9000 in de configmap
+
+  - van: opi
+    naar: seaweedfs
+    poort: 8333
+    verwacht: open
+    waarom: de S3-poort voor de bucketkopie van een kloon, met het admin-sleutelpaar
+
+  - van: opi
+    naar: seaweedfs
+    poort: 18888
+    verwacht: open
+    waarom: SEAWEEDFS_FILER_ADDRESS in de configmap; weed shell telt 10000 bij 8888 op
+
+  - van: opi
+    naar: seaweedfs
+    poort: 19333
+    verwacht: open
+    waarom: SEAWEEDFS_MASTER_ADDRESS in de configmap; zonder master hangt weed shell
+
+  # De lifecycle-ronde: `weed shell s3.lifecycle.run-shard -shards 0-15 -s3 seaweedfs:18333`.
+  # 18888 en 19333 zijn wat `weed shell` nodig heeft om op te starten; 18333 is het adres
+  # dat het commando meekrijgt. Met 18333 dicht deed de ronde op de sandbox nog steeds zijn
+  # werk, dus die poort staat open voor de aanroep en niet omdat hij een voorwaarde is.
+  - van: seaweedfs-lifecycle
+    naar: seaweedfs
+    poort: 18333
+    verwacht: open
+    waarom: het adres uit de -s3-vlag van s3.lifecycle.run-shard
+
+  - van: seaweedfs-lifecycle
+    naar: seaweedfs
+    poort: 18888
+    verwacht: open
+    waarom: de filer-gRPC die weed shell met -filer aanroept
+
+  - van: seaweedfs-lifecycle
+    naar: seaweedfs
+    poort: 19333
+    verwacht: open
+    waarom: de master-gRPC die weed shell met -master aanroept; zonder master hangt hij
 
   - van: opi
     naar: argocd
@@ -513,6 +596,12 @@ flows:
     poort: 9000
     verwacht: open
     waarom: de job minio scrapet /minio/v2/metrics/cluster op 9000
+
+  - van: prometheus
+    naar: seaweedfs
+    poort: 9327
+    verwacht: open
+    waarom: de job seaweedfs scrapet /metrics op 9327
 
   - van: prometheus
     naar: kube-state-metrics

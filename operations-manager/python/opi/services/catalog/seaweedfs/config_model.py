@@ -1,7 +1,8 @@
 """Typed config model voor de dienst ``seaweedfs-storage``.
 
-Dezelfde velden als bij ``minio-storage``, zonder de kloonstatus van ``CloneState``, want
-de proef kloont niet: ``enable-versioning`` op de projectlaag, en de grens op oude versies
+Dezelfde velden als bij ``minio-storage``, zonder de kloonstatus van ``CloneState``: deze
+dienst kloont wel, maar houdt geen bucketgeneraties, dus er is geen generatie of revisie om
+op te slaan. ``enable-versioning`` staat op de projectlaag, de grens op oude versies
 (RC-380) op de projectlaag en per deployment. Eén model voor beide lagen, dus elk veld is
 optioneel.
 """

@@ -133,7 +133,7 @@ def test_provision_delegates_to_the_right_manager():
     # same calls + args as the old fixed sequence
     db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, clone_interrupted=False, rotate_password=False)
     minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, rotate_secret_key=False)
-    seaweedfs.assert_awaited_once_with({"name": "p"}, {"name": "d"})
+    seaweedfs.assert_awaited_once_with({"name": "p"}, {"name": "d"}, force_clone=True)
     keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"}, rotate_client_secret=False)
     redis.assert_awaited_once_with({"name": "p"}, {"name": "d"})
     mail.assert_awaited_once_with({"name": "p"}, {"name": "d"})
@@ -157,7 +157,7 @@ _LEGACY_SERVICE_MANAGER_KEYS = {
     ServiceType.POSTGRESQL_DATABASE: ManagerKey.DATABASE,
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ManagerKey.DATABASE,
     ServiceType.MINIO_STORAGE: ManagerKey.MINIO,
-    # RC-331: eigen manager, want opruimen is hier direct en bij minio uitgesteld.
+    # RC-331: eigen manager, want het beheer loopt over `weed shell` en niet over `mc`.
     ServiceType.SEAWEEDFS_STORAGE: ManagerKey.SEAWEEDFS,
     ServiceType.REDIS: ManagerKey.REDIS,
     ServiceType.NAMESPACE_REDIS: ManagerKey.REDIS,
