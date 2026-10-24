@@ -8,13 +8,13 @@ This feature enables monitoring of storage usage for PostgreSQL databases and Mi
 |-----------|-----------------|------|------------|
 | PostgreSQL (CNPG) | `/metrics` | 9187 | `cnpg_pg_database_size_bytes` |
 | MinIO | `/minio/v2/metrics/cluster` | 9000 | `minio_bucket_usage_total_bytes` |
-| SeaweedFS | `/metrics` | 8081 | `SeaweedFS_volumeServer_total_disk_size` |
+| SeaweedFS | `/metrics` | 9327 | `SeaweedFS_volumeServer_total_disk_size` |
 
 Components are scraped by Prometheus via:
 1. Pod annotations (`prometheus.io/scrape: "true"`)
 2. Dedicated scrape jobs in the Prometheus ConfigMap (fallback)
 
-Note: SeaweedFS is available only on the sandbox cluster (`sandboxed-local`) and is a proef (RC-331).
+Note: SeaweedFS runs on `sandboxed-local`, `odcn-staging` and `odcn-production` (RC-331, RC-381).
 
 ## PostgreSQL Database Metrics
 
@@ -171,9 +171,9 @@ kubectl port-forward -n rig-system svc/minio 9000:9000
 curl http://localhost:9000/minio/v2/metrics/cluster | grep minio_bucket_usage
 ```
 
-## SeaweedFS Bucket Metrics (Sandbox Only)
+## SeaweedFS Bucket Metrics
 
-**Note:** SeaweedFS is available only on the sandbox cluster (`sandboxed-local`) as a proef (RC-331). It does not replace MinIO in production.
+**Note:** SeaweedFS runs alongside MinIO on every cluster: `sandboxed-local`, `odcn-staging` and `odcn-production`. It does not replace MinIO; a project picks one of the two.
 
 ### Available Metrics
 
@@ -208,27 +208,19 @@ SeaweedFS_volumeServer_total_disk_size / 1024 / 1024 / 1024
 ### Accessing SeaweedFS Metrics Directly
 
 ```bash
-# Port-forward to SeaweedFS (metrics are on port 8081)
-kubectl port-forward -n rig-system svc/seaweedfs 8081:8081
+# Port-forward to SeaweedFS (metrics are on port 9327)
+kubectl port-forward -n rig-system svc/seaweedfs 9327:9327
 
 # Query metrics
-curl http://localhost:8081/metrics | grep SeaweedFS_volumeServer_total_disk_size
+curl http://localhost:9327/metrics | grep SeaweedFS_volumeServer_total_disk_size
 ```
 
 ### Configuration
 
-SeaweedFS metrics are enabled in the deployment:
-
-```yaml
-# infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/deployment.yaml
-spec:
-  template:
-    metadata:
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8081"
-        prometheus.io/path: "/metrics"
-```
+The port comes from the `-metricsPort=9327` flag in
+`infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/deployment.yaml`. There
+are no `prometheus.io/*` pod annotations: the dedicated `seaweedfs` scrape job below is the
+only path, and the NetworkPolicy opens 9327 for Prometheus in the same namespace only.
 
 ## Accessing Prometheus UI
 
@@ -306,10 +298,11 @@ Dedicated scrape jobs are configured in the Prometheus ConfigMap:
     - targets: ['minio.rig-system:9000']
   metrics_path: /minio/v2/metrics/cluster
 
-# SeaweedFS job (static config, sandbox only)
+# SeaweedFS job: static config on the sandbox, pod discovery in the odcn overlays
+# (the namespace differs per cluster), both on port 9327
 - job_name: 'seaweedfs'
   static_configs:
-    - targets: ['seaweedfs.rig-system:8081']
+    - targets: ['seaweedfs.rig-system:9327']
   metrics_path: /metrics
 ```
 

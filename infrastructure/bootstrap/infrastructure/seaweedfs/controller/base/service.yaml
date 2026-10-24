@@ -5,13 +5,17 @@ metadata:
   namespace: rig-system
 spec:
   # Alleen wat van buiten de pod nodig is: S3 voor tenants en OPI, de twee gRPC-poorten
-  # voor `weed shell`, en metrics. De HTTP-poorten van master, volume en filer blijven
-  # pod-lokaal.
+  # voor `weed shell`, de gRPC-poort van de S3-gateway voor de lifecycle-ronde, en metrics.
+  # De HTTP-poorten van master, volume en filer blijven pod-lokaal.
   ports:
   - port: 8333
     protocol: TCP
     targetPort: 8333
     name: s3
+  - port: 18333
+    protocol: TCP
+    targetPort: 18333
+    name: s3-grpc
   - port: 18888
     protocol: TCP
     targetPort: 18888

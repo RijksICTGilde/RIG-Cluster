@@ -35,12 +35,15 @@ OPS_EGRESS = [
     {"endpoint": "operations_manager", "pod_labels": {"app": "operations-manager"}, "ports": [8000]},
 ]
 
-# SeaweedFS draait alleen op de sandbox (proef RC-331), dus de regel staat niet in de
-# gedeelde OPS_EGRESS: die zou de tenant-netpol van productie veranderen.
-SANDBOX_OPS_EGRESS = [
-    *OPS_EGRESS,
-    {"endpoint": "seaweedfs_host", "pod_labels": {"app": "seaweedfs"}, "ports": [SEAWEEDFS_S3_PORT]},
-]
+# De egressregel naar SeaweedFS staat niet in OPS_EGRESS maar volgt uit de clustersleutel
+# seaweedfs_host: get_ops_egress() zet hem erbij voor een cluster dat de dienst levert.
+# Zo is "dit cluster levert seaweedfs" op één plek geregeld, en ontstaat er geen kopie van
+# de hele lijst per cluster.
+SEAWEEDFS_OPS_EGRESS = {
+    "endpoint": "seaweedfs_host",
+    "pod_labels": {"app": "seaweedfs"},
+    "ports": [SEAWEEDFS_S3_PORT],
+}
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -143,9 +146,9 @@ CLUSTER_CONFIG = {
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": MINIO_PORT,
-        # De schakelaar van de proef seaweedfs-storage (RC-331): alleen een cluster met
-        # deze twee sleutels biedt de dienst aan en accepteert een project dat hem noemt.
-        # Productie heeft ze niet, en daarom geen kaart en geen opslag.
+        # De schakelaar van seaweedfs-storage (RC-331): alleen een cluster met deze twee
+        # sleutels biedt de dienst aan, accepteert een project dat hem noemt, en krijgt de
+        # egressregel naar 8333 in zijn tenant-baseline.
         "seaweedfs_host": "seaweedfs.rig-system.svc.cluster.local",
         "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
@@ -161,7 +164,7 @@ CLUSTER_CONFIG = {
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
-        "ops_egress": SANDBOX_OPS_EGRESS,
+        "ops_egress": OPS_EGRESS,
         # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
         "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
@@ -244,6 +247,8 @@ CLUSTER_CONFIG = {
         "database_server": "rig-db-rw.rig-prd-operations.svc.cluster.local",  # Assuming production DB is in operations namespace
         "minio_host": "minio.rig-prd-operations.svc.cluster.local",
         "minio_port": MINIO_PORT,
+        "seaweedfs_host": "seaweedfs.rig-prd-operations.svc.cluster.local",
+        "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
         # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
@@ -438,6 +443,8 @@ CLUSTER_CONFIG = {
         "database_server": "rig-db-rw.rig-staging-operations.svc.cluster.local",
         "minio_host": "minio.rig-staging-operations.svc.cluster.local",
         "minio_port": MINIO_PORT,
+        "seaweedfs_host": "seaweedfs.rig-staging-operations.svc.cluster.local",
+        "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-staging-operations.svc.cluster.local",
         "backup_namespace": "rig-staging-backup",
         # Een relay met de mailsink van de sandbox: er gaat geen mail naar buiten.
@@ -992,9 +999,9 @@ def get_minio_port(cluster_name: str) -> int:
 def get_seaweedfs_host(cluster_name: str) -> str | None:
     """Het SeaweedFS-adres van dit cluster, of None als het die dienst niet levert.
 
-    Afwezig is de normale uitkomst: de proef staat alleen op de sandbox. Zoals bij
-    ``get_vlam_config`` is dit de hele beschikbaarheidsvraag, zodat de dienst zelf geen
-    clusternaam noemt.
+    Zoals bij ``get_vlam_config`` is dit de hele beschikbaarheidsvraag, zodat de dienst
+    zelf geen clusternaam noemt. Het bepaalt ook of de tenant-baseline een egressregel naar
+    de S3-poort krijgt, zie :func:`get_ops_egress`.
     """
     return get_cluster_config(cluster_name).get("seaweedfs_host")
 
@@ -1070,8 +1077,16 @@ def get_database_operator_namespace(cluster_name: str) -> str:
 
 
 def get_ops_egress(cluster_name: str) -> list[dict[str, Any]]:
-    """Gedeelde services in de operations-namespace per poort voor de tenant-baseline."""
-    return get_cluster_config(cluster_name)["ops_egress"]
+    """Gedeelde services in de operations-namespace per poort voor de tenant-baseline.
+
+    Een cluster dat seaweedfs-storage levert krijgt de S3-poort van die dienst erbij; dat
+    volgt uit ``seaweedfs_host`` en staat niet per cluster in de lijst.
+    """
+    config = get_cluster_config(cluster_name)
+    egress: list[dict[str, Any]] = list(config["ops_egress"])
+    if config.get("seaweedfs_host"):
+        egress.append(SEAWEEDFS_OPS_EGRESS)
+    return egress
 
 
 def get_cluster_cidrs(cluster_name: str) -> dict[str, list[str]] | None:

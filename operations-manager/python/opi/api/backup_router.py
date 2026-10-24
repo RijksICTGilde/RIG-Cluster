@@ -26,7 +26,7 @@ from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_backup_run_id
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -527,20 +527,21 @@ async def backup_project_deployment(
             except Exception as e:
                 logger.warning(f"Failed to backup database for deployment {deployment_name}: {e}")
 
-        # Backup MinIO buckets if requested and deployment uses MinIO service
-        minio_service_types = [ServiceType.MINIO_STORAGE.value]
+        # Backup buckets if requested and the deployment uses an object-storage service
+        # (minio-storage or seaweedfs-storage; both carry the backup_label "minio").
+        minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
         if "minio" in resource_types and project_file_handler.deployment_uses_service(
             project.data, deployment_name, minio_service_types
         ):
-            logger.info("Deployment uses MinIO service, attempting bucket backup")
+            logger.info("Deployment uses an object-storage service, attempting bucket backup")
             try:
-                # Get components using minio service
+                # Get components using the object-storage service
                 minio_components = project_file_handler.get_components_using_service(
                     project.data, deployment_name, minio_service_types
                 )
 
-                # Get MinIO credentials from secret
-                minio_secret = await MinIOSecret.get_data(
+                # Get the bucket credentials from the deployment's secret
+                minio_secret = await get_object_storage_secret(
                     kubectl_connector=kubectl,
                     namespace=app_namespace,
                     prefix=deployment_name,

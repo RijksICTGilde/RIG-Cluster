@@ -129,9 +129,10 @@ class TestServiceOptionsProviderVervangenDienst:
         assert minio["replaced_by"] == "seaweedfs-storage"
 
     def test_zonder_opvolger_op_dit_cluster_blijft_de_kaart_voor_iedereen(self, monkeypatch) -> None:
-        # odcn-production heeft geen seaweedfs-storage, dus minio-storage is daar niet
-        # vervangen en is nog steeds een gewone kaart, ook zonder project_services.
-        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "odcn-production")
+        # Sinds RC-381 is "local" het enige cluster zonder seaweedfs-storage, dus
+        # minio-storage is daar niet vervangen en nog een gewone kaart, ook zonder
+        # project_services.
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "local")
         options = ServiceOptionsProvider(project_services=[]).get_options()
         minio = next(o for o in options if o["value"] == "minio-storage")
         assert "replaced_by" not in minio

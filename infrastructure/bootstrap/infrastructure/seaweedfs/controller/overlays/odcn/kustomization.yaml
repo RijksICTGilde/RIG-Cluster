@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rig-prd-operations
+resources:
+- ../../base
+
+patches:
+  - target:
+      kind: PersistentVolumeClaim
+      name: seaweedfs-data
+    patch: |-
+      - op: replace
+        path: /spec/storageClassName
+        value: ocs-storagecluster-ceph-rbd
+      - op: replace
+        path: /spec/resources/requests/storage
+        value: 20Gi
+  # OpenShift kent de UID uit het bereik van de namespace toe; een vaste 1000 wordt door
+  # de SCC geweigerd. Zelfde patch als bij redis.
+  - target:
+      kind: Deployment
+      name: seaweedfs
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext/runAsGroup
+  # Dezelfde reden voor de pod van de lifecycle-ronde.
+  - target:
+      kind: CronJob
+      name: seaweedfs-lifecycle
+    patch: |-
+      - op: remove
+        path: /spec/jobTemplate/spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/jobTemplate/spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/jobTemplate/spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/jobTemplate/spec/template/spec/containers/0/securityContext/runAsGroup
+
+# ODCN kan Docker Hub niet bereiken en haalt alles via de rcr-proxy. Staat dat pad hier
+# niet in git, dan herschrijft admission het image wel, maar wijkt wat er draait af van git
+# en ziet ArgoCD dat als eeuwige drift. De digest komt uit de basis en gaat daar omhoog,
+# samen met de weed-stage van de OPI-Dockerfile.
+images:
+  - name: chrislusf/seaweedfs
+    newName: rcr.rijksapps.nl/dockerhub-rig/chrislusf/seaweedfs

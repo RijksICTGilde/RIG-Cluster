@@ -47,8 +47,8 @@ spec:
         - protocol: TCP
           port: 53
     # De scrape-doelen in de platform-namespace, per job uit ../configmap-patch.yaml:
-    # rig-db 9187 (cloudnative-pg), minio 9000, keycloak 8080 en 9000, OPI 8000
-    # (prometheus.io/port op de pod), kube-state-metrics 8080.
+    # rig-db 9187 (cloudnative-pg), minio 9000, seaweedfs 9327, keycloak 8080 en 9000,
+    # OPI 8000 (prometheus.io/port op de pod), kube-state-metrics 8080.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -58,6 +58,8 @@ spec:
           port: 9187
         - protocol: TCP
           port: 9000
+        - protocol: TCP
+          port: 9327
         - protocol: TCP
           port: 8080
         - protocol: TCP

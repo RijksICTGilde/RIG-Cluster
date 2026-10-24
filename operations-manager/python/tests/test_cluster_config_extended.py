@@ -446,11 +446,25 @@ class TestSelectableClusters:
 class TestOpsEgressAndClusterCidrs:
     """RC-336: de tenant-baseline haalt de gedeelde services en de cluster-CIDRs hier op."""
 
-    def test_get_ops_egress_geeft_de_vier_gedeelde_services(self):
+    def test_get_ops_egress_geeft_de_gedeelde_services(self):
         from opi.core.cluster_config import get_ops_egress
 
+        # Sinds RC-381 levert odcn-production ook seaweedfs-storage, dus die egressregel
+        # komt er sinds dat cluster een seaweedfs_host heeft bij (zie get_ops_egress).
         endpoints = {service["endpoint"] for service in get_ops_egress("odcn-production")}
-        assert endpoints == {"database_server", "redis_server", "minio_host", "operations_manager"}
+        assert endpoints == {
+            "database_server",
+            "redis_server",
+            "minio_host",
+            "operations_manager",
+            "seaweedfs_host",
+        }
+
+    def test_een_cluster_zonder_seaweedfs_krijgt_de_egressregel_niet(self):
+        from opi.core.cluster_config import get_ops_egress
+
+        endpoints = {service["endpoint"] for service in get_ops_egress("local")}
+        assert "seaweedfs_host" not in endpoints
 
     @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
     def test_elk_cluster_heeft_een_ops_egress(self, cluster_name):

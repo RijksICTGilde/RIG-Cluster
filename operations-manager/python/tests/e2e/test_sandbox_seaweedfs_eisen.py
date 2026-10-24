@@ -670,7 +670,7 @@ def test_g18_beheer_vanuit_de_opi_pod(identiteiten: list[Identiteit], rapport: R
         f"SeaweedfsConnector().list_buckets() in de OPI-pod:\n{vanuit_opi.rapport(600)}\n\n"
         f"s3.user.list in de SeaweedFS-pod zelf:\n{binnen_de_pod.rapport(300)}\n\n"
         f"poorten vanuit de OPI-pod: {opi_mag}\n"
-        f"poorten vanuit een pod in rig-system ZONDER het OPI-label: {vreemde_mag}\n\n"
+        f"poorten vanuit een pod in {seaweedfs.NAMESPACE} ZONDER het OPI-label: {vreemde_mag}\n\n"
         "De connector draait `weed shell` als subprocess in de OPI-pod, met de binary uit het "
         "OPI-image: OPI krijgt daarmee geen pods/exec, en de grens op de gRPC-poorten is de "
         "NetworkPolicy plus de JWT op de filer. Zonder -master blijft `weed shell` in "
@@ -784,7 +784,7 @@ def test_i3_identiteit_a_kan_zichzelf_geen_rechten_geven(identiteiten: list[Iden
 
 def test_i4_alleen_de_s3_poort_is_voor_tenants_bereikbaar(identiteiten: list[Identiteit], rapport: Rapport) -> None:
     """Eerst of dit cluster NetworkPolicies handhaaft, dan wat de poortmeting betekent."""
-    host = "seaweedfs.rig-system.svc.cluster.local"
+    host = f"seaweedfs.{seaweedfs.NAMESPACE}.svc.cluster.local"
     poorten = [8333, 9333, 8888, 8080, 19333, 18888, 18080, 8181, 9101, 9327]
     uitkomsten = {poort: seaweedfs.netwerk_bereikt(host, poort) for poort in poorten}
     bereikt = [poort for poort, uitvoer in uitkomsten.items() if "BEREIKT" in uitvoer.stdout]
@@ -862,7 +862,7 @@ def test_k2_bucketkopie_van_een_andere_s3_server(identiteiten: list[Identiteit],
             "b": (GEBRUIKER_B, next(i.secret_key for i in identiteiten if i.naam == GEBRUIKER_B)),
         }
     )
-    minio_host = "minio.rig-system.svc.cluster.local:9000"
+    minio_host = f"minio.{seaweedfs.NAMESPACE}.svc.cluster.local:9000"
     env = f"export MC_HOST_minio=http://{minio['MINIO_ROOT_USER']}:{minio['MINIO_ROOT_PASSWORD']}@{minio_host}\n"
     seaweedfs.exec_in(
         seaweedfs.TENANT_NAMESPACE,
@@ -939,8 +939,8 @@ def test_b3_de_mirror_variant(identiteiten: list[Identiteit], rapport: Rapport) 
 def _metrieken_met_collection() -> seaweedfs.Uitvoer:
     """De reeksen met een gevulde collection-label, uit de OPI-pod.
 
-    Niet uit de clientpod: de NetworkPolicy laat de metrics-poort alleen vanuit rig-system
-    toe (I4), dus uit een tenant-namespace meet je het beleid en niet de reeks.
+    Niet uit de clientpod: de NetworkPolicy laat de metrics-poort alleen vanuit de eigen
+    namespace toe (I4), dus uit een tenant-namespace meet je het beleid en niet de reeks.
     """
     return seaweedfs.exec_in(
         seaweedfs.NAMESPACE,

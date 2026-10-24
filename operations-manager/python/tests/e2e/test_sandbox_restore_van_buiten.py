@@ -44,9 +44,10 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 
 _VERIFY_SSL = FORGEJO_VERIFY_SSL
 _CLUSTER = "sandboxed-local"
-# SeaweedFS replaces minio-storage on this cluster (RC-382) but has no backup yet.
-# Bucket migration is separate; this suite tests the database half (RC-81, RC-82).
-_SERVICES = ["postgresql-database"]
+# seaweedfs-storage en niet minio-storage: MinIO is op een cluster met SeaweedFS de
+# vervangen dienst (RC-382), dus zijn kaart staat er niet meer voor een nieuw project.
+# De bucketbackup draait sinds RC-381 ook tegen SeaweedFS, dus de buckethelft blijft.
+_SERVICES = ["postgresql-database", "seaweedfs-storage"]
 
 
 @pytest.fixture(scope="module")

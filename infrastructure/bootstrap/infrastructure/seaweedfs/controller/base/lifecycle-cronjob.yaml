@@ -1,0 +1,98 @@
+# De ronde die lifecycle-regels uitvoert. SeaweedFS neemt NoncurrentVersionExpiration aan
+# en bewaart hem, maar ruimt pas op in een "daily replay" per shard, en die ronde start niet
+# vanzelf in deze uitrol (RC-380, rij G20): zonder deze CronJob staat de grens op de bucket
+# zonder ooit af te dwingen. Hier en niet in OPI, omdat de ronde van het component is en
+# ook moet lopen als OPI stilstaat.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: seaweedfs-lifecycle
+  namespace: rig-system
+  labels:
+    app: seaweedfs-lifecycle
+    app.kubernetes.io/name: seaweedfs-lifecycle
+    app.kubernetes.io/part-of: seaweedfs
+spec:
+  schedule: "30 3 * * *"
+  timeZone: Europe/Amsterdam
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      # Een onbereikbare master laat `weed shell` in WaitUntilConnected wachten zonder ooit
+      # een fout te geven (rij G18), dus de tijdslimiet is hier de enige grens.
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          # app: seaweedfs-lifecycle is de selector waarmee allow-seaweedfs-access deze pod
+          # de drie beheerpoorten geeft. Een eigen label en niet dat van de OPI-pod, zodat
+          # de regel precies deze pod toelaat.
+          labels:
+            app: seaweedfs-lifecycle
+            app.kubernetes.io/name: seaweedfs-lifecycle
+            app.kubernetes.io/part-of: seaweedfs
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: run-shard
+            # Hetzelfde image op dezelfde digest als de pod en als de weed-stage van de
+            # OPI-Dockerfile; die drie gaan samen omhoog.
+            image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+            # 16 shards omdat SeaweedFS de buckets over precies dat aantal verdeelt; met een
+            # kleiner bereik blijft een deel van de buckets ongemoeid. `-refresh 0` is wat
+            # er een enkele pass van maakt: zonder die vlag blijft het commando draaien
+            # zonder ooit een pass te doen (gemeten: 10 minuten, 50 versies onveranderd).
+            # Het commando gaat over stdin, zoals in SeaweedfsConnector: `weed shell` heeft
+            # geen niet-interactieve vorm met het commando in argv. De twee adressen dragen
+            # de HTTP-poort en niet de gRPC-poort: `weed shell` telt er zelf 10000 bij op,
+            # zoals SEAWEEDFS_FILER_ADDRESS in de configmap ook 8888 noemt.
+            command:
+            - sh
+            - -c
+            - |
+              set -eu
+              echo "s3.lifecycle.run-shard -shards 0-15 -s3 seaweedfs:18333 -refresh 0" \
+                | weed shell -filer=seaweedfs:8888 -master=seaweedfs:9333
+            env:
+            # weed schrijft zijn shell-historie onder HOME, en de root staat read-only.
+            - name: HOME
+              value: /tmp
+            # De JWT-sleutel waarmee de filer-gRPC de aanroep aanneemt, en het
+            # admin-sleutelpaar; dezelfde bron als de pod en als OPI.
+            envFrom:
+            - secretRef:
+                name: seaweedfs-credentials
+            securityContext:
+              allowPrivilegeEscalation: false
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+              seccompProfile:
+                type: RuntimeDefault
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+              limits:
+                cpu: 500m
+                memory: 256Mi
+            volumeMounts:
+            # weed zet zijn lokale gRPC-sockets in /tmp, en de root staat read-only.
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir: {}

@@ -478,13 +478,15 @@ class Settings(BaseSettings):
     # MinIO client configuration
     MC_CONFIG_DIR: str = "/tmp/mc-config"  # Directory for mc CLI configuration files
 
-    # SeaweedFS (proef seaweedfs-storage, RC-331). Beide adressen zijn nodig: `weed shell`
+    # SeaweedFS (seaweedfs-storage, RC-331). Beide adressen zijn nodig: `weed shell`
     # hangt zonder masteradres in WaitUntilConnected (gemeten, rij G18). Leeg betekent
-    # "dit cluster levert de dienst niet"; alleen de sandbox-overlay zet ze.
+    # "dit cluster levert de dienst niet"; de overlay van elk cluster met de dienst zet ze.
     SEAWEEDFS_FILER_ADDRESS: str = ""
     SEAWEEDFS_MASTER_ADDRESS: str = ""
-    # Het admin-sleutelpaar van de S3-poort, voor wat `weed shell` niet kan: de
-    # lifecycle-regel op een bucket (RC-380). Uit hetzelfde secret als de JWT-sleutel.
+    # Het admin-sleutelpaar uit seaweedfs-credentials, waarmee `mc` een alias op de S3-poort
+    # legt: voor de bucketkopie van een kloon en voor wat `weed shell` niet kan, de
+    # lifecycle-regel op een bucket (RC-380). Beheer van identiteiten loopt NIET hierlangs
+    # maar over `weed shell`.
     SEAWEEDFS_ADMIN_ACCESS_KEY: str = ""
     SEAWEEDFS_ADMIN_SECRET_KEY: str = ""
 

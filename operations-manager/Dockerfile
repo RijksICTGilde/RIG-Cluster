@@ -10,7 +10,7 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 # er is staat in images/mc/Dockerfile, hoe je hem vult in images/mc/README.md.
 FROM ghcr.io/minbzk/base-images/mc:${MC_VERSION} AS mc
 
-# De `weed`-binary voor de proef seaweedfs-storage (RC-331). Op dezelfde digest als
+# De `weed`-binary voor seaweedfs-storage (RC-331, RC-381). Op dezelfde digest als
 # infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/deployment.yaml: die
 # twee gaan samen omhoog, want de eisentabel hangt aan precies deze build.
 FROM chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d AS weed

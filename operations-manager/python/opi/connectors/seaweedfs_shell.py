@@ -1,6 +1,6 @@
 """SeaweedFS-connector: `weed shell` als subprocess, met het commando op stdin.
 
-De beheerweg van de proef seaweedfs-storage (RC-331). `weed shell` praat over de
+De beheerweg van seaweedfs-storage (RC-331). `weed shell` praat over de
 filer-gRPC en heeft BEIDE adressen nodig: zonder ``-master`` blijft hij in
 ``WaitUntilConnected`` hangen in plaats van een fout te geven (gemeten, rij G18). De
 IAM-API op de S3-poort staat uit, dus dit is de enige weg.
@@ -20,6 +20,8 @@ import os
 import tempfile
 from typing import Any
 
+import aiohttp
+
 from opi.connectors.minio_mc import MinioExecutionError, create_minio_connector
 from opi.core.cluster_config import get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
@@ -32,6 +34,9 @@ logger = logging.getLogger(__name__)
 #: De admin-Bearer die `weed shell` zelf uit zijn omgeving leest. Hij staat als platformgeheim
 #: in PLATFORM_SECRET_NAMES, dus child_env filtert hem en hij gaat hier expliciet mee.
 JWT_SLEUTEL_ENV = "WEED_JWT_FILER_SIGNING_KEY"
+
+#: Hoe lang de anonieme toets op de S3-poort mag duren.
+ANONIEME_TOETS_TIMEOUT_SECONDS = 10.0
 
 #: Hoe lang een `weed shell`-commando mag duren. Een onbereikbare master laat `weed shell`
 #: in WaitUntilConnected wachten zonder ooit een fout te geven (rij G18), en dan hangt de
@@ -195,8 +200,9 @@ class SeaweedfsConnector:
         ``MinioConnector``, en het regel-document en zijn idempotentie staan daar al, dus
         hier staat geen tweede exemplaar.
 
-        SeaweedFS voert de regel uit in zijn lifecycle-ronde; die ronde draait in deze
-        uitrol niet vanzelf (zie features/seaweedfs-objectopslag.md, rij G20).
+        SeaweedFS voert de regel uit in zijn lifecycle-ronde. Die ronde start niet vanzelf;
+        de CronJob ``seaweedfs-lifecycle`` van het component draait hem eenmaal per nacht
+        (zie features/seaweedfs-objectopslag.md, rij G20).
 
         Raises:
             SeaweedfsConfigurationError: dit cluster heeft geen SeaweedFS of geen admin-sleutels.
@@ -290,6 +296,18 @@ class SeaweedfsConnector:
         await self._uitvoeren(
             f"s3.policy -delete -name {policy}", wat=f"policy {policy} verwijderen", verdraagt=_BESTAAT_NIET
         )
+
+    async def anonymous_access_allowed(self, s3_endpoint: str) -> bool:
+        """Of de S3-poort een ongeauthenticeerde ListBuckets aanneemt.
+
+        Zonder ook maar een identiteit zet SeaweedFS ``isAuthEnabled`` op false en antwoordt
+        deze aanroep met 200 en de volledige bucketlijst (RC-331, rij G14). Mét identiteit
+        is het 403. Dit is dus de meting of het admin-sleutelpaar zijn werk doet, en niet
+        of een secret bestaat.
+        """
+        timeout = aiohttp.ClientTimeout(total=ANONIEME_TOETS_TIMEOUT_SECONDS)
+        async with aiohttp.ClientSession(timeout=timeout) as sessie, sessie.get(f"{s3_endpoint}/") as antwoord:
+            return antwoord.status == 200
 
     async def grant_bucket_access(self, user: str, bucket: str, policy_name: str) -> None:
         """Het gedeelde document opslaan en koppelen: dezelfde isolatie als bij MinIO."""

@@ -161,6 +161,29 @@ spec:
             secretKeyRef:
               name: minio-admin-credentials
               key: MINIO_ROOT_PASSWORD
+        # SeaweedFS (seaweedfs-storage). Optioneel, want een cluster zonder de dienst heeft
+        # dit secret niet en de pod moet daar gewoon starten. De JWT-sleutel is de
+        # admin-Bearer op de IAM-gRPC van de filer, die `weed shell` zelf uit de omgeving
+        # leest; zonder die sleutel neemt die gRPC elke aanroep aan (RC-331, rij I5). Het
+        # sleutelpaar is de admin-identiteit op de S3-poort, voor de bucketkopie van een kloon.
+        - name: WEED_JWT_FILER_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: seaweedfs-credentials
+              key: WEED_JWT_FILER_SIGNING_KEY
+              optional: true
+        - name: SEAWEEDFS_ADMIN_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: seaweedfs-credentials
+              key: AWS_ACCESS_KEY_ID
+              optional: true
+        - name: SEAWEEDFS_ADMIN_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: seaweedfs-credentials
+              key: AWS_SECRET_ACCESS_KEY
+              optional: true
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:

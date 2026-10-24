@@ -9,7 +9,7 @@ resources:
   - ../../infrastructure/keycloak/controller/overlays/sandboxed-local
   - ../../infrastructure/keycloak/config/overlays/sandboxed-local
   - ../../infrastructure/minio/controller/overlays/sandboxed-local
-  # Proef naast minio (RC-331), alleen hier; odcn haalt hem niet op.
+  # Tweede object-storage-service naast minio (RC-331).
   - ../../infrastructure/seaweedfs/controller/overlays/sandboxed-local
   - ../../infrastructure/prometheus/controller/overlays/sandboxed-local
   - ../../infrastructure/redis/controller/overlays/sandboxed-local

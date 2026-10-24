@@ -963,3 +963,118 @@ class TestParseRetentionPeriodHours:
     def test_invalid_values(self, input_value: str) -> None:
         with pytest.raises(ValueError):  # noqa: PT011
             parse_retention_period_hours(input_value)
+
+
+class TestSeaweedfsUitgesteldOpruimen:
+    """seaweedfs-storage declareert CleanupStrategy.DEFERRED, dus geen van de drie
+    verwijderpaden mag de bucket, de identiteit of de policy direct weghalen zolang er
+    een bewaartermijn geldt.
+    """
+
+    @staticmethod
+    def _seaweedfs_deployment() -> dict:
+        deployment = _make_deployment()
+        deployment["services"] = ["seaweedfs-storage"]
+        return deployment
+
+    @staticmethod
+    def _mock_pm() -> MagicMock:
+        """Het mock-project uit _make_project_manager_mock, met de uitgestelde tak van elke
+        manager op een echt antwoord: een kale AsyncMock geeft een coroutine terug waar de
+        code een dict uitpakt.
+        """
+        mock_pm = _make_project_manager_mock()
+        leeg = {"operations": [], "errors": []}
+        for manager in (mock_pm._minio_manager, mock_pm._seaweedfs_manager):
+            manager.handle_service_removal = AsyncMock(return_value=leeg)
+        mock_pm._ensure_database_manager.return_value.handle_service_removal = AsyncMock(return_value=leeg)
+        mock_pm._project_file_handler.deployment_uses_service = MagicMock(
+            side_effect=lambda _yaml, _naam, soorten: "seaweedfs-storage" in soorten
+        )
+        return mock_pm
+
+    @pytest.mark.asyncio
+    async def test_yaml_change_geeft_de_markeringsdienst_door(self) -> None:
+        mock_pm = self._mock_pm()
+        deployment = self._seaweedfs_deployment()
+        previous_yaml = _make_project_data(services=["seaweedfs-storage"], deployments=[deployment])
+        marked = AsyncMock()
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(mock_pm).delete_deployment_from_yaml_change(
+                "test-project",
+                deployment,
+                _make_project_data(deployments=[]),
+                marked_for_deletion_service=marked,
+                previous_yaml=previous_yaml,
+            )
+
+        aanroep = mock_pm._seaweedfs_manager.handle_service_removal.await_args
+        assert aanroep is not None, "de dienst zat op de deployment, dus deze tak moet lopen"
+        assert aanroep.kwargs["marked_for_deletion_service"] is marked
+
+    @pytest.mark.asyncio
+    async def test_yaml_change_laat_de_namespace_staan_bij_alleen_deze_dienst(self) -> None:
+        # Zonder has_seaweedfs in has_deferred ging de namespace, en daarmee het secret
+        # {deployment}-seaweedfs, meteen weg.
+        mock_pm = self._mock_pm()
+        deployment = self._seaweedfs_deployment()
+        previous_yaml = _make_project_data(services=["seaweedfs-storage"], deployments=[deployment])
+        marked = AsyncMock()
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(mock_pm).delete_deployment_from_yaml_change(
+                "test-project",
+                deployment,
+                _make_project_data(deployments=[]),
+                marked_for_deletion_service=marked,
+                previous_yaml=previous_yaml,
+            )
+
+        gemarkeerd = {aanroep.kwargs["resource_type"] for aanroep in marked.mark_resource.await_args_list}
+        assert "namespace" in gemarkeerd, gemarkeerd
+        mock_pm._kubectl_connector.delete_namespace.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_deployment_markeert_bij_een_bewaartermijn(self) -> None:
+        mock_pm = self._mock_pm()
+        deployment = self._seaweedfs_deployment()
+        deployment["data-retention-period"] = "3d"
+        project_data = _make_project_data(services=["seaweedfs-storage"], deployments=[deployment])
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        mock_project = MagicMock()
+        mock_project.filename = "test-project.yaml"
+        mock_project_store = MagicMock()
+        mock_project_store.get = MagicMock(return_value=mock_project)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_store),
+            patch("os.path.exists", return_value=False),
+            patch("opi.core.database_pools.get_database_pool", return_value=MagicMock()),
+            patch("opi.services.marked_for_deletion_service.MarkedForDeletionService", return_value=AsyncMock()),
+        ):
+            await DeleteProjectManager(mock_pm).delete_deployment("test-project", "pr-42")
+
+        mock_pm._seaweedfs_manager.handle_service_removal.assert_awaited_once()
+        mock_pm._seaweedfs_manager.delete_resources_for_deployment.assert_not_awaited()

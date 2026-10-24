@@ -13,6 +13,7 @@ resources:
   - ../../infrastructure/keycloak/config/overlays/odcn-staging
   - ../../infrastructure/minio/controller/overlays/odcn-staging
   - ../../infrastructure/minio/config/overlays/odcn-staging
+  - ../../infrastructure/seaweedfs/controller/overlays/odcn-staging
   - ../../infrastructure/prometheus/controller/overlays/odcn-staging
   - ../../infrastructure/redis/controller/overlays/odcn-staging
   - ../../infrastructure/external-dns/controller/overlays/odcn-staging

@@ -351,3 +351,48 @@ class TestBeleidsdocument:
         with pytest.raises(SeaweedfsValidationError):
             await SeaweedfsConnector().delete_policy("fout beleid")
         assert len(shell) == 0
+
+
+class _NepAntwoord:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+    async def __aenter__(self) -> _NepAntwoord:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+
+class _NepSessie:
+    """Staat in voor ``aiohttp.ClientSession``: legt de gevraagde URL vast."""
+
+    def __init__(self, status: int) -> None:
+        self._status = status
+        self.gevraagde_url: str | None = None
+
+    async def __aenter__(self) -> _NepSessie:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    def get(self, url: str) -> _NepAntwoord:
+        self.gevraagde_url = url
+        return _NepAntwoord(self._status)
+
+
+class TestAnonymousAccessAllowed:
+    """De G14-meting: een 200 op een ongeauthenticeerde ListBuckets is een open poort."""
+
+    @pytest.mark.parametrize(("status", "verwacht"), [(200, True), (403, False), (401, False)])
+    async def test_de_statuscode_bepaalt_het_antwoord(
+        self, monkeypatch: pytest.MonkeyPatch, status: int, verwacht: bool
+    ) -> None:
+        sessie = _NepSessie(status)
+        monkeypatch.setattr("opi.connectors.seaweedfs_shell.aiohttp.ClientSession", lambda timeout=None: sessie)
+
+        resultaat = await SeaweedfsConnector().anonymous_access_allowed("http://seaweedfs:8333")
+
+        assert resultaat is verwacht
+        assert sessie.gevraagde_url == "http://seaweedfs:8333/"

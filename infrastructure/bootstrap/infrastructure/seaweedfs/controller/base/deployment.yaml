@@ -26,6 +26,41 @@ spec:
         # Zelfde reden als bij minio: anders zet de kubelet bij elke start de ownership van
         # elk bestand op de PVC om, wat op odcn buiten het rollout-venster viel.
         fsGroupChangePolicy: OnRootMismatch
+      # Zonder admin-identiteit zet SeaweedFS isAuthEnabled op false en staat de S3-poort
+      # anoniem open (RC-331, rij G14). Een leeg sleutelpaar is daarom een harde fout: deze
+      # container weigert en de pod start niet. Hetzelfde image, dus geen tweede pull.
+      initContainers:
+      - name: eis-admin-identiteit
+        image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+        command:
+        - sh
+        - -c
+        - |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "seaweedfs-credentials heeft geen admin-sleutelpaar; zonder identiteit staat de S3-poort open" >&2
+            exit 1
+          fi
+        envFrom:
+        - secretRef:
+            name: seaweedfs-credentials
+        # Geen runAsUser hier: die komt van de pod, en op odcn haalt de overlay hem weg
+        # omdat OpenShift de UID uit het bereik van de namespace toekent.
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          limits:
+            memory: 64Mi
+            cpu: 100m
+          requests:
+            memory: 16Mi
+            cpu: 10m
       containers:
       - name: seaweedfs
         # Op een digest gepind: de eisentabel hangt aan precies deze build en upstream beweegt
@@ -55,6 +90,8 @@ spec:
         ports:
         - containerPort: 8333
           name: s3
+        - containerPort: 18333
+          name: s3-grpc
         - containerPort: 18888
           name: filer-grpc
         - containerPort: 19333

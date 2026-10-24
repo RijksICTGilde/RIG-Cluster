@@ -53,7 +53,7 @@ from opi.utils.patterns import (
     POSTGRES_IDENTIFIER,
     S3_BUCKET_NAME,
 )
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
@@ -1566,7 +1566,10 @@ _DATABASE_SERVICE_TYPES = [
     ServiceType.POSTGRESQL_DATABASE.value,
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
 ]
-_MINIO_SERVICE_TYPES = [ServiceType.MINIO_STORAGE.value]
+#: minio-storage en seaweedfs-storage: dezelfde bucket achter dezelfde S3-API, dus dezelfde
+#: restore. Welke van de twee een deployment gebruikt staat in de naam van zijn secret, en
+#: ``get_object_storage_secret`` leest beide.
+_MINIO_SERVICE_TYPES = OBJECT_STORAGE_SERVICE_TYPES
 
 
 @dataclass
@@ -1787,7 +1790,7 @@ async def _resolve_own_bucket_target(project_name: str, namespace: str, referenc
             ),
         )
 
-    secret = await MinIOSecret.get_data(
+    secret = await get_object_storage_secret(
         kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
     )
     if secret is None:

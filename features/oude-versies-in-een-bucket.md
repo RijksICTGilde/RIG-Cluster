@@ -147,15 +147,12 @@ Twee dingen zijn anders dan bij MinIO:
   admin-sleutelpaar uit `seaweedfs-credentials`. De S3-client van dit project is `mc` in
   `MinioConnector`, en het regel-document en zijn idempotentie staan daar al, dus die
   worden hergebruikt onder de alias `default-seaweedfs`.
-- **Wanneer hij uitvoert.** SeaweedFS ruimt op in een "daily replay"-ronde per shard, en die
-  ronde draait in deze uitrol **niet vanzelf**: er is geen vlag in `weed server`/`weed s3`
-  die hem start en er staat geen worker in de pod. Acht minuten na het zetten van de regel
-  was er niets opgeruimd; na `s3.lifecycle.run-shard -shards 0-15 -s3 127.0.0.1:18333` was
-  het in één keer 31. De grens staat dus wel op de bucket, maar wordt pas afgedwongen als
-  die ronde loopt. Een periodieke trigger (een CronJob in het seaweedfs-component die
-  `weed shell s3.lifecycle.run-shard -shards 0-15 -s3 <s3>:18333` draait, of één
-  langdraaiende pass met `-refresh 24h`) is wat dat zou kosten; die is NIET gebouwd, want
-  deze taak zet de regel en SeaweedFS is een proef op de sandbox.
+- **Wanneer hij uitvoert.** SeaweedFS ruimt niet meteen op maar in een "daily replay"-ronde
+  per shard, en die ronde start niet vanzelf: er is geen vlag in `weed server`/`weed s3` die
+  hem aanzet en er staat geen worker in de pod. De CronJob `seaweedfs-lifecycle` van het
+  component draait hem daarom eenmaal per nacht (RC-381, zie "De lifecycle-ronde" in
+  `seaweedfs-objectopslag.md`). Voor je applicatie betekent dat: anders dan bij MinIO kan
+  een versie boven de grens tot een nacht langer blijven staan.
 
 ## Afhankelijkheden
 

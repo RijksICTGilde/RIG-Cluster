@@ -74,9 +74,10 @@ PLATFORM_POLICY_SOURCES: dict[str, str | None] = {
     "infrastructure/bootstrap/infrastructure/pgadmin/config/overlays/odcn/network-policies/pgadmin-networkpolicy.yaml": None,
     # Alleen de sandbox-overlay van de mailrelay.
     "infrastructure/bootstrap/infrastructure/mail/controller/overlays/sandboxed-local/network-policies/mail-relay-networkpolicy.yaml": None,
-    # De proef seaweedfs-storage (RC-331) staat in de base, maar alleen
-    # clusters/sandboxed-local haalt de overlay op: geen Application op productie.
-    "infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/network-policy.yaml": None,
+    # Via de production-infrastructure Application, sinds RC-381: clusters/odcn haalt de
+    # overlay op. De policy staat in de base, want zonder namespacenaam in zijn selectors
+    # klopt hij op elk cluster.
+    "infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/network-policy.yaml": OPS_NAMESPACE,
     # Buiten ArgoCD om: task bootstrap-backup-destination (CLUSTER default odcn) bouwt
     # en applied deze overlay, prune-safe voor de backup-PVC.
     "infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/odcn/network-policies/minio-networkpolicy.yaml": BACKUP_NAMESPACE,

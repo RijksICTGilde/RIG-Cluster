@@ -9,8 +9,10 @@ morgen naar een andere image dan vandaag, zonder commit. Zie features/image-vers
 """
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -695,3 +697,69 @@ class TestManifestImages:
     def test_de_standaard_van_backup_image_is_gepind(self) -> None:
         """Dit is de verwijzing die productie krijgt: de configmap daar zet hem niet."""
         assert _is_gepind(settings.BACKUP_IMAGE), settings.BACKUP_IMAGE
+
+
+#: De overlays van infrastructuurcomponenten die op een ODCN-cluster terechtkomen. Daar kan
+#: Docker Hub niet bij, en een image dat niet al in git naar de rcr-proxy wijst, wordt door
+#: admission herschreven en blijft daarna eeuwig OutOfSync.
+ODCN_COMPONENTOVERLAYS = (
+    "infrastructure/bootstrap/infrastructure/seaweedfs/controller/overlays/odcn",
+    "infrastructure/bootstrap/infrastructure/seaweedfs/controller/overlays/odcn-staging",
+)
+
+RCR = "rcr.rijksapps.nl/"
+
+
+def _gerenderde_images(overlay: str) -> list[str]:
+    """De images die kustomize voor deze overlay oplevert, niet wat de manifesten zeggen.
+
+    Gerenderd en niet gegrepen, want het pad komt uit een `images:`-blok in de overlay en
+    de digest uit de basis; alleen de uitkomst zegt of ze samenkomen, en een tweede
+    container of initContainer komt zo mee zonder dat deze toets wordt bijgewerkt.
+
+    Een CronJob zet zijn podspec een laag dieper (`jobTemplate`), dus die wordt apart
+    opgezocht: zonder dat viel de lifecycle-ronde van seaweedfs stil buiten deze toets.
+    """
+    proc = subprocess.run(
+        ["kustomize", "build", str(REPO_ROOT / overlay)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return [
+        container["image"]
+        for doc in yaml.safe_load_all(proc.stdout)
+        if doc
+        for spec in _podspecs(doc)
+        for container in (spec.get("containers") or []) + (spec.get("initContainers") or [])
+    ]
+
+
+def _podspecs(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """De podspecs in een manifest: die van een workload, en die van een CronJob."""
+    spec = doc.get("spec") or {}
+    kandidaten = [
+        (spec.get("template") or {}).get("spec"),
+        ((spec.get("jobTemplate") or {}).get("spec", {}).get("template") or {}).get("spec"),
+    ]
+    return [podspec for podspec in kandidaten if podspec]
+
+
+@pytest.mark.parametrize("overlay", ODCN_COMPONENTOVERLAYS)
+class TestOdcnComponentImages:
+    """Elk image in een ODCN-overlay van een infrastructuurcomponent komt van de rcr-proxy
+    en staat op een digest.
+
+    Het gat dat dit dicht: TestManifestImages volgt alleen de kustomization-wortels van
+    `clusters/odcn` en toetst alleen DAT er een digest staat, niet het pad, en
+    `odcn-staging` valt er helemaal buiten.
+    """
+
+    def test_elk_image_komt_van_de_rcr_proxy_en_staat_op_een_digest(self, overlay: str) -> None:
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+        images = _gerenderde_images(overlay)
+        assert images, f"{overlay} levert geen enkel image op; volgt de toets de overlay nog?"
+
+        fout = [image for image in images if not image.startswith(RCR) or "@sha256:" not in image]
+        assert fout == []

@@ -275,6 +275,31 @@ class SeaweedFSSecret(MinIOSecret):
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
 
 
+#: De twee diensten die dezelfde ``OBJECT_STORE_*``-variabelen leveren. Wie "de objectopslag
+#: van deze deployment" bedoelt noemt deze lijst, zodat een nieuwe afnemer er niet één
+#: vergeet; ``validate_project`` van seaweedfs-storage weigert ze samen op één deployment.
+OBJECT_STORAGE_SERVICE_TYPES: list[str] = [
+    ServiceType.MINIO_STORAGE.value,
+    ServiceType.SEAWEEDFS_STORAGE.value,
+]
+
+
+async def get_object_storage_secret(
+    kubectl_connector: KubectlConnector, namespace: str, prefix: str
+) -> MinIOSecret | None:
+    """Het objectopslag-secret van een deployment, van welke van de twee diensten het ook is.
+
+    De twee secrets hebben dezelfde velden en verschillen alleen in naam, dus een afnemer
+    (back-up, restore) hoeft het verschil niet te kennen. Eén van de twee kan bestaan, want
+    beide op één deployment is geweigerd.
+    """
+    for klasse in (MinIOSecret, SeaweedFSSecret):
+        secret = await klasse.get_data(kubectl_connector=kubectl_connector, namespace=namespace, prefix=prefix)
+        if secret is not None:
+            return secret
+    return None
+
+
 @dataclass
 class KeycloakSecret(BaseSecret):
     """Keycloak/OIDC secret configuration."""

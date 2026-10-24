@@ -1,26 +1,23 @@
-"""seaweedfs-storage: de proef met SeaweedFS als tweede object-storage-service (RC-331).
+"""seaweedfs-storage: SeaweedFS als tweede object-storage-service (RC-331, RC-381).
 
 De opvolger van ``minio-storage``: sinds RC-382 draagt die dienst ``replaced_by`` naar deze,
 dus op een cluster waar SeaweedFS er is ziet een nieuw project de MinIO-kaart niet meer. Wat
 erachter zit is wel anders: een ander beheerprotocol, een ander IAM-model, andere poorten. De
-dienst staat alleen op de sandbox, en productie verandert niet.
+dienst bestaat op elk cluster waarvan de configuratie een ``seaweedfs_host`` noemt.
 
-Drie dingen zijn met opzet zoals ze zijn:
+Twee dingen zijn met opzet zoals ze zijn:
 
 * **Dezelfde variabelen als minio.** ``MinIOVariables`` wordt hergebruikt, zoals
   ``namespace-postgresql-database`` de ``DatabaseVariables`` hergebruikt. Een applicatie
   ziet dus dezelfde namen en wisselt alleen van endpoint. De omschrijvingen noemen nog
-  MinIO; neutraal maken raakt de minio-dienst en de API-uitvoer en hoort bij het
-  productieplan.
+  MinIO; neutraal maken raakt de minio-dienst en de API-uitvoer.
 * **Eén van de twee per deployment.** Met dezelfde variabelen botsen de twee diensten in
   één pod, dus ``validate_project`` weigert een deployment die ze beide gebruikt.
-* **Wat de proef niet levert, weigert hij.** Geen ``clone-from`` en geen ``backup_label``,
-  want kloon en back-up zijn in de gate gemeten maar niet bedraad. Een dienst die aanstaat
-  en stil niets doet is wat ``instructions/services.md`` bij approvals verbiedt.
 
-Opruimen is ``IMMEDIATE`` en niet ``DEFERRED`` zoals minio: de uitgestelde weg vraagt een
-purge per resourcetype in ``opi/jobs/reconciliation.py``, en dat hoort bij het
-productieplan.
+Het ``backup_label`` is ``minio`` en niet een eigen label: het label groepeert diensten die
+hetzelfde soort back-up hebben, en dat is hier een bucket achter een S3-API. Een eigen label
+zou de back-uptab, de restore-route, het resourcetype van de back-up-API en de UI-lijst
+allemaal verdubbelen voor dezelfde handeling.
 """
 
 from __future__ import annotations
@@ -33,6 +30,7 @@ from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionCon
 from opi.services.catalog.minio.variables import MinIOVariables
 from opi.services.catalog.seaweedfs.actions import seaweedfs_storage_actions
 from opi.services.catalog.seaweedfs.config_model import SeaweedfsStorageConfig
+from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.noncurrent_versions import (
     NONCURRENT_VERSION_SETTINGS,
     noncurrent_deployment_section,
@@ -47,20 +45,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SeaweedfsStorageService(Service):
+class SeaweedfsStorageService(BackupsPageMixin, Service):
     service_type = ServiceType.SEAWEEDFS_STORAGE
     definition = ServiceDefinition(
-        name="SeaweedFS Object Storage (proef)",
-        description=(
-            "S3-compatibele object storage als proef naast MinIO. Alleen op de sandbox, zonder back-up en zonder kloon."
-        ),
+        name="SeaweedFS Object Storage",
+        description="S3-compatibele object storage voor documenten, afbeeldingen en grote bestanden",
         help_template="seaweedfs/help.md",
         icon="map",
         color="groen",
         shared_per_deployment=True,
         secret_class="SeaweedFSSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in MinIOVariables],
-        cleanup_strategy=CleanupStrategy.IMMEDIATE,
+        cleanup_strategy=CleanupStrategy.DEFERRED,
+        backup_label="minio",
         actions_provider=seaweedfs_storage_actions,
     )
     config_model = SeaweedfsStorageConfig
@@ -89,9 +86,9 @@ class SeaweedfsStorageService(Service):
         return get_seaweedfs_host(cluster) is not None
 
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """Niet samen met minio op één deployment, en geen kloon.
+        """Niet samen met minio op één deployment.
 
-        Draait voor ELK project, ook een dat deze dienst niet noemt; beide regels geven dan
+        Draait voor ELK project, ook een dat deze dienst niet noemt; de regel geeft dan
         niets terug.
         """
         from opi.handlers.project_file_handler import ProjectFileHandler
@@ -111,11 +108,6 @@ class SeaweedfsStorageService(Service):
                     f"Deployment '{naam}' gebruikt zowel minio-storage als seaweedfs-storage. Beide diensten "
                     "geven dezelfde OBJECT_STORE_*-variabelen, dus in een pod zou de ene de andere overschrijven. "
                     "Kies er een."
-                )
-            if deployment.get("clone-from"):
-                fouten.append(
-                    f"Deployment '{naam}' gebruikt seaweedfs-storage met clone-from. De proef kan geen bucket "
-                    "klonen; gebruik minio-storage of haal de clone-from weg."
                 )
         return fouten
 
@@ -216,7 +208,9 @@ class SeaweedfsStorageService(Service):
         ]
 
     async def provision(self, ctx: ProvisionContext) -> None:
-        await ctx.seaweedfs_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
+        await ctx.seaweedfs_manager.create_resources_for_deployment(
+            ctx.project_data, ctx.deployment, force_clone=ctx.force_clone
+        )
 
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
         creds = ctx.get_secret(ctx.deployment_name, "seaweedfs", SeaweedFSSecret)
