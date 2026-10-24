@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import httpx
+
 from security_tests.baseline import meldingen_van, oordeel_tegen_baseline
 from security_tests.doel import LOKALE_HOSTS, RAPPORTMAP, TOKEN_HEADER
 
@@ -154,6 +156,62 @@ def ontbrekende_herkenning(doel: Doel, pas: str) -> str:
     return ""
 
 
+#: Het component dat de wizard een proefproject geeft (``create_project_with_services``).
+PROEFCOMPONENT = "web"
+
+#: De ingevulde OpenAPI in de rapportmap, die de container als /zap/wrk ziet.
+GEZAAIDE_OPENAPI = "openapi-gezaaid.json"
+
+
+def _eerste_deployment(doel: Doel, project: str) -> str | None:
+    """De eerste deployment van een proefproject, gevraagd met zijn eigen sleutel."""
+    try:
+        antwoord = httpx.get(
+            f"{doel.url}/api/v2/projects/{project}", headers={"X-API-Key": doel.sleutels[project]}, timeout=30
+        )
+        deployments = antwoord.json().get("deployments") or []
+    except httpx.HTTPError, ValueError:
+        return None
+    namen = [d.get("name") for d in deployments if isinstance(d, dict) and d.get("name")]
+    return namen[0] if namen else None
+
+
+def zaai_openapi(spec: dict, waarden: dict[str, str]) -> dict:
+    """De OpenAPI met de waarden van een echt proefproject in de padparameters.
+
+    Zonder dit vult ZAP ``project_name`` letterlijk in, en komt geen enkele aanroep verder dan
+    de herkenning van een project dat niet bestaat (gemeten 24-10): dan valt ZAP de
+    proefprojecten nooit aan.
+    """
+    for pad in (spec.get("paths") or {}).values():
+        for operatie in [pad, *(o for o in pad.values() if isinstance(o, dict))]:
+            for parameter in operatie.get("parameters") or []:
+                if parameter.get("in") == "path" and parameter.get("name") in waarden:
+                    waarde = waarden[parameter["name"]]
+                    parameter["example"] = waarde
+                    parameter.setdefault("schema", {})["default"] = waarde
+    return spec
+
+
+def _zaad(doel: Doel, map_: Path) -> list[str]:
+    """``-t`` en ``-O`` voor ZAP: de ingevulde OpenAPI als er een proefproject is, anders die van het doel."""
+    url, _ = containerdoel(doel.url)
+    if not doel.projecten:
+        return ["-t", f"{url}/openapi.json"]
+    project = doel.projecten[0]
+    waarden = {"project_name": project, "component_name": PROEFCOMPONENT}
+    deployment = _eerste_deployment(doel, project)
+    if deployment:
+        waarden["deployment_name"] = deployment
+    try:
+        spec = httpx.get(f"{doel.url}/openapi.json", timeout=30).json()
+    except httpx.HTTPError, ValueError:
+        # Dan kent ZAP het schema van het doel zelf, zoals voor het zaaien.
+        return ["-t", f"{url}/openapi.json"]
+    (map_ / GEZAAIDE_OPENAPI).write_text(json.dumps(zaai_openapi(spec, waarden)))
+    return ["-t", f"/zap/wrk/{GEZAAIDE_OPENAPI}", "-O", url]
+
+
 def commando(doel: Doel, pas: str, rapport: Path) -> list[str]:
     """Het docker-commando voor een pas, met de weg naar het doel uit ``containerdoel``."""
     opties: list[str] = []
@@ -171,8 +229,7 @@ def commando(doel: Doel, pas: str, rapport: Path) -> list[str]:
         f"{rapport.parent}:/zap/wrk",
         ZAP_IMAGE,
         "zap-api-scan.py",
-        "-t",
-        f"{url}/openapi.json",
+        *_zaad(doel, rapport.parent),
         "-f",
         "openapi",
         "-J",

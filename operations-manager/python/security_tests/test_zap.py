@@ -446,3 +446,21 @@ def _kaal_doel(aanroeplog: Path) -> Doel:
 
 def _niet_aangeroepen(*_: object, **__: object) -> subprocess.CompletedProcess[str]:
     raise AssertionError("er hoort geen pas te draaien als de herkenning ontbreekt")
+
+
+def test_zaai_openapi_vult_de_padparameters_met_het_proefproject() -> None:
+    """Faalconditie: ZAP vult project_name letterlijk in en komt nooit langs de herkenning (24-10)."""
+    spec = {
+        "paths": {
+            "/api/v2/projects/{project_name}/deployments/{deployment_name}": {
+                "parameters": [{"name": "project_name", "in": "path", "schema": {"type": "string"}}],
+                "get": {"parameters": [{"name": "deployment_name", "in": "path"}, {"name": "rollout", "in": "query"}]},
+            }
+        }
+    }
+    gezaaid = zap_scan.zaai_openapi(spec, {"project_name": "zap0-abc", "deployment_name": "productie"})
+    pad = gezaaid["paths"]["/api/v2/projects/{project_name}/deployments/{deployment_name}"]
+    assert pad["parameters"][0]["example"] == "zap0-abc"
+    assert pad["parameters"][0]["schema"]["default"] == "zap0-abc"
+    assert pad["get"]["parameters"][0]["example"] == "productie"
+    assert "example" not in pad["get"]["parameters"][1], "een queryparameter blijft wat ZAP zelf kiest"

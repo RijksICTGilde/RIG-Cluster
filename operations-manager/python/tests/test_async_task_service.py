@@ -845,3 +845,10 @@ async def test_cleanup_keeps_the_work_data_of_a_deferred_rollout(orm_db):
     assert task["payload"] == {"name": "web", "rollout": False}
     assert task["details_purged_at"] is None
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+
+async def test_get_task_with_an_id_that_is_no_uuid_is_none(orm_db):
+    """Faalconditie: uuid.UUID gooit ValueError, en de voortgangsroute geeft dan een 500 (aanvalsproef 24-10)."""
+    svc = _svc()
+    assert await svc.get_task("geen-uuid") is None
+    assert await svc.get_task("1' OR 1=1") is None
