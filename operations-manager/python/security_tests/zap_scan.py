@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from security_tests.baseline import meldingen_van, oordeel_tegen_baseline
-from security_tests.doel import RAPPORTMAP, TOKEN_HEADER
+from security_tests.doel import LOKALE_HOSTS, RAPPORTMAP, TOKEN_HEADER
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,6 +84,11 @@ def containerdoel(url: str) -> tuple[str, list[str]]:
     if sys.platform.startswith("linux"):
         return url, ["--network", "host"]
     adres = urlparse(url)
+    host = adres.hostname or ""
+    if host not in LOKALE_HOSTS:
+        # Een hostnaam (de sandbox achter zijn ingress) houdt zijn naam, anders klopt het
+        # certificaat niet; --add-host laat die naam in de container naar de host wijzen.
+        return url, ["--add-host", f"{host}:host-gateway"]
     netloc = HOSTNAAM_IN_CONTAINER if adres.port is None else f"{HOSTNAAM_IN_CONTAINER}:{adres.port}"
     return adres._replace(netloc=netloc).geturl(), []
 

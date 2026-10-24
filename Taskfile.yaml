@@ -1622,7 +1622,22 @@ tasks:
           -p "{\"stringData\":{\"SECURITY_PROOF_TOKEN\":\"$TOKEN\"}}"
         {{.KUBECTL}} rollout restart deployment/operations-manager
         {{.KUBECTL}} rollout status deployment/operations-manager --timeout=300s
-        ZAD_PROEF_TOKEN="$TOKEN" uv run python -m security_tests.sandboxdoel {{.DOELURL}}
+        # Na de rollout kan de ingress nog even de oude pod (zonder token) bedienen: wacht
+        # tot /health het token vijf keer achter elkaar geeft.
+        GOED=0
+        for _ in $(seq 1 120); do
+          if curl -sk -D - -o /dev/null {{.DOELURL}}/health | tr -d '\r' | grep -qx "x-zad-proef: $TOKEN"; then
+            GOED=$((GOED + 1)); [ "$GOED" -ge 5 ] && break
+          else
+            GOED=0
+          fi
+          sleep 1
+        done
+        [ "$GOED" -ge 5 ] || { echo "het proeftoken komt niet stabiel terug op {{.DOELURL}}/health"; exit 1; }
+        # Proefprojecten met een sleutel, anders meet de proef niet of een project bij een ander kan.
+        E2E_BASE_URL={{.DOELURL}} uv run python -m security_tests.proefprojecten maak 2
+        ZAD_PROEF_TOKEN="$TOKEN" ZAD_PROEF_SLEUTELS="$(cat ../security-proof/.proef/proefprojecten.json)" \
+          uv run python -m security_tests.sandboxdoel {{.DOELURL}}
 
   security-proof:sandbox-af:
     desc: "Haal het proeftoken uit de sandbox en gooi het runbestand weg"
@@ -1631,6 +1646,7 @@ tasks:
       KUBECTL: kubectl --context kind-rig-sandbox -n rig-system --request-timeout=60s
     cmds:
       - |
+        uv run python -m security_tests.proefprojecten ruim-op || echo "LET OP: niet alle proefprojecten zijn opgeruimd"
         {{.KUBECTL}} patch secret operations-manager-env-secrets --type merge \
           -p '{"stringData":{"SECURITY_PROOF_TOKEN":""}}'
         {{.KUBECTL}} rollout restart deployment/operations-manager

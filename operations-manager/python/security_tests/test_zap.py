@@ -122,6 +122,15 @@ def test_op_macos_wordt_alleen_de_host_vertaald(monkeypatch: pytest.MonkeyPatch)
     assert netwerk == [], "--network host bestaat niet op Docker Desktop"
 
 
+def test_op_macos_houdt_een_hostnaam_zijn_naam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Faalconditie: de sandbox achter zijn ingress wordt host.docker.internal, en dan past het
+    certificaat van *.sandbox.rijksapp.dev niet meer (gemeten 24-10: CERTIFICATE_VERIFY_FAILED)."""
+    monkeypatch.setattr(zap_scan.sys, "platform", "darwin")
+    url, netwerk = containerdoel("https://zad.sandbox.rijksapp.dev")
+    assert url == "https://zad.sandbox.rijksapp.dev"
+    assert netwerk == ["--add-host", "zad.sandbox.rijksapp.dev:host-gateway"]
+
+
 def test_verifieer_containerdoel_is_leeg_bij_een_geldig_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Een returncode 0 van de tokenproef betekent: de container ziet de eigen sandbox."""
     monkeypatch.setattr(subprocess, "run", lambda *_, **__: subprocess.CompletedProcess([], 0, stdout="", stderr=""))
