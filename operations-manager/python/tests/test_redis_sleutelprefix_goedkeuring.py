@@ -495,7 +495,6 @@ class TestDeSchrijfwegenVanHetFormulier:
             "services": [{"name": ServiceType.REDIS.value, "config": config}],
             "components": [{"name": "frontend", "type": "single", "services": [ServiceType.REDIS.value]}],
             "config": {
-                "api-key": age,
                 "age-public-key": "age1nepnepnep",
                 "age-private-key": age,
             },

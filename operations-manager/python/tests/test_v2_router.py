@@ -729,7 +729,8 @@ class TestV2UpsertDeployment:
         assert payload["cloneFrom"] == "production"
         assert payload["forceClone"] is True
         assert payload["environment"] == "acceptatie"
-        assert payload["actor"] == "API"
+        # De aanroeper die de ingang herkende, niet meer het vlakke "API" (RC-322).
+        assert payload["actor"] == "project-api-key:test-project"
 
     def test_invalid_project_name_returns_400(self, v2_client: TestClient) -> None:
         response = v2_client.post(

@@ -15,6 +15,7 @@ from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
 from opi.core.errors import kenmerk_van, met_kenmerk
+from opi.core.handelingen import Handeling, handeling
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
@@ -667,6 +668,7 @@ def _bucket_result_to_model(result: BucketRestoreResult) -> BucketRestoreResultM
 
 
 @restore_router.get("/snapshots/{cluster}/{namespace}", response_model=ListSnapshotsResponse)
+@handeling(Handeling.HERSTEL_LEZEN)
 @validate_api_token
 async def list_snapshots(
     request: Request, cluster: ClusterPath, namespace: NamespacePath, project_name: str = _PROJECT_NAME_QUERY
@@ -710,6 +712,7 @@ async def list_snapshots(
 
 
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
+@handeling(Handeling.HERSTEL_LEZEN)
 @validate_api_token
 async def list_pvc_snapshots(
     request: Request,
@@ -755,6 +758,7 @@ async def list_pvc_snapshots(
 
 
 @restore_router.post("/pvc/{cluster}/{namespace}/{pvc_name}", response_model=RestoreResponse)
+@handeling(Handeling.HERSTEL_UITVOEREN)
 @validate_api_token
 async def restore_pvc(
     request: Request,
@@ -865,6 +869,7 @@ async def restore_pvc(
 
 
 @restore_router.post("/project/{project_name}", response_model=ProjectRestoreResponse)
+@handeling(Handeling.HERSTEL_UITVOEREN)
 @validate_api_token
 async def restore_project_pvc(
     request: Request,
@@ -1395,6 +1400,7 @@ def _set_generation(
     "/project/{project_name}/deployment/{deployment_name}/run/{backup_run_id}",
     response_model=BackupRunRestoreResponse,
 )
+@handeling(Handeling.HERSTEL_UITVOEREN)
 @validate_api_token
 async def restore_backup_run(
     request: Request,
@@ -1814,6 +1820,7 @@ async def _resolve_own_bucket_target(project_name: str, namespace: str, referenc
 
 
 @restore_router.post("/database/{cluster}/{namespace}/{reference_name}", response_model=DatabaseRestoreResponse)
+@handeling(Handeling.HERSTEL_UITVOEREN)
 @validate_api_token
 async def restore_database(
     request: Request,
@@ -1965,6 +1972,7 @@ async def restore_database(
 
 
 @restore_router.post("/bucket/{cluster}/{namespace}/{reference_name}", response_model=BucketRestoreResponse)
+@handeling(Handeling.HERSTEL_UITVOEREN)
 @validate_api_token
 async def restore_bucket(
     request: Request,
@@ -2109,6 +2117,7 @@ async def restore_bucket(
     "/project/{project_name}/deployment/{deployment_name}",
     response_model=DeploymentRestoreResponse,
 )
+@handeling(Handeling.HERSTEL_UITVOEREN)
 @validate_api_token
 async def restore_deployment_resource(
     request: Request,

@@ -96,6 +96,7 @@ PROJECTS = [
     _StoredProject("beta-project", "key-beta", [{"email": MEMBER, "role": "developer"}]),
     _StoredProject("gamma-project", "key-gamma", [{"email": MEMBER, "role": "owner"}]),
     _StoredProject("andermans-project", "key-ander", [{"email": OUTSIDER, "role": "admin"}]),
+    _StoredProject("gemigreerd-project", None, [{"email": MEMBER, "role": "admin"}]),
 ]
 
 
@@ -165,6 +166,17 @@ class TestWhoGetsTheKey:
         response = _get(test_client, realm["token_for"](MEMBER), "gamma-project")
         assert response.status_code == 200, response.text
         assert response.json() == {"api_key": "key-gamma"}
+
+    def test_een_gemigreerd_project_zonder_sleutel_geeft_410(
+        self, test_client: TestClient, realm: Any, store: Any, platform_admins: Any
+    ) -> None:
+        """Sinds schemaversie 2.12 heeft een project geen ``config.api-key`` meer: de
+        sleutel is een token van het service account ``project-api`` geworden, en er is
+        hier niets meer te overhandigen."""
+        response = _get(test_client, realm["token_for"](MEMBER), "gemigreerd-project")
+        assert response.status_code == 410
+        assert "projectsleutel" in response.json()["detail"]
+        assert "leden" in response.json()["detail"]
 
     def test_a_developer_is_refused_with_403(
         self, test_client: TestClient, realm: Any, store: Any, platform_admins: Any

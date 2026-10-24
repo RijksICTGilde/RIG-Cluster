@@ -26,6 +26,7 @@ from opi.api import rate_limiter
 from opi.api.endpoint_util import validate_api_token
 from opi.api.rate_limiter import IPRateLimiter
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.utils.client_ip import PEER_SCOPE_KEY, client_ip, forwarded_chain
@@ -150,6 +151,7 @@ def _app(peer: str) -> TestClient:
     app = FastAPI()
 
     @app.get("/api/v1/projects/{project_name}")
+    @handeling(Handeling.PROJECT_LEZEN)
     @validate_api_token
     async def project(request: Request, project_name: str) -> dict[str, str]:
         return {"project": project_name}

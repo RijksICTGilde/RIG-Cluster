@@ -23,6 +23,7 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import kenmerk_van, met_kenmerk
+from opi.core.handelingen import Handeling, handeling
 from opi.middleware.authorization import get_user
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.project_authorization import is_user_authorized_for_project
@@ -98,6 +99,7 @@ logs_router: APIRouter = APIRouter(
 
 
 @logs_router.get("/{project_name}")
+@handeling(Handeling.LOGS_LEZEN)
 @validate_api_token
 async def get_deployment_logs(
     request: Request,

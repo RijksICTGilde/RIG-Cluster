@@ -1,10 +1,11 @@
 import logging
-import secrets
+from collections.abc import Callable  # noqa: TC003 -- staat in een runtime-signatuur
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_master_api_key
+from opi.api.endpoint_util import handhaaf, validate_master_api_key
 from opi.api.task_models import TaskResponse, task_response_from_dict
 from opi.api.user_token_auth import (
     UserTokenError,
@@ -14,6 +15,7 @@ from opi.api.user_token_auth import (
 )
 from opi.core.actor import get_actor
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.services.project_store import get_project_store
 from pydantic import BaseModel, Field
 
@@ -133,13 +135,14 @@ async def _caller_started_this_task(request: Request, task: dict) -> bool:
     return bool(created_by) and created_by == user.get("email")
 
 
-async def _validate_task_access(request: Request, task: dict) -> None:
+async def _validate_task_access(request: Request, task: dict, endpoint: Callable[..., Any]) -> None:
     """Validate that this caller may see this task.
 
     Two ways in, in this order:
 
-    1. The project's own ``X-API-Key``. Tasks store ``project_name``, so we look up the
-       project and compare.
+    1. Een ``X-API-Key``: de oude projectsleutel of een token van een lid van het project. Taken
+       dragen hun ``project_name``, dus de handeling van deze route wordt op dat project
+       beslist, langs hetzelfde handhavingspunt als de rest van de API.
     2. An ``Authorization: Bearer`` token belonging to the person who started the task.
        This is what makes a create-project task pollable before its project exists.
 
@@ -162,13 +165,19 @@ async def _validate_task_access(request: Request, task: dict) -> None:
         raise HTTPException(status_code=401, detail="Task has no associated project")
 
     project = get_project_store().get(project_name)
-    if not project or not secrets.compare_digest(project.api_key, api_key):
+    try:
+        if project is None:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        await handhaaf(request, api_key, endpoint, project)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            raise
         # A create-project task holds a key that is not accepted yet: the project it
         # belongs to is still being written. The bearer token of whoever started it is
         # the way to follow it in the meantime.
         if await _caller_started_this_task(request, task):
             return
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +199,7 @@ task_router: APIRouter = APIRouter(
         404: {"description": "Task not found"},
     },
 )
+@handeling(Handeling.TAAK_LEZEN)
 async def get_task(request: Request, task_id: str) -> JSONResponse:
     """Get the current status of a task by its ID.
 
@@ -220,7 +230,7 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
             logger.info("Task not found: %s", task_id)
             raise HTTPException(status_code=404, detail="Task not found")
 
-    await _validate_task_access(request, task)
+    await _validate_task_access(request, task, get_task)
 
     status = task.get("status", "")
 
@@ -266,6 +276,7 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
     "",
     response_model=TaskListResponse,
 )
+@handeling(Handeling.TAAK_LEZEN)
 async def list_tasks(
     request: Request,
     project_name: str | None = Query(default=None),
@@ -286,8 +297,9 @@ async def list_tasks(
     if not project_name:
         raise HTTPException(status_code=400, detail="project_name query parameter is required")
     project = get_project_store().get(project_name)
-    if not project or not secrets.compare_digest(project.api_key, api_key):
+    if project is None:
         raise HTTPException(status_code=401, detail="Invalid API key")
+    await handhaaf(request, api_key, list_tasks, project)
 
     task_service = _get_task_service(request)
 
@@ -322,6 +334,7 @@ async def list_tasks(
         409: {"description": "Task cannot be cancelled in its current state"},
     },
 )
+@handeling(Handeling.TAAK_ANNULEREN)
 async def cancel_task(request: Request, task_id: str) -> JSONResponse:
     """Cancel a pending task. Requires the project's API key."""
     _validate_task_id(task_id)
@@ -332,7 +345,7 @@ async def cancel_task(request: Request, task_id: str) -> JSONResponse:
         logger.info("Cannot cancel task %s: not found", task_id)
         raise HTTPException(status_code=404, detail="Task not found")
 
-    await _validate_task_access(request, task)
+    await _validate_task_access(request, task, cancel_task)
 
     if task.get("status") != "pending":
         logger.info("Cannot cancel task %s: status is %s", task_id, task.get("status"))

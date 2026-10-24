@@ -1009,14 +1009,14 @@ class TestOpruimenNaEenHalveAanmaak:
             verwijderd.append((project, api_key))
             repo.namen.discard(project)
 
-        def _sleutel(_page: Any, _base_url: str, project: str, **_: Any) -> str:
+        def _sleutel(_base_url: str, project: str, **_: Any) -> str:
             if not sleutel_leesbaar:
-                raise AssertionError(f"Could not read API key for '{project}'")
+                raise AssertionError(f"Kon geen API-token uitgeven voor '{project}'")
             return "sleutel-van-" + project
 
         monkeypatch.setattr(lifecycle, "walk_create_wizard_with_services", lambda *a, **k: None)
         monkeypatch.setattr(lifecycle, "walk_create_wizard", lambda *a, **k: None)
-        monkeypatch.setattr(lifecycle, "read_api_key_with_retry", _sleutel)
+        monkeypatch.setattr(lifecycle, "projecttoken_met_retry", _sleutel)
         monkeypatch.setattr(cluster, "wait_for_project_apps_healthy", lambda *a, **k: True)
         monkeypatch.setattr(sandbox_api, "delete_project_via_api", _verwijder)
         return pagina, repo, verwijderd
@@ -1289,6 +1289,22 @@ def _meetbanken() -> list[str]:
 _MEETBANKEN = _meetbanken()
 
 
+def test_de_namen_in_sandbox_api_kloppen_met_het_portaal() -> None:
+    """``sandbox_api`` draagt drie namen van het portaal letterlijk, en waarom.
+
+    Importeren kan niet: dat zou ``opi.core.config`` meebrengen en dan is
+    ``scripts/sandbox_project_tool.py`` niet meer te starten zonder platformsleutel
+    (``TestDeMeetbankscripts`` meet dat). Deze toets is wat daarvoor in de plaats komt:
+    verschuift een naam in het portaal, dan valt het hier op en niet pas op de sandbox.
+    """
+    from opi.services.schema_migration import PROJECT_API_ACCOUNT
+    from opi.utils.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
+
+    assert sandbox_api.PROJECT_API_ACCOUNT == PROJECT_API_ACCOUNT
+    assert sandbox_api.CSRF_COOKIE_NAME == CSRF_COOKIE_NAME
+    assert sandbox_api.CSRF_HEADER_NAME == CSRF_HEADER_NAME
+
+
 class TestDeMeetbankscripts:
     """De scripts in ``scripts/`` die uit ``tests/`` importeren, blijven startbaar.
 
@@ -1325,7 +1341,7 @@ class TestDeMeetbankscripts:
         )
         monkeypatch.setattr(doorloop, "walk_create_wizard_with_services", lambda *a, **k: None)
         monkeypatch.setattr(cluster, "wait_for_project_apps_healthy", lambda naam, **k: gewacht.append(naam))
-        monkeypatch.setattr(lifecycle, "read_api_key_with_retry", lambda *a, **k: "sleutel")
+        monkeypatch.setattr(lifecycle, "projecttoken_met_retry", lambda *a, **k: "sleutel")
         monkeypatch.setattr(sandbox_api, "delete_project_via_api", lambda _u, naam, *a, **k: verwijderd.append(naam))
         monkeypatch.setattr(doorloop, "delete_project_via_api", lambda _u, naam, *a, **k: verwijderd.append(naam))
         monkeypatch.setattr("sys.argv", ["doorloop_rc108.py", "--commit", "abc1234", "--uit", str(tmp_path)])

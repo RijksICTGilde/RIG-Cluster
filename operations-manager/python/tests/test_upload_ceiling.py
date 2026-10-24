@@ -613,7 +613,7 @@ def push_stack(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestCli
     monkeypatch.setattr(settings, "IMAGE_UPLOAD_MAX_SIZE_MB", 10)
     monkeypatch.setattr(settings, "REGISTRY_URL", "rcr.rijksapps.nl")
 
-    project = SimpleNamespace(name="test-project", api_key="de-juiste-sleutel")
+    project = SimpleNamespace(name="test-project", api_key="de-juiste-sleutel", users=[])
     store = MagicMock()
     store.get.return_value = project
     monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)

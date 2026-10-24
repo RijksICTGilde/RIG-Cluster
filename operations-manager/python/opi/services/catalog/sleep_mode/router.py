@@ -23,12 +23,15 @@ either endpoint returns. See ``api_models`` for why there are two state fields.
 from __future__ import annotations
 
 import logging
-import secrets
-from typing import Annotated
+from collections.abc import Callable  # noqa: TC003 -- staat in een runtime-signatuur
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.requests import Request
 
+from opi.api.endpoint_util import handhaaf
+from opi.core.handelingen import Handeling, handeling
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeTimeout
@@ -55,19 +58,27 @@ ApiKeyHeader = Annotated[
 ]
 
 
-def _presented_token(project_name: str, wake_token: str | None, api_key: str | None) -> str | None:
+async def _presented_token(
+    request: Request,
+    endpoint: Callable[..., Any],
+    project_name: str,
+    wake_token: str | None,
+    api_key: str | None,
+) -> str | None:
     """Authenticate the caller and return what ``flow`` must still verify.
 
     A wake token is returned as-is: only the project file can say whether it belongs to
-    this deployment. A valid project key needs nothing further, so None is returned --
-    the same value the session-authenticated web route passes.
+    this deployment. Een ``X-API-Key`` loopt langs hetzelfde handhavingspunt als de rest
+    van de API, zodat de oude projectsleutel en een token hier niet uit elkaar lopen; die
+    weg heeft niets meer nodig, dus None.
     """
     if wake_token:
         return wake_token
     if api_key:
         project = get_project_store().get(project_name)
-        if project is None or not project.api_key or not secrets.compare_digest(project.api_key, api_key):
+        if project is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
+        await handhaaf(request, api_key, endpoint, project)
         return None
     raise HTTPException(status_code=401, detail="X-Wake-Token or X-API-Key header required")
 
@@ -93,7 +104,9 @@ async def finish_wake_after_response(project_name: str, deployment_name: str) ->
         202: {"model": WakeResponse, "description": "A wake started; the deployment is now waking."},
     },
 )
+@handeling(Handeling.SLAAPSTAND_WEKKEN)
 async def wake(
+    request: Request,
     project_name: str,
     deployment_name: str,
     background_tasks: BackgroundTasks,
@@ -108,7 +121,7 @@ async def wake(
     means one thing across both endpoints: on ``/status`` the field called ``state`` is the
     waker's poll contract and NOT a sleep state.
     """
-    token = _presented_token(project_name, x_wake_token, x_api_key)
+    token = await _presented_token(request, wake, project_name, x_wake_token, x_api_key)
     try:
         result = await flow.wake(project_name, deployment_name, presented_token=token)
     except InvalidWakeToken as exc:
@@ -123,7 +136,9 @@ async def wake(
 
 
 @sleep_mode_router.get("/{project_name}/{deployment_name}/status", response_model=SleepStatusResponse)
+@handeling(Handeling.SLAAPSTAND_LEZEN)
 async def status(
+    request: Request,
     project_name: str,
     deployment_name: str,
     x_wake_token: WakeTokenHeader = None,
@@ -138,7 +153,7 @@ async def status(
     deployment's real state, including ``disabled`` when sleep-mode is not configured for
     it -- the case that used to report a hardcoded ``starting``.
     """
-    token = _presented_token(project_name, x_wake_token, x_api_key)
+    token = await _presented_token(request, status, project_name, x_wake_token, x_api_key)
     try:
         result = await flow.status(project_name, deployment_name, presented_token=token)
     except InvalidWakeToken as exc:

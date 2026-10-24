@@ -25,7 +25,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from opi.api.endpoint_util import authenticate_project_api_key
+from opi.api.endpoint_util import legitimeert
 from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
 from opi.core.config import settings
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
@@ -109,7 +109,7 @@ class BodyLimitMiddleware:
         Het slot blijft tot het antwoord verstuurd is, zodat het aantal tarballs op de
         tempschijf echt begrensd is en niet alleen het aantal dat tegelijk gelezen wordt.
         """
-        weigering = self._key_refusal(scope, project_name)
+        weigering = await self._key_refusal(scope, project_name)
         if weigering is not None:
             await self._respond(scope, receive, send, *weigering)
             return
@@ -126,17 +126,19 @@ class BodyLimitMiddleware:
                 raise
             await self._respond(scope, receive, send, bezet.status_code, str(bezet.detail), bezet.headers)
 
-    def _key_refusal(self, scope: Scope, project_name: str) -> tuple[int, str, Mapping[str, str] | None] | None:
-        """Het antwoord dat de sleutelcontrole eist, of ``None`` als de sleutel klopt.
+    async def _key_refusal(self, scope: Scope, project_name: str) -> tuple[int, str, Mapping[str, str] | None] | None:
+        """Het antwoord dat de sleutelcontrole eist, of ``None`` als het bewijsmiddel klopt.
 
         Dezelfde twee faaltellers als ``validate_api_token``: deze weg loopt buiten
-        ``RateLimitMiddleware`` om, dus zonder dit zou raden hier ongeremd zijn.
+        ``RateLimitMiddleware`` om, dus zonder dit zou raden hier ongeremd zijn. Welk
+        bewijsmiddel geldt beslist ``legitimeert``, zodat een token hier even ver komt als
+        de oude projectsleutel en de twee niet uiteen kunnen gaan lopen.
         """
         presented = _header(scope, b"x-api-key")
         detail = _FOUTE_SLEUTEL if presented else _GEEN_SLEUTEL
         try:
             refuse_when_key_failures_exhausted(presented)
-            if authenticate_project_api_key(project_name, presented) is not None:
+            if await legitimeert(presented, project_name):
                 return None
             # Dezelfde WARNING als validate_api_token, die deze 401 voor is.
             logger.warning("Authentication failed for image push to %s: %s", project_name, detail)

@@ -19,7 +19,7 @@ from opi.forms.editables.enforcers import (
 )
 from opi.forms.layout import COMPONENT_IMAGE_SLOT, Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
-from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
+from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY
 from opi.forms.visualizers.fields.deployments import (
     BACKUP_DEPLOYMENT_NAME,
     BACKUP_RESOURCE_TYPES,
@@ -236,11 +236,10 @@ CONFIG_DISPLAY_SECTION = FormSection(
     icon="instellingen",
     description="Automatisch gegenereerde configuratie (alleen-lezen)",
     is_readonly=True,
-    editables=[AGE_PUBLIC_KEY, AGE_PRIVATE_KEY, API_KEY],
+    editables=[AGE_PUBLIC_KEY, AGE_PRIVATE_KEY],
     layout=[
         "config/age-public-key",
         "config/age-private-key",
-        "config/api-key",
     ],
 )
 

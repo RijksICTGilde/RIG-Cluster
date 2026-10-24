@@ -33,6 +33,7 @@ from opi.api.rate_limiter import (
     retry_after_seconds,
 )
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.middleware.rate_limit import RateLimitMiddleware
 from starlette.requests import Request
 from starlette.testclient import TestClient
@@ -104,6 +105,9 @@ def _projectstore(api_key: str = "goede-sleutel") -> MagicMock:
     return store
 
 
+# De handeling hoort erbij zoals op elke echte route: ``handhaaf`` weigert een
+# token-bereikbare route zonder markering met een RuntimeError.
+@handeling(Handeling.PROJECT_LEZEN)
 @validate_api_token
 async def _route(request: Request, project_name: str = "") -> dict[str, Any]:
     return {"project": project_name}

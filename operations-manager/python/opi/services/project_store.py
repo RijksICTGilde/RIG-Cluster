@@ -66,6 +66,8 @@ from opi.core.project_schema import (
     validate_project_schema,
 )
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
+from opi.services.project import lid_uit
+from opi.services.project_leden import human_emails
 from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
@@ -1192,7 +1194,8 @@ class GitProjectStore(ProjectStore):
                     logger.warning("Could not load project file %s into the cache", filename)
                     continue
                 loaded[project.name] = project
-                member_emails.extend(user.email for user in project.users or [])
+                # Alleen de MENSEN: een service account hoort niet op de inloglijst.
+                member_emails.extend(human_emails(project))
 
             # Build the full set first, then swap, so concurrent readers never
             # observe an empty or half-populated cache.
@@ -1338,11 +1341,9 @@ def _users_from_data(data: dict[str, Any]) -> list[ProjectUser] | None:
     users_data = data.get("users", [])
     if not isinstance(users_data, list):
         return None
-    users = [
-        ProjectUser(email=u["email"], role=u["role"])
-        for u in users_data
-        if isinstance(u, dict) and "email" in u and "role" in u
-    ]
+    # Dezelfde lezing als het gewone pad: een eigen variant hier liet de service accounts
+    # en daarmee hun tokens vallen, zodat een pijplijn na deze schrijfactie 401 kreeg.
+    users = [lid for lid in (lid_uit(entry) for entry in users_data) if lid is not None]
     return users or None
 
 

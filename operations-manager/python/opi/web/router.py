@@ -18,6 +18,7 @@ from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_h
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.step_up import StepUpActie
 from opi.core.templates_lotc import templates_lotc
+from opi.services.api_token_service import is_projectbeheerder
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     format_duration,
@@ -38,6 +39,7 @@ from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
 from opi.services.project_env_vars import read_user_env_vars
+from opi.services.project_leden import human_members
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.services.step_up_conditions import (
@@ -82,6 +84,7 @@ from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
 from .router_step_up import step_up_router
 from .router_tasks import tasks_router
+from .router_tokens import token_web_router, tokencontext
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
 from .router_wizard import wizard_router
@@ -112,6 +115,7 @@ web_router.include_router(wizard_attachments_router)
 web_router.include_router(tasks_router)
 web_router.include_router(otp_router)
 web_router.include_router(step_up_router)
+web_router.include_router(token_web_router)
 
 # Routers the services themselves deliver (RC-24): a service that owns a page block owns
 # the endpoints that fill it (the backups fragment, the console/job modals), instead of
@@ -1264,7 +1268,8 @@ async def dashboard(request: Request):
                 continue
             project_data = project.data or {}
             deployments = project_data.get("deployments", [])
-            users = project.users or []
+            # Alleen de MENSEN: het dashboard telt collega's, en een service account is er geen.
+            users = human_members(project)
             total_deployments += len(deployments)
             for u in users:
                 if hasattr(u, "email") and u.email:
@@ -1588,13 +1593,19 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # Dit stond voorheen alleen in het sjabloon en kon weg via een nieuw fragment.
         mag_geheimen_zien = user_role in PROJECT_EDIT_ROLES
 
+        # De projectsleutel is er alleen nog in een bestand waarvan de migratie naar
+        # schemaversie 2.12 hem niet open kreeg. Zonder deze ``if`` gaf elke projectpagina
+        # een 500 op de KeyError zodra het veld weg was.
+        oude_sleutel = project_data["config"].get("api-key")
         if mag_geheimen_zien:
-            project_data_decrypted["config"]["api-key"] = await decrypt_password_smart(
-                project_data["config"]["api-key"], project_private_key
-            )
+            if oude_sleutel:
+                project_data_decrypted["config"]["api-key"] = await decrypt_password_smart(
+                    oude_sleutel, project_private_key
+                )
             project_data_decrypted["config"]["age-private-key"] = project_private_key
         else:
-            project_data_decrypted["config"]["api-key"] = None
+            if oude_sleutel:
+                project_data_decrypted["config"]["api-key"] = None
             project_data_decrypted["config"]["age-private-key"] = None
 
         # Decrypt Keycloak passwords (RC-5 B: connections live under the keycloak
@@ -1729,7 +1740,9 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             "name": project_name,
             "display_name": project_data.get("display-name", project_name),
             "description": project_data.get("description", "Geen beschrijving beschikbaar"),
-            "users": project.users or [],
+            # Alleen de MENSEN: het Team-blok en zijn bewerkmodaal nodigen mensen uit en
+            # sturen ze mail. De service accounts staan in het blok Leden en tokens.
+            "users": human_members(project),
             "user_role": user_role,
             "services": services_with_info,
             "clusters": project_data.get("clusters", []),
@@ -1900,6 +1913,20 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             for dep in project_data_decrypted.get("deployments", [])
         }
 
+        # De leden en hun tokens, alleen voor het tabblad waar ze staan (RC-322).
+        token_context: dict[str, Any] = {}
+        if tab_from_path(request.url.path) == "team":
+            user_email = (user or {}).get("email", "").lower()
+            # Beheerder van DIT project, uit de ledenlijst in het projectbestand: dat is
+            # ook de bron van de weigering achter de knop. Een platformbeheerder die geen
+            # lid is zag hier anders knoppen die altijd weigeren.
+            token_context = tokencontext(
+                request,
+                project_name,
+                user_email,
+                is_beheerder=is_projectbeheerder(project_name, user_email),
+            )
+
         # Het backupsblok, voor de deployment die op het tabblad Backups openstaat (RC-100).
         #
         # Bij NAAM gevraagd en niet via het algemene dienstenmechanisme hierboven, want het
@@ -1955,7 +1982,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             except SQLAlchemyError:
                 logger.exception("Could not determine deferred rollouts for project %s", project_name)
 
-        return render(
+        antwoord = render(
             request,
             template="bg/project-tabs.html.j2",
             context={
@@ -1994,6 +2021,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 # after RC-5's config move kept reading the old project-level
                 # ``config.keycloak`` and silently stopped rendering).
                 "service_detail_sections": service_detail_sections,
+                **token_context,
                 **build_lotc_project_details(
                     request,
                     user=user,
@@ -2003,6 +2031,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 ),
             },
         )
+        if token_context.get("nieuw_token"):
+            # Dit antwoord draagt een token dat 90 tot 365 dagen geldig is, en het wordt
+            # maar een keer getoond. Zonder deze header mag een browser de pagina op schijf
+            # zetten en toont de terug-knop hem opnieuw, ook nadat hij server-side weg is.
+            # Dezelfde reden en dezelfde header als bij GET /api/v2/projects/{p}/api-key.
+            antwoord.headers["Cache-Control"] = "no-store"
+        return antwoord
 
     except HTTPException:
         raise
@@ -2698,7 +2733,7 @@ def _projects_for_user(user: dict) -> list[dict]:
                     "name": project_name,
                     "display_name": project_data.get("display-name", project_name),
                     "description": project_data.get("description", ""),
-                    "users": project.users or [],
+                    "users": human_members(project),
                     "user_role": get_user_role_for_project(project_name, user_email),
                     "services": project_data.get("services", []),
                     "clusters": project_data.get("clusters", []),

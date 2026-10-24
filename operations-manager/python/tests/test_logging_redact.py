@@ -6,6 +6,7 @@ Regression guard for the ArgoCD connector leaking a live admin Bearer JWT via
 
 import logging
 
+from opi.services.project_leden import TOKEN_PREFIX, nieuw_token
 from opi.utils.logging_redact import (
     SecretRedactionFilter,
     redact_sensitive_headers,
@@ -107,3 +108,23 @@ def test_redact_structure_maskeert_elke_tekst_in_een_dict() -> None:
     assert geredigeerd["klaar"] is None
     assert geredigeerd["stappen"][0] == "ok"
     assert resultaat["error"] == "password=markerwachtwoord"
+
+
+def test_een_api_token_valt_ook_buiten_een_header() -> None:
+    """Het vangnet voor de volgende logregel die een ``zad_``-token meeneemt (RC-322).
+
+    Het voorvoegsel maakt de vorm zelfstandig herkenbaar, dus dit werkt ook waar het token
+    niet in een bekende credential-header staat.
+    """
+    token, _ = nieuw_token()
+
+    assert token not in redact_text(f"Token {token} geweigerd voor project demo")
+    assert token not in redact_text(f'{{"token": "{token}"}}')
+    # De logregel houdt zijn vorm, zodat hij nog leesbaar is.
+    assert "geweigerd voor project demo" in redact_text(f"Token {token} geweigerd voor project demo")
+
+
+def test_het_voorvoegsel_van_het_patroon_is_dat_van_een_echt_token() -> None:
+    """Verandert ``TOKEN_PREFIX``, dan maskeert het patroon niets meer."""
+    assert nieuw_token()[0].startswith(TOKEN_PREFIX)
+    assert redact_text(nieuw_token()[0]).startswith(TOKEN_PREFIX)

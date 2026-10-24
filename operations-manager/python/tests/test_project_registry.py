@@ -6,7 +6,6 @@ from opi.forms.layout import ButtonGroup, Fieldset, Sequence
 from opi.forms.visualizers.project_registry import (
     AGE_PRIVATE_KEY,
     AGE_PUBLIC_KEY,
-    API_KEY,
     CLUSTERS,
     COMPONENTS_SEQUENCE,
     DEPLOYMENTS_SEQUENCE,
@@ -22,7 +21,7 @@ from opi.forms.visualizers.project_registry import (
 class TestEditableDefinitions:
     def test_get_all_project_editables_returns_expected_count(self):
         editables = get_all_project_editables()
-        assert len(editables) == 10
+        assert len(editables) == 9
 
     def test_all_editables_have_yaml_path(self):
         for editable in get_all_project_editables():
@@ -107,10 +106,6 @@ class TestReadonlyEditables:
     def test_age_private_key_is_readonly(self):
         assert AGE_PRIVATE_KEY.readonly is True
         assert AGE_PRIVATE_KEY.editable.converter is not None
-
-    def test_api_key_is_readonly(self):
-        assert API_KEY.readonly is True
-        assert API_KEY.editable.converter is not None
 
 
 class TestFormLayout:

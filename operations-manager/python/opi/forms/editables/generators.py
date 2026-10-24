@@ -66,22 +66,6 @@ class EncryptedPrivateKeyGenerator:
         return wrap_project_key_sync(plain_private_key)
 
 
-class EncryptedAPIKeyGenerator:
-    """Generate an API key and encrypt it with the project's public key."""
-
-    def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.utils.age import encrypt_age_content_sync
-        from opi.utils.api_keys import generate_api_key
-
-        public_key = yaml_data.get("config", {}).get("age-public-key")
-        if not public_key:
-            raise ValueError("Project public key required to encrypt API key")
-
-        plain_api_key = generate_api_key()
-        encrypted = encrypt_age_content_sync(plain_api_key, public_key)
-        return encrypted
-
-
 class IssuerGenerator:
     """Compute the TLS issuer based on the deployment's base-domain.
 

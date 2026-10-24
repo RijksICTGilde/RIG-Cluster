@@ -93,7 +93,7 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
     """Rendert de detailpagina voor een lid met deze rol: (context, html, private key)."""
     from opi.web import lotc_switch, router
 
-    globale_prive, globale_publiek = generate_sops_key_pair()
+    _, globale_publiek = generate_sops_key_pair()
     data, project_prive = await _projectbestand(globale_publiek)
     naam = data["name"]
 
@@ -106,7 +106,11 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
         lambda zelf, ctx: echte_realm_block(zelf, replace(ctx, user_role="admin")),
     )
 
-    monkeypatch.setattr(router, "get_global_private_key", lambda: globale_prive)
+    # De projectsleutel wordt sinds RC-254 met de KEK uitgepakt (``unwrap_project_key``) en
+    # niet meer met de globale SOPS-sleutel; deze toets patchte nog de oude naam en faalde
+    # daarop. De vorige opzet wordt hier aangehouden: de toets levert de sleutel die de
+    # pagina nodig heeft, zodat er geen KEK bij komt.
+    monkeypatch.setattr(router, "unwrap_project_key", _vast(project_prive))
     monkeypatch.setattr(router, "is_user_authorized_for_project", lambda *_: True)
     monkeypatch.setattr(router, "get_user_role_for_project", lambda *_: rol)
     monkeypatch.setattr(
@@ -134,6 +138,13 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
     antwoord = await router.project_details(_verzoek(naam), naam)
     assert antwoord.status_code == 200
     return opgevangen, antwoord.body.decode(), project_prive
+
+
+def _vast(waarde: str):
+    async def _geef(*_: Any, **__: Any) -> str:
+        return waarde
+
+    return _geef
 
 
 class _Store:

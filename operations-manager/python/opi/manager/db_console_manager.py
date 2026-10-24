@@ -57,6 +57,7 @@ from opi.manager.run_support import (
     parse_expires,
     resolve_image,
 )
+from opi.services.project_leden import human_emails
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 from opi.utils.naming import (
@@ -429,7 +430,9 @@ class DbConsoleManager:
             "banner": "Tijdelijke databaseconsole",
         }
 
-        emails = sorted({u.email.lower() for u in (project.users or []) if u.email})
+        # Alleen de MENSEN: een service account logt nergens in, dus hij hoort niet in de
+        # lijst adressen die de console mag openen.
+        emails = sorted({e.lower() for e in human_emails(project)})
 
         common = {
             "name": name,

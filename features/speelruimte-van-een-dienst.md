@@ -82,7 +82,7 @@ in de declaratie en geen verrassing in productie.
 | Kubernetes-hoeveelheid | `QuantitySetting(minimum=, maximum=, kind=)` | `storage`, `resources.*.cpu`, `resources.*.memory` |
 | Gesloten verzameling | `ChoiceSetting(allowed=)` | `image`, `registry` |
 
-`default=None` declareert een veld dat simpelweg **niet gezet** is tot een laag iets zegt:
+`default=None` declareert een veld dat **niet gezet** is tot een laag iets zegt:
 `resolve_setting` geeft dan None en de consument laat het ding weg. Dat is voor een veld
 waarvan het "uit" geen getal heeft om voor te staan, zoals de leeftijdsgrens op oude versies
 bovenop een aantal, waar 0 een magische waarde zou zijn in een reeks die bij 1 begint. Zo'n
