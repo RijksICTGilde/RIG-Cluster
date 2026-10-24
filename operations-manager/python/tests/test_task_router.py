@@ -6,12 +6,16 @@ POST /api/tasks (federation, master-key only), with various task states and erro
 conditions.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from opi.core.actor import ACTOR_PLATFORM_API_KEY
+from opi.core.leden import LidSoort
+from opi.services.project_leden import hash_van
+from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -488,6 +492,95 @@ class TestGetTaskWithBearerToken:
             response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.BEARER)
 
         assert response.status_code == 401
+
+
+class TestGetTaskWithApiToken:
+    """Een ``zad_`` token loopt sinds dit plan langs hetzelfde handhavingspunt als de
+    projectsleutel (``opi.api.endpoint_util.handhaaf``), dus taken zijn er ook mee te
+    pollen. Het aangrenzende geval: een token dat WEL herkend wordt maar de handeling
+    niet mag, geeft 403 en valt niet terug op de maker-bearer, ook niet als die er ook
+    bij staat -- anders zou een herkend maar te krap token zich via de bearer alsnog
+    toegang kunnen verschaffen.
+    """
+
+    TOKEN = "zad_eentoken"
+    TOKEN_HEADERS: ClassVar[dict[str, str]] = {"X-API-Key": "zad_eentoken"}
+
+    def _store(self, *, rol: str):
+        project = ProjectSummary(
+            name=SAMPLE_PROJECT,
+            filename=f"projects/{SAMPLE_PROJECT}.yaml",
+            users=[
+                ProjectUser(
+                    type=LidSoort.SERVICE_ACCOUNT,
+                    name="bouwstraat",
+                    role=rol,
+                    tokens=[
+                        ProjectToken(
+                            name="pijplijn",
+                            expires=datetime.now(UTC) + timedelta(days=30),
+                            hash=hash_van(self.TOKEN),
+                        )
+                    ],
+                )
+            ],
+        )
+        store = MagicMock()
+        store.get.return_value = project
+        return store
+
+    def test_een_token_van_een_beheerder_mag_de_taak_pollen(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        mock_task_service.get_task.return_value = _make_task(status="running")
+
+        with patch("opi.api.task_router.get_project_store", return_value=self._store(rol="admin")):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.TOKEN_HEADERS)
+
+        assert response.status_code == 202
+
+    def test_een_token_van_een_onbekende_rol_krijgt_403_en_niet_de_maker_fallback(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Zelfs met een geldige bearer van de maker erbij mag een 403 niet verdwijnen:
+        anders maakt een extra header een te krap token weer ruim genoeg."""
+        mock_task_service.get_task.return_value = _make_task(status="running", created_by="creator@example.com")
+
+        with (
+            patch("opi.api.task_router.get_project_store", return_value=self._store(rol="toeschouwer")),
+            patch(
+                "opi.api.task_router.verify_user_token",
+                new=AsyncMock(return_value={"email": "creator@example.com"}),
+            ),
+            patch("opi.api.task_router.authorize_claims", return_value={"email": "creator@example.com"}),
+        ):
+            response = test_client_with_task_service.get(
+                f"/api/tasks/{SAMPLE_TASK_ID}",
+                headers={**self.TOKEN_HEADERS, "Authorization": "Bearer a.valid.token"},
+            )
+
+        assert response.status_code == 403
+
+    def test_een_token_van_een_developer_annuleert_geen_taak(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """``taak.annuleren`` staat niet in de leeshandelingen, dus een developer-token
+        -- dat wel mag pollen -- komt hier niet doorheen."""
+        mock_task_service.get_task.return_value = _make_task(status="pending")
+
+        with patch("opi.api.task_router.get_project_store", return_value=self._store(rol="developer")):
+            response = test_client_with_task_service.post(
+                f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=self.TOKEN_HEADERS
+            )
+
+        assert response.status_code == 403
+        mock_task_service.update_task_status.assert_not_awaited()
 
 
 class TestListTasks:

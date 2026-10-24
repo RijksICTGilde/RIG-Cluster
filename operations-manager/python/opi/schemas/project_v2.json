@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
-  "title": "ZAD Project File (v2.11)",
+  "title": "ZAD Project File (v2.12)",
   "description": "Schema for ZAD self-service project definition files at the LATEST schema version. Older versions are not described here: they are composed from this file plus the legacy patches in schemas/project_legacy/ (see opi/core/project_schema.py). Anything an existing migration already removes belongs in the patch of the version that still carried it, not here.",
-  "x-zad-schema-version": "2.11",
+  "x-zad-schema-version": "2.12",
   "type": "object",
   "required": ["name"],
   "additionalProperties": false,
@@ -78,11 +78,34 @@
 
     "user": {
       "type": "object",
-      "required": ["email", "role"],
+      "description": "Een lid van dit project: een mens met een e-mailadres, of een service account met een naam. Beide dragen dezelfde rollen en kunnen API-tokens hebben.",
+      "required": ["role"],
       "additionalProperties": false,
       "properties": {
+        "type": { "type": "string", "enum": ["person", "service-account"] },
         "email": { "type": "string", "format": "email", "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+\\Z" },
-        "role": { "type": "string", "enum": ["admin", "owner", "member", "developer"] }
+        "name": { "type": "string", "pattern": "^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$" },
+        "role": { "type": "string", "enum": ["admin", "owner", "member", "developer"] },
+        "tokens": { "type": "array", "items": { "$ref": "#/$defs/api-token" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "service-account" } }, "required": ["type"] },
+          "then": { "required": ["name"], "not": { "required": ["email"] } },
+          "else": { "required": ["email"], "not": { "required": ["name"] } }
+        }
+      ]
+    },
+
+    "api-token": {
+      "type": "object",
+      "description": "Een uitgegeven API-token van dit lid. Alleen de hash staat hier: de waarde zelf is na uitgifte door niemand meer te lezen. Intrekken is dit blok weghalen, en dat is een commit.",
+      "required": ["name", "expires", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "expires": { "type": "string", "format": "date-time" },
+        "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
 
@@ -92,7 +115,10 @@
       "properties": {
         "age-public-key": { "type": "string" },
         "age-private-key": { "$ref": "#/$defs/age-encrypted" },
-        "api-key": { "$ref": "#/$defs/age-encrypted" }
+        "api-key": {
+          "$ref": "#/$defs/age-encrypted",
+          "description": "De oude projectsleutel. De migratie naar 2.12 maakt er een token van het service account 'project-api' van en haalt hem hier weg; hij blijft alleen staan in een bestand waarvan de sleutel niet open ging, en dat bestand moet geldig blijven. Een nieuw bestand draagt dit veld niet."
+        }
       }
     },
 

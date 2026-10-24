@@ -149,8 +149,9 @@ class TestV1AsyncUpsertDeployment:
         assert call_kwargs["deployment_name"] == "staging"
         assert call_kwargs["payload"]["cloneFrom"] == "production"
         assert call_kwargs["payload"]["environment"] == "productie"
-        # Geen sessie, maar wel een API-sleutel: de taak weet wie dit deed.
-        assert call_kwargs["payload"]["actor"] == "API"
+        # Geen sessie, maar wel een bewijsmiddel: de taak noemt de aanroeper die de
+        # ingang herkende, en niet meer het vlakke "API" (RC-322).
+        assert call_kwargs["payload"]["actor"] == "project-api-key:test-project"
 
     def test_environment_defaults_to_none_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
         """Weglaten moet erven betekenen, niet een lege string die niets is."""

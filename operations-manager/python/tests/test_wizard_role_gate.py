@@ -57,7 +57,6 @@ STORED_DATA: dict[str, Any] = {
         {"email": MEMBER_EMAIL, "role": "member"},
     ],
     "config": {
-        "api-key": AGE_BLOB,
         "age-public-key": "age1publicpublicpublic",
         "age-private-key": AGE_BLOB,
     },
@@ -101,7 +100,7 @@ def project_service() -> ProjectService:
     get_user_service()._platform_admin_emails.add(ADMIN_EMAIL)
     service.register(
         project_name=PROJECT_NAME,
-        api_key=STORED_DATA["config"]["api-key"],
+        api_key=None,
         filename=f"{PROJECT_NAME}.yaml",
         users=[
             ProjectUser(email=OWNER_EMAIL, role="owner"),
@@ -244,7 +243,7 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
             {"email": OWNER_EMAIL, "role": "owner"},
             {"email": "new-mate@example.com", "role": "member"},
         ],
-        "config": {"api-key": AGE_BLOB, "age-public-key": "age1publicpublicpublic"},
+        "config": {"age-public-key": "age1publicpublicpublic"},
     }
     with (
         patch("opi.web.project_edit_security.get_current_user", return_value={"email": OWNER_EMAIL}),
@@ -325,12 +324,12 @@ def test_apply_form_data_passes_non_immutable_fields_through() -> None:
         "name": "real-name",
         "clusters": ["odcn"],
         "users": [{"email": "a@x", "role": "owner"}],
-        "config": {"api-key": "real"},
+        "config": {"age-public-key": "age1oud"},
         "display-name": "Old",
     }
     submitted = {
         "users": [{"email": "a@x", "role": "owner"}, {"email": "b@x", "role": "member"}],
-        "config": {"api-key": "rotated"},
+        "config": {"age-public-key": "age1nieuw"},
         "display-name": "New",
         "components": [{"name": "frontend"}],
     }

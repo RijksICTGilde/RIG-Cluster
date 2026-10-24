@@ -1,4 +1,4 @@
-"""Config display section editables: read-only AGE keys and API key."""
+"""Config display section editables: read-only AGE keys."""
 
 from __future__ import annotations
 
@@ -14,10 +14,5 @@ AGE_PUBLIC_KEY_EDITABLE = Editable(
 
 AGE_PRIVATE_KEY_EDITABLE = Editable(
     yaml_path="config/age-private-key",
-    converter=EncryptedDisplayConverter(),
-)
-
-API_KEY_EDITABLE = Editable(
-    yaml_path="config/api-key",
     converter=EncryptedDisplayConverter(),
 )

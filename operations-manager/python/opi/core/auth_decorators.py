@@ -50,7 +50,14 @@ def get_current_user(request) -> dict[str, Any] | None:
     Utility function to get the current authenticated user from request.
 
     This is a helper function that route handlers can use to access
-    the current user information that was set by the authorization middleware.
+    the current user information.
+
+    Drie wegen vullen ``request.state.user``: de autorisatiemiddleware uit een sessie,
+    de bearer-decorators uit een geverifieerd SSO-token, en ``handhaaf`` uit een
+    persoonlijk API-token (RC-322). Een gevulde waarde zegt dus WIE de aanroeper is en
+    NIET dat hij een browserflow doorliep: hang er geen controle aan die een sessie of
+    een tweede factor veronderstelt. Een step-up hoort op ``@requires_step_up``, dat de
+    code per verzoek tegen deze persoon toetst.
 
     Args:
         request: The FastAPI/Starlette request object

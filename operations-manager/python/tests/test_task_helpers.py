@@ -12,10 +12,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.core.actor import Actor, ActorKind
+from opi.core.actor import actor as actor_contextvar
 from opi.core.task_helpers import (
     build_accepted_response,
     create_async_task,
     get_task_service,
+    task_actor,
     wait_for_task_completion,
 )
 
@@ -42,6 +45,58 @@ def _make_request(
         del request.app.state.federation_service
 
     return request
+
+
+# ---------------------------------------------------------------------------
+# task_actor
+# ---------------------------------------------------------------------------
+
+
+class TestTaskActor:
+    """De taak en de git-trailer noemen dezelfde aanroeper als de log (RC-322).
+
+    Een sessie-e-mailadres gaat voor; zonder sessie leest ``task_actor`` de contextvar van
+    ``opi.core.actor`` die de ingang (``handhaaf``) al zette, zodat een service account, een
+    persoonlijk token en de oude projectsleutel hun eigen vorm meekrijgen in plaats van allemaal
+    het vlakke "API".
+    """
+
+    @staticmethod
+    def _request(*, header: str | None = "zad_iets", sessie_email: str | None = None) -> MagicMock:
+        request = MagicMock()
+        request.state.user = {"email": sessie_email} if sessie_email else None
+        request.headers.get.side_effect = lambda naam: header if naam == "X-API-Key" else None
+        return request
+
+    def test_sessie_gaat_voor_de_contextvar(self) -> None:
+        token = actor_contextvar.set(Actor(ActorKind.SERVICE_ACCOUNT, "demo/project-api"))
+        try:
+            request = self._request(sessie_email="mens@rijksoverheid.nl")
+            assert task_actor(request) == "mens@rijksoverheid.nl"
+        finally:
+            actor_contextvar.reset(token)
+
+    def test_service_account_uit_de_contextvar_zonder_sessie(self) -> None:
+        token = actor_contextvar.set(Actor(ActorKind.SERVICE_ACCOUNT, "demo/project-api"))
+        try:
+            assert task_actor(self._request()) == "service-account:demo/project-api"
+        finally:
+            actor_contextvar.reset(token)
+
+    def test_persoonlijk_token_uit_de_contextvar_geeft_het_e_mailadres_zelf(self) -> None:
+        """Een PERSOON-actor draagt alleen het e-mailadres, zonder voorvoegsel (``Actor.__str__``)."""
+        token = actor_contextvar.set(Actor(ActorKind.USER, "mens@rijksoverheid.nl"))
+        try:
+            assert task_actor(self._request()) == "mens@rijksoverheid.nl"
+        finally:
+            actor_contextvar.reset(token)
+
+    def test_geen_sessie_geen_contextvar_maar_wel_een_sleutel_valt_terug_op_api(self) -> None:
+        """De ingang zette geen actor (een oudere weg); een sleutel was er wel."""
+        assert task_actor(self._request(header="zad_iets")) == "API"
+
+    def test_geen_sessie_geen_contextvar_en_geen_sleutel_geeft_niets(self) -> None:
+        assert task_actor(self._request(header=None)) is None
 
 
 # ---------------------------------------------------------------------------

@@ -76,7 +76,7 @@ kiezen. De suites die objectopslag meten draaien daarom op `seaweedfs-storage`
 (`tests/e2e/helpers/lifecycle.py`, `test_sandbox_all_services.py`,
 `test_sandbox_service_config_ui.py`). `tests/e2e/test_dienst_met_configstap_uitvinken.py`
 draait tegen een testserver met `CLUSTER_MANAGER=local`, waar MinIO niet vervangen is, en
-blijft de meting dat een MinIO-project gewoon doorwerkt.
+blijft de meting dat een MinIO-project doorwerkt.
 
 De buckethelft van `test_sandbox_restore_van_buiten.py` is weg: SeaweedFS heeft nog geen
 back-up, en een nieuw MinIO-project kan de suite niet meer aanmaken. Die meting hoort bij de

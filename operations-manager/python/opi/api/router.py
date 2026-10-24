@@ -25,6 +25,7 @@ from opi.connectors.subdomain import (
 from opi.core.auth_decorators import requires_step_up
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.core.project_environment import Omgeving
 from opi.core.step_up import StepUpActie
 from opi.core.task_handlers_operations import terminated_sync_fields
@@ -884,6 +885,7 @@ api_router: APIRouter = APIRouter(
         201: {"model": UpsertDeploymentResponse, "description": "Deployment created successfully"},
     },
 )
+@handeling(Handeling.DEPLOYMENT_SCHRIJVEN)
 @validate_api_token
 @requires_step_up(deployment_environment_downgrade, actie=StepUpActie.MARKERING_VERLAGEN)
 async def upsert_deployment(
@@ -1156,6 +1158,7 @@ class UpdateComponentRequest(BaseModel):
         201: {"description": "Component added successfully"},
     },
 )
+@handeling(Handeling.COMPONENT_TOEVOEGEN)
 @validate_api_token
 async def add_component(
     request: Request,
@@ -1337,6 +1340,7 @@ async def add_component(
         200: {"description": "Component updated successfully"},
     },
 )
+@handeling(Handeling.COMPONENT_WIJZIGEN)
 @validate_api_token
 async def update_component(
     request: Request,
@@ -1468,6 +1472,7 @@ async def update_component(
         201: {"description": "Component added to deployment successfully"},
     },
 )
+@handeling(Handeling.COMPONENT_KOPPELEN)
 @validate_api_token
 async def add_component_to_deployment(
     request: Request,
@@ -1628,6 +1633,7 @@ async def add_component_to_deployment(
         201: {"description": "Service added (or already present) successfully"},
     },
 )
+@handeling(Handeling.DIENST_TOEVOEGEN)
 @validate_api_token
 async def add_service(
     request: Request,
@@ -1779,6 +1785,7 @@ async def add_service(
 
 
 @api_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
+@handeling(Handeling.DEPLOYMENT_IMAGE_VERVANGEN)
 @validate_api_token
 async def update_deployment_image(
     request: Request,
@@ -1959,6 +1966,7 @@ async def update_deployment_image(
         200: {"model": RefreshProjectResponse, "description": "Project refreshed successfully"},
     },
 )
+@handeling(Handeling.PROJECT_VERVERSEN)
 @validate_api_token
 async def refresh_project(request: Request, project_name: str, force_clone: bool = False) -> JSONResponse:
     """
@@ -2059,6 +2067,7 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         200: {"model": RefreshProjectResponse, "description": "Deployment refreshed successfully"},
     },
 )
+@handeling(Handeling.DEPLOYMENT_VERVERSEN)
 @validate_api_token
 async def refresh_deployment(
     request: Request,
@@ -2178,6 +2187,7 @@ async def refresh_deployment(
 
 
 @api_router.delete("/projects/{project_name}")
+@handeling(Handeling.PROJECT_VERWIJDEREN)
 @validate_api_token
 @requires_step_up(project_in_production, actie=StepUpActie.PROJECT_VERWIJDEREN)
 async def delete_project(
@@ -2273,6 +2283,7 @@ async def delete_project(
 
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
+@handeling(Handeling.DEPLOYMENT_VERWIJDEREN)
 @validate_api_token
 @requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
 async def delete_project_deployment(
@@ -2372,6 +2383,7 @@ async def delete_project_deployment(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
+@handeling(Handeling.DATABASE_KLONEN)
 @validate_api_token
 async def clone_database_from_external(
     request: Request,
@@ -2544,6 +2556,7 @@ async def clone_database_from_external(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
+@handeling(Handeling.BUCKET_KLONEN)
 @validate_api_token
 async def clone_bucket_from_external(
     request: Request,
@@ -2715,6 +2728,7 @@ async def clone_bucket_from_external(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")
+@handeling(Handeling.KLOON_VALIDEREN)
 @validate_api_token
 async def validate_clone_configuration(
     request: Request, project_name: ProjectNamePath, deployment_name: str
@@ -3034,6 +3048,7 @@ class SubdomainListResponse(BaseModel):
         200: {"description": "Paginated list of subdomain registrations"},
     },
 )
+@handeling(Handeling.SUBDOMEIN_LEZEN)
 @validate_api_token
 async def list_subdomains(
     request: Request,
@@ -3119,6 +3134,7 @@ async def list_subdomains(
         200: {"description": "Registry updated successfully"},
     },
 )
+@handeling(Handeling.REGISTRY_TOEVOEGEN)
 @validate_api_token
 async def add_registry_by_secret(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryBySecretRequest = Body(...)
@@ -3216,6 +3232,7 @@ async def add_registry_by_secret(
         200: {"description": "Registry updated successfully"},
     },
 )
+@handeling(Handeling.REGISTRY_TOEVOEGEN)
 @validate_api_token
 async def add_registry_by_credentials(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryByCredentialsRequest = Body(...)

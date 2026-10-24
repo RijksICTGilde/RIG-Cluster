@@ -7,6 +7,7 @@ and introduces a `schema-version` field; future migrations use the version
 number directly.
 """
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -19,6 +20,7 @@ from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
 from opi.utils.naming import generate_storage_name
 
 if TYPE_CHECKING:
@@ -34,7 +36,7 @@ logger = logging.getLogger(__name__)
 #: quietly rejecting files that declare the new version.
 SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
     parse_schema_version(text)
-    for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11")
+    for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11", "2.12")
 )
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
@@ -1342,6 +1344,98 @@ def introduce_environment(project_data: dict[str, Any]) -> bool:
     return False
 
 
+#: Het service account dat de oude projectsleutel overneemt (v2.11 -> 2.12). De naam staat
+#: in de actor en in de git-trailer, dus een pijplijn is daar na de migratie aan te wijzen
+#: waar hij eerst alleen "het project" was.
+PROJECT_API_ACCOUNT = "project-api"
+
+#: De rol van dat account. ADMIN, omdat de projectsleutel vandaag de hele schrijfkant van
+#: een project opent, tot en met het verwijderen ervan en het terugzetten van een backup.
+#: Een smallere rol zou de migratie draaiende pijplijnen laten breken, en dat is een keuze
+#: voor de projectbeheerder (een lid verwijderen of zijn rol verlagen) en niet voor de
+#: migratie.
+PROJECT_API_ROL = "admin"
+
+#: De vervaldatum van het overgenomen token. Een vaste datum en geen ``now() + N dagen``:
+#: de migratie draait bij elke lezing van een nog niet weggeschreven bestand, en een datum
+#: die meeschuift zou het bestand elke keer anders maken.
+PROJECT_API_VERVALT = "2031-01-01T00:00:00+00:00"
+
+
+def relocate_api_key_to_service_account(project_data: dict[str, Any]) -> bool:
+    """De projectsleutel wordt een token van het service account ``project-api``.
+
+    ``config.api-key`` was een geheim zonder eigenaar, zonder vervaldatum en zonder manier
+    om hem in te trekken zonder het project te raken. Na deze stap is hij een token van een
+    lid: dezelfde waarde blijft werken, dus een draaiende pijplijn merkt er niets van, maar
+    hij heeft nu een naam, een vervaldatum en een rol, en intrekken is dat tokenblok
+    weghalen.
+
+    De sleutel staat AGE-versleuteld in het bestand en de hash moet over de PLATTE waarde,
+    want dat is wat een aanroeper presenteert. Gaat het ontsleutelen niet, dan BLIJFT
+    ``config.api-key`` staan: weghalen zou de pijplijn van dat project buitensluiten op
+    grond van een sleutel die we niet hebben kunnen lezen. Zo'n bestand blijft GELDIG,
+    want 2.12 laat het veld nog toe, en ``herken_principaal`` aanvaardt die sleutel dan
+    ook nog. Dat is de keuze: een foutregel en een volgende ronde, en niet een bestand dat
+    de validatie afkeurt en dus bij elke verwerking stil blijft staan. Het veld verdwijnt
+    pas uit het schema als de meting zegt dat niemand de oude sleutel meer gebruikt.
+
+    Idempotent: een tweede ronde vindt geen ``config.api-key`` meer, en een bestand dat het
+    account al heeft krijgt er geen tweede token bij.
+    """
+    config = project_data.get("config")
+    if not isinstance(config, dict) or not config.get("api-key"):
+        return False
+
+    opgeslagen = str(config["api-key"])
+    plat = _plattegrond_van_de_sleutel(str(project_data.get("name") or "?"), opgeslagen, config)
+    if plat is None:
+        logger.error(
+            "Projectsleutel van '%s' ging niet open; hij blijft als config.api-key staan "
+            "en wordt bij een volgende ronde opnieuw aangeboden",
+            project_data.get("name"),
+        )
+        return False
+    del config["api-key"]
+
+    leden = project_data.setdefault("users", [])
+    if not isinstance(leden, list):
+        project_data["users"] = leden = []
+
+    account: dict[str, Any] | None = next(
+        (lid for lid in leden if isinstance(lid, dict) and lid.get("name") == PROJECT_API_ACCOUNT),
+        None,
+    )
+    if account is None:
+        account = {"type": "service-account", "name": PROJECT_API_ACCOUNT, "role": PROJECT_API_ROL}
+        leden.append(account)
+
+    tokens = account.setdefault("tokens", [])
+    hash_hex = hashlib.sha256(plat.encode()).hexdigest()
+    if not any(isinstance(t, dict) and t.get("hash") == hash_hex for t in tokens):
+        tokens.append({"name": "projectsleutel", "expires": PROJECT_API_VERVALT, "hash": hash_hex})
+    return True
+
+
+def _plattegrond_van_de_sleutel(project_name: str, opgeslagen: str, config: dict[str, Any]) -> str | None:
+    """De platte projectsleutel, of None als hij niet open te krijgen is.
+
+    Dezelfde twee stappen als ``ProjectService._resolve_plaintext_api_key``: de
+    projectsleutel uitpakken met de KEK en daarmee de waarde ontsleutelen.
+    """
+    if not is_age_encrypted(opgeslagen):
+        return opgeslagen
+    ingepakt = config.get("age-private-key")
+    if not ingepakt:
+        return None
+    try:
+        private_key = unwrap_project_key_sync(str(ingepakt))
+    except ValueError as e:
+        logger.warning("Projectsleutel van '%s' niet uit te pakken: %s", project_name, e)
+        return None
+    return decrypt_age_content_sync(opgeslagen, private_key) or None
+
+
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
     """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
     Project(project_data).set(f"services/{service_name}/config", config)
@@ -1363,6 +1457,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.9"), relocate_registries_to_service),
     (parse_schema_version("2.10"), approve_existing_acl_key_prefix_optout),
     (parse_schema_version("2.11"), introduce_environment),
+    (parse_schema_version("2.12"), relocate_api_key_to_service_account),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

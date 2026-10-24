@@ -5,6 +5,8 @@ Tests parse_ports, normalize_project_name, validate_api_token
 and validate_master_api_key.
 """
 
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +15,7 @@ from opi.api.endpoint_util import (
     REQUIRES_MASTER_API_KEY,
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
+    legitimeert,
     normalize_project_name,
     parse_ports,
     validate_api_token,
@@ -20,7 +23,12 @@ from opi.api.endpoint_util import (
     validate_metrics_scrape_token,
 )
 from opi.core.actor import ACTOR_PLATFORM_API_KEY, get_actor, project_api_key_actor
+from opi.core.handelingen import Handeling, handeling
+from opi.core.leden import LidSoort
+from opi.services.project_leden import hash_van
 from starlette.requests import Request
+
+_VER_IN_DE_TOEKOMST = datetime.now(UTC) + timedelta(days=30)
 
 
 class TestParsePorts:
@@ -81,6 +89,7 @@ class TestValidateApiToken:
     async def test_missing_api_key_header(self):
         """Should return 401 when X-API-Key header is missing."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str):
             return {"ok": True}
@@ -98,6 +107,7 @@ class TestValidateApiToken:
     async def test_missing_project_name(self):
         """Should return 401 when project_name is not provided."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -114,6 +124,7 @@ class TestValidateApiToken:
     async def test_invalid_api_key(self):
         """Should return 401 when API key does not match project."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -141,6 +152,7 @@ class TestValidateApiToken:
     async def test_non_ascii_api_key(self):
         """Een niet-ASCII teken in de header is een foute sleutel, geen TypeError."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -168,6 +180,7 @@ class TestValidateApiToken:
     async def test_valid_api_key(self):
         """Should call through when API key matches project."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"project": project_name}
@@ -191,6 +204,7 @@ class TestValidateApiToken:
     async def test_valid_api_key_sets_the_project_actor(self):
         """De actor van een projectsleutel legitimeert een project, geen persoon."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"actor": get_actor()}
@@ -214,6 +228,7 @@ class TestValidateApiToken:
     async def test_project_not_found(self):
         """Should return 401 when project is not found."""
 
+        @handeling(Handeling.PROJECT_LEZEN)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -232,6 +247,67 @@ class TestValidateApiToken:
             await dummy_route(request=mock_request, project_name="nonexistent")
 
         assert exc_info.value.status_code == 401
+
+
+class TestLegitimeert:
+    """``legitimeert`` is de voorcontrole van de image-push: vóór de multipart-parser
+    weten of de aanroeper BIJ DIT PROJECT hoort, zonder al een handeling te beslissen.
+    Dat een token van een ander project hier niet doorheen komt is precies de grendel die
+    een eerdere ronde van dit plan dichtzette (anders zou de tarball al naar schijf
+    spoelen voor een token dat helemaal niet bij dit project hoort)."""
+
+    def _project(self, naam: str, token_waarde: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            name=naam,
+            api_key=None,
+            users=[
+                SimpleNamespace(
+                    type=LidSoort.SERVICE_ACCOUNT,
+                    name="bouwstraat",
+                    principaal="bouwstraat",
+                    email=None,
+                    role="admin",
+                    tokens=[SimpleNamespace(name="pijplijn", expires=_VER_IN_DE_TOEKOMST, hash=hash_van(token_waarde))],
+                )
+            ],
+        )
+
+    @pytest.mark.asyncio
+    async def test_een_token_van_dit_project_legitimeert(self) -> None:
+        project = self._project("eigen-project", "zad_token")
+        store = MagicMock()
+        store.get.return_value = project
+
+        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+            assert await legitimeert("zad_token", "eigen-project") is True
+
+    @pytest.mark.asyncio
+    async def test_een_onbekend_token_legitimeert_niets(self) -> None:
+        """Een token dat dit project niet draagt (bijvoorbeeld van een ander project) is
+        hier niet te onderscheiden van een geraden token: beide geven ``NietHerkend``,
+        want de zoektocht gebeurt binnen het project uit de URL en dat project draagt
+        deze hash niet."""
+        store = MagicMock()
+        store.get.return_value = self._project("eigen-project", "zad_vaneigen")
+
+        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+            assert await legitimeert("zad_vanandermans", "eigen-project") is False
+
+    @pytest.mark.asyncio
+    async def test_zonder_bewijsmiddel_legitimeert_niets(self) -> None:
+        store = MagicMock()
+        store.get.return_value = self._project("eigen-project", "zad_token")
+
+        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+            assert await legitimeert(None, "eigen-project") is False
+
+    @pytest.mark.asyncio
+    async def test_een_onbekend_project_legitimeert_niets(self) -> None:
+        store = MagicMock()
+        store.get.return_value = None
+
+        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+            assert await legitimeert("zad_token", "onbestaand-project") is False
 
 
 class TestValidateMasterApiKey:

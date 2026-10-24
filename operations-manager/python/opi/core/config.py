@@ -247,6 +247,11 @@ class Settings(BaseSettings):
     CLI_CLIENT_ID: str = "zad-cli"
     CLI_TOKEN_AUDIENCE: str = "zad-api"  # noqa: S105  # audience van het CLI-token, geen secret
 
+    # Hoe lang een API-token hoogstens geldig mag zijn, in dagen. Platformbeleid en geen
+    # keuze van wie het token aanmaakt: zonder maximum kiest iedereen het maximum.
+    TOKEN_MAX_DAGEN_PERSOONLIJK: int = 90
+    TOKEN_MAX_DAGEN_SERVICE_ACCOUNT: int = 365
+
     # Invite system settings
     INVITE_CLIENT_ID: str = "operations-manager-invites"
 

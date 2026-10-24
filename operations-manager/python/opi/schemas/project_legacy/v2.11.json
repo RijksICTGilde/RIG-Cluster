@@ -1,0 +1,15 @@
+{
+  "$comment": "v2.11 -> 2.12 verplaatste de projectsleutel naar een lid: config.api-key werd het service account 'project-api' met de hash van die sleutel als eerste token. Een 2.11-bestand kent geen type, name of tokens op een lid. config.api-key staat niet in deze patch: 2.12 laat het veld toe voor een bestand waarvan de sleutel niet open ging, dus het accepteert dezelfde vorm.",
+  "$defs": {
+    "api-token": null,
+    "user": {
+      "required": ["email", "role"],
+      "properties": {
+        "type": null,
+        "name": null,
+        "tokens": null
+      },
+      "allOf": null
+    }
+  }
+}

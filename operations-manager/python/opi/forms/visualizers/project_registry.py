@@ -31,7 +31,6 @@ from opi.forms.visualizers.fields.components import (
 from opi.forms.visualizers.fields.config_display import (
     AGE_PRIVATE_KEY,
     AGE_PUBLIC_KEY,
-    API_KEY,
 )
 from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_BASE_DOMAIN,
@@ -69,7 +68,6 @@ if TYPE_CHECKING:
 __all__ = [
     "AGE_PRIVATE_KEY",
     "AGE_PUBLIC_KEY",
-    "API_KEY",
     "CLUSTERS",
     "COMPONENTS_SEQUENCE",
     "COMPONENT_ALIASES",
@@ -117,7 +115,6 @@ def get_all_project_editables() -> list[EditableVisualizer]:
         DEPLOYMENTS_SEQUENCE,
         AGE_PUBLIC_KEY,
         AGE_PRIVATE_KEY,
-        API_KEY,
     ]
 
 
@@ -162,7 +159,6 @@ def get_project_form_layout() -> list[LayoutElement]:
             children=[
                 "config/age-public-key",
                 "config/age-private-key",
-                "config/api-key",
             ],
         ),
         ButtonGroup(

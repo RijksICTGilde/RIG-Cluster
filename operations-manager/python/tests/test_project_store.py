@@ -49,8 +49,7 @@ def _project(deployments: list[dict[str, Any]] | None = None, **extra: Any) -> d
         "services": [],
         "components": [],
         "deployments": deployments if deployments is not None else [],
-        # The schema requires an AGE-encrypted (or base64+age) api-key.
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
     data.update(extra)
     return data

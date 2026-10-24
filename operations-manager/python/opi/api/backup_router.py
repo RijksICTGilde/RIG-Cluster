@@ -12,6 +12,7 @@ from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.handelingen import Handeling, handeling
 from opi.handlers.project_file_handler import create_project_file_handler
 from opi.manager.backup import (
     BackupResult,
@@ -342,6 +343,7 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
 
 
 @backup_router.post("/project/{project_name}/deployment/{deployment_name}", response_model=DeploymentBackupResponse)
+@handeling(Handeling.BACKUP_MAKEN)
 @validate_api_token
 async def backup_project_deployment(
     request: Request,
@@ -652,6 +654,7 @@ async def backup_project_deployment(
 
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
+@handeling(Handeling.BACKUP_LEZEN)
 @validate_api_token
 async def list_backup_runs(request: Request, project_name: ProjectNamePath, deployment_name: str) -> BackupRunsResponse:
     """
@@ -795,6 +798,7 @@ class DeleteSnapshotResponse(BaseModel):
     "/snapshot/{project_name}/{deployment_name}/{snapshot_id}",
     response_model=DeleteSnapshotResponse,
 )
+@handeling(Handeling.BACKUP_VERWIJDEREN)
 @validate_api_token
 async def delete_snapshot(
     request: Request,
