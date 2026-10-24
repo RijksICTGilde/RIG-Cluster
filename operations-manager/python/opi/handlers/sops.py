@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 _SOPS_STORE_MAX_ATTEMPTS = 4
 _SOPS_STORE_RETRY_DELAY_SECONDS = 1.5
 
-#: Secret en Role voor het sleutel-secret. De Role gaat alleen mee bij plaatsen, niet
-#: bij reprocess (het secret klopt al).
+#: Secret en Role voor het sleutel-secret. De Role gaat mee bij elke verwerking, ook als
+#: het secret al klopt: zonder Role leest de CMP het secret niet en rendert ArgoCD niet.
 SOPS_SECRET_NAME = "sops-age-key"  # noqa: S105  # naam van het secret, geen secret
 CMP_SOPS_ROLE_NAME = "cmp-sops-key-reader"
 CMP_SERVICE_ACCOUNT = "argocd-cmp"
@@ -275,7 +275,7 @@ class SopsHandler:
                 # Buiten de lus, zodat een falende Role het secret niet opnieuw laat
                 # schrijven, en met een eigen melding: het secret staat er wel.
                 try:
-                    await self._apply_cmp_key_reader_role(namespace)
+                    await self.ensure_cmp_key_reader(namespace)
                 except KubectlExecutionError as role_error:
                     self.logger.error(
                         f"SOPS key stored, but failed to apply the CMP key reader role "
@@ -291,13 +291,27 @@ class SopsHandler:
             self.logger.error(f"Error storing SOPS key in namespace {namespace}: {e}")
             return False
 
-    async def _apply_cmp_key_reader_role(self, namespace: str) -> None:
+    async def ensure_cmp_key_reader(self, namespace: str) -> None:
         """
         Laat de CMP-sidecar precies het sleutel-secret van deze namespace lezen.
 
+        Idempotent: een gelijke Role en RoleBinding verandert niets.
+
         Raises:
+            ValueError: als de namespace van het platform zelf is
             KubectlExecutionError: als de Role of RoleBinding niet toegepast kan worden
         """
+        # Zelfde tweede laag als bij store_project_sops_key_in_namespace hierboven: de
+        # namespace komt uit een projectbestand, en in een platformnamespace is
+        # 'sops-age-key' de PLATFORMsleutel. Die leest de platform-sidecar uit zijn eigen
+        # mount; de tenant-sidecar hoort daar niets te mogen. Zelfde uitzondering als
+        # SKIP_NAMESPACES in de migratietaak in Taskfile.yaml.
+        if is_platform_namespace(namespace):
+            raise ValueError(
+                f"Weigert de Role '{CMP_SOPS_ROLE_NAME}' te zetten in namespace '{namespace}': "
+                f"dat is een namespace van het platform zelf."
+            )
+
         if not self.kubectl:
             raise RuntimeError("KubectlConnector not available for applying the CMP key reader role")
 

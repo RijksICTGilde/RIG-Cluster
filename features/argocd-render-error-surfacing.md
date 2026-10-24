@@ -71,6 +71,18 @@ namelijk de regel waarop hij struikelde, en die inhoud is geheim. In alle andere
 de stderr integraal mee, zoals hiervoor. Zie `features/helmfile-single-app-deployment.md` voor
 waarom de plugin die bestanden zelf ontsleutelt.
 
+### Een ComparisonError die over de sleutel gaat
+
+```
+ERROR: cannot read secret 'sops-age-key' in namespace 'rig-<project>':
+the namespace or the secret does not exist, or the repo-server may not read it
+```
+
+Dit is geen kapotte kustomization maar een ontbrekende Role `cmp-sops-key-reader` naast het
+sleutel-secret. OPI zet die bij elke verwerking en bij het opstarten, dus een herstart of een
+verwerking van dat project herstelt het; wie en wanneer staat in
+`instructions/sops-sleutel-in-het-cluster.md`.
+
 ## Files
 
 | File | Purpose |
