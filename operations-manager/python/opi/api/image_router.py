@@ -68,8 +68,9 @@ async def push_image(
     except SkopeoValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Zonder registry bestaat dit pad op deze instantie niet; dat is geen serverfout.
     if not settings.REGISTRY_URL:
-        raise HTTPException(status_code=501, detail="Container registry is not configured")
+        raise HTTPException(status_code=404, detail="Not Found")
 
     # BodyLimitMiddleware already took the slot before the parser, so this call is a no-op.
     async with upload_slot(request.scope):

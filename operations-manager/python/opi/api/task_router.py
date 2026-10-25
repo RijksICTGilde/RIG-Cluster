@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import handhaaf, validate_master_api_key
+from opi.api.endpoint_util import handhaaf
 from opi.api.task_models import TaskResponse, task_response_from_dict
 from opi.api.user_token_auth import (
     UserTokenError,
@@ -13,36 +13,16 @@ from opi.api.user_token_auth import (
     extract_bearer_token,
     verify_user_token,
 )
-from opi.core.actor import get_actor
-from opi.core.config import settings
 from opi.core.handelingen import Handeling, handeling
 from opi.services.project_store import get_project_store
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Request models
+# Response models
 # ---------------------------------------------------------------------------
-
-
-class CreateTaskRequest(BaseModel):
-    task_type: str
-    project_name: str
-    deployment_name: str | None = None
-    cluster: str
-    payload: dict = {}
-    created_by: str | None = Field(
-        None,
-        deprecated=True,
-        description=(
-            "Alleen een federatie-peer wordt hierin geloofd. De actor volgt de ingang die de "
-            "aanroeper legitimeert, en deze route is de master-key: op een instantie met "
-            "FEDERATION_ROLE=slave is die sleutel in handen van de master-OPI en blijft het "
-            "meegestuurde adres staan, elders wordt het veld genegeerd."
-        ),
-    )
 
 
 class TaskListResponse(BaseModel):
@@ -95,20 +75,6 @@ def _get_task_service(request: Request):
     if task_service is None:
         raise HTTPException(status_code=503, detail="Task service not available")
     return task_service
-
-
-def _created_by(claimed: str | None) -> str:
-    """Wie de taak startte: de ingang bepaalt dat, niet de body.
-
-    Deze route zit achter de master-key, dus de actor is het platform. Op een
-    federatie-slave is die sleutel in handen van de master-OPI, die een taak doorzet en
-    het adres van de starter meestuurt; alleen daar blijft dat adres staan, zodat het
-    spoor van een gefedereerde taak heel blijft. Elders zou iedere master-key-houder
-    anders zelf kiezen onder wiens naam de git-commit komt.
-    """
-    if claimed and settings.FEDERATION_ROLE == "slave":
-        return claimed
-    return str(get_actor())
 
 
 async def _caller_started_this_task(request: Request, task: dict) -> bool:
@@ -355,45 +321,3 @@ async def cancel_task(request: Request, task_id: str) -> JSONResponse:
     logger.info("Task %s cancelled", task_id)
 
     return JSONResponse(content={"status": "cancelled", "task_id": task_id}, status_code=200)
-
-
-@task_router.post(
-    "",
-    responses={
-        202: {"description": "Task created and accepted"},
-    },
-)
-@validate_master_api_key
-async def create_task(request: Request, task_data: CreateTaskRequest) -> JSONResponse:
-    """Create a new task (for federation). Requires master API key."""
-    task_service = _get_task_service(request)
-
-    logger.info(
-        "Creating task: type=%s, project=%s, deployment=%s, cluster=%s",
-        task_data.task_type,
-        task_data.project_name,
-        task_data.deployment_name,
-        task_data.cluster,
-    )
-
-    task = await task_service.create_task(
-        task_type=task_data.task_type,
-        project_name=task_data.project_name,
-        deployment_name=task_data.deployment_name,
-        cluster=task_data.cluster,
-        payload=task_data.payload,
-        created_by=_created_by(task_data.created_by),
-    )
-
-    task_id = str(task["task_id"])
-    poll_url = f"/api/tasks/{task_id}"
-
-    return JSONResponse(
-        content={
-            "status": "accepted",
-            "task_id": task_id,
-            "task_type": task_data.task_type,
-            "poll_url": poll_url,
-        },
-        status_code=202,
-    )

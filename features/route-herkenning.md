@@ -23,7 +23,6 @@ eis uit de route zelf te lezen is in plaats van uit een lijst met paden.
 | `validate_api_token` (`opi/api/endpoint_util.py`) | `REQUIRES_PROJECT_NAME` | `X-API-Key` van het project |
 | `validate_user_token` (`opi/api/user_token_auth.py`) | `REQUIRES_USER_TOKEN` | `Authorization: Bearer` (SSO) |
 | `validate_platform_admin_token` (`opi/api/user_token_auth.py`) | `REQUIRES_PLATFORM_ADMIN_TOKEN` | `Authorization: Bearer` (SSO) van een platformbeheerder |
-| `validate_master_api_key` | `REQUIRES_MASTER_API_KEY` | `X-API-Key` = `MASTER_API_KEY` |
 | `validate_metrics_scrape_token` | `REQUIRES_METRICS_SCRAPE_TOKEN` | `Authorization: Bearer` = `PROMETHEUS_METRICS_AUTH_TOKEN` |
 
 ## Gebruik

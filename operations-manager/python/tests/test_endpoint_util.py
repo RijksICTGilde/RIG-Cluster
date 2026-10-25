@@ -1,8 +1,7 @@
 """
 Tests for opi.api.endpoint_util module.
 
-Tests parse_ports, normalize_project_name, validate_api_token
-and validate_master_api_key.
+Tests parse_ports, normalize_project_name and validate_api_token.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -12,17 +11,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.api.endpoint_util import (
-    REQUIRES_MASTER_API_KEY,
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
     legitimeert,
     normalize_project_name,
     parse_ports,
     validate_api_token,
-    validate_master_api_key,
     validate_metrics_scrape_token,
 )
-from opi.core.actor import ACTOR_PLATFORM_API_KEY, get_actor, project_api_key_actor
+from opi.core.actor import get_actor, project_api_key_actor
 from opi.core.handelingen import Handeling, handeling
 from opi.core.leden import LidSoort
 from opi.services.project_leden import hash_van
@@ -310,80 +307,6 @@ class TestLegitimeert:
             assert await legitimeert("zad_token", "onbestaand-project") is False
 
 
-class TestValidateMasterApiKey:
-    """Tests for validate_master_api_key decorator."""
-
-    @pytest.mark.asyncio
-    async def test_missing_api_key_header(self):
-        """Should return 401 when X-API-Key header is missing."""
-
-        @validate_master_api_key
-        async def dummy_route(request: Request):
-            return {"ok": True}
-
-        mock_request = MagicMock(spec=Request)
-        mock_request.headers = {}
-
-        with pytest.raises(HTTPException) as exc_info:
-            await dummy_route(request=mock_request)
-
-        assert exc_info.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_master_key_not_configured(self):
-        """Should return 501 when MASTER_API_KEY is not set."""
-
-        @validate_master_api_key
-        async def dummy_route(request: Request):
-            return {"ok": True}
-
-        mock_request = MagicMock(spec=Request)
-        mock_request.headers = {"X-API-Key": "some-key"}
-
-        with patch("opi.api.endpoint_util.settings") as mock_settings:
-            mock_settings.MASTER_API_KEY = None
-            with pytest.raises(HTTPException) as exc_info:
-                await dummy_route(request=mock_request)
-
-        assert exc_info.value.status_code == 501
-
-    @pytest.mark.asyncio
-    async def test_invalid_master_key(self):
-        """Should return 401 when master key does not match."""
-
-        @validate_master_api_key
-        async def dummy_route(request: Request):
-            return {"ok": True}
-
-        mock_request = MagicMock(spec=Request)
-        mock_request.scope = {}
-        mock_request.headers = {"X-API-Key": "wrong-key"}
-
-        with patch("opi.api.endpoint_util.settings") as mock_settings:
-            mock_settings.MASTER_API_KEY = "correct-master-key"
-            with pytest.raises(HTTPException) as exc_info:
-                await dummy_route(request=mock_request)
-
-        assert exc_info.value.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_valid_master_key(self):
-        """Should call through when master key matches, and set the platform actor."""
-
-        @validate_master_api_key
-        async def dummy_route(request: Request):
-            return {"admin": True, "actor": get_actor()}
-
-        mock_request = MagicMock(spec=Request)
-        mock_request.headers = {"X-API-Key": "correct-master-key"}
-
-        with patch("opi.api.endpoint_util.settings") as mock_settings:
-            mock_settings.MASTER_API_KEY = "correct-master-key"
-            result = await dummy_route(request=mock_request)
-
-        assert result == {"admin": True, "actor": ACTOR_PLATFORM_API_KEY}
-
-
 class TestMarkeringen:
     """Elke herkenningsdecorator laat op de route zien dat hij er zit.
 
@@ -396,7 +319,6 @@ class TestMarkeringen:
         ("decorator", "markering"),
         [
             (validate_api_token, REQUIRES_PROJECT_NAME),
-            (validate_master_api_key, REQUIRES_MASTER_API_KEY),
             (validate_metrics_scrape_token, REQUIRES_METRICS_SCRAPE_TOKEN),
         ],
     )
@@ -410,7 +332,6 @@ class TestMarkeringen:
         """Twee decorators met dezelfde markering zijn in een route niet te onderscheiden."""
         markeringen = [
             REQUIRES_PROJECT_NAME,
-            REQUIRES_MASTER_API_KEY,
             REQUIRES_METRICS_SCRAPE_TOKEN,
         ]
 
@@ -424,5 +345,4 @@ class TestMarkeringen:
 
         gedecoreerd = validate_api_token(dummy_route)
 
-        assert getattr(gedecoreerd, REQUIRES_MASTER_API_KEY, False) is False
         assert getattr(gedecoreerd, REQUIRES_METRICS_SCRAPE_TOKEN, False) is False

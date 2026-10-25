@@ -137,8 +137,8 @@ def test_de_image_push_weigert_voor_de_body_in_het_geheugen_landt(doel: Doel, pr
     """Deze route heeft een eigen plafond van gigabytes, dus een body erboven is niet te sturen.
 
     Wat hier wel te meten is: de weigering komt voor de body (in de proefsandbox is geen
-    registry geconfigureerd, dus 501) en kost geen geheugen. Een echte push naar een registry
-    valt buiten de proef: de skopeo-binary is nagebootst.
+    registry geconfigureerd, dus 404 sinds RC-386) en kost geen geheugen. Een echte push naar
+    een registry valt buiten de proef: de skopeo-binary is nagebootst.
     """
     project = proefproject
     voor = geheugenbeeld(doel.pid)
@@ -146,7 +146,7 @@ def test_de_image_push_weigert_voor_de_body_in_het_geheugen_landt(doel: Doel, pr
         begin = time.monotonic()
         antwoord = client.post(image_pushroute(project), files=_multipart(PUSHBODY_BYTES))
         duur = time.monotonic() - begin
-    assert antwoord.status_code in (400, 401, 403, 413, 501), f"image-push gaf {antwoord.status_code}"
+    assert antwoord.status_code in (400, 401, 403, 404, 413), f"image-push gaf {antwoord.status_code}"
     assert duur < TIJDBUDGET, f"image-push hield de route {duur:.1f}s bezig"
     groei = geheugenbeeld(doel.pid) - voor
     assert groei < GROEIGRENS_BYTES, f"de pod groeide {groei // 1024 // 1024} MB van een image-push"

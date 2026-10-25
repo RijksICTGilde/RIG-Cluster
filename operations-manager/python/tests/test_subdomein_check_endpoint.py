@@ -26,7 +26,7 @@ DE VERGRENDELING
 De laatste test hieronder is generiek: elke route die ``validate_api_token`` draagt, moet
 een VERPLICHTE ``project_name`` kunnen ontvangen (in haar pad of als queryparameter). Dat
 vond nog twee gevallen: ``GET /api/v1/backup/status`` had de naam helemaal niet en gaat naar
-de mastersleutel, en ``GET /api/subdomains`` had hem als optionele filter terwijl weglaten
+het token van een platformbeheerder, en ``GET /api/subdomains`` had hem als optionele filter terwijl weglaten
 dezelfde 401 opleverde.
 """
 

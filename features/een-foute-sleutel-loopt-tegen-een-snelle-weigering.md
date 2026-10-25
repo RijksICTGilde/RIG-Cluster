@@ -1,7 +1,8 @@
 # Een foute sleutel of een stortvloed loopt tegen een snelle weigering
 
-De machine-API van OPI legitimeert zich met een `X-API-Key` per project en met een
-admin- of mastersleutel. De vergelijking was al constant-time en het antwoord bij elke
+De machine-API van OPI legitimeert zich met een `X-API-Key` per project en met het
+scrape-token van de metrics-route; de admin- en de mastersleutel zijn weg (RC-377 en
+RC-386). De vergelijking was al constant-time en het antwoord bij elke
 fout al een identieke 401, dus er lekte niet welk deel fout was, maar er zat geen rem op
 het AANTAL pogingen: een aanvaller kon blijven raden, en elke poging kostte OPI werk (een
 projectbestand lezen, soms een subprocess). OPI is een proces per cluster, dus zo'n

@@ -83,14 +83,22 @@ om een code moet vragen en de aanroep te herhalen. `action` zegt welke handeling
 De twee leesroutes vragen alleen het token: een OTP erop zou een handeling verzinnen die er
 niet is.
 
+## Ook op dit token: de back-upstand en de federatie (RC-386)
+
+`MASTER_API_KEY` bestond hiernaast als tweede gedeelde sleutel. Die is weg, en zijn
+leesroutes vragen nu hetzelfde token, zonder step-up:
+
+| Route | Wat het is |
+|---|---|
+| `GET /api/v1/backup/status` | de back-uplock van het cluster, een per cluster en dus zonder project |
+| `GET /api/federation/peers` | de ingerichte peers, zonder hun secrets |
+| `GET /api/federation/health` | een health-check per peer |
+
+De twee federatieroutes geven **404** als de federatie op deze instantie uit staat (geen
+`FEDERATION_ROLE=master` met peers). Dat er hier niets is ingericht is geen serverfout.
+
 ## Wat niet op dit token loopt
 
-- **De federatie tussen OPI's.** `POST /api/tasks` wordt aangeroepen door
-  `OpiConnector.create_task` van een andere OPI-instantie; dat is machineverkeer en blijft op
-  `MASTER_API_KEY`. `GET /api/federation/peers` en `GET /api/federation/health` horen bij
-  diezelfde federatie en blijven daar ook op staan.
-- **`GET /api/v1/backup/status`.** Geen aanroeper in de repo te vinden, dus onveranderd
-  gelaten; zie het open punt op PR van RC-377.
 - **De `/admin/...`-pagina's van het portaal.** Die lopen op de sessie, niet op een token.
 
 ## Afhankelijkheden

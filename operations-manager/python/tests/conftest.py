@@ -204,13 +204,10 @@ def mock_settings() -> Any:
         # De body-limit (RC-367) rekent met deze twee bij elk verzoek op een uploadroute.
         mock_settings.ATTACHMENT_BODY_LIMIT_FACTOR = 16
         mock_settings.IMAGE_UPLOAD_MAX_SIZE_MB = 5120
-        # Om dezelfde reden een echte string. validate_master_api_key doet eerst
-        # `if not settings.MASTER_API_KEY` (een kale MagicMock is waar-achtig, dus daar komt
-        # hij doorheen) en daarna secrets.compare_digest, en die weigert een MagicMock met
-        # een TypeError. Het endpoint gaf dan 500 in plaats van 401, en de test die juist
-        # toetst dat een PROJECTsleutel geweigerd wordt viel om op de vorm van de weigering.
-        # De waarde is expres een andere dan de projectsleutels in de fixtures.
-        mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
+        # Een echte lege string: /health zet het proefdoel-token als responseheader zodra
+        # het waar-achtig is, en een kale MagicMock is dat. Starlette weigerde die header
+        # met een TypeError, waardoor /health onder deze fixture niet te meten was.
+        mock_settings.SECURITY_PROOF_TOKEN = ""
         # Ook echte ints, om dezelfde reden: opi/api/rate_limiter.py rekent bij import met
         # deze waarden om zijn emmers te bouwen, en retry_after_seconds vergelijkt met de
         # max. Een kale MagicMock gaf een TypeError bij de import van de module, en dan

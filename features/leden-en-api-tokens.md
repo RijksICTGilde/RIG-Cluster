@@ -317,5 +317,4 @@ telling is "de projectsleutel verdwijnt zodra niemand hem meer gebruikt" een wen
   AuthZEN-vorm brengen (fase 1 tot 4 van `rechten-plan-van-aanpak.md`);
 - agents als eigen soort aanroeper (`via_agent`, `on_behalf_of`, fase 6);
 - `last_used_at` per token: dat komt uit een audittabel, niet uit het projectbestand;
-- `ADMIN_API_KEY` en `MASTER_API_KEY` omzetten naar tokens (4.3);
 - de rollenopschoning `owner` / `member` / `operator` (4.1).

@@ -2,7 +2,7 @@
 Unit tests for the task router API endpoints.
 
 Tests cover GET /api/tasks/{id}, GET /api/tasks, POST /api/tasks/{id}/:cancel, and
-POST /api/tasks (federation, master-key only), with various task states and error
+POST /api/tasks (dicht sinds RC-386), with various task states and error
 conditions.
 """
 
@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.core.actor import ACTOR_PLATFORM_API_KEY
 from opi.core.leden import LidSoort
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -781,118 +780,40 @@ class TestTaskServiceUnavailable:
         assert response.status_code == 503
 
 
-class TestCreateTask:
-    """Tests for POST /api/tasks: master-key-only, used by federation (RC-284)."""
+class TestPostApiTasksIsDicht:
+    """POST /api/tasks is dicht sinds RC-386.
 
-    MASTER_KEY: ClassVar[str] = "test-master-api-key-not-a-project-key"
-    MASTER_HEADERS: ClassVar[dict[str, str]] = {"X-API-Key": MASTER_KEY}
+    De route bestond alleen voor de federatie en liet zich herkennen met de
+    MASTER_API_KEY, een sleutel die iedere houder het platform maakte. Die sleutel is
+    weg, en een peer heeft nog geen eigen identiteit, dus is er niemand die deze route
+    mag aanroepen. Hij is daarom niet geregistreerd, en omdat GET op dit pad nog bestaat
+    antwoordt Starlette met 405 in plaats van 404. Het punt is dat het geen 5xx is.
+    """
 
-    @pytest.fixture(autouse=True)
-    def _master_key_configured(self) -> Any:
-        """``opi.api.endpoint_util`` bindt ``settings`` bij zijn EERSTE import, en als een
-        andere testmodule die module al eerder importeerde (buiten de mock_settings-
-        fixture om), is die binding bevroren op het object van toen: de gedeelde fixture
-        kan dan niet meer betrouwbaar bepalen welke MASTER_API_KEY deze route ziet. Zet de
-        waarde daarom rechtstreeks op het attribuut van het object waar die module al naar
-        wijst, ongeacht welk object dat is."""
-        with patch("opi.api.endpoint_util.settings.MASTER_API_KEY", self.MASTER_KEY):
-            yield
-
-    def _payload(self, **overrides: Any) -> dict[str, Any]:
-        payload: dict[str, Any] = {
+    def _payload(self) -> dict[str, Any]:
+        return {
             "task_type": "upsert_deployment",
             "project_name": SAMPLE_PROJECT,
             "cluster": "odcn-production",
         }
-        payload.update(overrides)
-        return payload
 
-    def test_created_by_in_de_body_wordt_genegeerd(
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            pytest.param({}, id="zonder-sleutel"),
+            pytest.param(AUTH_HEADERS, id="met-projectsleutel"),
+            pytest.param({"X-API-Key": "test-master-api-key-not-a-project-key"}, id="met-oude-master-sleutel"),
+        ],
+    )
+    def test_de_route_bestaat_niet_meer(
         self,
         test_client_with_task_service: TestClient,
         mock_task_service: AsyncMock,
+        headers: dict[str, str],
     ) -> None:
-        """Wie de master-key heeft mag niet zelf kiezen onder wiens naam de taak (en de
-        git-commit die hij aanstuurt) komt te staan: de server zet de platformactor."""
-        response = test_client_with_task_service.post(
-            "/api/tasks",
-            headers=self.MASTER_HEADERS,
-            json=self._payload(created_by="iemand@example.org"),
-        )
+        response = test_client_with_task_service.post("/api/tasks", headers=headers, json=self._payload())
 
-        assert response.status_code == 202
-        assert mock_task_service.create_task.await_args.kwargs["created_by"] == str(ACTOR_PLATFORM_API_KEY)
-
-    def test_ontbrekende_created_by_krijgt_ook_de_platformactor(
-        self,
-        test_client_with_task_service: TestClient,
-        mock_task_service: AsyncMock,
-    ) -> None:
-        response = test_client_with_task_service.post(
-            "/api/tasks",
-            headers=self.MASTER_HEADERS,
-            json=self._payload(),
-        )
-
-        assert response.status_code == 202
-        assert mock_task_service.create_task.await_args.kwargs["created_by"] == str(ACTOR_PLATFORM_API_KEY)
-
-    def test_een_federatie_slave_houdt_het_adres_van_de_starter(
-        self,
-        test_client_with_task_service: TestClient,
-        mock_task_service: AsyncMock,
-    ) -> None:
-        """Op een slave is de master-key in handen van de master-OPI, die een taak doorzet
-        en het adres van de starter meestuurt. Zonder deze uitzondering verliest een
-        gefedereerde taak zijn starter, en daarmee ook de weg waarlangs diens token de
-        taak kan volgen (_caller_started_this_task)."""
-        with patch("opi.api.task_router.settings.FEDERATION_ROLE", "slave"):
-            response = test_client_with_task_service.post(
-                "/api/tasks",
-                headers=self.MASTER_HEADERS,
-                json=self._payload(created_by="iemand@example.org"),
-            )
-
-        assert response.status_code == 202
-        assert mock_task_service.create_task.await_args.kwargs["created_by"] == "iemand@example.org"
-
-    def test_een_federatie_master_negeert_het_adres_in_de_body(
-        self,
-        test_client_with_task_service: TestClient,
-        mock_task_service: AsyncMock,
-    ) -> None:
-        """Alleen een slave gelooft de body: een master en een standalone instantie zien
-        hier gewone master-key-houders, die de actor niet mogen kiezen."""
-        with patch("opi.api.task_router.settings.FEDERATION_ROLE", "master"):
-            response = test_client_with_task_service.post(
-                "/api/tasks",
-                headers=self.MASTER_HEADERS,
-                json=self._payload(created_by="iemand@example.org"),
-            )
-
-        assert response.status_code == 202
-        assert mock_task_service.create_task.await_args.kwargs["created_by"] == str(ACTOR_PLATFORM_API_KEY)
-
-    def test_zonder_master_key_geeft_401(
-        self,
-        test_client_with_task_service: TestClient,
-        mock_task_service: AsyncMock,
-    ) -> None:
-        response = test_client_with_task_service.post("/api/tasks", json=self._payload())
-
-        assert response.status_code == 401
-        mock_task_service.create_task.assert_not_awaited()
-
-    def test_met_een_projectsleutel_in_plaats_van_de_master_key_geeft_401(
-        self,
-        test_client_with_task_service: TestClient,
-        mock_task_service: AsyncMock,
-    ) -> None:
-        """Een projectsleutel legitimeert een project, niet het platform: deze route
-        accepteert alleen de master-key."""
-        response = test_client_with_task_service.post("/api/tasks", headers=AUTH_HEADERS, json=self._payload())
-
-        assert response.status_code == 401
+        assert response.status_code == 405
         mock_task_service.create_task.assert_not_awaited()
 
 

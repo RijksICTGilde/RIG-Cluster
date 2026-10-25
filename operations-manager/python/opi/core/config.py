@@ -318,7 +318,6 @@ class Settings(BaseSettings):
     # API security
     API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     USE_UNSAFE_API_KEY: bool = False  # Use hardcoded "secret" API key for development (set to True in .env.local)
-    MASTER_API_KEY: str | None = None  # Master API key for admin operations (backups, etc.)
 
     # SOPS age key settings (from Kubernetes secret)
     SOPS_AGE_KEY_FILE: str | None = None  # Pad naar de gemounte platformsleutel in de pod
