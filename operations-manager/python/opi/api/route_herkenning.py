@@ -1,6 +1,6 @@
 """Elke geregistreerde route met haar herkenning.
 
-OPI herkent aanroepers op zes manieren, elk met een markering op het endpoint. Deze module
+OPI herkent aanroepers op vijf manieren, elk met een markering op het endpoint. Deze module
 leest die markeringen uit routes, zodat een test het kan afdwingen. Importeerbaar omdat
 RC-322 en fase 1 dezelfde enumeratie nodig hebben.
 """
@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 
 from opi.api.endpoint_util import (
-    REQUIRES_MASTER_API_KEY,
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
 )
@@ -28,7 +27,6 @@ MARKERINGEN: dict[str, str] = {
     "projectsleutel": REQUIRES_PROJECT_NAME,
     "sso-bearertoken": REQUIRES_USER_TOKEN,
     "platformbeheerder-token": REQUIRES_PLATFORM_ADMIN_TOKEN,
-    "master-sleutel": REQUIRES_MASTER_API_KEY,
     "metrics-token": REQUIRES_METRICS_SCRAPE_TOKEN,
 }
 

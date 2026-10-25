@@ -1,9 +1,12 @@
 """Tests for the federation routing layer."""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
+from opi.api.federation_router import _registry_of_404
 from opi.connectors.opi import OpiConnector, OpiConnectorError
 from opi.core.federation_config import FederationRegistry, PeerConfig
 from opi.core.federation_service import FederationError, FederationService
@@ -414,3 +417,43 @@ class TestTaskRouterFederationProxy:
             resp = await client.get("/api/tasks/00000000-0000-0000-0000-000000000002")
 
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Federation router: de 404 van een uitgeschakelde federatie (RC-386)
+# ---------------------------------------------------------------------------
+
+
+class TestRegistryOf404:
+    """Een instantie zonder federatie heeft hier niets te melden, en dat is geen serverfout."""
+
+    @staticmethod
+    def _verzoek(federation_service: object | None) -> MagicMock:
+        request = MagicMock()
+        request.app.state = (
+            SimpleNamespace() if federation_service is None else SimpleNamespace(federation_service=federation_service)
+        )
+        return request
+
+    def test_zonder_federatiedienst_een_404(self) -> None:
+        with pytest.raises(HTTPException) as exc_info:
+            _registry_of_404(self._verzoek(None))
+
+        assert exc_info.value.status_code == 404
+
+    def test_met_een_lege_registry_een_404(self) -> None:
+        """``is_enabled()`` is onwaar zonder peers, en dan staat de federatie uit."""
+        registry = FederationRegistry(peers=[], local_cluster="local")
+
+        with pytest.raises(HTTPException) as exc_info:
+            _registry_of_404(self._verzoek(SimpleNamespace(_registry=registry)))
+
+        assert exc_info.value.status_code == 404
+
+    def test_met_peers_komt_de_registry_terug(self) -> None:
+        registry = FederationRegistry(
+            peers=[PeerConfig(cluster="remote", url="https://slave.example.com", api_key="key")],
+            local_cluster="local",
+        )
+
+        assert _registry_of_404(self._verzoek(SimpleNamespace(_registry=registry))) is registry

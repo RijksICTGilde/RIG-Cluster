@@ -35,6 +35,10 @@ def test_een_booleaanse_variant_geeft_hetzelfde_als_een_naam_die_niet_bestaat(
     with sleutelclient(doel, proefproject) as client:
         basis = client.get("/api/tasks", params={"project_name": proefproject, "deployment_name": NIET_BESTAAND})
         aanval = client.get("/api/tasks", params={"project_name": proefproject, "deployment_name": variant})
+    if basis.status_code == 503:
+        # De wegwerp-sandbox heeft geen database en dus geen taakdienst: er is hier geen
+        # query om op te meten. Een bevinding melden zou verzonnen bewijs zijn.
+        pytest.skip("geen taakdienst op dit doel, dus geen query om te beproeven")
     assert basis.status_code == 200, f"de basismeting faalde: {basis.status_code}"
     assert aanval.status_code == basis.status_code, f"{variant!r} gaf {aanval.status_code}"
     assert aanval.json() == basis.json(), f"{variant!r} gaf andere taken dan een naam die niet bestaat"

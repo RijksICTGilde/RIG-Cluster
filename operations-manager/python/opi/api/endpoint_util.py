@@ -17,7 +17,7 @@ from opi.api.principaal import (
 )
 from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
 from opi.api.user_token_auth import REQUIRES_USER_TOKEN, UserTokenError, extract_bearer_token
-from opi.core.actor import ACTOR_PLATFORM_API_KEY, set_actor
+from opi.core.actor import set_actor
 from opi.core.config import settings
 from opi.core.handelingen import handeling_van
 from opi.services.project_store import get_project_store
@@ -29,9 +29,6 @@ if TYPE_CHECKING:
 REQUIRES_PROJECT_NAME = "zad_requires_project_name"
 """Markering op een route die met een projectsleutel wordt afgeschermd."""
 
-
-REQUIRES_MASTER_API_KEY = "zad_requires_master_api_key"
-"""Markering op een route die met MASTER_API_KEY wordt afgeschermd."""
 
 REQUIRES_METRICS_SCRAPE_TOKEN = "zad_requires_metrics_scrape_token"  # noqa: S105  # markering op een route, geen secret
 """Markering op een route die met PROMETHEUS_METRICS_AUTH_TOKEN wordt afgeschermd."""
@@ -183,7 +180,8 @@ def _require_shared_secret(
 ) -> None:
     """Laat de aanroep alleen door als ``presented`` exact het geconfigureerde secret is.
 
-    Een secret dat niet geconfigureerd is houdt de route dicht (501), nooit open.
+    Een secret dat niet geconfigureerd is houdt de route dicht, nooit open. Het antwoord
+    is dan 404: dat deze instantie de voorziening niet heeft is geen serverfout.
     """
     logger = logging.getLogger(__name__)
 
@@ -195,10 +193,7 @@ def _require_shared_secret(
 
     if not configured:
         logger.warning(f"{setting_name} not configured - route {route_name} is disabled")
-        raise HTTPException(
-            status_code=501,
-            detail=f"This endpoint requires {setting_name} to be configured",
-        )
+        raise HTTPException(status_code=404, detail="Not Found")
 
     # Op bytes vergelijken: compare_digest op twee str weigert een niet-ASCII teken met een
     # TypeError, en de header komt van buiten met willekeurige bytes.
@@ -208,26 +203,6 @@ def _require_shared_secret(
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     logger.debug(f"{setting_name} validation successful for route {route_name}")
-
-
-def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Eist MASTER_API_KEY via X-API-Key header."""
-
-    @wraps(func)
-    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
-        _require_shared_secret(
-            request,
-            request.headers.get("X-API-Key"),
-            settings.MASTER_API_KEY,
-            "MASTER_API_KEY",
-            func.__name__,
-            "Authentication required - provide X-API-Key header",
-        )
-        set_actor(ACTOR_PLATFORM_API_KEY)
-        return await func(*args, request=request, **kwargs)
-
-    setattr(wrapper, REQUIRES_MASTER_API_KEY, True)
-    return wrapper
 
 
 def validate_metrics_scrape_token(func: Callable[..., Any]) -> Callable[..., Any]:

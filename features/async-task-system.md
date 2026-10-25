@@ -28,7 +28,7 @@ Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts
 ### Existing Patterns We Build On
 
 - `CLUSTER_MANAGER` setting -- each OPI manages exactly one cluster (`config.py`)
-- `MASTER_API_KEY` + `validate_master_api_key` -- admin auth already exists (`endpoint_util.py`)
+- `validate_platform_admin_token` -- platform-admin auth already exists (`user_token_auth.py`)
 - `DatabasePool` -- asyncpg connection pool for PostgreSQL (`core/database_pool.py`)
 - `TaskProgressManager` -- in-memory task tracking with subtasks (`core/task_manager.py`)
 - `simple_background.py` -- existing background project processing
@@ -417,7 +417,6 @@ When running in combined mode (worker inside the API server process), the `Persi
 GET  /api/tasks/{task_id}          -- Full status, progress, subtasks, logs
 GET  /api/tasks                    -- List (filters: project_name, deployment_name, status)
 POST /api/tasks/{task_id}/:cancel  -- Cancel pending task
-POST /api/tasks                    -- Create task directly (used by federation, protected by MASTER_API_KEY)
 ```
 
 ### HTTP Status Codes on `GET /api/tasks/{task_id}`

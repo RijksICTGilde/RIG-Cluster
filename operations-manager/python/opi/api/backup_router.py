@@ -4,9 +4,10 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token, validate_master_api_key
+from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import DeploymentNamePath, ProjectNamePath
+from opi.api.user_token_auth import validate_platform_admin_token
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
@@ -304,7 +305,7 @@ def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultMod
 
 
 @backup_router.get("/status", response_model=BackupStatusResponse)
-@validate_master_api_key
+@validate_platform_admin_token
 async def get_backup_status(request: Request) -> BackupStatusResponse:
     """
     Get current backup status.
@@ -313,14 +314,13 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
     which namespace/PVC is being backed up, and lock details.
 
     The lock is one per cluster, not one per project, so there is no project to check a
-    project key against -- and ``validate_api_token`` needs one, which is why this endpoint
-    answered 401 to every caller. It takes the master key, like the other operations
-    without a project context.
+    project key against. Reading it is platform maintenance, so a platform admin signs in
+    with their own token and lands in the actor trail as themselves.
 
     Example:
     ```bash
     curl -X GET "http://localhost:9595/api/v1/backup/status" \\
-      -H "X-API-Key: your-master-api-key"
+      -H "Authorization: Bearer <token van een platformbeheerder>"
     ```
     """
     try:

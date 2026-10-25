@@ -185,9 +185,12 @@ them automatically — no curl needed.
 
 ### 3. Check Backup Status
 
+The lock is one per cluster, so this route takes a platform admin's own token and not a
+project key (RC-386).
+
 ```bash
 curl -X GET "http://localhost:9595/api/v1/backup/status" \
-  -H "X-API-Key: your-api-key"
+  -H "Authorization: Bearer <platform admin token>"
 ```
 
 ### 4. List Available Backups
@@ -246,7 +249,7 @@ This method automatically handles PVC versioning, project file updates, and Argo
 
 ```bash
 curl -X POST "http://localhost:9595/api/v1/restore/project/my-project" \
-  -H "X-Master-API-Key: your-master-key" \
+  -H "X-API-Key: your-project-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "deployment_name": "production",

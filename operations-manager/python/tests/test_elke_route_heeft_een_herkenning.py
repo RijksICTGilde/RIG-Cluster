@@ -143,7 +143,7 @@ def test_de_route_noemt_een_herkenning(route: RouteHerkenning) -> None:
     assert not ontbrekende_herkenning([route]), (
         f"{route} noemt geen herkenning. Zet er een decorator op (een van "
         f"requires_sso, validate_api_token, validate_user_token, validate_platform_admin_token, "
-        f"validate_master_api_key, validate_metrics_scrape_token), of zet hem met een reden "
+        f"validate_metrics_scrape_token), of zet hem met een reden "
         f"in PUBLIEKE_ROUTES in dit bestand."
     )
     assert len(route.herkenningen) == 1, f"{route} eist er meer dan een: {list(route.herkenningen)}"

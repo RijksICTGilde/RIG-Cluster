@@ -9,9 +9,10 @@ overgeslagen en blijft deze beoordelingslogica ongetoetst. Door haar hier apart 
 from __future__ import annotations
 
 #: Statuscodes waarmee een geweigerd verzoek mag antwoorden. Inclusief 4xx voor niet-bestaande
-#: operaties en foute invoer, 429 voor de ratelimiter van RC-368 (die weigert voor de handler,
-#: dus de aanroeper kwam ook dan niet binnen), en 501 voor routes zonder geconfigureerd secret.
-GEWEIGERD = frozenset({400, 401, 403, 404, 405, 409, 415, 422, 429, 501})
+#: operaties en foute invoer, en 429 voor de ratelimiter van RC-368 (die weigert voor de
+#: handler, dus de aanroeper kwam ook dan niet binnen). Sinds RC-386 zit 501 er niet meer bij:
+#: een route zonder geconfigureerd secret geeft 404, en geen enkele 5xx is een weigering.
+GEWEIGERD = frozenset({400, 401, 403, 404, 405, 409, 415, 422, 429})
 
 
 def beoordeel_weigering(status: int, operatie: str, herkenning: str) -> str | None:
