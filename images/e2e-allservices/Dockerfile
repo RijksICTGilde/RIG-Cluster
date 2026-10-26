@@ -12,7 +12,7 @@
 # probe_spec.json must be current before building:
 #   uv run python scripts/generate_probe_spec.py   (guarded by test_probe_spec_drift.py)
 
-FROM golang:1.23-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
 
 # Cache module downloads separately from the source.
