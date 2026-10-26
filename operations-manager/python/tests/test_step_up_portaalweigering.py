@@ -263,9 +263,14 @@ async def test_decorator_meldt_een_gebruikte_step_up_als_info(caplog: pytest.Log
 # ---------------------------------------------------------------------------
 
 
-def _render_herhaal(vervolg_token: str) -> str:
-    """Het fragment kaal door Jinja, zonder de LOTC-laag: alleen de htmx-attributen."""
+def _render_herhaal(vervolg_token: str, velden: dict[str, str] | None = None) -> str:
+    """Het fragment kaal door Jinja, zonder de LOTC-laag: alleen de htmx-attributen.
+
+    ``_vals`` stelt de body samen, zoals ``render_step_up_repeat`` dat doet: het token en
+    de velden van de handeling gaan langs dezelfde weg mee.
+    """
     from jinja2 import Environment, FileSystemLoader
+    from opi.web.step_up_dialog import _vals
 
     # autoescape=True zoals in productie (opi/core/templates_lotc.py:82). select_autoescape
     # kijkt naar de extensie en kent .j2 niet, dus dat gaf hier een escape-loze render.
@@ -274,7 +279,7 @@ def _render_herhaal(vervolg_token: str) -> str:
     return template.render(
         request=SimpleNamespace(state=SimpleNamespace(csrf_token="csrf")),
         vervolg="/projects/demo/modal-wizard/modal-edit-identity/confirm",
-        vervolg_token=vervolg_token,
+        vals=_vals(vervolg_token or None, velden),
     )
 
 
@@ -287,3 +292,10 @@ def test_de_herhaling_stuurt_het_wizard_token_in_de_body_mee() -> None:
 
 def test_de_herhaling_zonder_token_stuurt_een_lege_body() -> None:
     assert "_wizard_token" not in _render_herhaal("")
+
+
+def test_de_herhaling_stuurt_de_velden_van_de_handeling_mee() -> None:
+    """De dialoog verving het formulier, dus de velden rijden mee (RC-387)."""
+    html = _render_herhaal("", {"dagen": "30"})
+    assert "dagen" in html
+    assert "30" in html

@@ -1,7 +1,8 @@
-"""Elke route die een verse step-up vraagt draagt hem ook (RC-332, RC-377).
+"""Elke route die een verse step-up vraagt draagt hem ook (RC-332, RC-377, RC-387).
 
-Twee soorten: een verwijderroute die productie kan raken, en sinds RC-377 elke
-beheerroute die iets verandert.
+Drie soorten: een verwijderroute die productie kan raken, sinds RC-377 elke beheerroute
+die iets verandert, en sinds RC-387 elke handeling die een token of een lidmaatschap
+geeft of afneemt.
 
 Een eigen lijst en niet de route-enumeratie van RC-295: die is nog niet gemerged. Komt hij
 binnen, dan kan deze test erop aansluiten.
@@ -39,12 +40,27 @@ ROUTES_MET_STEP_UP = {
     ("POST", "/api/v2/admin/orphans/confirm"): StepUpActie.WEZEN_BEVESTIGEN,
     ("POST", "/api/v2/admin/projects/:reconcile"): StepUpActie.PROJECTEN_HERINLEZEN,
     ("POST", "/api/v2/projects/{project_name}/:rotate-project-key"): StepUpActie.PROJECTSLEUTEL_VERVANGEN,
+    # Leden en tokens (RC-387): elke handeling die een bewijsmiddel geeft of afneemt, in
+    # de API en in het portaal. De leesroute (GET .../leden) staat er met opzet niet bij.
+    ("POST", "/api/v2/projects/{project_name}/leden"): StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN,
+    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}"): StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN,
+    ("PUT", "/api/v2/projects/{project_name}/leden/{naam}/rol"): StepUpActie.ROL_WIJZIGEN,
+    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens"): StepUpActie.TOKEN_UITGEVEN,
+    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer"): StepUpActie.TOKEN_ROTEREN,
+    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}"): StepUpActie.TOKEN_INTREKKEN,
+    ("POST", "/projects/{project_name}/leden/toevoegen"): StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN,
+    ("POST", "/projects/{project_name}/leden/{naam}/verwijderen"): StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN,
+    ("POST", "/projects/{project_name}/leden/{naam}/rol"): StepUpActie.ROL_WIJZIGEN,
+    ("POST", "/projects/{project_name}/leden/{naam}/tokens"): StepUpActie.TOKEN_UITGEVEN,
+    ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren"): StepUpActie.TOKEN_ROTEREN,
+    ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken"): StepUpActie.TOKEN_INTREKKEN,
 }
 
-#: De beheerroutes die ALLEEN lezen en dus geen step-up dragen (RC-377).
+#: De routes die ALLEEN lezen en dus geen step-up dragen (RC-377, RC-387).
 BEHEERROUTES_ZONDER_STEP_UP = {
     ("GET", "/api/v2/admin/marked-for-deletion"),
     ("GET", "/api/v2/admin/orphans/report"),
+    ("GET", "/api/v2/projects/{project_name}/leden"),
 }
 
 

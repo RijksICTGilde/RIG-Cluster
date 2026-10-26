@@ -183,7 +183,7 @@ async def verify_api_step_up(
         instance=request.url.path,
         cause=cause,
         action=actie.value,
-        reason=actie.reden(doelwit),
+        reason=actie.reden(doelwit, project=project_name),
         remedy=_REMEDY[cause],
         enroll_url=OTP_ENROLL_PATH if cause is StepUpCause.FACTOR_ONTBREEKT else None,
         blocked_until=blocked_until,

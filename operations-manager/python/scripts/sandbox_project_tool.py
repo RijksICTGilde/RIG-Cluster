@@ -39,6 +39,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 
 from itsdangerous import TimestampSigner
@@ -49,7 +50,7 @@ PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from tests.e2e.helpers.sandbox_api import geef_projecttoken  # noqa: E402
+from tests.e2e.helpers.sandbox_api import STEP_UP_SESSION_KEY, geef_projecttoken  # noqa: E402
 
 BASE = os.environ.get("ZAD_BASE_URL", "https://zad.sandbox.rijksapp.dev").rstrip("/")
 # Dezelfde variabele die de e2e-suite leest, zodat `eval "$(sandbox-gegevens --env)"`
@@ -67,11 +68,17 @@ _CTX.verify_mode = ssl.CERT_NONE
 def _session_value() -> str:
     """De ondertekende sessiewaarde. ``login_at`` hoort erbij: een sessie zonder
     inlogtijdstip is voorbij haar absolute levensduur en wordt geweigerd
-    (``opi/core/session_guard.py``)."""
+    (``opi/core/session_guard.py``).
+
+    De step-upstempel hoort er ook bij: een token uitgeven vraagt een verse (RC-387) en
+    dit gereedschap heeft geen browser om een code in te typen. Het ondertekent zijn
+    sessie al met de SECRET_KEY van het cluster, dus de stempel geeft geen bevoegdheid die
+    er niet was."""
     if not SECRET:
         raise SystemExit('geen SECRET_KEY: zet ZAD_SECRET_KEY, of doe eval "$(sandbox-gegevens --env)"')
     user = {"sub": "sandbox-tool", "email": USER_EMAIL, "name": "Sandbox Tool", "login_at": time.time()}
-    payload = base64.b64encode(json.dumps({"user": user}).encode()).decode()
+    sessie = {"user": user, STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()}
+    payload = base64.b64encode(json.dumps(sessie).encode()).decode()
     return TimestampSigner(SECRET).sign(payload).decode()
 
 

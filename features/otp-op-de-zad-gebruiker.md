@@ -21,16 +21,25 @@ doet en dat hij het echt is (BIO2 8.05 en 8.32).
 | een deployment verwijderen | de effectieve markering van die deployment `productie` is |
 | een component verwijderen | een deployment op `productie` dat component gebruikt |
 | de OTAP-markering wijzigen | de wijziging `productie` VERLAAT; `productie` zetten vraagt niets |
+| een wijzigende beheerroute | altijd (RC-377): platformbeheer raakt het hele cluster |
+| een token uitgeven, roteren of intrekken | altijd (RC-387) |
+| een rol wijzigen, een service account toevoegen of verwijderen | altijd (RC-387) |
+
+De zes handelingen van RC-387 wegen de omgeving niet: met een token kan iemand blijvend bij
+een project, ook als dat project niet op productie staat. Zie
+[leden-en-api-tokens.md](leden-en-api-tokens.md).
 
 Een project heeft zelf geen markering (zie [otap-markering.md](otap-markering.md)), dus
 "een project in productie" is afgeleid: `highest_environment` van zijn deployments.
 
 Die regels staan op een plek, in `requires_production_step_up`
 (`opi/core/step_up.py`); een route verklaart met `@requires_step_up(...)` dat ze eronder
-valt. Welke routes dat zijn houdt `tests/test_step_up_routes.py` vast.
+valt, met een conditie die het doelwit weegt of met `vraagt_altijd_step_up`
+(`opi/services/step_up_conditions.py`) als de handeling er altijd een vraagt. Welke routes
+dat zijn houdt `tests/test_step_up_routes.py` vast.
 
-Nog NIET: platformbeheer, een rol `admin` of `owner` toekennen, en een backup in productie
-verwijderen. Dat zijn de volgende kandidaten, met hetzelfde mechanisme.
+Nog NIET: een backup in productie verwijderen. Dat is de volgende kandidaat, met hetzelfde
+mechanisme.
 
 ### Het venster
 
@@ -50,6 +59,10 @@ Bij een bewerking in de modal-wizard herhaalt de dialoog niet het pad van het ve
 de `/confirm`-route van die flow, met het wizard-token: de staproute eist een JSON-body die
 de bodyloze herhaling niet heeft, en `/confirm` leest alles uit de sessiestaat bij dat
 token.
+
+Formulieren op het tabblad Team die een step-up vragen tonen de dialoog in plaats van het
+formulier. De formuliervelden gaan mee in verborgen invoervelden; met een geldige code
+voert het formulier de handeling uit.
 
 ### Via de API en de CLI
 

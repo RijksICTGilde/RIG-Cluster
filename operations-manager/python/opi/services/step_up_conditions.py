@@ -34,11 +34,13 @@ def _project_data(request: Request, project_name: str) -> dict[str, Any]:
     return (project.data if project is not None else None) or {}
 
 
-def platformbeheer_wijzigt(request: Request, **_: Any) -> bool:
-    """Altijd waar: een wijzigende beheerroute raakt het hele cluster (RC-377).
+def vraagt_altijd_step_up(request: Request, **_: Any) -> bool:
+    """Altijd waar: deze handeling vraagt een step-up los van de omgeving.
 
-    Geen omgeving om te wegen, maar wel de conditie van ``requires_step_up``, zodat
-    platformbeheer dezelfde step-up draagt als de rest.
+    Een wijzigende beheerroute raakt het hele cluster (RC-377), en een token of een
+    lidmaatschap geeft blijvend toegang tot een project, ook buiten productie (RC-387).
+    Geen omgeving om te wegen, maar wel de conditie van ``requires_step_up``, zodat deze
+    handelingen dezelfde step-up dragen als de rest.
     """
     return True
 

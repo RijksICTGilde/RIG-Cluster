@@ -52,7 +52,10 @@ async def test_geldige_code_zet_de_step_up_en_herhaalt_de_handeling(caplog: pyte
 
     assert STEP_UP_SESSION_KEY in request.session
     herhaal.assert_called_once_with(
-        request, vervolg="/projects/demo/modal-wizard/modal-edit-identity/confirm", vervolg_token="wt-123"
+        request,
+        vervolg="/projects/demo/modal-wizard/modal-edit-identity/confirm",
+        vervolg_token="wt-123",
+        vervolg_velden={},
     )
     assert response.body == b"<herhaal/>"
     meldingen = [record.getMessage() for record in caplog.records]

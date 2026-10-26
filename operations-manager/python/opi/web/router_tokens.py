@@ -10,6 +10,10 @@ De waarde zelf blijft daarbij server-side: de sessie draagt alleen een verwijzin
 cookie-sessie van Starlette is ondertekend en niet versleuteld, dus het token zou tot de
 volgende GET base64-leesbaar op de schijf van de browser staan. Zelfde keuze als
 ``router_otp``, dat ook een vingerafdruk in de sessie zet en niet het geheim.
+
+Elke handeling hier vraagt een verse step-up (RC-387), met het venster van vijf minuten uit
+``opi.core.step_up``. De dialoog neemt de plaats van het formulier in, dus de velden van de
+handeling gaan mee in de herhaling: ``velden`` op de decorator somt ze per route op.
 """
 
 from __future__ import annotations
@@ -20,11 +24,12 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.core.config import settings
 from opi.core.leden import LidSoort
+from opi.core.step_up import StepUpActie
 from opi.services.api_token_service import (
     ROLLEN,
     TokenAanvraagGeweigerd,
@@ -36,6 +41,7 @@ from opi.services.api_token_service import (
     voeg_service_account_toe,
     wijzig_rol,
 )
+from opi.services.step_up_conditions import vraagt_altijd_step_up
 from opi.web.lotc_switch import project_tab_url
 
 logger = logging.getLogger(__name__)
@@ -87,8 +93,17 @@ def _email(request: Request) -> str:
     return email
 
 
-def _terug(project_name: str) -> RedirectResponse:
-    return RedirectResponse(url=project_tab_url(project_name, "team"), status_code=303)
+def _terug(request: Request, project_name: str) -> Response:
+    """Terug naar het tabblad Team, en onder htmx als volledige navigatie.
+
+    De formulieren posten met htmx omdat de step-up een dialoog in de plaats van het
+    formulier zet. Een 303 zou htmx de hele pagina in die dialoog laten hangen, dus gaat
+    de verversing als HX-Redirect; zie bg/_tokens.html.j2.
+    """
+    url = project_tab_url(project_name, "team")
+    if request.headers.get("HX-Request"):
+        return HTMLResponse(content="", headers={"HX-Redirect": url})
+    return RedirectResponse(url=url, status_code=303)
 
 
 async def _velden(request: Request) -> dict[str, str]:
@@ -105,7 +120,8 @@ def _dagen(velden: dict[str, str]) -> int:
 
 @token_web_router.post("/{project_name}/leden/toevoegen")
 @requires_sso
-async def voeg_service_account_toe_web(request: Request, project_name: str) -> RedirectResponse:
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN, velden=("naam", "rol"))
+async def voeg_service_account_toe_web(request: Request, project_name: str) -> Response:
     """Zet een service account in de leden van dit project."""
     velden = await _velden(request)
     try:
@@ -117,35 +133,38 @@ async def voeg_service_account_toe_web(request: Request, project_name: str) -> R
         )
     except TokenAanvraagGeweigerd as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(project_name)
+    return _terug(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/verwijderen")
 @requires_sso
-async def verwijder_service_account_web(request: Request, project_name: str, naam: str) -> RedirectResponse:
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN)
+async def verwijder_service_account_web(request: Request, project_name: str, naam: str) -> Response:
     """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
     try:
         await verwijder_service_account(project_name=project_name, naam=naam, door=_email(request))
     except TokenAanvraagGeweigerd as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(project_name)
+    return _terug(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/rol")
 @requires_sso
-async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> RedirectResponse:
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.ROL_WIJZIGEN, velden=("rol",))
+async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> Response:
     """Geef een lid een andere rol. Zijn bestaande tokens volgen die rol meteen."""
     velden = await _velden(request)
     try:
         await wijzig_rol(project_name=project_name, naam=naam, rol=velden.get("rol", ""), door=_email(request))
     except TokenAanvraagGeweigerd as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(project_name)
+    return _terug(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/tokens")
 @requires_sso
-async def maak_token_web(request: Request, project_name: str, naam: str) -> RedirectResponse:
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_UITGEVEN, velden=("tokennaam", "dagen"))
+async def maak_token_web(request: Request, project_name: str, naam: str) -> Response:
     """Geef een token uit aan dit lid. De waarde is daarna een keer te zien."""
     velden = await _velden(request)
     try:
@@ -158,15 +177,16 @@ async def maak_token_web(request: Request, project_name: str, naam: str) -> Redi
         )
     except TokenAanvraagGeweigerd as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
-        return _terug(project_name)
+        return _terug(request, project_name)
 
     request.session[NIEUW_TOKEN_SLEUTEL] = _leg_klaar({"token": waarde, "eigenaar": naam})
-    return _terug(project_name)
+    return _terug(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren")
 @requires_sso
-async def roteer_token_web(request: Request, project_name: str, naam: str, tokennaam: str) -> RedirectResponse:
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_ROTEREN, velden=("dagen",))
+async def roteer_token_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
     """Trek dit token in en geef er een nieuw uit onder dezelfde naam."""
     velden = await _velden(request)
     try:
@@ -179,21 +199,22 @@ async def roteer_token_web(request: Request, project_name: str, naam: str, token
         )
     except TokenAanvraagGeweigerd as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
-        return _terug(project_name)
+        return _terug(request, project_name)
 
     request.session[NIEUW_TOKEN_SLEUTEL] = _leg_klaar({"token": waarde, "eigenaar": naam})
-    return _terug(project_name)
+    return _terug(request, project_name)
 
 
 @token_web_router.post("/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken")
 @requires_sso
-async def trek_token_in_web(request: Request, project_name: str, naam: str, tokennaam: str) -> RedirectResponse:
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_INTREKKEN)
+async def trek_token_in_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
     """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
     try:
         await trek_token_in(project_name=project_name, naam=naam, tokennaam=tokennaam, door=_email(request))
     except TokenAanvraagGeweigerd as exc:
         request.session[TOKENFOUT_SLEUTEL] = str(exc)
-    return _terug(project_name)
+    return _terug(request, project_name)
 
 
 def tokencontext(request: Request, project_name: str, user_email: str, is_beheerder: bool) -> dict[str, Any]:

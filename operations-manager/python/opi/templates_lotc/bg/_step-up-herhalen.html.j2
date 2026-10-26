@@ -5,10 +5,10 @@
   gebruiker niet opnieuw op verwijderen hoeft te klikken. Het antwoord daarvan (de
   voortgang van de taak) vervangt dit blok.
 
-  vervolg_token gaat als body-waarde mee naast de query, net als de bevestigknop in
-  bg/_modal-wizard-review.html.j2: htmx laat een query string op een POST niet overal staan.
+  vals is de body die mee moet: het wizard-token naast de query, net als de bevestigknop in
+  bg/_modal-wizard-review.html.j2 (htmx laat een query string op een POST niet overal
+  staan), en de velden van het formulier dat de dialoog verving (RC-387).
 #}
-{% set vals = '{"_wizard_token": "' ~ vervolg_token ~ '"}' if vervolg_token else '{}' %}
 <div hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
      hx-post="{{ vervolg }}"
      hx-vals='{{ vals }}'

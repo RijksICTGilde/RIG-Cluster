@@ -1290,19 +1290,21 @@ _MEETBANKEN = _meetbanken()
 
 
 def test_de_namen_in_sandbox_api_kloppen_met_het_portaal() -> None:
-    """``sandbox_api`` draagt drie namen van het portaal letterlijk, en waarom.
+    """``sandbox_api`` draagt vier namen van het portaal letterlijk, en waarom.
 
     Importeren kan niet: dat zou ``opi.core.config`` meebrengen en dan is
     ``scripts/sandbox_project_tool.py`` niet meer te starten zonder platformsleutel
     (``TestDeMeetbankscripts`` meet dat). Deze toets is wat daarvoor in de plaats komt:
     verschuift een naam in het portaal, dan valt het hier op en niet pas op de sandbox.
     """
+    from opi.core.step_up import STEP_UP_SESSION_KEY
     from opi.services.schema_migration import PROJECT_API_ACCOUNT
     from opi.utils.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 
     assert sandbox_api.PROJECT_API_ACCOUNT == PROJECT_API_ACCOUNT
     assert sandbox_api.CSRF_COOKIE_NAME == CSRF_COOKIE_NAME
     assert sandbox_api.CSRF_HEADER_NAME == CSRF_HEADER_NAME
+    assert sandbox_api.STEP_UP_SESSION_KEY == STEP_UP_SESSION_KEY
 
 
 class TestDeMeetbankscripts:
