@@ -309,6 +309,11 @@ def _delete_manager() -> tuple[DeleteProjectManager, MagicMock, MagicMock]:
     pm.get_name = AsyncMock(return_value="test-project")
     pm._kubectl_connector = AsyncMock()
     pm._kubectl_connector.delete_namespace = AsyncMock(return_value=True)
+    # Echte antwoorden voor de hermeting aan het eind van delete_deployment: een kale
+    # AsyncMock zou "onleesbaar" heten, en dan beslist de foutenlijst alsnog.
+    pm._kubectl_connector.argocd_application_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.resource_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.namespace_absent = AsyncMock(return_value=True)
     pm._keycloak_manager = AsyncMock()
     pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
     pm._minio_manager = AsyncMock()

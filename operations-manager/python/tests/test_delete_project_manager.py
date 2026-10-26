@@ -678,7 +678,7 @@ class TestDeleteProjectOrchestration:
 
         assert result["success"] is True
         # Deployments deleted first
-        mock_delete_dep.assert_called_once_with("test-project", "pr-42", force=False)
+        mock_delete_dep.assert_called_once_with("test-project", "pr-42", force=False, leaving={"pr-42"})
         # Then infrastructure cleanup
         mock_infra_cleanup.assert_called_once()
         call_args = mock_infra_cleanup.call_args

@@ -1,9 +1,9 @@
 """Reproducties van de vijf verwijderfouten van oktober 2026 (RC-379).
 
-Elke toets hier staat op ``xfail(strict=True)``: ze laten zien wat vandaag misgaat en
-worden rood zodra het gerepareerd is. De volledige kaart van de verwijderpaden, met het
-bewijs per geval, staat in ``features/futures/verwijderpaden-in-kaart.md``. Niets in deze
-taak repareert iets; dit bestand is de meetlat voor het plan dat erna komt.
+Vier van de vijf zijn sinds RC-385 groen en staan niet meer op ``xfail``. Geval 3 blijft
+``xfail(strict=True)``: dat is invariant I5, het rapport van sectie 6.4 van het onderzoek,
+en dat hoort bij een volgende kaart. De volledige kaart van de verwijderpaden, met het
+bewijs per geval, staat in ``features/futures/verwijderpaden-in-kaart.md``.
 
 De vijf gevallen; vier gemeten op de sandbox, geval 4 op productie:
 
@@ -89,16 +89,6 @@ def _appprojects_en_verwijzingen(project_dir: Path) -> tuple[set[str], dict[str,
     return gedefinieerd, verwijzingen
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "isoa8-v4i: de grendel voor het AppProject-bestand vraagt alleen of een ANDERE DEPLOYMENT "
-        "deze namespace gebruikt. De projectapplicatie {project}-project is geen deployment, dus "
-        "ze is onzichtbaar voor die toets: het AppProject gaat weg en de Application die ernaar "
-        "wijst blijft staan. De finalizer van het AppProject wacht dan op die Application, en de "
-        "sync van user-applications hangt voor ELK project"
-    ),
-)
 async def test_de_projectapplicatie_houdt_het_appproject_in_de_map(tmp_path: Path) -> None:
     manager: DeleteProjectManager
     manager, gitops, manifests = _delete_manager()
@@ -179,17 +169,6 @@ async def test_de_sweep_meldt_een_deployment_zonder_application(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "rig-rl437-56m: force=True laat delete_project doorlopen naar stap 5, ook als een "
-        "deployment zijn namespace NIET heeft kunnen verwijderen. Het projectbestand is de bron "
-        "van waarheid van elke latere ronde en van de orphan-sweep, dus zodra het weg is kan "
-        "niemand de verwijdering nog afmaken of zelfs melden: de namespace staat er 55 minuten "
-        "later nog. Gemeten: 'Skipping namespace deletion' tijdens de verwijdering, "
-        "projectbestand weg om 09:07:24"
-    ),
-)
 async def test_een_achtergebleven_namespace_houdt_het_projectbestand(monkeypatch: pytest.MonkeyPatch) -> None:
     from opi.manager.delete_project_manager import DeleteProjectManager
     from tests.test_delete_project_manager import _make_deployment, _make_project_data, _make_project_manager_mock
@@ -251,21 +230,13 @@ _TENANT_FORBIDDEN_TYPES = ["podtemplates", "elasticsearches.elasticsearch.k8s.io
 _EIGEN_TYPES = ["deployments.apps", "services", "secrets"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "nd-j7s: list_tracked_resources vraagt elk namespaced type (322 op productie, waarvan 92 "
-        "Forbidden in de tenant). De inventaris heet onvolledig op types ZAD niet aanmaakt, dus "
-        "de taak faalt 'not fully deleted' terwijl de verwijdering afkwam."
-    ),
-)
 async def test_de_veegactie_vraagt_alleen_de_typen_van_de_application() -> None:
     from opi.manager.delete_project_manager import DeleteProjectManager
 
     gevraagd: list[list[str] | None] = []
 
     async def _list_tracked_resources(
-        namespace: str, resource_types: list[str] | None = None
+        namespace: str, resource_types: list[str] | None = None, own_types: list[str] | None = None
     ) -> tuple[list[Any], bool]:
         gevraagd.append(resource_types)
         gevraagde = resource_types if resource_types is not None else _EIGEN_TYPES + _TENANT_FORBIDDEN_TYPES
@@ -376,18 +347,6 @@ def _project_manager_met_levend_projectbestand(bestand: dict[str, Any]) -> Async
     return pm
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "rl263-ofb, rl364-y9l, rl464-glu: de grendel op de namespace vraagt het PROJECTBESTAND of "
-        "een andere deployment dezelfde namespace gebruikt, en kan niet zien dat die andere "
-        "deployment in DEZELFDE ronde wordt verwijderd. Bij twee deployments in een namespace "
-        "waarvan de Application zijn finalizer houdt (de veegactie kan niet schoon vegen), slaat "
-        "stap 8 het verwijderen van de entry over, staan beide entries er bij elke beurt nog, en "
-        "verwijdert geen enkele beurt de namespace. force haalt daarna het projectbestand wel weg: "
-        "de namespace blijft achter met het secret sops-age-key, en de melding is 'success: True'"
-    ),
-)
 async def test_een_projectbrede_verwijdering_ruimt_de_namespace_op(monkeypatch: pytest.MonkeyPatch) -> None:
     from opi.manager.delete_project_manager import DeleteProjectManager, StuckApplicationOutcome
 

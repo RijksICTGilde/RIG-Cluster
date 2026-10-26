@@ -462,6 +462,21 @@ account elk type mag lijsten, zoals de sandbox, is de volle inventaris meestal a
 komt deze toets niet aan te pas. Meestal, want een deel-antwoord komt ook van een onbereikbare
 aggregated API, en dan beslist hij daar net zo.
 
+Sinds RC-385 leest de veegactie van het forceren dezelfde maatstaf, in plaats van alle
+namespaced types van het cluster. Ze vraagt de types uit `status.resources` van de Application,
+en `list_tracked_resources` noemt een `Forbidden` op een type dat wij niet renderen geen
+onvolledige meting meer. Noemt de Application geen resources, dan VRAAGT de veegactie alle
+namespaced types en zijn de kinds van de deployments-repo alleen de `own_types`: ze zeggen
+welke weigering geen gat is. De repo is van de tenant, dus hij mag de vraag aan het cluster
+niet smaller maken. Een repo die een kind niet meer rendert terwijl de resource nog in de
+namespace staat zou de veegactie anders schoon laten melden en de finalizer eraf halen, precies
+de silent force die deze functie moet voorkomen. Op productie kostte die maatstaf een valse
+"not fully deleted" plus 180s cascade-wacht per deployment; geval 4 van
+[`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md). Een
+timeout of een 5xx op een kind van ons maakt de meting nog steeds onvolledig, en op de sandbox
+blijft `networkpolicies` dat ook: wat een verwijdering daar beoordeelt is de hermeting van de
+lagen aan het eind, niet deze inventaris.
+
 De kinds worden gelezen uit de regels `apiVersion:` en `kind:` vooraan een document, niet
 geparsed: de helmfile-projecten bevatten chart-templates, die pas YAML zijn als ArgoCD ze
 rendert. Een getemplatete `apiVersion` telt voor elke groep met dat kind; een getemplatete
@@ -522,9 +537,10 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 | Bestand | Wat het doet |
 |---|---|
 | `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
-| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application`, `argocd_application_deletion_progress`, `argocd_application_resource_types`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `types_named_in_kubectl_error`, `delete_tracked_resources`, `list_argocd_applications` |
+| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application`, `argocd_application_deletion_progress`, `argocd_application_resource_types`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources` (met `own_types`), `types_named_in_kubectl_error`, `types_forbidden_in_kubectl_error`, `delete_tracked_resources`, `list_argocd_applications` |
 | `opi/connectors/argo.py` | `wait_for_application_deletion`: de wacht die op de stilstand stopt en niet op de klok |
-| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, `DELETION_PROGRESS_BUDGET_SECONDS` met `deletion_progress_window()`, en de vier verwijderplekken |
+| `opi/utils/rendered_kinds.py` | `rendered_kinds` en `rendered_types`: de kinds die de deployments-repo rendert, gedeeld door de veegactie en de sweep |
+| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_inventory_types`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, `DELETION_PROGRESS_BUDGET_SECONDS` met `deletion_progress_window()`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
 | `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, de merktekens zelf, en of de project file het cluster volgt |

@@ -64,6 +64,15 @@ def types_named_in_kubectl_error(stderr_text: str, types: list[str]) -> list[str
     return [t for t in types if re.search(rf"(?<![\w.-]){re.escape(t)}(?![\w.-])", stderr_text)]
 
 
+def types_forbidden_in_kubectl_error(stderr_text: str, types: list[str]) -> list[str]:
+    """Which of these types kubectl refused with Forbidden (per line, as kubectl reports)."""
+    forbidden: set[str] = set()
+    for line in stderr_text.splitlines():
+        if "forbidden" in line.lower():
+            forbidden.update(types_named_in_kubectl_error(line, types))
+    return sorted(forbidden)
+
+
 def is_previous_attempt_missing(stderr_text: str) -> bool:
     """Whether kubectl's stderr says this pod has no previous attempt to read."""
     return _PREVIOUS_ATTEMPT_MISSING_MARKER in stderr_text
@@ -546,6 +555,28 @@ class KubectlConnector:
             logger.debug(f"Namespace {namespace} does not exist")
             return False
 
+    async def namespace_absent(self, namespace: str) -> bool | None:
+        """Is de namespace weg (True), aanwezig (False), of onbekend (None)?"""
+        stdout, stderr, code = await self._run_kubectl_command(["get", "namespace", namespace, "-o", "name"])
+        if code == 0:
+            return False
+        if "notfound" in stderr.lower().replace(" ", ""):
+            return True
+        logger.warning(f"Could not determine existence of namespace '{namespace}': {stderr}")
+        return None
+
+    async def wait_for_namespace_deletion(self, namespace: str, max_retries: int = 40, retry_delay: int = 5) -> bool:
+        """Wacht tot de namespace weg is (NotFound van de API-server)."""
+        for attempt in range(1, max_retries + 1):
+            absent = await self.namespace_absent(namespace)
+            if absent:
+                logger.info(f"Namespace '{namespace}' is gone (after {attempt} check(s))")
+                return True
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+        logger.warning(f"Namespace '{namespace}' was not confirmed gone after {max_retries} checks")
+        return False
+
     async def get_namespace_label_map(self, label_key: str) -> dict[str, str]:
         """Every namespace in the cluster, mapped to its value for ``label_key``.
 
@@ -1016,23 +1047,17 @@ class KubectlConnector:
         return sorted({served[kind] for kind in kinds})
 
     async def list_tracked_resources(
-        self, namespace: str, resource_types: list[str] | None = None
+        self, namespace: str, resource_types: list[str] | None = None, own_types: list[str] | None = None
     ) -> tuple[list[TrackedResource], bool] | None:
-        """
-        Every resource in a namespace that ArgoCD marked as its own.
+        """Every resource in a namespace marked as ArgoCD's own.
 
         Args:
-            namespace: The namespace to inventory
-            resource_types: kubectl type names to query; defaults to every namespaced
-                type this cluster can list and delete
+            namespace: The namespace to inventory.
+            resource_types: kubectl types to query; defaults to all namespaced types.
+            own_types: Types where silence means incompleteness; Forbidden on types outside this set is OK.
 
         Returns:
-            The tracked resources found plus whether the inventory is COMPLETE, or ``None``
-            when the namespace could not be inventoried at all. Three answers and not two,
-            because a ``kubectl get`` over many types exits non-zero when ONE of them fails
-            and still prints the rest. Both callers act on all three, and for the same
-            reason: a force that reads a failed or a half answer as 'nothing here' deletes
-            nothing and reports success, and a sweep that does so reports SCHOON (RC-226).
+            (Resources, is_inventory_complete) or None if the read failed.
         """
         types = resource_types if resource_types is not None else await self.list_namespaced_resource_types()
         if not types:
@@ -1055,17 +1080,27 @@ class KubectlConnector:
             # this namespace) but still prints what it did get. Keeping that part beats
             # reporting nothing, as long as the caller hears that it IS a part: the types
             # that stayed silent are exactly where a leftover resource hides.
-            complete = False
             failed_types = types_named_in_kubectl_error(stderr, types)
-            if failed_types:
+            judged = set(own_types) if own_types is not None else set(types)
+            tolerated = [
+                t for t in failed_types if t not in judged and t in types_forbidden_in_kubectl_error(stderr, types)
+            ]
+            unmeasured = [t for t in failed_types if t not in tolerated]
+            complete = bool(failed_types) and not unmeasured
+            if unmeasured:
                 logger.warning(
-                    f"Partial inventory of namespace '{namespace}': {len(failed_types)} of {len(types)} "
-                    f"types could not be listed ({', '.join(failed_types)}). kubectl reported: {stderr}"
+                    f"Partial inventory of namespace '{namespace}': {len(unmeasured)} of {len(types)} "
+                    f"types could not be listed ({', '.join(unmeasured)}). kubectl reported: {stderr}"
                 )
-            else:
+            elif not failed_types:
                 logger.warning(
                     f"Partial inventory of namespace '{namespace}', and kubectl named none of the "
                     f"{len(types)} queried types as the one that failed: {stderr}"
+                )
+            else:
+                logger.info(
+                    f"Namespace '{namespace}' refused {len(tolerated)} type(s) ZAD does not render "
+                    f"({', '.join(tolerated)}); the inventory of our own kinds is complete"
                 )
 
         try:

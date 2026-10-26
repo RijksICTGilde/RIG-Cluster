@@ -1,12 +1,43 @@
 # De verwijderpaden van OPI in kaart
 
-Status: **onderzoek, niets gerepareerd.** Dit document beschrijft hoe het verwijderen vandaag
-werkt, waar het misgaat, en wat het plan daarna moet halen. De reproducties staan als
-`xfail(strict=True)` in `operations-manager/python/tests/test_verwijderpaden_reproducties.py`:
-ze worden rood zodra een reparatie landt, en dat is de bedoeling.
+Status: **onderzoek, en sectie 6.1 plus de volgorde van 6.4 zijn gebouwd (RC-385).** Dit
+document beschrijft hoe het verwijderen werkt, waar het misging, en wat het plan daarna moet
+halen. Wat van dit onderzoek gebouwd is en wat niet, staat in "Wat hiervan gebouwd is"
+hieronder; de rest van het document blijft de meting van 23 oktober 2026.
 
 Gemeten op 23 oktober 2026, op `forgejo/main` en op het sandboxcluster
 (`kind-rig-sandbox`, cluster `sandboxed-local`).
+
+## Wat hiervan gebouwd is
+
+RC-385 bouwde de drie reparaties van 6.1, de hermeting uit 6.1 en de volgorde van het
+AppProject uit 6.4. Vier van de vijf reproducties zijn daarmee groen en staan niet meer op
+`xfail` in `operations-manager/python/tests/test_verwijderpaden_reproducties.py`; de
+keerzijde van elke reparatie staat in `tests/test_verwijderuitkomst.py`.
+
+| Voorstel | Gebouwd | Waar |
+|---|---|---|
+| 6.1-1, de grendel op de namespace vraagt naar een deployment die BLIJFT | ja | `_namespace_used_by_others`, en pad 1 geeft de namen van de ronde mee als `leaving` |
+| 6.1-1, pad 1 ruimt na de lus zelf de namespaces op | ja | `_delete_project_namespaces`, met een wacht op `NotFound` van de API-server |
+| 6.1-2, het AppProject gaat pas als niets er meer naar wijst | ja | `_remove_appproject_file`, een gedeelde guard voor pad 2 en 3 |
+| 6.1-3, de veegactie oordeelt over onze eigen kinds | ja | `_inventory_types`: de types van de Application als vraag, de kinds van de repo als `own_types` in `list_tracked_resources` |
+| 6.1, de hermeting voor het antwoord | ja | `_measure_remaining` en `_judge_and_delete_project_file` |
+| 6.4, het AppProject verlaat laag 2 in een latere commit | ja | `_release_project_applications`, eerst de Applications, dan de wacht, dan de map |
+| 6.2, een gedeelde stappendefinitie | nee | de twee paden blijven |
+| 6.3, de toestand `partial` en de retry per stap | nee | kaart #274 |
+| 6.4, het rapport op I1 tot I5 in de orphan-sweep | nee | geval 3 blijft daarom `xfail` |
+| de nachtelijke purge in productie actief | nee | #205 |
+
+Welke invarianten daarmee gelden:
+
+| # | Vandaag | Hoe |
+|---|---|---|
+| I1 | geldt | het AppProject-bestand gaat alleen weg als geen Application het nog noemt, en bij een projectbrede verwijdering pas nadat het cluster meldt dat ze weg zijn |
+| I2 | geldt | "in gebruik" betekent een deployment die blijft; een entry die bleef staan omdat haar delete niet afkwam houdt de namespace niet meer tegen voor de ronde |
+| I3 | geldt voor laag 1 en 5 | het projectbestand gaat pas weg als de hermeting schoon is, en pad 1 ruimt de namespaces zelf op |
+| I4 | geldt | gevolg van I1 |
+| I5 | niet gemeten | dat is het rapport van 6.4, niet gebouwd |
+| I6 | geldt voor pad 1 en 2 | de uitkomst komt van de hermeting, niet van de foutenlijst. De hermeting beslist alleen over de lagen die ze meet: laat stap 8 van pad 2 de deployment-entry met opzet staan, dan blijft dat een mislukte verwijdering. Pad 3 gooit zijn uitkomst nog weg (`project_manager.py`), dat staat nog open |
 
 ## Waarom deze kaart er is
 
