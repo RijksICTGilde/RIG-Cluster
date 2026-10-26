@@ -88,6 +88,15 @@ def geef_projecttoken(
         csrf = client.cookies.get(CSRF_COOKIE_NAME)
         if not csrf:
             raise AssertionError(f"geen {CSRF_COOKIE_NAME}-cookie na GET van het tabblad Team van '{project_name}'")
+        if lid == PROJECT_API_ACCOUNT:
+            # Een project dat na RC-322 nieuw is, heeft dit service account niet: alleen de
+            # migratie van 2.12 maakte het voor een bestaande projectsleutel. Bestaat het al,
+            # dan weigert de dienst het toevoegen en loopt dit gewoon door naar het uitgeven.
+            client.post(
+                f"{basis}/projects/{project_name}/leden/toevoegen",
+                data={"naam": lid, "rol": "admin"},
+                headers={CSRF_HEADER_NAME: csrf, "Origin": basis},
+            )
         antwoord = client.post(
             f"{basis}/projects/{project_name}/leden/{lid}/tokens",
             data={"tokennaam": tokennaam, "dagen": str(dagen)},
