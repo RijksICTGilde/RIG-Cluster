@@ -68,7 +68,7 @@ def test_render_step_up_repeat_wijst_naar_het_vervolg() -> None:
     assert html == "<herhaal/>"
     assert render.call_args.kwargs["template"] == "bg/_step-up-herhalen.html.j2"
     assert render.call_args.kwargs["context"]["vervolg"] == "/projects/delete/demo"
-    assert render.call_args.kwargs["context"]["vervolg_token"] == ""
+    assert render.call_args.kwargs["context"]["vals"] == "{}"
 
 
 def test_render_step_up_repeat_geeft_het_wizard_token_mee() -> None:
@@ -76,7 +76,7 @@ def test_render_step_up_repeat_geeft_het_wizard_token_mee() -> None:
     with patch("opi.web.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
         render_step_up_repeat(_request(), vervolg="/projects/demo/x/confirm", vervolg_token="wt-123")
 
-    assert render.call_args.kwargs["context"]["vervolg_token"] == "wt-123"
+    assert render.call_args.kwargs["context"]["vals"] == '{"_wizard_token": "wt-123"}'
 
 
 @pytest.mark.asyncio

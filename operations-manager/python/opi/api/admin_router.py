@@ -23,7 +23,7 @@ from opi.core.config import settings
 from opi.core.step_up import StepUpActie
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
-from opi.services.step_up_conditions import platformbeheer_wijzigt
+from opi.services.step_up_conditions import vraagt_altijd_step_up
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ async def list_marked_for_deletion(
 
 @admin_router.post("/cleanup/trigger")
 @validate_platform_admin_token
-@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.OPRUIMING_STARTEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.OPRUIMING_STARTEN)
 async def trigger_cleanup(
     request: Request,
     project_name: str = Query(..., description="Project name to clean up (required)"),
@@ -114,7 +114,7 @@ async def trigger_cleanup(
 
 @admin_router.post("/reconciliation/trigger")
 @validate_platform_admin_token
-@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.RECONCILIATIE_STARTEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.RECONCILIATIE_STARTEN)
 async def trigger_reconciliation(
     request: Request,
     dry_run: bool = Query(True, description="Preview actions without executing (default: true)"),
@@ -161,7 +161,7 @@ async def trigger_reconciliation(
 
 @admin_router.delete("/marked-for-deletion/{mark_id}")
 @validate_platform_admin_token
-@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.MARKERING_INTREKKEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.MARKERING_INTREKKEN)
 async def delete_mark(
     request: Request,
     mark_id: str,
@@ -215,7 +215,7 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
 
 @admin_router.post("/orphans/confirm")
 @validate_platform_admin_token
-@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.WEZEN_BEVESTIGEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.WEZEN_BEVESTIGEN)
 async def confirm_orphans(request: Request) -> JSONResponse:
     """Mark confirmed orphan candidates for grace-period deletion.
 
@@ -304,7 +304,7 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 
 @admin_router.post("/projects/:reconcile")
 @validate_platform_admin_token
-@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.PROJECTEN_HERINLEZEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.PROJECTEN_HERINLEZEN)
 async def reconcile_projects(request: Request) -> JSONResponse:
     """Pull the projects repo into the store now, instead of waiting for the poll.
 

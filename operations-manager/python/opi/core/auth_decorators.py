@@ -97,7 +97,7 @@ def require_platform_admin(request) -> dict[str, Any]:
 REQUIRES_STEP_UP = "zad_requires_step_up"
 
 
-def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Callable:
+def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie, velden: tuple[str, ...] = ()) -> Callable:
     """Laat een handeling zelf verklaren dat ze een verse step-up vraagt (RC-332).
 
     ``condition`` krijgt het verzoek en de argumenten van de route en zegt of DEZE
@@ -107,6 +107,12 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Ca
     Twee wegen, omdat er twee soorten aanroepers zijn: het portaal heeft een sessie en
     krijgt een dialoog, de API heeft die niet en draagt de code van de eigenaar van het
     token per verzoek mee.
+
+    ``velden`` noemt de formuliervelden die de herhaling in het portaal moet meesturen:
+    de dialoog neemt de plaats in van het formulier, dus zonder die velden zou een
+    handeling met een body (een rol, een tokennaam, een aantal dagen) ze kwijt zijn. Per
+    route opgesomd en niet het hele formulier, zodat er nooit een veld in de pagina
+    terugkomt dat de route niet noemde.
     """
 
     def decorator(func: Callable) -> Callable:
@@ -128,6 +134,7 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Ca
                 argumenten.get("deployment_name")
                 or argumenten.get("component_name")
                 or argumenten.get("mark_id")
+                or argumenten.get("naam")
                 or project_name
             )
 
@@ -142,7 +149,7 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Ca
             email = str((get_current_user(request) or {}).get("email", ""))
             if not has_fresh_step_up(request):
                 tekst = log_step_up_refusal(actie.handeling, project_name=project_name, actor=email, doelwit=doelwit)
-                return await _step_up_refusal(request, actie.handeling, tekst)
+                return await _step_up_refusal(request, actie.handeling, tekst, velden=await _velden(request, velden))
 
             logger.info(
                 "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
@@ -159,7 +166,17 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Ca
     return decorator
 
 
-async def _step_up_refusal(request: Request, handeling: str, tekst: str) -> Any:
+async def _velden(request: Request, namen: tuple[str, ...]) -> dict[str, str]:
+    """De genoemde velden uit het formulier van dit verzoek, voor de herhaling."""
+    if not namen:
+        return {}
+    formulier = await request.form()
+    return {naam: str(formulier[naam]) for naam in namen if naam in formulier}
+
+
+async def _step_up_refusal(
+    request: Request, handeling: str, tekst: str, *, velden: dict[str, str] | None = None
+) -> Any:
     """De dialoog voor een htmx-verzoek, dezelfde tekst als 403 voor al het andere.
 
     De dialoog komt uit de weblaag; die importeren op modulehoogte zou een kring maken,
@@ -168,6 +185,8 @@ async def _step_up_refusal(request: Request, handeling: str, tekst: str) -> Any:
     from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
     if request.headers.get("HX-Request"):
-        html = await render_step_up_dialog(request, vervolg=request.url.path, handeling=handeling)
+        html = await render_step_up_dialog(
+            request, vervolg=request.url.path, handeling=handeling, vervolg_velden=velden
+        )
         return step_up_dialog_response(html)
     raise HTTPException(status_code=403, detail=tekst)

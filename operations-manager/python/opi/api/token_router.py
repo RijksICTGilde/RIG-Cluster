@@ -12,6 +12,11 @@ handhavingspunt, zodat een service account er ook via de gewone API niet bij kan
 
 De uitgegeven waarde staat EEN keer in het antwoord op het aanmaken. Daarna is hij nergens
 meer op te halen; wie hem kwijt is roteert het token.
+
+Elke schrijvende handeling hier vraagt daarbovenop een verse tweede factor (RC-387): wie een
+token uitgeeft, roteert, intrekt of een rol verandert, geeft of neemt een bewijsmiddel. De
+code gaat als ``X-ZAD-OTP`` mee en wordt getoetst tegen de eigenaar van het bearer-token;
+``opi.api.otp_step_up`` beschrijft de weigering. De leesroute vraagt er geen: die verandert niets.
 """
 
 from __future__ import annotations
@@ -22,8 +27,9 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.params import ProjectNamePath
 from opi.api.user_token_auth import validate_user_token
-from opi.core.auth_decorators import get_current_user
+from opi.core.auth_decorators import get_current_user, requires_step_up
 from opi.core.handelingen import Handeling, handeling
+from opi.core.step_up import StepUpActie
 from opi.services.api_token_service import (
     TokenAanvraagGeweigerd,
     geef_token_uit,
@@ -35,6 +41,7 @@ from opi.services.api_token_service import (
     wijzig_rol,
 )
 from opi.services.project_authorization import is_user_authorized_for_project
+from opi.services.step_up_conditions import vraagt_altijd_step_up
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -116,6 +123,7 @@ def _serialiseerbaar(leden: list[dict]) -> list[dict]:
 @token_router.post("/projects/{project_name}/leden", status_code=201, summary="Voeg een service account toe")
 @handeling(Handeling.TOKEN_BEHEREN)
 @validate_user_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN)
 async def voeg_lid_toe(
     request: Request, project_name: ProjectNamePath, aanvraag: ServiceAccountAanvraag = Body(...)
 ) -> JSONResponse:
@@ -135,6 +143,7 @@ async def voeg_lid_toe(
 @token_router.delete("/projects/{project_name}/leden/{naam}", summary="Verwijder een service account")
 @handeling(Handeling.TOKEN_BEHEREN)
 @validate_user_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN)
 async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: str) -> JSONResponse:
     """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
     email = _eis_lidmaatschap(project_name, _email(request))
@@ -148,6 +157,7 @@ async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: s
 @token_router.put("/projects/{project_name}/leden/{naam}/rol", summary="Wijzig de rol van een lid")
 @handeling(Handeling.TOKEN_BEHEREN)
 @validate_user_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.ROL_WIJZIGEN)
 async def zet_rol(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: RolAanvraag = Body(...)
 ) -> JSONResponse:
@@ -163,6 +173,7 @@ async def zet_rol(
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens", status_code=201, summary="Geef een token uit")
 @handeling(Handeling.TOKEN_BEHEREN)
 @validate_user_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_UITGEVEN)
 async def maak_token(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -185,6 +196,7 @@ async def maak_token(
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer", summary="Roteer een token")
 @handeling(Handeling.TOKEN_BEHEREN)
 @validate_user_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_ROTEREN)
 async def roteer(
     request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -202,6 +214,7 @@ async def roteer(
 @token_router.delete("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}", summary="Trek een token in")
 @handeling(Handeling.TOKEN_BEHEREN)
 @validate_user_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_INTREKKEN)
 async def trek_in(request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str) -> JSONResponse:
     """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
     email = _eis_lidmaatschap(project_name, _email(request))

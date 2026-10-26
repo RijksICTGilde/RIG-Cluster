@@ -15,6 +15,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from playwright.sync_api import expect
@@ -470,7 +471,12 @@ def projecttoken_met_retry(base_url: str, project_name: str, *, attempts: int = 
     bestand staat er net, maar de store heeft het nog niet gelezen en kent het lid dus nog
     niet.
     """
-    sessie = _sign_session({"user": SANDBOX_TEST_USER}, E2E_SECRET_KEY)
+    # Met een verse step-up erin: uitgeven vraagt er een (RC-387), en deze weg heeft geen
+    # browser om een code in te typen. De sessie zelf is hier al ondertekend met de
+    # SECRET_KEY van het cluster, dus de stempel geeft geen bevoegdheid die er niet was.
+    sessie = _sign_session(
+        {"user": SANDBOX_TEST_USER, sandbox_api.STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()}, E2E_SECRET_KEY
+    )
     last_error: Exception | None = None
     for _ in range(attempts):
         try:

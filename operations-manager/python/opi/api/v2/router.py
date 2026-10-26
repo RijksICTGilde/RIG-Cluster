@@ -163,7 +163,7 @@ from opi.services.step_up_conditions import (
     component_in_production,
     deployment_environment_downgrade,
     deployment_in_production,
-    platformbeheer_wijzigt,
+    vraagt_altijd_step_up,
 )
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.client_ip import client_ip
@@ -1490,7 +1490,7 @@ async def refresh_project_v2(
     },
 )
 @validate_platform_admin_token
-@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.PROJECTSLEUTEL_VERVANGEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.PROJECTSLEUTEL_VERVANGEN)
 async def rotate_project_key_v2(
     request: Request,
     project_name: str,

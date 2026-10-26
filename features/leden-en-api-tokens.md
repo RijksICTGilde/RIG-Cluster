@@ -93,10 +93,38 @@ Het antwoord is een problem-detail (RFC 7807) met `type: urn:zad:step-up-require
 een client ziet welke handeling het was, waarom ze een step-up vraagt en wat hij moet doen.
 De eigen tweede factor richt een mens in op `/account/otp`.
 
+### Uitgeven, roteren en intrekken vragen zelf een step-up
+
+Sinds RC-387 vraagt elke handeling die een bewijsmiddel GEEFT of AFNEEMT een verse tweede
+factor, ongeacht de omgeving van het project. Met een token kan iemand blijvend bij een
+project, ook als dat project niet op productie staat (BIO2 8.05 en 8.32).
+
+| handeling | API | portaal |
+|---|---|---|
+| een service account toevoegen | `POST /api/v2/projects/{p}/leden` | tabblad Team |
+| een service account verwijderen | `DELETE .../leden/{naam}` | tabblad Team |
+| een rol wijzigen | `PUT .../leden/{naam}/rol` | tabblad Team |
+| een token uitgeven | `POST .../leden/{naam}/tokens` | tabblad Team |
+| een token roteren | `POST .../tokens/{tokennaam}/:roteer` | tabblad Team |
+| een token intrekken | `DELETE .../tokens/{tokennaam}` | tabblad Team |
+
+De leesroute (`GET .../leden`) vraagt er geen: die verandert niets.
+
+In de API gaat de code als `X-ZAD-OTP` mee, per aanroep, en wordt getoetst tegen de eigenaar
+van het bearertoken. Zonder code is het 403 `otp-ontbreekt`, met een foute code 403
+`code-ongeldig`, en zonder ingerichte factor 403 `factor-ontbreekt` met de weg naar
+`/account/otp`. In het portaal neemt de dialoog de plaats van het formulier in; een geldige
+code dekt vijf minuten en voert de handeling daarna alsnog uit. Zie
+[otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
+
+Een service account komt hier nooit aan toe: deze routes vragen een bearertoken van een
+persoon, en een service account heeft geen tweede factor.
+
 **`MENS_VERPLICHT` en de step-upcatalogus zijn met opzet NIET dezelfde verzameling.** Ze
 beslissen een andere vraag: `MENS_VERPLICHT` zegt of deze SOORT aanroeper dit ooit mag, en
-dat is onvoorwaardelijk; een step-up weegt het DOELWIT, dus een deployment op productie
-vraagt er een en dezelfde op acceptatie niet. `project.verwijderen` in `MENS_VERPLICHT`
+dat is onvoorwaardelijk; een step-up weegt doorgaans het DOELWIT, dus een deployment op
+productie vraagt er een en dezelfde op acceptatie niet. Een handeling kan beide dragen, en
+de zes hierboven doen dat: ze vragen altijd een step-up EN nooit een service account. `project.verwijderen` in `MENS_VERPLICHT`
 zetten zou een pijplijn ook uitsluiten van een project zonder productie, en dat is een
 verruiming van de weigering die niemand gevraagd heeft. Welke step-upactie bij welke
 handeling hoort staat per route in `tests/test_handelingen.py`, zodat de twee catalogi niet

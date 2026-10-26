@@ -8,8 +8,10 @@ die een groene rendertest zou missen: het formulier lijkt te werken en de server
 """
 
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.services.user_otp_service import OtpStatus
 from tests.e2e.helpers.tabs import open_tab
 from tests.e2e.helpers.tekst import toon_tekst
 
@@ -83,6 +85,41 @@ def test_de_formuliervelden_hebben_unieke_ids(app_server: str, auth_page: Page) 
     )
     dubbel = sorted({i for i in ids if ids.count(i) > 1})
     assert not dubbel, f"deze veld-ids komen meer dan een keer voor: {dubbel}"
+
+
+@pytest.fixture
+def factor_ingericht() -> object:
+    """Doe alsof deze gebruiker een tweede factor heeft.
+
+    De dialoog leest die status uit de database, en de testserver draait zonder. De
+    OTP-dienst zelf staat in ``tests/test_user_otp_service.py``.
+    """
+    dienst = MagicMock(status=AsyncMock(return_value=OtpStatus(registered=True)))
+    with patch("opi.web.step_up_dialog.UserOtpService", return_value=dienst):
+        yield
+
+
+def test_uitgeven_vraagt_eerst_een_code(app_server: str, auth_page: Page, factor_ingericht: object) -> None:
+    """Zonder verse step-up komt de dialoog in de gedeelde modal, en gebeurt er niets (RC-387).
+
+    Een browsertest omdat hier drie dingen op elkaar moeten passen die geen van alle uit de
+    HTML blijken: het formulier post met htmx, het antwoord stuurt zichzelf met HX-Retarget
+    naar de modal, en edit_modal.js opent die modal omdat de gebruiker hem niet zelf opende.
+    """
+    formulier = _tokenformulieren(app_server, auth_page).first
+    auth_page.locator("summary", has_text="Een token uitgeven").first.click()
+    formulier.locator('[name="tokennaam"] input').first.fill("pijplijn")
+
+    formulier.locator('[type="submit"], button').first.click()
+    auth_page.wait_for_selector(".edit-section-modal.is-open [data-step-up]")
+
+    dialoog = auth_page.locator("#edit-section-inner")
+    assert "een token uit te geven" in dialoog.inner_text()
+    assert dialoog.locator('input[name="code"], [name="code"] input').count() >= 1
+    # De velden van het formulier rijden mee, want de dialoog nam de plaats ervan in.
+    velden = dialoog.locator('input[name="vervolg_velden"]').input_value()
+    assert "pijplijn" in velden
+    assert "zad_" not in auth_page.content(), "er hoort geen token uitgegeven te zijn"
 
 
 def _tokenformulieren(app_server: str, page: Page):

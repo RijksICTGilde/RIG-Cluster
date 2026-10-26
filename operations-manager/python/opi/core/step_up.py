@@ -1,7 +1,9 @@
 """Een handeling in productie vraagt een verse step-up (RC-332).
 
 Sinds RC-377 vraagt ook elke wijzigende beheerroute er een, ongeacht de omgeving: een
-handeling van platformbeheer raakt het hele cluster.
+handeling van platformbeheer raakt het hele cluster. Sinds RC-387 geldt dat ook voor een
+token of een lidmaatschap: wie een bewijsmiddel krijgt of houdt kan blijvend bij een
+project, ook buiten productie.
 
 Hier staat WANNEER een handeling er een vraagt en of er een verse is. Hoe het portaal
 erom vraagt staat in ``opi/web/router_step_up.py``; hoe een handeling hem oplegt in
@@ -65,15 +67,21 @@ class StepUpActie(StrEnum):
     WEZEN_BEVESTIGEN = "wezen-bevestigen"
     PROJECTEN_HERINLEZEN = "projecten-herinlezen"
     PROJECTSLEUTEL_VERVANGEN = "projectsleutel-vervangen"
+    TOKEN_UITGEVEN = "token-uitgeven"  # noqa: S105 -- naam van een handeling, geen secret
+    TOKEN_ROTEREN = "token-roteren"  # noqa: S105 -- naam van een handeling, geen secret
+    TOKEN_INTREKKEN = "token-intrekken"  # noqa: S105 -- naam van een handeling, geen secret
+    ROL_WIJZIGEN = "rol-wijzigen"
+    SERVICE_ACCOUNT_TOEVOEGEN = "service-account-toevoegen"
+    SERVICE_ACCOUNT_VERWIJDEREN = "service-account-verwijderen"
 
     @property
     def handeling(self) -> str:
         """De handeling als te-infinitief, voor de dialoog en de log."""
         return _HANDELING[self]
 
-    def reden(self, doelwit: str) -> str:
+    def reden(self, doelwit: str, *, project: str = "") -> str:
         """Waarom DEZE aanroep een step-up vraagt, voor het problem-detail."""
-        return _REDEN[self].format(doelwit=doelwit)
+        return _REDEN[self].format(doelwit=doelwit, project=project)
 
 
 _HANDELING = {
@@ -87,6 +95,12 @@ _HANDELING = {
     StepUpActie.WEZEN_BEVESTIGEN: "deze wezen te bevestigen",
     StepUpActie.PROJECTEN_HERINLEZEN: "de projects-repo nu in te lezen",
     StepUpActie.PROJECTSLEUTEL_VERVANGEN: "de projectsleutel te vervangen",
+    StepUpActie.TOKEN_UITGEVEN: "een token uit te geven",
+    StepUpActie.TOKEN_ROTEREN: "dit token te roteren",
+    StepUpActie.TOKEN_INTREKKEN: "dit token in te trekken",
+    StepUpActie.ROL_WIJZIGEN: "de rol van dit lid te wijzigen",
+    StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN: "een service account toe te voegen",
+    StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN: "dit service account te verwijderen",
 }
 
 _REDEN = {
@@ -102,6 +116,14 @@ _REDEN = {
     StepUpActie.PROJECTSLEUTEL_VERVANGEN: (
         "de sleutel van '{doelwit}' wordt vervangen en elke versleutelde waarde opnieuw versleuteld"
     ),
+    StepUpActie.TOKEN_UITGEVEN: "'{doelwit}' krijgt een bewijsmiddel voor project '{project}'",
+    StepUpActie.TOKEN_ROTEREN: "het token van '{doelwit}' in project '{project}' krijgt een nieuwe waarde",
+    StepUpActie.TOKEN_INTREKKEN: "een token van '{doelwit}' in project '{project}' werkt daarna niet meer",
+    StepUpActie.ROL_WIJZIGEN: "de rol van '{doelwit}' in project '{project}' bepaalt wat zijn tokens mogen",
+    StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN: (
+        "er komt een lid bij in project '{project}', en dat lid kan een token dragen"
+    ),
+    StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN: "'{doelwit}' en al zijn tokens gaan uit project '{project}'",
 }
 
 

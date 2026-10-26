@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.core.step_up import STEP_UP_SESSION_KEY
 from opi.services.api_token_service import TokenAanvraagGeweigerd
 from opi.web.router_tokens import (
     NIEUW_TOKEN_SLEUTEL,
@@ -32,6 +33,7 @@ from opi.web.router_tokens import (
     voeg_service_account_toe_web,
     wijzig_rol_web,
 )
+from opi.web.step_up_dialog import MODAL_TARGET
 
 pytestmark = pytest.mark.asyncio
 
@@ -39,9 +41,21 @@ PROJECT = "bouwput"
 EMAIL = "beheerder@rijksoverheid.nl"
 
 
-def _verzoek(email: str | None, velden: dict[str, str]) -> Any:
+def _verzoek(email: str | None, velden: dict[str, str], *, step_up: bool = True, htmx: bool = False) -> Any:
+    """Een verzoek zoals de route hem ziet, met een verse step-up tenzij anders gevraagd.
+
+    Elke handeling hier vraagt er een (RC-387), dus zonder stempel meet een test de
+    weigering en niet de handeling zelf.
+    """
     user = {"email": email} if email else None
-    return SimpleNamespace(state=SimpleNamespace(user=user), session={}, form=AsyncMock(return_value=velden))
+    sessie = {STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()} if step_up else {}
+    return SimpleNamespace(
+        state=SimpleNamespace(user=user),
+        session=sessie,
+        url=SimpleNamespace(path="/projects/bouwput/leden"),
+        headers={"HX-Request": "true"} if htmx else {},
+        form=AsyncMock(return_value=velden),
+    )
 
 
 # --- uitgeven --------------------------------------------------------------
@@ -272,3 +286,32 @@ async def test_het_tabblad_toont_de_platformmaxima() -> None:
 
     assert context["token_max_dagen_persoonlijk"] > 0
     assert context["token_max_dagen_service_account"] >= context["token_max_dagen_persoonlijk"]
+
+
+# --- de step-up ------------------------------------------------------------
+
+
+async def test_zonder_verse_step_up_gebeurt_er_niets() -> None:
+    """Elke handeling hier vraagt een verse factor (RC-387), ook buiten productie."""
+    verzoek = _verzoek(EMAIL, {"tokennaam": "cli", "dagen": "30"}, step_up=False)
+    with patch("opi.web.router_tokens.geef_token_uit", AsyncMock()) as mock, pytest.raises(HTTPException) as info:
+        await maak_token_web(verzoek, PROJECT, EMAIL)
+
+    assert info.value.status_code == 403
+    mock.assert_not_awaited()
+
+
+async def test_de_dialoog_draagt_de_velden_van_het_formulier_mee() -> None:
+    """De dialoog neemt de plaats van het formulier in, dus de herhaling kent zijn velden."""
+    dialoog = AsyncMock(return_value="<dialoog>")
+    with (
+        patch("opi.web.router_tokens.geef_token_uit", AsyncMock()) as mock,
+        patch("opi.web.step_up_dialog.render_step_up_dialog", dialoog),
+    ):
+        verzoek = _verzoek(EMAIL, {"tokennaam": "cli", "dagen": "30"}, step_up=False, htmx=True)
+        antwoord = await maak_token_web(verzoek, PROJECT, EMAIL)
+
+    assert antwoord.headers["HX-Retarget"] == MODAL_TARGET
+    mock.assert_not_awaited()
+    assert dialoog.await_args is not None
+    assert dialoog.await_args.kwargs["vervolg_velden"] == {"tokennaam": "cli", "dagen": "30"}

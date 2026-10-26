@@ -153,6 +153,27 @@
         modal.focus();
     }
 
+    /*
+     * De step-up die van een formulier op de pagina zelf komt (RC-387).
+     *
+     * De dialoog uit bg/_step-up.html.j2 komt met HX-Retarget in #edit-section-inner, ook
+     * als de gebruiker hem opriep van een formulier buiten de dialoog, zoals op het
+     * tabblad Team. Dan staat de dialoog nog dicht, en zou de vraag om een code in een
+     * verborgen blok belanden.
+     */
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var tgt = evt.detail && evt.detail.target;
+        if (!tgt || tgt.id !== 'edit-section-inner') return;
+        if (!tgt.querySelector('[data-step-up]')) return;
+        if (document.querySelector('.edit-section-modal.is-open')) return;
+        var titel = document.getElementById('edit-section-title-text');
+        if (titel) titel.textContent = 'Extra bevestiging';
+        toonDialoog(
+            document.getElementById('edit-section-modal'),
+            document.getElementById('edit-section-backdrop')
+        );
+    });
+
     function closeAnyOpenModals() {
         document
             .querySelectorAll('.edit-section-modal.is-open, .edit-section-backdrop.is-open')

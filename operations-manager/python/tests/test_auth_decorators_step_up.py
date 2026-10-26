@@ -85,6 +85,20 @@ async def test_api_pad_zonder_geldige_otp_geeft_het_probleem_en_voert_niets_uit(
 
 
 @pytest.mark.asyncio
+async def test_api_pad_kiest_naam_als_doelwit_boven_het_project() -> None:
+    """``naam`` is het lid van de ledenroutes (RC-387): het doelwit, niet het project."""
+
+    @requires_step_up(lambda request, **kwargs: True, actie=ACTIE)
+    async def route(request: Any, project_name: str, naam: str) -> str:
+        return "uitgevoerd"
+
+    with patch("opi.api.otp_step_up.verify_api_step_up", new=AsyncMock(return_value=None)) as verify:
+        await route(_request("/api/projects/demo/leden/bouwstraat"), project_name="demo", naam="bouwstraat")
+
+    verify.assert_awaited_once_with(ANY, project_name="demo", actie=ACTIE, doelwit="bouwstraat")
+
+
+@pytest.mark.asyncio
 async def test_api_pad_met_geldige_otp_voert_de_handeling_uit() -> None:
     route = _decorated(lambda request, **kwargs: True)
 
@@ -161,4 +175,5 @@ async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_proj
         ANY,
         vervolg="/projects/demo/delete-deployment/prod",
         handeling=StepUpActie.DEPLOYMENT_VERWIJDEREN.handeling,
+        vervolg_velden={},
     )
