@@ -379,3 +379,52 @@ async def test_an_input_of_several_megabytes_is_no_longer_bounded_by_the_argumen
 
     assert code == 0
     assert stdin_dump.read_text() == manifest
+
+
+async def test_namespace_absent_is_true_on_notfound(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", 'Error from server (NotFound): namespaces "rig-demo" not found', 1)
+
+        assert await connector.namespace_absent("rig-demo") is True
+
+
+async def test_namespace_absent_is_false_when_kubectl_finds_it(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("namespace/rig-demo", "", 0)
+
+        assert await connector.namespace_absent("rig-demo") is False
+
+
+async def test_namespace_absent_is_none_on_an_unrelated_error(connector):
+    """A Forbidden or a timeout says nothing about whether the namespace is there."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): namespaces is forbidden", 1)
+
+        assert await connector.namespace_absent("rig-demo") is None
+
+
+async def test_wait_for_namespace_deletion_stops_as_soon_as_it_is_gone(connector):
+    with (
+        patch.object(connector, "namespace_absent", new_callable=AsyncMock) as absent,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        absent.side_effect = [False, False, True]
+
+        gone = await connector.wait_for_namespace_deletion("rig-demo", max_retries=5, retry_delay=1)
+
+        assert gone is True
+        assert absent.await_count == 3
+        assert sleep.await_count == 2
+
+
+async def test_wait_for_namespace_deletion_gives_up_after_max_retries(connector):
+    with (
+        patch.object(connector, "namespace_absent", new_callable=AsyncMock) as absent,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        absent.return_value = False
+
+        gone = await connector.wait_for_namespace_deletion("rig-demo", max_retries=3, retry_delay=1)
+
+        assert gone is False
+        assert absent.await_count == 3

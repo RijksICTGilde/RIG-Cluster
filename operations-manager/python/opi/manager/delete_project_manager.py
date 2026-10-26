@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import glob
 import logging
 import os
 import shutil
 import time
 from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
@@ -27,15 +30,20 @@ from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
 from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from
+from opi.utils.fs_paths import safe_join
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
+from opi.utils.rendered_kinds import rendered_kinds, rendered_types
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from opi.connectors.argo import ArgoConnector
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
     from opi.utils.argocd_tracking import TrackedResource
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
+    generate_argocd_project_application_name,
     generate_backup_prefix,
     generate_deployment_manifest_path,
     generate_gitops_argocd_application_path,
@@ -149,6 +157,98 @@ def _split_on_the_mark(
     return tracked, undecidable
 
 
+def _namespace_used_by_others(
+    deployments: list[dict[str, Any]],
+    deployment_name: str,
+    cluster: str | None,
+    base_namespace: str | None,
+    leaving: Collection[str] = (),
+) -> bool:
+    """Of een deployment die BLIJFT STAAN deze namespace nog gebruikt.
+
+    ``leaving`` zijn de deployments die in DEZELFDE ronde worden verwijderd. Zonder dat
+    onderscheid noemt elke zusterentry de namespace "in gebruik", ook een die net zo hard
+    weggaat, en dan ruimt geen enkele beurt hem op (geval 5 van
+    features/futures/verwijderpaden-in-kaart.md).
+    """
+    return any(
+        other.get("name") != deployment_name
+        and other.get("name") not in leaving
+        and other.get("cluster") == cluster
+        and other.get("namespace") == base_namespace
+        for other in deployments
+    )
+
+
+def _application_files(project_dir: str) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """De Application-bestanden in een argo-projectmap.
+
+    Returns:
+        Per Application het pad, de ``metadata.name`` en het AppProject dat ze noemt, plus
+        de bestanden die niet te lezen waren.
+    """
+    applications: list[tuple[str, str, str]] = []
+    unreadable: list[str] = []
+    for path in sorted(glob.glob(os.path.join(project_dir, "*.yaml"))):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                document = yaml.safe_load(handle)
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+            logger.warning(f"Could not read '{path}' in the ArgoCD folder of this project: {e}")
+            unreadable.append(os.path.basename(path))
+            continue
+        if not isinstance(document, dict) or document.get("kind") != "Application":
+            continue
+        name = (document.get("metadata") or {}).get("name") or os.path.basename(path)
+        applications.append((path, name, (document.get("spec") or {}).get("project") or ""))
+    return applications, unreadable
+
+
+def _applications_pointing_at_appproject(project_dir: str, appproject_name: str) -> list[str]:
+    """Welke Applications in deze argo-map dit AppProject nog noemen.
+
+    Een bestand dat niet te lezen is telt mee: onbekend is hier geen vrijbrief.
+    """
+    applications, unreadable = _application_files(project_dir)
+    return [name for _, name, project in applications if project == appproject_name] + unreadable
+
+
+def _remove_appproject_file(
+    project_dir: str, project_name: str, base_namespace: str, namespace_used_by_others: bool
+) -> bool:
+    """Of het AppProject uit de map is; alleen als niets naar wijst (finalizers stallen; geval 1)."""
+    appproject_name = generate_argocd_appproject_prefix(project_name, base_namespace)
+    if namespace_used_by_others:
+        logger.info(f"Keeping AppProject file '{appproject_name}': another deployment still uses this namespace")
+        return False
+    pointing = _applications_pointing_at_appproject(project_dir, appproject_name)
+    if pointing:
+        logger.info(f"Keeping AppProject file '{appproject_name}': still named by {', '.join(pointing)}")
+        return False
+
+    appproject_filename = get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
+    appproject_file_path = os.path.join(project_dir, appproject_filename)
+    if os.path.exists(appproject_file_path):
+        os.remove(appproject_file_path)
+        logger.info(f"Deleted AppProject file: {appproject_filename}")
+    return True
+
+
+@dataclass(frozen=True)
+class RemainingState:
+    """Wat een hermeting van de lagen aan het eind van een verwijdering nog aantrof."""
+
+    #: Lagen die er nog staan, als leesbare beschrijving per stuk.
+    present: list[str]
+    #: Lagen waarvan de meting zelf faalde, dus onbekend zijn.
+    unreadable: list[str]
+
+    @property
+    def decides(self) -> bool:
+        """Of deze meting het antwoord bepaalt: iets aangetroffen, of niets met alle lagen gemeten?"""
+        return bool(self.present) or not self.unreadable
+
+
 @dataclass(frozen=True)
 class ForcedDeletion:
     """Result of forcing a stuck Application."""
@@ -195,7 +295,60 @@ class DeleteProjectManager:
         if not terminated:
             logger.warning(f"Could not clear a running operation on ArgoCD application {app_name}")
 
-    async def _force_delete_stuck_application(self, app_name: str, deletion_results: dict[str, Any]) -> ForcedDeletion:
+    async def _inventory_types(
+        self, app_name: str, deployments_repo_dir: str | None
+    ) -> tuple[list[str] | None, list[str] | None]:
+        """De typen voor een inventaris, als ``(resource_types, own_types)``.
+
+        De Application noemt haar eigen typen in ``status.resources``, en dat is het cluster
+        zelf: die mogen de vraag smaller maken, en dat is wat geval 4 (Capsule) haalt. De
+        terugval komt uit de manifest-repo van de tenant en mag dat NIET: een repo die een
+        kind niet meer noemt zou de veegactie anders schoon laten melden terwijl de resource
+        blijft staan. Ze zegt alleen welke ``Forbidden`` geen gat in de meting is.
+        """
+        kubectl = self.project_manager._kubectl_connector
+        types = await kubectl.argocd_application_resource_types(app_name)
+        if types:
+            return types, None
+        if deployments_repo_dir is None:
+            return None, None
+        served = await kubectl.list_namespaced_kinds()
+        if served is None:
+            return None, None
+        kinds, unreadable = rendered_kinds(Path(deployments_repo_dir), settings.CLUSTER_MANAGER)
+        if unreadable:
+            logger.info(
+                f"{len(unreadable)} manifest(s) template their kind, so they are not judged for completeness: "
+                f"{', '.join(unreadable)}"
+            )
+        return None, rendered_types(kinds, served) or None
+
+    async def _deployments_repo_dir(self, project_data: dict[str, Any], repository_name: str | None) -> str | None:
+        """De map in de deployments-repo waaronder de ``{cluster}/``-boom staat, of ``None``."""
+        if not repository_name:
+            return None
+        repo_config = next(
+            (r for r in project_data.get("repositories", []) or [] if r.get("name") == repository_name), None
+        )
+        if not repo_config:
+            return None
+        connector = await self.project_manager.get_git_connector_for_deployment(str(repository_name), repo_config)
+        await connector.ensure_repo_cloned()
+        working_dir = await connector.get_working_dir()
+        repo_path = (repo_config.get("path") or "").strip("/")
+        if not repo_path or repo_path == ".":
+            return working_dir
+        try:
+            # Via safe_join: een bestaand projectbestand komt niet opnieuw langs het
+            # patroon van REPOSITORY_PATH_PATTERN (features/repository-pad.md).
+            return safe_join(working_dir, repo_path)
+        except ValueError as e:
+            logger.error(f"Repository path of '{repository_name}' falls outside its clone, so it is not read: {e}")
+            return None
+
+    async def _force_delete_stuck_application(
+        self, app_name: str, deletion_results: dict[str, Any], deployments_repo_dir: str | None = None
+    ) -> ForcedDeletion:
         """Delete an Application that would not go away: its resources first, then its finalizer.
 
         Removing the finalizer is what makes the Application disappear, but it also cancels
@@ -233,7 +386,12 @@ class DeleteProjectManager:
                 "its resources may be left behind"
             )
         else:
-            inventory = await kubectl.list_tracked_resources(destination)
+            resource_types, own_types = await self._inventory_types(app_name, deployments_repo_dir)
+            inventory = (
+                await kubectl.list_tracked_resources(destination, resource_types, own_types)
+                if resource_types or own_types
+                else None
+            )
             if inventory is None:
                 # Not the same as an empty namespace: this read failed, so reporting it
                 # as swept is the silent force this function exists to prevent.
@@ -249,6 +407,11 @@ class DeleteProjectManager:
                     f"Could not inventory namespace '{destination}' for resources of ArgoCD application "
                     f"'{app_name}'; its resources may be left behind"
                 )
+                if not (resource_types or own_types):
+                    logger.error(
+                        f"Neither ArgoCD nor the deployments repo said which resource types "
+                        f"'{app_name}' owns, so there is nothing to inventory it over"
+                    )
             else:
                 resources, complete = inventory
                 known_names = await self._known_application_names()
@@ -317,12 +480,16 @@ class DeleteProjectManager:
         return ForcedDeletion(finalizer_removed=finalizer_removed, swept_partially=False)
 
     async def _force_delete_or_await_cascade(
-        self, app_name: str, deletion_results: dict[str, Any], argo_connector: ArgoConnector
+        self,
+        app_name: str,
+        deletion_results: dict[str, Any],
+        argo_connector: ArgoConnector,
+        deployments_repo_dir: str | None = None,
     ) -> StuckApplicationOutcome:
         """Force a stuck Application away, or wait for its cascade to complete."""
         kubectl = self.project_manager._kubectl_connector
         errors_before = len(deletion_results["errors"])
-        forced = await self._force_delete_stuck_application(app_name, deletion_results)
+        forced = await self._force_delete_stuck_application(app_name, deletion_results, deployments_repo_dir)
 
         if forced.finalizer_removed:
             gone = await argo_connector.wait_for_application_deletion(
@@ -356,6 +523,47 @@ class DeleteProjectManager:
             del deletion_results["errors"][errors_before:]
         deletion_results["operations"].append(cascade_wait)
         return StuckApplicationOutcome(application_gone=gone, finalizer_removed=False)
+
+    async def _measure_remaining(
+        self,
+        cluster: str,
+        applications: Collection[str] = (),
+        appprojects: Collection[str] = (),
+        namespaces: Collection[str] = (),
+    ) -> RemainingState:
+        """Meet opnieuw: Application, AppProject, namespace nog aanwezig?
+        Foutenlijst is logboek, niet toestand: de API is waarheid (geval 4 en 5)."""
+        kubectl = self.project_manager._kubectl_connector
+        present: list[str] = []
+        unreadable: list[str] = []
+
+        for app_name in applications:
+            exists = await kubectl.argocd_application_exists(app_name)
+            if exists is True:
+                present.append(f"ArgoCD application '{app_name}'")
+            elif exists is not False:
+                unreadable.append(f"ArgoCD application '{app_name}'")
+
+        argo_namespace = get_argo_namespace(cluster)
+        for appproject_name in appprojects:
+            exists = await kubectl.resource_exists("appproject", appproject_name, argo_namespace)
+            if exists is True:
+                present.append(f"ArgoCD AppProject '{appproject_name}'")
+            elif exists is not False:
+                unreadable.append(f"ArgoCD AppProject '{appproject_name}'")
+
+        for namespace in namespaces:
+            absent = await kubectl.namespace_absent(namespace)
+            if absent is False:
+                present.append(f"namespace '{namespace}'")
+            elif absent is not True:
+                unreadable.append(f"namespace '{namespace}'")
+
+        if present:
+            logger.warning(f"After the deletion these still stand: {', '.join(present)}")
+        if unreadable:
+            logger.warning(f"After the deletion these could not be measured: {', '.join(unreadable)}")
+        return RemainingState(present=present, unreadable=unreadable)
 
     async def _known_application_names(self) -> set[str] | None:
         """Every ArgoCD Application name on this cluster, or ``None`` when the read failed.
@@ -475,6 +683,83 @@ class DeleteProjectManager:
         except Exception as e:
             logger.exception("Error during orphaned ArgoCD resource cleanup")
             deletion_results["errors"].append(f"Orphaned ArgoCD cleanup error: {e}")
+
+    async def _release_project_applications(
+        self, project_name: str, cluster: str, deletion_results: dict[str, Any]
+    ) -> bool:
+        """Haal Applications uit git en wacht tot ze weg zijn; AppProject kan pas weg als map leeg is (geval 1)."""
+        gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+        working_dir = await gitops_connector.get_working_dir()
+        project_dir = os.path.join(working_dir, cluster, project_name)
+        removed: list[str] = []
+        unreadable: list[str] = []
+
+        async def _verwijder_applications() -> bool:
+            if not os.path.isdir(project_dir):
+                return False
+            applications, unreadable_files = _application_files(project_dir)
+            unreadable.extend(unreadable_files)
+            for path, name, _project in applications:
+                os.remove(path)
+                removed.append(name)
+            if not removed:
+                return False
+            self.project_manager._manifest_generator.create_kustomization_files(
+                output_dir=project_dir,
+                namespace=get_argo_namespace(cluster),
+            )
+            return True
+
+        commit_message = f"Remove ArgoCD applications of project '{project_name}' before its AppProject"
+        await gitops_connector.mutate_and_push(commit_message, _verwijder_applications)
+        if not removed and not unreadable:
+            return True
+
+        deletion_results["operations"].append(
+            {
+                "type": "project_application_file_deletion",
+                "target": os.path.join(cluster, project_name),
+                "status": "success",
+                "applications": removed,
+                "unreadable": sorted(set(unreadable)),
+            }
+        )
+        argo_connector = create_argo_connector()
+        await argo_connector.refresh_application("user-applications")
+
+        # Een bestand dat we niet konden lezen hebben we ook niet kunnen afwachten, en de
+        # map gaat hierna in zijn geheel weg: Application-bestand en AppProject samen. Dus
+        # telt het mee als een Application die blijft staan (geval 1).
+        standing: list[str] = sorted(set(unreadable))
+        for name in removed:
+            gone = await argo_connector.wait_for_application_deletion(
+                name,
+                max_retries=40,
+                retry_delay=5,
+                kubectl_connector=self.project_manager._kubectl_connector,
+                progress_window_seconds=deletion_progress_window(),
+            )
+            if not gone:
+                standing.append(name)
+        deletion_results["operations"].append(
+            {
+                "type": "project_application_deletion_wait",
+                "target": os.path.join(cluster, project_name),
+                "status": "success" if not standing else "timeout",
+                "standing": standing,
+            }
+        )
+        if standing:
+            message = (
+                f"ArgoCD application(s) {', '.join(standing)} of project '{project_name}' are still in the cluster, "
+                f"so the AppProject stays in the GitOps repository: removing it now would leave them pointing at an "
+                f"AppProject that does not exist, and that stalls the sync of user-applications for every project"
+            )
+            logger.error(message)
+            deletion_results["errors"].append(message)
+            deletion_results["success"] = False
+            return False
+        return True
 
     async def _delete_project_argocd_folder(
         self, project_name: str, cluster: str, deletion_results: dict[str, Any], expect_folder: bool = False
@@ -1035,6 +1320,110 @@ class DeleteProjectManager:
             deletion_results["errors"].append(f"Error deleting project level folder: {e}")
             logger.exception("Error deleting project level folder")
 
+    async def _delete_project_namespaces(
+        self,
+        project_name: str,
+        cluster: str,
+        deployments: list[dict[str, Any]],
+        deletion_results: dict[str, Any],
+    ) -> None:
+        """Verwijder namespaces nu geen deployment er meer naar wijst (geval 5 en 6.1-1)."""
+        kubectl = self.project_manager._kubectl_connector
+        for base_namespace in sorted({dep.get("namespace") or project_name for dep in deployments}):
+            namespace = get_prefixed_namespace(cluster, base_namespace)
+            if await kubectl.namespace_absent(namespace) is True:
+                deletion_results["operations"].append(
+                    {"type": "project_namespace_deletion", "target": namespace, "status": "not_found"}
+                )
+                continue
+
+            logger.info(f"Deleting namespace {namespace} of project '{project_name}'")
+            if not await kubectl.delete_namespace(namespace):
+                deletion_results["operations"].append(
+                    {"type": "project_namespace_deletion", "target": namespace, "status": "error"}
+                )
+                deletion_results["errors"].append(
+                    f"Failed to delete namespace '{namespace}' (see logs for the kubectl error)."
+                )
+                deletion_results["success"] = False
+                continue
+
+            # De Kubernetes-API is de waarheid: een delete die werd aangenomen zegt niet dat
+            # de namespace weg is, want zijn finalizers kunnen nog lopen.
+            gone = await kubectl.wait_for_namespace_deletion(namespace)
+            deletion_results["operations"].append(
+                {
+                    "type": "project_namespace_deletion",
+                    "target": namespace,
+                    "status": "success" if gone else "timeout",
+                }
+            )
+            if not gone:
+                deletion_results["errors"].append(f"Namespace '{namespace}' was not confirmed gone after its delete")
+                deletion_results["success"] = False
+
+    async def _judge_and_delete_project_file(
+        self,
+        project_name: str,
+        cluster: str,
+        deployments: list[dict[str, Any]],
+        deletion_results: dict[str, Any],
+    ) -> None:
+        """Meet de lagen opnieuw, en haal het projectbestand pas weg als er niets meer staat.
+
+        De fouten van de rit blijven als uitleg in het resultaat staan; ze beslissen niets
+        meer. Kon de meting niet worden gedaan, dan beslist de rit alsnog: onbekend is geen
+        bewijs, in geen van beide richtingen.
+        """
+        remaining = await self._measure_remaining(
+            cluster,
+            applications=[generate_argocd_application_name(project_name, str(dep.get("name"))) for dep in deployments]
+            + [generate_argocd_project_application_name(project_name)],
+            appprojects=[
+                generate_argocd_appproject_prefix(project_name, dep.get("namespace") or project_name)
+                for dep in deployments
+            ],
+            namespaces=[get_prefixed_namespace(cluster, dep.get("namespace") or project_name) for dep in deployments],
+        )
+        if remaining.decides:
+            deletion_results["success"] = not remaining.present
+            for leftover in remaining.present:
+                deletion_results["errors"].append(
+                    f"Project '{project_name}' is not fully deleted: {leftover} still stands"
+                )
+        deletion_results["operations"].append(
+            {
+                "type": "deletion_remeasurement",
+                "target": f"project '{project_name}'",
+                "status": ("incomplete" if remaining.present else "clean") if remaining.decides else "unreadable",
+                "remaining": remaining.present,
+                "unreadable": remaining.unreadable,
+            }
+        )
+
+        if not deletion_results["success"]:
+            logger.warning(
+                f"Keeping the project file of '{project_name}': "
+                f"{', '.join(remaining.present) or 'the deletion reported errors'}"
+            )
+            deletion_results["operations"].append(
+                {
+                    "type": "project_file_deletion",
+                    "target": project_name,
+                    "status": "skipped",
+                    "reason": "the deletion is not finished, so the project file stays as the input for a retry",
+                }
+            )
+            return
+
+        logger.info(f"Everything of project {project_name} is gone, now deleting its project file")
+        commit_message = f"Delete project '{project_name}' - removed project file after deployment cleanup"
+        delete_result = await self._delete_project_file(project_name, commit_message)
+        deletion_results["operations"].extend(delete_result["operations"])
+        deletion_results["errors"].extend(delete_result["errors"])
+        if not delete_result["success"]:
+            deletion_results["success"] = False
+
     async def delete_project(self, project_name: str, force: bool = False) -> dict[str, Any]:
         """
         Delete a project by first deleting all deployments, then cleaning up project-level resources.
@@ -1044,13 +1433,17 @@ class DeleteProjectManager:
         2. Delete all deployments on the current cluster (deployment-level resources only)
         3. Clean up project-level infrastructure (namespace-specific PostgreSQL/Redis)
         4. Clean up project Keycloak realm(s)
-        5. Delete the project file
-        6. Clean up subdomains and in-memory state
+        5. Remove the project folders from the deployments and GitOps repos, the
+           Applications before the AppProject, and the namespaces of this project
+        6. Measure the layers again, and delete the project file only when nothing is left
+        7. Clean up subdomains and in-memory state
 
         Args:
             project_name: Name of the project to delete
             force: If True, continues on errors and cleans up stuck resources.
-                   Use when a previous deletion failed partially.
+                   Use when a previous deletion failed partially. Het haalt het
+                   projectbestand NIET weg zolang er nog iets staat: dat is de enige
+                   onomkeerbare stap, en het bestand is de invoer van elke nieuwe poging.
 
         Returns:
             Dictionary containing deletion results and status
@@ -1121,13 +1514,18 @@ class DeleteProjectManager:
                 return deletion_results
 
             # Step 4: Delete all deployments on the current cluster
+            #
+            # Elke deployment van deze ronde kent de namen van de andere, zodat de grendel
+            # op de namespace een zuster die net zo hard weggaat niet voor een blijver
+            # aanziet (geval 5).
+            leaving = {str(dep.get("name")) for dep in current_cluster_deployments if dep.get("name")}
             for deployment in current_cluster_deployments:
                 deployment_name = deployment.get("name")
                 logger.info(f"Deleting deployment {deployment_name} from project {project_name}")
 
                 try:
                     deployment_deletion_result = await self.delete_deployment(
-                        project_name, deployment_name, force=force
+                        project_name, deployment_name, force=force, leaving=leaving
                     )
                     deletion_results["deployment_deletions"][deployment_name] = deployment_deletion_result
                     deletion_results["operations"].extend(deployment_deletion_result["operations"])
@@ -1153,8 +1551,10 @@ class DeleteProjectManager:
                                 "errors": deployment_deletion_result["errors"],
                             }
                         )
-                        if not force:
-                            deletion_results["success"] = False
+                        # Ook met force: een deployment die faalde maakt de
+                        # projectverwijdering niet geslaagd. force betekent "stop niet bij
+                        # de eerste fout", niet "noem een halve verwijdering klaar".
+                        deletion_results["success"] = False
                         logger.error(
                             f"Failed to delete deployment {deployment_name}: {deployment_deletion_result['errors']}"
                         )
@@ -1171,8 +1571,7 @@ class DeleteProjectManager:
                             "error": str(e),
                         }
                     )
-                    if not force:
-                        deletion_results["success"] = False
+                    deletion_results["success"] = False
                     logger.exception(error_msg)
 
             # Step 4.5: Clean up project-level infrastructure (namespace-specific PostgreSQL/Redis)
@@ -1219,9 +1618,12 @@ class DeleteProjectManager:
 
             # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
             # from the GitOps repo, so the root application prunes these resources.
-            # This folder also holds the project-level application ({project}-project), so
-            # removing the folder removes it with the AppProject.
-            if deletion_results["success"] or force:
+            # This folder also holds the project-level application ({project}-project), and
+            # that one goes first, in a commit of its own: the AppProject may only leave the
+            # folder once the cluster reports no Application points at it any more.
+            if (deletion_results["success"] or force) and await self._release_project_applications(
+                project_name, current_cluster, deletion_results
+            ):
                 await self._delete_project_argocd_folder(
                     project_name,
                     current_cluster,
@@ -1229,23 +1631,23 @@ class DeleteProjectManager:
                     expect_folder=len(current_cluster_deployments) > 0,
                 )
 
-            # Step 5: Delete the project file if all deployment deletions succeeded (or in force mode)
-            should_delete_project_file = deletion_results["success"] or force
-            if should_delete_project_file and len(current_cluster_deployments) > 0:
-                if force and not deletion_results["success"]:
-                    logger.info(f"Force mode: deleting project file despite errors for {project_name}")
-                else:
-                    logger.info(f"All deployments deleted successfully, now deleting project file for {project_name}")
+            # Step 4.8: De namespaces van dit project, nu er geen deployment meer naar wijst
+            if deletion_results["success"] or force:
+                await self._delete_project_namespaces(
+                    project_name, current_cluster, current_cluster_deployments, deletion_results
+                )
 
-                commit_message = f"Delete project '{project_name}' - removed project file after deployment cleanup"
-                delete_result = await self._delete_project_file(project_name, commit_message)
-
-                deletion_results["operations"].extend(delete_result["operations"])
-                deletion_results["errors"].extend(delete_result["errors"])
-                if not delete_result["success"]:
-                    deletion_results["success"] = False
-
-            elif len(current_cluster_deployments) == 0:
+            # Step 4.9 en 5: de hermeting bepaalt de uitkomst, en daarmee of het
+            # projectbestand mag gaan. Het projectbestand is de invoer van elke latere ronde
+            # en van de orphan-sweep, dus zolang er iets staat moet het blijven staan: anders
+            # kan niemand de verwijdering nog afmaken of zelfs melden (geval 2c en 5). force
+            # overrulet dat niet meer, want dat is hoe rig-rl437-56m zijn namespace hield
+            # zonder projectbestand ernaast.
+            if len(current_cluster_deployments) > 0:
+                await self._judge_and_delete_project_file(
+                    project_name, current_cluster, current_cluster_deployments, deletion_results
+                )
+            else:
                 logger.info(f"No deployments found on current cluster '{current_cluster}' for project {project_name}")
                 deletion_results["operations"].append(
                     {
@@ -1385,7 +1787,13 @@ class DeleteProjectManager:
 
         return result
 
-    async def delete_deployment(self, project_name: str, deployment_name: str, force: bool = False) -> dict[str, Any]:
+    async def delete_deployment(
+        self,
+        project_name: str,
+        deployment_name: str,
+        force: bool = False,
+        leaving: Collection[str] = (),
+    ) -> dict[str, Any]:
         """
         Delete all resources associated with a specific deployment.
 
@@ -1404,6 +1812,9 @@ class DeleteProjectManager:
                      removes its finalizer only when that sweep got everything
                    - Skips database cleanup if secrets are inaccessible
                    - Only deletes namespace after ArgoCD app is confirmed deleted
+            leaving: De namen van de deployments die in DEZELFDE ronde worden verwijderd.
+                   Een zuster uit die verzameling houdt de namespace niet tegen, want ze
+                   gaat net zo hard weg (geval 5).
 
         Returns:
             Dictionary containing deletion results and status
@@ -1469,11 +1880,8 @@ class DeleteProjectManager:
             # de commit, dus hun verwijdering bleef ongecommit in de werkboom staan, en de
             # kustomization die er net voor herbouwd werd noemde ze nog.
             current_base_namespace = deployment.get("namespace")
-            namespace_used_by_others = any(
-                other_dep.get("name") != deployment_name
-                and other_dep.get("cluster") == cluster
-                and other_dep.get("namespace") == current_base_namespace
-                for other_dep in project_data.get("deployments", [])
+            namespace_used_by_others = _namespace_used_by_others(
+                project_data.get("deployments", []), deployment_name, cluster, current_base_namespace, leaving
             )
             current_repo = deployment.get("repository")
             repo_used_by_others = current_repo is not None and any(
@@ -1481,7 +1889,10 @@ class DeleteProjectManager:
                 for other_dep in project_data.get("deployments", [])
             )
 
+            appproject_left_git = False
+
             async def _verwijder_argocd_bestanden() -> None:
+                nonlocal appproject_left_git
                 if os.path.exists(file_full_path):
                     os.remove(file_full_path)
                     deletion_results["operations"].append(
@@ -1505,15 +1916,9 @@ class DeleteProjectManager:
                         }
                     )
 
-                if not namespace_used_by_others:
-                    appproject_name = generate_argocd_appproject_prefix(project_name, current_base_namespace)
-                    appproject_filename = get_output_filename_from_template(
-                        "argocd-appproject.yaml.jinja", appproject_name
-                    )
-                    appproject_file_path = os.path.join(project_dir, appproject_filename)
-                    if os.path.exists(appproject_file_path):
-                        os.remove(appproject_file_path)
-                        logger.info(f"Deleted AppProject file: {appproject_filename}")
+                appproject_left_git = _remove_appproject_file(
+                    project_dir, project_name, current_base_namespace, namespace_used_by_others
+                )
 
                 if current_repo and not repo_used_by_others:
                     unique_repo_name = f"{project_name}-{current_repo}"
@@ -1627,7 +2032,10 @@ class DeleteProjectManager:
                                 "force mode: deleting its resources, then removing finalizers"
                             )
                             outcome = await self._force_delete_or_await_cascade(
-                                app_name, deletion_results, argo_connector
+                                app_name,
+                                deletion_results,
+                                argo_connector,
+                                await self._deployments_repo_dir(project_data, repository_name),
                             )
                             argocd_app_deleted = outcome.application_gone
                             finalizer_removed = outcome.finalizer_removed
@@ -1692,15 +2100,13 @@ class DeleteProjectManager:
                     argocd_app_deleted = True  # In force mode, continue anyway
 
             # Step 5: Delete Kubernetes namespace (only if ArgoCD app was confirmed deleted)
+            namespace_should_be_gone = False
             try:
                 base_namespace = deployment.get("namespace", project_name)
                 namespace = get_prefixed_namespace(cluster, base_namespace)
 
-                namespace_used_by_others = any(
-                    other_dep.get("name") != deployment_name
-                    and other_dep.get("cluster") == cluster
-                    and other_dep.get("namespace") == base_namespace
-                    for other_dep in project_data.get("deployments", [])
+                namespace_used_by_others = _namespace_used_by_others(
+                    project_data.get("deployments", []), deployment_name, cluster, base_namespace, leaving
                 )
 
                 # Only delete namespace if ArgoCD app was confirmed deleted
@@ -1726,6 +2132,7 @@ class DeleteProjectManager:
                         "This prevents orphaning the ArgoCD application."
                     )
                 elif not namespace_used_by_others:
+                    namespace_should_be_gone = True
                     if not argocd_app_deleted:
                         logger.warning(
                             f"Force mode: deleting namespace {namespace} even though ArgoCD app status is uncertain"
@@ -2058,6 +2465,10 @@ class DeleteProjectManager:
             # delete_deployment_from_yaml_change heeft met opzet geen tegenhanger van deze
             # stap: daar heeft de gebruiker de entry zelf weggehaald, dus het bestand is de
             # INVOER en er is niets om terug te schrijven.
+            #
+            # project_file_settled is laag 1 van de hermeting hieronder: die meet alleen het
+            # cluster, en zou een met opzet bewaarde entry anders als geslaagd melden.
+            project_file_settled = False
             if not manifest_folder_removed or not argocd_app_deleted:
                 if not manifest_folder_removed:
                     reason = "deployment manifests still in git"
@@ -2113,6 +2524,7 @@ class DeleteProjectManager:
                         }
                     )
                     logger.info("Deployment '%s' removed from project file (committed=%s)", deployment_name, committed)
+                    project_file_settled = True
 
                 except Exception as e:
                     deletion_results["operations"].append(
@@ -2154,12 +2566,54 @@ class DeleteProjectManager:
                 logger.warning(error_msg)
                 # Don't fail the deletion for subdomain cleanup errors
 
-            # Honest result regardless of mode: a delete that left errors behind is NOT a
-            # success. Force mode differs only in that it keeps attempting every step instead
-            # of aborting on the first failure - it must NOT relabel a partial deletion as
-            # success. (Doing so is what let orphaned previews accumulate: the caller and the
-            # nightly cleaner were told "done" while resources stayed behind.)
-            deletion_results["success"] = len(deletion_results["errors"]) == 0
+            # De uitkomst komt van een HERMETING van de lagen, niet van de foutenlijst van
+            # de rit: een fout die tijdens de verwijdering waar was en aan het eind niet
+            # meer, beschrijft niets dat is achtergebleven (geval 4). Omgekeerd maakt een
+            # lege foutenlijst een namespace die blijft staan niet weg (geval 5). Kon de
+            # meting niet worden gedaan, dan blijft de foutenlijst het antwoord: onbekend
+            # is geen bewijs, in geen van beide richtingen.
+            #
+            # De meting beslist alleen over de lagen die ze meet. Laag 1, de entry in het
+            # projectbestand, staat er niet bij: stap 8 laat die met opzet staan zodra git
+            # of het cluster niet schoon was, en dat is geen geslaagde verwijdering.
+            remaining = await self._measure_remaining(
+                cluster,
+                applications=[app_name],
+                appprojects=[generate_argocd_appproject_prefix(project_name, current_base_namespace)]
+                if appproject_left_git
+                else [],
+                namespaces=[namespace] if namespace_should_be_gone else [],
+            )
+            if remaining.decides:
+                settled = not remaining.present and project_file_settled
+                deletion_results["success"] = settled
+                for leftover in remaining.present:
+                    deletion_results["errors"].append(
+                        f"Deployment '{deployment_name}' of project '{project_name}' is not fully deleted: "
+                        f"{leftover} still stands"
+                    )
+                deletion_results["operations"].append(
+                    {
+                        "type": "deletion_remeasurement",
+                        "target": f"deployment '{deployment_name}'",
+                        "status": "clean" if settled else "incomplete",
+                        "remaining": remaining.present,
+                        "project_file_settled": project_file_settled,
+                        # De fouten van de rit blijven staan als uitleg bij een schone
+                        # eindtoestand; ze beslissen niets meer.
+                        "explained_errors": deletion_results["errors"] if settled else [],
+                    }
+                )
+            else:
+                deletion_results["success"] = len(deletion_results["errors"]) == 0
+                deletion_results["operations"].append(
+                    {
+                        "type": "deletion_remeasurement",
+                        "target": f"deployment '{deployment_name}'",
+                        "status": "unreadable",
+                        "unreadable": remaining.unreadable,
+                    }
+                )
             if force and deletion_results["errors"]:
                 logger.warning(
                     f"Force mode finished with {len(deletion_results['errors'])} error(s) for "
@@ -2246,11 +2700,8 @@ class DeleteProjectManager:
         deployment_name = deployment_data.get("name", "unknown")
         cluster = deployment_data.get("cluster", "")
         base_namespace = deployment_data.get("namespace")
-        namespace_used_by_others = any(
-            other_dep.get("name") != deployment_name
-            and other_dep.get("cluster") == cluster
-            and other_dep.get("namespace") == base_namespace
-            for other_dep in project_data.get("deployments", [])
+        namespace_used_by_others = _namespace_used_by_others(
+            project_data.get("deployments", []), deployment_name, cluster, base_namespace
         )
 
         deletion_results: dict[str, Any] = {
@@ -2306,15 +2757,8 @@ class DeleteProjectManager:
                         }
                     )
 
-                if not namespace_used_by_others and base_namespace:
-                    appproject_name = generate_argocd_appproject_prefix(project_name, base_namespace)
-                    appproject_filename = get_output_filename_from_template(
-                        "argocd-appproject.yaml.jinja", appproject_name
-                    )
-                    appproject_path = os.path.join(project_dir, appproject_filename)
-                    if os.path.exists(appproject_path):
-                        os.remove(appproject_path)
-                        logger.info("Deleted AppProject file: %s", appproject_filename)
+                if base_namespace:
+                    _remove_appproject_file(project_dir, project_name, base_namespace, namespace_used_by_others)
 
                 if repository_name and not repo_used_by_others:
                     unique_repo_name = f"{project_name}-{repository_name}"
