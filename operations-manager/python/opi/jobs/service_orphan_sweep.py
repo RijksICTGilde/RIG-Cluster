@@ -273,10 +273,13 @@ async def sweep(
 
         minio = create_minio_connector()
         alias = "orphan-sweep"
-        minio_url = (
-            f"{'https' if settings.MINIO_USE_TLS else 'http'}://{get_minio_host(cluster)}:{get_minio_port(cluster)}"
+        await minio.configure_alias(
+            alias,
+            f"{get_minio_host(cluster)}:{get_minio_port(cluster)}",
+            settings.MINIO_ADMIN_ACCESS_KEY,
+            settings.MINIO_ADMIN_SECRET_KEY,
+            secure=settings.MINIO_USE_TLS,
         )
-        await minio.configure_alias(alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY)
 
         for bucket in await minio.list_buckets(alias):
             bucket_name = bucket.get("name", "") if isinstance(bucket, dict) else str(bucket)
