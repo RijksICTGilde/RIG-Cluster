@@ -134,6 +134,7 @@ class InMemoryUserOtpService:
 
     def __init__(self) -> None:
         self._rows: dict[str, dict] = {}
+        self._pending: dict[str, tuple] = {}
 
     async def status(self, email: str):
         from opi.services.user_otp_service import OtpStatus
@@ -150,6 +151,34 @@ class InMemoryUserOtpService:
 
     async def resume_registration(self, email: str, encrypted_secret: str):
         return self._registration(email, encrypted_secret)
+
+    # Lopende registraties: zoals de echte service (tabel otp_pending_registrations),
+    # hier in het geheugen. Zie de uitleg in opi/services/persistence/otp_pending.py.
+
+    async def note_pending_registration(self, email: str, fingerprint: str):
+        from datetime import UTC, datetime, timedelta
+
+        self._pending[email] = (fingerprint, datetime.now(UTC) + timedelta(minutes=10))
+
+    async def consume_pending_registration(self, email: str, fingerprint: str) -> bool:
+        from datetime import UTC, datetime
+
+        row = self._pending.get(email)
+        if row is None or row[1] <= datetime.now(UTC):
+            return False
+        return row[0] == fingerprint
+
+    async def discard_pending_registration(self, email: str) -> None:
+        self._pending.pop(email, None)
+
+    async def purge_expired_pending_registrations(self) -> int:
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        verlopen = [email for email, row in self._pending.items() if row[1] <= now]
+        for email in verlopen:
+            del self._pending[email]
+        return len(verlopen)
 
     async def confirm_registration(self, email: str, code: str, encrypted_secret: str, full_name: str = "") -> bool:
         from datetime import UTC, datetime

@@ -3,23 +3,22 @@
 Zelfbediening: deze pagina's raken alleen de factor van de INGELOGDE gebruiker. De
 factor van een ander resetten is beheer en staat in ``router_user_admin.py``.
 
-Een nog niet bevestigde registratie staat niet in de database, zodat een nieuwe
-registratie de oude factor pas vervangt als de gebruiker een geldige code van de nieuwe
-heeft ingevoerd. Hij reist AGE-versleuteld mee in een verborgen veld van het formulier,
-met alleen zijn vingerafdruk in de sessie.
+Een nog niet bevestigde registratie staat niet in de database als factor: de oude factor
+verdwijnt pas als de gebruiker een geldige code van de nieuwe heeft ingevoerd. Het zaad
+reist AGE-versleuteld mee in een verborgen veld van het formulier; dat die registratie
+loopt, staat met de vingerafdruk van dat zaad in de tabel ``otp_pending_registrations``.
 
-Waarom niet het zaad zelf in de sessie: de sessiecookie draagt al een id_token, en een
-versleuteld zaad van ~800 bytes erbij brengt hem in de buurt van de 4 KB die een browser
-accepteert. Daarboven verdwijnt de cookie zonder foutmelding en ben je uitgelogd. De
-vingerafdruk is 64 tekens en doet hetzelfde werk: zonder een door /start gezette
-vingerafdruk wordt geen enkel zaad bevestigd, dus de controle op de huidige factor is niet
-te omzeilen door rechtstreeks te bevestigen.
+Server-side, zoals AMT/TAD hetzelfde probleem oploste: tot 27-10-2026 ontving de
+sessiecookie die vingerafdruk, en op de sandbox liep zo'n cookie (hij draagt al een
+id_token) daarmee over de ~4 KB die een browser geruisloos laat vallen. /bevestigen kwam
+dan aan zonder merk, de gebruiker zag geen enkele foutmelding, en de registratie
+verdween. De sessie raakt de registratie hier helemaal niet meer; wie geen /start heeft
+gedaan, heeft geen rij; de rij verloopt na tien minuten en de cleanup-lus ruimt op.
 """
 
 from __future__ import annotations
 
 import hashlib
-import hmac
 import logging
 
 from fastapi import APIRouter, Request
@@ -37,11 +36,10 @@ logger = logging.getLogger(__name__)
 
 otp_router = APIRouter(prefix="/account/otp", tags=["account-otp"])
 
-#: De sessiesleutel met de vingerafdruk van de lopende registratie.
-PENDING_SESSION_KEY = "otp_pending_fingerprint"
-
 #: Het verborgen veld dat het versleutelde zaad draagt.
 PENDING_FIELD = "pending"
+
+#: PENDING_TTL van de service bepaalt hoe lang een /start zijn bevestiging accepteert.
 
 _PATH = "/account/otp"
 
@@ -132,7 +130,7 @@ async def otp_start(request: Request) -> Response:
             )
 
     registratie = await service.start_registration(email)
-    request.session[PENDING_SESSION_KEY] = _fingerprint(registratie.encrypted_secret)
+    await service.note_pending_registration(email, _fingerprint(registratie.encrypted_secret))
     return _registration_page(request, registratie)
 
 
@@ -142,13 +140,18 @@ async def otp_bevestigen(request: Request) -> Response:
     """Bevestig de lopende registratie. Pas hier gaat de nieuwe factor in."""
     form = await request.form()
     encrypted = str(form.get(PENDING_FIELD, ""))
-    verwacht = request.session.get(PENDING_SESSION_KEY, "")
-    if not encrypted or not verwacht or not hmac.compare_digest(_fingerprint(encrypted), verwacht):
-        logger.warning("OTP-bevestiging zonder lopende registratie voor %s", _email(request))
-        return RedirectResponse(url=_PATH, status_code=303)
+    email = _email(request)
+    if not encrypted or not await _get_otp_service().consume_pending_registration(email, _fingerprint(encrypted)):
+        logger.warning("OTP-bevestiging zonder lopende registratie voor %s", email)
+        # Stil wegvallen was de bug van 27-10: de gebruiker keek op "niets gebeurd". Zeg
+        # in dat geval wat er aan de hand is: de getoonde afspraak was verlopen of nooit van
+        # deze start, en de weg terug is opnieuw beginnen.
+        return RedirectResponse(
+            url=f"{_PATH}?melding=Die+registratie+was+verlopen+of+is+al+afgebroken.+Begin+opnieuw.",
+            status_code=303,
+        )
 
     user = get_current_user(request) or {}
-    email = _email(request)
     service = _get_otp_service()
     bevestigd = await service.confirm_registration(
         email,
@@ -162,7 +165,6 @@ async def otp_bevestigen(request: Request) -> Response:
             request, registratie, fout="Die code klopt niet. Probeer de volgende code uit je app."
         )
 
-    request.session.pop(PENDING_SESSION_KEY, None)
     return RedirectResponse(url=f"{_PATH}?melding=Tweede+factor+ingericht", status_code=303)
 
 
@@ -170,5 +172,5 @@ async def otp_bevestigen(request: Request) -> Response:
 @requires_sso
 async def otp_afbreken(request: Request) -> Response:
     """Vergeet de lopende registratie. De bestaande factor blijft zoals hij was."""
-    request.session.pop(PENDING_SESSION_KEY, None)
+    await _get_otp_service().discard_pending_registration(_email(request))
     return RedirectResponse(url=f"{_PATH}?melding=Registratie+afgebroken", status_code=303)

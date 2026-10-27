@@ -184,6 +184,16 @@ Zonder die stap zou wie een sessie overneemt ook de tweede factor kunnen overnem
 die code niet meer kan maken, vraagt een platformbeheerder om een reset. Je eigen factor
 registreren of vervangen vraagt verder nooit een verhoogde stap: dat is zelfbediening.
 
+## Waar een gestarte registratie staat
+
+Tussen /account/otp/start en de bevestiging met de code staat de lopende registratie
+server-side in de tabel `otp_pending_registrations`: alleen de vingerafdruk van het
+AGE-versleutelde zaad uit het verborgen formulierveld, tien minuten geldig, met een
+opruiming via de uurlijkse schoonmaaklus van de taakwerker. Niets daarvan staat in de
+sessiecookie: die draagt al een id_token, en daarbovenop (gezien op 27-10-2026 op de
+sandbox) viel de browser zo'n cookie geruisloos weg boven ~4 KB. De bug van toen: geen
+fout, geen opslag. Nu krijg je een melding die zegt dat je opnieuw begint.
+
 ## Blokkade na mislukte codes
 
 Vijf mislukte codes achter elkaar blokkeren de factor een kwartier
