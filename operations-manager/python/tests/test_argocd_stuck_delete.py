@@ -1308,6 +1308,8 @@ def _deployment_harness(
     the first wait time out and reach the force branch.
     """
     pm = AsyncMock()
+    # Geen voortgangsmanager: de delete-stappen melden dan niets.
+    pm.get_progress_manager = MagicMock(return_value=None)
     pm._kubectl_connector = _recording_kubectl(
         calls, destination="rig-mpfm-w3h", tracked=tracked or [], complete=complete
     )

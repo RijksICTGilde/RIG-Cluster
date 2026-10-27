@@ -28,6 +28,8 @@ def _make_project_manager_mock() -> MagicMock:
     """Create a mock ProjectManager with common defaults."""
     mock_pm = AsyncMock()
     mock_pm.get_name = AsyncMock(return_value="test-project")
+    # Geen voortgangsmanager: de delete-stappen melden dan niets.
+    mock_pm.get_progress_manager = MagicMock(return_value=None)
     mock_pm._kubectl_connector = AsyncMock()
     mock_pm._kubectl_connector.delete_namespace = AsyncMock(return_value=True)
     mock_pm._kubectl_connector.remove_argocd_application_finalizers = AsyncMock(return_value=True)
@@ -340,8 +342,11 @@ class TestDeleteProjectArgocdFolder:
             patch("os.path.exists", return_value=True),
             patch("shutil.rmtree") as mock_rmtree,
         ):
-            await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+            verwijderd = await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
 
+        # True is het signaal voor de hermeting: de map ging uit git, dus het AppProject
+        # komt eraan en er valt op te wachten.
+        assert verwijderd is True
         mock_rmtree.assert_called_once_with("/tmp/gitops/local/test-project")
 
         gitops_connector = await mock_pm.get_git_connector_for_argocd()
@@ -361,8 +366,11 @@ class TestDeleteProjectArgocdFolder:
         deletion_results: dict = {"operations": [], "errors": []}
 
         with patch("os.path.exists", return_value=False):
-            await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+            verwijderd = await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
 
+        # False: de map ging niet uit git, dus de hermeting wacht niet op een AppProject
+        # dat nooit is weggehaald.
+        assert verwijderd is False
         commit_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_gitops_commit"]
         assert commit_ops == [], "zonder map valt er niets te committen"
 
@@ -389,8 +397,11 @@ class TestDeleteProjectArgocdFolder:
         deletion_results: dict = {"operations": [], "errors": [], "success": True}
 
         with patch("os.path.exists", return_value=False):
-            await manager._delete_project_argocd_folder("test-project", "local", deletion_results, expect_folder=True)
+            verwijderd = await manager._delete_project_argocd_folder(
+                "test-project", "local", deletion_results, expect_folder=True
+            )
 
+        assert verwijderd is False
         folder_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_folder_deletion"]
         assert len(folder_ops) == 1
         assert folder_ops[0]["status"] == "missing"
@@ -445,8 +456,9 @@ class TestDeleteProjectArgocdFolder:
         manager = DeleteProjectManager(mock_pm)
         deletion_results: dict = {"operations": [], "errors": [], "success": True}
 
-        await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
+        verwijderd = await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
 
+        assert verwijderd is False
         assert len(deletion_results["errors"]) > 0
         assert "git error" in deletion_results["errors"][0]
         assert deletion_results["success"] is False, "een mislukte opruiming mag niet als geslaagd doorgaan"

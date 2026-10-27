@@ -293,6 +293,8 @@ def _project_manager_met_levend_projectbestand(bestand: dict[str, Any]) -> Async
     """
     pm = AsyncMock()
     pm.get_name = AsyncMock(return_value=bestand["name"])
+    # Geen voortgangsmanager: de delete-stappen melden dan niets.
+    pm.get_progress_manager = MagicMock(return_value=None)
     pm._kubectl_connector = AsyncMock()
     pm._kubectl_connector.delete_namespace = AsyncMock(return_value=True)
     pm._keycloak_manager = AsyncMock()

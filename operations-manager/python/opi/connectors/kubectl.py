@@ -577,6 +577,28 @@ class KubectlConnector:
         logger.warning(f"Namespace '{namespace}' was not confirmed gone after {max_retries} checks")
         return False
 
+    async def wait_for_resource_absence(
+        self, resource_type: str, resource_name: str, namespace: str, max_retries: int = 20, retry_delay: int = 2
+    ) -> bool:
+        """Wacht tot een namespaced resource weg is (NotFound van de API-server).
+
+        Voor resources die een controller asynchroon opruimt, zoals een AppProject dat
+        ArgoCD prunt nadat zijn manifest uit git is. Een onmeetbare lezing (None uit
+        resource_exists) telt als nog aanwezig: pas een uitgelezen NotFound geldt als weg.
+        Na een timeout komt False terug en beslist de aanroeper zoals zonder deze wacht.
+        """
+        for attempt in range(1, max_retries + 1):
+            exists = await self.resource_exists(resource_type, resource_name, namespace)
+            if exists is False:
+                logger.info(f"{resource_type} '{resource_name}' in '{namespace}' is gone (after {attempt} check(s))")
+                return True
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+        logger.warning(
+            f"{resource_type} '{resource_name}' in '{namespace}' was not confirmed gone after {max_retries} checks"
+        )
+        return False
+
     async def get_namespace_label_map(self, label_key: str) -> dict[str, str]:
         """Every namespace in the cluster, mapped to its value for ``label_key``.
 

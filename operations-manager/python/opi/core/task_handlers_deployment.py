@@ -114,10 +114,11 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     from opi.manager.project_manager import create_project_manager
 
     project_manager = create_project_manager()
+    # Attach the progress manager so the delete names its own steps (ArgoCD, namespace,
+    # services, manifests, remeasurement) instead of one long-running task.
+    project_manager.set_progress_manager(progress)
     progress.complete_task(init_task)
 
-    # Task 2: Delete deployment resources
-    delete_task = progress.add_task("Deployment-resources verwijderen")
     try:
         deletion_results = await project_manager.delete_deployment(project_name, deployment_name, force=True)
 
@@ -133,8 +134,6 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
             raise RuntimeError(
                 f"Deployment '{deployment_name}' in project '{project_name}' not fully deleted: {error_detail}"
             )
-
-        progress.complete_task(delete_task)
 
         # A deleted deployment leaves no OOM tune state behind. This is tidiness, not a
         # leak: the two module dicts hold 256 bytes per orphan, and a deployment that
@@ -164,7 +163,6 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
         }
     except Exception as exc:
         error_msg = f"Failed to delete deployment: {exc}"
-        progress.fail_task(delete_task, error_msg)
         progress.fail_project(error_msg)
         raise
     finally:

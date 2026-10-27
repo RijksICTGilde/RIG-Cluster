@@ -14,9 +14,11 @@ import os
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest  # noqa: TC002
+import pytest
 import yaml
+from fastapi import HTTPException
 from opi.connectors.kubectl import KubectlConnector
+from opi.core.cluster_config import get_argo_namespace
 from opi.manager.delete_project_manager import DeleteProjectManager, ForcedDeletion
 from opi.utils.naming import (
     generate_argocd_appproject_prefix,
@@ -28,9 +30,10 @@ from tests.test_verwijderpaden_reproducties import (
     _project_manager_met_levend_projectbestand,
     _twee_deployments_in_een_namespace,
 )
-from tests.test_zombie_deployment import _delete_manager, _niets_bestaat
+from tests.test_zombie_deployment import _delete_manager, _deployment, _niets_bestaat
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
 
@@ -434,12 +437,19 @@ async def test_een_repo_path_buiten_de_kloon_levert_geen_werkmap() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _verwijder_deployment(kubectl_antwoorden: dict[str, Any], fout_tijdens_de_rit: bool) -> dict[str, Any]:
+async def _verwijder_deployment(
+    kubectl_antwoorden: dict[str, Any], fout_tijdens_de_rit: bool
+) -> tuple[dict[str, Any], AsyncMock]:
     manager, _gitops, _manifests = _delete_manager()
     pm = manager.project_manager
     pm._kubectl_connector.argocd_application_exists = AsyncMock(return_value=kubectl_antwoorden["application_exists"])
     pm._kubectl_connector.resource_exists = AsyncMock(return_value=kubectl_antwoorden["appproject_exists"])
     pm._kubectl_connector.namespace_absent = AsyncMock(return_value=kubectl_antwoorden["namespace_absent"])
+    # Wie bij de hermeting nog staat, stond ook na de wacht nog; de wacht zelf haalt
+    # alles weg wat bij de meting weg is.
+    pm._kubectl_connector.wait_for_resource_absence = AsyncMock(
+        return_value=kubectl_antwoorden["appproject_exists"] is not True
+    )
     if fout_tijdens_de_rit:
         pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(
             return_value={"operations": [], "errors": ["Keycloak gaf 503 tijdens de rit"]}
@@ -460,11 +470,11 @@ async def _verwijder_deployment(kubectl_antwoorden: dict[str, Any], fout_tijdens
         patch("shutil.rmtree", MagicMock()),
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
     ):
-        return await manager.delete_deployment("test-project", "pr-42")
+        return await manager.delete_deployment("test-project", "pr-42"), pm
 
 
 async def test_een_fout_tijdens_de_rit_met_een_schone_eindtoestand_is_geslaagd() -> None:
-    resultaat = await _verwijder_deployment(
+    resultaat, _pm = await _verwijder_deployment(
         {"application_exists": False, "appproject_exists": False, "namespace_absent": True},
         fout_tijdens_de_rit=True,
     )
@@ -477,7 +487,7 @@ async def test_een_fout_tijdens_de_rit_met_een_schone_eindtoestand_is_geslaagd()
 
 
 async def test_een_namespace_die_blijft_staan_is_niet_geslaagd() -> None:
-    resultaat = await _verwijder_deployment(
+    resultaat, _pm = await _verwijder_deployment(
         {"application_exists": False, "appproject_exists": False, "namespace_absent": False},
         fout_tijdens_de_rit=False,
     )
@@ -490,7 +500,7 @@ async def test_een_namespace_die_blijft_staan_is_niet_geslaagd() -> None:
 
 
 async def test_een_onleesbare_hermeting_laat_de_foutenlijst_beslissen() -> None:
-    resultaat = await _verwijder_deployment(
+    resultaat, _pm = await _verwijder_deployment(
         {"application_exists": None, "appproject_exists": None, "namespace_absent": None},
         fout_tijdens_de_rit=False,
     )
@@ -499,6 +509,35 @@ async def test_een_onleesbare_hermeting_laat_de_foutenlijst_beslissen() -> None:
     hermeting = [op for op in resultaat["operations"] if op["type"] == "deletion_remeasurement"]
     assert hermeting
     assert hermeting[0]["status"] == "unreadable"
+
+
+async def test_de_hermeting_van_een_deployment_wacht_eerst_op_het_appproject() -> None:
+    """Het AppProject ging deze ronde uit git; ArgoCD prunt asynchroon (RC-389)."""
+    resultaat, pm = await _verwijder_deployment(
+        {"application_exists": False, "appproject_exists": False, "namespace_absent": True},
+        fout_tijdens_de_rit=False,
+    )
+
+    assert resultaat["success"] is True, resultaat["errors"]
+    pm._kubectl_connector.wait_for_resource_absence.assert_awaited_once_with(
+        "appproject",
+        generate_argocd_appproject_prefix("test-project", "test-project"),
+        get_argo_namespace("local"),
+    )
+
+
+async def test_een_appproject_dat_bij_een_deployment_blijft_staan_is_niet_geslaagd() -> None:
+    """Ook na de wacht: de hermeting beslist zoals hij vandaag beslist."""
+    resultaat, _pm = await _verwijder_deployment(
+        {"application_exists": False, "appproject_exists": True, "namespace_absent": True},
+        fout_tijdens_de_rit=False,
+    )
+
+    assert resultaat["success"] is False
+    assert any("AppProject" in fout and "still stands" in fout for fout in resultaat["errors"]), resultaat["errors"]
+    hermeting = [op for op in resultaat["operations"] if op["type"] == "deletion_remeasurement"]
+    assert hermeting
+    assert hermeting[0]["status"] == "incomplete"
 
 
 # ---------------------------------------------------------------------------
@@ -588,16 +627,20 @@ async def test_een_zuster_die_deze_ronde_weggaat_houdt_de_namespace_niet_tegen(
 
 
 async def _verwijder_project(
-    namespace_blijft: bool, monkeypatch: pytest.MonkeyPatch
-) -> tuple[dict[str, Any], AsyncMock]:
+    namespace_blijft: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    appproject_blijft: bool = False,
+    map_uit_git: bool = True,
+) -> tuple[dict[str, Any], AsyncMock, AsyncMock]:
     """Een geslaagde deploymentronde, waarna alleen de hermeting nog iets te zeggen heeft."""
     deployment = _make_deployment()
     pm = _make_project_manager_mock()
     pm.get_contents = AsyncMock(return_value=_make_project_data(deployments=[deployment]))
     pm.get_deployments = AsyncMock(return_value=[deployment])
     pm._kubectl_connector.argocd_application_exists = AsyncMock(return_value=False)
-    pm._kubectl_connector.resource_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.resource_exists = AsyncMock(return_value=appproject_blijft)
     pm._kubectl_connector.namespace_absent = AsyncMock(return_value=not namespace_blijft)
+    pm._kubectl_connector.wait_for_resource_absence = AsyncMock(return_value=not appproject_blijft)
     manager = DeleteProjectManager(pm)
 
     store = MagicMock()
@@ -620,14 +663,18 @@ async def _verwijder_project(
         "_delete_project_namespaces",
     ):
         monkeypatch.setattr(manager, naam, AsyncMock(return_value=True))
+    if not map_uit_git:
+        # De map ging deze ronde niet uit git (bijvoorbeeld not_found), dus er valt
+        # niets af te wachten.
+        monkeypatch.setattr(manager, "_delete_project_argocd_folder", AsyncMock(return_value=False))
     projectbestand_weg = AsyncMock(return_value={"success": True, "operations": [], "errors": []})
     monkeypatch.setattr(manager, "_delete_project_file", projectbestand_weg)
 
-    return await manager.delete_project("test-project"), projectbestand_weg
+    return await manager.delete_project("test-project"), projectbestand_weg, pm
 
 
 async def test_een_schone_hermeting_laat_het_projectbestand_gaan(monkeypatch: pytest.MonkeyPatch) -> None:
-    resultaat, projectbestand_weg = await _verwijder_project(namespace_blijft=False, monkeypatch=monkeypatch)
+    resultaat, projectbestand_weg, _pm = await _verwijder_project(namespace_blijft=False, monkeypatch=monkeypatch)
 
     assert resultaat["success"] is True, resultaat["errors"]
     projectbestand_weg.assert_awaited_once()
@@ -640,7 +687,7 @@ async def test_een_namespace_die_blijft_houdt_het_projectbestand_ook_zonder_fout
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Elke stap meldde zich geslaagd, dus alleen de hermeting kan dit nog tegenhouden."""
-    resultaat, projectbestand_weg = await _verwijder_project(namespace_blijft=True, monkeypatch=monkeypatch)
+    resultaat, projectbestand_weg, _pm = await _verwijder_project(namespace_blijft=True, monkeypatch=monkeypatch)
 
     assert resultaat["success"] is False, resultaat
     projectbestand_weg.assert_not_awaited()
@@ -648,3 +695,269 @@ async def test_een_namespace_die_blijft_houdt_het_projectbestand_ook_zonder_fout
     assert hermeting
     assert hermeting[0]["status"] == "incomplete"
     assert any("namespace" in rest for rest in hermeting[0]["remaining"]), hermeting[0]
+
+
+# ---------------------------------------------------------------------------
+# De AppProject-wacht vóór de hermeting (RC-389): ArgoCD prunt asynchroon
+# ---------------------------------------------------------------------------
+
+
+async def test_een_appproject_dat_tijdens_de_wacht_verdwijnt_geeft_een_schone_rit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De valse mislukking uit het incident: de map is uit git, de prune loopt na."""
+    resultaat, projectbestand_weg, pm = await _verwijder_project(
+        namespace_blijft=False, monkeypatch=monkeypatch, appproject_blijft=False
+    )
+
+    assert resultaat["success"] is True, resultaat["errors"]
+    pm._kubectl_connector.wait_for_resource_absence.assert_awaited_once_with(
+        "appproject",
+        generate_argocd_appproject_prefix("test-project", "test-project"),
+        get_argo_namespace("local"),
+    )
+    projectbestand_weg.assert_awaited_once()
+    hermeting = [op for op in resultaat["operations"] if op["type"] == "deletion_remeasurement"]
+    assert hermeting[0]["status"] == "clean"
+
+
+async def test_een_appproject_dat_blijft_staan_houdt_het_projectbestand_na_de_wacht(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De wacht verandert de beslissing niet: wie na de timeout nog staat, staat er."""
+    resultaat, projectbestand_weg, pm = await _verwijder_project(
+        namespace_blijft=False, monkeypatch=monkeypatch, appproject_blijft=True
+    )
+
+    assert resultaat["success"] is False, resultaat
+    assert pm._kubectl_connector.wait_for_resource_absence.await_count == 1
+    projectbestand_weg.assert_not_awaited()
+    hermeting = [op for op in resultaat["operations"] if op["type"] == "deletion_remeasurement"]
+    assert hermeting[0]["status"] == "incomplete"
+    assert any("AppProject" in rest for rest in hermeting[0]["remaining"]), hermeting[0]
+
+
+async def test_zonder_map_die_uit_git_ging_is_er_niets_om_op_te_wachten(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Een delete die vóór stap 4.7 faalde wacht niet 40s op een AppProject dat nooit weggehaald is."""
+    resultaat, _projectbestand_weg, pm = await _verwijder_project(
+        namespace_blijft=False, monkeypatch=monkeypatch, map_uit_git=False
+    )
+
+    assert resultaat["success"] is True, resultaat["errors"]
+    pm._kubectl_connector.wait_for_resource_absence.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# De delete meldt zijn stappen (RC-389): per deployment met onderwerp
+# ---------------------------------------------------------------------------
+
+
+def _stappen_van(progress: MagicMock) -> list[tuple[str, str | None]]:
+    return [(call.args[0], call.kwargs.get("subject")) for call in progress.add_task.call_args_list]
+
+
+def _delete_deployment_met_stappen(
+    extra_deployments: list[dict[str, Any]] | None = None,
+    push_fout: Exception | None = None,
+    namespace_delete: bool = True,
+) -> tuple[Callable[[], Awaitable[dict[str, Any]]], MagicMock, AsyncMock]:
+    """Een delete_deployment-ronde met een voortgangsmanager: geeft (run, progress, pm)."""
+    manager, gitops, _manifests = _delete_manager()
+    pm = manager.project_manager
+    pm._kubectl_connector.argocd_application_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.resource_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.namespace_absent = AsyncMock(return_value=True)
+    pm._kubectl_connector.wait_for_resource_absence = AsyncMock(return_value=True)
+    pm._kubectl_connector.delete_namespace = AsyncMock(return_value=namespace_delete)
+    if extra_deployments:
+        data = dict(pm.get_contents.return_value)
+        data["deployments"] = [*data["deployments"], *extra_deployments]
+        pm.get_contents = AsyncMock(return_value=data)
+    if push_fout is not None:
+        gitops.mutate_and_push = AsyncMock(side_effect=push_fout)
+
+    progress = MagicMock()
+    progress.add_task = MagicMock(side_effect=lambda name, subject=None: f"stap-{name}")
+    pm.get_progress_manager = MagicMock(return_value=progress)
+
+    argo = AsyncMock()
+    argo.refresh_application = AsyncMock(return_value=True)
+    argo.application_exists = AsyncMock(return_value=False)
+    store = MagicMock()
+    store.get.return_value = MagicMock(filename="test-project.yaml")
+    subdomain = MagicMock()
+    subdomain.return_value.delete_by_deployment = AsyncMock(return_value=0)
+
+    async def _run() -> dict[str, Any]:
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+            patch("os.path.exists", side_effect=_niets_bestaat),
+            patch("shutil.rmtree", MagicMock()),
+            patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        ):
+            return await manager.delete_deployment("test-project", "pr-42")
+
+    return _run, progress, pm
+
+
+async def test_een_deployment_verwijderen_meldt_elke_stap_met_de_deployment_als_onderwerp() -> None:
+    run, progress, _pm = _delete_deployment_met_stappen()
+
+    resultaat = await run()
+
+    assert resultaat["success"] is True, resultaat["errors"]
+    assert _stappen_van(progress) == [
+        ("ArgoCD-toepassing verwijderen", "pr-42"),
+        ("Namespace verwijderen", "pr-42"),
+        ("Services opruimen", "pr-42"),
+        ("Manifesten verwijderen", "pr-42"),
+        ("Deployment uit het projectbestand verwijderen", "pr-42"),
+        ("Subdomein opruimen", "pr-42"),
+        ("Controleren dat alles verwijderd is", "pr-42"),
+    ]
+    # Elke stap werd ook afgesloten.
+    assert progress.complete_task.call_count == 7
+
+
+async def test_een_stap_valt_weg_als_zijn_werk_niet_draait() -> None:
+    """De namespace deelt `pr-42` met `acceptatie`; die blijft, dus de namespace blijft
+    ook en er mag geen stap 'Namespace verwijderen' groen kleuren."""
+    zuster = {**_deployment(), "name": "acceptatie"}
+    run, progress, pm = _delete_deployment_met_stappen(extra_deployments=[zuster])
+
+    resultaat = await run()
+
+    assert resultaat["success"] is True, resultaat["errors"]
+    pm._kubectl_connector.delete_namespace.assert_not_awaited()
+    assert _stappen_van(progress) == [
+        ("ArgoCD-toepassing verwijderen", "pr-42"),
+        ("Services opruimen", "pr-42"),
+        ("Manifesten verwijderen", "pr-42"),
+        ("Deployment uit het projectbestand verwijderen", "pr-42"),
+        ("Subdomein opruimen", "pr-42"),
+        ("Controleren dat alles verwijderd is", "pr-42"),
+    ]
+
+
+async def test_een_stap_die_omvalt_wordt_als_mislukt_gemeld() -> None:
+    """De stap kleurt niet groen terwijl het werk eronder knapt."""
+    run, progress, _pm = _delete_deployment_met_stappen(push_fout=RuntimeError("git is stuk"))
+
+    with pytest.raises(HTTPException, match="git is stuk"):
+        await run()
+
+    progress.fail_task.assert_called_once_with("stap-ArgoCD-toepassing verwijderen", "git is stuk")
+    progress.complete_task.assert_not_called()
+
+
+async def test_een_stap_met_nieuwe_fouten_sluit_als_mislukt() -> None:
+    """Fouten die tijdens de stap bijkwamen zijn zijn sluitreden. De rit zelf loopt door;
+    de hermeting aan het eind (namespace uiteindelijk weg) beslist over de uitkomst."""
+    run, progress, _pm = _delete_deployment_met_stappen(namespace_delete=False)
+
+    resultaat = await run()
+
+    stap, fout = progress.fail_task.call_args.args
+    assert stap == "stap-Namespace verwijderen"
+    assert "rig-test-project" in fout
+    assert [naam for naam, _ in _stappen_van(progress)] == [
+        "ArgoCD-toepassing verwijderen",
+        "Namespace verwijderen",
+        "Services opruimen",
+        "Manifesten verwijderen",
+        "Deployment uit het projectbestand verwijderen",
+        "Subdomein opruimen",
+        "Controleren dat alles verwijderd is",
+    ]
+    assert resultaat["success"] is True, resultaat["errors"]
+    hermeting = [op for op in resultaat["operations"] if op["type"] == "deletion_remeasurement"]
+    assert hermeting[0]["status"] == "clean"
+
+
+def _project_delete_met_stappen(
+    monkeypatch: pytest.MonkeyPatch, release_fout: Exception | None = None
+) -> tuple[DeleteProjectManager, MagicMock]:
+    """Een delete_project-ronde met een voortgangsmanager; de deployments zijn afgevangen."""
+    deployment = _make_deployment()
+    pm = _make_project_manager_mock()
+    pm.get_contents = AsyncMock(return_value=_make_project_data(deployments=[deployment]))
+    pm.get_deployments = AsyncMock(return_value=[deployment])
+    pm._kubectl_connector.argocd_application_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.resource_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.namespace_absent = AsyncMock(return_value=True)
+    pm._kubectl_connector.wait_for_resource_absence = AsyncMock(return_value=True)
+
+    progress = MagicMock()
+    progress.add_task = MagicMock(side_effect=lambda name, subject=None: f"stap-{name}")
+    pm.get_progress_manager = MagicMock(return_value=progress)
+
+    manager = DeleteProjectManager(pm)
+
+    store = MagicMock()
+    store.get = MagicMock(return_value=MagicMock(filename="test-project.yaml"))
+    monkeypatch.setattr("opi.manager.delete_project_manager.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.delete_project_manager.settings.CLUSTER_MANAGER", "local", raising=False)
+    subdomain = MagicMock()
+    subdomain.return_value.delete_by_project = AsyncMock(return_value=0)
+    monkeypatch.setattr("opi.manager.delete_project_manager.SubdomainConnector", subdomain)
+
+    monkeypatch.setattr(
+        manager, "delete_deployment", AsyncMock(return_value={"success": True, "operations": [], "errors": []})
+    )
+    for naam in (
+        "_cleanup_project_infrastructure",
+        "_cleanup_project_keycloak_realm",
+        "_delete_project_level_folder",
+        "_delete_project_argocd_folder",
+        "_delete_project_namespaces",
+    ):
+        monkeypatch.setattr(manager, naam, AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        manager,
+        "_release_project_applications",
+        AsyncMock(side_effect=release_fout) if release_fout else AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        manager, "_delete_project_file", AsyncMock(return_value={"success": True, "operations": [], "errors": []})
+    )
+    return manager, progress
+
+
+async def test_een_project_verwijderen_meldt_de_stappen_van_de_projectlaag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De deployments zelf zijn hier afgevangen; het gaat om de stappen eromheen."""
+    manager, progress = _project_delete_met_stappen(monkeypatch)
+
+    resultaat = await manager.delete_project("test-project")
+
+    assert resultaat["success"] is True, resultaat["errors"]
+    assert _stappen_van(progress) == [
+        ("Projectinfrastructuur opruimen", None),
+        ("Keycloak-realm verwijderen", None),
+        ("ArgoCD-resources van het project verwijderen", None),
+        ("Namespaces verwijderen", None),
+        ("Controleren dat alles verwijderd is", None),
+        ("Projectbestand verwijderen", None),
+        ("Subdomeinen opruimen", None),
+    ]
+    assert progress.complete_task.call_count == 7
+
+
+async def test_een_fout_bij_het_vrijgeven_van_de_applications_meldt_de_stap_mislukt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """delete_project vangt de fout af en meldt de rit mislukt; de stap mag niet open of
+    groen blijven hangen."""
+    manager, progress = _project_delete_met_stappen(monkeypatch, release_fout=RuntimeError("argo git is stuk"))
+
+    resultaat = await manager.delete_project("test-project")
+
+    assert resultaat["success"] is False
+    assert any("argo git is stuk" in fout for fout in resultaat["errors"]), resultaat["errors"]
+    progress.fail_task.assert_called_once_with("stap-ArgoCD-resources van het project verwijderen", "argo git is stuk")
+    # Alleen de stappen vóór de mislukte stap kleurden groen.
+    assert progress.complete_task.call_count == 2
