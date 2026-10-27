@@ -218,6 +218,13 @@ def markdown_to_components(source: str, *, icon: str | None = None, color: str |
                 flush()
             bullets.append(_inline(stripped[2:].strip()))
         else:
+            if bullets and line[:1] in (" ", "\t"):
+                # A wrapped bullet item: the indented continuation line belongs to the
+                # bullet above, it does not open a paragraph of its own. Without this the
+                # list flushed mid-sentence and the rest of the line stood as its own
+                # paragraph under the list.
+                bullets[-1] += " " + _inline(stripped)
+                continue
             if bullets:
                 flush()
             paragraph.append(_inline(stripped))
