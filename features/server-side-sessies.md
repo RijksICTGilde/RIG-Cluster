@@ -28,17 +28,18 @@ SessionStore                          <- opi/services/session_store.py
         |  read: cache -> tabel -> cache vullen
         |  write: cache + tabel tegelijk (write-through)
         v    +--------------------------------------------+
-SessionCache (FIFO + TTL)             |  tabel `sessions`  |
+SessionCache (LRU + TTL)              |  tabel `sessions`  |
   opi/core/session_cache.py           |  (migratie 011)    |
   max SESSION_CACHE_MAX_ENTRIES       +--------------------+
   TTL SESSION_CACHE_TTL_SECONDS
 ```
 
 - **Elke request leest van de cache**; de database alleen bij een miss. De cache is een
-  FIFO met twee grenzen: maximaal `SESSION_CACHE_MAX_ENTRIES` (standaard 5000) items, en
+  LRU met twee grenzen: maximaal `SESSION_CACHE_MAX_ENTRIES` (standaard 5000) items, en
   een per-item TTL (`SESSION_CACHE_TTL_SECONDS`, standaard 60 seconden). Een verlopen item
-  komt nooit uit de cache; een volle cache zakt de oudste eruit. Na de TTL is de database
-  weer de bron, dus een tweede OPI-pod loopt nooit verder achter dan die minuut.
+  komt nooit uit de cache; een volle cache zakt de minst-recent-aangeraakte eruit. Na de
+  TTL is de database weer de bron, dus een tweede OPI-pod loopt nooit verder achter dan
+  die minuut.
 - **Writes zijn write-through**: een mutatie vult de cache én upsert de rij in dezelfde
   adem, zodat een volgende lezer de wijziging direct ziet, ook halverwege het request.
   De middleware wacht lopende schrijfacties af voordat het antwoord vertrekt.
@@ -83,7 +84,7 @@ betekent. Iedereen logt dus eenmalig opnieuw in; dual-read is er bewust niet.
 |---|---|
 | middleware + `request.session`-dict | `opi/middleware/server_side_session.py` |
 | store (cache + tabel, metingen, purge) | `opi/services/session_store.py` |
-| begrensde FIFO-cache met TTL | `opi/core/session_cache.py` |
+| begrensde LRU-cache met TTL | `opi/core/session_cache.py` |
 | ORM-model | `opi/services/persistence/sessions.py` |
 | migratie 011 | `opi/migrations/versions/011_add_sessions.py` |
 | guard op levensduur en intrekken | `opi/core/session_guard.py` (ongewijzigd) |

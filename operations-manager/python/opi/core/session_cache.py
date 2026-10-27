@@ -1,10 +1,10 @@
-"""De hot-cache voor server-side sessies: een begrensde FIFO met per-item TTL.
+"""De hot-cache voor server-side sessies: een begrensde LRU met per-item TTL.
 
 Elke request leest van hier; de database is alleen de bron bij een miss. Twee grenzen
-houden hem klein en vers: maximaal ``max_entries`` items (een volle cache zakt de oudste
-eruit, in volgorde van binnenkomst) en een vervaltijd per item (daarna telt hij als miss
+houden hem klein en vers: maximaal ``max_entries`` items (een volle cache zakt de
+minst-recent-aangeraakte eruit) en een vervaltijd per item (daarna telt hij als miss
 en dwingt een database-lezing af, dus een tweede OPI-pod loopt nooit verder achter dan
-die tijd). FIFO bewust geen LRU: een volgorderij is eenvoudiger en hier genoeg.
+die tijd).
 """
 
 from __future__ import annotations
@@ -38,11 +38,17 @@ class CacheStats:
 
 
 class SessionCache:
-    """Begrensde FIFO met per-item TTL, voor sessie-id's en hun data.
+    """Begrensde LRU met per-item TTL, voor sessie-id's en hun data.
 
-    ``get`` levert NOOIT een verlopen item en verplaatst niets: de volgorde is zuiver de
-    volgorde van binnenkomst. Kopieert in en uit, zodat een aanroeper de bewaarde data
-    niet mee muteert (een sessie-dict verandert plek in de store, niet in het cachebeeld).
+    ``get`` levert NOOIT een verlopen item en verplaatst de hit naar het einde van de
+    rij (meest recent); ``set`` doet hetzelfde. De evictie verliest daardoor wie het
+    langst onaangeraakt is. Kopieert in en uit, zodat een aanroeper de bewaarde data
+    niet mee muteert (een sessie-dict verandert plek in de store, niet in het
+    cachebeeld).
+
+    De evictie gaat alleen op recentheid, niet op verlopenheid: een verlopen item
+    houdt zijn plek tot de eerste lezing erna, ook als daarvoor een geldig maar koud
+    item wijkt. Dat is bewust, om een volle ``set`` geen zoektocht te laten doen.
     """
 
     def __init__(
@@ -70,15 +76,18 @@ class SessionCache:
             del self._entries[session_id]
             self._misses += 1
             return None
+        self._entries.move_to_end(session_id)
         self._hits += 1
         return deepcopy(entry.data)
 
     def set(self, session_id: str, data: dict[str, Any]) -> None:
-        """Sla de data op met een verse TTL; bij een volle cache gaat de oudste eruit."""
-        if session_id not in self._entries and len(self._entries) >= self._max_entries:
+        """Sla de data op met een verse TTL en een verse positie; bij een volle cache gaat de minst-recent-aangeraakte eruit."""
+        bestaand = session_id in self._entries
+        if not bestaand and len(self._entries) >= self._max_entries:
             self._entries.popitem(last=False)
             self._evictions += 1
         self._entries[session_id] = _Entry(data=deepcopy(data), expires_at=self._clock() + self._ttl)
+        self._entries.move_to_end(session_id)
 
     def delete(self, session_id: str) -> None:
         self._entries.pop(session_id, None)

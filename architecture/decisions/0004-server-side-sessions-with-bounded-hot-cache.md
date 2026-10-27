@@ -27,12 +27,12 @@ Session content moves server-side (RC-390):
 - `SessionStore` (`opi/services/session_store.py`) is read-through on reads (cache,
   then table, then fill the cache) and write-through on writes (`set` fills the cache
   and upserts the row, so a next reader sees a mutation immediately, even mid-request).
-- The hot cache (`opi/core/session_cache.py`) is a bounded FIFO: at most
+- The hot cache (`opi/core/session_cache.py`) is bounded: at most
   `SESSION_CACHE_MAX_ENTRIES` entries (default 5000) plus a per-item TTL
   (`SESSION_CACHE_TTL_SECONDS`, default 60 seconds). After the TTL the database is the
-  source again, so a second OPI pod never lags more than that minute. FIFO rather than
-  LRU on purpose: LRU serves repeated hot hits better, but an arrival-order queue is
-  simpler and sufficient here.
+  source again, so a second OPI pod never lags more than that minute. (The eviction
+  order recorded here as FIFO was amended to LRU by
+  [0005](0005-hot-cache-evicts-least-recently-used.md).)
 - `ServerSideSessionMiddleware` (`opi/middleware/server_side_session.py`) replaces
   Starlette's SessionMiddleware as a drop-in: `request.session` stays a dict, cookie
   attributes (`httponly`, `same_site=lax`, `Secure` outside DEBUG, `Max-Age`) are
