@@ -1,4 +1,4 @@
-"""De grenzen van de sessie-hot-cache (RC-390): FIFO-verdringing, TTL en kopie-semantiek."""
+"""De grenzen van de sessie-hot-cache (RC-390): LRU-verdringing, TTL en kopie-semantiek."""
 
 from __future__ import annotations
 
@@ -43,34 +43,55 @@ def test_an_expired_item_never_comes_from_the_cache() -> None:
     assert cache.take_stats().misses == 1
 
 
-def test_a_full_cache_evicts_the_oldest() -> None:
-    """FIFO: de volgorde van binnenkomst bepaalt wie weg moet, niet wie recent gelezen is."""
+def test_a_full_cache_evicts_the_least_recently_touched() -> None:
+    """LRU: wie net nog gelezen werd, blijft; de minst-recent-aangeraakte gaat eruit."""
     cache = SessionCache(max_entries=3, ttl_seconds=60)
     for sid in ("s1", "s2", "s3"):
         cache.set(sid, {"v": sid})
-    # s1 recent gelezen mag de FIFO-volgorde niet redden.
+    # s1 lezen maakt s2 tot de minst-recente onaangeraakte.
     assert cache.get("s1") is not None
 
     cache.set("s4", {"v": "s4"})
 
-    assert cache.get("s1") is None
-    assert cache.get("s2") is not None
+    assert cache.get("s1") is not None, "s1 is ververst door de lezing en blijft"
+    assert cache.get("s2") is None, "s2 was de minst-recente onaangeraakte"
     assert cache.take_stats().evictions == 1
 
 
-def test_a_rewritten_id_keeps_its_original_position() -> None:
-    """Puur FIFO: een set overschrijft de data maar ververst de positie niet."""
+def test_a_rewritten_id_refreshes_its_position() -> None:
+    """LRU geldt ook voor schrijven: een set van een bestaande sleutel ververst hem."""
     cache = SessionCache(max_entries=2, ttl_seconds=60)
     cache.set("s1", {"v": 1})
     cache.set("s2", {"v": 2})
     cache.set("s1", {"v": 9})
-    assert cache.get("s1") == {"v": 9}, "overschreven is overschreven"
 
     cache.set("s3", {"v": 3})
 
-    assert cache.get("s1") is None, "s1 was eerst binnen, ook al is hij later overschreven"
-    assert cache.get("s2") is not None
+    assert cache.get("s1") == {"v": 9}, "overschreven blijft overschreven, en de herschrijving telde als aanraking"
+    assert cache.get("s2") is None, "s2 is de minst-recente onaangeraakte"
     assert cache.get("s3") is not None
+
+
+def test_eviction_follows_recency_not_expiry() -> None:
+    """Een verlopen item houdt zijn plek tot de eerste lezing erna; een volle set wijkt
+    dan uit voor een geldig maar koud item (de class-docstring legt die keuze vast)."""
+    now, clock = _clock_fixture_bits()
+    cache = SessionCache(max_entries=2, ttl_seconds=60, clock=clock)  # type: ignore[arg-type]
+    cache.set("stale", {"v": 1})
+    now[0] += 1
+    cache.set("cold", {"v": 2})
+    now[0] += 58
+    assert cache.get("stale") is not None, "laatste geldige lezing: stale naar achteren, cold naar voren"
+
+    now[0] += 1.5  # stale is net verlopen (60s na zijn set), cold nog 0.5s geldig
+    cache.set("fresh", {"v": 3})
+
+    assert cache.take_stats().evictions == 1, "alleen de set van fresh evicteerde"
+    assert len(cache) == 2, "het verlopen item hield zijn plek bij de evictie"
+    assert cache.get("cold") is None, "het geldige koude item week, niet het verlopen"
+    assert cache.get("fresh") is not None
+    assert cache.get("stale") is None, "verlopen blijft een miss"
+    assert len(cache) == 1, "de eerste lezing na verloop ruimt de plek pas op"
 
 
 def test_returned_data_is_a_copy() -> None:

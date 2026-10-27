@@ -194,7 +194,7 @@ class Settings(BaseSettings):
     # session expires only after this many seconds of inactivity.
     SESSION_MAX_AGE_SECONDS: int = 28800  # 8 hours - one workday
 
-    # Hot-cache voor de server-side sessies (RC-390): een FIFO met max + per-item TTL.
+    # Hot-cache voor de server-side sessies (RC-390): een LRU met max + per-item TTL.
     # Na de TTL is de database weer de bron (een tweede pod loopt nooit verder achter).
     SESSION_CACHE_MAX_ENTRIES: int = 5000
     SESSION_CACHE_TTL_SECONDS: float = 60.0
