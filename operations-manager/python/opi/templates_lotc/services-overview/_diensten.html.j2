@@ -18,6 +18,11 @@
                             <p>
                                 API naam: <code>{{ service_info.service.value }}</code>
                             </p>
+                            {% if service_info.replaced_by %}
+                                <p><strong>Vervangen door {{ service_info.replaced_by }}.</strong>
+                                    Nieuwe projecten kiezen deze dienst niet meer; bestaande
+                                    projecten werken ermee zoals eerst.</p>
+                            {% endif %}
                         </div>
 
                         {# Environment Variables Section #}
