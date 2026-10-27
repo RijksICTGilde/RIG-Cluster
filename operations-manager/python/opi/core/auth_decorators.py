@@ -149,7 +149,9 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie, velde
             email = str((get_current_user(request) or {}).get("email", ""))
             if not has_fresh_step_up(request):
                 tekst = log_step_up_refusal(actie.handeling, project_name=project_name, actor=email, doelwit=doelwit)
-                return await _step_up_refusal(request, actie.handeling, tekst, velden=await _velden(request, velden))
+                return await _step_up_refusal(
+                    request, actie.handeling, tekst, velden=await _velden(request, velden), methode=request.method
+                )
 
             logger.info(
                 "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
@@ -175,18 +177,19 @@ async def _velden(request: Request, namen: tuple[str, ...]) -> dict[str, str]:
 
 
 async def _step_up_refusal(
-    request: Request, handeling: str, tekst: str, *, velden: dict[str, str] | None = None
+    request: Request, handeling: str, tekst: str, *, velden: dict[str, str] | None = None, methode: str = "POST"
 ) -> Any:
     """De dialoog voor een htmx-verzoek, dezelfde tekst als 403 voor al het andere.
 
     De dialoog komt uit de weblaag; die importeren op modulehoogte zou een kring maken,
-    want de weblaag leunt zelf op dit bestand.
+    want de weblaag leunt zelf op dit bestand. ``methode`` is die van dit verzoek, zodat
+    de herhaling na een geslaagde code dezelfde methode gebruikt.
     """
     from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
     if request.headers.get("HX-Request"):
         html = await render_step_up_dialog(
-            request, vervolg=request.url.path, handeling=handeling, vervolg_velden=velden
+            request, vervolg=request.url.path, handeling=handeling, vervolg_velden=velden, methode=methode
         )
         return step_up_dialog_response(html)
     raise HTTPException(status_code=403, detail=tekst)

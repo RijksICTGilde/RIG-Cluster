@@ -123,6 +123,11 @@ INVENTARIS: dict[str, Schrijver] = {
         "het projectbestand zoals een zelfbedieningsaanvraag het aanlevert",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
     ),
+    "opi/web/router_env_vars.py": Schrijver(
+        "user-env-vars op een component of deployment-override: het AGE-versleutelde blok "
+        "van de gebruiker, achter een verse step-up (RC-388)",
+        "test_het_env_vars_venster_schrijft_geldig",
+    ),
     "opi/services/api_token_service.py": Schrijver(
         "leden onder users: een service account toevoegen of verwijderen, een rol wijzigen, "
         "en per lid een token uitgeven of intrekken",

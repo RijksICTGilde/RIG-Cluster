@@ -37,6 +37,7 @@ def _request(*, verse_step_up: bool) -> Any:
     return SimpleNamespace(
         state=SimpleNamespace(user={"email": OWNER_EMAIL}),
         session=sessie,
+        method="POST",
         url=SimpleNamespace(path="/projects/demo/modal-wizard/modal-edit-identity/step/identity"),
         headers={},
     )

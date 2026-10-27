@@ -1,0 +1,51 @@
+{#
+  Het venster waarin de omgevingsvariabelen van een component te zien en te wijzigen zijn
+  (RC-388).
+
+  De enige plek in het portaal waar de waarden in de HTML komen: de route erachter vraagt
+  altijd een verse step-up, ook voor een deployment in ontwikkeling. De weergavepagina
+  toont alleen de namen en het aantal.
+
+  De textarea draagt data-cm-kv, zodat kv_editor_hook.js er dezelfde editor van maakt als
+  in de wizard. De header met X-CSRF-Token staat op de omhullende div, net als bij
+  bg/_step-up.html.j2: htmx erft hem van een voorouder.
+
+  Verwacht: project_name, component_name, deployment_name (leeg = componentniveau),
+  vars_text (de KEY=value-regels), post_url en optioneel fout.
+#}
+<div data-modal-fragment
+     data-modal-title="Omgevingsvariabelen - {{ component_name }}{{ ' in ' ~ deployment_name if deployment_name }}"
+     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
+    <c-stack gap="md">
+        {% if deployment_name %}
+            <c-paragraph size="sm">Overschrijvingen voor <strong>{{ component_name }}</strong> in deployment <strong>{{ deployment_name }}</strong>. De standaardwaarden staan bij het component.</c-paragraph>
+        {% else %}
+            <c-paragraph size="sm">Standaardvariabelen van <strong>{{ component_name }}</strong>; ze gelden voor alle deployments.</c-paragraph>
+        {% endif %}
+
+        {% if fout %}
+            <c-alert type="error" heading="{{ fout }}" />
+        {% endif %}
+
+        <form autocomplete="off" method="post" action="{{ post_url }}" novalidate
+              hx-post="{{ post_url }}"
+              hx-target="#edit-section-inner" hx-swap="innerHTML">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}" />
+            <c-stack gap="md">
+                {# De id is niet decoratief: zonder id bergt initKvEditors de editor op
+                   onder de lege sleutel en ruimt zijn eigen opruimronde hem meteen weer
+                   op (document.getElementById('') bestaat nooit). #}
+                <div class="kv-editor" id="kv-editor-env-vars" data-format="env">
+                    <span class="utrecht-form-label kv-editor__label">Omgevingsvariabelen</span>
+                    <textarea id="vars" name="vars" data-cm-kv="true" rows="8"
+                              placeholder="KEY=value">{{ vars_text | e }}</textarea>
+                </div>
+                <c-paragraph size="sm">Elke regel een KEY=value. Leeg opslaan haalt alle variabelen van deze scope weg. Na het opslaan wordt het project opnieuw verwerkt.</c-paragraph>
+                <c-action-group align="end">
+                    <c-button type="secondary" label="Annuleren" @click="closeEditModal()" />
+                    <c-button type="primary" label="Opslaan" html-type="submit" />
+                </c-action-group>
+            </c-stack>
+        </form>
+    </c-stack>
+</div>

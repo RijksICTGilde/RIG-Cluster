@@ -20,6 +20,7 @@ from opi.forms.visualizers.wizard_sections import (
     ATTACHMENTS_SECTION,
     AUTH_WALL_CONFIG_SECTION,
     BACKUP_SELECT_SECTION,
+    COMPONENTS_CREATE_SECTION,
     COMPONENTS_EDIT_SECTION,
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
@@ -141,9 +142,9 @@ CREATE_FLOW = FormFlow(
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
         ATTACHMENTS_SECTION,
-        COMPONENTS_SECTION,
-        # After COMPONENTS_SECTION so the waker-component select is populated from the
-        # components already entered into the draft project (empty earlier in the flow).
+        COMPONENTS_CREATE_SECTION,
+        # After COMPONENTS_CREATE_SECTION so the waker-component select is populated from
+        # the components already entered into the draft project (empty earlier in the flow).
         SLEEP_MODE_CONFIG_SECTION,
         # After COMPONENTS_SECTION too: the own-component select reads the draft components.
         CROSS_DOMAIN_CONFIG_SECTION,

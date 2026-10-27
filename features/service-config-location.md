@@ -70,17 +70,18 @@ projectsectie. Per dienst is de vraag inhoudelijk, niet mechanisch:
 | `health-check` | schema, poort, liveness/readiness-pad | Nee. Idem: dit hangt aan het beeld dat het component draait. |
 | `persistent-storage` | lijst volumes (naam, grootte, mountpad) | Nee. Een mountpad is per component. Wat projectbreed *wel* betekenis heeft is een opslagquotum, en dat is een platformgrens, geen dienstconfig; het bestaat vandaag niet en zou een eigen voorstel zijn. |
 | `temp-storage` | idem | Nee, om dezelfde reden. |
-| `user-env-vars` (systeem) | variabelen per component en per deployment-component | Nee. Projectbrede variabelen voor alle componenten zijn een aparte functiewens; RC-25 heeft bewust per component gekozen. Bereikbaar via het componentformulier en het env-vars-blok op de detailpagina. |
+| `user-env-vars` (systeem) | variabelen per component en per deployment-component | Nee. Projectbrede variabelen voor alle componenten zijn een aparte functiewens; RC-25 heeft bewust per component gekozen. Sinds RC-388 niet meer via het componentformulier of de detailpagina, maar via een eigen venster achter een verse step-up (zie [omgevingsvariabelen-achter-step-up.md](omgevingsvariabelen-achter-step-up.md)) en via de values-API. |
 | `aliases` (systeem) | koppeling platformvariabele -> eigen naam | Nee. Een alias bestaat alleen in de context van één component. |
 
 Uitkomst: geen van de zeven krijgt een projectsectie. Een lege of kunstmatige projectsectie
 is slechter dan een zin die zegt waar je moet zijn -- en die zin staat er nu.
 
 De twee systeemdiensten hebben geen kaart in de dienstenkiezer (`ServiceKind.SYSTEM`), dus
-voor hen speelt de terugkoppeling op de dienstenstap niet; hun config is en blijft
-bereikbaar in het componentformulier. Dat elke laag met config *ergens* bewerkbaar is, is
-een aparte, al bestaande garantie: `tests/test_service_config_layers.py`
-(zie `features/service-config-per-layer-editable.md`).
+voor hen speelt de terugkoppeling op de dienstenstap niet; hun config is bereikbaar in
+het componentformulier, met één uitzondering: `user-env-vars` staat er sinds RC-388 niet
+meer in, maar achter het step-up-venster (`form_exempt_layers` op de dienst). Dat elke
+laag met config *ergens* bewerkbaar is, is een aparte, al bestaande garantie:
+`tests/test_service_config_layers.py` (zie `features/service-config-per-layer-editable.md`).
 
 ## Bestanden
 

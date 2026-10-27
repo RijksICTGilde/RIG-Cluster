@@ -63,12 +63,17 @@ async def render_step_up_dialog(
     fout: str = "",
     vervolg_token: str | None = None,
     vervolg_velden: dict[str, str] | None = None,
+    methode: str = "POST",
 ) -> str:
     """De dialoog met het OTP-veld, of de uitleg dat er nog geen factor is.
 
     ``vervolg_token`` is het wizard-token dat de herhaling in de BODY moet meesturen,
     naast de query. ``vervolg_velden`` zijn de formuliervelden van de handeling zelf, die
     de dialoog verving. Zie :func:`render_step_up_repeat`.
+
+    ``methode`` is de methode van de handeling (GET of POST): de herhaling na een
+    geslaagde code moet dezelfde methode gebruiken, en een leesvenster is een GET
+    (RC-388).
     """
     email = str((get_current_user(request) or {}).get("email", "")).lower()
     status = await UserOtpService().status(email)
@@ -82,6 +87,7 @@ async def render_step_up_dialog(
             "geregistreerd": status.registered,
             "vervolg_token": vervolg_token or "",
             "vervolg_velden": json.dumps(vervolg_velden or {}, sort_keys=True),
+            "vervolg_methode": methode,
         },
     )
 
@@ -92,18 +98,20 @@ def render_step_up_repeat(
     vervolg: str,
     vervolg_token: str | None = None,
     vervolg_velden: dict[str, str] | None = None,
+    methode: str = "POST",
 ) -> str:
     """Het fragment dat de handeling alsnog uitvoert, nu de step-up er is.
 
     Een wizard-token gaat ook als body-waarde mee, net als de bevestigknop in
     ``bg/_modal-wizard-review.html.j2``: htmx laat een query string op een POST niet
     overal staan, en de ontvangende route leest het token uit beide. De velden van de
-    handeling zelf gaan langs dezelfde weg mee.
+    handeling zelf gaan langs dezelfde weg mee. ``methode`` is die van de oorspronkelijke
+    handeling: een leesvenster gaat met een GET opnieuw (RC-388).
     """
     return _fragment(
         request,
         "bg/_step-up-herhalen.html.j2",
-        {"vervolg": vervolg, "vals": _vals(vervolg_token, vervolg_velden)},
+        {"vervolg": vervolg, "vals": _vals(vervolg_token, vervolg_velden), "methode": methode},
     )
 
 

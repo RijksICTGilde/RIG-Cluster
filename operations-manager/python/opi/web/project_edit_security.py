@@ -99,13 +99,22 @@ def apply_form_data_to_project(
 ) -> dict[str, Any]:
     """Merge submitted form data into the stored project data. Returns a new dict.
 
-    Raises HTTPException 400 if the submission tries to set any
+    Raises HTTPException 400 if the submission tries to CHANGE any
     ``IMMUTABLE_PROJECT_FIELDS``. That is a structural-integrity violation:
-    no form should expose these fields, so receiving one means either a
+    no form may set these, so receiving a different value means either a
     form bug or a tampered submission. Fail loud rather than silently
     dropping the value.
+
+    Een veld dat GEMERGDE data meedraagt (de bewerkwizard levert ZIJN hele project -
+    de sessie is uit de opgeslagen stand gezaaid) is geen schending: gelijk aan wat er
+    al staat is "niet gewijzigd", en de wizard kan daardoor opslaan. Een WIJZIGING blijft
+    een weigering.
     """
-    offending = [field for field in IMMUTABLE_PROJECT_FIELDS if field in submitted_data]
+    offending = [
+        field
+        for field in IMMUTABLE_PROJECT_FIELDS
+        if field in submitted_data and submitted_data[field] != existing_data.get(field)
+    ]
     if offending:
         raise HTTPException(
             status_code=400,

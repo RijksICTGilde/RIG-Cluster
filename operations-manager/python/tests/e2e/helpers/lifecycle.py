@@ -15,13 +15,12 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from playwright.sync_api import expect
-from tests.e2e.conftest import E2E_SECRET_KEY, SANDBOX_TEST_USER, _sign_session
 from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers import wizard as wizard_helpers
+from tests.e2e.helpers.step_up import fresh_step_up_session
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -474,9 +473,7 @@ def projecttoken_met_retry(base_url: str, project_name: str, *, attempts: int = 
     # Met een verse step-up erin: uitgeven vraagt er een (RC-387), en deze weg heeft geen
     # browser om een code in te typen. De sessie zelf is hier al ondertekend met de
     # SECRET_KEY van het cluster, dus de stempel geeft geen bevoegdheid die er niet was.
-    sessie = _sign_session(
-        {"user": SANDBOX_TEST_USER, sandbox_api.STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()}, E2E_SECRET_KEY
-    )
+    sessie = fresh_step_up_session()
     last_error: Exception | None = None
     for _ in range(attempts):
         try:

@@ -3,7 +3,8 @@
 Sinds RC-377 vraagt ook elke wijzigende beheerroute er een, ongeacht de omgeving: een
 handeling van platformbeheer raakt het hele cluster. Sinds RC-387 geldt dat ook voor een
 token of een lidmaatschap: wie een bewijsmiddel krijgt of houdt kan blijvend bij een
-project, ook buiten productie.
+project, ook buiten productie. Sinds RC-388 geldt het voor de omgevingsvariabelen van een
+component: die kunnen geheimen bevatten en staan daarom niet meer op een pagina.
 
 Hier staat WANNEER een handeling er een vraagt en of er een verse is. Hoe het portaal
 erom vraagt staat in ``opi/web/router_step_up.py``; hoe een handeling hem oplegt in
@@ -73,6 +74,7 @@ class StepUpActie(StrEnum):
     ROL_WIJZIGEN = "rol-wijzigen"
     SERVICE_ACCOUNT_TOEVOEGEN = "service-account-toevoegen"
     SERVICE_ACCOUNT_VERWIJDEREN = "service-account-verwijderen"
+    ENV_VARS_BEHEREN = "env-vars-beheren"
 
     @property
     def handeling(self) -> str:
@@ -101,6 +103,7 @@ _HANDELING = {
     StepUpActie.ROL_WIJZIGEN: "de rol van dit lid te wijzigen",
     StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN: "een service account toe te voegen",
     StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN: "dit service account te verwijderen",
+    StepUpActie.ENV_VARS_BEHEREN: "de omgevingsvariabelen van dit component te zien en te wijzigen",
 }
 
 _REDEN = {
@@ -124,6 +127,9 @@ _REDEN = {
         "er komt een lid bij in project '{project}', en dat lid kan een token dragen"
     ),
     StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN: "'{doelwit}' en al zijn tokens gaan uit project '{project}'",
+    StepUpActie.ENV_VARS_BEHEREN: (
+        "de omgevingsvariabelen van '{doelwit}' in project '{project}' kunnen geheimen bevatten"
+    ),
 }
 
 

@@ -40,6 +40,8 @@ async def step_up(request: Request) -> HTMLResponse:
     handeling = sanitize_for_log(str(form.get("handeling", "deze handeling uit te voeren")))
     vervolg_token = str(form.get("vervolg_token", "")) or None
     vervolg_velden = lees_vervolg_velden(str(form.get("vervolg_velden", "")))
+    # Alleen GET en POST kent de herhaling; alles anders leest als de gewone POST.
+    vervolg_methode = "GET" if str(form.get("vervolg_methode", "")).upper() == "GET" else "POST"
     code = str(form.get("code", "")).strip()
     email = str((get_current_user(request) or {}).get("email", "")).lower()
 
@@ -60,6 +62,7 @@ async def step_up(request: Request) -> HTMLResponse:
                 fout=fout,
                 vervolg_token=vervolg_token,
                 vervolg_velden=vervolg_velden,
+                methode=vervolg_methode,
             )
         )
 
@@ -67,6 +70,10 @@ async def step_up(request: Request) -> HTMLResponse:
     logger.info("Step-up geslaagd voor %s, om %s", email, handeling)
     return HTMLResponse(
         content=render_step_up_repeat(
-            request, vervolg=vervolg, vervolg_token=vervolg_token, vervolg_velden=vervolg_velden
+            request,
+            vervolg=vervolg,
+            vervolg_token=vervolg_token,
+            vervolg_velden=vervolg_velden,
+            methode=vervolg_methode,
         )
     )

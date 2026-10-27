@@ -756,10 +756,10 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
 
     labels = [getattr(n, "legend", None) or getattr(n, "field_name", None) for n in _service_component_layouts()]
     assert labels == [
-        # The aliases / user-env-vars system services sort first (RC-25), where the
-        # hand-authored "Variabelen" fieldset used to sit.
+        # Aliassen sorteert vooraan (RC-25). De "Eigen omgevingsvariabelen"-fieldset van
+        # user-env-vars staat hier sinds RC-388 niet meer: dat veld hoort niet in een
+        # algemeen formulier maar achter een verse step-up (form_exempt_layers).
         "Aliassen",
-        "Eigen omgevingsvariabelen",
         # image-registries staat hier NIET meer tussen: die knoop noemt een slot en landt
         # daarmee bij het image-veld in plaats van onderaan (RC-187).
         "services{persistent-storage}/config",

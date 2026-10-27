@@ -56,10 +56,78 @@ async def test_geldige_code_zet_de_step_up_en_herhaalt_de_handeling(caplog: pyte
         vervolg="/projects/demo/modal-wizard/modal-edit-identity/confirm",
         vervolg_token="wt-123",
         vervolg_velden={},
+        methode="POST",
     )
     assert response.body == b"<herhaal/>"
     meldingen = [record.getMessage() for record in caplog.records]
     assert any("Step-up geslaagd voor" in m and EMAIL in m for m in meldingen)
+
+
+@pytest.mark.asyncio
+async def test_de_herhaling_neemt_de_methode_van_de_handeling_over() -> None:
+    """Een handeling die een GET is (het env-varsvenster, RC-388) herhaalt als GET."""
+    request = _request(
+        {
+            "vervolg": "/projects/demo/componenten/web/env-vars",
+            "handeling": "de omgevingsvariabelen te zien en te wijzigen",
+            "code": "123456",
+            "vervolg_methode": "GET",
+        }
+    )
+    service = _service(verify=OtpVerification.OK)
+
+    with (
+        patch("opi.web.router_step_up.UserOtpService", return_value=service),
+        patch("opi.web.router_step_up.render_step_up_repeat", return_value="<herhaal/>") as herhaal,
+    ):
+        await step_up(request)
+
+    assert herhaal.call_args.kwargs["methode"] == "GET"
+
+
+@pytest.mark.asyncio
+async def test_een_onbekende_methode_valt_terug_op_post() -> None:
+    request = _request(
+        {
+            "vervolg": "/projects/demo/componenten/web/env-vars",
+            "handeling": "iets",
+            "code": "123456",
+            "vervolg_methode": "DELETE",
+        }
+    )
+    service = _service(verify=OtpVerification.OK)
+
+    with (
+        patch("opi.web.router_step_up.UserOtpService", return_value=service),
+        patch("opi.web.router_step_up.render_step_up_repeat", return_value="<herhaal/>") as herhaal,
+    ):
+        await step_up(request)
+
+    assert herhaal.call_args.kwargs["methode"] == "POST"
+
+
+@pytest.mark.asyncio
+async def test_foute_code_behoudt_de_methode_voor_de_herhaling() -> None:
+    """Een foute code op een GET-handeling (RC-388) rendert de dialoog opnieuw mét GET:
+    anders postte de volgende poging naar een route die alleen GET kent."""
+    request = _request(
+        {
+            "vervolg": "/projects/demo/componenten/web/env-vars",
+            "handeling": "de omgevingsvariabelen te zien en te wijzigen",
+            "code": "000000",
+            "vervolg_methode": "GET",
+        }
+    )
+    service = _service(verify=OtpVerification.INVALID)
+
+    with (
+        patch("opi.web.router_step_up.UserOtpService", return_value=service),
+        patch("opi.web.router_step_up.render_step_up_dialog", new=AsyncMock(return_value="<dialoog/>")) as dialoog,
+    ):
+        await step_up(request)
+
+    assert STEP_UP_SESSION_KEY not in request.session
+    assert dialoog.call_args.kwargs["methode"] == "GET"
 
 
 @pytest.mark.asyncio

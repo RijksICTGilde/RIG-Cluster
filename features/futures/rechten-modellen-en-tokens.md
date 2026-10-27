@@ -253,7 +253,7 @@ De rij `agent` staat er met opzet in terwijl hij niet bestaat: het is de enige p
 | `component.create` | component toevoegen | `POST /api/v2/projects/{p}/components` |
 | `service.add` | dienst aan een project toevoegen | `POST /api/v2/projects/{p}/services` |
 | `backup.restore` | back-up terugzetten | `POST /api/v1/restore/project/{p}` |
-| `secret.read` | projectsleutel of omgevingsvariabelen lezen | detailpagina, `opi/web/router.py:1010` |
+| `secret.read` | projectsleutel of omgevingsvariabelen lezen | projectsleutel via de detailpagina (`opi/web/router.py:1010`); omgevingsvariabelen sinds RC-388 via het step-up-venster (`opi/web/router_env_vars.py`) |
 | `member.update` | ledenlijst wijzigen | bewerkvenster, `opi/web/router_detail_edit.py:743` |
 | `platform.reconcile` | reconciliatie starten | `POST /api/v2/admin/reconciliation/trigger` |
 

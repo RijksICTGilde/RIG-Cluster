@@ -7,8 +7,9 @@
 
   Verwacht: vervolg (de handeling die hierna alsnog moet draaien), handeling (hoe hij
   heet), geregistreerd (of deze gebruiker een bevestigde factor heeft). Optioneel: fout,
-  vervolg_token (het wizard-token dat de herhaling in de body meestuurt) en vervolg_velden
-  (de velden van het formulier dat deze dialoog verving, als JSON).
+  vervolg_token (het wizard-token dat de herhaling in de body meestuurt), vervolg_velden
+  (de velden van het formulier dat deze dialoog verving, als JSON) en vervolg_methode
+  (GET of POST; de herhaling gebruikt dezelfde methode als de handeling).
 #}
 <div data-step-up
      hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
@@ -34,6 +35,7 @@
                 <input type="hidden" name="handeling" value="{{ handeling }}" />
                 <input type="hidden" name="vervolg_token" value="{{ vervolg_token }}" />
                 <input type="hidden" name="vervolg_velden" value="{{ vervolg_velden }}" />
+                <input type="hidden" name="vervolg_methode" value="{{ vervolg_methode }}" />
                 <c-stack gap="md">
                     <c-text-input-field
                         id="step_up_code"

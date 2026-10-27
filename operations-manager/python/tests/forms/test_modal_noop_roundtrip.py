@@ -94,6 +94,9 @@ def _project() -> dict[str, Any]:
                 "path": [{"match": "/"}],
                 "ports": {"inbound": [8080]},
                 "image": "ghcr.io/x/web:latest",
+                # Het versleutelde blok is van de gebruiker (RC-388): geen modalflow bezit
+                # het veld meer, dus elke no-op hieronder bewijst dat hij exact meekomt.
+                "user-env-vars": "-----BEGIN AGE ENCRYPTED FILE-----\nZW52LXZhcnM=\n-----END AGE ENCRYPTED FILE-----\n",
                 "resources": {
                     "requests": {"memory": "64Mi", "cpu": "50m"},
                     "limits": {"memory": "256Mi", "cpu": "1"},
@@ -118,7 +121,13 @@ def _project() -> dict[str, Any]:
                 "name": "productie",
                 "cluster": "sandboxed-local",
                 "namespace": "sweep",
-                "components": [{"reference": "web", "image": "ghcr.io/x/web:v1"}],
+                "components": [
+                    {
+                        "reference": "web",
+                        "image": "ghcr.io/x/web:v1",
+                        "user-env-vars": "-----BEGIN AGE ENCRYPTED FILE-----\nb3ZlcnJpZGU=\n-----END AGE ENCRYPTED FILE-----\n",
+                    }
+                ],
                 "services": [
                     {
                         "reference": "publish-on-web",

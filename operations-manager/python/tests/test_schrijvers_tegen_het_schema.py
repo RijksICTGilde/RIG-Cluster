@@ -546,6 +546,61 @@ def test_de_migratie_van_een_oud_bestand_levert_iets_geldigs_op() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Omgevingsvariabelen: wat het step-up-venster (RC-388) wegschrijft
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("met_deployment", [False, True], ids=["component", "deployment-override"])
+async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> None:
+    """De route uit RC-388 is een schrijver naar het projectbestand.
+
+    De echte route, niet een handgeschreven blok: de converter versleutelt daar met de
+    projectsleutel uit het bestand, en juist die blokstring met zijn patroonregel is wat
+    het schema kent. Zowel de component- als de deployment-override-houder wordt gemeten,
+    want dat zijn twee definities in het schema.
+    """
+    from types import SimpleNamespace
+
+    from opi.core.step_up import STEP_UP_SESSION_KEY
+    from opi.web.router_env_vars import save_env_vars
+
+    project = _basis_project()
+    verzoek = SimpleNamespace(
+        state=SimpleNamespace(user={"email": "admin@rijksoverheid.nl"}, csrf_token="csrf"),
+        session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
+        url=SimpleNamespace(path="/projects/schrijvers/componenten/api/env-vars"),
+        method="POST",
+        headers={"HX-Request": "true"},
+        form=AsyncMock(return_value={"vars": "API_TOKEN=bewijsbaar\nTWEEDE=twee"}),
+    )
+    manager = SimpleNamespace(
+        get_contents=AsyncMock(return_value=project),
+        save_and_commit_project=AsyncMock(),
+        close=AsyncMock(),
+    )
+    with (
+        patch.multiple(
+            "opi.web.project_edit_security",
+            get_project_store=lambda: SimpleNamespace(get=lambda _name: SimpleNamespace(data=project)),
+            is_user_authorized_for_project=lambda _p, _e: True,
+            get_user_role_for_project=lambda _p, _e: "admin",
+        ),
+        patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
+        patch("opi.web.router_env_vars.create_task_and_render_progress", AsyncMock()),
+    ):
+        await save_env_vars(verzoek, "schrijvers", "api", "productie" if met_deployment else None)
+
+    aangeboden = _aangeboden(manager.save_and_commit_project)
+    if met_deployment:
+        blok = aangeboden["deployments"][0]["components"][0]["user-env-vars"]
+    else:
+        blok = aangeboden["components"][0]["user-env-vars"]
+    assert "BEGIN AGE ENCRYPTED FILE" in blok, "zonder echt AGE-blok raakt deze test de patroonregel niet"
+    poorten(aangeboden)
+
+
+# ---------------------------------------------------------------------------
 # Mailaccounts: wat de mailmanager onder de dienst send-email wegschrijft
 # ---------------------------------------------------------------------------
 

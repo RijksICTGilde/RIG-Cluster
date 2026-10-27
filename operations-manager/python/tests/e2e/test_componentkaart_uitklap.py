@@ -83,10 +83,11 @@ def test_een_klik_klapt_open_en_weer_dicht(app_server: str, auth_page: Page) -> 
 
 
 def test_een_klik_in_de_inhoud_klapt_niet_dicht(app_server: str, auth_page: Page) -> None:
-    """In het uitgeklapte deel staan invoervelden; die moeten bruikbaar blijven.
+    """In het uitgeklapte deel staat geen invoer meer, maar de bediening van de rij zelf
+    mag de stand niet omzetten: het potloodje (RC-388) draagt zijn eigen klik.
 
-    Zonder deze uitzondering klapt het blok dicht onder de vingers van wie op het oogje of
-    de kopieerknop van een geheim veld drukt.
+    Voor RC-388 stonden hier geheimvelden met een oogje; sindsdien toont de rij alleen
+    namen en opent het potloodje het step-up-venster voor de waarden.
     """
     auth_page.goto(f"{app_server}{COMPONENTEN_URL}")
     auth_page.wait_for_load_state("networkidle")
@@ -99,9 +100,8 @@ def test_een_klik_in_de_inhoud_klapt_niet_dicht(app_server: str, auth_page: Page
     _kop_van(env_rij).click()
     inhoud.wait_for(state="visible", timeout=5000)
 
-    # Het oogje van het geheime veld: precies de knop waarop iemand drukt en waarna het
-    # blok onder zijn vingers niet mag dichtklappen.
-    inhoud.locator("lotc-secret-field button").first.click()
+    # Een klik op een naamrij: er staat geen bediening meer in, dus de rij reageert niet.
+    inhoud.click()
     auth_page.wait_for_timeout(200)
     assert inhoud.is_visible() is True
 

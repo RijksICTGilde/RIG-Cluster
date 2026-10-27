@@ -22,10 +22,14 @@ Dat zijn twee verschillende dingen, en de modal die je krijgt hangt af van waar 
 | | de componentdefinitie | het component in een deployment |
 |---|---|---|
 | in het projectbestand | `components[]` | `deployments[].components[]` |
-| wat er staat | naam, type, poorten, resources, paden, diensten, env-vars | het container image, en wat per deployment anders is (certificaat, bijlage) |
+| wat er staat | naam, type, poorten, resources, paden, diensten | het container image, en wat per deployment anders is (certificaat, bijlage) |
 | de lijstmodal | `modal-edit-components` | `modal-edit-deployment-{index}` |
 | de selectiesleutel | `name` | `reference` |
 | waar je erop klikt | tabblad Componenten | tabblad Deployments, onder een deployment |
+
+De env-vars stonden ook in deze modals; sinds RC-388 zitten ze daar niet meer, maar in
+een eigen venster achter een verse step-up (zie
+[omgevingsvariabelen-achter-step-up.md](omgevingsvariabelen-achter-step-up.md)).
 
 Op het tabblad Deployments opent een klik op een component die deployment met alleen dat
 component erin. Op het tabblad Componenten opent "Bewerken" op een componentkaart het

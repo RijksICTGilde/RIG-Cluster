@@ -81,6 +81,12 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
 - `sandbox_api.py` - `read_api_key` (scrapes the per-project key from the details page),
   `add_component` (calls the v2 endpoint + polls the task, surfacing real failures),
   `delete_project_via_api` (force teardown / cleanup safety net).
+- `step_up.py` - `fresh_step_up_session()` en `context_with_fresh_step_up(browser, sandbox_url)`:
+  een ondertekende sessie of eigen browsercontext met een VERSE step-up-stempel, voor
+  handelingen die er een vragen (een token uitgeven, het omgevingsvariabelen-venster). De
+  gedeelde sandbox-context draagt die stempel niet, dus zonder deze helper strandt zo'n
+  handeling in de OTP-dialoog. Maak de context vlak voor de handeling aan: de stempel
+  veroudert na vijf minuten.
 - `weesprojecten.py` - haalt een achtergebleven testproject weg zonder browser, over de
   webroute. Ook als `task sandbox:verwijder-weesproject NAAM=...`; zie "Een aanmaak die
   halverwege omvalt" hieronder.

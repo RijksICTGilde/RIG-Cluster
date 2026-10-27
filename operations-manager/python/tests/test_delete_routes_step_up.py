@@ -39,6 +39,7 @@ def _request(*, verse_step_up: bool) -> SimpleNamespace:
         state=SimpleNamespace(user={"email": OWNER}),
         session=session,
         headers={},
+        method="POST",
         url=SimpleNamespace(path="/projects/delete/demo"),
     )
 

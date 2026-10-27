@@ -45,7 +45,7 @@ Zonder `E2E_BASE_URL` skipt alles automatisch (de `sandbox_url`-fixture).
 | `test_concurrent_component_adds_on_same_file` | `alpha` en `beta` worden tegelijk toegevoegd | beide aanwezig, `web` niet gesneuveld, alle drie in de deployment, env-vars AGE-versleuteld |
 | `test_concurrent_patches_on_same_file` | drie patches, elk op een ander component | drie verschillende geheugenlimieten staan er tegelijk in |
 | `test_ui_edits_while_api_task_runs_on_same_file` | API voegt `gamma` toe terwijl de browser beschrijving én teamlid wijzigt | alle drie de wijzigingen, plus eerdere rondes nog intact |
-| `test_ui_env_vars_while_api_patches_same_file` | UI zet env-vars op `web` terwijl de API het image wijzigt | versleutelde env-vars én het nieuwe image; plaintext lekt niet; waarde weer leesbaar in de UI |
+| `test_ui_env_vars_while_api_patches_same_file` | UI zet env-vars op `web` via het step-up-venster terwijl de API het image wijzigt | versleutelde env-vars én het nieuwe image; plaintext lekt niet; de naam staat op het componententabblad |
 | `test_ui_removal_while_api_patches_same_file` | UI verwijdert `beta` terwijl een API-patch `alpha` herschrijft | `beta` weg uit componenten én deployment, patch op `alpha` overleefde |
 | `test_add_deployment_rolls_out_whole_project` | een tweede deployment erbij (rolt het hele project opnieuw uit) | beide deployments aanwezig, elk met hun componenten |
 | `test_final_state_of_all_projects` | geen mutatie, alleen controle | de volledige eindtoestand van alle vijf files |

@@ -159,6 +159,11 @@ Dit is een besluit vermomd als bug (zie 5.6). Wat er ook uitkomt: het antwoord h
 
 **Let op:** als de uitkomst is dat alleen `admin`/`owner` ze mag zien, is dat een *versmalling* die vandaag werkende werkwijzen kan breken, een developer die zijn eigen applicatieconfiguratie opzoekt, kan dat dan niet meer. Dat is een gedragsverandering die aangekondigd hoort te worden, niet stilletjes doorgevoerd.
 
+**Uitgevoerd (RC-388):** de handler ontsleutelt niet meer voor de weergave; de pagina krijgt
+alleen de gesorteerde namen en een teller. Waarden bekijken en wijzigen gaan via een eigen
+venster achter een verse step-up. Zie
+[omgevingsvariabelen-achter-step-up.md](../omgevingsvariabelen-achter-step-up.md).
+
 ## 5. Besluiten die een mens moet nemen
 
 ### 5.1 Welke rollen blijven er
@@ -210,6 +215,12 @@ Dit is een besluit vermomd als bug (zie 5.6). Wat er ook uitkomt: het antwoord h
 - **C.** Elk lid, maar met een vermelding in het logboek dat ze zijn opgevraagd.
 
 **Aanbeveling: C.** A is de huidige praktijk en breekt niets; B is consistent maar versmalt zichtbaar wat mensen vandaag doen. C houdt de werkwijze intact en maakt tegelijk waar wat de andere twee niet doen: dat je achteraf kunt zien wie erbij is geweest. Dit besluit hangt aan RC-149 en hoort daar afgestemd te worden.
+
+**BESLOTEN: B, aangescherpt** (RC-388). De detailpagina toont de waarden helemaal niet
+meer, alleen de namen; bekijken én wijzigen vragen `admin`/`owner` plus een verse
+step-up, ongeacht de OTAP-markering. De stap per leesbeurt van C zit ook in deze vorm:
+elke step-up is een vastgelegde gebeurtenis. Zie
+[omgevingsvariabelen-achter-step-up.md](../omgevingsvariabelen-achter-step-up.md).
 
 ### 5.7 Waar komt "platformbeheerder" vandaan
 

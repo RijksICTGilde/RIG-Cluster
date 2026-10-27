@@ -309,13 +309,28 @@ async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectServic
 
 
 def test_apply_form_data_raises_on_immutable_field() -> None:
-    """Submitted data containing an immutable field is rejected loudly."""
+    """Submitted data containing a CHANGED immutable field is rejected loudly."""
     existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
     for field in IMMUTABLE_PROJECT_FIELDS:
         with pytest.raises(HTTPException) as exc:
             apply_form_data_to_project(existing, {field: "anything", "display-name": "X"})
         assert exc.value.status_code == 400
         assert field in exc.value.detail
+
+
+def test_apply_form_data_allows_an_unchanged_immutable_field() -> None:
+    """Merged wizard data always carries the stored immutable fields; that is not a write.
+
+    De bewerkwizard zaaide zijn sessie uit het projectbestand, dus ``clusters`` zit er
+    altijd exact zo in als opgeslagen. De poort weigert een WIJZIGING, niet een herhaling
+    van de stand - anders kan de wizard helemaal niet meer opslaan (gemeten op de
+    sandbox: elke no-op save eindigde in een 400, RC-388).
+    """
+    existing = {"name": "real-name", "clusters": ["odcn"], "display-name": "Real"}
+    merged = apply_form_data_to_project(existing, {"name": "real-name", "clusters": ["odcn"], "display-name": "Nieuw"})
+    assert merged["display-name"] == "Nieuw"
+    assert merged["name"] == "real-name"
+    assert merged["clusters"] == ["odcn"]
 
 
 def test_apply_form_data_passes_non_immutable_fields_through() -> None:

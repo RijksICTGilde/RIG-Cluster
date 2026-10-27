@@ -16,13 +16,16 @@ plain ``user-env-vars`` property of a component, not a block inside a ``services
 ``owned_property`` declares that, so the generic config validation walks it. Nothing in
 any project file moves.
 
-Together with ``aliases`` this is the first system service with a user interface --
-``resource-tuning`` proved the headless half of ``ServiceKind.SYSTEM``.
+Sinds RC-388 heeft de "declared form section" hierboven een uitzondering: de waarden
+kunnen geheimen bevatten en horen niet in een algemeen formulier of op een
+weergavepagina. De enige plek waar het portaal ze toont en schrijft is een eigen venster
+achter een verse step-up (``opi/web/router_env_vars.py``); de lagen staan daarom in
+``form_exempt_layers``. De API-lezing blijft de waarden masken (``owned_value_is_secret``).
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import ClassVar
 
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
@@ -56,12 +59,21 @@ class UserEnvVarsService(Service):
     # One AGE block for the whole set: the plaintext is the KEY=value text the form
     # posts and the deploy path parses, so it can only be encrypted as a whole.
     owned_values_map = True
-    # Never a way to read one of these values back. The service inherits the default
-    # ``owned_value_is_secret`` (see there for why that is a decision and not a gap):
-    # these values can hold secrets, they are settable and changeable through the API,
-    # and they leave it again only in the workload's environment.
-    # Sits at the top of the per-component service fieldsets, where the hand-authored
-    # "Variabelen" fieldset used to be, so the form order is unchanged.
+
+    form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {
+        ConfigLayer.COMPONENT: (
+            "De waarden kunnen geheimen bevatten en horen niet in een algemeen bewerk"
+            "formulier; het eigen venster achter een verse step-up (RC-388) is de enige "
+            "bewerkweg. Alleen de aanmaakwizard kent het veld: schrijven zonder dat er "
+            "een waarde was om te lezen."
+        ),
+        ConfigLayer.DEPLOYMENT_COMPONENT: (
+            "Dezelfde reden als op de componentlaag: alleen het step-up-venster (RC-388) "
+            "leest en schrijft deze overschrijvingen."
+        ),
+    }
+    # Sortering onder de componentdiensten; deze dienst levert geen formuliervelden meer
+    # (zie form_exempt_layers), dus de plek doet er nu alleen nog voor de registratie toe.
     config_component_order = 6
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
@@ -80,37 +92,3 @@ class UserEnvVarsService(Service):
         if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
             return [DEPLOYMENT_COMP_USER_ENV_VARS_EDITABLE]
         return []
-
-    def config_component_visualizers(self):
-        from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VARS
-
-        return [COMPONENT_USER_ENV_VARS]
-
-    def config_component_layout(self) -> list[Any]:
-        from opi.forms.layout import Fieldset
-
-        # No depends_on/show_when: a system service is always on, so its fieldset is
-        # unconditional. That is the visible difference with a user service's fieldset.
-        return [
-            Fieldset(
-                legend="Eigen omgevingsvariabelen",
-                description="Omgevingsvariabelen voor dit component. Worden versleuteld opgeslagen.",
-                children=["user-env-vars"],
-            )
-        ]
-
-    def config_deployment_component_visualizers(self):
-        from opi.services.catalog.user_env_vars.visualizers import DEPLOYMENT_COMP_USER_ENV_VARS
-
-        return [DEPLOYMENT_COMP_USER_ENV_VARS]
-
-    def config_deployment_component_layout(self) -> list[Any]:
-        from opi.forms.layout import Fieldset
-
-        return [
-            Fieldset(
-                legend="Omgevingsvariabelen",
-                description="Deployment-specifieke omgevingsvariabelen voor dit component.",
-                children=["user-env-vars"],
-            )
-        ]

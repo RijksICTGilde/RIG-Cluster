@@ -7,6 +7,15 @@ the deployment-component env-vars fieldset now comes from a registry hook
 objects are wired together; only a browser proves the fields still render, save, and end
 up encrypted in the project file.
 
+RC-388 veranderde de weg voor env-vars: het veld staat niet meer in de bewerkwizard of de
+componentmodals (het kan een geheim bevatten, dus hoort het niet in een algemeen
+formulier), maar in een eigen venster achter een verse step-up
+(``opi/web/router_env_vars.py``). Alleen de aanmaakwizard vraagt de initiële set: er is
+dan nog geen opgeslagen waarde om te lezen. Deze suite meet die weg: de browsercontext
+draagt een sessie MET een verse step-up-stempel (dezelfde vorm als ``geef_projecttoken``),
+want de sandbox-admin registreert geen OTP; de OTP-dialoog zelf dekt
+``tests/e2e/test_env_vars_venster.py`` lokaal.
+
 ``test_sandbox_reallife.py`` already covers component-level env-vars, so what is new here
 is the coverage that was missing: **aliases** (never covered E2E) and the
 **deployment-component** env-vars override (the layer whose hook is new).
@@ -27,10 +36,11 @@ from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, naam_en_sleutel_na_de_wizard
+from tests.e2e.helpers.step_up import context_with_fresh_step_up
 from tests.e2e.helpers.wizard import WizardHelper, veldbesturing
 
 if TYPE_CHECKING:
-    from playwright.sync_api import BrowserContext, Page
+    from playwright.sync_api import Browser, BrowserContext, Page
     from tests.e2e.helpers.forgejo import ForgejoClient
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
@@ -43,9 +53,10 @@ _AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----"
 def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) -> tuple[str, str]:
     """Create a minimal one-component project; return (project_name, api_key).
 
-    Also asserts the two system-service fieldsets are present on the component step --
-    they are contributed by the registry now, and a system service that failed to
-    contribute would simply render nothing, which is the silent failure worth catching.
+    Asserts the aliases fieldset is present on the component step and the env-vars field
+    is NOT: the aliases system service still contributes its field to the generic form,
+    and user-env-vars deliberately does not anymore (RC-388); both are silent-failure
+    shapes worth catching.
     """
     wizard = WizardHelper(page, sandbox_url)
     wizard.open_create_wizard()
@@ -64,13 +75,14 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
             wizard.fill_team(email=_USER_EMAIL)
         if page.locator("[name='components[0]/name']").count() > 0:
             wizard.fill_component(name="web", image=RUNNABLE_IMAGE)
-            # Both system services must have contributed their field to this step.
             assert page.locator("[name='components[0]/aliases']").count() > 0, (
                 "the aliases field is not on the component step -- the aliases system "
                 "service did not contribute its fieldset"
             )
+            # Bij het AANMAKEN staat het veld er wel: er is nog geen opgeslagen waarde om
+            # te lezen, dus geen step-up. Pas daarna schrijft alleen het venster (RC-388).
             assert page.locator("[name='components[0]/user-env-vars']").count() > 0, (
-                "the user-env-vars field is not on the component step"
+                "het initiële user-env-vars-veld mist op de aanmaakstap; alleen aanmaken mag zonder step-up"
             )
             saw_fields = True
         wizard.click_next()
@@ -131,14 +143,30 @@ def _wait_for(check, timeout_s: float = 120):
     return value
 
 
-def _save_component_env_vars(
-    page: Page, sandbox_url: str, forgejo: ForgejoClient, project_name: str, text: str
-) -> str | None:
-    """Write component-level user-env-vars through the modal; return what was stored."""
-    modal = _open_components_modal(page, sandbox_url, project_name)
-    modal.fill_codemirror_kv("components[0]/user-env-vars", text)
-    modal.submit_step_expect_progress()
-    return _wait_for(lambda: (_component(forgejo, project_name, "web") or {}).get("user-env-vars"))
+def _open_window_and_fill(page: Page, sandbox_url: str, project_name: str, tekst: str) -> None:
+    """Open het step-up-venster van component `web` en sla de tekst op.
+
+    De browsercontext draagt een verse step-up-stempel (zie context_with_fresh_step_up),
+    dus de dialoog komt niet ertussen; die is lokale e2e-werk in test_env_vars_venster.py.
+    """
+    from tests.e2e.helpers.tabs import open_tab
+
+    page.goto(f"{sandbox_url}/projects/{project_name}/componenten")
+    page.wait_for_load_state("networkidle")
+    open_tab(page, "componenten")
+    pencil = page.locator(
+        "nldd-list-item-segment[accessible-label^='Omgevingsvariabelen van web'], "
+        "nldd-button:has-text('Omgevingsvariabelen')"
+    ).first
+    pencil.wait_for(state="visible")
+    pencil.click()
+    editor = page.locator("#edit-section-inner .kv-editor .cm-content")
+    editor.wait_for(state="visible")
+    editor.click()
+    page.keyboard.press("ControlOrMeta+a")
+    if tekst:
+        page.keyboard.type(tekst)
+    page.locator("#edit-section-inner button:has-text('Opslaan')").first.click()
 
 
 def test_component_aliases_save_through_the_ui(
@@ -163,10 +191,11 @@ def test_component_aliases_save_through_the_ui(
     # de redactie van de wizardsessie de plaatshouder terug in het veld en weigerde de
     # validator elke volgende opslag met "Alias(sen) zonder verwijzing" - de modal was
     # daarna niet meer op te slaan, ook niet voor een gewone gebruiker.
-    again = _save_component_env_vars(sandbox_page, sandbox_url, forgejo, envali_project, "NA_ALIAS=rc88-tweede-opslag")
+    modal = _open_components_modal(sandbox_page, sandbox_url, envali_project)
+    modal.fill_codemirror_kv("components[0]/aliases", "POSTGRES_HOST=$DATABASE_SERVER_HOST\nTWEEDE=$PUBLIC_HOST")
+    modal.submit_step_expect_progress()
     capture(sandbox_page, "aliases-second-save")
-    assert again, "de tweede opslag van de componenten-modal kwam nooit in het projectbestand"
-    kept = (_component(forgejo, envali_project, "web") or {}).get("aliases")
+    kept = _wait_for(lambda: (_component(forgejo, envali_project, "web") or {}).get("aliases"))
     assert kept, "de alias overleefde de tweede opslag niet"
     assert _AGE_ARMOR in str(kept), f"de alias staat niet meer versleuteld opgeslagen: {kept}"
 
@@ -182,53 +211,68 @@ def test_component_aliases_save_through_the_ui(
     assert _AGE_ARMOR not in getoond, "er staat een AGE-blok in het aliasveld"
 
 
-def test_component_env_vars_save_encrypted_through_the_ui(
-    envali_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient, capture
+def test_component_env_vars_through_the_step_up_window(
+    envali_project: str, sandbox_url: str, browser: Browser, forgejo: ForgejoClient, capture
 ) -> None:
-    """Env-vars on the component: the field must still save AND be AGE-encrypted."""
-    modal = _open_components_modal(sandbox_page, sandbox_url, envali_project)
-    modal.fill_codemirror_kv("components[0]/user-env-vars", "E2E_TOKEN=rc25-secret-value")
-    capture(sandbox_page, "component-env-vars-filled")
-    modal.submit_step_expect_progress()
+    """Env-vars op het component: alleen het step-up-venster schrijft ze nog (RC-388)."""
+    context = context_with_fresh_step_up(browser, sandbox_url)
+    page = context.new_page()
+    try:
+        _open_window_and_fill(page, sandbox_url, envali_project, "E2E_TOKEN=rc388-secret-value")
+        capture(page, "component-env-vars-venster")
+    finally:
+        page.close()
+        context.close()
 
     stored = _wait_for(lambda: (_component(forgejo, envali_project, "web") or {}).get("user-env-vars"))
     assert stored, "the env var never reached the project file"
     assert _AGE_ARMOR in str(stored), f"user-env-vars is not AGE-encrypted: {str(stored)[:60]}"
-    assert "rc25-secret-value" not in str(stored), "the plaintext value is in the project file"
+    assert "rc388-secret-value" not in str(stored), "the plaintext value is in the project file"
 
 
-def test_deployment_component_env_vars_override_saves(
-    envali_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient, capture
+def test_deployment_component_env_vars_override_through_the_step_up_window(
+    envali_project: str, sandbox_url: str, browser: Browser, sandbox_page: Page, forgejo: ForgejoClient, capture
 ) -> None:
-    """The deployment-component override: the layer whose form hook is new in RC-25.
+    """De deployment-overschrijving loopt via dezelfde beveiligde weg (RC-388).
 
-    Before RC-25 this fieldset was hand-authored in ``forms/editables/fields/deployments.py``;
-    it now comes from ``config_deployment_component_layout()`` on the user-env-vars service,
-    collected by ``_service_deployment_component_layouts()``. Nothing but a browser proves
-    that swap kept the field on screen and saving.
+    De twee lagen moeten APART in het bestand blijven: op de cluster wint de deployment-
+    componentwaarde per sleutel, en dat betekent alleen iets zolang beide op hun eigen
+    plek staan.
     """
-    # Deze test toetst aan het eind dat de twee lagen APART blijven staan, en heeft
-    # daarvoor een component-laag nodig. Die kwam eerder van de vorige test in deze
-    # module, waarmee dit mat in welke volgorde pytest draait (en die is willekeurig).
-    # Nu zorgt de test zelf voor zijn uitgangspunt, en alleen als het er nog niet is.
+    # De component-laag eerst, anders is "apart bewaren" niet te meten.
     if not (_component(forgejo, envali_project, "web") or {}).get("user-env-vars"):
-        assert _save_component_env_vars(
-            sandbox_page, sandbox_url, forgejo, envali_project, "E2E_TOKEN=rc25-secret-value"
-        ), "kon de component-laag niet klaarzetten voor deze test"
+        context = context_with_fresh_step_up(browser, sandbox_url)
+        page = context.new_page()
+        try:
+            _open_window_and_fill(page, sandbox_url, envali_project, "E2E_TOKEN=rc388-secret-value")
+        finally:
+            page.close()
+            context.close()
+        assert _wait_for(lambda: (_component(forgejo, envali_project, "web") or {}).get("user-env-vars")), (
+            "kon de component-laag niet klaarzetten voor deze test"
+        )
 
-    modal = EditModalHelper(sandbox_page, sandbox_url, envali_project)
-    modal.open_detail_page()
-    modal.open_edit_modal("modal-edit-deployment-0", "Deployment bewerken")
+    from tests.e2e.helpers.tabs import open_tab
 
-    field = sandbox_page.locator("textarea[name*='components'][name*='user-env-vars']").first
-    assert field.count() > 0, (
-        "no deployment-component user-env-vars field in the deployment modal -- the "
-        "service did not contribute its layout to this layer"
-    )
-    field_name = field.get_attribute("name") or ""
-    modal.fill_codemirror_kv(field_name, "DEPLOY_ONLY=rc25-deployment-value")
-    capture(sandbox_page, "deployment-component-env-vars-filled")
-    modal.submit_step_expect_progress()
+    context = context_with_fresh_step_up(browser, sandbox_url)
+    page = context.new_page()
+    try:
+        page.goto(f"{sandbox_url}/projects/{envali_project}/deployments")
+        page.wait_for_load_state("networkidle")
+        open_tab(page, "deployments")
+        button = page.locator("nldd-button[text='Bekijken en bewerken']").first
+        button.wait_for(state="visible")
+        button.click()
+        editor = page.locator("#edit-section-inner .kv-editor .cm-content")
+        editor.wait_for(state="visible")
+        editor.click()
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.type("DEPLOY_ONLY=rc388-deployment-value")
+        capture(page, "deployment-component-env-vars-venster")
+        page.locator("#edit-section-inner button:has-text('Opslaan')").first.click()
+    finally:
+        page.close()
+        context.close()
 
     def _stored():
         data = forgejo.get_project_yaml(envali_project) or {}
@@ -242,11 +286,6 @@ def test_deployment_component_env_vars_override_saves(
     assert stored, "the deployment-level env var never reached the project file"
     assert _AGE_ARMOR in str(stored), f"deployment user-env-vars is not AGE-encrypted: {str(stored)[:60]}"
 
-    # The two layers must stay SEPARATE in the file. They are merged at deploy time
-    # (deployment-component wins per key, ProjectManager), and that merge only means
-    # anything while both values are still stored in their own place. One service owning
-    # both layers is exactly the arrangement that could accidentally write them to one
-    # spot, so assert the component-level value (zie boven) survived this save.
     component_level = (_component(forgejo, envali_project, "web") or {}).get("user-env-vars")
     assert component_level, (
         "writing the deployment-component override wiped the component-level user-env-vars; "
@@ -256,3 +295,26 @@ def test_deployment_component_env_vars_override_saves(
         "component and deployment-component user-env-vars hold identical ciphertext, "
         "which suggests one write landed on both layers"
     )
+
+
+def test_the_modals_leave_the_env_vars_byte_identical(
+    envali_project: str, sandbox_url: str, sandbox_page: Page, forgejo: ForgejoClient
+) -> None:
+    """De gewone schrijfweg (RC-388): een no-op opslag via de componenten-modal mag het
+    versleutelde blok niet aanraken - geen placeholder, geen terugzetstap, geen churn."""
+    # Deze test heeft een bestaand blok nodig; zet het klaar als de eerdere tests in deze
+    # module het nog niet deden (pytest-volgorde is niet te voorspellen).
+    modal = _open_components_modal(sandbox_page, sandbox_url, envali_project)
+    modal.submit_step_expect_progress()
+
+    voor = (_component(forgejo, envali_project, "web") or {}).get("user-env-vars")
+    if not voor:
+        pytest.skip("geen user-env-vars opgeslagen; component-test draaide niet eerder")
+
+    modal = _open_components_modal(sandbox_page, sandbox_url, envali_project)
+    modal.submit_step_expect_progress()
+
+    def _zelfde_blok():
+        return (_component(forgejo, envali_project, "web") or {}).get("user-env-vars") == voor
+
+    assert _wait_for(_zelfde_blok), "een no-op opslag via de componenten-modal schreef het user-env-vars-blok opnieuw"

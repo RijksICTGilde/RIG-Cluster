@@ -23,7 +23,11 @@ en dat bezwaar verdwijnt met `SYSTEM`.
 
 De onvoorwaardelijke fieldset is het enige echte verschil in de formulierlaag: een
 fieldset die zich verstopt tot de dienst is aangevinkt zou bij een systeemdienst nooit
-verschijnen.
+verschijnen. Sinds RC-388 maakt `user-env-vars` hierop de enige uitzondering: zijn lagen
+staan in `form_exempt_layers`, want waarden die geheimen kunnen zijn horen niet in een
+algemeen formulier (zie
+[omgevingsvariabelen-achter-step-up.md](omgevingsvariabelen-achter-step-up.md)). `aliases`
+houdt de onvoorwaardelijke fieldset.
 
 ## `owned_property`: een dienst die een gewone eigenschap bezit
 
