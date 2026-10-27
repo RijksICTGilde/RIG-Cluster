@@ -307,9 +307,12 @@ async def _purge_marks(
             # cluster, so that is the one to configure the alias against.
             minio_host = get_minio_host(settings.CLUSTER_MANAGER)
             minio_port = get_minio_port(settings.CLUSTER_MANAGER)
-            minio_url = f"{'https' if settings.MINIO_USE_TLS else 'http'}://{minio_host}:{minio_port}"
             await minio_conn.configure_alias(
-                alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY
+                alias,
+                f"{minio_host}:{minio_port}",
+                settings.MINIO_ADMIN_ACCESS_KEY,
+                settings.MINIO_ADMIN_SECRET_KEY,
+                secure=settings.MINIO_USE_TLS,
             )
 
             for mark in minio_policy_marks:
