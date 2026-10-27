@@ -92,21 +92,26 @@ class TestHandleDeleteDeployment:
 
     @pytest.mark.asyncio
     async def test_success_calls_add_task_and_complete(self, payload):
+        # De echte stappen van de verwijdering zet de manager via de meegegeven
+        # voortgangsmanager; de handler zelf kent alleen nog "Projectgegevens ophalen".
         from opi.core.task_handlers_deployment import handle_delete_deployment
 
         progress = _make_progress()
 
         mock_pm = AsyncMock()
+        # De echte set_progress_manager is synchroon; een kale AsyncMock maakt er een
+        # coroutine van die niemand afwacht.
+        mock_pm.set_progress_manager = MagicMock()
         mock_pm.delete_deployment = AsyncMock(return_value={"success": True, "namespace": {"success": True}})
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm):
             result = await handle_delete_deployment(payload, progress)
 
-        assert progress.add_task.call_count == 2
+        mock_pm.set_progress_manager.assert_called_once_with(progress)
+        assert progress.add_task.call_count == 1
         progress.add_task.assert_any_call("Projectgegevens ophalen")
-        progress.add_task.assert_any_call("Deployment-resources verwijderen")
-        assert progress.complete_task.call_count == 2
+        assert progress.complete_task.call_count == 1
         assert result["deletion_results"]["namespace"]["success"] is True
 
     @pytest.mark.asyncio
@@ -118,13 +123,13 @@ class TestHandleDeleteDeployment:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
+        mock_pm.set_progress_manager = MagicMock()
         mock_pm.delete_deployment = AsyncMock(return_value={"success": False, "errors": ["boom"]})
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError):
             await handle_delete_deployment(payload, progress)
 
-        progress.fail_task.assert_called_once()
         progress.fail_project.assert_called_once()
 
     @pytest.mark.asyncio
@@ -134,13 +139,13 @@ class TestHandleDeleteDeployment:
         progress = _make_progress()
 
         mock_pm = AsyncMock()
+        mock_pm.set_progress_manager = MagicMock()
         mock_pm.delete_deployment = AsyncMock(side_effect=RuntimeError("k8s unreachable"))
         mock_pm.close = AsyncMock()
 
         with patch(CREATE_PM_PATH, return_value=mock_pm), pytest.raises(RuntimeError, match="k8s unreachable"):
             await handle_delete_deployment(payload, progress)
 
-        progress.fail_task.assert_called_once()
         progress.fail_project.assert_called_once()
 
 

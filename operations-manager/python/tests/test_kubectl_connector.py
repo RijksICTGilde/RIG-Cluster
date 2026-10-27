@@ -428,3 +428,65 @@ async def test_wait_for_namespace_deletion_gives_up_after_max_retries(connector)
 
         assert gone is False
         assert absent.await_count == 3
+
+
+async def test_wait_for_resource_absence_is_meteen_klaar_als_de_resource_weg_is(connector):
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        exists.return_value = False
+
+        gone = await connector.wait_for_resource_absence("appproject", "demo-demo", "argocd")
+
+        assert gone is True
+        assert exists.await_count == 1
+        exists.assert_awaited_with("appproject", "demo-demo", "argocd")
+        sleep.assert_not_awaited()
+
+
+async def test_wait_for_resource_absence_stopt_zodra_de_resource_weg_is(connector):
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        exists.side_effect = [True, True, False]
+
+        gone = await connector.wait_for_resource_absence(
+            "appproject", "demo-demo", "argocd", max_retries=5, retry_delay=1
+        )
+
+        assert gone is True
+        assert exists.await_count == 3
+        assert sleep.await_count == 2
+
+
+async def test_wait_for_resource_absence_geeft_false_bij_een_timeout(connector):
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        exists.return_value = True
+
+        gone = await connector.wait_for_resource_absence(
+            "appproject", "demo-demo", "argocd", max_retries=3, retry_delay=1
+        )
+
+        assert gone is False
+        assert exists.await_count == 3
+
+
+async def test_wait_for_resource_absence_blijft_bij_een_onmeetbare_lezing_tot_de_timeout(connector):
+    """Een lezing die faalde (None) is geen bewijs van afwezigheid."""
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        exists.return_value = None
+
+        gone = await connector.wait_for_resource_absence(
+            "appproject", "demo-demo", "argocd", max_retries=3, retry_delay=1
+        )
+
+        assert gone is False
+        assert exists.await_count == 3

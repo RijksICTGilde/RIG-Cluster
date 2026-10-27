@@ -615,6 +615,9 @@ async def handle_delete_project(payload: dict, progress: Any) -> dict:
 
     delete_task = progress.add_task(f"Project '{project_name}' verwijderen")
     project_manager = create_project_manager()
+    # Attach the progress manager so the delete names its own steps (infrastructure,
+    # Keycloak, ArgoCD, namespaces, remeasurement) instead of one long-running task.
+    project_manager.set_progress_manager(progress)
     try:
         deletion_results = await project_manager.delete_project(project_name)
     except Exception as exc:

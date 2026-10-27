@@ -109,9 +109,10 @@ overdoet.
 
 ## Wat bewust niet wijkt
 
-De **deletion-wait** (`wait_for_application_deletion`, gebruikt door de delete-flows) wordt **niet**
-afgebroken. Een nieuwere taak kan afhankelijk zijn van het voltooien van de verwijdering; een
-half-verwijderde app achterlaten is gevaarlijker dan even wachten.
+De **deletion-wait** van de delete-flows wordt **niet** afgebroken. Dat geldt voor
+`wait_for_application_deletion` (op de Application) en voor `wait_for_resource_absence` (op het
+AppProject vóór de hermeting). Een nieuwere taak kan afhankelijk zijn van het voltooien van de
+verwijdering; een half-verwijderde app achterlaten is gevaarlijker dan even wachten.
 
 ## Robuustheid
 

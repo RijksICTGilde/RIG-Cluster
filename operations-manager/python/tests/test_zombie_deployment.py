@@ -307,6 +307,8 @@ def _delete_manager() -> tuple[DeleteProjectManager, MagicMock, MagicMock]:
     """Een delete-ronde waarin alles slaagt; de test sloopt er één stap van."""
     pm = AsyncMock()
     pm.get_name = AsyncMock(return_value="test-project")
+    # Geen voortgangsmanager: de delete-stappen melden dan niets.
+    pm.get_progress_manager = MagicMock(return_value=None)
     pm._kubectl_connector = AsyncMock()
     pm._kubectl_connector.delete_namespace = AsyncMock(return_value=True)
     # Echte antwoorden voor de hermeting aan het eind van delete_deployment: een kale
