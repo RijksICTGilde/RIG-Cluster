@@ -1,5 +1,6 @@
 """Persoonsgegevens (ALLOWED_EMAILS, ADMIN_EMAILS) gaan in secrets, niet in de configmap
 en niet in de broncode.
+Staging houdt ze uit deze publieke repo: ze staan in de private repo zad-staging-secrets.
 Sandbox-adressen zijn uitgesloten.
 """
 
@@ -17,6 +18,8 @@ CONFIGMAP = OVERLAY / "configmap.yaml"
 ACCESS_SECRET = OVERLAY / "operations-manager-access-secrets.yaml"
 DECRYPT_SOPS = OVERLAY / "decrypt-sops.yaml"
 KUSTOMIZATION = OVERLAY / "kustomization.yaml"
+OVERLAY_STAGING = REPO_ROOT / "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-staging"
+CONFIGMAP_STAGING = OVERLAY_STAGING / "configmap.yaml"
 SANDBOX_KUSTOMIZATION = (
     REPO_ROOT / "bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/kustomization.yaml"
 )
@@ -33,6 +36,27 @@ def env_regels() -> list[str]:
     """Regels van de .env in de configmap."""
     configmap = yaml.safe_load(CONFIGMAP.read_text())
     return configmap["data"][".env"].splitlines()
+
+
+@pytest.fixture(scope="module")
+def env_regels_staging() -> list[str]:
+    """Regels van de .env in de staging-configmap."""
+    configmap = yaml.safe_load(CONFIGMAP_STAGING.read_text())
+    return configmap["data"][".env"].splitlines()
+
+
+class TestDeStagingConfigmap:
+    """Zelfde regel als productie: de toegangslijsten zijn persoonsgegevens en horen bij
+    staging in zad-staging-secrets, uit deze repo."""
+
+    @pytest.mark.parametrize("sleutel", ["ALLOWED_EMAILS", "ADMIN_EMAILS"])
+    def test_zet_de_toegangslijsten_niet(self, env_regels_staging: list[str], sleutel: str) -> None:
+        gevonden = [r for r in env_regels_staging if r.strip().startswith(f"{sleutel}=")]
+        assert not gevonden, f"{sleutel} hoort in zad-staging-secrets, niet in de configmap: {gevonden}"
+
+    def test_bevat_geen_enkel_emailadres(self, env_regels_staging: list[str]) -> None:
+        gevonden = [r.strip() for r in env_regels_staging if not r.strip().startswith("#") and EMAILADRES.search(r)]
+        assert not gevonden, f"e-mailadressen in de leesbare stagingconfiguratie: {gevonden}"
 
 
 class TestDeProductieConfigmap:
