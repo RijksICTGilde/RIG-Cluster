@@ -307,3 +307,49 @@ async def test_geen_zaad_of_code_in_de_logregels(orm_db, otp_keys, caplog) -> No
     niveaus = {r.levelname for r in caplog.records}
     assert "INFO" in niveaus
     assert "WARNING" in niveaus
+
+
+# --- lopende registraties (tabel otp_pending_registrations) ---------------------------
+
+
+async def test_een_lopende_registratie_klopt_alleen_met_haar_eigen_afdruk(orm_db, otp_keys) -> None:
+    from opi.services.user_otp_service import UserOtpService as S
+
+    svc = S()
+    await svc.note_pending_registration(EMAIL, "afdruk-van-dit-zaad")
+    assert await svc.consume_pending_registration(EMAIL, "afdruk-van-dit-zaad") is True
+    assert await svc.consume_pending_registration(EMAIL, "afdruk-van-iets-anders") is False
+    assert await svc.consume_pending_registration("en-niemand@example.nl", "afdruk-van-dit-zaad") is False
+
+
+async def test_een_tweede_start_overschrijft_de_eerste(orm_db, otp_keys) -> None:
+    from opi.services.user_otp_service import UserOtpService as S
+
+    svc = S()
+    await svc.note_pending_registration(EMAIL, "oud")
+    await svc.note_pending_registration(EMAIL, "nieuw")
+    assert await svc.consume_pending_registration(EMAIL, "oud") is False
+    assert await svc.consume_pending_registration(EMAIL, "nieuw") is True
+
+
+async def test_afbreken_gooit_de_rij_weg(orm_db, otp_keys) -> None:
+    from opi.services.user_otp_service import UserOtpService as S
+
+    svc = S()
+    await svc.note_pending_registration(EMAIL, "afdruk")
+    await svc.discard_pending_registration(EMAIL)
+    assert await svc.consume_pending_registration(EMAIL, "afdruk") is False
+
+
+async def test_een_verlopen_rij_doet_niet_mee_en_de_schoonmaak_ruimt_op(orm_db, otp_keys, monkeypatch) -> None:
+    from datetime import timedelta
+
+    from opi.services import user_otp_service
+    from opi.services.user_otp_service import UserOtpService as S
+
+    monkeypatch.setattr(user_otp_service, "PENDING_TTL", timedelta(seconds=-1))
+    svc = S()
+    await svc.note_pending_registration(EMAIL, "afdruk")
+    assert await svc.consume_pending_registration(EMAIL, "afdruk") is False
+    assert await svc.purge_expired_pending_registrations() == 1
+    assert await svc.purge_expired_pending_registrations() == 0
