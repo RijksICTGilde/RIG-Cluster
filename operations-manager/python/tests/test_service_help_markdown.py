@@ -125,6 +125,21 @@ def test_paragraphs_and_bullets_become_their_components() -> None:
     assert "Eerste regel van een alinea." in rendered, "wrapped lines are one paragraph"
 
 
+def test_a_wrapped_bullet_stays_one_item() -> None:
+    rendered = _render("- Een bullet die\n  over twee regels loopt.\n- een volgende")
+
+    assert rendered.count("<li>") == 2
+    assert "Een bullet die over twee regels loopt." in rendered
+    assert rendered.count('data-lotc-component="paragraph"') == 0, "geen wees-paragraaf onder de lijst"
+
+
+def test_a_paragraph_after_bullets_ends_the_list() -> None:
+    rendered = _render("- een\n\nNiet ingesprongen, dus een nieuwe alinea.")
+
+    assert rendered.count("<li>") == 1
+    assert 'data-lotc-component="paragraph"' in rendered
+
+
 def test_bold_becomes_strong() -> None:
     rendered = _render("Zet **DATABASE_DB** in je omgeving.")
 
