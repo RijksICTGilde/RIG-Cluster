@@ -190,6 +190,10 @@ class SeaweedfsStorageService(BackupsPageMixin, Service):
                             "worden opgeruimd, en met een leeftijdsgrens ook de versies die ouder zijn. "
                             "Je kunt dus niet verder terug dan wat hier staat."
                         ),
+                        # Het hele blok staat achter het vinkje: wie versiebeheer niet
+                        # aanvinkt ziet geen grenzen om in te stellen. De renderer
+                        # hertekent live (het vinkje draagt data-rerender).
+                        depends_on=config_path(ConfigLayer.PROJECT, self.service_type, "config", "enable-versioning"),
                         children=[
                             MAX_NONCURRENT_VERSIONS_FIELD.editable.yaml_path,
                             NONCURRENT_EXPIRE_DAYS_FIELD.editable.yaml_path,
