@@ -21,6 +21,9 @@ MINIO_ENABLE_VERSIONING = EditableVisualizer(
         "verwijdering terug te draaien is. Dit kost extra opslag, evenredig met hoe vaak "
         "objecten wijzigen."
     ),
+    # Live hertekenen: het blok "Oude versies" staat achter een Fieldset-poort op dit
+    # vinkje; zonder dit attribuut wordt de toggle pas op de volgende stap zichtbaar.
+    attributes={"data-rerender": "true"},
 )
 
 
