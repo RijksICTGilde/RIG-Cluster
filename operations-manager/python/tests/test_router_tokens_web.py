@@ -15,8 +15,10 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from bs4 import BeautifulSoup
 from fastapi import HTTPException
 from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import TokenAanvraagGeweigerd
 from opi.web.router_tokens import (
     NIEUW_TOKEN_SLEUTEL,
@@ -252,6 +254,16 @@ def _overzicht() -> list[dict[str, Any]]:
     ]
 
 
+def _overzicht_met_tokens() -> list[dict[str, Any]]:
+    """Adds a token to bouwstraat too: rotate forms only render for a member that has one."""
+    overzicht = _overzicht()
+    vervalt = datetime.now(UTC) + timedelta(days=60)
+    for lid in overzicht:
+        if lid["naam"] == "bouwstraat":
+            lid["tokens"] = [{"naam": "pijplijn", "vervalt": vervalt, "verlopen": False}]
+    return overzicht
+
+
 async def test_een_beheerder_beheert_elk_lid() -> None:
     verzoek = _verzoek(EMAIL, {})
     with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
@@ -286,6 +298,74 @@ async def test_het_tabblad_toont_de_platformmaxima() -> None:
 
     assert context["token_max_dagen_persoonlijk"] > 0
     assert context["token_max_dagen_service_account"] >= context["token_max_dagen_persoonlijk"]
+
+
+# --- the caller's own card -------------------------------------------------
+
+
+def _render_tokens_tab(context: dict[str, Any]) -> BeautifulSoup:
+    html = templates_lotc.env.get_template("bg/_tokens.html.j2").render(
+        project=SimpleNamespace(name=PROJECT),
+        csrf_token="csrf-van-de-test",
+        **context,
+    )
+    return BeautifulSoup(html, "html.parser")
+
+
+async def test_the_current_users_card_comes_first_and_keeps_the_project_file_order_for_the_rest() -> None:
+    dev = "dev@rijksoverheid.nl"
+    verzoek = _verzoek(dev, {})
+    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+        context = tokencontext(verzoek, PROJECT, dev, is_beheerder=False)
+
+    assert [lid["naam"] for lid in context["leden"]] == [dev, EMAIL, "bouwstraat"]
+    assert [lid["is_current_user"] for lid in context["leden"]] == [True, False, False]
+
+
+async def test_a_caller_who_is_no_member_has_no_own_card_and_moves_nothing() -> None:
+    """A platform admin viewing the project without being a member has no own card to find."""
+    buitenstaander = "buitenstaander@rijksoverheid.nl"
+    verzoek = _verzoek(buitenstaander, {})
+    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+        context = tokencontext(verzoek, PROJECT, buitenstaander, is_beheerder=False)
+
+    assert [lid["naam"] for lid in context["leden"]] == [EMAIL, "dev@rijksoverheid.nl", "bouwstraat"]
+    assert all(lid["is_current_user"] is False for lid in context["leden"])
+
+
+async def test_the_own_card_is_first_on_the_page_and_carries_a_marker() -> None:
+    dev = "dev@rijksoverheid.nl"
+    verzoek = _verzoek(dev, {})
+    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht()):
+        soup = _render_tokens_tab(tokencontext(verzoek, PROJECT, dev, is_beheerder=False))
+
+    koppen = soup.select("nldd-title h3")
+    assert [kop.get_text(strip=True) for kop in koppen[:3]] == [dev, EMAIL, "bouwstraat"]
+
+    eigen_kopregel = koppen[0].find_parent(attrs={"data-lotc-component": "cluster"})
+    assert eigen_kopregel is not None, "the caller's heading has no marker cluster around it"
+    markering = eigen_kopregel.find(attrs={"data-lotc-component": "tag"})
+    assert markering is not None
+    assert markering.get("text") == "jij"
+    assert len(soup.select('[data-lotc-component="tag"][text="jij"]')) == 1
+
+
+async def test_the_own_card_shows_its_forms_directly_and_other_cards_keep_the_accordion() -> None:
+    verzoek = _verzoek(EMAIL, {})
+    with patch("opi.web.router_tokens.leden_overzicht", return_value=_overzicht_met_tokens()):
+        soup = _render_tokens_tab(tokencontext(verzoek, PROJECT, EMAIL, is_beheerder=True))
+
+    eigen_uitgeven = soup.find("form", action=f"/projects/{PROJECT}/leden/{EMAIL}/tokens")
+    eigen_roteren = soup.find("form", action=f"/projects/{PROJECT}/leden/{EMAIL}/tokens/cli/roteren")
+    for formulier in (eigen_uitgeven, eigen_roteren):
+        assert formulier is not None
+        assert formulier.find_parent(attrs={"data-lotc-component": "accordion-item"}) is None
+
+    ander_uitgeven = soup.find("form", action=f"/projects/{PROJECT}/leden/bouwstraat/tokens")
+    ander_roteren = soup.find("form", action=f"/projects/{PROJECT}/leden/bouwstraat/tokens/pijplijn/roteren")
+    for formulier in (ander_uitgeven, ander_roteren):
+        assert formulier is not None
+        assert formulier.find_parent(attrs={"data-lotc-component": "accordion-item"}) is not None
 
 
 # --- de step-up ------------------------------------------------------------

@@ -12,7 +12,7 @@ Dit gaat over herkenning, niet over rol: dat de aanroeper herkend wordt, niet da
 wat hij vraagt. De rolgrens per route is fase 1 van
 `features/futures/rechten-plan-van-aanpak.md`.
 
-## De zes manieren waarop OPI een aanroeper herkent
+## De vijf manieren waarop OPI een aanroeper herkent
 
 Elke manier is een decorator, en elke decorator zet een markering op het endpoint, zodat de
 eis uit de route zelf te lezen is in plaats van uit een lijst met paden.
@@ -38,21 +38,23 @@ for route in route_herkenningen(app):
 ```
 
 `route_herkenningen(app)` geeft per route een `RouteHerkenning` met `methode`, `pad`,
-`module` en `herkenningen`. Websocketroutes krijgen `WEBSOCKET` als methode.
+`module`, `herkenningen` en `endpoint` (de handler zelf, zodat een bewaker diens bron kan
+lezen). Websocketroutes krijgen `WEBSOCKET` als methode.
 
 Het staat in `opi/` en niet in de test, omdat meer dan een vraagsteller dezelfde
-enumeratie wil: RC-322 (scopes per token) loopt de routes ook langs, en fase 1 wil er een
-opstartcontrole op bouwen.
+enumeratie wil: ook de guards op platformbeheer, op de weggehaalde master-sleutel en in de
+securitytests halen hun routes hier op.
 
 ## De test
 
-`tests/test_elke_route_heeft_een_herkenning.py` eist per route precies een herkenning, of
-een regel in `PUBLIEKE_ROUTES`: een dict van `(methode, pad)` naar de reden waarom die route
-publiek is. Precies een, want twee herkenningen betekent dat niet te zeggen is welke weigert.
+`tests/test_elke_route_heeft_een_herkenning.py` eist per route precies een herkenning, een
+regel in `PUBLIEKE_ROUTES` (een dict van `(methode, pad)` naar de reden waarom die route
+publiek is), of een regel in `HANDGESCHREVEN_CONTROLES` (zie hieronder). Precies een, want
+twee herkenningen betekent dat niet te zeggen is welke weigert.
 
 Een route toevoegen zonder decorator maakt de test rood, en de enige manieren om hem weer
-groen te krijgen zijn een decorator of een regel in `PUBLIEKE_ROUTES`, die een reviewer dan
-ziet. Daarnaast toetst het bestand:
+groen te krijgen zijn een decorator of een regel in een van de twee lijsten, die een
+reviewer dan ziet. Daarnaast toetst het bestand:
 
 - dat geen route onder `/api/` op `_requires_sso` leunt, want de middleware leest die
   markering daar niet. Zo'n route is open en leest in de code alsof hij afgeschermd is;
@@ -63,14 +65,17 @@ ziet. Daarnaast toetst het bestand:
 
 ### Handgeschreven controles
 
-Acht routes controleren de aanroeper wel, maar met een eigen controle in de handler in
-plaats van met een decorator. Daardoor is er niets uit de route te lezen en dus niets af te
-dwingen. Ze staan in `HANDGESCHREVEN_CONTROLES` en zijn `xfail` met `strict=True`: komt er
-een markering op, dan slaat de xfail om in een fout en hoort de regel weg.
+Sommige routes controleren de aanroeper wel, maar met een eigen controle in de handler in
+plaats van met een decorator. Daardoor is er geen markering op het endpoint om af te
+dwingen. Per route staat in `HANDGESCHREVEN_CONTROLES` de reden waarom geen markering past,
+plus sporen: tekstfragmenten die letterlijk in de bron van de handler moeten staan.
 
-Niet hier gerepareerd omdat RC-322 deze handlers al raakt en er een handhavingspunt aan
-toevoegt; twee PR's die dezelfde functies herschrijven leveren een conflict op in plaats van
-een grens.
+`test_de_handgeschreven_controle_staat_er_nog` eist elk spoor in
+`inspect.getsource(route.endpoint)`. Wie de controle uit de handler haalt zet er geen
+markering bij; zonder deze pin zou de plicht hierboven groen blijven terwijl de route open
+ligt. Komt er juist een draagbare markering op zo'n route, dan wordt
+`test_de_route_noemt_een_herkenning` rood met de melding de route naar de gewone plicht te
+verhuizen en de regel weg te halen.
 
 ## Afhankelijkheden
 

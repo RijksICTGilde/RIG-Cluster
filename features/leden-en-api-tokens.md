@@ -263,6 +263,10 @@ want de cookie-sessie van Starlette is ondertekend en niet versleuteld. Het antw
 die waarde draagt krijgt `Cache-Control: no-store`, anders mag een browser de pagina op
 schijf zetten en toont de terug-knop het token opnieuw, ook nadat het server-side weg is.
 
+De kaart van de ingelogde aanroeper staat bovenaan het paneel, met een "jij"-markering
+naast de naam, en toont de formulieren om een token uit te geven of te roteren direct.
+Bij de andere leden zitten die in een accordion.
+
 Logt er ergens toch een token mee, dan maskeert `SecretRedactionFilter`
 (`opi/utils/logging_redact.py`) de vorm `zad_` plus 40 of meer url-veilige tekens. Vandaag
 logt niets de waarde; dit is het vangnet voor de volgende logregel die hem meeneemt.

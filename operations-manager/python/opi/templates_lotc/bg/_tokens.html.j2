@@ -58,7 +58,15 @@
             {% set maximum = token_max_dagen_service_account if lid.is_service_account else token_max_dagen_persoonlijk %}
             <c-card outline padding="md">
                 <c-stack gap="sm">
-                    <c-heading type="h3" size="5" label="{{ lid.naam }}" />
+                    {% if lid.is_current_user %}
+                        {# tokencontext sorts the caller's own card to the front. #}
+                        <c-cluster gap="sm" align="center">
+                            <c-heading type="h3" size="5" label="{{ lid.naam }}" />
+                            <c-tag type="info" label="jij" />
+                        </c-cluster>
+                    {% else %}
+                        <c-heading type="h3" size="5" label="{{ lid.naam }}" />
+                    {% endif %}
                     <c-paragraph size="sm">
                         {{ 'Service account' if lid.is_service_account else 'Lid' }}, rol {{ lid.rol }}
                     </c-paragraph>
@@ -122,30 +130,40 @@
                         </c-table>
 
                         {% if lid.mag_uitgeven %}
-                            <c-accordion>
-                                <c-accordion-item title="Een token roteren">
-                                    <c-stack gap="sm">
-                                        {% for token in lid.tokens %}
-                                            <c-paragraph size="sm">{{ token.naam }}</c-paragraph>
-                                            {{ tokenformulier(lid,
-                                                "/projects/" ~ project.name ~ "/leden/" ~ lid.naam ~ "/tokens/" ~ token.naam ~ "/roteren",
-                                                "Roteren", maximum, "rot-" ~ lid_nr ~ "-" ~ loop.index) }}
-                                        {% endfor %}
-                                    </c-stack>
-                                </c-accordion-item>
-                            </c-accordion>
+                            {% set roteerformulieren %}
+                                <c-stack gap="sm">
+                                    {% for token in lid.tokens %}
+                                        <c-paragraph size="sm">{{ token.naam }}</c-paragraph>
+                                        {{ tokenformulier(lid,
+                                            "/projects/" ~ project.name ~ "/leden/" ~ lid.naam ~ "/tokens/" ~ token.naam ~ "/roteren",
+                                            "Roteren", maximum, "rot-" ~ lid_nr ~ "-" ~ loop.index) }}
+                                    {% endfor %}
+                                </c-stack>
+                            {% endset %}
+                            {% if lid.is_current_user %}
+                                {{ roteerformulieren }}
+                            {% else %}
+                                <c-accordion>
+                                    <c-accordion-item title="Een token roteren">{{ roteerformulieren }}</c-accordion-item>
+                                </c-accordion>
+                            {% endif %}
                         {% endif %}
                     {% else %}
                         <c-paragraph size="sm">Dit lid heeft nog geen token.</c-paragraph>
                     {% endif %}
 
                     {% if lid.mag_uitgeven %}
-                        <c-accordion>
-                            <c-accordion-item title="Een token uitgeven">
-                                {{ tokenformulier(lid, "/projects/" ~ project.name ~ "/leden/" ~ lid.naam ~ "/tokens",
-                                                  "Token maken", maximum, "nieuw-" ~ lid_nr) }}
-                            </c-accordion-item>
-                        </c-accordion>
+                        {% set uitgeefformulier %}
+                            {{ tokenformulier(lid, "/projects/" ~ project.name ~ "/leden/" ~ lid.naam ~ "/tokens",
+                                              "Token maken", maximum, "nieuw-" ~ lid_nr) }}
+                        {% endset %}
+                        {% if lid.is_current_user %}
+                            {{ uitgeefformulier }}
+                        {% else %}
+                            <c-accordion>
+                                <c-accordion-item title="Een token uitgeven">{{ uitgeefformulier }}</c-accordion-item>
+                            </c-accordion>
+                        {% endif %}
                     {% endif %}
 
                     {% if lid.is_service_account and is_project_beheerder %}
