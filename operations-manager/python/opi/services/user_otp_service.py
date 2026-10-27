@@ -10,6 +10,7 @@ aan een service-account, deze hangt aan een persoon.
 
 from __future__ import annotations
 
+import hmac
 import logging
 import uuid
 from dataclasses import dataclass
@@ -17,10 +18,11 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from opi.core.config import settings
 from opi.core.db import session_scope
+from opi.services.persistence.otp_pending import OtpPendingRegistration
 from opi.services.persistence.users import User
 from opi.utils.age import decrypt_age_content, encrypt_age_content, get_global_private_key
 from opi.utils.totp import build_otpauth_uri, generate_totp_secret, totp_base32, verify_totp
@@ -38,6 +40,9 @@ OTP_LOCK_DURATION = timedelta(minutes=15)
 #: De sleutel waarmee ``otp_secret`` is versleuteld. Een kolom ernaast houdt roteren
 #: later mogelijk zonder te moeten raden waarmee een rij ooit is versleuteld.
 OTP_KEY_VERSION = 1
+
+#: Hoe lang een gestarte registratie zijn bevestiging accepteert.
+PENDING_TTL = timedelta(minutes=10)
 
 #: De kolommen die een reset leegmaakt. Ook de feature-documentatie noemt ze, voor wie
 #: een gebruiker met de hand moet helpen.
@@ -205,6 +210,61 @@ class UserOtpService:
             row.otp_locked_until = None
         logger.info("OTP gereset voor %s door %s", email, by)
         return True
+
+    # ---- Lopende registraties (server-side, eigen tabel) -------------------------------------
+
+    async def note_pending_registration(self, email: str, fingerprint: str) -> None:
+        """Leg vast dat /start voor deze gebruiker draaide, met het zaad als afdruk.
+
+        Tot 27-10-2026 zat die afdruk in de sessiecookie (zie router_otp.py). Nu in de
+        tabel ``otp_pending_registrations``, met verloop, volgens het patroon van AMT/TAD.
+        """
+        now = datetime.now(UTC)
+        async with session_scope() as session:
+            row = (
+                await session.execute(select(OtpPendingRegistration).where(OtpPendingRegistration.email == email))
+            ).scalar_one_or_none()
+            if row is None:
+                session.add(
+                    OtpPendingRegistration(
+                        email=email, fingerprint=fingerprint, created_at=now, expires_at=now + PENDING_TTL
+                    )
+                )
+            else:
+                row.fingerprint = fingerprint
+                row.created_at = now
+                row.expires_at = now + PENDING_TTL
+
+    async def consume_pending_registration(self, email: str, fingerprint: str) -> bool:
+        """True als deze gebruiker een lopende registratie heeft die bij deze afdruk hoort.
+
+        Een verlopen of afwezige registratie geeft False. De rij blijft staan voor een
+        nieuwe poging (de code uit de app komt dertig seconden later weer); het schrijven
+        van de factor zelf is de bevestiging.
+        """
+        async with session_scope() as session:
+            row = (
+                await session.execute(select(OtpPendingRegistration).where(OtpPendingRegistration.email == email))
+            ).scalar_one_or_none()
+            if row is None or row.expires_at <= datetime.now(UTC):
+                return False
+            return hmac.compare_digest(row.fingerprint, fingerprint)
+
+    async def discard_pending_registration(self, email: str) -> None:
+        async with session_scope() as session:
+            row = (
+                await session.execute(select(OtpPendingRegistration).where(OtpPendingRegistration.email == email))
+            ).scalar_one_or_none()
+            if row is not None:
+                await session.delete(row)
+
+    async def purge_expired_pending_registrations(self) -> int:
+        """Ruim verlopen registraties op; de cleanup-lus van de taakwerker roept dit."""
+        async with session_scope() as session:
+            result = await session.execute(
+                delete(OtpPendingRegistration).where(OtpPendingRegistration.expires_at <= datetime.now(UTC))
+            )
+            return result.rowcount or 0
 
     @staticmethod
     def _registration(email: str, secret: str, encrypted_secret: str) -> OtpRegistration:

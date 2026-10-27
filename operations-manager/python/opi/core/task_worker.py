@@ -25,6 +25,7 @@ from opi.core.task_supersede import (
     reset_current_task,
     set_current_task,
 )
+from opi.services.user_otp_service import UserOtpService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -445,6 +446,9 @@ class TaskWorker:
                 )
                 if deleted > 0:
                     logger.info("Cleaned up %d old tasks", deleted)
+                pending = await UserOtpService().purge_expired_pending_registrations()
+                if pending > 0:
+                    logger.info("Cleaned up %d expired OTP registrations", pending)
             except asyncio.CancelledError:
                 break
             except Exception:
