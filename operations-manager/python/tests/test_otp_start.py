@@ -38,6 +38,9 @@ def _dienst(status: OtpStatus, verify_uitkomst: OtpVerification) -> Any:
     dienst.status = AsyncMock(return_value=status)
     dienst.verify = AsyncMock(return_value=verify_uitkomst)
     dienst.start_registration = AsyncMock(return_value=_REGISTRATIE)
+    # Sinds PR 370 legt /start de lopende registratie server-side vast; zonder AsyncMock
+    # hier eindigde deze toets op "'MagicMock' object can't be awaited".
+    dienst.note_pending_registration = AsyncMock()
     return dienst
 
 

@@ -181,7 +181,7 @@ controleert voor en na de lus dat `/dashboard` nog 200 geeft.
 
 Dezelfde sessie kan ook op de **vorm van het koekje** sneuvelen. De wegwerp-sandbox serveert
 http, en OPI zet zijn sessiekoekje terecht op `Secure`. Zodra een route in de sessie schrijft
-(`POST /account/otp/start` bijvoorbeeld) herschrijft `SessionMiddleware` het koekje, en een
+(`POST /account/otp/start` bijvoorbeeld) herschrijft `ServerSideSessionMiddleware` het koekje, en een
 client stuurt een `Secure`-koekje niet over http terug. Daarom gaan alle aanroepers via
 `proefclient()` in `conftest.py`, dat `Secure` van een koekje van de sandbox haalt. Dat is een
 eigenschap van de proefopstelling, geen uitspraak over de koekjespolitiek van OPI.

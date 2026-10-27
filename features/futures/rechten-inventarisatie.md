@@ -46,7 +46,7 @@ Zes manieren om een handeling uitgevoerd te krijgen. Vier ervan zijn een decorat
 | `ADMIN_API_KEY`, `@validate_admin_api_key` | `opi/api/endpoint_util.py:82` | 6 | de aanroeper kent een gedeeld platformgeheim uit de omgeving | niemand |
 | `MASTER_API_KEY`, `@validate_master_api_key` | `opi/api/endpoint_util.py:123` | 3 | idem, een tweede gedeeld geheim | niemand |
 | Handgeschreven projectsleutelcontrole | `opi/api/task_router.py:56` en `:159-165` | 3 | hetzelfde als de decorator, apart uitgeschreven | niemand |
-| Handgeschreven sessiecontrole in een websocket | `opi/api/logs_websocket_router.py:299-360` | 1 | Origin-header, sessiecookie, allowlist en projectlidmaatschap, allemaal met de hand | een mens |
+| Handgeschreven sessiecontrole in een websocket | `opi/api/logs_websocket_router.py:299-360` | 1 | Origin-header, allowlist en projectlidmaatschap met de hand; de sessie zelf levert de sessiemiddleware (server-side, RC-390) | een mens |
 
 De middleware doet er nog iets bovenop dat makkelijk over het hoofd wordt gezien. `AuthorizationMiddleware.dispatch` (`opi/middleware/authorization.py:82-116`) slaat elke padcontrole over voor `/metrics` en voor alles onder `/health`, `/ready`, `/version` en `/static/`, en laat elk pad dat met `/api/` begint zonder sessiecontrole door omdat die routes hun eigen sleutelcontrole doen. Voor alle overige paden bepaalt `_route_requires_sso` (`:126-156`) of de gevonden endpointfunctie het attribuut `_requires_sso` draagt. **Staat dat attribuut er niet op, dan is de route publiek.** Alleen wanneer er helemaal geen route matcht valt de middleware terug op "wel SSO vereist", en dat geval bereikt de handler per definitie nooit.
 
@@ -279,7 +279,7 @@ Er is geen enkele handeling met de betekenis "een recht toekennen", "een recht i
 | `ADMIN_API_KEY` | omgeving, `opi/core/config.py:226` | vrije string, standaard `None` | geen | geen | geen | geen |
 | `MASTER_API_KEY` | omgeving, `opi/core/config.py:225` | vrije string, standaard `None` | geen | geen | geen | geen |
 | Peer-sleutels voor federatie | `FEDERATION_PEERS`, `opi/core/config.py:386` | JSON-string in een omgevingsvariabele, met de `MASTER_API_KEY` van elke peer in platte tekst | geen | geen | geen | geen |
-| SSO-sessiecookie | Starlette-sessie, ondertekend met `SECRET_KEY` | cookie | sessieduur | - | uitloggen | e-mailadres in het log van de handler |
+| SSO-sessiecookie | ondertekend sessie-id met `SECRET_KEY`, inhoud in de tabel `sessions` (server-side, RC-390) | cookie | sessieduur | - | uitloggen | e-mailadres in het log van de handler |
 | Uitnodigingssleutel | projectbestand, `invites.active[].key` | door de beheerder gekozen string in de URL | optioneel `expires_at` | handmatig | sleutel verwijderen uit het bestand | geen |
 | Projectsleutelpaar (AGE) | `config.age-public-key` / `age-private-key` | AGE | geen | geen | geen | - |
 

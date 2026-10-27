@@ -13,12 +13,11 @@ import json
 import subprocess
 import sys
 import time
-from base64 import b64decode
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from itsdangerous import TimestampSigner
-from tests.e2e.testserver import SECRET_KEY
+from tests.e2e.testserver import SECRET_KEY, get_in_memory_session_store
 
 from security_tests import sandbox
 from security_tests.doel import TOKEN_HEADER
@@ -178,14 +177,19 @@ async def test_route_log_app_bemoeit_zich_niet_met_lifespan() -> None:
     assert onderliggend.gezien_scope is scope
 
 
-def test_sessiekoekje_is_een_geldig_starlette_sessiekoekje() -> None:
-    """Zonder dit koekje leest OPI's SessionMiddleware een anonieme aanroeper in plaats van een rol."""
+def test_sessiekoekje_is_een_geldig_sessiekoekje() -> None:
+    """Zonder dit koekje leest OPI een anonieme aanroeper in plaats van een rol.
+
+    Sinds RC-390 draagt het koekje alleen een ondertekend id; de inhoud staat in de
+    (in-memory) store van de proefsandbox.
+    """
     koekje = sessiekoekje("proef-admin@example.nl", "Proef ZAD-admin")
     data = TimestampSigner(SECRET_KEY).unsign(koekje.encode())
-    sessie = json.loads(b64decode(data))
-    assert sessie["user"]["email"] == "proef-admin@example.nl"
-    assert sessie["user"]["name"] == "Proef ZAD-admin"
-    assert sessie["user"]["sub"] == "proef-admin@example.nl"
+    sessie_id = data.decode()
+    rij = get_in_memory_session_store()._rows[sessie_id]
+    assert rij["user"]["email"] == "proef-admin@example.nl"
+    assert rij["user"]["name"] == "Proef ZAD-admin"
+    assert rij["user"]["sub"] == "proef-admin@example.nl"
 
 
 def test_sessiekoekje_met_een_ander_geheim_wordt_geweigerd() -> None:

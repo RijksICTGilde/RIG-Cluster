@@ -85,27 +85,22 @@ class TestStatuspagina:
 
 
 class TestMetEenDikkeSessie:
-    """De bug van 27-10-2026: omdat de vingerafdruk in de sessiecookie zat, liep die cookie
-    bij een id_token van formaat over de ~4 KB die een browser geruisloos laat vallen, en
-    bevestigen deed toen niets (geen melding, niets opgeslagen). De lopende registratie
-    staat nu server-side (tabel otp_pending_registrations), en de sessie schrijft er niets
-    meer bij. Deze test loopt de flow met een sessie van vlak onder de grens: met de oude
-    vorm zou /start er een paar honderd bytes bij hebben gezet en zou de browser dat
-    antwoord gedropt hebben, met precies die stille strand tot gevolg."""
+    """De bug van 27-10-2026, en zijn definitieve versie (RC-390): toen liep een cookie
+    met een id_token van formaat over de ~4 KB die een browser geruisloos laat vallen, en
+    bevestigen deed toen niets (geen melding, niets opgeslagen). Sinds RC-390 woont de
+    hele sessie-inhoud server-side en draagt de cookie alleen een ondertekend id: er IS
+    geen grens meer om tegenaan te lopen. Deze test loopt de flow met een sessie die als
+    cookie ver over de grens had gezeten: de inhoud is dik, de cookie blijft klein."""
 
-    def test_bevestigen_werkt_met_een_sessie_vlak_onder_de_browsergrens(self, app_server: str, browser) -> None:
+    def test_bevestigen_werkt_met_een_dikke_sessie_en_een_dunne_cookie(self, app_server: str, browser) -> None:
         from urllib.parse import urlparse
 
         from tests.e2e.conftest import TEST_USER, _sign_session
 
-        # Itereer op de grootte: het koekje blijft onder de grens maar niet ver eronder.
-        dikke_sessie = ""
-        for lengte in range(2600, 4000, 50):
-            kandidaat = _sign_session({"user": TEST_USER, "id_token": "x" * lengte})
-            if len(kandidaat) > 4000:
-                break
-            dikke_sessie = kandidaat
-        assert len(dikke_sessie) > 3600, f"de test wil een kandidaat dicht bij de grens, vond {len(dikke_sessie)}"
+        # 5000 bytes aan id_token: als cookie was dit allang gedropt; server-side is het
+        # gewoon inhoud.
+        dikke_sessie = _sign_session({"user": TEST_USER, "id_token": "x" * 5000})
+        assert len(dikke_sessie) < 200, f"de cookie draagt alleen het id, vond {len(dikke_sessie)} bytes"
 
         context = browser.new_context()
         host = urlparse(app_server).hostname or "127.0.0.1"

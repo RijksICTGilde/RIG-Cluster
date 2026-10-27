@@ -264,7 +264,7 @@ def _client(stream_start: Any, toegestane_pods: list[dict[str, Any]]) -> Any:
         TestClient(app),
         patch.multiple(
             "opi.api.logs_websocket_router",
-            _get_session_from_cookie=MagicMock(
+            _get_session_from_scope=MagicMock(
                 return_value={"user": {"email": "lid@rijksoverheid.nl", "login_at": time.time()}}
             ),
             get_user_service=MagicMock(return_value=MagicMock(is_email_allowed=MagicMock(return_value=True))),

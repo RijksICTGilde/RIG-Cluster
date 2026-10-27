@@ -12,6 +12,7 @@ from urllib.parse import quote_plus
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from opi.middleware.server_side_session import ServerSideSession
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_service import get_user_service
 from sqlalchemy.exc import SQLAlchemyError
@@ -125,6 +126,12 @@ async def auth_callback(request: Request) -> Response:
             # No "user" is stored, so this does not grant access; it only tells the denied page why.
             request.session["denied_reason"] = "email-not-verified"
             return RedirectResponse(url="/permission-denied", status_code=302)
+
+        # Sessiefixatie: nieuw sessie-id op het privilegescharnier, zodat een geplant id
+        # (cookie tossing vanaf een sibling-subdomain) dood is voordat de identiteit erin landt.
+        session = request.session
+        if isinstance(session, ServerSideSession):
+            await session.regenerate()
 
         # Store user information in the session
         request.session["user"] = {

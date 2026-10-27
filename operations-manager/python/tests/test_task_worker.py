@@ -404,3 +404,29 @@ class TestWorkerCleanupLoop:
             retention_hours=72,
             header_retention_days=90,
         )
+
+    async def test_cleanup_loop_purges_expired_sessions(
+        self,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+        mock_worker_settings: Any,
+    ) -> None:
+        """RC-390: de uurlijkse lus ruimt ook de verlopen sessierijen op."""
+
+        async def _stop_after_first_sleep(_seconds: float) -> None:
+            worker._running = False
+
+        store = AsyncMock()
+        store.purge_expired = AsyncMock(return_value=3)
+        otp_service = AsyncMock()
+        otp_service.purge_expired_pending_registrations = AsyncMock(return_value=0)
+        worker._running = True
+
+        with (
+            patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock(side_effect=_stop_after_first_sleep)),
+            patch("opi.core.task_worker.UserOtpService", return_value=otp_service),
+            patch("opi.core.task_worker.get_session_store", return_value=store),
+        ):
+            await worker._cleanup_loop()
+
+        store.purge_expired.assert_awaited_once()

@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from opi.core.db import session_scope
 from opi.services.persistence.session_revocations import SessionRevocation
+from opi.services.session_store import get_session_store
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 async def revoke_sessions(email: str) -> datetime:
     """Maak elke lopende portaalsessie van dit e-mailadres ongeldig.
+
+    Twee bewakers: de revocatierij weigert cookies van voor dit tijdstip, en sinds de
+    server-side sessies (RC-390) verdwijnen ook de rijen zelf - een verwijderde rij is
+    een harde weigering op de volgende request.
 
     Returns:
         Het tijdstip waarvoor sessies vervallen.
@@ -29,6 +34,10 @@ async def revoke_sessions(email: str) -> datetime:
     )
     async with session_scope() as session:
         await session.execute(statement)
+
+    removed = await get_session_store().delete_by_email(email)
+    if removed:
+        logger.info("Also removed %d server-side session row(s) of %s", removed, email)
 
     get_user_service().set_sessions_revoked_after(email, revoked_after.timestamp())
     return revoked_after

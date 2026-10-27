@@ -10,8 +10,7 @@ tabel loopt en niet via een stub.
 
 from __future__ import annotations
 
-import base64
-import json
+import secrets
 import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -28,17 +27,20 @@ from itsdangerous import TimestampSigner
 from opi.api.auth_routes import logout
 from opi.core.auth_decorators import requires_sso
 from opi.core.config import settings
-from opi.core.db import Base, include_orm_object
+from opi.core.db import Base, include_orm_object, session_scope
 from opi.core.session_guard import valid_session_user
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.middleware.server_side_session import ServerSideSessionMiddleware
+from opi.services.persistence.sessions import PortalSession
 from opi.services.session_revocation_service import load_revocations, revoke_sessions
+from opi.services.session_store import get_session_store
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_service import get_user_service
 from opi.web.router_user_admin import revoke_user_sessions
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.exc import SQLAlchemyError
-from starlette.middleware.sessions import SessionMiddleware
 from tests.conftest import alembic_downgrade, alembic_upgrade
+from tests.inmemory_session_store import InMemorySessionStore
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,9 +50,10 @@ BEHEERDER = "beheerder@rijksoverheid.nl"
 EIND_SESSIE = "https://keycloak.test/logout"
 
 
-def _cookie(login_at: float, email: str = EMAIL) -> str:
-    payload = base64.b64encode(json.dumps({"user": {"email": email, "login_at": login_at}}).encode()).decode()
-    return TimestampSigner(str(settings.SECRET_KEY)).sign(payload).decode()
+def _cookie(store: InMemorySessionStore, login_at: float, email: str = EMAIL) -> str:
+    """Een sessie in de store; de cookie draagt alleen het ondertekende id (RC-390)."""
+    session_id = store.seed(secrets.token_urlsafe(32), _sessie(login_at, email))
+    return TimestampSigner(str(settings.SECRET_KEY)).sign(session_id.encode()).decode()
 
 
 def _sessie(login_at: float, email: str = EMAIL) -> dict[str, Any]:
@@ -58,8 +61,13 @@ def _sessie(login_at: float, email: str = EMAIL) -> dict[str, Any]:
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
-    """Een app met de autorisatie en de sessie erin, en een route die een sessie eist."""
+def client() -> Iterator[tuple[TestClient, InMemorySessionStore]]:
+    """Een app met de autorisatie en de server-side sessie erin, met een in-memory store.
+
+    De guard-semantiek (ingetrokken = geweigerd) toetst op de echte UserService; de
+    sessie-opslag is hier in-memory, want de TestClient draait zijn eigen event loop.
+    """
+    store = InMemorySessionStore()
     app = FastAPI()
 
     @app.get("/beveiligd")
@@ -68,12 +76,18 @@ def client() -> Iterator[TestClient]:
         return PlainTextResponse("binnen")
 
     app.add_middleware(AuthorizationMiddleware)
-    app.add_middleware(SessionMiddleware, secret_key=str(settings.SECRET_KEY))
+    app.add_middleware(
+        ServerSideSessionMiddleware,
+        secret_key=str(settings.SECRET_KEY),
+        max_age=settings.SESSION_MAX_AGE_SECONDS,
+        https_only=False,
+        store=store,
+    )
 
     toegang = MagicMock()
     toegang.is_email_allowed.return_value = True
     with patch("opi.middleware.authorization.get_user_service", return_value=toegang):
-        yield TestClient(app)
+        yield TestClient(app), store
 
 
 @pytest.fixture(autouse=True)
@@ -122,19 +136,35 @@ async def test_een_falende_database_breekt_het_uitloggen_niet_af() -> None:
 
 
 async def test_de_middleware_weigert_een_ingetrokken_sessie_en_laat_een_nieuwe_door(
-    orm_db: None, client: TestClient
+    orm_db: None, client: tuple[TestClient, InMemorySessionStore]
 ) -> None:
+    http, store = client
     await revoke_sessions(EMAIL)
 
-    client.cookies.set("session", _cookie(time.time() - 60))
-    geweigerd = client.get("/beveiligd", follow_redirects=False)
+    http.cookies.set("session", _cookie(store, time.time() - 60))
+    geweigerd = http.get("/beveiligd", follow_redirects=False)
 
-    client.cookies.set("session", _cookie(time.time()))
-    opnieuw = client.get("/beveiligd", follow_redirects=False)
+    http.cookies.set("session", _cookie(store, time.time()))
+    opnieuw = http.get("/beveiligd", follow_redirects=False)
 
     assert geweigerd.status_code == 302
     assert geweigerd.headers["location"] == "/auth/login"
     assert opnieuw.status_code == 200
+
+
+async def test_revocation_removes_the_server_side_session_rows(orm_db: None) -> None:
+    """Sinds RC-390 is "verwijder de rij" de harde weigering op de volgende request:
+    naast de revocatiepost verdwijnen de sessies van dit adres uit de tabel."""
+    await get_session_store().set(secrets.token_urlsafe(32), _sessie(time.time() - 60, EMAIL))
+    await get_session_store().set(
+        secrets.token_urlsafe(32), _sessie(time.time() - 60, "iemand-anders@rijksoverheid.nl")
+    )
+
+    await revoke_sessions(EMAIL)
+
+    async with session_scope() as session:
+        over = (await session.scalars(select(PortalSession))).all()
+    assert [rij.data["user"]["email"] for rij in over] == ["iemand-anders@rijksoverheid.nl"]
 
 
 async def test_het_intrekken_staat_in_de_tabel_en_overleeft_een_herstart(orm_db: None) -> None:

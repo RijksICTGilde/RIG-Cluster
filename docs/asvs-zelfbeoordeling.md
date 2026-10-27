@@ -16,7 +16,7 @@ De zwaartepunten voor de externe audit zijn autorisatie (V8), tenant-isolatie (V
 | V4 API and Web Service | 10 | 5 | 0 | 2 | 3 |
 | V5 File Handling | 9 | 6 | 0 | 1 | 2 |
 | V6 Authentication | 35 | 3 | 0 | 22 | 10 |
-| V7 Session Management | 18 | 12 | 0 | 6 | 0 |
+| V7 Session Management | 18 | 13 | 0 | 5 | 0 |
 | V8 Authorization | 7 | 6 | 0 | 1 | 0 |
 | V9 Self-contained Tokens | 7 | 6 | 0 | 1 | 0 |
 | V10 OAuth and OIDC | 29 | 6 | 0 | 18 | 5 |
@@ -27,7 +27,7 @@ De zwaartepunten voor de externe audit zijn autorisatie (V8), tenant-isolatie (V
 | V15 Secure Coding and Architecture | 13 | 8 | 0 | 4 | 1 |
 | V16 Security Logging and Error Handling | 16 | 11 | 0 | 5 | 0 |
 | V17 WebRTC | 7 | 0 | 0 | 0 | 7 |
-| **Totaal** | **253** | **122** | **6** | **83** | **42** |
+| **Totaal** | **253** | **123** | **6** | **82** | **42** |
 
 ## Eisen
 
@@ -182,7 +182,7 @@ De zwaartepunten voor de externe audit zijn autorisatie (V8), tenant-isolatie (V
 | V7.2.1 | L1 | automatische toets | `operations-manager/python/tests/test_authorization.py` | Verify that the application performs all session token verification using a trusted, backend service. |
 | V7.2.2 | L1 | automatische toets | `operations-manager/python/tests/test_secret_key_failclosed.py` | Verify that the application uses either self-contained or reference tokens that are dynamically generated for session management, i.e. not using static API secrets and keys. |
 | V7.2.3 | L1 | automatische toets | `operations-manager/python/tests/test_secret_key_failclosed.py` | Verify that if reference tokens are used to represent user sessions, they are unique and generated using a cryptographically secure pseudo-random number generator (CSPRNG) and possess at least 128 bits of entropy. |
-| V7.2.4 | L1 | handwerk | OPI-ontwikkelteam | Verify that the application generates a new session token on user authentication, including re-authentication, and terminates the current session token. |
+| V7.2.4 | L1 | automatische toets | `operations-manager/python/tests/test_server_side_session.py` | Verify that the application generates a new session token on user authentication, including re-authentication, and terminates the current session token. |
 | V7.3.1 | L2 | automatische toets | `operations-manager/python/tests/test_portaalsessie_levensduur.py` | Verify that there is an inactivity timeout such that re-authentication is enforced according to risk analysis and documented security decisions. |
 | V7.3.2 | L2 | automatische toets | `operations-manager/python/tests/test_portaalsessie_levensduur.py` | Verify that there is an absolute maximum session lifetime such that re-authentication is enforced according to risk analysis and documented security decisions. |
 | V7.4.1 | L1 | automatische toets | `operations-manager/python/tests/test_sessies_intrekken.py` | Verify that when session termination is triggered (such as logout or expiration), the application disallows any further use of the session. For reference tokens or stateful sessions, this means invalidating the session data at the application backend. Applications using self-contained tokens will need a solution such as maintaining a list of terminated tokens, disallowing tokens produced before a per-user date and time or rotating a per-user signing key. |

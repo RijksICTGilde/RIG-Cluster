@@ -34,7 +34,7 @@ from tests.e2e import test_sandbox_registry_pull as registry_pull
 from tests.e2e import test_sandbox_seaweedfs_eisen as seaweedfs_eisen
 from tests.e2e import test_sandbox_speelruimte as speelruimte
 from tests.e2e import testserver
-from tests.e2e.conftest import SANDBOX_TEST_USER, _houd_sandboxmodules_bij_elkaar
+from tests.e2e.conftest import _houd_sandboxmodules_bij_elkaar
 from tests.e2e.conftest import pytest_collection_modifyitems as ordeningshook
 from tests.e2e.helpers import cluster, lifecycle, sandbox_api, seaweedfs, weesprojecten, zad_cli
 
@@ -1440,6 +1440,13 @@ class TestWeesprojectVerwijderen:
     @staticmethod
     def _client(monkeypatch: pytest.MonkeyPatch) -> type[_NepHttpClient]:
         monkeypatch.setattr(weesprojecten.httpx, "Client", _NepHttpClient)
+        # De sessie dient sinds RC-390 aan als een rij in de sandbox-database; de aanmaak
+        # daarvan is hier niet aan de orde, alleen dat de cookie met de sleutel tekent.
+        monkeypatch.setattr(
+            weesprojecten.sandbox_api,
+            "make_session_cookie",
+            lambda data, *, secret, **_: TimestampSigner(secret).sign(b"e2e-sessie-id").decode(),
+        )
         # ``laatste`` is een klasse-attribuut: zonder deze reset leest een toets die op
         # het UITBLIJVEN van een verzoek grendelt de client van de vorige toets.
         monkeypatch.setattr(_NepHttpClient, "laatste", None)
@@ -1459,8 +1466,8 @@ class TestWeesprojectVerwijderen:
         assert headers["Origin"] == "https://zad.sandbox.test"
         sessie = client.cookies.get("session")
         assert sessie, "er ging geen sessiecookie mee"
-        ondertekend = TimestampSigner("x" * 32).unsign(sessie)
-        assert json.loads(base64.b64decode(ondertekend))["user"]["email"] == SANDBOX_TEST_USER["email"]
+        # Sinds RC-390 draagt de cookie alleen een ondertekend id; de inhoud woont op de server.
+        assert TimestampSigner("x" * 32).unsign(sessie) == b"e2e-sessie-id"
 
     def test_een_sessie_die_niet_wordt_aanvaard_zegt_dat_voor_de_post(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Een omleiding naar de login hoort hier te stoppen, niet in een 403 verderop."""

@@ -5,7 +5,6 @@ Nagebootste binaries en test projects zodat de proeven herhaalbaar zijn.
 
 from __future__ import annotations
 
-import base64
 import contextlib
 import json
 import logging
@@ -24,7 +23,7 @@ import uvicorn
 import yaml
 from itsdangerous import TimestampSigner
 from opi.utils.logging_redact import redact_invite_key_in_path
-from tests.e2e.testserver import SECRET_KEY, _munt_projectsleutelpaar, create_test_app
+from tests.e2e.testserver import SECRET_KEY, _munt_projectsleutelpaar, create_test_app, get_in_memory_session_store
 
 from security_tests import sandboxlog
 from security_tests.doel import AANROEPLOG, PROEF_ROOT, RUNBESTAND, TOKEN_HEADER
@@ -147,16 +146,18 @@ def _seed_projecten() -> dict[str, str]:
 
 
 def sessiekoekje(email: str, naam: str, secret: str = SECRET_KEY) -> str:
-    """Een ondertekend sessiekoekje, zoals SessionMiddleware het schrijft.
+    """Een ondertekend sessiekoekje voor de wegwerp-sandbox, zoals RC-390 het schrijft.
 
-    Dezelfde opzet als ``tests/e2e/conftest.py`` en ``scripts/sandbox_project_tool.py``: er is
-    geen gedeelde helper voor, en een sessie namaken is het enige dat hier van de app nodig is.
-    Het geheim is een argument, want een doel in het cluster ondertekent met zijn eigen
-    SECRET_KEY en niet met die van de wegwerp-sandbox.
+    De cookie draagt alleen een ondertekend id; de inhoud woont in de in-memory store die
+    de testserver aansluit (``get_in_memory_session_store``). Het geheim is een argument,
+    want een doel in het cluster ondertekent met zijn eigen SECRET_KEY - wie de ECHTE
+    sandbox aanroept maakt de rij aan via ``sandbox_api.make_session_cookie``
+    (zie ``security_tests/sandboxdoel.py``).
     """
     gebruiker = {"sub": email, "email": email, "name": naam, "login_at": time.time()}
-    payload = base64.b64encode(json.dumps({"user": gebruiker}).encode()).decode()
-    return TimestampSigner(secret).sign(payload).decode()
+    session_id = secrets.token_urlsafe(24)
+    get_in_memory_session_store().seed(session_id, {"user": gebruiker})
+    return TimestampSigner(secret).sign(session_id.encode()).decode()
 
 
 def _schrijf_runbestand(url: str, token: str, sleutels: dict[str, str]) -> None:

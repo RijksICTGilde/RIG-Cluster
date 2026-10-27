@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Snelle, HTTP-only hulp om sandboxprojecten te drijven, zonder browser.
 
-Dit gereedschap tekent dezelfde Starlette-sessiecookie die de e2e-suite gebruikt en praat
-plain HTTP, dus het antwoordt in seconden. Gebruik het om een project een API-token te
+Dit gereedschap maakt dezelfde server-side sessie die de e2e-suite gebruikt (een rij in
+de rig-db plus het ondertekende id, RC-390) en praat plain HTTP, dus het antwoordt in
+seconden. Gebruik het om een project een API-token te
 geven, het te verwijderen via de Operations Manager, of een dienstconfig te zetten.
 
 HOE HET AAN EEN BEWIJSMIDDEL KOMT. Tot schemaversie 2.12 schraapte dit script
@@ -31,18 +32,14 @@ Voorbeelden:
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import ssl
 import sys
-import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
-
-from itsdangerous import TimestampSigner
 
 # Python zet bij een aanroep met een BESTANDSNAAM de map van het SCRIPT op ``sys.path`` en
 # niet de projectwortel, en dan is ``tests`` niet te importeren.
@@ -50,7 +47,7 @@ PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from tests.e2e.helpers.sandbox_api import STEP_UP_SESSION_KEY, geef_projecttoken  # noqa: E402
+from tests.e2e.helpers.sandbox_api import STEP_UP_SESSION_KEY, geef_projecttoken, make_session_cookie  # noqa: E402
 
 BASE = os.environ.get("ZAD_BASE_URL", "https://zad.sandbox.rijksapp.dev").rstrip("/")
 # Dezelfde variabele die de e2e-suite leest, zodat `eval "$(sandbox-gegevens --env)"`
@@ -66,20 +63,18 @@ _CTX.verify_mode = ssl.CERT_NONE
 
 
 def _session_value() -> str:
-    """De ondertekende sessiewaarde. ``login_at`` hoort erbij: een sessie zonder
-    inlogtijdstip is voorbij haar absolute levensduur en wordt geweigerd
-    (``opi/core/session_guard.py``).
+    """De ondertekende sessiewaarde: een rij in de rig-db van het cluster plus het
+    ondertekende id ervan (server-side sessies, RC-390).
 
-    De step-upstempel hoort er ook bij: een token uitgeven vraagt een verse (RC-387) en
-    dit gereedschap heeft geen browser om een code in te typen. Het ondertekent zijn
-    sessie al met de SECRET_KEY van het cluster, dus de stempel geeft geen bevoegdheid die
-    er niet was."""
+    De step-upstempel hoort erbij: een token uitgeven vraagt een verse (RC-387) en dit
+    gereedschap heeft geen browser om een code in te typen. Het maakt zijn sessie al aan
+    met de SECRET_KEY van het cluster, dus de stempel geeft geen bevoegdheid die er niet
+    was."""
     if not SECRET:
         raise SystemExit('geen SECRET_KEY: zet ZAD_SECRET_KEY, of doe eval "$(sandbox-gegevens --env)"')
-    user = {"sub": "sandbox-tool", "email": USER_EMAIL, "name": "Sandbox Tool", "login_at": time.time()}
+    user = {"sub": "sandbox-tool", "email": USER_EMAIL, "name": "Sandbox Tool"}
     sessie = {"user": user, STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()}
-    payload = base64.b64encode(json.dumps(sessie).encode()).decode()
-    return TimestampSigner(SECRET).sign(payload).decode()
+    return make_session_cookie(sessie, secret=SECRET)
 
 
 def _request(

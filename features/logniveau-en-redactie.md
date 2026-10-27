@@ -70,8 +70,8 @@ De patronen zijn opzettelijk nauw gekozen, zodat ze geen gewone regels vervormen
 Bearer-token moet minimaal 20 tekens zijn, anders zou "Bearer authentication failed" ook
 worden gemaskeerd; de JSON-vorm eist een gequoteerde sleutel, anders zou "Failed to
 decrypt registry password: \<fout\>" zijn fouttekst kwijtraken; en `cookie` staat niet in
-de namenlijst van het tekstpatroon, omdat dat woord in gewone regels voorkomt ("Failed to
-decode session cookie: \<fout\>").
+de namenlijst van het tekstpatroon, omdat dat woord in gewone regels voorkomt ("Invalid
+session cookie signature - tampering or SECRET_KEY mismatch").
 
 De access-log van uvicorn komt hier niet langs: `uvicorn.access` heeft zijn eigen handler
 met `propagate: false`, dus de filters daarvoor hangen op de logger zelf. Een filter dat

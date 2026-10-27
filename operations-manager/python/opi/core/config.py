@@ -189,11 +189,15 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
 
-    # Idle session timeout. The session cookie is re-signed on every response,
-    # so this acts as a sliding window: a session expires only after this many
-    # seconds of inactivity. Shared by the HTTP SessionMiddleware and the
-    # WebSocket handshake so both enforce the same lifetime.
+    # Idle session timeout. The session cookie is re-signed on every response that
+    # mutates the session, and the server-side row renews on activity via touch: a
+    # session expires only after this many seconds of inactivity.
     SESSION_MAX_AGE_SECONDS: int = 28800  # 8 hours - one workday
+
+    # Hot-cache voor de server-side sessies (RC-390): een FIFO met max + per-item TTL.
+    # Na de TTL is de database weer de bron (een tweede pod loopt nooit verder achter).
+    SESSION_CACHE_MAX_ENTRIES: int = 5000
+    SESSION_CACHE_TTL_SECONDS: float = 60.0
 
     # Absolute maximumduur van een sessie vanaf het inloggen, hoe actief ook (BIO2 8.05,
     # ASVS 3.3.1). De inactiviteitsgrens hierboven is een schuivend venster; dit is hard.

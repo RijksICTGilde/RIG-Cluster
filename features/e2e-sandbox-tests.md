@@ -293,10 +293,12 @@ Chromium is installed on demand by the Taskfile targets (`uv run playwright inst
 
 ## Authentication (why there is no login code)
 
-Tests authenticate with a **pre-signed Starlette session cookie** - the fixture signs a cookie for
-an allowlisted user with the app's `SECRET_KEY` and injects it into the browser context. No
-Keycloak round-trip, no login form. This is why tests never contain auth code: it lives once, in
-the `auth_page` / `sandbox_page` fixtures.
+Tests authenticate with a **server-side session** (see `server-side-sessies.md`). The
+fixture creates the session content server-side - locally in the test server's in-memory store,
+on the sandbox as a row in the `sessions` table (`make_session_cookie` in
+`tests/e2e/helpers/sandbox_api.py` writes it via a psql pod) - and injects a cookie carrying only
+the signed session id into the browser context. No Keycloak round-trip, no login form. This is why
+tests never contain auth code: it lives once, in the `auth_page` / `sandbox_page` fixtures.
 
 Trade-off: sandbox mode depends on `E2E_SECRET_KEY` matching the running sandbox `SECRET_KEY`. A
 future **real-login fixture** (admin/admin1234 against the Keycloak form, which the `sso-support`
@@ -315,7 +317,8 @@ Three layers, all under `E2E_ARTIFACT_DIR` (sandbox mode):
 ## Adding a test user (future)
 
 Add a second Keycloak user to the sandbox realm config, add its email to `ALLOWED_EMAILS` in the
-sandbox configmap, then either add a `SANDBOX_TEST_USER`-style constant and sign a cookie for it, or
+sandbox configmap, then either add a `SANDBOX_TEST_USER`-style constant and create its session with
+`make_session_cookie` (the server-side session, not just a signed cookie), or
 implement the real-login fixture mentioned above.
 
 ## Known constraints on the current sandbox

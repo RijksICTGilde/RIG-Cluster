@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import yaml
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
+from tests.inmemory_session_store import InMemorySessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,20 @@ class InMemoryUserOtpService:
 # Singleton so the test server and tests share the same instance
 _in_memory_user_service: InMemoryUserAdminService | None = None
 _in_memory_otp_service: InMemoryUserOtpService | None = None
+_in_memory_session_store: InMemorySessionStore | None = None
+
+
+def get_in_memory_session_store() -> InMemorySessionStore:
+    """De server-side sessies van deze suite, in het geheugen (RC-390).
+
+    Zonder Postgres in deze harnas kan de sessiemiddleware niet naar de echte store. De
+    app krijgt deze via de patch hieronder; de fixtures schrijven er sessies in met
+    ``seed`` en tekenen alleen het id als cookie.
+    """
+    global _in_memory_session_store
+    if _in_memory_session_store is None:
+        _in_memory_session_store = InMemorySessionStore()
+    return _in_memory_session_store
 
 
 def get_in_memory_user_service() -> InMemoryUserAdminService:
@@ -625,6 +640,12 @@ def create_test_app():
             patch("opi.web.router_user_admin._get_otp_service", _mock_get_otp_service),
             patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
             patch("opi.web.router.UserOtpService", _mock_get_otp_service),
+            # De server-side sessies (RC-390): de middleware vraagt per request om de
+            # store, en krijgt hier de in-memory variant.
+            patch(
+                "opi.middleware.server_side_session.get_session_store",
+                get_in_memory_session_store,
+            ),
             # /admin/diensten leest via de metriekconnector; hier is geen Prometheus.
             patch(
                 "opi.services.gedeelde_diensten.get_metrics_connector",
@@ -669,6 +690,23 @@ def create_test_app():
     return patched_app
 
 
+#: Vast sessie-id voor de standalone server (aanvalsproef-CI): twee processen delen geen
+#: geheugen, dus de scan kan geen vers geseede sessie ophalen en gebruikt deze vaste id,
+#: die de server bij het starten zelf in zijn in-memory store legt (:func:`run_standalone`).
+TEST_SESSION_ID = "e2e-testserver-sessie"
+
+
+def aanvalsproef_cookie() -> str:
+    """De sessiecookie van de standalone server: het ondertekende vaste sessie-id.
+
+    Aangeroepen vanuit een tweede proces (de aanvalsproef-workflow); het ondertekenen kan
+    daar, want het geheim is een constante van deze harnas en de rij is al gelegd.
+    """
+    from itsdangerous import TimestampSigner
+
+    return TimestampSigner(SECRET_KEY).sign(TEST_SESSION_ID.encode()).decode()
+
+
 def run_standalone() -> None:
     """Run the test server standalone for interactive UI development."""
     import uvicorn
@@ -691,6 +729,14 @@ def run_standalone() -> None:
 
     ctx = create_test_app()
     with ctx() as app:
+        # De sessie achter TEST_SESSION_ID, zodat een tweede proces (de aanvalsproef) er
+        # mee kan ondertekenen. login_at vers, anders weigert de guard de sessie direct.
+        import time
+
+        get_in_memory_session_store().seed(
+            TEST_SESSION_ID,
+            {"user": {"sub": "e2e-user", "email": TEST_USER_EMAIL, "name": "E2E Test User", "login_at": time.time()}},
+        )
         config = uvicorn.Config(
             app,
             host="127.0.0.1",

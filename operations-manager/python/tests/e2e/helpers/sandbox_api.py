@@ -11,6 +11,7 @@ bestaand token is dus niet op te halen: de weg is er een UITGEVEN, en dat doet
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import re
 import secrets
@@ -18,6 +19,7 @@ import time
 from urllib.parse import urlparse
 
 import httpx
+from itsdangerous import TimestampSigner
 from tests.e2e.helpers import cluster
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,38 @@ STEP_UP_SESSION_KEY = "step_up_at"
 
 #: Hoe een uitgegeven token eruitziet: het voorvoegsel plus de willekeurige waarde.
 _TOKEN_VORM = re.compile(r'value="(zad_[A-Za-z0-9_-]+)"')
+
+
+def make_session_cookie(data: dict, *, secret: str, max_age_seconds: int = 28800) -> str:
+    """Maak een server-side sessie op de SANDBOX en geef de ondertekende cookie terug.
+
+    Sinds RC-390 draagt de cookie alleen een ondertekend id; de inhoud woont in de tabel
+    ``sessions`` van de rig-db. Deze helper schrijft die rij (via een psql-pod, zoals
+    ``cluster.run_psql`` dat doet) en tekent het id met de SECRET_KEY van het cluster.
+
+    Een ``user`` in ``data`` krijgt een vers ``login_at``: de guard weigert een sessie
+    zonder inlogtijdstip (opi/core/session_guard.py).
+    """
+    if gebruiker := data.get("user"):
+        data = {**data, "user": {**gebruiker, "login_at": time.time()}}
+    session_id = secrets.token_urlsafe(32)
+    # SQL-literal-escaping: de data gaat als een letterlijke string de psql-pod in.
+    data_sql = json.dumps(data).replace("'", "''")
+    password = cluster.secret_values("rig-system", "postgres-admin-credentials")["password"]
+    code, uitvoer = cluster.run_psql(
+        "INSERT INTO sessions (id, data, created_at, expires_at, last_seen) "
+        f"VALUES ('{session_id}', '{data_sql}'::jsonb, now(), "
+        f"now() + interval '{max_age_seconds} seconds', now()) "
+        "ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at, "
+        "last_seen = now()",
+        host="rig-db-rw",
+        user="postgres",
+        database="operations_manager",
+        password=password,
+    )
+    if code != 0:
+        raise AssertionError(f"sessie-rij aanmaken op de sandbox mislukte (exit {code}): {uitvoer[:300]}")
+    return TimestampSigner(secret).sign(session_id.encode()).decode()
 
 
 def geef_projecttoken(

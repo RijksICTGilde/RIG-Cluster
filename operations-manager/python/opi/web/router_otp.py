@@ -139,7 +139,9 @@ async def otp_start(request: Request) -> Response:
 async def otp_bevestigen(request: Request) -> Response:
     """Bevestig de lopende registratie. Pas hier gaat de nieuwe factor in."""
     form = await request.form()
-    encrypted = str(form.get(PENDING_FIELD, ""))
+    # Een formulier-POST maakt CRLF van de LF's in het AGE-pantser (form-encoding);
+    # de afdruk en de ontsleuteling horen de kanonieke vorm te zien.
+    encrypted = str(form.get(PENDING_FIELD, "")).replace("\r\n", "\n")
     email = _email(request)
     if not encrypted or not await _get_otp_service().consume_pending_registration(email, _fingerprint(encrypted)):
         logger.warning("OTP-bevestiging zonder lopende registratie voor %s", email)
