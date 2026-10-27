@@ -200,6 +200,24 @@ class _ApprovalState:
         last = history[-1] if isinstance(history, list) and history else None
         return last if isinstance(last, dict) else {}
 
+    def _promote_bare_entry(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Maak van een kale-string-entry de recordvorm, zodat er een config is om naar te schrijven.
+
+        Een dienst met alleen optionele config blijft als kale string in de lijst staan en
+        heeft dan geen plek voor het blok; de schrijver returnde dan stil en de aanvraag
+        verdween. Promoveren naar de recordvorm is wat ``set_service_config`` ook doet: de
+        selectie is een set op naam, de vorm van de entry is bijzaak.
+        """
+        services = project_data.get("services")
+        if not isinstance(services, list):
+            return None
+        for index, entry in enumerate(services):
+            if entry == self.service:
+                record: dict[str, Any] = {"name": self.service}
+                services[index] = record
+                return record
+        return None
+
     def write(
         self,
         project_data: dict[str, Any],
@@ -208,6 +226,8 @@ class _ApprovalState:
     ) -> None:
         """Vul het blok aan, en maak het aan als het er nog niet is."""
         entry = self.entry(project_data)
+        if entry is None:
+            entry = self._promote_bare_entry(project_data)
         if entry is None:
             return
         config = entry.setdefault("config", {})

@@ -1014,6 +1014,20 @@ class TestDeAanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
         assert project["services"] == []
 
+    def test_aanzetten_als_kale_string_maakt_ook_de_aanvraag(self) -> None:
+        """Een dienst met alleen optionele config blijft als kale string in de lijst staan
+        ("send-email", zoals de wizard en de API hem toevoegen), en ook dan is aanzetten de
+        aanvraag. De schrijfplek returnde stil op zo'n entry, dus de aanvraag verdween: de
+        dienst stond aan, er kwam nooit een blok en nooit een besluit."""
+        project = {"name": "myproject", "services": [ServiceType.SEND_EMAIL.value]}
+        SERVICE.ensure_approval_requests(project)
+        assert project["services"] == [
+            {
+                "name": ServiceType.SEND_EMAIL.value,
+                "config": {"approval": {"status": "requested", "history": []}},
+            }
+        ]
+
     def test_de_aanvraag_komt_in_de_generieke_lijst(self) -> None:
         from opi.services.approvals import collect_approval_items
 
