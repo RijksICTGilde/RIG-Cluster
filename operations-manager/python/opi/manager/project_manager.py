@@ -8867,6 +8867,10 @@ class ProjectManager:
             # that mutation away while the response still reported the component as
             # updated, which is the ordinary second call (configure, then bind).
             if result["services_added"] or result["components_updated"]:
+                # De dienst aanzetten IS de aanvraag, op deze weg net zo goed als in
+                # configure_service en in het portaal -- deze route sloeg hem over, dus
+                # een via de API aangezette goedkeuringsplichtige dienst vroeg nooit iets.
+                ensure_approval_requests(project_data)
                 commit_message = self._add_service_commit_message(project_name, service_name, result)
                 await self.save_and_commit_project(project_data, commit_message)
 
