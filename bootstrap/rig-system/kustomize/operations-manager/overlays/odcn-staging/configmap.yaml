@@ -79,12 +79,10 @@ data:
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    # Dezelfde lijsten als productie; wie er tijdens de pentest bij mag, is een keuze die
-    # nog gemaakt moet worden.
-    ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
-    ADMIN_EMAILS=robbert.bos@rijksoverheid.nl
-    ENABLE_TRACEMALLOC=false
-    ARGOCD_MANAGER=rig-staging-operations
+    # ALLOWED_EMAILS en ADMIN_EMAILS (persoonsgegevens) staan in de private repo
+    # zad-staging-secrets, in operations-manager/operations-manager-env-secrets.yaml;
+    # dat secret komt mee via envFrom in de base-Deployment.
+    ENABLE_TRACEMALLOC=false    ARGOCD_MANAGER=rig-staging-operations
 
     # Geen GRAFANA_DATASOURCE_UID en geen REGISTRY_*: de Mimir-datasources tonen de
     # metrics van productie, en de registry-organisatie rig/zad is die van productie.
