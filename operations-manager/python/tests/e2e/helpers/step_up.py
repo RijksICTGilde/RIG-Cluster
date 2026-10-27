@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from tests.e2e.conftest import E2E_SECRET_KEY, SANDBOX_ACTIE_BUDGET_MS, SANDBOX_TEST_USER, _sign_session
+from tests.e2e.conftest import E2E_SECRET_KEY, SANDBOX_ACTIE_BUDGET_MS, SANDBOX_TEST_USER
 from tests.e2e.helpers import sandbox_api
 
 if TYPE_CHECKING:
@@ -21,8 +21,12 @@ if TYPE_CHECKING:
 
 
 def fresh_step_up_session() -> str:
-    """Een ondertekende sessiecookie die een verse step-up-stempel draagt."""
-    return _sign_session(
+    """Een ondertekende sessiecookie die een verse step-up-stempel draagt.
+
+    De inhoud woont server-side (RC-390): deze maakt de rij aan in de sandbox-database
+    en tekent alleen het id. De stempel zit dus in de rij, niet in de cookie.
+    """
+    return sandbox_api.make_session_cookie(
         {"user": SANDBOX_TEST_USER, sandbox_api.STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
         secret=E2E_SECRET_KEY,
     )

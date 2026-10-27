@@ -141,7 +141,7 @@ jobs:
       - name: Scan met een sessie
         working-directory: operations-manager/python
         run: |
-          COOKIE=$(uv run python -c "from tests.e2e.conftest import TEST_USER, _sign_session; print(_sign_session({'user': TEST_USER}))")
+          COOKIE=$(uv run python -c "from tests.e2e.testserver import aanvalsproef_cookie; print(aanvalsproef_cookie())")
           nuclei -u http://127.0.0.1:8111 -H "Cookie: session=$COOKIE" \
             -jsonl-export "$GITHUB_WORKSPACE/nuclei-sessie.jsonl" -no-interactsh -timeout 5 -stats -silent
 

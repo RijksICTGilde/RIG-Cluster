@@ -9,8 +9,6 @@ basisdeployment die waarde echt zet.
 
 from __future__ import annotations
 
-import base64
-import json
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +20,7 @@ from itsdangerous import TimestampSigner
 from opi.core.config import Settings, settings
 from opi.server import create_app
 from opi.services.user_service import get_user_service
+from tests.inmemory_session_store import InMemorySessionStore
 
 REPO_WORTEL = Path(__file__).resolve().parents[3]
 BASISDEPLOYMENT = REPO_WORTEL / "bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml"
@@ -30,6 +29,7 @@ DEV_COMPOSE = REPO_WORTEL / "docker-compose.dev.yaml"
 TESTPADEN = ("/test-hero", "/forms/formulier", "/test-template-variables", "/example")
 
 GEBRUIKER = {"sub": "start-dicht", "email": "start-dicht@voorbeeld.nl", "name": "Toets"}
+SESSIE_ID = "start-dicht-sessie"
 
 
 def _app_in(environment: str):
@@ -38,22 +38,24 @@ def _app_in(environment: str):
 
 
 def _sessiecookie() -> str:
-    """Zoals SessionMiddleware hem ondertekent, met de sleutel van deze proces-settings.
-
-    ``login_at`` hoort erbij: ``session_guard`` weigert sinds RC-287 een sessie zonder
-    inlogtijdstip, en dan loopt elk verzoek hier op een redirect naar de login uit.
-    """
-    gebruiker = {**GEBRUIKER, "login_at": time.time()}
-    payload = base64.b64encode(json.dumps({"user": gebruiker}).encode()).decode()
-    return TimestampSigner(settings.SECRET_KEY).sign(payload).decode()
+    """De ondertekende verwijzing naar de server-side sessie (RC-390): alleen een id."""
+    return TimestampSigner(settings.SECRET_KEY).sign(SESSIE_ID.encode()).decode()
 
 
 @pytest.fixture
 def ingelogde_client() -> TestClient:
+    """Een client met een sessie in een in-memory store: hier is geen database.
+
+    ``login_at`` hoort erbij: ``session_guard`` weigert sinds RC-287 een sessie zonder
+    inlogtijdstip, en dan loopt elk verzoek hier op een redirect naar de login uit.
+    """
     get_user_service().add_allowed_emails([GEBRUIKER["email"]])
-    client = TestClient(_app_in("local"))
-    client.cookies.set("session", _sessiecookie())
-    return client
+    store = InMemorySessionStore()
+    store.seed(SESSIE_ID, {"user": {**GEBRUIKER, "login_at": time.time()}})
+    with patch("opi.middleware.server_side_session.get_session_store", return_value=store):
+        client = TestClient(_app_in("local"))
+        client.cookies.set("session", _sessiecookie())
+        yield client
 
 
 # ---------------------------------------------------------------------------

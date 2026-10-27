@@ -67,6 +67,22 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
         "opi/forms/editables/converters.py",
         "AGEEncryptConverter.read",
     ): "de generieke AGEEncryptConverter, geen projectsleutel",
+    (
+        "opi/services/user_otp_service.py",
+        "UserOtpService.start_registration",
+    ): "het OTP-zaad van een gebruiker is een gebruikersgeheim, geen projectsleutel",
+    (
+        "opi/services/user_otp_service.py",
+        "UserOtpService.resume_registration",
+    ): "het OTP-zaad van een gebruiker is een gebruikersgeheim, geen projectsleutel",
+    (
+        "opi/services/user_otp_service.py",
+        "UserOtpService.confirm_registration",
+    ): "het OTP-zaad van een gebruiker is een gebruikersgeheim, geen projectsleutel",
+    (
+        "opi/services/user_otp_service.py",
+        "UserOtpService.verify",
+    ): "het OTP-zaad van een gebruiker is een gebruikersgeheim, geen projectsleutel",
 }
 
 

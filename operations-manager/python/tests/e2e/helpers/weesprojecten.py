@@ -16,7 +16,8 @@ het project is nooit afgemaakt. Blijft over de webroute
 ``POST /projects/delete/{naam}``, en die wil drie dingen TEGELIJK:
 
 1. een getekende sessiecookie, dezelfde ondertekening als de e2e-fixtures gebruiken
-   (``_sign_session`` met de ``SECRET_KEY`` van het cluster);
+   (``sandbox_api.make_session_cookie`` met de ``SECRET_KEY`` van het cluster; de rij staat
+   in de sandbox-database sinds RC-390);
 2. de ``csrf_token``-cookie terug in de ``x-csrf-token``-header (double submit,
    ``opi/utils/csrf.py``);
 3. een ``Origin``-header die op de host van het verzoek matcht (``opi/utils/csrf.py``).
@@ -45,8 +46,8 @@ from tests.e2e.conftest import (
     FORGEJO_USER,
     FORGEJO_VERIFY_SSL,
     SANDBOX_TEST_USER,
-    _sign_session,
 )
+from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.forgejo import ForgejoClient
 
 logger = logging.getLogger(__name__)
@@ -73,7 +74,7 @@ def start_verwijdering(
     """
     basis = base_url.rstrip("/")
     host = urlparse(basis).hostname or ""
-    sessie = _sign_session({"user": gebruiker or SANDBOX_TEST_USER}, secret=secret_key)
+    sessie = sandbox_api.make_session_cookie({"user": gebruiker or SANDBOX_TEST_USER}, secret=secret_key)
     with httpx.Client(verify=verify_ssl, timeout=timeout, follow_redirects=False) as client:
         client.cookies.set("session", sessie, domain=host)
         # Een GET zet de csrf_token-cookie (de middleware munt hem als hij ontbreekt) en
@@ -121,7 +122,7 @@ def wacht_tot_de_taak_klaar_is(
     """
     basis = base_url.rstrip("/")
     host = urlparse(basis).hostname or ""
-    sessie = _sign_session({"user": gebruiker or SANDBOX_TEST_USER}, secret=secret_key)
+    sessie = sandbox_api.make_session_cookie({"user": gebruiker or SANDBOX_TEST_USER}, secret=secret_key)
     einde = time.monotonic() + timeout
     tekst = ""
     with httpx.Client(verify=verify_ssl, timeout=60.0, follow_redirects=False) as client:

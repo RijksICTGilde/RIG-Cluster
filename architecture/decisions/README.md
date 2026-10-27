@@ -41,3 +41,4 @@ What becomes easier or harder as a result of this decision?
 | 0001 | [Remove FormField, use ResolvedEditableVisualizer](0001-remove-formfield-use-resolved-editable.md) | Proposed | 2026-03-09 |
 | 0002 | [Wait for ArgoCD sync completion after project refresh](0002-argocd-sync-wait-after-project-refresh.md) | Accepted | 2026-03-11 |
 | 0003 | [SeaweedFS as fallback object storage when MinIO maintenance burden grows](0003-seaweedfs-as-fallback-object-storage.md) | Accepted | 2026-10-22 |
+| 0004 | [Server-side sessions with a bounded hot cache](0004-server-side-sessions-with-bounded-hot-cache.md) | Accepted | 2026-10-27 |

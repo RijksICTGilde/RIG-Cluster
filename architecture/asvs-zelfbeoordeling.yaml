@@ -503,10 +503,8 @@ oordelen:
   status: toets
   toets: operations-manager/python/tests/test_secret_key_failclosed.py
 - id: V7.2.4
-  status: handwerk
-  eigenaar: OPI-ontwikkelteam
-  toelichting: Of de sessie bij herauthenticatie een nieuw token krijgt is niet apart getoetst. te doen
-    in de handmatige ronde voor de externe audit
+  status: toets
+  toets: operations-manager/python/tests/test_server_side_session.py
 - id: V7.3.1
   status: toets
   toets: operations-manager/python/tests/test_portaalsessie_levensduur.py

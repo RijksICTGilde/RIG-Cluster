@@ -10,7 +10,6 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from opi.api.admin_router import admin_router
@@ -60,6 +59,7 @@ from opi.middleware.body_limit import BodyLimitMiddleware
 from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
+from opi.middleware.server_side_session import ServerSideSessionMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.utils.logging_redact import redact_invite_key_in_path
@@ -772,7 +772,7 @@ def create_app() -> FastAPI:
     # CSRFMiddleware (double-submit token + Origin/Referer check) is the real
     # defense against the same-site sibling-subdomain tenant attacker.
     app.add_middleware(
-        SessionMiddleware,
+        ServerSideSessionMiddleware,
         secret_key=settings.SECRET_KEY,
         same_site="lax",
         https_only=not settings.DEBUG,

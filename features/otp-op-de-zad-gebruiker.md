@@ -190,9 +190,11 @@ Tussen /account/otp/start en de bevestiging met de code staat de lopende registr
 server-side in de tabel `otp_pending_registrations`: alleen de vingerafdruk van het
 AGE-versleutelde zaad uit het verborgen formulierveld, tien minuten geldig, met een
 opruiming via de uurlijkse schoonmaaklus van de taakwerker. Niets daarvan staat in de
-sessiecookie: die draagt al een id_token, en daarbovenop (gezien op 27-10-2026 op de
-sandbox) viel de browser zo'n cookie geruisloos weg boven ~4 KB. De bug van toen: geen
-fout, geen opslag. Nu krijg je een melding die zegt dat je opnieuw begint.
+sessie. De sessiecookie droeg toen de hele inhoud, met al een id_token erin, en
+daarbovenop (gezien op 27-10-2026 op de sandbox) viel de browser zo'n cookie geruisloos
+weg boven ~4 KB. De bug van toen: geen fout, geen opslag. Nu krijg je een melding die
+zegt dat je opnieuw begint. (Inmiddels staat de hele sessie server-side en draagt de
+cookie alleen een ondertekend id, zie `server-side-sessies.md`.)
 
 ## Blokkade na mislukte codes
 

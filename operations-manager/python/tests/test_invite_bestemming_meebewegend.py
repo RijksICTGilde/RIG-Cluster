@@ -16,7 +16,6 @@ en niet elke URL is afleidbaar. De voorrang is bestemming, dan URL, dan geen kno
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 from typing import Any
@@ -32,6 +31,7 @@ from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.catalog.invite.target_format import join_target, split_target
 from opi.services.project_store import ProjectSummary, ProjectUser
 from pydantic import ValidationError
+from tests.inmemory_session_store import InMemorySessionStore
 
 SLEUTEL = "welkom-bij-hn7"
 PROJECT = "toets-hn7"
@@ -311,14 +311,17 @@ class TestDeKeuzelijstSchrijftDeKeuze:
 # ---------------------------------------------------------------------------
 
 
+SESSIE_ID = "invite-bestemming-sessie"
+
+
 def _sessiekoekje(secret: str) -> str:
-    """Een getekend Starlette-sessiekoekje, zoals de e2e-suite dat ook doet.
+    """Het ondertekende sessie-id, zoals RC-390 het schrijft. De inhoud (een eenmalige
+    ``invite_success``-melding) woont in de store die de fixture hieronder aansluit.
 
     De succespagina stuurt door naar de landingspagina als de sessie leeg is, dus zonder
     dit koekje meet de toets de omleiding en niet de knop.
     """
-    payload = base64.b64encode(json.dumps({"invite_success": {"email": "iemand@example.nl"}}).encode()).decode()
-    return TimestampSigner(secret).sign(payload).decode()
+    return TimestampSigner(secret).sign(SESSIE_ID.encode()).decode()
 
 
 @pytest.fixture
@@ -349,7 +352,12 @@ def pagina(mock_settings: Any) -> Any:
                 data=project,
             )
         ]
-        with patch("opi.api.invite_routes.get_project_store", return_value=store):
+        sessie_store = InMemorySessionStore()
+        sessie_store.seed(SESSIE_ID, {"invite_success": {"email": "iemand@example.nl"}})
+        with (
+            patch("opi.api.invite_routes.get_project_store", return_value=store),
+            patch("opi.middleware.server_side_session.get_session_store", return_value=sessie_store),
+        ):
             app = opi.server.create_app()
             client = TestClient(app)
             client.cookies.set("session", _sessiekoekje(sleutel))

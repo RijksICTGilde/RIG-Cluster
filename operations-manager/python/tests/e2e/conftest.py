@@ -10,11 +10,10 @@ a test user, injecting it into the Playwright browser context. No production
 code changes needed.
 """
 
-import base64
 import contextlib
 import faulthandler
-import json
 import os
+import secrets
 import socket
 import threading
 import time
@@ -26,7 +25,13 @@ import pytest
 import uvicorn
 from itsdangerous import TimestampSigner
 from tests.e2e.helpers.forgejo import ForgejoClient
-from tests.e2e.testserver import SECRET_KEY, _preinitialize_kubectl_without_probing, create_test_app
+from tests.e2e.helpers.sandbox_api import make_session_cookie
+from tests.e2e.testserver import (
+    SECRET_KEY,
+    _preinitialize_kubectl_without_probing,
+    create_test_app,
+    get_in_memory_session_store,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -65,17 +70,19 @@ SANDBOX_TEST_USER = {
 
 
 def _sign_session(data: dict, secret: str = SECRET_KEY) -> str:
-    """Replicate Starlette SessionMiddleware cookie signing.
+    """Maak een LOKALE server-side sessie (in-memory store) en teken alleen het id.
 
-    De sessiegebruiker krijgt een vers ``login_at``: een sessie zonder inlogtijdstip is
-    voorbij haar absolute levensduur en wordt geweigerd (opi/core/session_guard.py).
+    Sinds RC-390 draagt de cookie geen inhoud meer maar een id; de inhoud woont in de
+    store die de testserver aansluit. De sessiegebruiker krijgt een vers ``login_at``:
+    een sessie zonder inlogtijdstip is voorbij haar absolute levensduur en wordt
+    geweigerd (opi/core/session_guard.py).
     """
     user = data.get("user")
     if user is not None:
         data = {**data, "user": {**user, "login_at": time.time()}}
-    payload = base64.b64encode(json.dumps(data).encode()).decode()
-    signer = TimestampSigner(secret)
-    return signer.sign(payload).decode()
+    session_id = secrets.token_urlsafe(32)
+    get_in_memory_session_store().seed(session_id, data)
+    return TimestampSigner(str(secret)).sign(session_id.encode()).decode()
 
 
 def _free_port() -> int:
@@ -346,7 +353,9 @@ def sandbox_context(browser: BrowserContext, sandbox_url: str) -> Generator[Brow
     # Beide: set_default_timeout geldt voor handelingen, navigeren heeft zijn eigen grens.
     context.set_default_timeout(SANDBOX_ACTIE_BUDGET_MS)
     context.set_default_navigation_timeout(SANDBOX_ACTIE_BUDGET_MS)
-    signed = _sign_session({"user": SANDBOX_TEST_USER}, secret=E2E_SECRET_KEY)
+    # Server-side sessies (RC-390): de rij moet op de SANDBOX-database staan, niet in de
+    # lokale in-memory store - _sign_session is daarom niet de weg voor deze context.
+    signed = make_session_cookie({"user": SANDBOX_TEST_USER}, secret=E2E_SECRET_KEY)
     parsed = urlparse(sandbox_url)
     context.add_cookies(
         [

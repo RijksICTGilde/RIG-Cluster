@@ -213,7 +213,7 @@ See `features/wizard-samenvatting-weergave.md` for why it returns data.
 ## Dependencies
 
 - **HTMX**: Client-side library for server-driven interactivity
-- **Starlette SessionMiddleware**: Server-side wizard state storage (already configured)
+- **ServerSideSessionMiddleware**: Server-side wizard state storage, via `request.session` (see `server-side-sessies.md`)
 - **Web components**: `lord-of-the-components` (NLDD-thema) for UI widgets and icons
 - **EditableFormProcessor**: Existing form processing infrastructure for validation and YAML application
 

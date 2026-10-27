@@ -10,12 +10,13 @@ Daarvoor gelden drie grenzen naast elkaar:
 
 | grens | instelling | standaard | wat hij doet |
 |---|---|---|---|
-| inactiviteit | `SESSION_MAX_AGE_SECONDS` | 8 uur | De cookie wordt bij elk antwoord opnieuw getekend, dus dit is een schuivend venster: je sessie vervalt na zoveel tijd zonder verzoek. |
+| inactiviteit | `SESSION_MAX_AGE_SECONDS` | 8 uur | De cookie wordt bij elke sessie-mutatie opnieuw getekend en de server-side rij verlengt bij activiteit: je sessie vervalt na zoveel tijd zonder verzoek. |
 | absolute levensduur | `SESSION_ABSOLUTE_MAX_SECONDS` | 12 uur | Gerekend vanaf het inloggen, hoe actief je ook bent. Daarna log je opnieuw in. |
-| intrekken | geen | | Uitloggen, of een platformbeheerder, maakt elke sessie van dat e-mailadres ongeldig. |
+| intrekken | geen | | Uitloggen, of een platformbeheerder, maakt elke sessie van dat e-mailadres ongeldig: de rijen verdwijnen ook echt (server-side sessies, zie `server-side-sessies.md`). |
 
 Alle drie worden ze afgedwongen in de middleware, in de handshake van de logs-WebSocket en
-op `/api/logs/pods/...`, want die lezen alle drie dezelfde cookie.
+op `/api/logs/pods/...`: ze lezen dezelfde sessie, opgebouwd uit de cookie (alleen het id)
+en de rij erachter.
 
 ## Hoe het werkt
 

@@ -75,6 +75,23 @@ async def test_het_zaad_van_start_wordt_wel_bevestigd() -> None:
     dienst.consume_pending_registration.assert_awaited_once_with(EMAIL, _fingerprint(ZAAD))
 
 
+async def test_een_formulier_post_met_crlf_regels_bevestigt_alsnog() -> None:
+    """HTML maakt CRLF van de LF's in het AGE-pantser tussen renderen en posten.
+
+    De echte (niet de in-memory e2e-stub) versleuteling is meerregelig; zonder de
+    normalisatie in ``otp_bevestigen`` week de geposte afdruk af van die uit /start en
+    faalde elke bevestiging (op de sandbox gemeten 27-10-2026).
+    """
+    pantser = "-----BEGIN AGE ENCRYPTED FILE-----\nregel-1\nregel-2\n-----END AGE ENCRYPTED FILE-----\n"
+    dienst = _dienst()
+    with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
+        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: pantser.replace("\n", "\r\n"), "code": "123456"}))
+
+    assert "Begin opnieuw" not in _melding(antwoord).replace("+", " ")
+    dienst.consume_pending_registration.assert_awaited_once_with(EMAIL, _fingerprint(pantser))
+    dienst.confirm_registration.assert_awaited_once()
+
+
 async def test_afbreken_vergeet_de_rij_en_laat_de_bestaande_factor_staan() -> None:
     dienst = _dienst()
     with patch("opi.web.router_otp._get_otp_service", return_value=dienst):

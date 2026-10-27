@@ -9,8 +9,10 @@ instantie moet het token terugkaatsen op ``/health``.
 Wat er in het runbestand aan herkenningen komt, bepaalt wat er te meten valt:
 
 * ``ZAD_PROEF_SESSIE_SECRET`` plus ``ZAD_PROEF_ADMIN``: hiermee wordt een sessiekoekje voor de
-  beheerder van de sandbox ondertekend, zoals ``tests/e2e`` dat doet. Zonder deze twee gaan de
-  proeven die een sessie nodig hebben over in NIET GEMETEN.
+  beheerder van de sandbox gemaakt. Sinds RC-390 hoort daar een RIJ bij: deze zet een
+  server-side sessie in de database van het doel (``sandbox_api.make_session_cookie``) en
+  ondertekent alleen het id. Zonder deze twee gaan de proeven die een sessie nodig hebben
+  over in NIET GEMETEN.
 * ``ZAD_PROEF_SLEUTELS``: JSON van projectnaam naar API-sleutel. Zonder deze zijn er geen
   proefprojecten op dit doel, en slaan de proeven die een projectsleutel vragen zich over.
 """
@@ -22,20 +24,25 @@ import os
 import sys
 import time
 
+from tests.e2e.helpers.sandbox_api import make_session_cookie
+
 from security_tests.doel import AANROEPLOG, RUNBESTAND, SANDBOX, OnveiligDoel, huidig_doel, soort_doel
-from security_tests.sandbox import sessiekoekje
 
 #: De sandbox van dit project, zoals workflow/sandbox.md hem noemt.
 STANDAARDDOEL = "https://zad.sandbox.rijksapp.dev"
 
 
 def _sessies() -> dict[str, str]:
-    """De ondertekende sessies voor dit doel, of niets als het geheim niet is meegegeven."""
+    """De ondertekende sessies voor dit doel, of niets als het geheim niet is meegegeven.
+
+    Elke sessie is een rij in de database van het doel plus het ondertekende id ervan.
+    """
     secret = os.environ.get("ZAD_PROEF_SESSIE_SECRET", "")
     admin = os.environ.get("ZAD_PROEF_ADMIN", "")
     if not secret or not admin:
         return {}
-    return {"zad-admin": sessiekoekje(admin, "Proef ZAD-admin", secret)}
+    gebruiker = {"sub": admin, "email": admin, "name": "Proef ZAD-admin"}
+    return {"zad-admin": make_session_cookie({"user": gebruiker}, secret=secret)}
 
 
 def schrijf_runbestand(url: str, token: str) -> None:

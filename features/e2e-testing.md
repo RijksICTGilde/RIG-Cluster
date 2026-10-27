@@ -15,7 +15,7 @@ Two test layers:
 
 The test suite starts a real FastAPI app instance on a free TCP port with:
 - Startup tasks patched out (no Keycloak, database, or MinIO connections needed)
-- A known `SECRET_KEY` used to pre-sign session cookies
+- A known `SECRET_KEY` used to sign session cookies, with the session content seeded in an in-memory store (server-side sessions, RC-390)
 - All readiness services marked as ready
 
 ### Sandbox Tests (Layer 2)
@@ -25,7 +25,7 @@ Playwright connects to the sandbox via `E2E_BASE_URL` (e.g., `https://zad.sandbo
 Caddy (ports 80/443) → Kind nginx-ingress (KIND_HTTP_PORT) → OPI pod
 ```
 
-Authentication uses the sandbox's `SECRET_KEY` (configurable via `E2E_SECRET_KEY` env var) to pre-sign a session cookie for the sandbox admin user (`admin@sandbox.rijksapp.dev`).
+Authentication writes a server-side session for the sandbox admin user (`admin@sandbox.rijksapp.dev`) into the `sessions` table of the sandbox rig-db and uses the sandbox's `SECRET_KEY` (configurable via `E2E_SECRET_KEY` env var) to sign the session id into a cookie.
 
 ## Running Tests
 
