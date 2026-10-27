@@ -19,7 +19,7 @@ Een tweede ZAD-installatie op dezelfde OpenShift-cluster als productie, in de Ca
 | AGE-sleutel | `security/key.txt` | `security/odcn-staging-key.txt` |
 | project-KEK (RC-334) | `security/project-kek-odcn-production.txt` | `security/project-kek-odcn-staging.txt` |
 
-Alles wat de cluster zelf bepaalt is gelijk aan productie: router-shard `rig`, storage classes, de Quay-proxycaches van de klant `rig`, Capsule. Het logboek van de opzet staat in `docs/logboek-zad-staging.md`.
+Alles wat de cluster zelf bepaalt is gelijk aan productie: router-shard `rig`, storage classes, de Quay-proxycaches van de klant `rig`, Capsule. SeaweedFS draait hier als objectopslag-dienst naast MinIO (5Gi, image via de rcr-proxy), sinds de uitrol van RC-381; de details staan in `features/seaweedfs-objectopslag.md`. Het logboek van de opzet staat in `docs/logboek-zad-staging.md`.
 
 ## Waarom de geheimen in een eigen repo staan
 
