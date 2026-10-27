@@ -43,6 +43,11 @@
             <c-cluster gap="sm" align="center">
                 <c-icon icon="{{ service.icon | nldd_icon }}" color="{{ service.color }}" size="lg" />
                 <c-heading type="h3" size="5" label="{{ service.label }}" />
+                {% if service.replaced_by %}
+                    {# The picker's pill, here too: a replaced service is a reference for
+                       existing projects, not a choice for new ones. #}
+                    <c-tag type="warning" label="Vervangen door {{ service.replaced_by }}" />
+                {% endif %}
                 {% if service.help_template %}
                     {% set help_js = "event.stopPropagation(); openServiceHelp('" ~ service.help_template ~ "')" %}
                     <c-icon-button
