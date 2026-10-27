@@ -76,8 +76,10 @@ class TestSequenceEditables:
         # +1 for the authorization-wall signpost (a read-only pointer to the project-level
         # setting, shown only when that service is on this component), +1 for the
         # image-registries reference (welke eigen registry hoort bij de image van dit
-        # component, RC-177).
-        assert len(COMPONENTS_SEQUENCE.children) == 26
+        # component, RC-177). Sinds RC-388 telt user-env-vars niet meer mee: dat veld is
+        # uit de generieke stroom en leeft alleen nog op de aanmaakwizard en achter de
+        # step-up.
+        assert len(COMPONENTS_SEQUENCE.children) == 25
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
@@ -91,10 +93,12 @@ class TestSequenceEditables:
         assert len(nested_seq) == 1
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
-        # reference, image, pullPolicy, user-env-vars, the publish-on-web certificate
-        # override (tls + attachment, RC-78), per-deployment attachments sequence, and the
+        # reference, image, pullPolicy, the publish-on-web certificate override
+        # (tls + attachment, RC-78), per-deployment attachments sequence, and the
         # image-registries override (een andere registry alleen voor deze deployment).
-        assert len(nested_seq[0].children) == 8
+        # user-env-vars staat hier sinds RC-388 niet meer tussen: die overschrijving gaat
+        # alleen via het step-up-venster.
+        assert len(nested_seq[0].children) == 7
 
 
 class TestReadonlyEditables:

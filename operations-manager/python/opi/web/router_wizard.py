@@ -19,6 +19,7 @@ from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, v
 from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
+from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import (
     find_service_in_list,
@@ -182,6 +183,18 @@ def _render_step_html(
 
             # Check if this is a transient field that depends on another field
             if ed.transient and ed.depends_on:
+                # Een wildcardpad (deployments[*]/...) kan alleen per item geschreven
+                # worden: een kale set_value erop is een ValueError. Gevonden via RC-388:
+                # de bewerkwizard gaf een 500 op elk project met base-domain of backup-schema.
+                if "[*]" in ed.yaml_path:
+                    list_path = ed.yaml_path.split("[*]", 1)[0]
+                    items = smart_get_value(data, list_path) or []
+                    for index in range(len(items)):
+                        dep_value = smart_get_value(data, resolve_path(ed.depends_on, index))
+                        if dep_value and dep_value != "__custom__":
+                            smart_set_value(data, resolve_path(ed.yaml_path, index), dep_value)
+                    continue
+
                 # Get the dependency value (the parent field value)
                 dep_value = smart_get_value(data, ed.depends_on)
 

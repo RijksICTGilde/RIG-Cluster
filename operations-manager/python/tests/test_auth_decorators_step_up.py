@@ -23,6 +23,7 @@ HANDELING = ACTIE.handeling
 def _request(path: str, *, htmx: bool = False, email: str = "eigenaar@example.org") -> SimpleNamespace:
     return SimpleNamespace(
         url=SimpleNamespace(path=path),
+        method="POST",
         headers={"HX-Request": "true"} if htmx else {},
         state=SimpleNamespace(user={"email": email}),
     )
@@ -176,4 +177,5 @@ async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_proj
         vervolg="/projects/demo/delete-deployment/prod",
         handeling=StepUpActie.DEPLOYMENT_VERWIJDEREN.handeling,
         vervolg_velden={},
+        methode="POST",
     )

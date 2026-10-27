@@ -230,6 +230,50 @@ DEPLOYMENTS_SECTION = FormSection(
     layout=[Sequence(field_name="deployments")],
 )
 
+
+def _components_create_section() -> FormSection:
+    """De componentenstap voor de AANMAAK-wizard, met de initiële omgevingsvariabelen.
+
+    RC-388 haalde het veld uit alle generieke formulieren: een opgeslagen waarde kan een
+    geheim bevatten en hoort achter een step-up. Bij het AANMAKEN van een project valt er
+    nog niets terug te lezen, dus daar is alleen schrijven zonder step-up zinvol en
+    veilig; alles daarna gaat via het venster in ``opi/web/router_env_vars.py``.
+    Het veld zelf blijft van de dienst (zelfde visualizer, zelfde validator); alleen de
+    keuze "wel op aanmaak, niet op bewerken" staat hier.
+    """
+    from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VARS
+
+    create_sequence = dataclasses.replace(
+        COMPONENTS_SEQUENCE,
+        children=[*(COMPONENTS_SEQUENCE.children or []), COMPONENT_USER_ENV_VARS],
+    )
+    basis_layout = COMPONENTS_SECTION.layout[0]
+    if not isinstance(basis_layout, Sequence):
+        raise TypeError("de componentenstap bestaat uit één Sequence")
+    # Achteraan: het veld vult de initiële waarde en is een toevoeging, geen kern van
+    # de stap. De dienst-layouts (aliassen e.d.) blijven op hun plek.
+    child_layout = [
+        *basis_layout.child_layout,
+        Fieldset(
+            legend="Eigen omgevingsvariabelen",
+            description="Omgevingsvariabelen voor dit component. Worden versleuteld opgeslagen; bekijken en wijzigen kan straks achter een extra bevestiging.",
+            children=["user-env-vars"],
+        ),
+    ]
+    layout: list[LayoutElement | str] = [dataclasses.replace(basis_layout, child_layout=child_layout)]
+    return FormSection(
+        section_id=COMPONENTS_SECTION.section_id,
+        title=COMPONENTS_SECTION.title,
+        icon=COMPONENTS_SECTION.icon,
+        description=COMPONENTS_SECTION.description,
+        enforcer=COMPONENTS_SECTION.enforcer,
+        editables=[create_sequence],
+        layout=layout,
+    )
+
+
+COMPONENTS_CREATE_SECTION = _components_create_section()
+
 CONFIG_DISPLAY_SECTION = FormSection(
     section_id="config",
     title="Configuratie",

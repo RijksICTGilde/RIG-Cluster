@@ -171,46 +171,39 @@
     {# De configuratievariabelen van de deployment zelf staan hier bewust niet; dat besluit
        (hoe geheimen getoond worden) staat nog open, net als op de bestaande pagina. #}
 
-    {# Alleen wat DEZE deployment zelf zet, niet wat het component al draagt.
+    {# De overschrijvingen per component: alleen de NAMEN en het aantal, nooit de waarden
+       (RC-388). De waarden zitten achter een verse step-up, in het venster dat de knop
+       opent - ook als deze deployment in ontwikkeling staat.
 
-       Hier stond `project_component['user-env-vars']`: de variabelen van het PROJECT-
-       component, opgezocht via de referentie. Daardoor toonde dit blok de standaardwaarden
-       onder een kop die zegt dat het om deze deployment gaat, en stond elke variabele twee
-       keer op de pagina - een keer bij Componenten en een keer hier, met dezelfde waarde.
-
-       De deployment-componentregel draagt zijn eigen `user-env-vars`; dat zijn de
-       overschrijvingen, en dat is wat hier hoort. #}
-    {% set deployment_components = deployment.components | sort(attribute='reference') if deployment.components else [] %}
-    {% set eigen_vars = [] %}
-    {% for component in deployment_components %}
-        {% if component.get('user-env-vars') %}
-            {% set _ = eigen_vars.append((component.reference, component['user-env-vars'])) %}
-        {% endif %}
-    {% endfor %}
-
-    {% if eigen_vars %}
-        {# Heet hetzelfde als op het tabblad Componenten, want het IS hetzelfde: de
-           omgevingsvariabelen van een component. Hier stond "Gebruikers configuratie", en
-           twee namen voor een ding laten de lezer zoeken naar het verschil. Het onderscheid
-           zit in de uitleg eronder, niet in de kop. #}
+       De knop staat bij ELKE componentregel en niet alleen waar al een overschrijving
+       is: dit venster is sinds RC-388 ook de enige weg om er een te maken. #}
+    {% if deployment.components %}
         <c-heading type="h4" size="5" label="Omgevingsvariabelen" />
         <c-paragraph size="sm">Wat deze deployment anders instelt dan het component. De standaardwaarden staan bij Componenten.</c-paragraph>
-        <c-stack gap="md">
-            {% for reference, variabelen in eigen_vars %}
-                <c-card outline padding="md">
-                    <c-stack gap="sm">
+        <c-stack gap="sm">
+            {% for component in deployment.components | sort(attribute='reference') %}
+                {% set env_namen = component.get('user-env-var-namen') or [] %}
+                {% set env_vars_url = "/projects/" ~ project.name ~ "/deployments/" ~ (deployment.name | urlencode) ~ "/componenten/" ~ (component.reference | urlencode) ~ "/env-vars" %}
+                <c-card outline padding="sm">
+                    <c-cluster gap="sm" align="center" justify="between">
                         <c-cluster gap="sm" align="center">
                             <c-icon icon="puzzle-piece" size="sm" />
-                            <c-heading type="h5" size="6" label="Component: {{ reference }}" />
+                            <c-span>{{ component.reference }}</c-span>
+                            <c-tag type="default" label="{{ env_namen | length }} overschrijving{{ 'en' if env_namen | length != 1 else '' }}" />
                         </c-cluster>
-                        {% for key, value in variabelen.items() %}
-                            <c-cluster gap="sm" align="center">
-                                <c-icon icon="lock-closed" size="sm" />
-                                <c-span>{{ key }}</c-span>
-                            </c-cluster>
-                            <c-secret-field value="{{ value }}" />
-                        {% endfor %}
-                    </c-stack>
+                        {# htmx, geen JS: het antwoord vraagt zelf om de step-up of opent
+                           het venster; de haak in edit_modal.js opent de modal. #}
+                        {% if user_role in ['admin', 'owner'] %}
+                            <c-button type="tertiary" size="sm" label="Bekijken en bewerken" icon="pencil-on-square" show-icon="before"
+                                      hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
+                        {% endif %}
+                    </c-cluster>
+                    {% if env_namen %}
+                        <c-cluster gap="sm" align="center">
+                            <c-icon icon="lock-closed" size="sm" />
+                            <c-span>{{ env_namen | join(', ') }}</c-span>
+                        </c-cluster>
+                    {% endif %}
                 </c-card>
             {% endfor %}
         </c-stack>

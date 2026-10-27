@@ -35,6 +35,11 @@ PROJECT_NAME = "netjes"
 
 REALM_PASSWORD = "-----BEGIN AGE ENCRYPTED FILE-----\nd2FjaHR3b29yZA==\n-----END AGE ENCRYPTED FILE-----\n"
 REALM_TOTP = "-----BEGIN AGE ENCRYPTED FILE-----\ndG90cA==\n-----END AGE ENCRYPTED FILE-----\n"
+#: Op peer review mag een bewerking van iets anders dit blok niet aanraken (RC-388): de
+#: waarden zitten achter een step-up-venster, geen enkele flow bezit het veld nog, dus elke
+#: test hieronder bewijst tegelijk dat hij byte-gelijk terugkomt.
+ENV_VARS_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nZW52LXZhcnM=\n-----END AGE ENCRYPTED FILE-----\n"
+ENV_VARS_OVERRIDE = "-----BEGIN AGE ENCRYPTED FILE-----\nb3ZlcnJpZGU=\n-----END AGE ENCRYPTED FILE-----\n"
 
 _INDEX_RE = re.compile(r"\[\d+\]")
 
@@ -111,6 +116,7 @@ def build_project() -> dict[str, Any]:
                 "uses-components": [],
                 "resources": {"cpu": "1", "limits": {"memory": "256Mi"}},
                 "services": ["publish-on-web", "keycloak"],
+                "user-env-vars": ENV_VARS_BLOCK,
             },
             {
                 "name": "backend",
@@ -142,7 +148,11 @@ def build_project() -> dict[str, Any]:
                 ],
                 "components": [
                     {"reference": "frontend", "image": "example.invalid/frontend:1.0"},
-                    {"reference": "backend", "image": "example.invalid/backend:1.0"},
+                    {
+                        "reference": "backend",
+                        "image": "example.invalid/backend:1.0",
+                        "user-env-vars": ENV_VARS_OVERRIDE,
+                    },
                 ],
             },
             {

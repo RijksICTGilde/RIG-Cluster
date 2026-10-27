@@ -1,7 +1,9 @@
 # Env-vars en aliassen via de API
 
 De omgevingsvariabelen en aliassen van een component zijn nu ook via de REST-API te
-beheren, per stuk, in plaats van alleen via de wizard en de bewerkmodals.
+beheren, per stuk, naast de portalwegen: de wizard en de bewerkmodals voor aliassen,
+en voor env-vars sinds RC-388 het venster achter een verse step-up (zie
+[omgevingsvariabelen-achter-step-up.md](omgevingsvariabelen-achter-step-up.md)).
 
 ## Waarom dit er niet al was
 

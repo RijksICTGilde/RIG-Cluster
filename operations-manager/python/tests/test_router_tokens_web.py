@@ -54,6 +54,7 @@ def _verzoek(email: str | None, velden: dict[str, str], *, step_up: bool = True,
     return SimpleNamespace(
         state=SimpleNamespace(user=user),
         session=sessie,
+        method="POST",
         url=SimpleNamespace(path="/projects/bouwput/leden"),
         headers={"HX-Request": "true"} if htmx else {},
         form=AsyncMock(return_value=velden),

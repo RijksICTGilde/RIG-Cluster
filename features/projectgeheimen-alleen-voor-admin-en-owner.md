@@ -33,9 +33,11 @@ Niets aan wat iemand mag of ziet: de sjablonen toonden deze waarden al alleen aa
 owner, en een veld met `None` rendert niet. Wat verdwijnt is de ontsleutelde waarde in de
 context van een lid dat hem toch niet te zien kreeg.
 
-Buiten scope blijven de `user-env-vars`, `aliases` en `helm-values` van componenten en
-deployments: die ziet elk lid vandaag bewust (zie `features/futures/rechten-plan-van-aanpak.md`,
-5.6).
+Buiten scope blijven de `aliases` en `helm-values` van componenten en deployments: die
+ziet elk lid bewust (zie `features/futures/rechten-plan-van-aanpak.md`, 5.6). Voor de
+`user-env-vars` gold dat toen ook; sinds RC-388 toont de pagina alleen nog hun namen, en
+vragen bekijken en bewerken een verse step-up (zie
+[omgevingsvariabelen-achter-step-up.md](omgevingsvariabelen-achter-step-up.md)).
 
 ## Dekking
 

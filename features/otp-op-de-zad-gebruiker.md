@@ -24,10 +24,13 @@ doet en dat hij het echt is (BIO2 8.05 en 8.32).
 | een wijzigende beheerroute | altijd (RC-377): platformbeheer raakt het hele cluster |
 | een token uitgeven, roteren of intrekken | altijd (RC-387) |
 | een rol wijzigen, een service account toevoegen of verwijderen | altijd (RC-387) |
+| de omgevingsvariabelen van een component bekijken of wijzigen | altijd (RC-388): ze kunnen geheimen bevatten |
 
 De zes handelingen van RC-387 wegen de omgeving niet: met een token kan iemand blijvend bij
 een project, ook als dat project niet op productie staat. Zie
-[leden-en-api-tokens.md](leden-en-api-tokens.md).
+[leden-en-api-tokens.md](leden-en-api-tokens.md). Env-vars (RC-388) wegen de omgeving om de
+andere reden niet: ook in ontwikkeling kan er een geheim in staan. Zie
+[omgevingsvariabelen-achter-step-up.md](omgevingsvariabelen-achter-step-up.md).
 
 Een project heeft zelf geen markering (zie [otap-markering.md](otap-markering.md)), dus
 "een project in productie" is afgeleid: `highest_environment` van zijn deployments.
@@ -63,6 +66,11 @@ token.
 Formulieren op het tabblad Team die een step-up vragen tonen de dialoog in plaats van het
 formulier. De formuliervelden gaan mee in verborgen invoervelden; met een geldige code
 voert het formulier de handeling uit.
+
+De meeste handelingen zijn een POST, en dat is wat de herhaling uitvoerde. Sinds RC-388
+kent de dialoog ook een GET als methode: het omgevingsvariabelen-venster LEEST iets, en
+herhalen met een POST zou er iets laten wijzigen waar alleen een lezing hoorde. De methode
+reist mee in het verborgen veld `vervolg_methode`; alles behalve GET valt terug op POST.
 
 ### Via de API en de CLI
 

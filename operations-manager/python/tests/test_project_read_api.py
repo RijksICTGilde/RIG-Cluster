@@ -617,12 +617,11 @@ class TestOneEnvVarReader:
 
 
 class TestDetailPageIsUnaffected:
-    """The project detail page shares the reader, so it must not change with it.
+    """The env-vars overview template renders names and counts, never values (RC-388).
 
-    ``section-env-vars.html.j2`` shows a block only for a mapping with something in it,
-    so "nothing stored" renders the same whether the reader answers None or ``{}``. That
-    is an assumption about a template, which is exactly the kind you check rather than
-    believe.
+    The template reads ``user-env-var-namen`` (sorted names, or None when the stored
+    block could not be read); the detail route no longer puts ``user-env-vars`` in the
+    render context at all. These tests pin that contract.
     """
 
     @staticmethod
@@ -631,21 +630,22 @@ class TestDetailPageIsUnaffected:
 
         project = {
             "name": PROJECT,
-            "components": [{"name": "frontend", "user-env-vars": stored}],
+            "components": [{"name": "frontend", "user-env-var-namen": stored}],
             "deployments": [{"name": "production", "cluster": "local", "components": []}],
         }
         return templates.get_template("bg/_env-vars.html.j2").render(project=project)
 
     def test_empty_mapping_renders_exactly_like_unknown(self) -> None:
-        assert self._render({}) == self._render(None)
+        assert self._render([]) == self._render(None)
 
-    def test_variables_still_render(self) -> None:
-        html = self._render({"API_TOKEN": ENV_VALUE_TWO})
+    def test_variables_render_by_name_without_the_value(self) -> None:
+        html = self._render(["API_TOKEN"])
         assert "API_TOKEN" in html
+        assert ENV_VALUE_TWO not in html
         assert "Geen omgevingsvariabelen geconfigureerd" not in html
 
     def test_nothing_stored_shows_the_empty_state(self) -> None:
-        assert "Geen omgevingsvariabelen geconfigureerd" in self._render({})
+        assert "Geen omgevingsvariabelen geconfigureerd" in self._render([])
 
 
 class TestUserEnvVarsReader:

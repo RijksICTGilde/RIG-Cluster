@@ -98,6 +98,9 @@ components:
       POSTGRES_SERVER: $DATABASE_SERVER_HOST
       POSTGRES_USER: $DATABASE_SERVER_USER
       KEYCLOAK_URI: $OIDC_URL
+    # Zo levert de detailroute ze sinds RC-388: alleen de namen; het versleutelde blok
+    # zelf komt de paginacontext nooit in.
+    user-env-var-namen: [API_TOKEN, FEATURE_VLAG]
     services:
       - publish-on-web
       - keycloak
@@ -129,6 +132,7 @@ deployments:
       - reference: backend
         image: ghcr.io/voorbeeld/backend:2026.08.01
         registry: voorbeeld-registry
+        user-env-var-namen: [API_TOKEN]
         resources:
           requests:
             memory: 512Mi

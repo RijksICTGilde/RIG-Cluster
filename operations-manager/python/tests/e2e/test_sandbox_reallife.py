@@ -48,6 +48,8 @@ from tests.e2e.helpers.lifecycle import (
     CreatedProject,
     create_project_via_wizard,
 )
+from tests.e2e.helpers.step_up import context_with_fresh_step_up
+from tests.e2e.helpers.tabs import open_tab
 from tests.e2e.helpers.wizard import unique_project_name, veldbesturing
 
 logger = logging.getLogger(__name__)
@@ -56,7 +58,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
 
-    from playwright.sync_api import BrowserContext, Page
+    from playwright.sync_api import Browser, BrowserContext, Page
     from tests.e2e.helpers.forgejo import ForgejoClient
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.reallife, pytest.mark.serial]
@@ -324,15 +326,54 @@ def _await_progress(modal: EditModalHelper, project_name: str) -> None:
         )
 
 
-def _set_env_vars_via_ui(page: Page, base_url: str, project_name: str, component_name: str, env_text: str) -> None:
-    """Set a component's user env vars through the components modal (process_project)."""
-    modal = _open_components_modal(page, base_url, project_name)
-    index = _component_index_in_modal(page, component_name)
-    # The env-vars field is a CodeMirror editor overlaying a hidden textarea.
-    modal.fill_codemirror_kv(f"components[{index}]/user-env-vars", env_text)
-    modal.submit_step_expect_progress()
-    _await_progress(modal, project_name)
-    modal.close_modal()
+def _set_env_vars_via_ui(
+    browser: Browser, base_url: str, project_name: str, component_name: str, env_text: str
+) -> None:
+    """Set a component's user env vars through the step-up window (RC-388).
+
+    Sinds RC-388 staat het veld niet meer in de componenten-modal maar in een eigen
+    venster achter een verse step-up (opi/web/router_env_vars.py). De gedeelde
+    sandbox-sessie heeft die stempel niet, dus deze handeling draait in een eigen
+    browsercontext met een verse stempel, zoals test_sandbox_env_vars_aliases_ui.py.
+    """
+    context = context_with_fresh_step_up(browser, base_url)
+    page = context.new_page()
+    modal = EditModalHelper(page, base_url, project_name, action_timeout_ms=MODAL_ACTION_TIMEOUT_MS)
+    try:
+        page.goto(f"{base_url}/projects/{project_name}/componenten")
+        page.wait_for_load_state("networkidle")
+        open_tab(page, "componenten")
+        # Scopen op de kaart van DIT component: met vier componenten op de pagina zou een
+        # losse selector op de knoptekst de eerste kaart pakken. Heeft het component al
+        # variabelen, dan is de knop een potloodje met de naam in het accessible-label;
+        # anders de knop "Omgevingsvariabelen (0)" zonder naam erin.
+        card = page.locator(".component-card").filter(has=page.get_by_text(component_name, exact=True)).first
+        knop = card.locator(
+            f"nldd-list-item-segment[accessible-label^='Omgevingsvariabelen van {component_name}'], "
+            "nldd-button:has-text('Omgevingsvariabelen')"
+        ).first
+        knop.wait_for(state="visible")
+        knop.click()
+        editor = page.locator("#edit-section-inner .kv-editor .cm-content")
+        editor.wait_for(state="visible")
+        editor.click()
+        page.keyboard.press("ControlOrMeta+a")
+        page.keyboard.type(env_text)
+        page.locator("#edit-section-inner button:has-text('Opslaan')").first.click()
+        try:
+            page.locator("#edit-section-inner .edit-progress-view").wait_for(
+                state="visible", timeout=MODAL_ACTION_TIMEOUT_MS
+            )
+        except PlaywrightError as fout:
+            raise AssertionError(
+                "De voortgangsweergave kwam niet na het opslaan van de env-vars. Wat het venster toont:\n"
+                + " ".join((page.locator("#edit-section-inner").text_content() or "").split())[:2000]
+            ) from fout
+        _await_progress(modal, project_name)
+        modal.close_modal()
+    finally:
+        page.close()
+        context.close()
 
 
 def _remove_component_via_ui(page: Page, base_url: str, project_name: str, component_name: str) -> None:
@@ -549,15 +590,18 @@ def test_ui_env_vars_while_api_patches_same_file(
     sandbox_url: str,
     forgejo: ForgejoClient,
     ui_page: Page,
+    browser: Browser,
 ) -> None:
     """UI env-var edit on `web` races an API image update on the same file.
 
-    Also proves the env-var round trip: encrypted in git, readable again in the UI.
+    Also proves the env-var round trip: encrypted in git, and the edit goes through the
+    step-up window (RC-388), the only UI path that still writes env vars. The names show
+    on the componenten tab; the values only behind a fresh step-up.
     """
     tasks = [(p, _start_image_update(sandbox_url, p, WEB, ALT_IMAGE)) for p in reallife_projects]
 
     for project in reallife_projects:
-        _set_env_vars_via_ui(ui_page, sandbox_url, project.name, WEB, UI_ENV_MARKER)
+        _set_env_vars_via_ui(browser, sandbox_url, project.name, WEB, UI_ENV_MARKER)
 
     for project in reallife_projects:
         _assert_in_git(
@@ -584,7 +628,7 @@ def test_ui_env_vars_while_api_patches_same_file(
         ui_page.wait_for_load_state("networkidle")
         key = UI_ENV_MARKER.partition("=")[0]
         assert ui_page.locator(f"text={key}").count() > 0, (
-            f"Env var '{key}' not shown decrypted on the componenten tab of '{project.name}'"
+            f"Env var name '{key}' not on the componenten tab of '{project.name}'"
         )
 
     _settle_tasks(sandbox_url, tasks)

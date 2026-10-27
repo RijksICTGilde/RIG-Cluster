@@ -184,13 +184,14 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage/attachment sequences hidden (no storage services),
+        # 13 children: storage/attachment sequences hidden (no storage services),
         # path (with nested match/rewrite) always visible, the publish-on-web TLS field
         # (component enables publish-on-web), and the optional start command. The registry
         # picker is not among them: this project has no registries, so there is nothing to
         # pick and the component form stays exactly as it was (RC-187) -- which is the
-        # state of 47 of the 49 projects.
-        assert len(first_item.children) == 14
+        # state of 47 of the 49 projects. user-env-vars telt sinds RC-388 niet meer mee:
+        # dat veld is uit de generieke stroom (step-up-venster).
+        assert len(first_item.children) == 13
 
     def test_components_item_gains_the_registry_picker_with_a_registry(self):
         """De tegenproef: een project MET een registry krijgt het veld er wel bij."""
@@ -207,7 +208,7 @@ class TestSequenceRendering:
             ],
         }
         fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
-        assert len(fields["components"].children[0].children) == 15
+        assert len(fields["components"].children[0].children) == 14
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -230,10 +231,11 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 15 children: storage sequence visible (persistent-storage enabled),
+        # 14 children: storage sequence visible (persistent-storage enabled),
         # path (with nested match/rewrite) always visible, the publish-on-web TLS field
         # (component enables publish-on-web), and the optional start command.
-        assert len(first_item.children) == 15
+        # user-env-vars is hier sinds RC-388 uit (step-up-venster).
+        assert len(first_item.children) == 14
 
 
 class TestNestedSequenceRendering:
@@ -277,12 +279,13 @@ class TestNestedSequenceRendering:
         nested_seq = nested_seqs[0]
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
-        # reference, image, pullPolicy, user-env-vars, the publish-on-web TLS override
-        # (RC-78) and the per-deployment attachments sequence. The certificate picker next
-        # to the TLS override is not here: its show_when only admits it for 'provided'.
-        # Neither is the image-registries override: this project has no registries, so its
-        # own list has nothing to offer and the field is not drawn (RC-187).
-        assert len(first_comp.children) == 6
+        # reference, image, pullPolicy, the publish-on-web TLS override (RC-78) and the
+        # per-deployment attachments sequence. The certificate picker next to the TLS
+        # override is not here: its show_when only admits it for 'provided'. Neither is
+        # the image-registries override: this project has no registries, so its own list
+        # has nothing to offer and the field is not drawn (RC-187). user-env-vars telt
+        # sinds RC-388 niet meer mee: die overschrijving gaat via het step-up-venster.
+        assert len(first_comp.children) == 5
 
     def test_nested_sequence_item_gains_the_registry_override_with_a_registry(self):
         """De tegenproef bij de telling hierboven: de lijst IS de zichtbaarheid."""
@@ -301,7 +304,7 @@ class TestNestedSequenceRendering:
         fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
         first_dep = fields["deployments"].children[0]
         nested_seq = next(c for c in first_dep.children if c.widget_type == "sequence")
-        assert len(nested_seq.children[0].children) == 7
+        assert len(nested_seq.children[0].children) == 6
 
 
 class TestDisplayCardRendering:

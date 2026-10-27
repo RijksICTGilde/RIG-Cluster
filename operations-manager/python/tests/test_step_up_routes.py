@@ -54,6 +54,18 @@ ROUTES_MET_STEP_UP = {
     ("POST", "/projects/{project_name}/leden/{naam}/tokens"): StepUpActie.TOKEN_UITGEVEN,
     ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren"): StepUpActie.TOKEN_ROTEREN,
     ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken"): StepUpActie.TOKEN_INTREKKEN,
+    # Omgevingsvariabelen (RC-388): al het lezen en schrijven van waarden, dus ook de
+    # GET die het venster opent.
+    ("GET", "/projects/{project_name}/componenten/{component_name}/env-vars"): StepUpActie.ENV_VARS_BEHEREN,
+    ("POST", "/projects/{project_name}/componenten/{component_name}/env-vars"): StepUpActie.ENV_VARS_BEHEREN,
+    (
+        "GET",
+        "/projects/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
+    ): StepUpActie.ENV_VARS_BEHEREN,
+    (
+        "POST",
+        "/projects/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
+    ): StepUpActie.ENV_VARS_BEHEREN,
 }
 
 #: De routes die ALLEEN lezen en dus geen step-up dragen (RC-377, RC-387).

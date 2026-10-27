@@ -154,20 +154,23 @@
     }
 
     /*
-     * De step-up die van een formulier op de pagina zelf komt (RC-387).
+     * Een htmx-antwoord dat zelf aangeeft in de dialoog te horen (RC-387, RC-388).
      *
-     * De dialoog uit bg/_step-up.html.j2 komt met HX-Retarget in #edit-section-inner, ook
-     * als de gebruiker hem opriep van een formulier buiten de dialoog, zoals op het
-     * tabblad Team. Dan staat de dialoog nog dicht, en zou de vraag om een code in een
-     * verborgen blok belanden.
+     * De step-up-dialoog uit bg/_step-up.html.j2 en een fragment met het attribuut
+     * data-modal-fragment komen met htmx in #edit-section-inner terecht, ook als de
+     * gebruiker hen opriep van een knop op de pagina zelf (zoals het potloodje bij de
+     * omgevingsvariabelen). Dan staat de dialoog nog dicht, en zou de inhoud in een
+     * verborgen blok belanden. De titel neemt het fragment zelf mee in
+     * data-modal-title, of valt terug op de titel van de bevestigingsdialoog.
      */
     document.addEventListener('htmx:afterSwap', function (evt) {
         var tgt = evt.detail && evt.detail.target;
         if (!tgt || tgt.id !== 'edit-section-inner') return;
-        if (!tgt.querySelector('[data-step-up]')) return;
+        var fragment = tgt.querySelector('[data-step-up], [data-modal-fragment]');
+        if (!fragment) return;
         if (document.querySelector('.edit-section-modal.is-open')) return;
         var titel = document.getElementById('edit-section-title-text');
-        if (titel) titel.textContent = 'Extra bevestiging';
+        if (titel) titel.textContent = fragment.getAttribute('data-modal-title') || 'Extra bevestiging';
         toonDialoog(
             document.getElementById('edit-section-modal'),
             document.getElementById('edit-section-backdrop')

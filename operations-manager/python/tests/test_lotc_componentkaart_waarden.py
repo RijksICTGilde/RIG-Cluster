@@ -8,7 +8,9 @@ de gebruiker het op zijn scherm krijgt.
 
 Wat hier bewaakt wordt is vooral de AFSCHERMING, want die twee soorten verschillen:
 
-- een omgevingsvariabele is een gebruikerswaarde en kan van alles zijn, dus altijd verborgen;
+- een omgevingsvariabele is een gebruikerswaarde en kan van alles zijn, dus sinds RC-388
+  staat alleen de NAAM op de kaart - een waarde komt niet meer in de HTML, ook niet in
+  een afgeschermd veld; bekijken en bewerken vraagt een verse step-up.
 - een alias die naar platformvariabelen VERWIJST noemt alleen waar de waarde vandaan komt.
   Dat afschermen maakt het blok waardeloos, want dan zie je nog steeds niet wat er staat.
 
@@ -62,5 +64,18 @@ def test_een_alias_die_verwijst_wordt_niet_afgeschermd(componentenkaart: str) ->
 
 
 def test_omgevingsvariabelen_blijven_wel_afgeschermd(componentenkaart: str) -> None:
-    """De tegenhanger: een eigen waarde kan een wachtwoord zijn, dus die blijft verborgen."""
-    assert "Omgevingsvariabelen" not in componentenkaart or GEHEIM_VELD in componentenkaart
+    """De verscherpte tegenhanger (RC-388): de kaart toont hooguit de NAMEN.
+
+    Een waarde komt nooit in de HTML, dus ook niet in een `<c-secret-field>`: bekijken en
+    bewerken gaat achter een verse step-up. De fixture draagt `API_TOKEN` en
+    `FEATURE_VLAG` als namen van component `backend`.
+    """
+    assert "Omgevingsvariabelen (2)" in componentenkaart
+    assert "API_TOKEN" in componentenkaart
+    assert "FEATURE_VLAG" in componentenkaart
+
+    positie = componentenkaart.index("Omgevingsvariabelen (2)")
+    rondom = componentenkaart[positie : positie + 800]
+
+    assert GEHEIM_VELD not in rondom, "een omgevingsvariabele hoort geen geheimveld op de pagina te krijgen"
+    assert "/env-vars" in rondom, "de weg naar het step-up-venster hoort bij het blok te staan"

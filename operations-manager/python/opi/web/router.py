@@ -79,6 +79,7 @@ from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
+from .router_env_vars import env_vars_web_router
 from .router_otp import otp_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
@@ -116,6 +117,7 @@ web_router.include_router(tasks_router)
 web_router.include_router(otp_router)
 web_router.include_router(step_up_router)
 web_router.include_router(token_web_router)
+web_router.include_router(env_vars_web_router)
 
 # Routers the services themselves deliver (RC-24): a service that owns a page block owns
 # the endpoints that fill it (the backups fragment, the console/job modals), instead of
@@ -1643,17 +1645,16 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
         # the page and the API can never disagree about what a component's variables are.
         #
-        # Taken met asyncio.gather, maar naast elkaar zet dat ze niet: sinds RC-218
-        # ontsleutelt opi/utils/age.py in het proces, dus de keten _lees_env_vars ->
-        # read_user_env_vars -> decrypt_age_content yieldt nergens en elke taak loopt in
-        # een keer af. De vorm blijft staan omdat de aanroepen onderling onafhankelijk
-        # zijn (elke taak schrijft in zijn eigen dict); te overlappen valt er niets meer,
-        # want de fork per veld is weg en een ontsleuteling kost 0,17 ms.
-        async def _lees_env_vars(houder: dict[str, Any], waar: str) -> None:
-            houder["user-env-vars"] = await read_user_env_vars(houder["user-env-vars"], project_private_key, where=waar)
+        # Sinds RC-388 komen alleen de NAMEN in de context; waarden vragen een verse
+        # step-up (router_env_vars). De versleutelde blokken gaan ook mee uit de kopie,
+        # zodat er niets van dit veld in de HTML kan belanden.
+        async def _lees_env_var_namen(houder: dict[str, Any], waar: str) -> None:
+            raw = houder.pop("user-env-vars", None)
+            gelezen = await read_user_env_vars(raw, project_private_key, where=waar)
+            houder["user-env-var-namen"] = sorted(gelezen) if gelezen is not None else None
 
         env_var_taken = [
-            _lees_env_vars(dep_component, f"deployment component '{dep_component.get('reference')}'")
+            _lees_env_var_namen(dep_component, f"deployment component '{dep_component.get('reference')}'")
             for deployment in project_data_decrypted.get("deployments", [])
             for dep_component in deployment.get("components", [])
             if dep_component.get("user-env-vars")
@@ -1661,7 +1662,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
         env_var_taken += [
-            _lees_env_vars(component, f"component '{component.get('name', 'unknown')}'")
+            _lees_env_var_namen(component, f"component '{component.get('name', 'unknown')}'")
             for component in project_data_decrypted.get("components", [])
             if component.get("user-env-vars")
         ]

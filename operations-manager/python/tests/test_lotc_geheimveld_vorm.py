@@ -29,7 +29,9 @@ REPO = Path(__file__).resolve().parent.parent
 LEZERS = [
     ("tests/e2e/helpers/sandbox_api.py", r'value="(zad_[A-Za-z0-9_-]+)"'),
     ("tests/e2e/test_lotc_project_tab.py", "lotc-secret-field button[data-action='copy']"),
-    ("tests/e2e/test_componentkaart_uitklap.py", 'locator("lotc-secret-field button")'),
+    # tests/e2e/test_componentkaart_uitklap.py stond hier als derde lezer: de kaart toont
+    # sinds RC-388 alleen nog NAMEN van omgevingsvariabelen, dus die test wijst geen
+    # geheimveld meer aan en kan deze vorm niet meer meebewaken.
 ]
 
 #: Het patroon uit ``sandbox_api.geef_projecttoken``, dat het zojuist uitgegeven token van
@@ -95,10 +97,10 @@ def test_de_kopieerknop_is_op_zijn_actie_aan_te_wijzen() -> None:
 
 
 def test_de_eerste_knop_van_een_afgeschermd_veld_is_het_oogje() -> None:
-    """De knop waar test_componentkaart_uitklap op klikt, en de reden dat hij ``.first`` is.
+    """Bij een afgeschermd veld staat het oogje vooraan en de kopieerknop erachter.
 
-    Bij een afgeschermd veld staat het oogje vooraan en de kopieerknop erachter. Keert die
-    volgorde om, dan klikt die test op kopieren en meet hij niet meer wat hij zegt.
+    Dit meet het contract van het component zelf; wie op positie in plaats van op
+    ``data-action`` klikt, vertrouwt op deze volgorde.
     """
     knoppen = BeautifulSoup(_render(), "html.parser").select("lotc-secret-field button")
 
