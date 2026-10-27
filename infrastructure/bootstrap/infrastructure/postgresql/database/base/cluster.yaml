@@ -133,6 +133,11 @@ spec:
     # enablePodMonitor is deprecated in CNPG v1.27+
     # Telt de verbindingen zonder TLS per rol; zie monitoring-queries.yaml en
     # features/postgresql-tls.md. De standaardqueries van CNPG blijven ernaast staan.
+    # De default-entry staat er expliciet in omdat de CNPG-webhook hem anders zelf in de
+    # live spec injecteert - dan ziet ArgoCD een permanent verschil en self-healt hij
+    # continue op niets.
     customQueriesConfigMap:
+      - name: cnpg-default-monitoring
+        key: queries
       - name: rig-db-monitoring-queries
         key: queries.yaml
