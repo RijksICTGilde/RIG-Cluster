@@ -89,6 +89,9 @@ def build_lotc_services(
             "icon": to_nldd_icon(definition.icon),
             "color": definition.color,
             "help_template": getattr(definition, "help_template", None),
+            # The deprecation marker from the caller (services_router computes it against
+            # the managing cluster); None where the service is current.
+            "replaced_by": entry.get("replaced_by"),
             # De omgevingsvariabelen die deze service levert, met hun aliassen en hun
             # uitleg. De bestaande pagina toont die per kaart; ze stonden hier alleen
             # geTELD op een chip ("3 variabelen"), en dat is precies het soort
