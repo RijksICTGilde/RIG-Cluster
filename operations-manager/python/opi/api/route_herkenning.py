@@ -41,6 +41,8 @@ class RouteHerkenning(NamedTuple):
     pad: str
     module: str
     herkenningen: tuple[str, ...]
+    #: Het geregistreerde endpoint zelf, zodat een bewaker de bron van de handler kan lezen.
+    endpoint: object
 
     @property
     def sleutel(self) -> tuple[str, str]:
@@ -78,5 +80,7 @@ def route_herkenningen(app: FastAPI) -> list[RouteHerkenning]:
         pad = getattr(route, "path", "")
         module = getattr(endpoint, "__module__", "?")
         herkenningen = _herkenningen_van(endpoint)
-        gevonden.extend(RouteHerkenning(methode, pad, module, herkenningen) for methode in _methoden_van(route))
+        gevonden.extend(
+            RouteHerkenning(methode, pad, module, herkenningen, endpoint) for methode in _methoden_van(route)
+        )
     return gevonden

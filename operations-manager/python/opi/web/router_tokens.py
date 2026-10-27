@@ -226,11 +226,16 @@ def tokencontext(request: Request, project_name: str, user_email: str, is_beheer
     leden = leden_overzicht(project_name)
     for lid in leden:
         lid["is_service_account"] = lid["soort"] == LidSoort.SERVICE_ACCOUNT.value
+        lid["is_current_user"] = lid["naam"].lower() == user_email
         # Een beheerder beheert de tokens van elk lid; een mens die van zichzelf. Uitgeven
         # voor een ander mens kan niemand: dat zou een bewijsmiddel zijn dat iemand draagt
         # zonder te weten dat het bestaat.
-        lid["mag_uitgeven"] = (lid["is_service_account"] and is_beheerder) or lid["naam"].lower() == user_email
-        lid["mag_intrekken"] = is_beheerder or lid["naam"].lower() == user_email
+        lid["mag_uitgeven"] = (lid["is_service_account"] and is_beheerder) or lid["is_current_user"]
+        lid["mag_intrekken"] = is_beheerder or lid["is_current_user"]
+
+    # The caller's own card goes first; the stable sort keeps the project file order for
+    # the rest, and a caller without membership moves nothing.
+    leden.sort(key=lambda lid: not lid["is_current_user"])
 
     return {
         "leden": leden,

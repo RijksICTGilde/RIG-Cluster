@@ -2,12 +2,15 @@
 
 De middleware geeft elk pad onder /api/ meteen door naar de handler en leest voor de rest
 _requires_sso met False als default. Deze test dwingt af dat elke route precies een
-herkenning draagt, of in PUBLIEKE_ROUTES staat met reden. Dit is herkenning, niet rol:
-dat je herkend wordt, niet dat je mag wat je vraagt (dat is fase 1).
+herkenning draagt, in PUBLIEKE_ROUTES staat met reden, of in HANDGESCHREVEN_CONTROLES
+staat met de reden dat geen markering past en de sporen van de controle in de handler.
+Dit is herkenning, niet rol: dat je herkend wordt, niet dat je mag wat je vraagt (dat is
+fase 1).
 """
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import pytest
@@ -79,17 +82,45 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/api/v2/services/{service_name}"): "beschrijving van een platformdienst, projectonafhankelijk",
 }
 
-#: Routes met eigen controles in handler (RC-322 zal ze aanpakken). Geen decorator, dus geen
-#: markering af te dwingen. xfail met strict=True: markering opzetten omzet dit in een fout.
-HANDGESCHREVEN_CONTROLES: dict[tuple[str, str], str] = {
-    ("GET", "/auth/user"): "eigen sessiecontrole in de handler (auth_routes.py)",
-    ("GET", "/api/logs/pods/{project_name}"): "eigen sessiecontrole in de handler (logs_router.py)",
-    (WEBSOCKET, "/api/logs/stream/{project_name}"): "eigen sessiecontrole op de cookie (logs_websocket_router.py)",
-    ("GET", "/api/tasks"): "eigen X-API-Key-controle in de handler (task_router.py)",
-    ("GET", "/api/tasks/{task_id}"): "eigen controle via _validate_task_access (task_router.py)",
-    ("POST", "/api/tasks/{task_id}/:cancel"): "eigen controle via _validate_task_access (task_router.py)",
-    ("GET", "/api/sleep-mode/{project_name}/{deployment_name}/status"): "eigen controle op X-Wake-Token of X-API-Key",
-    ("POST", "/api/sleep-mode/{project_name}/{deployment_name}/wake"): "eigen controle op X-Wake-Token of X-API-Key",
+#: Routes waar geen markering op past: per route de reden waarom niet, plus sporen,
+#: tekstfragmenten die letterlijk in de bron van de handler moeten staan.
+HANDGESCHREVEN_CONTROLES: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
+    ("GET", "/auth/user"): (
+        "401-JSON in plaats van een omleiding naar de inlogpagina; eigen sessiecontrole in de handler (auth_routes.py)",
+        ('request.session.get("user")',),
+    ),
+    ("GET", "/api/logs/pods/{project_name}"): (
+        "de middleware leest geen markering onder /api/ (zie "
+        "test_geen_api_route_leunt_op_de_sso_markering); eigen sessiecontrole in de handler (logs_router.py)",
+        ("get_user(request)", "is_user_authorized_for_project("),
+    ),
+    (WEBSOCKET, "/api/logs/stream/{project_name}"): (
+        "een websocket krijgt geen omleiding of afwijzing van de middleware; "
+        "eigen sessiecontrole op de cookie (logs_websocket_router.py)",
+        ("valid_session_user(", "is_user_authorized_for_project("),
+    ),
+    ("GET", "/api/tasks"): (
+        "herkenning alleen via de X-API-Key-header, gehandhaafd met de handeling van de route (task_router.py)",
+        ("handhaaf(",),
+    ),
+    ("GET", "/api/tasks/{task_id}"): (
+        "herkenning alleen via de X-API-Key-header, gehandhaafd via _validate_task_access (task_router.py)",
+        ("_validate_task_access(",),
+    ),
+    ("POST", "/api/tasks/{task_id}/:cancel"): (
+        "herkenning alleen via de X-API-Key-header, gehandhaafd via _validate_task_access (task_router.py)",
+        ("_validate_task_access(",),
+    ),
+    ("GET", "/api/sleep-mode/{project_name}/{deployment_name}/status"): (
+        "twee bewijsmiddelen zijn legitiem (het wake-token van de waker of een token van een lid); "
+        "_presented_token laat het eerste door naar flow en handhaaft het tweede",
+        ("_presented_token(",),
+    ),
+    ("POST", "/api/sleep-mode/{project_name}/{deployment_name}/wake"): (
+        "twee bewijsmiddelen zijn legitiem (het wake-token van de waker of een token van een lid); "
+        "_presented_token laat het eerste door naar flow en handhaaft het tweede",
+        ("_presented_token(",),
+    ),
 }
 
 
@@ -113,18 +144,7 @@ def routes() -> list[RouteHerkenning]:
 
 def _parameters() -> list[Any]:
     """Elke route een eigen geval, zodat de uitslag per route leesbaar is."""
-    gevallen = []
-    for route in route_herkenningen(app):
-        marks = []
-        if route.sleutel in HANDGESCHREVEN_CONTROLES:
-            marks.append(
-                pytest.mark.xfail(
-                    reason=f"{HANDGESCHREVEN_CONTROLES[route.sleutel]}, markering volgt met RC-322",
-                    strict=True,
-                )
-            )
-        gevallen.append(pytest.param(route, marks=marks, id=f"{route.methode} {route.pad}"))
-    return gevallen
+    return [pytest.param(route, id=f"{route.methode} {route.pad}") for route in route_herkenningen(app)]
 
 
 @pytest.mark.parametrize("route", _parameters())
@@ -140,6 +160,13 @@ def test_de_route_noemt_een_herkenning(route: RouteHerkenning) -> None:
         )
         return
 
+    if route.sleutel in HANDGESCHREVEN_CONTROLES:
+        assert not route.herkenningen, (
+            f"{route} draagt {list(route.herkenningen)} maar staat in HANDGESCHREVEN_CONTROLES; "
+            f"verhuis de route naar de gewone plicht en haal de regel weg"
+        )
+        return
+
     assert not ontbrekende_herkenning([route]), (
         f"{route} noemt geen herkenning. Zet er een decorator op (een van "
         f"requires_sso, validate_api_token, validate_user_token, validate_platform_admin_token, "
@@ -147,6 +174,39 @@ def test_de_route_noemt_een_herkenning(route: RouteHerkenning) -> None:
         f"in PUBLIEKE_ROUTES in dit bestand."
     )
     assert len(route.herkenningen) == 1, f"{route} eist er meer dan een: {list(route.herkenningen)}"
+
+
+def _handgeschreven_parameters() -> list[Any]:
+    """Elke regel uit HANDGESCHREVEN_CONTROLES een eigen geval, met de route erbij als die bestaat."""
+    per_sleutel = {route.sleutel: route for route in route_herkenningen(app)}
+    return [
+        pytest.param(per_sleutel.get(sleutel), reden, sporen, id=f"{methode} {pad}")
+        for sleutel, (reden, sporen) in HANDGESCHREVEN_CONTROLES.items()
+        for methode, pad in [sleutel]
+    ]
+
+
+@pytest.mark.parametrize(("route", "reden", "sporen"), _handgeschreven_parameters())
+def test_de_handgeschreven_controle_staat_er_nog(
+    route: RouteHerkenning | None, reden: str, sporen: tuple[str, ...]
+) -> None:
+    """Zonder deze pin merkt niemand het als de controle uit de handler verdwijnt: de plicht
+    hierboven kijkt voor deze routes alleen of er geen markering staat, en wie de controle
+    weghaalt zet er geen markering bij.
+    """
+    assert route is not None, (
+        "deze regel in HANDGESCHREVEN_CONTROLES beschrijft een route die niet meer bestaat; "
+        "haal de regel weg of herzie hem"
+    )
+    # Een regel zonder sporen pint niets, en een leeg spoor staat in elke bron.
+    assert sporen, f"{route}: een regel in HANDGESCHREVEN_CONTROLES eist minstens een spoor"
+    assert all(sporen), f"{route}: een leeg spoor in HANDGESCHREVEN_CONTROLES pint niets"
+    ontbrekend = [spoor for spoor in sporen if spoor not in inspect.getsource(route.endpoint)]
+    assert not ontbrekend, (
+        f"{route}: {ontbrekend} staat niet meer in de bron van de handler. De controle die de "
+        f"reden beschrijft ({reden}) is mogelijk weggehaald; staat hij er nog maar anders, pas "
+        f"dan de sporen aan."
+    )
 
 
 def test_geen_api_route_leunt_op_de_sso_markering(routes: list[RouteHerkenning]) -> None:
