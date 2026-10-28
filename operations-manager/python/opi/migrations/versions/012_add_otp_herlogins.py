@@ -1,7 +1,7 @@
 """Add otp_herlogins: de herlogin bij Keycloak voor het inrichten van een 2-factor (server-side).
 
-De OIDC-state van de herlogin en de uitkomst staan in een tabel, niet in de sessiecookie:
-die zit op een ingelogde sessie al dicht tegen de 4 KB-grens van de browser.
+De OIDC-state van de herlogin en de uitkomst staan in een tabel. Gebouwd toen de sessie nog in
+de cookie zat; sinds RC-390 staat de sessie server-side en kan dit ook daarin (open vraag).
 
 Nummer 012 en volgt op 011 (sessions, RC-390), laatste head op main toen dit geschreven werd.
 
