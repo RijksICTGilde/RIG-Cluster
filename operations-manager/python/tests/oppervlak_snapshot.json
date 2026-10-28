@@ -58,6 +58,9 @@
       "approval-modal",
       "approval-title",
       "approval-title-text",
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "edit-section-inner",
       "hoofdinhoud"
     ],
@@ -123,11 +126,12 @@
       "/weergave?scheme=dark&terug=/admin/users",
       "/weergave?scheme=light&terug=/admin/users"
     ],
-    "functies": [
-      "confirm"
-    ],
+    "functies": [],
     "htmx": [],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "hoofdinhoud"
     ],
     "velden": [
@@ -351,6 +355,9 @@
     ],
     "ids": [
       "backups-snapshots-default",
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "edit-section-backdrop",
       "edit-section-content",
       "edit-section-inner",
@@ -430,6 +437,9 @@
     ],
     "htmx": [],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "edit-section-backdrop",
       "edit-section-content",
       "edit-section-inner",
@@ -507,6 +517,9 @@
     ],
     "htmx": [],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "deployment-actions-default",
       "deployment-default",
       "edit-section-backdrop",
@@ -600,6 +613,9 @@
       "hx-get=/projects/test-project-detail/details?dsort=naam-af"
     ],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "deployment-status",
       "deployments-lijst",
       "edit-section-backdrop",
@@ -682,6 +698,9 @@
       "hx-get=/projects/details/test-project-detail/metrics/default"
     ],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "edit-section-backdrop",
       "edit-section-content",
       "edit-section-inner",
@@ -1393,6 +1412,9 @@
     ],
     "htmx": [],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "edit-section-backdrop",
       "edit-section-content",
       "edit-section-inner",
@@ -1469,6 +1491,9 @@
       "hx-get=/projects/test-project-detail/tasks"
     ],
     "ids": [
+      "bevestiging-annuleren",
+      "bevestiging-dialoog",
+      "bevestiging-doorgaan",
       "edit-section-backdrop",
       "edit-section-content",
       "edit-section-inner",

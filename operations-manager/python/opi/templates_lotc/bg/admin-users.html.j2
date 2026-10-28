@@ -14,9 +14,10 @@
   maar het verplaatsen is een besluit over de pagina en niet over de componenten, en dus
   niet iets om ongemerkt in een omzetting mee te nemen.
 
-  Het verwijderen blijft een gewoon formulier met een confirm(), precies zoals nu. Het is
-  geen htmx en geen dialoog, en er is in deze omzetting geen reden om daar iets anders van
-  te maken; alleen de aanspreekvorm is informeel geworden, zoals overal in deze bouwlijn.
+  De drie handelingen blijven gewone formulieren met een redirect erachter, geen htmx. Wat
+  ze vragen voordat ze doen gaat door de dialoog uit bg/_bevestiging.html.j2: de vraag, de
+  uitleg en het label van de knop staan in data-attributen op het formulier, en de
+  POST-bestemming blijft het action van dat formulier.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -58,13 +59,11 @@
                                     icon="pencil-on-square"
                                     show-icon="before"
                                     href="/admin/users/{{ user.id }}/edit" />
-                                {# Het formulier draagt de bevestiging en het CSRF-token. De knop erin
-                                   is alleen de verzendknop.
-                                   tojson/forceescape beschermt tegen XSS op user.full_name
-                                   (patroon: bg/_argocd-deployment-card.html.j2). #}
-                                {% set sessies_js = ('return confirm(' ~ (('Weet je zeker dat je de sessies van ' ~ user.full_name ~ ' wilt beëindigen? Deze gebruiker moet dan opnieuw inloggen.') | tojson) ~ ')') | forceescape %}
+                                {# De naam gaat in een attribuutwaarde: autoescape beschermt tegen XSS. #}
                                 <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/revoke-sessions"
-                                      onsubmit="{{ sessies_js }}">
+                                      data-bevestig="De sessies van {{ user.full_name }} beëindigen?"
+                                      data-bevestig-uitleg="Daarna moet {{ user.full_name }} opnieuw inloggen."
+                                      data-bevestig-knop="Sessies beëindigen">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                     <c-button
                                         type="tertiary"
@@ -74,9 +73,10 @@
                                         show-icon="before"
                                         html-type="submit" />
                                 </form>
-                                {% set verwijderen_js = ('return confirm(' ~ (('Weet je zeker dat je ' ~ user.full_name ~ ' wilt verwijderen?') | tojson) ~ ')') | forceescape %}
                                 <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
-                                      onsubmit="{{ verwijderen_js }}">
+                                      data-bevestig="{{ user.full_name }} verwijderen?"
+                                      data-bevestig-uitleg="Daarna kan {{ user.full_name }} niet meer inloggen op het portaal."
+                                      data-bevestig-knop="Gebruiker verwijderen">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                     <c-button
                                         type="warning"
@@ -89,9 +89,10 @@
                                 {# Je eigen factor hoort niet hier maar op /account/otp, en de
                                    route weigert hem ook. #}
                                 {% if user.email | lower != eigen_email %}
-                                    {% set otp_reset_js = ('return confirm(' ~ (('De tweede factor van ' ~ user.full_name ~ ' leegmaken? Daarna richt ' ~ user.full_name ~ ' hem zelf opnieuw in.') | tojson) ~ ')') | forceescape %}
                                     <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/otp-reset"
-                                          onsubmit="{{ otp_reset_js }}">
+                                          data-bevestig="De 2-factor van {{ user.full_name }} leegmaken?"
+                                          data-bevestig-uitleg="Daarna richt {{ user.full_name }} hem zelf opnieuw in."
+                                          data-bevestig-knop="2-factor leegmaken">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                         <c-button
                                             type="tertiary"
@@ -115,4 +116,6 @@
     {% if success_message %}
         <c-alert type="success" heading="{{ success_message }}" />
     {% endif %}
+
+    {% include "bg/_bevestiging.html.j2" %}
 {% endblock %}

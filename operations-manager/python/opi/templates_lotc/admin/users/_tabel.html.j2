@@ -37,9 +37,11 @@
                            als kind van een cluster is het vanzelf al een flex-item. #}
                         <c-cluster gap="xs">
                             {% set lotc_onclick_1 %}window.location.href='/admin/users/{{ user.id }}/edit'{% endset %}<c-button label="Bewerken" size="sm" show-icon="before" icon="pencil-on-square"/>
-                            {% set verwijderen_js = ('return confirm(' ~ (('Weet je zeker dat je ' ~ user.full_name ~ ' wilt verwijderen?') | tojson) ~ ')') | forceescape %}
+                            {# De dialoog staat in bg/_bevestiging.html.j2, niet hier. #}
                             <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
-                                  onsubmit="{{ verwijderen_js }}">
+                                  data-bevestig="{{ user.full_name }} verwijderen?"
+                                  data-bevestig-uitleg="Daarna kan {{ user.full_name }} niet meer inloggen op het portaal."
+                                  data-bevestig-knop="Gebruiker verwijderen">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                 <c-button label="Verwijderen" size="sm" show-icon="before" icon="trash" html-type="submit" type="warning"/>
                             </form>

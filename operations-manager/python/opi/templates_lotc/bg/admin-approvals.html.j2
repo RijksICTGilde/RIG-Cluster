@@ -249,6 +249,10 @@
         <div id="approval-loading" class="edit-section-loading"><c-paragraph>Laden...</c-paragraph></div>
         <div id="edit-section-inner"></div>
     </div>
+
+    {# De bevestigingsdialoog hoort bij de gedeelde afhandeling hierboven: die vraagt bij
+       niet-opgeslagen werk, en dat doet hij hier door deze dialoog. #}
+    {% include "bg/_bevestiging.html.j2" %}
 {% endblock %}
 
 {% block additional_styles %}
