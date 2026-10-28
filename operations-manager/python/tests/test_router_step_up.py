@@ -37,7 +37,7 @@ async def test_geldige_code_zet_de_step_up_en_herhaalt_de_handeling(caplog: pyte
         {
             "vervolg": "/projects/demo/modal-wizard/modal-edit-identity/confirm",
             "handeling": "dit project te verwijderen",
-            "code": "123456",
+            "otp": "123456",
             "vervolg_token": "wt-123",
         }
     )
@@ -70,7 +70,7 @@ async def test_de_herhaling_neemt_de_methode_van_de_handeling_over() -> None:
         {
             "vervolg": "/projects/demo/componenten/web/env-vars",
             "handeling": "de omgevingsvariabelen te zien en te wijzigen",
-            "code": "123456",
+            "otp": "123456",
             "vervolg_methode": "GET",
         }
     )
@@ -91,7 +91,7 @@ async def test_een_onbekende_methode_valt_terug_op_post() -> None:
         {
             "vervolg": "/projects/demo/componenten/web/env-vars",
             "handeling": "iets",
-            "code": "123456",
+            "otp": "123456",
             "vervolg_methode": "DELETE",
         }
     )
@@ -114,7 +114,7 @@ async def test_foute_code_behoudt_de_methode_voor_de_herhaling() -> None:
         {
             "vervolg": "/projects/demo/componenten/web/env-vars",
             "handeling": "de omgevingsvariabelen te zien en te wijzigen",
-            "code": "000000",
+            "otp": "000000",
             "vervolg_methode": "GET",
         }
     )
@@ -132,7 +132,7 @@ async def test_foute_code_behoudt_de_methode_voor_de_herhaling() -> None:
 
 @pytest.mark.asyncio
 async def test_foute_code_zet_niets_en_toont_de_foutmelding() -> None:
-    request = _request({"vervolg": "/x", "handeling": "iets", "code": "000000"})
+    request = _request({"vervolg": "/x", "handeling": "iets", "otp": "000000"})
     service = _service(verify=OtpVerification.INVALID)
 
     with (
@@ -149,7 +149,7 @@ async def test_foute_code_zet_niets_en_toont_de_foutmelding() -> None:
 
 @pytest.mark.asyncio
 async def test_geblokkeerd_toont_de_blokkadetekst_en_zet_niets() -> None:
-    request = _request({"vervolg": "/x", "handeling": "iets", "code": "000000"})
+    request = _request({"vervolg": "/x", "handeling": "iets", "otp": "000000"})
     service = _service(verify=OtpVerification.LOCKED)
 
     with (
@@ -165,7 +165,7 @@ async def test_geblokkeerd_toont_de_blokkadetekst_en_zet_niets() -> None:
 @pytest.mark.asyncio
 async def test_zonder_bevestigde_factor_zet_de_route_niets() -> None:
     """De factor uit RC-329 kent geen herstelcodes: alleen een geldige TOTP telt."""
-    request = _request({"vervolg": "/x", "handeling": "iets", "code": "123456"})
+    request = _request({"vervolg": "/x", "handeling": "iets", "otp": "123456"})
     service = _service(verify=OtpVerification.NOT_REGISTERED)
 
     with (
@@ -185,7 +185,7 @@ async def test_handeling_uit_het_formulier_forgeert_geen_logregel(caplog: pytest
     inzender mag er geen geslaagde step-up van iemand anders in kunnen schrijven.
     """
     forged = "x\n2026-10-22 14:00:00 - opi.web.router_step_up - INFO - Step-up geslaagd voor beheerder@example.org"
-    request = _request({"vervolg": "/x", "handeling": forged, "code": "000000"})
+    request = _request({"vervolg": "/x", "handeling": forged, "otp": "000000"})
     service = _service(verify=OtpVerification.INVALID)
 
     with (

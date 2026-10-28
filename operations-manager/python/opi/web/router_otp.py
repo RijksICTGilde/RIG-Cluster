@@ -142,7 +142,7 @@ async def otp_start(request: Request) -> Response:
 
     if status.registered:
         form = await request.form()
-        uitkomst = await service.verify(email, str(form.get("huidige_code", "")))
+        uitkomst = await service.verify(email, str(form.get("otp", "")))
         if uitkomst is not OtpVerification.OK:
             return await _status_page(
                 request,
@@ -258,7 +258,7 @@ async def otp_bevestigen(request: Request) -> Response:
     service = _get_otp_service()
     bevestigd = await service.confirm_registration(
         email,
-        str(form.get("code", "")),
+        str(form.get("otp", "")),
         encrypted,
         full_name=str(user.get("name") or user.get("display_name") or ""),
     )

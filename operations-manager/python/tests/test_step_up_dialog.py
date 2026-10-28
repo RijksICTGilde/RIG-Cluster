@@ -35,7 +35,7 @@ async def test_render_step_up_dialog_vraagt_de_status_op_voor_het_lagere_e_maila
         patch("opi.web.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
         html = await render_step_up_dialog(
-            _request(), vervolg="/projects/delete/demo", handeling="dit project te verwijderen", fout="oeps"
+            _request(), vervolg="/projects/delete/demo", handeling="dit project te verwijderen", code_fout="oeps"
         )
 
     mocked.assert_awaited_once_with("eigenaar@example.org")
@@ -43,7 +43,7 @@ async def test_render_step_up_dialog_vraagt_de_status_op_voor_het_lagere_e_maila
     context = render.call_args.kwargs["context"]
     assert context["vervolg"] == "/projects/delete/demo"
     assert context["handeling"] == "dit project te verwijderen"
-    assert context["fout"] == "oeps"
+    assert context["code_fout"] == "oeps"
     assert context["geregistreerd"] is True
     assert render.call_args.kwargs["template"] == "bg/_step-up.html.j2"
 
@@ -58,7 +58,7 @@ async def test_render_step_up_dialog_zonder_factor_meldt_niet_geregistreerd() ->
         await render_step_up_dialog(_request(), vervolg="/x", handeling="iets")
 
     assert render.call_args.kwargs["context"]["geregistreerd"] is False
-    assert render.call_args.kwargs["context"]["fout"] == ""
+    assert render.call_args.kwargs["context"]["code_fout"] == ""
 
 
 def test_render_step_up_repeat_wijst_naar_het_vervolg() -> None:
@@ -111,7 +111,7 @@ def _render_dialoog(*, geregistreerd: bool) -> str:
             "csp_nonce": "nonce",
             "vervolg": "/projects/delete/demo",
             "handeling": "dit project te verwijderen",
-            "fout": "",
+            "code_fout": "",
             "geregistreerd": geregistreerd,
             "vervolg_token": "",
         }
@@ -120,12 +120,12 @@ def _render_dialoog(*, geregistreerd: bool) -> str:
 
 def test_de_dialoog_vraagt_een_code_van_wie_een_factor_heeft() -> None:
     html = _render_dialoog(geregistreerd=True)
-    assert 'name="code"' in html
+    assert 'name="otp"' in html
     assert 'hx-post="/step-up"' in html
     assert 'name="vervolg" value="/projects/delete/demo"' in html
 
 
 def test_de_dialoog_wijst_naar_de_registratie_zonder_factor() -> None:
     html = _render_dialoog(geregistreerd=False)
-    assert 'name="code"' not in html
+    assert 'name="otp"' not in html
     assert "/account/otp" in html

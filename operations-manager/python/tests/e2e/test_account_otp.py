@@ -68,7 +68,7 @@ def _reset_door_een_beheerder() -> None:
 def _bevestig_registratie(page: Page, basis: str) -> None:
     """Van de lege stand naar een bevestigde factor, met de code van de pagina zelf."""
     _start_registratie(page, basis)
-    page.locator("input[name='code']").fill(_code_van_de_pagina(page))
+    page.locator("input[name='otp']").fill(_code_van_de_pagina(page))
     page.locator("button[type='submit'], input[type='submit']").first.click()
     page.wait_for_load_state("networkidle")
 
@@ -116,7 +116,7 @@ class TestHerlogin:
         get_in_memory_herlogin_service().vers.clear()
         auth_page.goto(f"{app_server}{OTP_URL}")
 
-        assert auth_page.locator("input[name='huidige_code']").count() == 0
+        assert auth_page.locator("input[name='otp']").count() == 0
         assert auth_page.locator("a[href='/account/otp/herlogin']").first.is_visible()
 
 
@@ -220,7 +220,7 @@ class TestMetEenDikkeSessie:
 
     def test_een_verkeerde_bevestigingscode_slaat_niets_op(self, app_server: str, auth_page: Page) -> None:
         _start_registratie(auth_page, app_server)
-        auth_page.locator("input[name='code']").fill("000000")
+        auth_page.locator("input[name='otp']").fill("000000")
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
         auth_page.wait_for_load_state("networkidle")
 
@@ -236,7 +236,7 @@ class TestMetEenDikkeSessie:
         _bevestig_registratie(auth_page, app_server)
 
         auth_page.goto(f"{app_server}{OTP_URL}")
-        auth_page.locator("input[name='huidige_code']").fill("000000")
+        auth_page.locator("input[name='otp']").fill("000000")
         auth_page.locator("text=Opnieuw inrichten").last.click()
         auth_page.wait_for_load_state("networkidle")
 

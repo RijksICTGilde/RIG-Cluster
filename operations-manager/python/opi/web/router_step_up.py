@@ -42,7 +42,7 @@ async def step_up(request: Request) -> HTMLResponse:
     vervolg_velden = lees_vervolg_velden(str(form.get("vervolg_velden", "")))
     # Alleen GET en POST kent de herhaling; alles anders leest als de gewone POST.
     vervolg_methode = "GET" if str(form.get("vervolg_methode", "")).upper() == "GET" else "POST"
-    code = str(form.get("code", "")).strip()
+    code = str(form.get("otp", "")).strip()
     email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     service = UserOtpService()
