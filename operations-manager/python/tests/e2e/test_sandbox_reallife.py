@@ -610,20 +610,14 @@ def test_ui_env_vars_while_api_patches_same_file(
         )
         _assert_env_vars_encrypted(forgejo, project.name, WEB, UI_ENV_MARKER)
 
-        # De namen van de variabelen staan op het tabblad COMPONENTEN, niet op Deployments.
-        # Dat is sinds fc590e0a/804c226e/77f1a9a0 een bewuste keuze: variabelen op
-        # COMPONENTniveau horen bij het component, en Deployments toont alleen wat daar
-        # anders is dan de standaard. Deze test wees nog naar Deployments (en naar
-        # bg/_env-vars.html.j2, dat sindsdien nergens meer wordt ingevoegd) en zocht daar
-        # naar een variabele die per definitie op de andere kaart staat.
-        # Niet via text_content("body"): dat leest de lichte boom en de naam staat in een
-        # <c-code> binnen een LOTC-component. De tekstselector van Playwright kijkt wel
-        # door schaduwbomen heen.
+        # Sinds RC-388 staat er geen variabele op de pagina: ook geen naam. De waarden en de
+        # namen zitten achter de step-up in het venster. De tekstselector van Playwright kijkt
+        # door schaduwbomen heen, anders zou deze meting niets vinden.
         ui_page.goto(f"{sandbox_url}/projects/{project.name}/componenten")
         ui_page.wait_for_load_state("networkidle")
         key = UI_ENV_MARKER.partition("=")[0]
-        assert ui_page.locator(f"text={key}").count() > 0, (
-            f"Env var name '{key}' not on the componenten tab of '{project.name}'"
+        assert ui_page.locator(f"text={key}").count() == 0, (
+            f"Env var name '{key}' staat op de componenten-tab van '{project.name}'"
         )
 
     _settle_tasks(sandbox_url, tasks)

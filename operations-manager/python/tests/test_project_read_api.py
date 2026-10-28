@@ -616,38 +616,6 @@ class TestOneEnvVarReader:
         assert api_read.read_user_env_vars is shared.read_user_env_vars
 
 
-class TestDetailPageIsUnaffected:
-    """The env-vars overview template renders names and counts, never values (RC-388).
-
-    The template reads ``user-env-var-namen`` (sorted names, or None when the stored
-    block could not be read); the detail route no longer puts ``user-env-vars`` in the
-    render context at all. These tests pin that contract.
-    """
-
-    @staticmethod
-    def _render(stored: Any) -> str:
-        from opi.core.templates_lotc import templates_lotc as templates
-
-        project = {
-            "name": PROJECT,
-            "components": [{"name": "frontend", "user-env-var-namen": stored}],
-            "deployments": [{"name": "production", "cluster": "local", "components": []}],
-        }
-        return templates.get_template("bg/_env-vars.html.j2").render(project=project)
-
-    def test_empty_mapping_renders_exactly_like_unknown(self) -> None:
-        assert self._render([]) == self._render(None)
-
-    def test_variables_render_by_name_without_the_value(self) -> None:
-        html = self._render(["API_TOKEN"])
-        assert "API_TOKEN" in html
-        assert ENV_VALUE_TWO not in html
-        assert "Geen omgevingsvariabelen geconfigureerd" not in html
-
-    def test_nothing_stored_shows_the_empty_state(self) -> None:
-        assert "Geen omgevingsvariabelen geconfigureerd" in self._render([])
-
-
 class TestUserEnvVarsReader:
     """The shared reader itself: the shapes a project file may legally hold."""
 
