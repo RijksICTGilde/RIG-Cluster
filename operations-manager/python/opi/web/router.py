@@ -70,6 +70,7 @@ from opi.web.lotc_switch import (
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import get_navigation
 from opi.web.project_actions import build_project_action
+from opi.web.security_policy import security_policy_html
 from opi.web.stap_labels import stap_label
 from opi.web.task_progress import create_task_and_render_progress, on_complete_for, render_progress_fragment
 
@@ -2894,6 +2895,26 @@ async def about_platform(request: Request):
             status_code=500,
             detail="Deze pagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
         ) from e
+
+
+@web_router.get("/security", response_class=HTMLResponse)
+async def security_policy(request: Request) -> HTMLResponse:
+    """Het beveiligingsbeleid, ``SECURITY.md`` als pagina.
+
+    BEWUST ZONDER ``@requires_sso``: wie een kwetsbaarheid wil melden is meestal niet
+    ingelogd.
+    """
+    user = get_current_user(request)
+    return render(
+        request,
+        template="bg/security.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(user),
+            "navigation": get_navigation(user, current_path="/security"),
+            "security_policy_html": security_policy_html(),
+        },
+    )
 
 
 @dev_router.get("/test-template-variables", response_class=HTMLResponse)
