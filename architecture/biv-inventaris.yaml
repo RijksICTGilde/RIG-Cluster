@@ -103,7 +103,7 @@ componenten:
           bron: plans/keycloak-config-bewerkbaar-zonder-verlies.md
           toets: operations-manager/python/tests/test_keycloak_drift_guards.py
       vertrouwelijkheid:
-        - maatregel: Het realm-beheeraccount staat achter een tweede factor (OTP).
+        - maatregel: Het realm-beheeraccount staat achter een 2-factor (OTP).
           bron: features/keycloak-realm-admin-otp.md
           toets: operations-manager/python/tests/test_keycloak_otp.py
         - maatregel: Uitloggen trekt de sessies in plaats van alleen het koekje te wissen.

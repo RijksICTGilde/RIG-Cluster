@@ -4,14 +4,14 @@
 
 Een lokaal account in Keycloak logt in met een gebruikersnaam en een wachtwoord. Dat is één
 factor, en BIO2 8.05 vraagt sterkere authenticatie voor wie niet via de federatie
-binnenkomt. Deze feature voegt die tweede factor toe op twee plekken:
+binnenkomt. Deze feature voegt die 2-factor toe op twee plekken:
 
 1. een **derde realmblauwdruk**, `sso-support-otp`, die een project zelf kiest;
 2. de **master-realm**, waar de platformbeheerders en de beheeraccounts van de
    projectrealms staan. Daar is de OTP altijd verplicht.
 
 Wie via SSO Rijk inlogt merkt er niets van: die komt langs de Identity Provider Redirector
-en bereikt het wachtwoordformulier, waar de OTP-stap achter hangt, nooit. De tweede factor
+en bereikt het wachtwoordformulier, waar de OTP-stap achter hangt, nooit. De 2-factor
 hoort daar bij SSO Rijk.
 
 Service accounts en client-credentials vallen erbuiten. Dat is geen browserlogin, dus de
@@ -81,7 +81,7 @@ uitnodiging ook zonder rol ingewisseld kan worden. Een clientoverride wint echte
 `browserFlow` van het realm, en in die ingebouwde flow is de OTP-stap voorwaardelijk. Dat
 gaf een publieke client waarop een lokaal account zonder OTP-credential alleen met zijn
 wachtwoord een realmsessie kreeg, en de Cookie-stap liet die sessie daarna ook op de
-applicatieclient binnen: geen tweede factor. Daarom wijst de override onder
+applicatieclient binnen: geen 2-factor. Daarom wijst de override onder
 `sso-support-otp` naar dezelfde verplichte-OTP-flow als het realm. De blauwdruklezer maakt
 flows voordat hij clients maakt, dus de flow bestaat op dat moment al.
 
@@ -115,7 +115,7 @@ Bij elke start van OPI (`KeycloakSetup.ensure_master_otp`, naast `ensure_otp_mas
 - elke menselijke gebruiker in `master` zonder OTP krijgt `CONFIGURE_TOTP`.
 
 Faalt die stap, dan logt OPI een ERROR en gaat de bootstrap door: een master-realm zonder
-tweede factor is beter dan een OPI die niet start en geen project meer kan uitrollen.
+2-factor is beter dan een OPI die niet start en geen project meer kan uitrollen.
 
 ### Het account waarmee OPI zelf inlogt
 

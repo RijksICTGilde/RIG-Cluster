@@ -1,5 +1,5 @@
 {#
-  Profielpagina: sessie-info plus tweede factor (uit de database, RC-329).
+  Profielpagina: sessie-info plus 2-factor (uit de database, RC-329).
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -26,18 +26,18 @@
         </c-paragraph>
     {% endcall %}
 
-    {% call panel("Tweede factor", "lock-closed") %}
+    {% call panel("2-factor", "lock-closed") %}
         {% if otp_status.registered %}
             <c-paragraph>
-                Je hebt een tweede factor ingericht op {{ otp_status.confirmed_at | dutch_date }}.
+                Je hebt een 2-factor ingericht op {{ otp_status.confirmed_at | dutch_date }}.
             </c-paragraph>
         {% else %}
             <c-paragraph>
-                Je hebt nog geen tweede factor: een eenmalige code uit een app op je telefoon,
+                Je hebt nog geen 2-factor: een eenmalige code uit een app op je telefoon,
                 naast je inlog.
             </c-paragraph>
         {% endif %}
-        {% set otp_knop = "Tweede factor beheren" if otp_status.registered else "Tweede factor inrichten" %}
+        {% set otp_knop = "2-factor beheren" if otp_status.registered else "2-factor inrichten" %}
         <c-cluster gap="sm">
             <c-button type="secondary" label="{{ otp_knop }}" href="/account/otp" />
         </c-cluster>
