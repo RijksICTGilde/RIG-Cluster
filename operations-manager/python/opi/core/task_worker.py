@@ -25,6 +25,7 @@ from opi.core.task_supersede import (
     reset_current_task,
     set_current_task,
 )
+from opi.services.otp_herlogin_service import OtpHerloginService
 from opi.services.session_store import get_session_store
 from opi.services.user_otp_service import UserOtpService
 
@@ -453,6 +454,9 @@ class TaskWorker:
                 purged = await get_session_store().purge_expired()
                 if purged > 0:
                     logger.info("Cleaned up %d expired sessions", purged)
+                herlogins = await OtpHerloginService().purge_expired()
+                if herlogins > 0:
+                    logger.info("Cleaned up %d expired OTP re-logins", herlogins)
             except asyncio.CancelledError:
                 break
             except Exception:

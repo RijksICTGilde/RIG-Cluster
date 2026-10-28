@@ -277,6 +277,31 @@ def get_in_memory_otp_service() -> InMemoryUserOtpService:
     return _in_memory_otp_service
 
 
+class InMemoryHerloginService:
+    """In-memory stub voor OtpHerloginService: er is in deze suite geen Keycloak om bij in te loggen.
+
+    Een test zet een gebruiker in ``vers`` om te doen alsof hij zojuist opnieuw inlogde. De
+    poort zelf (de route, de sjablonen) is echt; alleen de herlogin bij Keycloak ontbreekt.
+    """
+
+    def __init__(self) -> None:
+        self.vers: set[str] = set()
+
+    async def is_fresh(self, email: str, login_at: float | None) -> bool:
+        return email in self.vers
+
+
+_in_memory_herlogin_service: InMemoryHerloginService | None = None
+
+
+def get_in_memory_herlogin_service() -> InMemoryHerloginService:
+    """Get (or create) the shared in-memory herlogin service."""
+    global _in_memory_herlogin_service
+    if _in_memory_herlogin_service is None:
+        _in_memory_herlogin_service = InMemoryHerloginService()
+    return _in_memory_herlogin_service
+
+
 def _mock_get_otp_service() -> InMemoryUserOtpService:
     """Drop-in replacement for router_otp._get_otp_service."""
     return get_in_memory_otp_service()
@@ -639,6 +664,7 @@ def create_test_app():
             # gebruikersbeheer; alle drie zonder Postgres.
             patch("opi.web.router_user_admin._get_otp_service", _mock_get_otp_service),
             patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
+            patch("opi.web.router_otp._get_herlogin_service", get_in_memory_herlogin_service),
             patch("opi.web.router.UserOtpService", _mock_get_otp_service),
             # De server-side sessies (RC-390): de middleware vraagt per request om de
             # store, en krijgt hier de in-memory variant.

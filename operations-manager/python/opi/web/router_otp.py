@@ -14,6 +14,12 @@ id_token) daarmee over de ~4 KB die een browser geruisloos laat vallen. /bevesti
 dan aan zonder merk, de gebruiker zag geen enkele foutmelding, en de registratie
 verdween. De sessie raakt de registratie hier helemaal niet meer; wie geen /start heeft
 gedaan, heeft geen rij; de rij verloopt na tien minuten en de cleanup-lus ruimt op.
+
+Een 2-factor inrichten of vervangen vraagt eerst een herlogin bij Keycloak (``/herlogin``):
+anders richt iedereen met een open sessie op een ontgrendelde computer een eigen 2-factor in
+onder de naam van een ander. De poort staat op ``/start``; ``/bevestigen`` wordt beschermd
+door de rij die ``/start`` zet, en zou een registratie vernietigen die al gescand is als het
+venster van de herlogin tijdens het scannen verliep.
 """
 
 from __future__ import annotations
@@ -21,11 +27,15 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from fastapi import APIRouter, Request
+import httpx
+from authlib.common.errors import AuthlibBaseError
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from joserfc.errors import JoseError
 from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.services.otp_herlogin_service import OtpHerloginService, herlogin_klopt
 from opi.services.user_otp_service import OtpRegistration, OtpVerification, UserOtpService
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.qr import qr_svg
@@ -46,6 +56,19 @@ _PATH = "/account/otp"
 
 def _get_otp_service() -> UserOtpService:
     return UserOtpService()
+
+
+def _get_herlogin_service() -> OtpHerloginService:
+    return OtpHerloginService()
+
+
+def _login_at(request: Request) -> float | None:
+    login_at = (get_current_user(request) or {}).get("login_at")
+    return login_at if isinstance(login_at, int | float) else None
+
+
+def _herlogin_url(request: Request) -> str:
+    return str(request.url_for("otp_herlogin_terug"))
 
 
 def _email(request: Request) -> str:
@@ -73,8 +96,9 @@ def _page(request: Request, template: str, context: dict) -> Response:
     )
 
 
-def _status_page(request: Request, context: dict) -> Response:
-    return _page(request, "bg/account-otp.html.j2", context)
+async def _status_page(request: Request, context: dict) -> Response:
+    herlogin_vers = await _get_herlogin_service().is_fresh(_email(request), _login_at(request))
+    return _page(request, "bg/account-otp.html.j2", {"herlogin_vers": herlogin_vers, **context})
 
 
 def _registration_page(request: Request, registratie: OtpRegistration, fout: str = "") -> Response:
@@ -96,7 +120,7 @@ def _registration_page(request: Request, registratie: OtpRegistration, fout: str
 async def otp_status_pagina(request: Request) -> Response:
     """Of je een 2-factor hebt, en de weg om hem in te richten of te vervangen."""
     status = await _get_otp_service().status(_email(request))
-    return _status_page(request, {"status": status})
+    return await _status_page(request, {"status": status})
 
 
 @otp_router.post("/start", response_model=None)
@@ -109,6 +133,9 @@ async def otp_start(request: Request) -> Response:
     vraagt een platformbeheerder om een reset.
     """
     email = _email(request)
+    if not await _get_herlogin_service().is_fresh(email, _login_at(request)):
+        return RedirectResponse(url=f"{_PATH}/herlogin", status_code=303)
+
     service = _get_otp_service()
     status = await service.status(email)
 
@@ -116,7 +143,7 @@ async def otp_start(request: Request) -> Response:
         form = await request.form()
         uitkomst = await service.verify(email, str(form.get("huidige_code", "")))
         if uitkomst is not OtpVerification.OK:
-            return _status_page(
+            return await _status_page(
                 request,
                 {
                     "status": status,
@@ -132,6 +159,69 @@ async def otp_start(request: Request) -> Response:
     registratie = await service.start_registration(email)
     await service.note_pending_registration(email, _fingerprint(registratie.encrypted_secret))
     return _registration_page(request, registratie)
+
+
+@otp_router.get("/herlogin", response_model=None)
+@requires_sso
+async def otp_herlogin(request: Request) -> Response:
+    """Stuur naar Keycloak voor een verse login, voordat een 2-factor ingericht wordt.
+
+    ``prompt=login`` en ``max_age=0`` dwingen een nieuwe authenticatie af, ook als Keycloak
+    nog een sessie van deze browser kent. De state staat server-side (zie
+    ``opi/services/persistence/otp_herlogin.py``).
+    """
+    login_at = _login_at(request)
+    if login_at is None:
+        raise HTTPException(status_code=403, detail="Geen geldige sessie om opnieuw mee in te loggen")
+
+    herlogin = await _get_herlogin_service().begin(_email(request), login_at)
+    keycloak = request.app.state.oauth.keycloak
+    aanvraag = await keycloak.create_authorization_url(
+        _herlogin_url(request),
+        state=herlogin.state,
+        nonce=herlogin.nonce,
+        code_verifier=herlogin.code_verifier,
+        prompt="login",
+        max_age=0,
+    )
+    return RedirectResponse(url=aanvraag["url"], status_code=302)
+
+
+@otp_router.get("/herlogin/terug", response_model=None, name="otp_herlogin_terug")
+@requires_sso
+async def otp_herlogin_terug(request: Request) -> Response:
+    """Keycloak komt hier terug. Een geslaagde herlogin opent het venster voor ``/start``."""
+    email = _email(request)
+    login_at = _login_at(request)
+    code = request.query_params.get("code", "")
+    service = _get_herlogin_service()
+    herlogin = (
+        await service.take(request.query_params.get("state", ""), email, login_at) if login_at is not None else None
+    )
+
+    if herlogin is None or not code:
+        logger.warning("Herlogin zonder geldige state of code voor %s", email)
+    else:
+        keycloak = request.app.state.oauth.keycloak
+        try:
+            token = await keycloak.fetch_access_token(
+                _herlogin_url(request), code=code, code_verifier=herlogin.code_verifier
+            )
+            claims = await keycloak.parse_id_token(token, herlogin.nonce)
+        except (AuthlibBaseError, JoseError, httpx.HTTPError) as e:
+            logger.warning("Herlogin voor %s mislukt bij Keycloak: %s", email, e)
+        else:
+            if herlogin_klopt(claims, get_current_user(request) or {}):
+                await service.mark_verified(herlogin.state)
+                return RedirectResponse(url=_PATH, status_code=303)
+
+    return await _status_page(
+        request,
+        {
+            "status": await _get_otp_service().status(email),
+            "fout": "Opnieuw inloggen is niet gelukt. Probeer het opnieuw.",
+        },
+    )
 
 
 @otp_router.post("/bevestigen", response_model=None)
@@ -155,7 +245,7 @@ async def otp_bevestigen(request: Request) -> Response:
                     "maar vul een nieuwe code uit je app in."
                 ),
             )
-        return _status_page(
+        return await _status_page(
             request,
             {
                 "status": await _get_otp_service().status(email),

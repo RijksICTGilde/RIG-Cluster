@@ -20,23 +20,27 @@
 {% endcall %}
 
 {% call panel("Opnieuw inrichten", "arrow-clockwise") %}
-    {# novalidate: de server valideert dit veld. Zie FORMULIEREN_MET_SERVERVALIDATIE
-       in tests/test_template_structure.py. #}
-    <form autocomplete="off" method="post" action="/account/otp/start" novalidate>
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <c-stack gap="md">
-            <c-text-input-field
-                id="huidige_code"
-                name="huidige_code"
-                label="Code uit je huidige app"
-                type="text"
-                autocomplete="one-time-code"
-                help="Zonder deze code kan iemand die je sessie overneemt ook je 2-factor overnemen. Ben je je telefoon kwijt, vraag dan een platformbeheerder om je factor te resetten."
-                required="true" />
-            <c-action-group align="start">
-                <c-button type="primary" label="Opnieuw inrichten" html-type="submit" />
-                <c-button type="secondary" label="Terug naar account" href="/account" />
-            </c-action-group>
-        </c-stack>
-    </form>
+    {% if herlogin_vers %}
+        {# novalidate: de server valideert dit veld. Zie FORMULIEREN_MET_SERVERVALIDATIE
+           in tests/test_template_structure.py. #}
+        <form autocomplete="off" method="post" action="/account/otp/start" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <c-stack gap="md">
+                <c-text-input-field
+                    id="huidige_code"
+                    name="huidige_code"
+                    label="Code uit je huidige app"
+                    type="text"
+                    autocomplete="one-time-code"
+                    help="Zonder deze code kan iemand die je sessie overneemt ook je 2-factor overnemen. Ben je je telefoon kwijt, vraag dan een platformbeheerder om je factor te resetten."
+                    required="true" />
+                <c-action-group align="start">
+                    <c-button type="primary" label="Opnieuw inrichten" html-type="submit" />
+                    <c-button type="secondary" label="Terug naar account" href="/account" />
+                </c-action-group>
+            </c-stack>
+        </form>
+    {% else %}
+        {% include "bg/_otp-herlogin.html.j2" %}
+    {% endif %}
 {% endcall %}

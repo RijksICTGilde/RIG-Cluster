@@ -5,11 +5,15 @@
         Je hebt nog geen 2-factor. Met een authenticator-app lees je een QR in en
         krijg je elke dertig seconden een code.
     </c-paragraph>
-    <form autocomplete="off" method="post" action="/account/otp/start">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <c-action-group align="start">
-            <c-button type="primary" label="2-factor inrichten" html-type="submit" />
-            <c-button type="secondary" label="Terug naar account" href="/account" />
-        </c-action-group>
-    </form>
+    {% if herlogin_vers %}
+        <form autocomplete="off" method="post" action="/account/otp/start">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <c-action-group align="start">
+                <c-button type="primary" label="2-factor inrichten" html-type="submit" />
+                <c-button type="secondary" label="Terug naar account" href="/account" />
+            </c-action-group>
+        </form>
+    {% else %}
+        {% include "bg/_otp-herlogin.html.j2" %}
+    {% endif %}
 {% endcall %}
