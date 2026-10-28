@@ -314,6 +314,22 @@ date = true
 [queue.outbound]
 next-hop = "'upstream'"
 
+# MTA-STS uit. Stalwart haalt het beleid van het ontvangende domein ook op als het
+# bericht naar een vaste next-hop gaat (delivery.rs, v0.11.8), terwijl dat beleid over
+# hun MX gaat en wij nooit zelf een MX kiezen. De netpol laat geen HTTPS naar buiten,
+# dus elke ophaalpoging hing tot de TCP-timeout: gemeten 28 oktober 2026 ~130 seconden
+# vertraging per bericht naar gmail.com en andere domeinen met een beleid. TLS naar de
+# upstream blijft verplicht via [remote.upstream.tls].
+[queue.outbound.tls]
+mta-sts = "disable"
+
+# Geen TLS-rapporten. Die gaan naar de rapportadressen van de ontvangers (bijvoorbeeld
+# sts-reports@google.com), liepen tegen dezelfde MTA-STS-muur en werden daarna door de
+# upstream geweigerd. Zonder verzending doet Stalwart ook de TLS-RPT-lookup per bericht
+# niet meer.
+[report.tls.aggregate]
+send = "never"
+
 # Poort 25 en GEEN authenticatie, en dat is geen slordigheid maar gemeten gedrag.
 # Op 17 augustus 2026 tegen rmrmail.rijksweb.nl vanuit een pod met rig-ron-egress:
 # poort 25 antwoordt met "220 rmrmail.rijksweb.nl ESMTP", 587 en 465 zijn dicht, en de
