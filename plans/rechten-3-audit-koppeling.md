@@ -8,7 +8,7 @@ Opdracht: laat elke schrijfactie en elke weigering een rij in de audit opleveren
 
 Taak 1 laat bij elke beslissing de action, de resource, de beslissing en de step-up op `request.state` achter (ontwerp 8.3). Taak 2 levert `record_action` (ontwerp 8.2) en `list_actions`. Deze taak verbindt die twee, en voegt de twee dingen toe die alleen na een verzoek bekend zijn: de statuscode en de commit van het projectbestand.
 
-De review en de security-gate van taak 2 lieten vijf punten bij deze taak achter, omdat ze pas een gat worden zodra er een route of een tweede soort bij komt. Ze staan hieronder bij de stap waar ze horen, gemarkeerd met **(overdracht taak 2)**.
+De review en de security-gate van taak 2 lieten punten bij deze taak achter, omdat ze pas een gat worden zodra er een route of een tweede soort bij komt. Ze staan hieronder bij de stap waar ze horen, gemarkeerd met **(overdracht taak 2)**.
 
 ## Wat er moet gebeuren
 
@@ -39,7 +39,9 @@ Schrijf de rij zonder het antwoord op te houden: na het versturen, als achtergro
 
 Waarden die niet in het projectbestand staan (welk image, welke back-up): kijk welke schrijfroutes dat hebben. Breid voor die routes `velden=` uit, of voeg naast `@action` een `audit_fields=(...)` toe als er geen step-up op zit. Noem in de PR welke routes dat zijn en waarom het bestaande niet volstond.
 
-**De actor-kolom (overdracht taak 2).** `record_action` in `opi/services/audit.py` schrijft nu `actor.identity` voor elke soort. Het ontwerp (`features/futures/gebeurtenissen-vastleggen-en-melden.md`, de rij over BIO2 8.15.01) wil `actor` op `NULL` op de wegen die geen persoon dragen: de projectsleutel, een scheduler, het cluster. De Actor-eis wordt daar gedragen door `actor_kind` plus `project` plus `origin`. Pas `record_action` aan zodat `actor` alleen gevuld wordt voor `ActorKind.USER`, `SERVICE_ACCOUNT`, `PLATFORM_API_KEY` en `ADMIN_API_KEY`, en `NULL` is voor `PROJECT_API_KEY`, `SCHEDULER` en `UNKNOWN`. `actor_kind` blijft altijd gevuld. Wijkt een soort volgens jou af van deze indeling, zeg dan in de PR waarom.
+**De actor-kolom (overdracht taak 2).** Het gebeurtenissenontwerp (`features/futures/gebeurtenissen-vastleggen-en-melden.md`, de rij over BIO2 8.15.01) laat `actor` leeg op de projectsleutel, omdat die geen persoon droeg. Die sleutel bestaat niet meer: sinds schema 2.12 heeft een project tokens per rol, en elke ingang kent zijn actor. `record_action` vult `actor` daarom altijd, zoals taak 2 het al doet, ook voor een scheduler (de procesnaam is geen persoonsgegeven). Pas `record_action` hier niet op aan.
+
+De oude projectsleutel staat nog als terugval in `herken_principaal` (`opi/api/principal.py`, voorheen `principaal.py`), voor een bestand dat de migratie naar 2.12 niet open kreeg. Die terugval valt buiten deze taak; hij schrijft `actor_kind` `project-api-key` met de projectnaam als identiteit, en dat is goed genoeg voor de audit.
 
 **`fields` (overdracht taak 2).** De bewaarlus zet na 90 dagen alleen de kolommen `actor` en `origin` op `NULL`. Wat in `data.fields` staat blijft een jaar staan. Er mag dus nooit een persoonsgegeven in `fields`: geen e-mailadres, geen lidnaam, geen IP-adres, ook niet als waarde van een veld dat de route noemt. Een route waarvan een genoemd veld zo'n waarde kan dragen (de ledenroutes bijvoorbeeld) noemt dat veld niet; de commit-SHA wijst de wijziging dan aan. Breid de bewaarlus hiervoor niet uit: komt er toch een persoonsgegeven in `data`, dan is de fout de route, niet de lus.
 
@@ -49,7 +51,7 @@ Waarden die niet in het projectbestand staan (welk image, welke back-up): kijk w
 - een leesroute die toegestaan wordt levert geen rij; een leesroute die geweigerd wordt wel;
 - een opslag in een projectbestand levert een rij met de SHA van die commit, en `git show` van die SHA in de test-repo bevat de wijziging;
 - een gefaalde `record_action` laat het antwoord ongemoeid;
-- een verzoek met een projectsleutel en een run van een scheduler leveren een rij met `actor` `NULL` en `actor_kind` gevuld; een verzoek van een gebruiker een rij met diens identiteit;
+- een verzoek met een token van een gebruiker en een met een token van een service account leveren elk een rij met `actor` en `actor_kind` gevuld;
 - een test die alle routes met `velden=` of `audit_fields=` langsloopt en faalt als er een veld bij zit uit een vaste lijst van velden die een persoon aanwijzen (leden, e-mail, gebruikersnaam); de lijst staat in de test.
 
 ### 3. Het audit-tabblad
@@ -70,7 +72,7 @@ Een tabblad op de projectpagina dat `list_actions` toont: tijd, wie, wat, waarop
 
 ### 5. Documentatie
 
-Werk `features/audit.md` uit taak 2 bij: de koppeling, de velden, het tabblad, welke soort actor `NULL` krijgt, de regel dat `fields` geen persoonsgegeven draagt, en dat de bewaarlus alleen de auditsoorten raakt.
+Werk `features/audit.md` uit taak 2 bij: de koppeling, de velden, het tabblad, dat `actor` altijd gevuld is, de regel dat `fields` geen persoonsgegeven draagt, en dat de bewaarlus alleen de auditsoorten raakt.
 
 ## Wat er buiten valt
 
@@ -87,5 +89,5 @@ Werk `features/audit.md` uit taak 2 bij: de koppeling, de velden, het tabblad, w
 
 1. `uv run ruff check . --fix && uv run ruff format . && uv run pyright` schoon in `operations-manager/python`.
 2. De routetabeltest uit stap 2: elke schrijfroute, toegestaan en geweigerd, één rij.
-3. De vijf overdrachtspunten elk met hun test: actor `NULL` per soort, geen persoonsveld in `fields`, 403 op een ander project, het plafond op `limit`, de bewaarlus per soort.
+3. De overdrachtspunten elk met hun test: `actor` gevuld per tokensoort, geen persoonsveld in `fields`, 403 op een ander project, het plafond op `limit`, de bewaarlus per soort.
 4. De bestaande suite groen, inclusief de matrixtest uit taak 1.
