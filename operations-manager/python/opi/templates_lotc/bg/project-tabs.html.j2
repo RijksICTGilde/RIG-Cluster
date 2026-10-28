@@ -66,7 +66,7 @@
        een <c-secret-field>, dat zijn eigen kopieerknop meebrengt. Stond inline op de
        bestaande pagina; sinds deze omzetting in een eigen bestand. #}
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
-    {# De uitklappende rijen in een componentkaart (omgevingsvariabelen, aliassen).
+    {# De uitklappende rijen in een componentkaart (services, aliassen).
        <nldd-list-item> tekent het uitklappen, dit zet alleen de stand om. #}
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/uitklap.js') }}"></script>
     {# De key-value editors (omgevingsvariabelen, aliassen) in de bewerkdialoog. De
@@ -457,8 +457,14 @@
                                         <c-paragraph size="sm">{{ component.type | title }}</c-paragraph>
                                     </c-stack>
                                     {% if user_role in ["admin", "owner"] %}
+                                        {# Omgevingsvariabelen staan nergens op de pagina (RC-388): de knop opent het
+                                           venster dat eerst een verse step-up vraagt. htmx, geen JS: het antwoord
+                                           opent de modal zelf via de haak in edit_modal.js. #}
+                                        {% set env_vars_url = "/projects/" ~ project.name ~ "/componenten/" ~ (component.name | urlencode) ~ "/env-vars" %}
                                         <c-action-group align="end">
                                             <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ component_bewerken }}" />
+                                            <c-button type="secondary" size="sm" label="Omgevingsvariabelen bewerken" icon="key" show-icon="before"
+                                                      hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
                                             <c-button type="warning" size="sm" label="Verwijderen" @click="{{ component_verwijderen }}" />
                                         </c-action-group>
                                     {% endif %}
@@ -582,62 +588,6 @@
                                         {% endfor %}
                                         </c-list-item>
                                     </c-list>
-                                {% endif %}
-
-                                {# De omgevingsvariabelen: alleen de NAMEN, nooit de
-                                   waarden (RC-388). Waarden horen niet op een
-                                   weergavepagina - er kan van alles in staan - maar
-                                   achter een verse step-up, in het venster dat de knop
-                                   opent. Dat geldt ook voor een deployment in
-                                   ontwikkeling.
-
-                                   INGEKLAPT, want deze lijst heeft geen bovengrens. Een
-                                   component met dertig variabelen duwde alles eronder
-                                   buiten beeld. Het omklappen doet static/js/uitklap.js;
-                                   het AANTAL staat in de kop, zodat je weet of het de
-                                   moeite is om open te klappen. #}
-                                {% set env_namen = component.get('user-env-var-namen') or [] %}
-                                {% set env_vars_url = "/projects/" ~ project.name ~ "/componenten/" ~ (component.name | urlencode) ~ "/env-vars" %}
-                                {% if env_namen %}
-                                    <c-list variant="simple" dividers="never">
-                                        <c-list-item button :attrs="{'data-uitklap': 'true'}">
-                                            {# disclosure via :attrs, want c-icon-cell kent het attribuut niet als
-                                               eigen eigenschap; het thema selecteert erop
-                                               (::slotted(nldd-icon-cell[disclosure])) en draait de cel dan mee
-                                               met de stand van de rij. #}
-                                            <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
-                                            <c-spacer-cell size="8" />
-                                            <c-text-cell text="Omgevingsvariabelen ({{ env_namen | length }})" />
-                                            {% if user_role in ["admin", "owner"] %}
-                                                {# htmx, geen JS: het antwoord (de step-up-
-                                                   dialoog of het venster) opent de modal zelf
-                                                   via de haak in edit_modal.js. Alleen de rij
-                                                   zelf mag niet meeklappen. #}
-                                                <c-list-item-segment button accessible-label="Omgevingsvariabelen van {{ component.name }} bekijken en bewerken"
-                                                                     hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML"
-                                                                     @click="event.stopPropagation()">
-                                                    <c-icon-cell icon="pencil-on-square" size="20" />
-                                                </c-list-item-segment>
-                                            {% endif %}
-                                            {# ELKE NAAM EEN EIGEN RIJ: het slot "children" van
-                                               <nldd-list-item> neemt alleen geneste <nldd-list-item>. #}
-                                            {% for naam in env_namen %}
-                                                <c-list-item slot="children">
-                                                    <c-icon-cell icon="lock-closed" size="16" />
-                                                    <c-spacer-cell size="8" />
-                                                    <c-text-cell text="{{ naam }}" />
-                                                </c-list-item>
-                                            {% endfor %}
-                                        </c-list-item>
-                                    </c-list>
-                                {% elif user_role in ["admin", "owner"] %}
-                                    {# Ook zonder variabelen een weg naar het venster: dit is
-                                       de enige plek om ze te zetten. #}
-                                    <c-cluster gap="sm" align="center">
-                                        <c-button type="tertiary" size="sm" label="Omgevingsvariabelen (0)"
-                                                  icon="pencil-on-square" show-icon="before"
-                                                  hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
-                                    </c-cluster>
                                 {% endif %}
 
                                 {# De ALIASSEN, naast de omgevingsvariabelen en in dezelfde

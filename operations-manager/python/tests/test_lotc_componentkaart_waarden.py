@@ -63,19 +63,19 @@ def test_een_alias_die_verwijst_wordt_niet_afgeschermd(componentenkaart: str) ->
     assert GEHEIM_VELD not in rondom, "een verwijzing werd afgeschermd en is dus onleesbaar"
 
 
-def test_omgevingsvariabelen_blijven_wel_afgeschermd(componentenkaart: str) -> None:
-    """De verscherpte tegenhanger (RC-388): de kaart toont hooguit de NAMEN.
+def test_omgevingsvariabelen_staan_niet_op_de_kaart(componentenkaart: str) -> None:
+    """Geen waarde en geen naam: de kaart heeft alleen de knop naar het step-up-venster.
 
-    Een waarde komt nooit in de HTML, dus ook niet in een `<c-secret-field>`: bekijken en
-    bewerken gaat achter een verse step-up. De fixture draagt `API_TOKEN` en
-    `FEATURE_VLAG` als namen van component `backend`.
+    De fixture draagt `API_TOKEN` en `FEATURE_VLAG` als namen van component `backend`.
     """
-    assert "Omgevingsvariabelen (2)" in componentenkaart
-    assert "API_TOKEN" in componentenkaart
-    assert "FEATURE_VLAG" in componentenkaart
+    assert "API_TOKEN" not in componentenkaart
+    assert "FEATURE_VLAG" not in componentenkaart
+    assert "Omgevingsvariabelen (" not in componentenkaart
 
-    positie = componentenkaart.index("Omgevingsvariabelen (2)")
-    rondom = componentenkaart[positie : positie + 800]
+    positie = componentenkaart.index("Omgevingsvariabelen bewerken")
+    rondom = componentenkaart[positie - 200 : positie + 400]
 
-    assert GEHEIM_VELD not in rondom, "een omgevingsvariabele hoort geen geheimveld op de pagina te krijgen"
-    assert "/env-vars" in rondom, "de weg naar het step-up-venster hoort bij het blok te staan"
+    assert GEHEIM_VELD not in rondom
+    assert "/componenten/backend/env-vars" in rondom, (
+        "de knop hoort naar het step-up-venster van dit component te wijzen"
+    )
