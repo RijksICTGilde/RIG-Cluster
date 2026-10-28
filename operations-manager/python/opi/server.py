@@ -613,7 +613,7 @@ def create_app() -> FastAPI:
         }
         step_up_403 = {
             "description": (
-                "Deze handeling vraagt een verse tweede factor. Het antwoord "
+                "Deze handeling vraagt een verse 2-factor. Het antwoord "
                 f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
                 f"'remedy' wat er moet gebeuren. Herhaal de aanroep met '{OTP_CODE_HEADER}'."
             ),

@@ -76,7 +76,7 @@ class StepUpProblem(BaseModel):
     remedy: str = Field(..., description="Wat de aanroeper moet doen om de handeling alsnog uit te voeren")
     otp_header: str = Field(default=OTP_CODE_HEADER, description="De header waarin de code hoort")
     enroll_url: str | None = Field(
-        default=None, description="Waar de aanroeper zijn tweede factor inricht; alleen bij 'factor-missing'"
+        default=None, description="Waar de aanroeper zijn 2-factor inricht; alleen bij 'factor-missing'"
     )
     blocked_until: str | None = Field(
         default=None, description="Wanneer het weer mag, in ISO 8601; alleen bij 'geblokkeerd'"
@@ -86,19 +86,19 @@ class StepUpProblem(BaseModel):
 _DETAIL = {
     # Niet "raakt productie": sinds RC-377 vraagt ook platformbeheer een step-up. Waarom
     # DEZE aanroep er een vraagt staat in ``reason``.
-    StepUpCause.OTP_MISSING: "Deze handeling vraagt een verse code uit je tweede factor.",
-    StepUpCause.FACTOR_MISSING: "Je hebt nog geen tweede factor ingericht, en deze handeling vraagt er een.",
+    StepUpCause.OTP_MISSING: "Deze handeling vraagt een verse code uit je 2-factor.",
+    StepUpCause.FACTOR_MISSING: "Je hebt nog geen 2-factor ingericht, en deze handeling vraagt er een.",
     StepUpCause.CODE_INVALID: "De meegestuurde code is niet aanvaard.",
-    StepUpCause.BLOCKED: "Je tweede factor is tijdelijk geblokkeerd na te veel mislukte pogingen.",
+    StepUpCause.BLOCKED: "Je 2-factor is tijdelijk geblokkeerd na te veel mislukte pogingen.",
     StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED: (
-        "Deze handeling vraagt een verse tweede factor, en de sleutel waarmee je aanroept hoort bij geen gebruiker."
+        "Deze handeling vraagt een verse 2-factor, en de sleutel waarmee je aanroept hoort bij geen gebruiker."
     ),
 }
 
 _REMEDY = {
     StepUpCause.OTP_MISSING: f"Stuur '{OTP_CODE_HEADER}' mee met een code uit je authenticator en herhaal de aanroep.",
     StepUpCause.FACTOR_MISSING: (
-        f"Richt je tweede factor in op '{OTP_ENROLL_PATH}' en herhaal de aanroep met '{OTP_CODE_HEADER}'."
+        f"Richt je 2-factor in op '{OTP_ENROLL_PATH}' en herhaal de aanroep met '{OTP_CODE_HEADER}'."
     ),
     StepUpCause.CODE_INVALID: f"Wacht op een nieuwe code in je authenticator en herhaal de aanroep met '{OTP_CODE_HEADER}'.",
     StepUpCause.BLOCKED: "Probeer het opnieuw zodra de blokkade voorbij is; 'blocked_until' zegt wanneer.",

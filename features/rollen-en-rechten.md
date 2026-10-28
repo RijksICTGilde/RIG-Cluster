@@ -33,8 +33,8 @@ Een platformbeheerder krijgt op elk project `[admin, ops]`, zonder lid te zijn.
 
 `/admin/rollen`, voor platformbeheerders. Hij wordt uit het register gelezen, dus hij
 staat hier niet nog een keer: elke regel krijgt een rij per scope die hij noemt, met een
-kolom per rol. `v` mag, `v s` mag met een verse code uit je tweede factor, leeg mag niet.
-Een service account kan geen tweede factor geven, dus alles met `s` is voor een pijplijn
+kolom per rol. `v` mag, `v s` mag met een verse code uit je 2-factor, leeg mag niet.
+Een service account kan geen 2-factor geven, dus alles met `s` is voor een pijplijn
 dicht.
 
 ## Hoe je een regel toevoegt
@@ -99,7 +99,7 @@ er iets mee kan.
   sjabloon.
 - **Step-up**: `@requires_step_up` zonder conditie leest de beslissing die de poort al
   op het verzoek zette (`request.state.authz_decision`), en daaruit of er een verse
-  tweede factor bij deze aanroep hoort. Zo dwingt de route af wat de matrixpagina toont.
+  2-factor bij deze aanroep hoort. Zo dwingt de route af wat de matrixpagina toont.
   De mechaniek (dialoog, venster van vijf minuten, replay, `X-ZAD-OTP`) is onveranderd.
 
   Een eigen conditie blijft voor de twee gevallen waar geen projectbeslissing is om uit
@@ -199,4 +199,4 @@ mee uit `deployment.write`.
 
 - `features/leden-en-api-tokens.md`: leden, service accounts en tokens.
 - `features/otap-markering.md`: de markering `environment` op een deployment.
-- `features/otp-op-de-zad-gebruiker.md`: de tweede factor achter de step-up.
+- `features/otp-op-de-zad-gebruiker.md`: de 2-factor achter de step-up.

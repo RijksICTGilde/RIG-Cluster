@@ -2,7 +2,7 @@
 
 ## Wat het is
 
-Elke ZAD-gebruiker kan in het portaal zelf een tweede factor registreren: een TOTP-geheim
+Elke ZAD-gebruiker kan in het portaal zelf een 2-factor registreren: een TOTP-geheim
 dat hij in een authenticator-app zet, zoals Google Authenticator. ZAD verifieert die codes
 zelf. Er is geen tweede soort factor en er zijn geen herstelcodes: raak je je app kwijt,
 dan reset een platformbeheerder je factor en registreer je opnieuw.
@@ -90,7 +90,7 @@ het menu is een tijdstip en geen "nu", dus die blijft kloppen.
 Sinds RC-377 vraagt ook elke wijzigende beheerroute een step-up, ongeacht de omgeving: een
 handeling van platformbeheer raakt het hele cluster. Voor de rest geldt: buiten `productie`
 verandert er niets: de projectsleutel en de bearer-tokens werken zoals
-ze werkten. Raakt de handeling `productie`, dan vraagt ze een verse tweede factor van de
+ze werkten. Raakt de handeling `productie`, dan vraagt ze een verse 2-factor van de
 AANROEPER zelf. Eén header, en maar één betekenis:
 
 | header | waarde |
@@ -103,7 +103,7 @@ elk token bij een lid. Er is dus geen manier om de code van iemand anders aan ee
 te hangen; de oude header `X-ZAD-OTP-User` bestaat niet meer.
 
 Met de **projectsleutel** (`X-API-Key`) kan zo'n handeling niet. Die hoort bij geen enkele
-gebruiker, en een machine heeft geen tweede factor: dat is altijd een 403, ook met een
+gebruiker, en een machine heeft geen 2-factor: dat is altijd een 403, ook met een
 `X-ZAD-OTP` erbij. De verwijderroutes van de API worden met de projectsleutel afgeschermd,
 dus die handelingen lopen via het portaal tot er een persoonlijk token op die routes kan.
 De beheerroutes van RC-377 lopen al wel op een persoonlijk token: zie
@@ -166,7 +166,7 @@ Er zijn er twee, met verschillende doelen. Zie ook
 
 ## Registreren
 
-1. Ga naar **Account** (je naam rechtsboven) en kies **Tweede factor inrichten**, of ga
+1. Ga naar **Account** (je naam rechtsboven) en kies **2-factor inrichten**, of ga
    rechtstreeks naar `/account/otp`. Op `/account/otp` zelf heet de startknop **2-factor
    inrichten**.
 2. Je logt eerst opnieuw in bij Keycloak, zie [Eerst opnieuw inloggen](#eerst-opnieuw-inloggen). Daarna kom je vanzelf terug en kun je beginnen.
@@ -235,7 +235,7 @@ afhandelen. Hun 2-factor staat bij SSO Rijk en niet hier.
 ## Opnieuw inrichten
 
 Een bestaande, bevestigde factor vervangen vraagt eerst een geldige code van die factor.
-Zonder die stap zou wie een sessie overneemt ook de tweede factor kunnen overnemen. Wie
+Zonder die stap zou wie een sessie overneemt ook de 2-factor kunnen overnemen. Wie
 die code niet meer kan maken, vraagt een platformbeheerder om een reset. Je eigen factor
 registreren of vervangen vraagt verder nooit een verhoogde stap: dat is zelfbediening. De
 herlogin hierboven komt daar wel bovenop, ook als je al een factor hebt.

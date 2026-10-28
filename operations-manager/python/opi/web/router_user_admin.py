@@ -372,7 +372,7 @@ async def reset_user_otp(request: Request, user_id: str) -> Response:
 
     door = str(beheerder.get("email", "")).lower()
     if existing["email"].lower() == door:
-        raise HTTPException(status_code=403, detail="Je eigen tweede factor reset je op /account/otp")
+        raise HTTPException(status_code=403, detail="Je eigen 2-factor reset je op /account/otp")
 
     await _get_otp_service().reset(existing["email"], by=door)
     return RedirectResponse(
