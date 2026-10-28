@@ -60,7 +60,7 @@ async def render_step_up_dialog(
     *,
     vervolg: str,
     handeling: str,
-    fout: str = "",
+    code_fout: str = "",
     vervolg_token: str | None = None,
     vervolg_velden: dict[str, str] | None = None,
     methode: str = "POST",
@@ -83,7 +83,7 @@ async def render_step_up_dialog(
         {
             "vervolg": vervolg,
             "handeling": handeling,
-            "fout": fout,
+            "code_fout": code_fout,
             "geregistreerd": status.registered,
             "vervolg_token": vervolg_token or "",
             "vervolg_velden": json.dumps(vervolg_velden or {}, sort_keys=True),

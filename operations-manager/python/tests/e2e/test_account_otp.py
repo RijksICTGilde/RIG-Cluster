@@ -224,8 +224,10 @@ class TestMetEenDikkeSessie:
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
         auth_page.wait_for_load_state("networkidle")
 
+        # De melding hoort bij het codeveld, niet in een alert boven het formulier.
+        assert "Die code klopt niet" in auth_page.locator("#code-error").inner_text()
+        assert auth_page.locator("c-alert, nldd-alert").count() == 0
         # Dezelfde QR blijft staan, zodat je het opnieuw kunt proberen.
-        assert "Die code klopt niet" in auth_page.content()
         assert auth_page.locator(".otp-qr svg").is_visible()
         auth_page.goto(f"{app_server}{OTP_URL}")
         assert "Nog niet ingericht" in auth_page.content()
@@ -239,7 +241,7 @@ class TestMetEenDikkeSessie:
         auth_page.wait_for_load_state("networkidle")
 
         inhoud = auth_page.content()
-        assert "Die code klopt niet" in inhoud
+        assert "Die code klopt niet" in auth_page.locator("#huidige_code-error").inner_text()
         # De pagina wijst de weg terug: een reset door een beheerder.
         assert "resetten" in inhoud
         assert auth_page.locator(".otp-qr svg").count() == 0

@@ -6,7 +6,7 @@
   in bg/_action-confirm.html.j2.
 
   Verwacht: vervolg (de handeling die hierna alsnog moet draaien), handeling (hoe hij
-  heet), geregistreerd (of deze gebruiker een bevestigde factor heeft). Optioneel: fout,
+  heet), geregistreerd (of deze gebruiker een bevestigde factor heeft). Optioneel: code_fout (hoort bij het codeveld),
   vervolg_token (het wizard-token dat de herhaling in de body meestuurt), vervolg_velden
   (de velden van het formulier dat deze dialoog verving, als JSON) en vervolg_methode
   (GET of POST; de herhaling gebruikt dezelfde methode als de handeling).
@@ -17,10 +17,6 @@
         {# Niet "raakt productie": sinds RC-377 en RC-387 vraagt ook een beheerhandeling
            of een token er een, ongeacht de omgeving. #}
         <c-alert type="warning" heading="Deze handeling vraagt een extra bevestiging" />
-
-        {% if fout %}
-            <c-alert type="error" heading="{{ fout }}" />
-        {% endif %}
 
         {% if geregistreerd %}
             <c-paragraph>Vul een code uit je app in om {{ handeling }}. De code dekt vijf minuten; daarna vraagt de volgende handeling er opnieuw om.</c-paragraph>
@@ -43,6 +39,7 @@
                         label="Code uit je app"
                         type="text"
                         autocomplete="one-time-code"
+                        :error="code_fout or none"
                         required="true" />
                     <c-action-group align="end">
                         <c-button type="secondary" label="Annuleren" @click="closeEditModal()" />

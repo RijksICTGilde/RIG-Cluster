@@ -32,6 +32,7 @@
                     label="Code uit je huidige app"
                     type="text"
                     autocomplete="one-time-code"
+                    :error="code_fout or none"
                     help="Zonder deze code kan iemand die je sessie overneemt ook je 2-factor overnemen. Ben je je telefoon kwijt, vraag dan een platformbeheerder om je factor te resetten."
                     required="true" />
                 <c-action-group align="start">

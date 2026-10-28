@@ -101,7 +101,7 @@ async def _status_page(request: Request, context: dict) -> Response:
     return _page(request, "bg/account-otp.html.j2", {"herlogin_vers": herlogin_vers, **context})
 
 
-def _registration_page(request: Request, registratie: OtpRegistration, fout: str = "") -> Response:
+def _registration_page(request: Request, registratie: OtpRegistration, fout: str = "", code_fout: str = "") -> Response:
     return _page(
         request,
         "bg/account-otp-registreren.html.j2",
@@ -111,6 +111,7 @@ def _registration_page(request: Request, registratie: OtpRegistration, fout: str
             "pending": registratie.encrypted_secret,
             "pending_field": PENDING_FIELD,
             "fout": fout,
+            "code_fout": code_fout,
         },
     )
 
@@ -147,7 +148,7 @@ async def otp_start(request: Request) -> Response:
                 request,
                 {
                     "status": status,
-                    "fout": (
+                    "code_fout": (
                         "Je factor is tijdelijk geblokkeerd na te veel mislukte pogingen. Probeer het later "
                         "opnieuw, of vraag een platformbeheerder om je factor te resetten."
                         if uitkomst is OtpVerification.LOCKED
@@ -264,7 +265,7 @@ async def otp_bevestigen(request: Request) -> Response:
     if not bevestigd:
         registratie = await service.resume_registration(email, encrypted)
         return _registration_page(
-            request, registratie, fout="Die code klopt niet. Probeer de volgende code uit je app."
+            request, registratie, code_fout="Die code klopt niet. Probeer de volgende code uit je app."
         )
 
     return RedirectResponse(url=_PATH, status_code=303)

@@ -49,7 +49,7 @@ async def step_up(request: Request) -> HTMLResponse:
     uitkomst = await service.verify(email, code)
     if uitkomst is not OtpVerification.OK:
         logger.warning("Step-up geweigerd voor %s, om %s: uitkomst %s", email, handeling, uitkomst)
-        fout = (
+        code_fout = (
             "Je factor is tijdelijk geblokkeerd na te veel mislukte pogingen. Probeer het later opnieuw."
             if uitkomst is OtpVerification.LOCKED
             else "Die code klopt niet. Vul de code in die je app nu toont."
@@ -59,7 +59,7 @@ async def step_up(request: Request) -> HTMLResponse:
                 request,
                 vervolg=vervolg,
                 handeling=handeling,
-                fout=fout,
+                code_fout=code_fout,
                 vervolg_token=vervolg_token,
                 vervolg_velden=vervolg_velden,
                 methode=vervolg_methode,
