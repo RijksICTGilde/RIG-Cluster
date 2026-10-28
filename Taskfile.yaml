@@ -4512,15 +4512,20 @@ tasks:
           OPI_TOKEN="$(vraag STAGING_OPI_TOKEN 'PAT van de OPI (schrijven)')"
           KC_SECRET="$(vraag STAGING_KEYCLOAK_CLIENT_SECRET 'Client secret van zad-staging in de prod-Keycloak (leeg = geen SSO)')"
           BACKUP_PASSWORD="$(sops --decrypt "{{.SECRETS_DIR}}/backup-destination/minio-credentials-secret.yaml.sops.yaml" | yq '.stringData."root-password"')"
+          # De PAT versleuteld, zoals op productie: de wizard neemt PROJECT_REPO_PASSWORD
+          # letterlijk over in elk nieuw projectbestand, dus een plain: hier is een platte
+          # PAT in de projects-repo. Niet via encrypt-value-age-base64: die krijgt de waarde
+          # als argument, en dan staat de PAT in de procestabel.
+          OPI_TOKEN_AGE="base64+age:$(printf '%s' "$OPI_TOKEN" | age -r "$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')" -a | base64 | tr -d '\n')"
           # Eerst leeg en alleen voor jou leesbaar, dan pas de tokens erin (geen umask in de
           # shell van Task).
           : > "{{.ENV_FILE}}" && chmod 600 "{{.ENV_FILE}}"
           {
             echo "SECRET_KEY=$(openssl rand -hex 32)"
             echo "DEBUG_MODE=false"
-            echo "GIT_PROJECTS_SERVER_PASSWORD=plain:$OPI_TOKEN"
-            echo "GIT_ARGO_APPLICATIONS_PASSWORD=plain:$OPI_TOKEN"
-            echo "PROJECT_REPO_PASSWORD=plain:$OPI_TOKEN"
+            echo "GIT_PROJECTS_SERVER_PASSWORD=$OPI_TOKEN_AGE"
+            echo "GIT_ARGO_APPLICATIONS_PASSWORD=$OPI_TOKEN_AGE"
+            echo "PROJECT_REPO_PASSWORD=$OPI_TOKEN_AGE"
             echo "BACKUP_S3_ENDPOINT=http://minio.{{.BACKUP_NAMESPACE}}.svc.cluster.local:9000"
             echo "BACKUP_S3_ACCESS_KEY=backup-admin"
             echo "BACKUP_S3_SECRET_KEY=$BACKUP_PASSWORD"
