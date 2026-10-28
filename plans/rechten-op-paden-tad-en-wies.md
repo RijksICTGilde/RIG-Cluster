@@ -345,15 +345,21 @@ Wat wordt schrijfbaar dat het niet was, en welke guard staat erop:
 | de audit-tabel | bestaat niet | alleen de hook schrijft; geen route, geen API |
 | `roles` via de schemamigratie | | eenmalig, zie stap 7 |
 
-## 8. Fasering
+## 8. Taken en wat ze delen
 
-Drie orch-taken. Taak A en B veranderen geen gedrag. Taak C wel.
+Dit document is het ontwerp. Gebouwd wordt het in drie orch-taken, elk met een eigen plan:
 
-### Taak A: woordenlijst, register, matrix, elke route een action
+| taak | plan | hangt af van | gedrag verandert |
+|---|---|---|---|
+| 1. Het rechtensysteem | `plans/rechten-1-rechtensysteem.md` | niets | ja |
+| 2. De audit-opslag en de bewaarlus | `plans/rechten-2-audit.md` | niets | nee |
+| 3. De koppeling en het audit-tabblad | `plans/rechten-3-audit-koppeling.md` | 1 en 2 gemerged | nee |
 
-**A1. Woordenlijst naar het Engels.** `opi/core/handelingen.py` wordt `opi/core/authz/actions.py` met `Action`, en de decorator heet `@action`. `StepUpActie` wordt `StepUpAction`. `Principaal`, `PrincipaalSoort`, `ROL_HANDELINGEN`, `LEESHANDELINGEN`, `MENS_VERPLICHT`, `SCHRIJFROLLEN`, `NietHerkend`, `ToegangGeweigerd` krijgen Engelse namen. Andere Nederlandse namen buiten de authz-modules (`project_leden`, `LidSoort`, routes als `/leden`) blijven staan; die omzetten is niet gevraagd.
+Taak 1 en 2 lopen parallel. Wat ze delen staat hieronder en is daarmee vast: wie ervan afwijkt, breekt de andere taak.
 
-Waarden, besloten:
+### 8.1 De woordenlijst
+
+Deze waarden zijn besloten en gelden voor alle drie de taken. Taak 2 slaat ze op als tekst, dus hij heeft de code van taak 1 er niet voor nodig.
 
 | oud | nieuw |
 |---|---|
@@ -378,47 +384,47 @@ Waarden, besloten:
 
 De `cause` en de step-up-`action` staan in API-antwoorden. Werk `features/leden-en-api-tokens.md`, `features/otp-op-de-zad-gebruiker.md`, `features/projectsleutel-vervangen.md` en `features/platformbeheer-via-de-api.md` bij. Er is in deze repo geen client die erop stuurt.
 
-*Controle:* alle tests groen; `grep -rn "Handeling\|StepUpActie\|Principaal" opi tests` levert niets op.
+### 8.2 De schrijffunctie van de audit
 
-**A2. Het register** uit paragraaf 5.3, dat de **huidige** rechten beschrijft, nog niet die van paragraaf 4. Voor nu is de rol een tijdelijke vertaling van de huidige enum: `admin`/`owner` worden `{admin, ops}`, `developer` wordt de huidige operate-set, `member` wordt `viewer`. `ROL_HANDELINGEN` en `MENS_VERPLICHT` verdwijnen en volgen uit de regels.
+Taak 2 levert hem, taak 3 roept hem aan, taak 1 kent hem niet. Plek: `opi/services/audit.py`.
 
-*Controle:* een test zet voor elke combinatie van (huidige rol, soort aanroeper, action, markering) de uitkomst van `decide` naast de huidige uitkomst van de API-handhaving en de portaal-tuples, en ze zijn gelijk. Een test toont dat de step-ups per route gelijk zijn aan de huidige `@requires_step_up`-predicaten.
+```python
+async def record_action(
+    *,
+    actor: Actor,                      # opi/core/actor.py
+    action: str,                       # een waarde uit 8.1, of een nieuwe uit taak 1
+    resource_path: str,                # "project/demo/deployment/live"
+    project: str | None,
+    deployment: str | None,
+    environment: str | None,           # de OTAP-markering van de deployment, als die er is
+    allowed: bool,
+    cause: str | None,                 # een Cause uit 5.3 bij een weigering
+    grant: str | None,                 # "ops@production": rol en scope van de grant die het toestond
+    step_up: bool,                     # of een verse step-up gebruikt is
+    status_code: int | None,
+    commit_shas: list[str],            # leeg als er geen commit van een projectbestand was
+    task_id: uuid.UUID | None,
+    origin: str | None,                # client-IP
+    fields: dict[str, object] | None = None,  # extra velden die de route noemt; nooit een hele body
+) -> None: ...
+```
 
-**A3. De matrixpagina** uit 5.4.
+De gebeurtenistypes zijn `nl.rig.zad.action.performed.v1` (bij `allowed`) en `nl.rig.zad.action.denied.v1`. Alle argumenten behalve `actor`, `project`, `deployment`, `task_id` en `origin` (die hun eigen kolom hebben) gaan naar `data`.
 
-*Controle:* elke regel staat op de pagina; een regel zonder label of met een onbekende scope start niet op.
+`record_action` gooit geen exceptie naar de aanroeper. Een mislukte schrijfactie wordt gelogd met `logger.exception` en telt op in een Prometheus-teller (VOORSTEL `zad_audit_write_failures_total`, naast de bestaande in `opi/core/metrics.py`), zodat het niet stil gebeurt; het verzoek zelf gaat door, want een kapotte audit mag geen deployment tegenhouden. Comply-or-explain: dit wijkt af van de huisregel om specifieke excepties te vangen, en de reden staat bij de vangst.
 
-**A4. Elke route een action**, ook in `opi/web`. Nieuwe actions die je nodig hebt volgen het patroon `<object>.<werkwoord>` in het Engels, kebab-case, en staan in de PR. Er zijn er minstens bij nodig: `env-vars.manage`, `member.manage`, `environment.set`, `job.run`, `database.console`, `audit.read`. Platformroutes (achter `is_platform_admin`) krijgen een action onder `platform.*` en een regel met een eigen holder `PLATFORM_ADMIN`; hun handhaving verandert niet.
+### 8.3 Wat taak 1 achterlaat voor taak 3
 
-*Controle:* de opstartcontrole uit 5.4 staat aan en de applicatie start; een test bewijst dat een route zonder action de opstart laat falen.
+Taak 3 haakt in zonder de routes opnieuw aan te raken. Daarvoor zet taak 1 bij **elke** beslissing, in API en portaal, op hetzelfde moment en ook als de beslissing een weigering is:
 
-### Taak B: audit
+| attribuut | type | inhoud |
+|---|---|---|
+| `request.state.authz_action` | `Action` | de action van de route |
+| `request.state.authz_resource` | `Resource` | uit 5.3, met `path` |
+| `request.state.authz_decision` | `Decision` | uit 5.3, met `grant` en `cause` |
+| `request.state.authz_step_up` | `bool` | of er een verse step-up gebruikt is |
 
-**B1.** De tabel, het model en de migratie uit 6.2. **B2.** De hook rond `decide` uit 6.1, inclusief de commit-SHA en de taak-id. **B3.** De bewaarlus (90 dagen, een jaar) als geplande taak naast de bestaande in `opi/core/simple_background.py` of de scheduler die daar hoort. **B4.** Het audit-tabblad uit 6.3.
-
-*Controle:* een test die door elke route met een schrijfactie loopt en per aanroep precies één rij verwacht, met de juiste actor, action, resource en uitkomst; een geweigerde aanroep geeft ook een rij, met de cause; de bewaarlus zet na 90 dagen `actor` en `origin` op `NULL` en laat de rest staan; geen rij bevat een e-mailadres buiten `actor`.
-
-### Taak C: de handhaving om, en de nieuwe rollen
-
-**C1. Portaal in schaduw.** De portaal-dependency uit 5.5 draait naast de bestaande helpers en logt elk verschil als warning. Daarna per helper omzetten: eerst `require_project_edit_access`, dan `_require_project_member_access`, dan `require_project_operate_access`, dan de losse controles in `opi/web/router.py`, als laatste de templates (via `can`). `@requires_step_up` leest zijn beslissing uit `decide`.
-
-*Controle:* per omgezette helper een test dat de uitkomst gelijk is aan die van A2; na de omzetting `grep -rn '"owner"' opi` levert alleen nog de migratie op.
-
-**C2. Schemamigratie naar 2.13** in `opi/services/schema_migration.py`, met een legacy-patch in `opi/schemas/project_legacy/`. `users[].role: x` wordt `users[].roles: [...]`: `admin` en `owner` worden `[admin, ops]`, `developer` blijft `[developer]`, `member` wordt `[viewer]`. Het schema accepteert alleen de zes rollen uit paragraaf 4, als lijst met minstens één waarde. Een project heeft minstens één lid met `admin`; het schema of de validatie weigert anders.
-
-*Controle:* draai de migratie op een kopie van de projects-repo (lokaal: `~/IdeaProjects/rig-cluster-test-git-repositories/rig-cluster-projects-github`, niet pushen). Elk lid dat `admin` was, heeft daarna `[admin, ops]`. Nergens staat nog `role:`. Elk bestand valideert.
-
-**C3. De regels van paragraaf 4.** Vervang de tijdelijke vertaling uit A2 door de regels die paragraaf 4 beschrijft. Dit is de gedragswijziging. Platformbeheerders krijgen op elk project `[admin, ops]` (B6).
-
-*Controle:* een test die de gegenereerde matrix vergelijkt met de tabel in paragraaf 4, cel voor cel.
-
-**C4. De schrijfwegen uit paragraaf 7.** De team-wizard en de Team-kaart schrijven rollen allebei via `set_member_roles`; opslaan vraagt `member.manage` met step-up; andere flows mogen `users` niet indienen; de markering vraagt `ops`.
-
-*Controle:* een developer die de POST van de team-wizard of de rolroute stuurt krijgt 403 en het bestand verandert niet; een admin zonder verse step-up krijgt `step-up-required`; een onbekende rol, een lege lijst en het weghalen van de laatste admin worden geweigerd, via beide wegen; een test dat een developer de markering van een productiedeployment niet kan verlagen of zetten.
-
-**C5. De Team-kaart en de team-wizard** tonen per lid de rollen als meerkeuze, met `role_label` en `ROLE_DESCRIPTIONS`, achter de bestaande step-up. De waarde die het formulier verstuurt is de sleutel. De keuzelijst `UserRoleOptionsProvider` (`opi/forms/visualizers/providers.py:306`, nu met de ongeldige rol `operator`) leest uit hetzelfde register of verdwijnt.
-
-*Controle:* een test die `ROLE_LABELS[Role.DEVELOPER]` in de test wijzigt en ziet dat Team-kaart en matrix het nieuwe label tonen, terwijl het projectbestand `developer` houdt; `grep` op een rolsleutel in `opi/templates_lotc` levert geen getoonde tekst op.
+Een route die zijn action pas binnen de handler kent, bestaat na taak 1 niet: elke route draagt zijn action als decorator.
 
 ## 9. Buiten dit plan
 
