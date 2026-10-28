@@ -117,6 +117,62 @@ class TestHerlogin:
         assert auth_page.locator("a[href='/account/otp/herlogin']").first.is_visible()
 
 
+class TestVerhoogdeRechtenInHetMenu:
+    """Een verse step-up is zichtbaar in het accountmenu: ander icoon, groen, met de eindtijd."""
+
+    @staticmethod
+    def _pagina_met_sessie(browser, app_server: str, extra: dict) -> Page:
+        from urllib.parse import urlparse
+
+        from tests.e2e.conftest import TEST_USER, _sign_session
+
+        context = browser.new_context()
+        host = urlparse(app_server).hostname or "127.0.0.1"
+        context.add_cookies(
+            [{"name": "session", "value": _sign_session({"user": TEST_USER, **extra}), "domain": host, "path": "/"}]
+        )
+        page = context.new_page()
+        page.goto(f"{app_server}/account")
+        return page
+
+    def test_met_een_verse_step_up_toont_het_menu_het_schild(self, app_server: str, browser) -> None:
+        from datetime import UTC, datetime
+
+        page = self._pagina_met_sessie(browser, app_server, {"step_up_at": datetime.now(UTC).isoformat()})
+        try:
+            item = page.locator("nldd-menu-bar-item[icon='shield-check-mark']")
+            assert item.count() == 1
+            assert item.get_attribute("class") == "menu-verhoogd"
+            assert "verhoogde rechten actief" in (item.get_attribute("accessible-label") or "")
+            assert "Verhoogde rechten tot" in page.content()
+        finally:
+            page.context.close()
+
+    def test_het_schild_is_echt_anders_van_kleur_dan_het_gewone_icoon(self, app_server: str, browser) -> None:
+        from datetime import UTC, datetime
+
+        kleur = (
+            "() => { const el = document.querySelector('nldd-menu-bar-item[text]:not([text=Weergave]):not([text=Beheer])');"
+            " const b = el.shadowRoot.querySelector('.menu-bar-item'); return getComputedStyle(b).color; }"
+        )
+        verhoogd = self._pagina_met_sessie(browser, app_server, {"step_up_at": datetime.now(UTC).isoformat()})
+        gewoon = self._pagina_met_sessie(browser, app_server, {})
+        try:
+            assert verhoogd.evaluate(kleur) != gewoon.evaluate(kleur)
+        finally:
+            verhoogd.context.close()
+            gewoon.context.close()
+
+    def test_zonder_step_up_blijft_het_gewone_icoon(self, app_server: str, browser) -> None:
+        page = self._pagina_met_sessie(browser, app_server, {})
+        try:
+            assert page.locator("nldd-menu-bar-item[icon='person-circle']").count() == 1
+            assert page.locator("nldd-menu-bar-item[icon='shield-check-mark']").count() == 0
+            assert "Verhoogde rechten tot" not in page.content()
+        finally:
+            page.context.close()
+
+
 class TestMetEenDikkeSessie:
     """De bug van 27-10-2026, en zijn definitieve versie (RC-390): toen liep een cookie
     met een id_token van formaat over de ~4 KB die een browser geruisloos laat vallen, en

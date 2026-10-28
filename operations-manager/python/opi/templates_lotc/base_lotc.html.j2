@@ -129,8 +129,18 @@
                     {% endif %}
 
                     {% if is_ingelogd %}
-                        <nldd-menu-bar-item text="{{ gebruikersnaam }}" icon="person-circle" expandable>
+                        {# Verhoogde rechten (een verse step-up): ander icoon EN groen, en de eindtijd in
+                           het menu. Kleur alleen is niet toegankelijk. #}
+                        <nldd-menu-bar-item text="{{ gebruikersnaam }}"
+                                            {% if verhoogd_tot %}icon="shield-check-mark"
+                                            accessible-label="{{ gebruikersnaam }}, verhoogde rechten actief"
+                                            class="menu-verhoogd"
+                                            {% else %}icon="person-circle"{% endif %} expandable>
                             <nldd-menu placement="bottom-start" variant="menu">
+                                {% if verhoogd_tot %}
+                                    <nldd-menu-item text="Verhoogde rechten tot {{ verhoogd_tot | dutch_date(only_time=True) }}" disabled></nldd-menu-item>
+                                    <nldd-menu-divider></nldd-menu-divider>
+                                {% endif %}
                                 <nldd-menu-item text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
                                 <nldd-menu-divider></nldd-menu-divider>
                                 <nldd-menu-item text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>

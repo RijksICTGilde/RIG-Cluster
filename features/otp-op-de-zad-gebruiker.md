@@ -72,6 +72,19 @@ kent de dialoog ook een GET als methode: het omgevingsvariabelen-venster LEEST i
 herhalen met een POST zou er iets laten wijzigen waar alleen een lezing hoorde. De methode
 reist mee in het verborgen veld `vervolg_methode`; alles behalve GET valt terug op POST.
 
+### Te zien in het accountmenu
+
+Zolang je een verse step-up hebt, toont het accountmenu rechtsboven een groen schild
+(`shield-check-mark`) in plaats van het gewone persoonsicoon, en bovenaan het uitklapmenu staat
+"Verhoogde rechten tot 14:32" (uitgeschakeld, alleen ter informatie). Het item heeft ook een
+toegankelijk label, want kleur alleen is niet genoeg. Het eindtijdstip komt uit
+`step_up_until()` in `opi/core/step_up.py`, `render()` in `opi/web/lotc_switch.py` zet het als
+`verhoogd_tot` in elke pagina, en de kleur staat in `static/css/lotc-app.css` (`.menu-verhoogd`).
+
+Er is bewust geen timer: de pagina bepaalt dit bij het laden. Verloopt het venster terwijl je op
+een pagina blijft, dan blijft het schild staan tot je naar de volgende pagina gaat. De eindtijd in
+het menu is een tijdstip en geen "nu", dus die blijft kloppen.
+
 ### Via de API en de CLI
 
 Sinds RC-377 vraagt ook elke wijzigende beheerroute een step-up, ongeacht de omgeving: een

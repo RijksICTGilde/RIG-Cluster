@@ -211,17 +211,22 @@ def record_step_up(request: Request) -> None:
     request.session[STEP_UP_SESSION_KEY] = datetime.now(UTC).isoformat()
 
 
-def has_fresh_step_up(request: Request) -> bool:
-    """Of er een step-up van minder dan :data:`STEP_UP_WINDOW` geleden in de sessie staat."""
+def step_up_until(request: Request) -> datetime | None:
+    """Het moment waarop de verse step-up in de sessie verloopt, of None als er geen is."""
     stamp = request.session.get(STEP_UP_SESSION_KEY)
     if not isinstance(stamp, str):
-        return False
+        return None
     try:
-        moment = datetime.fromisoformat(stamp)
+        until = datetime.fromisoformat(stamp) + STEP_UP_WINDOW
     except ValueError:
         logger.warning("Onleesbare step-up-stempel in de sessie, genegeerd")
-        return False
-    return datetime.now(UTC) - moment < STEP_UP_WINDOW
+        return None
+    return until if datetime.now(UTC) < until else None
+
+
+def has_fresh_step_up(request: Request) -> bool:
+    """Of er een step-up van minder dan :data:`STEP_UP_WINDOW` geleden in de sessie staat."""
+    return step_up_until(request) is not None
 
 
 def _names(items: Any) -> set[str]:

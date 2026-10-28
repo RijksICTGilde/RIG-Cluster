@@ -55,7 +55,9 @@ DUTCH_MONTHS_SHORT = [
 ]
 
 
-def format_dutch_date(value: str | datetime | None, include_time: bool = True, short_month: bool = False) -> str:
+def format_dutch_date(
+    value: str | datetime | None, include_time: bool = True, short_month: bool = False, only_time: bool = False
+) -> str:
     """
     Format a date/timestamp in Dutch format.
 
@@ -63,6 +65,7 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True, s
         value: ISO timestamp string or datetime object
         include_time: Whether to include time in output
         short_month: Abbreviate the month to three letters ("17 sep 2026 23:18")
+        only_time: Only the time of day ("23:18"), for something that expires today
 
     Returns:
         Dutch formatted date string (e.g., "14 januari 2026 17:14")
@@ -114,6 +117,8 @@ def format_dutch_date(value: str | datetime | None, include_time: bool = True, s
         month = (DUTCH_MONTHS_SHORT if short_month else DUTCH_MONTHS)[dt.month - 1]
         year = dt.year
 
+        if only_time:
+            return f"{dt.hour:02d}:{dt.minute:02d}"
         if include_time:
             return f"{day} {month} {year} {dt.hour:02d}:{dt.minute:02d}"
         else:

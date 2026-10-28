@@ -17,6 +17,8 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
+from opi.core.step_up import step_up_until
+
 if TYPE_CHECKING:
     from fastapi import Request
     from starlette.responses import Response
@@ -39,7 +41,11 @@ def render(request: Request, *, template: str, context: dict[str, Any], status_c
     """
     from opi.core.templates_lotc import templates_lotc
 
-    return templates_lotc.TemplateResponse(request, template, context, status_code=status_code)
+    # Voor het accountmenu: een pagina zonder sessie (een foutpagina) heeft geen step-up.
+    verhoogd_tot = step_up_until(request) if "session" in request.scope else None
+    return templates_lotc.TemplateResponse(
+        request, template, {"verhoogd_tot": verhoogd_tot, **context}, status_code=status_code
+    )
 
 
 def render_fragment(request: Request, *, template: str, context: dict[str, Any]) -> str:

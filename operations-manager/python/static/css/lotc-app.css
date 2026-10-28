@@ -280,3 +280,15 @@ nldd-sidebar-section {
     max-width: 220px;
     height: auto;
 }
+
+/*
+ * Accountmenu met verhoogde rechten (een verse step-up): het schild is groen. De kleur
+ * komt uit de succesreeks van NLDD en wisselt mee met licht en donker. Het icoon en de
+ * eindtijd in het menu dragen dezelfde boodschap voor wie geen kleur ziet.
+ */
+.menu-verhoogd {
+    --components-menu-bar-item-content-color: light-dark(
+        var(--primitives-color-success-750),
+        var(--primitives-color-success-300)
+    );
+}
