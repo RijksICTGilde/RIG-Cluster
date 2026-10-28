@@ -49,7 +49,7 @@ De oude projectsleutel staat nog als terugval in `recognise_principal` (`opi/api
 
 *Bewijs:*
 
-- een test die door **elke** route uit de routetabel loopt waarvan de action geen leesactie is, hem één keer toegestaan en één keer geweigerd aanroept, en per aanroep precies één rij ziet met de juiste actor, action, resource en uitkomst;
+- een test die door **elke** route uit de routetabel loopt waarvan de action geen leesactie is, hem één keer toegestaan en één keer geweigerd aanroept, en per aanroep precies één rij per beslissing ziet met de juiste actor, action, resource en uitkomst;
 - een leesroute die toegestaan wordt levert geen rij; een leesroute die geweigerd wordt wel;
 - een upsert met `cloneFrom` die toegestaan wordt levert twee rijen, een voor het doel (`deployment.write`) en een voor de bron (`deployment.clone-from`); wordt de bron geweigerd, dan staat die weigering als rij in de audit;
 - een opslag in een projectbestand levert een rij met de SHA van die commit, en `git show` van die SHA in de test-repo bevat de wijziging;
@@ -91,6 +91,6 @@ Werk `features/audit.md` uit taak 2 bij: de koppeling, de velden, het tabblad, d
 ## Verifieerbaar
 
 1. `uv run ruff check . --fix && uv run ruff format . && uv run pyright` schoon in `operations-manager/python`.
-2. De routetabeltest uit stap 2: elke schrijfroute, toegestaan en geweigerd, één rij.
+2. De routetabeltest uit stap 2: elke schrijfroute, toegestaan en geweigerd, één rij per beslissing.
 3. De overdrachtspunten elk met hun test: `actor` gevuld per tokensoort, geen persoonsveld in `fields`, 403 op een ander project, het plafond op `limit`, de bewaarlus per soort.
 4. De bestaande suite groen, inclusief de matrixtest uit taak 1.
