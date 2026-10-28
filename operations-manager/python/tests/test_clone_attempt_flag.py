@@ -279,7 +279,7 @@ async def test_the_final_save_compares_against_the_state_after_the_flag_save(mon
 
     async def someone_writes_and_pm_reads(*_: Any, **__: Any) -> None:
         # Wat de Keycloak-stap halverwege doet: iemand anders schrijft, deze manager leest.
-        store.committed.setdefault("users", []).append({"email": "tussendoor@example.nl", "role": "admin"})
+        store.committed.setdefault("users", []).append({"email": "tussendoor@example.nl", "roles": ["admin", "ops"]})
         await pm.get_contents()
 
     pm = _manager(

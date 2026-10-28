@@ -39,6 +39,7 @@ from opi.services.services import ServiceDefinition, service_entry_name
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.core.authz.actions import Action
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -617,12 +618,13 @@ class ProjectPageContext:
     input grows a field here instead of a new argument at every call site.
 
     ``project_data`` is the DECRYPTED project dict, so a service can surface the
-    credentials it manages; ``user_role`` lets a service gate on the viewer's role -- a
-    section that returns nothing for a role simply omits itself.
+    credentials it manages; ``can`` answers whether this caller may perform an action, so
+    a block that shows a secret reads the same rule as the route behind it instead of
+    naming a role of its own. A block that may show nothing simply omits itself.
     """
 
     project_data: dict[str, Any]
-    user_role: str
+    can: Callable[[Action], bool]
 
 
 @dataclass
@@ -642,7 +644,7 @@ class DeploymentPageContext:
 
     project_data: dict[str, Any]
     deployment: dict[str, Any]
-    user_role: str
+    user_roles: list[str]
     #: The cluster this OPI instance manages (``settings.CLUSTER_MANAGER``).
     current_cluster: str
     #: Probed availability of optional platform back-ends, keyed by name.

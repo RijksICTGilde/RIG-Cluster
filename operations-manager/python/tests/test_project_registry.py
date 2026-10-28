@@ -66,7 +66,7 @@ class TestSequenceEditables:
         children = USERS_SEQUENCE.children or []
         paths = [c.editable.yaml_path for c in children]
         assert "users[*]/email" in paths
-        assert "users[*]/role" in paths
+        assert "users[*]/roles" in paths
 
     def test_components_sequence_has_children(self):
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"

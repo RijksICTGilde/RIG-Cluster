@@ -31,7 +31,7 @@ from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from opi.api.endpoint_util import handhaaf
-from opi.core.handelingen import Handeling, handeling
+from opi.core.authz.actions import Action, action
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeTimeout
@@ -104,7 +104,7 @@ async def finish_wake_after_response(project_name: str, deployment_name: str) ->
         202: {"model": WakeResponse, "description": "A wake started; the deployment is now waking."},
     },
 )
-@handeling(Handeling.SLAAPSTAND_WEKKEN)
+@action(Action.SLEEP_WAKE)
 async def wake(
     request: Request,
     project_name: str,
@@ -136,7 +136,7 @@ async def wake(
 
 
 @sleep_mode_router.get("/{project_name}/{deployment_name}/status", response_model=SleepStatusResponse)
-@handeling(Handeling.SLAAPSTAND_LEZEN)
+@action(Action.SLEEP_READ)
 async def status(
     request: Request,
     project_name: str,

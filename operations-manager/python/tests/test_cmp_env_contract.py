@@ -198,7 +198,7 @@ def _helmfile_project(env_vars: dict[str, str]) -> dict[str, object]:
         "name": "mb-docs",
         "description": "Helmfile deployment",
         "clusters": ["odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "helmfile": [{"name": "docs", "url": "https://git.example.org/mijn-bureau-infra.git"}],
         "deployments": [
             {

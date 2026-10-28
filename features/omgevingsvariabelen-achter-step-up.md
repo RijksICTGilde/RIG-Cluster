@@ -38,7 +38,7 @@ houdt dat vast.
 
 ## Hoe de techniek loopt
 
-- De step-up is die van RC-332: `StepUpActie.ENV_VARS_BEHEREN` met
+- De step-up is die van RC-332: `StepUpAction.ENV_VARS_MANAGE` met
   `@requires_step_up(vraagt_altijd_step_up, ...)` op de GET én de POST van
   `opi/web/router_env_vars.py`. De opslag toetst de stempel dus opnieuw, ook als het
   venster al openstond. Het venster van vijf minuten schuift niet mee.
@@ -64,7 +64,9 @@ houdt dat vast.
   moet dragen is een open punt.
 - De voorwaarde is een declaratie op de handeling (het `actie`-argument), zodat
   "alleen bepaalde rollen" later een wijziging van die declaratie is en geen ingreep in
-  generieke code. Nu geldt: wie het component mag bewerken (admin/owner) plus een verse
-  step-up.
+  generieke code. Sinds RC-392 is dat de regel `env-vars.manage` in
+  `opi/core/authz/rules.py`: `developer` plus een verse step-up voor een component dat
+  niet in een productiedeployment zit, `ops` plus een verse step-up voor een component dat
+  daar wel in zit. Zie [rollen-en-rechten.md](rollen-en-rechten.md).
 - `aliases` volgen hetzelfde patroon zodra dit bewezen is; dat is bewust buiten deze
   wijziging gehouden.

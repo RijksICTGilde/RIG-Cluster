@@ -18,54 +18,54 @@ from typing import Any
 import pytest
 from opi.api.otp_step_up import OTP_CODE_HEADER, STEP_UP_PROBLEM_MEDIA_TYPE
 from opi.core.auth_decorators import REQUIRES_STEP_UP
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.server import create_app
 
 #: (methode, pad) -> de handeling die de route verklaart.
 ROUTES_MET_STEP_UP = {
-    ("POST", "/projects/delete/{project_name}"): StepUpActie.PROJECT_VERWIJDEREN,
-    ("POST", "/projects/{project_name}/delete-deployment/{deployment_name}"): StepUpActie.DEPLOYMENT_VERWIJDEREN,
-    ("POST", "/projects/{project_name}/delete-component/{component_name}"): StepUpActie.COMPONENT_VERWIJDEREN,
-    ("DELETE", "/api/projects/{project_name}"): StepUpActie.PROJECT_VERWIJDEREN,
-    ("DELETE", "/api/projects/{project_name}/{deployment_name}"): StepUpActie.DEPLOYMENT_VERWIJDEREN,
-    ("DELETE", "/api/v2/projects/{project_name}/{deployment_name}"): StepUpActie.DEPLOYMENT_VERWIJDEREN,
-    ("DELETE", "/api/v2/projects/{project_name}/components/{component_name}"): StepUpActie.COMPONENT_VERWIJDEREN,
-    ("POST", "/api/projects/{project_name}/:upsert-deployment"): StepUpActie.MARKERING_VERLAGEN,
-    ("POST", "/api/v2/projects/{project_name}/:upsert-deployment"): StepUpActie.MARKERING_VERLAGEN,
+    ("POST", "/projects/delete/{project_name}"): StepUpAction.PROJECT_DELETE,
+    ("POST", "/projects/{project_name}/delete-deployment/{deployment_name}"): StepUpAction.DEPLOYMENT_DELETE,
+    ("POST", "/projects/{project_name}/delete-component/{component_name}"): StepUpAction.COMPONENT_DELETE,
+    ("DELETE", "/api/projects/{project_name}"): StepUpAction.PROJECT_DELETE,
+    ("DELETE", "/api/projects/{project_name}/{deployment_name}"): StepUpAction.DEPLOYMENT_DELETE,
+    ("DELETE", "/api/v2/projects/{project_name}/{deployment_name}"): StepUpAction.DEPLOYMENT_DELETE,
+    ("DELETE", "/api/v2/projects/{project_name}/components/{component_name}"): StepUpAction.COMPONENT_DELETE,
+    ("POST", "/api/projects/{project_name}/:upsert-deployment"): StepUpAction.MARKING_SET,
+    ("POST", "/api/v2/projects/{project_name}/:upsert-deployment"): StepUpAction.MARKING_SET,
     # Platformbeheer (RC-377): elke beheerroute die iets verandert. De twee leesroutes
     # (GET /marked-for-deletion en GET /orphans/report) staan er met opzet niet bij.
-    ("POST", "/api/v2/admin/cleanup/trigger"): StepUpActie.OPRUIMING_STARTEN,
-    ("POST", "/api/v2/admin/reconciliation/trigger"): StepUpActie.RECONCILIATIE_STARTEN,
-    ("DELETE", "/api/v2/admin/marked-for-deletion/{mark_id}"): StepUpActie.MARKERING_INTREKKEN,
-    ("POST", "/api/v2/admin/orphans/confirm"): StepUpActie.WEZEN_BEVESTIGEN,
-    ("POST", "/api/v2/admin/projects/:reconcile"): StepUpActie.PROJECTEN_HERINLEZEN,
-    ("POST", "/api/v2/projects/{project_name}/:rotate-project-key"): StepUpActie.PROJECTSLEUTEL_VERVANGEN,
+    ("POST", "/api/v2/admin/cleanup/trigger"): StepUpAction.CLEANUP_START,
+    ("POST", "/api/v2/admin/reconciliation/trigger"): StepUpAction.RECONCILIATION_START,
+    ("DELETE", "/api/v2/admin/marked-for-deletion/{mark_id}"): StepUpAction.MARKING_REVOKE,
+    ("POST", "/api/v2/admin/orphans/confirm"): StepUpAction.ORPHANS_CONFIRM,
+    ("POST", "/api/v2/admin/projects/:reconcile"): StepUpAction.PROJECTS_RELOAD,
+    ("POST", "/api/v2/projects/{project_name}/:rotate-project-key"): StepUpAction.PROJECT_KEY_REPLACE,
     # Leden en tokens (RC-387): elke handeling die een bewijsmiddel geeft of afneemt, in
     # de API en in het portaal. De leesroute (GET .../leden) staat er met opzet niet bij.
-    ("POST", "/api/v2/projects/{project_name}/leden"): StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN,
-    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}"): StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN,
-    ("PUT", "/api/v2/projects/{project_name}/leden/{naam}/rol"): StepUpActie.ROL_WIJZIGEN,
-    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens"): StepUpActie.TOKEN_UITGEVEN,
-    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer"): StepUpActie.TOKEN_ROTEREN,
-    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}"): StepUpActie.TOKEN_INTREKKEN,
-    ("POST", "/projects/{project_name}/leden/toevoegen"): StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN,
-    ("POST", "/projects/{project_name}/leden/{naam}/verwijderen"): StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN,
-    ("POST", "/projects/{project_name}/leden/{naam}/rol"): StepUpActie.ROL_WIJZIGEN,
-    ("POST", "/projects/{project_name}/leden/{naam}/tokens"): StepUpActie.TOKEN_UITGEVEN,
-    ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren"): StepUpActie.TOKEN_ROTEREN,
-    ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken"): StepUpActie.TOKEN_INTREKKEN,
+    ("POST", "/api/v2/projects/{project_name}/leden"): StepUpAction.SERVICE_ACCOUNT_ADD,
+    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}"): StepUpAction.SERVICE_ACCOUNT_REMOVE,
+    ("PUT", "/api/v2/projects/{project_name}/leden/{naam}/rol"): StepUpAction.ROLE_CHANGE,
+    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens"): StepUpAction.TOKEN_ISSUE,
+    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer"): StepUpAction.TOKEN_ROTATE,
+    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}"): StepUpAction.TOKEN_REVOKE,
+    ("POST", "/projects/{project_name}/leden/toevoegen"): StepUpAction.SERVICE_ACCOUNT_ADD,
+    ("POST", "/projects/{project_name}/leden/{naam}/verwijderen"): StepUpAction.SERVICE_ACCOUNT_REMOVE,
+    ("POST", "/projects/{project_name}/leden/{naam}/rol"): StepUpAction.ROLE_CHANGE,
+    ("POST", "/projects/{project_name}/leden/{naam}/tokens"): StepUpAction.TOKEN_ISSUE,
+    ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren"): StepUpAction.TOKEN_ROTATE,
+    ("POST", "/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken"): StepUpAction.TOKEN_REVOKE,
     # Omgevingsvariabelen (RC-388): al het lezen en schrijven van waarden, dus ook de
     # GET die het venster opent.
-    ("GET", "/projects/{project_name}/componenten/{component_name}/env-vars"): StepUpActie.ENV_VARS_BEHEREN,
-    ("POST", "/projects/{project_name}/componenten/{component_name}/env-vars"): StepUpActie.ENV_VARS_BEHEREN,
+    ("GET", "/projects/{project_name}/componenten/{component_name}/env-vars"): StepUpAction.ENV_VARS_MANAGE,
+    ("POST", "/projects/{project_name}/componenten/{component_name}/env-vars"): StepUpAction.ENV_VARS_MANAGE,
     (
         "GET",
         "/projects/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
-    ): StepUpActie.ENV_VARS_BEHEREN,
+    ): StepUpAction.ENV_VARS_MANAGE,
     (
         "POST",
         "/projects/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
-    ): StepUpActie.ENV_VARS_BEHEREN,
+    ): StepUpAction.ENV_VARS_MANAGE,
 }
 
 #: De routes die ALLEEN lezen en dus geen step-up dragen (RC-377, RC-387).

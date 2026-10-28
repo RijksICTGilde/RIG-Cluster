@@ -564,16 +564,19 @@ class TestGetTaskWithApiToken:
 
         assert response.status_code == 403
 
-    def test_een_token_van_een_developer_annuleert_geen_taak(
+    def test_een_token_van_een_viewer_annuleert_geen_taak(
         self,
         test_client_with_task_service: TestClient,
         mock_task_service: AsyncMock,
     ) -> None:
-        """``taak.annuleren`` staat niet in de leeshandelingen, dus een developer-token
-        -- dat wel mag pollen -- komt hier niet doorheen."""
+        """``task.cancel`` is geen leesactie, dus een viewer-token komt er niet doorheen.
+
+        Sinds RC-392 is annuleren operationeel: een developer mag het wel, buiten
+        productie (ontwerp paragraaf 4, rij 14). De rol die het sluit is viewer.
+        """
         mock_task_service.get_task.return_value = _make_task(status="pending")
 
-        with patch("opi.api.task_router.get_project_store", return_value=self._store(rol="developer")):
+        with patch("opi.api.task_router.get_project_store", return_value=self._store(rol="member")):
             response = test_client_with_task_service.post(
                 f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=self.TOKEN_HEADERS
             )

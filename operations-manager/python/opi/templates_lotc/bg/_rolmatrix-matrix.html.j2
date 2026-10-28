@@ -1,0 +1,26 @@
+{#
+  De matrix zelf: per sectie een tabel, per regel en scope een rij.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% for naam, rijen in secties %}
+    {% call panel(naam) %}
+        <c-table columns="2fr 1.2fr 0.8fr 1.2fr 0.7fr 0.8fr 1.1fr 0.8fr">
+            <c-table-head>
+                <c-th>Handeling</c-th>
+                <c-th>Waar</c-th>
+                {% for kolom in kolommen %}
+                    <c-th>{{ kolom.label }}</c-th>
+                {% endfor %}
+            </c-table-head>
+            {% for rij in rijen %}
+                <c-table-row>
+                    <c-td>{{ rij.label }}</c-td>
+                    <c-td>{{ rij.scope_label or "overal" }}</c-td>
+                    {% for cel in rij.cells %}
+                        <c-td>{{ cel.mark }}</c-td>
+                    {% endfor %}
+                </c-table-row>
+            {% endfor %}
+        </c-table>
+    {% endcall %}
+{% endfor %}

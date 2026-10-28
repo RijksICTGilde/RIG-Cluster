@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 
 from opi.api.router import sanitize_for_log
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.step_up import record_step_up
 from opi.services.user_otp_service import OtpVerification, UserOtpService
 from opi.web.step_up_dialog import lees_vervolg_velden, render_step_up_dialog, render_step_up_repeat
@@ -26,6 +27,7 @@ step_up_router = APIRouter(tags=["step-up"])
 
 
 @step_up_router.post("/step-up", response_class=HTMLResponse)
+@action(Action.STEP_UP_VERIFY)
 @requires_sso
 async def step_up(request: Request) -> HTMLResponse:
     """Toets de code en voer daarna de handeling uit die erom vroeg.

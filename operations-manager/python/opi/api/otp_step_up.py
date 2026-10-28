@@ -27,7 +27,7 @@ from opi.services.user_otp_service import OtpVerification, UserOtpService
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from opi.core.step_up import StepUpActie
+    from opi.core.step_up import StepUpAction
     from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
@@ -47,15 +47,15 @@ STEP_UP_PROBLEM_MEDIA_TYPE = "application/problem+json"
 class StepUpCause(StrEnum):
     """Waarom deze aanroep werd geweigerd, zover een client dat mag weten.
 
-    Genoeg om te weten wat te doen, nooit genoeg om een code te raden: ``CODE_ONGELDIG``
+    Genoeg om te weten wat te doen, nooit genoeg om een code te raden: ``CODE_INVALID``
     dekt zowel een verkeerde als een al gebruikte code, en zegt niet welk deel faalde.
     """
 
-    OTP_ONTBREEKT = "otp-ontbreekt"
-    FACTOR_ONTBREEKT = "factor-ontbreekt"
-    CODE_ONGELDIG = "code-ongeldig"
-    GEBLOKKEERD = "geblokkeerd"
-    TOKENSOORT_NIET_TOEGESTAAN = "tokensoort-niet-toegestaan"
+    OTP_MISSING = "otp-missing"
+    FACTOR_MISSING = "factor-missing"
+    CODE_INVALID = "code-invalid"
+    BLOCKED = "blocked"
+    PRINCIPAL_KIND_NOT_ALLOWED = "principal-kind-not-allowed"
 
 
 class StepUpProblem(BaseModel):
@@ -71,12 +71,12 @@ class StepUpProblem(BaseModel):
     detail: str = Field(..., description="Wat er misging, in gewone taal; nooit welk deel van een code fout was")
     instance: str | None = Field(default=None, description="Het pad waarop de weigering optrad")
     cause: StepUpCause = Field(..., description="Waarom er werd geweigerd, als waarde waarop een client kan sturen")
-    action: str = Field(..., description="De handeling die een step-up vraagt, bijvoorbeeld 'deployment-verwijderen'")
+    action: str = Field(..., description="De handeling die een step-up vraagt, bijvoorbeeld 'deployment-delete'")
     reason: str = Field(..., description="Waarom deze handeling er een vraagt, bijvoorbeeld dat ze productie raakt")
     remedy: str = Field(..., description="Wat de aanroeper moet doen om de handeling alsnog uit te voeren")
     otp_header: str = Field(default=OTP_CODE_HEADER, description="De header waarin de code hoort")
     enroll_url: str | None = Field(
-        default=None, description="Waar de aanroeper zijn tweede factor inricht; alleen bij 'factor-ontbreekt'"
+        default=None, description="Waar de aanroeper zijn tweede factor inricht; alleen bij 'factor-missing'"
     )
     blocked_until: str | None = Field(
         default=None, description="Wanneer het weer mag, in ISO 8601; alleen bij 'geblokkeerd'"
@@ -86,32 +86,32 @@ class StepUpProblem(BaseModel):
 _DETAIL = {
     # Niet "raakt productie": sinds RC-377 vraagt ook platformbeheer een step-up. Waarom
     # DEZE aanroep er een vraagt staat in ``reason``.
-    StepUpCause.OTP_ONTBREEKT: "Deze handeling vraagt een verse code uit je tweede factor.",
-    StepUpCause.FACTOR_ONTBREEKT: "Je hebt nog geen tweede factor ingericht, en deze handeling vraagt er een.",
-    StepUpCause.CODE_ONGELDIG: "De meegestuurde code is niet aanvaard.",
-    StepUpCause.GEBLOKKEERD: "Je tweede factor is tijdelijk geblokkeerd na te veel mislukte pogingen.",
-    StepUpCause.TOKENSOORT_NIET_TOEGESTAAN: (
+    StepUpCause.OTP_MISSING: "Deze handeling vraagt een verse code uit je tweede factor.",
+    StepUpCause.FACTOR_MISSING: "Je hebt nog geen tweede factor ingericht, en deze handeling vraagt er een.",
+    StepUpCause.CODE_INVALID: "De meegestuurde code is niet aanvaard.",
+    StepUpCause.BLOCKED: "Je tweede factor is tijdelijk geblokkeerd na te veel mislukte pogingen.",
+    StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED: (
         "Deze handeling vraagt een verse tweede factor, en de sleutel waarmee je aanroept hoort bij geen gebruiker."
     ),
 }
 
 _REMEDY = {
-    StepUpCause.OTP_ONTBREEKT: f"Stuur '{OTP_CODE_HEADER}' mee met een code uit je authenticator en herhaal de aanroep.",
-    StepUpCause.FACTOR_ONTBREEKT: (
+    StepUpCause.OTP_MISSING: f"Stuur '{OTP_CODE_HEADER}' mee met een code uit je authenticator en herhaal de aanroep.",
+    StepUpCause.FACTOR_MISSING: (
         f"Richt je tweede factor in op '{OTP_ENROLL_PATH}' en herhaal de aanroep met '{OTP_CODE_HEADER}'."
     ),
-    StepUpCause.CODE_ONGELDIG: f"Wacht op een nieuwe code in je authenticator en herhaal de aanroep met '{OTP_CODE_HEADER}'.",
-    StepUpCause.GEBLOKKEERD: "Probeer het opnieuw zodra de blokkade voorbij is; 'blocked_until' zegt wanneer.",
-    StepUpCause.TOKENSOORT_NIET_TOEGESTAAN: (
+    StepUpCause.CODE_INVALID: f"Wacht op een nieuwe code in je authenticator en herhaal de aanroep met '{OTP_CODE_HEADER}'.",
+    StepUpCause.BLOCKED: "Probeer het opnieuw zodra de blokkade voorbij is; 'blocked_until' zegt wanneer.",
+    StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED: (
         "Met een projectsleutel kan dit niet: gebruik een persoonlijk token en stuur je eigen code mee."
     ),
 }
 
 #: Welke uitkomst van de verificatie bij welke reden hoort.
 _CAUSE_PER_UITKOMST = {
-    OtpVerification.NOT_REGISTERED: StepUpCause.FACTOR_ONTBREEKT,
-    OtpVerification.LOCKED: StepUpCause.GEBLOKKEERD,
-    OtpVerification.INVALID: StepUpCause.CODE_ONGELDIG,
+    OtpVerification.NOT_REGISTERED: StepUpCause.FACTOR_MISSING,
+    OtpVerification.LOCKED: StepUpCause.BLOCKED,
+    OtpVerification.INVALID: StepUpCause.CODE_INVALID,
 }
 
 
@@ -129,9 +129,9 @@ def _token_owner(request: Request) -> str | None:
 async def _cause(email: str | None, code: str) -> tuple[StepUpCause, str | None] | None:
     """Waarom deze aanroep geweigerd wordt, met het moment waarop het weer mag, of None."""
     if email is None:
-        return StepUpCause.TOKENSOORT_NIET_TOEGESTAAN, None
+        return StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED, None
     if not code:
-        return StepUpCause.OTP_ONTBREEKT, None
+        return StepUpCause.OTP_MISSING, None
 
     service = UserOtpService()
     uitkomst = await service.verify(email, code)
@@ -139,7 +139,7 @@ async def _cause(email: str | None, code: str) -> tuple[StepUpCause, str | None]
         return None
     if uitkomst is OtpVerification.LOCKED:
         locked_until = (await service.status(email)).locked_until
-        return StepUpCause.GEBLOKKEERD, locked_until.isoformat() if locked_until else None
+        return StepUpCause.BLOCKED, locked_until.isoformat() if locked_until else None
     return _CAUSE_PER_UITKOMST[uitkomst], None
 
 
@@ -147,7 +147,7 @@ async def verify_api_step_up(
     request: Request,
     *,
     project_name: str,
-    actie: StepUpActie,
+    actie: StepUpAction,
     doelwit: str,
 ) -> StepUpProblem | None:
     """Toets de step-up van deze aanroep; geef ``None`` als hij door mag.
@@ -162,7 +162,7 @@ async def verify_api_step_up(
     if uitkomst is None:
         logger.info(
             "Step-up geaccepteerd om %s: doel '%s', project '%s', door %s",
-            actie.handeling,
+            actie.phrase,
             doelwit,
             project_name,
             email,
@@ -172,7 +172,7 @@ async def verify_api_step_up(
     cause, blocked_until = uitkomst
     logger.warning(
         "Step-up geweigerd om %s: doel '%s', project '%s', door %s, reden %s",
-        actie.handeling,
+        actie.phrase,
         doelwit,
         project_name,
         email or "een sleutel zonder gebruiker",
@@ -183,9 +183,9 @@ async def verify_api_step_up(
         instance=request.url.path,
         cause=cause,
         action=actie.value,
-        reason=actie.reden(doelwit, project=project_name),
+        reason=actie.reason(doelwit, project=project_name),
         remedy=_REMEDY[cause],
-        enroll_url=OTP_ENROLL_PATH if cause is StepUpCause.FACTOR_ONTBREEKT else None,
+        enroll_url=OTP_ENROLL_PATH if cause is StepUpCause.FACTOR_MISSING else None,
         blocked_until=blocked_until,
     )
 

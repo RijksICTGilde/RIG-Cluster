@@ -1,8 +1,8 @@
 """De condities waarmee een route zich voor een step-up aanmeldt (RC-332).
 
-Dekt ``opi/services/step_up_conditions.py``: elke conditie leest de projectstore en
-geeft een lege projectdata terug voor wie er niet bij mag, zodat de dialoog niets
-verklapt over een project waar je geen lid van bent.
+Dekt ``opi/services/step_up_conditions.py``: de conditie leest de projectstore en krijgt
+een lege projectdata voor wie er niet bij mag, zodat de dialoog niets verklapt over een
+project waar je geen lid van bent.
 """
 
 from __future__ import annotations
@@ -40,69 +40,8 @@ def _patched(data: dict[str, Any] | None, *, geautoriseerd: bool = True):
     )
 
 
-def test_project_in_production_true_voor_een_productieproject() -> None:
-    p1, p2 = _patched(PROJECT)
-    with p1, p2:
-        assert conditions.project_in_production(_request(OWNER), project_name="demo") is True
-
-
-def test_project_in_production_false_voor_een_niet_productieproject() -> None:
-    p1, p2 = _patched({"name": "demo", "deployments": [{"name": "d1", "environment": "test"}]})
-    with p1, p2:
-        assert conditions.project_in_production(_request(OWNER), project_name="demo") is False
-
-
-def test_project_in_production_leest_leeg_voor_een_niet_geautoriseerde_gebruiker() -> None:
-    """Een vreemde krijgt geen inhoud, dus ook geen bevestiging dat dit productie is."""
-    p1, p2 = _patched(PROJECT, geautoriseerd=False)
-    with p1, p2:
-        assert conditions.project_in_production(_request(VREEMDE), project_name="demo") is False
-
-
-def test_project_in_production_zonder_sessiegebruiker_leest_toch_de_store() -> None:
-    """Een API-aanroep heeft geen sessiegebruiker: de projectsleutel is al gecontroleerd."""
-    p1, p2 = _patched(PROJECT)
-    with p1, p2:
-        request = SimpleNamespace(state=SimpleNamespace())
-        assert conditions.project_in_production(request, project_name="demo") is True
-
-
-def test_project_in_production_onbekend_project_is_geen_productie() -> None:
-    p1, p2 = _patched(None)
-    with p1, p2:
-        assert conditions.project_in_production(_request(OWNER), project_name="nope") is False
-
-
-def test_deployment_in_production_true_voor_de_juiste_deployment() -> None:
-    p1, p2 = _patched(PROJECT)
-    with p1, p2:
-        assert conditions.deployment_in_production(_request(OWNER), project_name="demo", deployment_name="prod") is True
-
-
-def test_deployment_in_production_false_voor_een_andere_deployment() -> None:
-    project = {**PROJECT, "deployments": [*PROJECT["deployments"], {"name": "acc", "environment": "acceptatie"}]}
-    p1, p2 = _patched(project)
-    with p1, p2:
-        assert conditions.deployment_in_production(_request(OWNER), project_name="demo", deployment_name="acc") is False
-
-
-def test_component_in_production_true_als_een_productiedeployment_het_gebruikt() -> None:
-    p1, p2 = _patched(PROJECT)
-    with p1, p2:
-        assert conditions.component_in_production(_request(OWNER), project_name="demo", component_name="web") is True
-
-
-def test_component_in_production_false_als_niemand_het_gebruikt() -> None:
-    p1, p2 = _patched(PROJECT)
-    with p1, p2:
-        assert (
-            conditions.component_in_production(_request(OWNER), project_name="demo", component_name="ongebruikt")
-            is False
-        )
-
-
 # ---------------------------------------------------------------------------
-# deployment_environment_downgrade
+# deployment_environment_change
 # ---------------------------------------------------------------------------
 
 
@@ -111,23 +50,24 @@ def test_downgrade_true_van_productie_naar_acceptatie() -> None:
     with p1, p2:
         deployment_data = SimpleNamespace(environment="acceptatie", deploymentName="prod")
         assert (
-            conditions.deployment_environment_downgrade(
+            conditions.deployment_environment_change(
                 _request(OWNER), project_name="demo", deployment_data=deployment_data
             )
             is True
         )
 
 
-def test_downgrade_false_van_acceptatie_naar_productie() -> None:
+def test_verhogen_naar_productie_vraagt_ook_step_up() -> None:
+    """Ontwerp paragraaf 7: de markering ZETTEN vraagt hetzelfde als hem verlagen."""
     project = {**PROJECT, "deployments": [{"name": "d1", "environment": "acceptatie"}]}
     p1, p2 = _patched(project)
     with p1, p2:
         deployment_data = SimpleNamespace(environment="productie", deploymentName="d1")
         assert (
-            conditions.deployment_environment_downgrade(
+            conditions.deployment_environment_change(
                 _request(OWNER), project_name="demo", deployment_data=deployment_data
             )
-            is False
+            is True
         )
 
 
@@ -137,21 +77,34 @@ def test_downgrade_false_zonder_aangevraagde_markering() -> None:
     with p1, p2:
         deployment_data = SimpleNamespace(environment=None, deploymentName="prod")
         assert (
-            conditions.deployment_environment_downgrade(
+            conditions.deployment_environment_change(
                 _request(OWNER), project_name="demo", deployment_data=deployment_data
             )
             is False
         )
 
 
-def test_downgrade_false_voor_een_nieuwe_deployment_die_nog_niet_bestaat() -> None:
-    """Een nieuwe deployment kan niets verlagen: er is geen voor-staat om vanaf te verlagen."""
+def test_nieuwe_deployment_op_de_standaard_vraagt_niets() -> None:
+    """Een nieuwe deployment die op ``ontwikkeling`` blijft zet geen markering."""
     p1, p2 = _patched(PROJECT)
     with p1, p2:
-        deployment_data = SimpleNamespace(environment="test", deploymentName="nieuw")
+        deployment_data = SimpleNamespace(environment="ontwikkeling", deploymentName="nieuw")
         assert (
-            conditions.deployment_environment_downgrade(
+            conditions.deployment_environment_change(
                 _request(OWNER), project_name="demo", deployment_data=deployment_data
             )
             is False
+        )
+
+
+def test_nieuwe_deployment_meteen_op_productie_vraagt_step_up() -> None:
+    """Hem meteen op productie zetten is net zo goed de markering zetten."""
+    p1, p2 = _patched(PROJECT)
+    with p1, p2:
+        deployment_data = SimpleNamespace(environment="productie", deploymentName="nieuw")
+        assert (
+            conditions.deployment_environment_change(
+                _request(OWNER), project_name="demo", deployment_data=deployment_data
+            )
+            is True
         )

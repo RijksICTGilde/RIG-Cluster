@@ -216,6 +216,18 @@ class TestDeStoringZelf:
 
         monkeypatch.setattr(webrouter, "get_project_store", _database_onbereikbaar)
 
+        # De rolpoort op de web-router leest het project voordat de handler draait; zonder
+        # deze twee valt het verzoek op een 404 en meet de test de foutpagina niet.
+        from unittest.mock import MagicMock
+
+        from opi.web import authz
+
+        project = MagicMock()
+        project.name = "dd-mco"
+        project.data = {"name": "dd-mco"}
+        monkeypatch.setattr(authz, "get_project_store", lambda: MagicMock(get=lambda naam: project))
+        monkeypatch.setattr(authz, "get_user_service", lambda: MagicMock(is_platform_admin=lambda _e: True))
+
         app = create_app()
         app.debug = False
         return TestClient(app, raise_server_exceptions=False)

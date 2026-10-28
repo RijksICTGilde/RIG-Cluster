@@ -22,14 +22,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import requires_sso
+from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.manager.job_manager import JobError, get_job_manager
 from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind
+from opi.web.authz import may
 from opi.web.lotc_switch import render
-from opi.web.project_edit_security import may_operate_on_project, require_project_operate_access
-from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ async def _render(
             "form_command": form_command,
             "ttl_seconds": settings.JOB_TTL_SECONDS,
             "enabled": settings.JOB_ENABLED,
-            "mag_uitvoeren": may_operate_on_project(request, project_name),
+            "mag_uitvoeren": may(request, action=Action.JOB_RUN, project_name=project_name),
         },
     )
 
@@ -98,26 +98,27 @@ async def _render(
 # Human labels for the unified Taken table. Runs (console/job) + background
 # tasks (upserts, refreshes, ...) are shown together as one history.
 @jobs_router.get("/{project_name}/jobs/{deployment_name}/modal", response_class=HTMLResponse)
+@action(Action.SERVICE_READ)
 @requires_sso
 async def job_modal(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Modal body, loaded when the user opens the job modal."""
-    _require_project_member_access(request, project_name)
     return await _render(request, project_name, deployment_name)
 
 
 @jobs_router.get("/{project_name}/jobs/{deployment_name}/status", response_class=HTMLResponse)
+@action(Action.SERVICE_READ)
 @requires_sso
 async def job_status(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Polled by the modal while a job is starting/running."""
-    _require_project_member_access(request, project_name)
     return await _render(request, project_name, deployment_name, include_pending=True)
 
 
 @jobs_router.post("/{project_name}/jobs", response_class=HTMLResponse)
+@action(Action.JOB_RUN)
 @requires_sso
 async def job_start(request: Request, project_name: str) -> HTMLResponse:
     """Start a job for a deployment; returns the modal body (now monitoring)."""
-    _, user_email = require_project_operate_access(request, project_name)
+    user_email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     form = await request.form()
     deployment_name = str(form.get("deployment", ""))
@@ -167,10 +168,11 @@ async def job_start(request: Request, project_name: str) -> HTMLResponse:
 
 
 @jobs_router.post("/{project_name}/jobs/{session_id}/stop", response_class=HTMLResponse)
+@action(Action.JOB_RUN)
 @requires_sso
 async def job_stop(request: Request, project_name: str, session_id: str) -> HTMLResponse:
     """Stop/remove a job immediately; returns the modal body (back to the form)."""
-    _, user_email = require_project_operate_access(request, project_name)
+    user_email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     form = await request.form()
     deployment_name = str(form.get("deployment", ""))

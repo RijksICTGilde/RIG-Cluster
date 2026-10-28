@@ -21,6 +21,7 @@ import inspect
 from typing import Any
 
 import pytest
+from opi.core.authz.actions import Action
 from opi.services import registry
 from opi.services.catalog.base import (
     DeploymentPageContext,
@@ -316,9 +317,9 @@ class TestThePayloadIsOneObjectPerEvent:
         assert seen == [payload]
 
     def test_the_project_page_payload_carries_what_the_two_arguments_did(self) -> None:
-        """``detail_page_sections(project_data, user_role)`` became one object; both inputs
+        """``detail_page_sections(project_data, can)`` became one object; both inputs
         are still there, now as a type rather than as a call convention."""
-        payload = ProjectPageContext(project_data={"name": "p"}, user_role="admin")
+        payload = ProjectPageContext(project_data={"name": "p"}, can=lambda _handeling: True)
 
         assert payload.project_data["name"] == "p"
-        assert payload.user_role == "admin"
+        assert payload.can(Action.PROJECT_KEY_READ) is True

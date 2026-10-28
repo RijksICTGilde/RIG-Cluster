@@ -113,5 +113,5 @@ def test_mag_terugzetten_follows_the_operate_role_not_membership() -> None:
     `is_user_authorized_for_project` above already checks for every viewer).
     """
     source = inspect.getsource(backups.backups_fragment)
-    assert "may_operate_on_project(request, project_name)" in source
-    assert '"mag_terugzetten": may_operate_on_project' in source
+    assert "may(request, action=Action.RESTORE_RUN, project_name=project_name)" in source
+    assert '"mag_terugzetten": may(' in source

@@ -65,8 +65,8 @@ _SERVICES_DATA = {
 
 _TEAM_DATA = {
     "users": [
-        {"email": "admin@test.nl", "role": "admin"},
-        {"email": "dev@test.nl", "role": "developer"},
+        {"email": "admin@test.nl", "roles": ["admin", "ops"]},
+        {"email": "dev@test.nl", "roles": ["developer"]},
     ],
 }
 

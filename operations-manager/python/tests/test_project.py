@@ -142,7 +142,7 @@ class TestGetSummary:
         data = {
             "name": "demo",
             "config": {"api-key": "stored-key"},
-            "users": [{"email": "a@b.nl", "role": "admin"}, {"email": "c@d.nl", "role": "developer"}],
+            "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}, {"email": "c@d.nl", "roles": ["developer"]}],
         }
         summary = Project(data).get_summary("demo.yaml")
         assert summary is not None
@@ -176,7 +176,7 @@ class TestGetSummary:
         data = {
             "name": "demo",
             "users": [
-                {"email": "a@b.nl", "role": "admin"},
+                {"email": "a@b.nl", "roles": ["admin", "ops"]},
                 {"email": "kapot@b.nl"},  # geen role: dat veld is verplicht
             ],
         }

@@ -15,19 +15,18 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from opi.api import principaal as mod
-from opi.api.principaal import (
-    TOKENSOORT_NIET_TOEGESTAAN,
-    NietHerkend,
-    PrincipaalSoort,
-    ToegangGeweigerd,
+from opi.api import principal as mod
+from opi.api.principal import (
+    AccessDenied,
+    NotRecognised,
+    PrincipalKind,
     beslis,
-    herken_principaal,
     hoort_bij_project,
+    recognise_principal,
     reset_gebruik,
     tel_gebruik,
 )
-from opi.core.handelingen import Handeling
+from opi.core.authz.actions import Action
 from opi.core.leden import LidSoort
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -85,32 +84,32 @@ def _iedereen_mag_het_platform_op(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_een_token_van_een_mens_wordt_die_mens(project: ProjectSummary) -> None:
-    principaal = await herken_principaal(TOKEN_BEHEERDER, project)
-    assert principaal.soort is PrincipaalSoort.PERSOON
-    assert principaal.naam == BEHEERDER
-    assert str(principaal.actor) == BEHEERDER
+    principal = await recognise_principal(TOKEN_BEHEERDER, project)
+    assert principal.kind is PrincipalKind.HUMAN
+    assert principal.name == BEHEERDER
+    assert str(principal.actor) == BEHEERDER
 
 
 @pytest.mark.asyncio
 async def test_een_token_van_een_service_account_draagt_zijn_naam(project: ProjectSummary) -> None:
     """De naam is het punt van een service account: zonder naam valt er niets te loggen."""
-    principaal = await herken_principaal(TOKEN_BOUWSTRAAT, project)
-    assert principaal.soort is PrincipaalSoort.SERVICE_ACCOUNT
-    assert principaal.naam == "bouwstraat"
-    assert str(principaal.actor) == "service-account:bouwput/bouwstraat"
+    principal = await recognise_principal(TOKEN_BOUWSTRAAT, project)
+    assert principal.kind is PrincipalKind.SERVICE_ACCOUNT
+    assert principal.name == "bouwstraat"
+    assert str(principal.actor) == "service-account:bouwput/bouwstraat"
 
 
 @pytest.mark.asyncio
 async def test_een_onbekend_token_wordt_niet_herkend(project: ProjectSummary) -> None:
-    with pytest.raises(NietHerkend):
-        await herken_principaal("zad_nooit-uitgegeven", project)
+    with pytest.raises(NotRecognised):
+        await recognise_principal("zad_nooit-uitgegeven", project)
 
 
 @pytest.mark.asyncio
 async def test_een_verlopen_token_opent_niets(project: ProjectSummary) -> None:
     """Zonder dat iemand iets intrekt. Dat is waar de verplichte vervaldatum voor is."""
-    with pytest.raises(NietHerkend):
-        await herken_principaal(TOKEN_VERLOPEN, project)
+    with pytest.raises(NotRecognised):
+        await recognise_principal(TOKEN_VERLOPEN, project)
 
 
 @pytest.mark.asyncio
@@ -118,8 +117,8 @@ async def test_een_token_van_een_ander_project_geeft_dezelfde_401(project: Proje
     """Niet een 403: anders is het verschil een manier om projectnamen af te tasten."""
     ander = _project("anderproject")
     ander.users = [ProjectUser(email="iemand@rijksoverheid.nl", role="admin")]
-    with pytest.raises(NietHerkend):
-        await herken_principaal(TOKEN_BEHEERDER, ander)
+    with pytest.raises(NotRecognised):
+        await recognise_principal(TOKEN_BEHEERDER, ander)
 
 
 @pytest.mark.asyncio
@@ -128,8 +127,8 @@ async def test_een_mens_zonder_platformtoegang_verliest_zijn_token(
 ) -> None:
     """Offboarding in het gebruikersbeheer raakt geen projectbestand, maar wel dit token."""
     monkeypatch.setattr(get_user_service(), "is_email_allowed", lambda email: False)
-    with pytest.raises(NietHerkend):
-        await herken_principaal(TOKEN_BEHEERDER, project)
+    with pytest.raises(NotRecognised):
+        await recognise_principal(TOKEN_BEHEERDER, project)
 
 
 @pytest.mark.asyncio
@@ -137,9 +136,9 @@ async def test_de_oude_projectsleutel_werkt_zolang_hij_in_het_bestand_staat() ->
     """Alleen voor een bestand waarvan de migratie naar 2.12 de sleutel niet open kreeg."""
     project = _project()
     project.api_key = "oude-sleutel"
-    principaal = await herken_principaal("oude-sleutel", project)
-    assert principaal.soort is PrincipaalSoort.PROJECTSLEUTEL
-    assert str(principaal.actor) == "project-api-key:bouwput"
+    principal = await recognise_principal("oude-sleutel", project)
+    assert principal.kind is PrincipalKind.PROJECT_KEY
+    assert str(principal.actor) == "project-api-key:bouwput"
 
 
 # --- beslissen -------------------------------------------------------------
@@ -147,16 +146,28 @@ async def test_de_oude_projectsleutel_werkt_zolang_hij_in_het_bestand_staat() ->
 
 @pytest.mark.asyncio
 async def test_een_beheerder_mag_schrijven(project: ProjectSummary) -> None:
-    principaal = await herken_principaal(TOKEN_BEHEERDER, project)
-    beslis(principaal, project=project, handeling=Handeling.DEPLOYMENT_SCHRIJVEN)
+    principal = await recognise_principal(TOKEN_BEHEERDER, project)
+    beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE)
 
 
 @pytest.mark.asyncio
-async def test_een_developer_leest_wel_en_schrijft_niet(project: ProjectSummary) -> None:
-    principaal = await herken_principaal(TOKEN_DEV, project)
-    beslis(principaal, project=project, handeling=Handeling.DEPLOYMENT_LEZEN)
-    with pytest.raises(ToegangGeweigerd):
-        beslis(principaal, project=project, handeling=Handeling.DEPLOYMENT_SCHRIJVEN)
+async def test_een_developer_schrijft_buiten_productie_wel_en_op_productie_niet(
+    project: ProjectSummary,
+) -> None:
+    """Sinds RC-392 weegt de poort de MARKERING en niet alleen de rol (ontwerp rij 2 en 3)."""
+    from opi.core.authz.engine import Resource
+
+    principal = await recognise_principal(TOKEN_DEV, project)
+    beslis(principal, project=project, handeling=Action.DEPLOYMENT_READ)
+
+    acceptatie = Resource(project=project.name, path="project/x/deployment/acc", deployment="acc")
+    beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE, resource=acceptatie)
+
+    productie = Resource(
+        project=project.name, path="project/x/deployment/live", deployment="live", environment="productie"
+    )
+    with pytest.raises(AccessDenied):
+        beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE, resource=productie)
 
 
 @pytest.mark.asyncio
@@ -166,53 +177,66 @@ async def test_een_token_sterft_met_het_lidmaatschap(project: ProjectSummary) ->
     De rol wordt bij het BESLISSEN opnieuw gelezen, dus een bestand dat tussen herkennen en
     beslissen verandert telt al mee.
     """
-    principaal = await herken_principaal(TOKEN_BEHEERDER, project)
+    principal = await recognise_principal(TOKEN_BEHEERDER, project)
     project.users = [lid for lid in project.users or [] if lid.email != BEHEERDER]
 
-    with pytest.raises(ToegangGeweigerd, match="geen lid"):
-        beslis(principaal, project=project, handeling=Handeling.PROJECT_LEZEN)
+    with pytest.raises(AccessDenied, match="geen lid"):
+        beslis(principal, project=project, handeling=Action.PROJECT_READ)
 
 
 @pytest.mark.asyncio
 async def test_een_verlaagde_rol_werkt_meteen_door(project: ProjectSummary) -> None:
     """Een token draagt een VERWIJZING naar zijn lid, geen kopie van diens rechten."""
-    principaal = await herken_principaal(TOKEN_BEHEERDER, project)
+    from opi.core.authz.engine import Resource
+
+    principal = await recognise_principal(TOKEN_BEHEERDER, project)
     for lid in project.users or []:
         if lid.email == BEHEERDER:
-            lid.role = "developer"
+            lid.roles = ["developer"]
 
-    with pytest.raises(ToegangGeweigerd, match="developer"):
-        beslis(principaal, project=project, handeling=Handeling.DEPLOYMENT_SCHRIJVEN)
+    productie = Resource(
+        project=project.name, path="project/x/deployment/live", deployment="live", environment="productie"
+    )
+    with pytest.raises(AccessDenied, match="openen"):
+        beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE, resource=productie)
 
 
 @pytest.mark.asyncio
 async def test_een_service_account_mag_geen_tokens_beheren(project: ProjectSummary) -> None:
     """Een pijplijn hoort zijn eigen bewijsmiddel niet te kunnen vermenigvuldigen.
 
-    Hij is admin en heeft dus de rol ervoor; wat hem tegenhoudt is zijn SOORT, en dat
-    zegt de cause ook.
+    Hij is admin en heeft dus de rol ervoor; wat hem tegenhoudt is zijn SOORT. Sinds
+    RC-392 vraagt ``token.manage`` een verse step-up, dus het ANTWOORD komt van
+    ``@requires_step_up``; de beslissing hieronder wijst de soort aan.
     """
-    principaal = await herken_principaal(TOKEN_BOUWSTRAAT, project)
-    beslis(principaal, project=project, handeling=Handeling.DEPLOYMENT_SCHRIJVEN)
+    from opi.core.authz.engine import Cause
 
-    with pytest.raises(ToegangGeweigerd) as fout:
-        beslis(principaal, project=project, handeling=Handeling.TOKEN_BEHEREN)
-    assert fout.value.cause == TOKENSOORT_NIET_TOEGESTAAN
+    principal = await recognise_principal(TOKEN_BOUWSTRAAT, project)
+    beslis(principal, project=project, handeling=Action.DEPLOYMENT_WRITE)
+
+    beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=False)
+    assert beslissing.allowed is False
+    assert beslissing.cause is Cause.PRINCIPAL_KIND_NOT_ALLOWED
 
 
 @pytest.mark.asyncio
 async def test_een_mens_mag_wel_tokens_beheren(project: ProjectSummary) -> None:
-    principaal = await herken_principaal(TOKEN_BEHEERDER, project)
-    beslis(principaal, project=project, handeling=Handeling.TOKEN_BEHEREN)
+    principal = await recognise_principal(TOKEN_BEHEERDER, project)
+    beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=True)
+    assert beslissing.allowed is True
 
 
 @pytest.mark.asyncio
 async def test_de_oude_sleutel_mag_geen_tokens_beheren() -> None:
+    """Ook hier wijst de beslissing de SOORT aan; de step-up geeft het antwoord."""
+    from opi.core.authz.engine import Cause
+
     project = _project()
     project.api_key = "oude-sleutel"
-    principaal = await herken_principaal("oude-sleutel", project)
-    with pytest.raises(ToegangGeweigerd):
-        beslis(principaal, project=project, handeling=Handeling.TOKEN_BEHEREN)
+    principal = await recognise_principal("oude-sleutel", project)
+    beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=False)
+    assert beslissing.allowed is False
+    assert beslissing.cause is Cause.PRINCIPAL_KIND_NOT_ALLOWED
 
 
 # --- voorcontrole van de image-push ----------------------------------------
@@ -220,11 +244,11 @@ async def test_de_oude_sleutel_mag_geen_tokens_beheren() -> None:
 
 @pytest.mark.asyncio
 async def test_hoort_bij_project_valt_op_een_verdwenen_lid(project: ProjectSummary) -> None:
-    principaal = await herken_principaal(TOKEN_BOUWSTRAAT, project)
-    assert hoort_bij_project(principaal, project)
+    principal = await recognise_principal(TOKEN_BOUWSTRAAT, project)
+    assert hoort_bij_project(principal, project)
 
     project.users = [lid for lid in project.users or [] if lid.name != "bouwstraat"]
-    assert not hoort_bij_project(principaal, project)
+    assert not hoort_bij_project(principal, project)
 
 
 # --- meting ----------------------------------------------------------------
@@ -233,12 +257,12 @@ async def test_hoort_bij_project_valt_op_een_verdwenen_lid(project: ProjectSumma
 def test_het_gebruik_wordt_per_project_en_soort_geteld() -> None:
     """Zonder deze telling is het afbouwpad van de projectsleutel een wens."""
     reset_gebruik()
-    tel_gebruik("bouwput", PrincipaalSoort.PROJECTSLEUTEL)
-    tel_gebruik("bouwput", PrincipaalSoort.PROJECTSLEUTEL)
-    tel_gebruik("bouwput", PrincipaalSoort.SERVICE_ACCOUNT)
+    tel_gebruik("bouwput", PrincipalKind.PROJECT_KEY)
+    tel_gebruik("bouwput", PrincipalKind.PROJECT_KEY)
+    tel_gebruik("bouwput", PrincipalKind.SERVICE_ACCOUNT)
 
     assert mod.gebruik_per_project() == {
-        ("bouwput", "projectsleutel"): 2,
+        ("bouwput", "project-key"): 2,
         ("bouwput", "service-account"): 1,
     }
     reset_gebruik()

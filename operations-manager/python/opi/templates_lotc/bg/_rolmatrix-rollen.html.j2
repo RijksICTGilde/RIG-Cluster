@@ -1,0 +1,20 @@
+{#
+  De rollen zelf: wat elke rol is, en of een service account hem kan dragen.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% call panel("De rollen", "user") %}
+    <c-table columns="1fr 3fr 1.4fr">
+        <c-table-head>
+            <c-th>Rol</c-th>
+            <c-th>Waarvoor</c-th>
+            <c-th>Service account</c-th>
+        </c-table-head>
+        {% for kolom in kolommen %}
+            <c-table-row>
+                <c-td>{{ kolom.label }}</c-td>
+                <c-td>{{ kolom.description }}</c-td>
+                <c-td>{{ "ja" if kolom.service_account_reachable else "nee, vraagt een mens" }}</c-td>
+            </c-table-row>
+        {% endfor %}
+    </c-table>
+{% endcall %}

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.core.authz.actions import Action
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.visualizers.sections import FormSection
 from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -22,6 +24,8 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     _extract_services,
 )
+from opi.services.project_service import ProjectUser
+from opi.web.authz import authorize
 from opi.web.router_detail_edit import (
     _determine_flow_action,
     _get_edit_section,
@@ -212,8 +216,8 @@ class TestRenderSectionHtml:
     def test_renders_team_edit_section(self):
         yaml_data = {
             "users": [
-                {"email": "alice@example.com", "role": "owner"},
-                {"email": "bob@example.com", "role": "member"},
+                {"email": "alice@example.com", "roles": ["admin", "ops"]},
+                {"email": "bob@example.com", "roles": ["viewer"]},
             ],
         }
         html = _render_section_html(TEAM_SECTION, yaml_data=yaml_data)
@@ -304,13 +308,27 @@ class TestServiceAddOnlyEnforcement:
 class MockProjectInfo:
     """Minimal mock of the ProjectInfo returned by project_service."""
 
-    def __init__(self, name: str, data: dict[str, Any] | None = None, filename: str = "/tmp/test.yaml"):
+    def __init__(
+        self,
+        name: str,
+        data: dict[str, Any] | None = None,
+        filename: str = "/tmp/test.yaml",
+        users: list[Any] | None = None,
+    ):
         self.name = name
         self.data = data or {"name": name, "display-name": name, "description": "test"}
         self.filename = filename
+        self.users = users or []
 
 
-def _mock_project_service(project: MockProjectInfo | None = None, user_role: str = "owner"):
+def _platformdienst(is_admin: bool = True):
+    """Een platformbeheerder: die opent elk project, net als in productie (B6)."""
+    dienst = MagicMock()
+    dienst.is_platform_admin.return_value = is_admin
+    return dienst
+
+
+def _mock_project_service(project: MockProjectInfo | None = None, user_roles: list[str] | None = None):
     """Create a mock project service that returns the given project."""
     svc = MagicMock()
     svc.get.return_value = project
@@ -318,78 +336,66 @@ def _mock_project_service(project: MockProjectInfo | None = None, user_role: str
     # Authorization moved out of the service into project_authorization; callers patch
     # those free functions using the two hints below.
     svc._authorized = project is not None
-    svc._role = user_role
+    svc._role = user_roles
     return svc
 
 
-class TestRequireProjectEditAccess:
-    @pytest.mark.asyncio
-    async def test_returns_404_for_unknown_project(self):
-        from opi.web.project_edit_security import require_project_edit_access
+class TestAuthorizeProjectEdit:
+    """De poort op het projectbestand, sinds RC-392 via decide() in opi/web/authz.py."""
 
-        svc = _mock_project_service(project=None)
-        with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
-        ):
-            request = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                require_project_edit_access(request, "nonexistent")
-            assert exc_info.value.status_code == 404
+    @staticmethod
+    def _project(user_roles: list[str] | None = None) -> Any:
+        rollen = user_roles or ["admin", "ops"]
+        return MockProjectInfo(
+            "test-project",
+            data={"name": "test-project", "users": [{"email": "a@b.nl", "roles": rollen}]},
+            users=[ProjectUser(email="a@b.nl", roles=rollen)],
+        )
 
-    @pytest.mark.asyncio
-    async def test_returns_403_for_unauthorized_user(self):
-        from opi.web.project_edit_security import require_project_edit_access
+    @staticmethod
+    def _patches(project: Any):
+        store = MagicMock()
+        store.get.return_value = project
+        gebruikers = MagicMock()
+        gebruikers.is_platform_admin.return_value = False
+        return (
+            patch("opi.web.authz.get_project_store", return_value=store),
+            patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        )
 
-        project = MockProjectInfo("test-project")
-        svc = _mock_project_service(project=project)
-        svc._authorized = False
-        with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
-        ):
-            request = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                require_project_edit_access(request, "test-project")
-            assert exc_info.value.status_code == 403
+    @staticmethod
+    def _request() -> Any:
+        return SimpleNamespace(state=SimpleNamespace(user={"email": "a@b.nl"}), session={}, path_params={})
 
-    @pytest.mark.asyncio
-    async def test_returns_403_for_viewer_role(self):
-        from opi.web.project_edit_security import require_project_edit_access
+    def test_returns_404_for_unknown_project(self):
+        store_patch, user_patch = self._patches(None)
+        with store_patch, user_patch, pytest.raises(HTTPException) as exc_info:
+            authorize(self._request(), action=Action.PROJECT_EDIT, project_name="nonexistent")
+        assert exc_info.value.status_code == 404
 
-        project = MockProjectInfo("test-project")
-        svc = _mock_project_service(project=project, user_role="viewer")
-        with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
-        ):
-            request = MagicMock()
-            with pytest.raises(HTTPException) as exc_info:
-                require_project_edit_access(request, "test-project")
-            assert exc_info.value.status_code == 403
+    def test_returns_403_for_a_non_member(self):
+        store_patch, user_patch = self._patches(
+            MockProjectInfo("test-project", data={"name": "test-project"}, users=[])
+        )
+        with store_patch, user_patch, pytest.raises(HTTPException) as exc_info:
+            authorize(self._request(), action=Action.PROJECT_EDIT, project_name="test-project")
+        assert exc_info.value.status_code == 403
 
-    @pytest.mark.asyncio
-    async def test_returns_project_for_owner(self):
-        from opi.web.project_edit_security import require_project_edit_access
+    def test_returns_403_for_the_read_role(self):
+        store_patch, user_patch = self._patches(self._project(user_roles=["viewer"]))
+        with store_patch, user_patch, pytest.raises(HTTPException) as exc_info:
+            authorize(self._request(), action=Action.PROJECT_EDIT, project_name="test-project")
+        assert exc_info.value.status_code == 403
 
-        project = MockProjectInfo("test-project")
-        svc = _mock_project_service(project=project, user_role="owner")
-        with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
-        ):
-            request = MagicMock()
-            result_project, result_email = require_project_edit_access(request, "test-project")
-            assert result_project is project
-            assert result_email == "a@b.nl"
+    def test_returns_project_for_owner(self):
+        project = self._project(user_roles=["admin", "ops"])
+        store_patch, user_patch = self._patches(project)
+        with store_patch, user_patch:
+            result_project, result_email = authorize(
+                self._request(), action=Action.PROJECT_EDIT, project_name="test-project"
+            )
+        assert result_project is project
+        assert result_email == "a@b.nl"
 
 
 class TestDetermineFlowAction:
@@ -416,7 +422,7 @@ class TestSequenceActionEndpoint:
             "name": "test-project",
             "display-name": "Test",
             "description": "test",
-            "users": [{"email": "a@b.nl", "role": "owner"}],
+            "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         }
         project = MockProjectInfo("test-project", data=project_data)
         svc = _mock_project_service(project=project)
@@ -425,7 +431,7 @@ class TestSequenceActionEndpoint:
         request.session = {}
         request.json = AsyncMock(
             return_value={
-                "users": [{"email": "a@b.nl", "role": "owner"}],
+                "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
                 "_seq_action": "add",
                 "_seq_path": "users",
                 "_seq_index": "",
@@ -433,10 +439,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
+            patch("opi.web.authz.get_project_store", return_value=svc),
+            patch("opi.web.authz.get_user_service", return_value=_platformdienst()),
         ):
             from opi.web.router_detail_edit import sequence_action
 
@@ -462,10 +466,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
+            patch("opi.web.authz.get_project_store", return_value=svc),
+            patch("opi.web.authz.get_user_service", return_value=_platformdienst()),
         ):
             from opi.web.router_detail_edit import sequence_action
 
@@ -477,24 +479,19 @@ class TestSequenceActionEndpoint:
     async def test_sequence_action_requires_auth(self):
         """Unauthorized user gets 403."""
         project_data = {"name": "test-project", "display-name": "Test", "description": "test"}
-        project = MockProjectInfo("test-project", data=project_data)
-        svc = _mock_project_service(project=project, user_role="viewer")
+        project = MockProjectInfo("test-project", data=project_data, users=[ProjectUser(email="a@b.nl", role="member")])
+        svc = _mock_project_service(project=project, user_roles=["viewer"])
 
-        request = MagicMock()
-        request.session = {}
-        request.json = AsyncMock(
-            return_value={
-                "_seq_action": "add",
-                "_seq_path": "users",
-                "_seq_index": "",
-            }
+        request = SimpleNamespace(
+            state=SimpleNamespace(user={"email": "a@b.nl"}),
+            session={},
+            path_params={},
+            json=AsyncMock(return_value={"_seq_action": "add", "_seq_path": "users", "_seq_index": ""}),
         )
 
         with (
-            patch("opi.web.project_edit_security.get_current_user", return_value={"email": "a@b.nl"}),
-            patch("opi.web.project_edit_security.get_project_store", return_value=svc),
-            patch("opi.web.project_edit_security.is_user_authorized_for_project", return_value=svc._authorized),
-            patch("opi.web.project_edit_security.get_user_role_for_project", return_value=svc._role),
+            patch("opi.web.authz.get_project_store", return_value=svc),
+            patch("opi.web.authz.get_user_service", return_value=_platformdienst(is_admin=False)),
         ):
             from opi.web.router_detail_edit import sequence_action
 

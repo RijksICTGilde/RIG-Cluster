@@ -830,7 +830,7 @@ class TestHetBlokOpDeProjectpagina:
         from opi.services.catalog.base import ProjectPageContext
 
         return SERVICE.handle_ui(
-            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=_project(), user_role="admin")
+            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=_project(), can=lambda _handeling: True)
         )
 
     def test_het_blok_noemt_beide_adressen_en_het_pad(self, doorlus, op_het_vlam_cluster) -> None:

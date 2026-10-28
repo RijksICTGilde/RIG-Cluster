@@ -15,8 +15,9 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
+from opi.services.project_roles import roles_from_value
 from opi.services.project_service import get_project_service
-from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROL
+from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
 from opi.utils.age import encrypt_age_content, wrap_project_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
@@ -527,18 +528,19 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
 
     # Add users if provided
     users: list[dict[str, Any]] = []
-    if project_data.user_email and project_data.user_role:
-        for email, role in zip(project_data.user_email, project_data.user_role, strict=False):
+    if project_data.user_email and project_data.user_roles:
+        for email, rollen in zip(project_data.user_email, project_data.user_roles, strict=False):
             if email and email.strip():  # Skip empty entries
-                users.append({"email": email.strip(), "role": role})
+                gekozen = sorted(rol.value for rol in roles_from_value(rollen))
+                users.append({"email": email.strip(), "roles": gekozen or list(PROJECT_API_ROLLEN)})
 
-    # Het service account dat de API-toegang van dit project draagt. Rol admin, want het
-    # vervangt de projectsleutel en die opende de hele schrijfkant.
+    # Het service account dat de API-toegang van dit project draagt. De rollen van een
+    # beheerder, want het vervangt de projectsleutel en die opende de hele schrijfkant.
     users.append(
         {
             "type": "service-account",
             "name": PROJECT_API_ACCOUNT,
-            "role": PROJECT_API_ROL,
+            "roles": list(PROJECT_API_ROLLEN),
             "tokens": (
                 [
                     {
@@ -620,7 +622,7 @@ async def generate_base_project_file(
         issuer=None,
         contact_email=None,
         user_email=[owner_email],
-        user_role=["admin"],
+        user_roles=["admin"],
         services=[],
         components=None,
     )

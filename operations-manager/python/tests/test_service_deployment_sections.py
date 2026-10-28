@@ -31,7 +31,7 @@ def _ctx(
     components: list[dict[str, Any]] | None = None,
     prometheus: bool = True,
     cluster: str = "test-cluster",
-    user_role: str = "admin",
+    user_roles: list[str] | None = None,
 ) -> DeploymentPageContext:
     return DeploymentPageContext(
         project_data={
@@ -41,7 +41,7 @@ def _ctx(
             "deployments": [DEPLOYMENT],
         },
         deployment=dict(DEPLOYMENT, cluster=cluster),
-        user_role=user_role,
+        user_roles=user_roles,
         current_cluster="test-cluster",
         backend_available={"prometheus": prometheus, "backups": True},
     )

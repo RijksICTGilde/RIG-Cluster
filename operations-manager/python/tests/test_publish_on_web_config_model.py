@@ -73,7 +73,7 @@ def _project_met_subdomein(subdomain: str, *, cluster: str, base_domain: str) ->
         "name": "amtbz-2m9",
         "description": "Project created via self-service portal",
         "clusters": [cluster],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "services": ["publish-on-web"],
         "repositories": [
             {"name": "main-repo", "url": "https://github.com/rig/amtbz.git", "branch": "main", "path": "."}

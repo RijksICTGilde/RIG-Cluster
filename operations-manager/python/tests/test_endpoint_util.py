@@ -20,7 +20,7 @@ from opi.api.endpoint_util import (
     validate_metrics_scrape_token,
 )
 from opi.core.actor import get_actor, project_api_key_actor
-from opi.core.handelingen import Handeling, handeling
+from opi.core.authz.actions import Action, action
 from opi.core.leden import LidSoort
 from opi.services.project_leden import hash_van
 from starlette.requests import Request
@@ -86,7 +86,7 @@ class TestValidateApiToken:
     async def test_missing_api_key_header(self):
         """Should return 401 when X-API-Key header is missing."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str):
             return {"ok": True}
@@ -104,7 +104,7 @@ class TestValidateApiToken:
     async def test_missing_project_name(self):
         """Should return 401 when project_name is not provided."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -121,7 +121,7 @@ class TestValidateApiToken:
     async def test_invalid_api_key(self):
         """Should return 401 when API key does not match project."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -149,7 +149,7 @@ class TestValidateApiToken:
     async def test_non_ascii_api_key(self):
         """Een niet-ASCII teken in de header is een foute sleutel, geen TypeError."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -177,7 +177,7 @@ class TestValidateApiToken:
     async def test_valid_api_key(self):
         """Should call through when API key matches project."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"project": project_name}
@@ -201,7 +201,7 @@ class TestValidateApiToken:
     async def test_valid_api_key_sets_the_project_actor(self):
         """De actor van een projectsleutel legitimeert een project, geen persoon."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"actor": get_actor()}
@@ -225,7 +225,7 @@ class TestValidateApiToken:
     async def test_project_not_found(self):
         """Should return 401 when project is not found."""
 
-        @handeling(Handeling.PROJECT_LEZEN)
+        @action(Action.PROJECT_READ)
         @validate_api_token
         async def dummy_route(request: Request, project_name: str = ""):
             return {"ok": True}
@@ -263,7 +263,7 @@ class TestLegitimeert:
                     name="bouwstraat",
                     principaal="bouwstraat",
                     email=None,
-                    role="admin",
+                    roles=["admin", "ops"],
                     tokens=[SimpleNamespace(name="pijplijn", expires=_VER_IN_DE_TOEKOMST, hash=hash_van(token_waarde))],
                 )
             ],
@@ -281,7 +281,7 @@ class TestLegitimeert:
     @pytest.mark.asyncio
     async def test_een_onbekend_token_legitimeert_niets(self) -> None:
         """Een token dat dit project niet draagt (bijvoorbeeld van een ander project) is
-        hier niet te onderscheiden van een geraden token: beide geven ``NietHerkend``,
+        hier niet te onderscheiden van een geraden token: beide geven ``NotRecognised``,
         want de zoektocht gebeurt binnen het project uit de URL en dat project draagt
         deze hash niet."""
         store = MagicMock()

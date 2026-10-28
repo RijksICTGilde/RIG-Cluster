@@ -26,10 +26,10 @@ from opi.services.api_token_service import (
     is_projectbeheerder,
     leden_overzicht,
     roteer_token,
+    set_member_roles,
     trek_token_in,
     verwijder_service_account,
     voeg_service_account_toe,
-    wijzig_rol,
 )
 from opi.services.project_leden import TOKEN_PREFIX, hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -48,11 +48,11 @@ def _bestand() -> dict[str, Any]:
         "users": [
             {
                 "email": BEHEERDER,
-                "role": "admin",
+                "roles": ["admin", "ops"],
                 "tokens": [{"name": "cli", "expires": "2030-01-01T00:00:00+00:00", "hash": hash_van("zad_oud")}],
             },
-            {"email": DEV, "role": "developer"},
-            {"type": "service-account", "name": "bouwstraat", "role": "developer", "tokens": []},
+            {"email": DEV, "roles": ["developer"]},
+            {"type": "service-account", "name": "bouwstraat", "roles": ["developer"], "tokens": []},
         ],
     }
 
@@ -65,10 +65,10 @@ def _summary() -> ProjectSummary:
         users=[
             ProjectUser(
                 email=BEHEERDER,
-                role="admin",
+                roles=["admin", "ops"],
                 tokens=[ProjectToken(name="cli", expires=vervalt, hash=hash_van("zad_oud"))],
             ),
-            ProjectUser(email=DEV, role="developer"),
+            ProjectUser(email=DEV, roles=["developer"]),
             ProjectUser(type=LidSoort.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
         ],
     )
@@ -110,26 +110,26 @@ def _lid(bestand: dict[str, Any], naam: str) -> dict[str, Any] | None:
 
 
 async def test_een_beheerder_voegt_een_service_account_toe(store) -> None:
-    await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rol="developer", door=BEHEERDER)
+    await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rollen=["developer"], door=BEHEERDER)
 
     account = _lid(store, "nachtploeg")
-    assert account == {"type": "service-account", "name": "nachtploeg", "role": "developer", "tokens": []}
+    assert account == {"type": "service-account", "name": "nachtploeg", "roles": ["developer"], "tokens": []}
 
 
 async def test_een_ontwikkelaar_voegt_er_geen_toe(store) -> None:
     with pytest.raises(TokenAanvraagGeweigerd, match="beheerder"):
-        await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rol="admin", door=DEV)
+        await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rollen=["admin"], door=DEV)
 
 
 async def test_een_naam_die_geen_dns_label_is_wordt_geweigerd(store) -> None:
     """De naam reist mee in de actor en in de git-trailer."""
     with pytest.raises(TokenAanvraagGeweigerd, match="kleine letters"):
-        await voeg_service_account_toe(project_name=PROJECT, naam="Nacht Ploeg", rol="admin", door=BEHEERDER)
+        await voeg_service_account_toe(project_name=PROJECT, naam="Nacht Ploeg", rollen=["admin"], door=BEHEERDER)
 
 
 async def test_een_onbekende_rol_bij_het_toevoegen_wordt_geweigerd(store) -> None:
     with pytest.raises(TokenAanvraagGeweigerd, match="Onbekende rol"):
-        await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rol="superuser", door=BEHEERDER)
+        await voeg_service_account_toe(project_name=PROJECT, naam="nachtploeg", rollen=["superuser"], door=BEHEERDER)
 
 
 async def test_een_service_account_die_al_bestaat_toevoegen_is_een_stille_no_op(store) -> None:
@@ -137,7 +137,7 @@ async def test_een_service_account_die_al_bestaat_toevoegen_is_een_stille_no_op(
     voor = copy.deepcopy(_lid(store, "bouwstraat"))
     nep = mod.get_project_store()
 
-    await voeg_service_account_toe(project_name=PROJECT, naam="bouwstraat", rol="admin", door=BEHEERDER)
+    await voeg_service_account_toe(project_name=PROJECT, naam="bouwstraat", rollen=["admin"], door=BEHEERDER)
 
     rijen = [lid for lid in store["users"] if lid.get("name") == "bouwstraat"]
     assert rijen == [voor]
@@ -170,29 +170,40 @@ async def test_een_mens_verwijderen_via_deze_route_is_een_stille_no_op(store) ->
     assert nep.laatste_change_resultaat is None
 
 
-async def test_een_rol_wijzigen_raakt_alleen_de_rol(store) -> None:
-    await wijzig_rol(project_name=PROJECT, naam="bouwstraat", rol="admin", door=BEHEERDER)
+async def test_rollen_wijzigen_raakt_alleen_de_rollen(store) -> None:
+    await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=["ops"], door=BEHEERDER)
 
-    assert _lid(store, "bouwstraat")["role"] == "admin"
+    assert _lid(store, "bouwstraat")["roles"] == ["ops"]
 
 
-async def test_dezelfde_rol_opnieuw_zetten_is_een_stille_no_op(store) -> None:
-    nep = mod.get_project_store()
-    await wijzig_rol(project_name=PROJECT, naam="bouwstraat", rol="developer", door=BEHEERDER)
+async def test_de_laatste_admin_weghalen_wordt_geweigerd(store) -> None:
+    """Zonder admin kan niemand nog leden of tokens beheren (ontwerp paragraaf 7)."""
+    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een lid met de rol admin"):
+        await set_member_roles(project_name=PROJECT, naam=BEHEERDER, rollen=["developer"], door=BEHEERDER)
 
-    assert nep.mutate.await_count == 1
-    assert _lid(store, "bouwstraat")["role"] == "developer"
-    assert nep.laatste_change_resultaat is None
+
+async def test_een_lege_lijst_rollen_wordt_geweigerd(store) -> None:
+    with pytest.raises(TokenAanvraagGeweigerd, match="minstens een rol"):
+        await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=[], door=BEHEERDER)
 
 
 async def test_een_onbekende_rol_wordt_geweigerd(store) -> None:
     with pytest.raises(TokenAanvraagGeweigerd, match="Onbekende rol"):
-        await wijzig_rol(project_name=PROJECT, naam="bouwstraat", rol="superuser", door=BEHEERDER)
+        await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=["operator"], door=BEHEERDER)
+
+
+async def test_dezelfde_rol_opnieuw_zetten_is_een_stille_no_op(store) -> None:
+    nep = mod.get_project_store()
+    await set_member_roles(project_name=PROJECT, naam="bouwstraat", rollen=["developer"], door=BEHEERDER)
+
+    assert nep.mutate.await_count == 1
+    assert _lid(store, "bouwstraat")["roles"] == ["developer"]
+    assert nep.laatste_change_resultaat is None
 
 
 async def test_een_onbestaand_lid_een_rol_geven_wordt_geweigerd(store) -> None:
     with pytest.raises(TokenAanvraagGeweigerd, match="geen lid"):
-        await wijzig_rol(project_name=PROJECT, naam="bestaat-niet", rol="admin", door=BEHEERDER)
+        await set_member_roles(project_name=PROJECT, naam="bestaat-niet", rollen=["admin"], door=BEHEERDER)
 
 
 # --- wie mag beheren --------------------------------------------------------
@@ -316,7 +327,7 @@ async def test_een_niet_lid_trekt_ook_zijn_eigen_token_hier_niet_in(store) -> No
 
     Een niet-lid kreeg op een BESTAAND project een stille no-op (303) en op een onbestaand
     een ontsnapte ``ProjectNotFoundError`` (500). Dat verschil zegt of een projectnaam
-    bestaat, precies de grendel die ``herken_principaal`` dichthoudt.
+    bestaat, precies de grendel die ``recognise_principal`` dichthoudt.
     """
     vreemde = "vreemde@rijksoverheid.nl"
     nep = mod.get_project_store()

@@ -1,7 +1,9 @@
 """Tests for schema migration framework."""
 
 import copy
+import logging
 
+import pytest
 from opi.connectors.subdomain import get_domains_config
 from opi.core.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
 from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
@@ -16,6 +18,7 @@ from opi.services.schema_migration import (
     relocate_domain_settings_to_service,
     relocate_registries_to_service,
     remove_domain_mode,
+    roles_as_a_list,
 )
 
 # ---------------------------------------------------------------------------
@@ -1372,7 +1375,7 @@ class TestRemoveDomainMode:
         return {
             "schema-version": 2.7,
             "name": "desa",
-            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
             "clusters": ["odcn-production"],
             "components": [{"name": "website", "type": "deployment", "ports": {"inbound": [8080]}}],
             "deployments": [
@@ -1642,3 +1645,87 @@ class TestRelocateRegistriesToService:
         twice, was_migrated = migrate_to_latest(copy.deepcopy(once))
         assert was_migrated is False
         assert twice == once
+
+
+# ---------------------------------------------------------------------------
+# v2.12 -> v2.13: users[].role: x wordt users[].roles: [...] (RC-392)
+# ---------------------------------------------------------------------------
+
+
+class TestRolesAsAList:
+    @pytest.mark.parametrize(
+        ("oude_rol", "verwachte_rollen"),
+        [
+            ("admin", ["admin", "ops"]),
+            ("owner", ["admin", "ops"]),
+            ("developer", ["developer"]),
+            ("member", ["viewer"]),
+        ],
+    )
+    def test_elke_oude_rol_krijgt_zijn_nieuwe_lijst(self, oude_rol: str, verwachte_rollen: list[str]) -> None:
+        # Een tweede lid met admin, zodat de "geen admin over" fallback hier niet meespeelt:
+        # die heeft zijn eigen test hieronder.
+        data = {
+            "name": "p",
+            "users": [{"email": "a@b.nl", "role": oude_rol}, {"email": "beheerder@b.nl", "role": "admin"}],
+        }
+        gewijzigd = roles_as_a_list(data)
+
+        assert gewijzigd is True
+        assert data["users"][0]["roles"] == verwachte_rollen
+        assert "role" not in data["users"][0]
+
+    def test_een_onbekende_rol_wordt_viewer_en_logt_een_waarschuwing(self, caplog: pytest.LogCaptureFixture) -> None:
+        data = {
+            "name": "p",
+            "users": [{"email": "a@b.nl", "role": "operator"}, {"email": "beheerder@b.nl", "role": "admin"}],
+        }
+
+        with caplog.at_level(logging.WARNING, logger="opi.services.schema_migration"):
+            gewijzigd = roles_as_a_list(data)
+
+        assert gewijzigd is True
+        assert data["users"][0]["roles"] == ["viewer"]
+        assert any("operator" in record.message for record in caplog.records)
+
+    def test_een_lid_dat_al_roles_draagt_blijft_onaangeraakt(self) -> None:
+        data = {"name": "p", "users": [{"email": "a@b.nl", "roles": ["developer"]}]}
+
+        gewijzigd = roles_as_a_list(data)
+
+        assert gewijzigd is False
+        assert data["users"][0]["roles"] == ["developer"]
+
+    def test_zonder_users_lijst_gebeurt_er_niets(self) -> None:
+        assert roles_as_a_list({"name": "p"}) is False
+
+    def test_blijft_na_migratie_zonder_admin_krijgt_het_eerste_lid_admin_erbij(self) -> None:
+        """Zonder deze regel zou een bestand na de migratie ongeldig worden: het schema
+        eist minstens een lid met ``admin`` (``minContains`` op ``users``)."""
+        data = {
+            "name": "p",
+            "users": [
+                {"email": "a@b.nl", "role": "developer"},
+                {"email": "b@b.nl", "role": "member"},
+            ],
+        }
+
+        roles_as_a_list(data)
+
+        assert data["users"][0]["roles"] == ["admin", "developer"]
+        assert data["users"][1]["roles"] == ["viewer"]
+        validate_project_schema({**data, "schema-version": LATEST_SCHEMA_VERSION_VALUE})
+
+    def test_blijft_na_migratie_met_een_admin_laat_de_leden_verder_ongemoeid(self) -> None:
+        data = {
+            "name": "p",
+            "users": [
+                {"email": "a@b.nl", "role": "developer"},
+                {"email": "b@b.nl", "role": "admin"},
+            ],
+        }
+
+        roles_as_a_list(data)
+
+        assert data["users"][0]["roles"] == ["developer"]
+        assert data["users"][1]["roles"] == ["admin", "ops"]

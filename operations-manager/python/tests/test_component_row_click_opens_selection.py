@@ -28,9 +28,9 @@ PROJECT = {
 }
 
 
-def _render(user_role: str = "admin") -> str:
+def _render(mag: bool = True) -> str:
     return templates.env.get_template("bg/_section-deployments.html.j2").render(
-        {"project": PROJECT, "user_role": user_role}
+        {"project": PROJECT, "can": lambda *_a, **_k: mag}
     )
 
 
@@ -58,6 +58,6 @@ def test_het_andere_component_in_dezelfde_deployment_krijgt_zijn_eigen_naam() ->
 
 
 def test_zonder_bewerkrol_is_de_rij_niet_klikbaar() -> None:
-    html = _render(user_role="member")
+    html = _render(mag=False)
 
     assert "openEditModal(" not in html

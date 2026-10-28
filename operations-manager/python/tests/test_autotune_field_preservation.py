@@ -96,7 +96,7 @@ config:
     -----END AGE ENCRYPTED FILE-----
 users:
 - email: dev@example.com
-  role: admin
+  roles: [admin, ops]
 components:
 - name: backend
   type: single

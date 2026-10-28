@@ -299,7 +299,7 @@ def test_project_with_a_per_deployment_certificate_validates() -> None:
     project = {
         "schema-version": 2,
         "name": "demo",
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         "clusters": ["odcn-production"],
         **{k: v for k, v in _two_deployments().items() if k in ("services", "components", "deployments")},
     }

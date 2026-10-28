@@ -57,8 +57,8 @@ def build_project() -> dict[str, Any]:
         "display-name": "Netjes Project",
         "description": "Blijft heel bij elke bewerking",
         "users": [
-            {"email": "admin@rijksoverheid.nl", "role": "admin"},
-            {"email": "dev@rijksoverheid.nl", "role": "developer"},
+            {"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]},
+            {"email": "dev@rijksoverheid.nl", "roles": ["developer"]},
         ],
         "clusters": ["sandboxed-local"],
         "services": [
@@ -292,7 +292,7 @@ FLOW_EDITS: list[tuple[str, str, Any, dict[str, Any]]] = [
         "example.invalid/frontend:2.0",
         {"component_count": 2},
     ),
-    ("modal-edit-team", "users[1]/role", "admin", {}),
+    ("modal-edit-team", "users[1]/roles", ["admin"], {}),
     ("modal-edit-components", "components[1]/resources/limits/memory", "1Gi", {}),
     ("modal-edit-services", "services/keycloak/config/template", "algoritmeregister", {}),
     ("modal-edit-backup-schedule-0", "deployments[0]/backup/schedule", "0 3 * * *", {}),

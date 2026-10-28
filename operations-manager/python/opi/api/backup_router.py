@@ -10,10 +10,10 @@ from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.api.user_token_auth import validate_platform_admin_token
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
+from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.handelingen import Handeling, handeling
 from opi.handlers.project_file_handler import create_project_file_handler
 from opi.manager.backup import (
     BackupResult,
@@ -305,6 +305,7 @@ def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultMod
 
 
 @backup_router.get("/status", response_model=BackupStatusResponse)
+@action(Action.PLATFORM_BACKUP)
 @validate_platform_admin_token
 async def get_backup_status(request: Request) -> BackupStatusResponse:
     """
@@ -343,7 +344,7 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
 
 
 @backup_router.post("/project/{project_name}/deployment/{deployment_name}", response_model=DeploymentBackupResponse)
-@handeling(Handeling.BACKUP_MAKEN)
+@action(Action.BACKUP_CREATE)
 @validate_api_token
 async def backup_project_deployment(
     request: Request,
@@ -654,7 +655,7 @@ async def backup_project_deployment(
 
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
-@handeling(Handeling.BACKUP_LEZEN)
+@action(Action.BACKUP_READ)
 @validate_api_token
 async def list_backup_runs(request: Request, project_name: ProjectNamePath, deployment_name: str) -> BackupRunsResponse:
     """
@@ -798,7 +799,7 @@ class DeleteSnapshotResponse(BaseModel):
     "/snapshot/{project_name}/{deployment_name}/{snapshot_id}",
     response_model=DeleteSnapshotResponse,
 )
-@handeling(Handeling.BACKUP_VERWIJDEREN)
+@action(Action.BACKUP_DELETE)
 @validate_api_token
 async def delete_snapshot(
     request: Request,

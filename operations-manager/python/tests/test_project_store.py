@@ -44,7 +44,7 @@ def _project(deployments: list[dict[str, Any]] | None = None, **extra: Any) -> d
         "name": PROJECT_NAME,
         "display-name": "Demo",
         "description": "test project",
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["odcn-production"],
         "services": [],
         "components": [],

@@ -32,7 +32,7 @@ EMPTY_PROJECT: dict[str, Any] = {
     "name": PROJECT,
     "display-name": "Vers project",
     "clusters": ["local"],
-    "users": [{"email": "user@example.com", "role": "admin"}],
+    "users": [{"email": "user@example.com", "roles": ["admin", "ops"]}],
     "repositories": [{"name": "main-repo", "url": "https://example.test/repo.git"}],
     "components": [
         {

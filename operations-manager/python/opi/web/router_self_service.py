@@ -13,6 +13,7 @@ from opi.connectors.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
@@ -47,6 +48,7 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
     return result
 
 
+@action(Action.PORTAL_READ)
 @requires_sso
 async def check_subdomain_availability_web(request: Request) -> JSONResponse:
     """

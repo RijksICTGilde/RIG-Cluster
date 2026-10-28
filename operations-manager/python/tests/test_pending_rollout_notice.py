@@ -17,9 +17,9 @@ _SECTION = "bg/_pending-rollout.html.j2"
 _TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc"
 
 
-def _render(pending: dict | None, user_role: str = "admin") -> str:
+def _render(pending: dict | None, mag: bool = True) -> str:
     return templates_lotc.get_template(_SECTION).render(
-        {"pending_rollout": pending, "user_role": user_role, "project": {"name": "wies"}}
+        {"pending_rollout": pending, "can": lambda *_a, **_k: mag, "project": {"name": "wies"}}
     )
 
 
@@ -56,7 +56,7 @@ def test_the_notice_offers_the_button_that_resolves_it() -> None:
 
 
 def test_a_reader_sees_the_drift_but_not_the_button() -> None:
-    html = _render({"count": 1, "since": None, "task_types": []}, user_role="developer")
+    html = _render({"count": 1, "since": None, "task_types": []}, mag=False)
 
     assert "nog niet uitgerold" in html
     assert "Nu verwerken" not in html

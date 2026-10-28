@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.api.principaal import NietHerkend, herken_principaal
+from opi.api.principal import NotRecognised, recognise_principal
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug
@@ -58,12 +58,12 @@ def _project() -> dict[str, Any]:
         "display-name": "Netjes",
         "description": "x",
         "users": [
-            {"email": "dev@rijksoverheid.nl", "role": "developer", "tokens": [_token("dev-laptop", DEV_TOKEN)]},
-            {"email": "baas@rijksoverheid.nl", "role": "admin", "tokens": [_token("baas-cli", BAAS_TOKEN)]},
+            {"email": "dev@rijksoverheid.nl", "roles": ["developer"], "tokens": [_token("dev-laptop", DEV_TOKEN)]},
+            {"email": "baas@rijksoverheid.nl", "roles": ["admin", "ops"], "tokens": [_token("baas-cli", BAAS_TOKEN)]},
             {
                 "type": "service-account",
                 "name": "project-api",
-                "role": "admin",
+                "roles": ["admin", "ops"],
                 "tokens": [_token("projectsleutel", SA_TOKEN)],
             },
         ],
@@ -76,7 +76,7 @@ def _project() -> dict[str, Any]:
 
 
 #: Wat de browser post als de beheerder de bovenste rij (``dev@``) weghaalt.
-BODY_DEV_WEG = {"users": [{"email": "baas@rijksoverheid.nl", "role": "admin"}]}
+BODY_DEV_WEG = {"users": [{"email": "baas@rijksoverheid.nl", "roles": ["admin", "ops"]}]}
 
 
 # --- de twee functies zelf, op hun randen -----------------------------------
@@ -92,7 +92,7 @@ def test_leden_voor_formulier_laat_data_zonder_ledenlijst_ongewijzigd() -> None:
 
 def test_zet_verborgen_leden_terug_doet_niets_zonder_ledenlijst() -> None:
     merged = {"name": "x"}
-    stored = {"name": "x", "users": [{"email": "a@b.nl", "role": "admin"}]}
+    stored = {"name": "x", "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}]}
 
     zet_verborgen_leden_terug(merged, stored)
 
@@ -114,14 +114,14 @@ def test_zet_verborgen_leden_terug_negeert_een_service_account_in_het_ingediende
     terecht, dan telt alleen het exemplaar uit het bestand, niet een tweede ernaast."""
     merged = {
         "users": [
-            {"email": "a@b.nl", "role": "admin"},
-            {"type": "service-account", "name": "indringer", "role": "admin"},
+            {"email": "a@b.nl", "roles": ["admin", "ops"]},
+            {"type": "service-account", "name": "indringer", "roles": ["admin", "ops"]},
         ]
     }
     stored = {
         "users": [
-            {"email": "a@b.nl", "role": "admin"},
-            {"type": "service-account", "name": "bouwstraat", "role": "developer"},
+            {"email": "a@b.nl", "roles": ["admin", "ops"]},
+            {"type": "service-account", "name": "bouwstraat", "roles": ["developer"]},
         ]
     }
 
@@ -195,11 +195,11 @@ async def test_het_token_van_het_weggehaalde_lid_legitimeert_niemand(flow_id: st
     assert project is not None
     get_user_service().add_allowed_emails(["baas@rijksoverheid.nl"])
 
-    with pytest.raises(NietHerkend):
-        await herken_principaal(DEV_TOKEN, project)
+    with pytest.raises(NotRecognised):
+        await recognise_principal(DEV_TOKEN, project)
 
-    assert (await herken_principaal(BAAS_TOKEN, project)).naam == "baas@rijksoverheid.nl"
-    assert (await herken_principaal(SA_TOKEN, project)).naam == "project-api"
+    assert (await recognise_principal(BAAS_TOKEN, project)).name == "baas@rijksoverheid.nl"
+    assert (await recognise_principal(SA_TOKEN, project)).name == "project-api"
 
 
 #: De twee formulierwegen die ``users`` als geheel schrijven, met de plek waar ze de

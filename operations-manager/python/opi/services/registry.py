@@ -13,6 +13,7 @@ postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system"
 from __future__ import annotations
 
 import re
+from collections.abc import Callable  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.aliases import AliasesService
@@ -44,6 +45,7 @@ from opi.services.catalog.vlam import VlamService
 from opi.services.services_enums import ActionEvent, ServiceEvent, ServiceType, UIEvent
 
 if TYPE_CHECKING:
+    from opi.core.authz.actions import Action
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.services import DeploymentAction, ServiceDefinition
@@ -282,7 +284,7 @@ def find_deployment_action(project_data: dict, deployment_name: str, action_key:
     return None
 
 
-def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
+def collect_detail_page_sections(project_data: dict, can: Callable[[Action], bool]) -> list:
     """Read-only detail-page sections contributed by the services a project uses (WP2).
 
     Only services the project actually selects (project-level or referenced by a
@@ -292,7 +294,7 @@ def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
     """
     from opi.services.catalog.base import DetailPageSection
 
-    payload = ProjectPageContext(project_data=project_data, user_role=user_role)
+    payload = ProjectPageContext(project_data=project_data, can=can)
     sections: list[DetailPageSection] = []
     for service in listeners(UIEvent.PROJECT_SECTIONS, project_data):
         sections.extend(service.handle_ui(UIEvent.PROJECT_SECTIONS, payload))

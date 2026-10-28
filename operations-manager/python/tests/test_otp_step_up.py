@@ -20,12 +20,12 @@ from opi.api.otp_step_up import (
     step_up_problem_response,
     verify_api_step_up,
 )
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 PROJECT = "demo"
 EIGENAAR = "eigenaar@example.org"
-ACTIE = StepUpActie.DEPLOYMENT_VERWIJDEREN
+ACTIE = StepUpAction.DEPLOYMENT_DELETE
 
 
 def _request(headers: dict[str, str] | None = None, *, owner: str | None = None) -> SimpleNamespace:
@@ -53,7 +53,7 @@ def _otp_service(uitkomst: OtpVerification, *, status: OtpStatus | None = None) 
 async def test_projectsleutel_zonder_code_weigert_op_de_tokensoort() -> None:
     probleem = await _verify(_request())
     assert probleem is not None
-    assert probleem.cause is StepUpCause.TOKENSOORT_NIET_TOEGESTAAN
+    assert probleem.cause is StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED
     assert "persoonlijk token" in probleem.remedy
 
 
@@ -67,7 +67,7 @@ async def test_projectsleutel_met_een_code_weigert_nog_steeds(caplog: pytest.Log
         probleem = await _verify(_request({"X-ZAD-OTP": "123456"}))
 
     assert probleem is not None
-    assert probleem.cause is StepUpCause.TOKENSOORT_NIET_TOEGESTAAN
+    assert probleem.cause is StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED
     service_cls.assert_not_called()
     assert any("sleutel zonder gebruiker" in r.getMessage() for r in caplog.records)
 
@@ -81,7 +81,7 @@ async def test_projectsleutel_met_een_code_weigert_nog_steeds(caplog: pytest.Log
 async def test_token_zonder_code_vraagt_om_de_header() -> None:
     probleem = await _verify(_request(owner=EIGENAAR))
     assert probleem is not None
-    assert probleem.cause is StepUpCause.OTP_ONTBREEKT
+    assert probleem.cause is StepUpCause.OTP_MISSING
     assert probleem.otp_header == "X-ZAD-OTP"
 
 
@@ -118,7 +118,7 @@ async def test_zonder_bevestigde_factor_wijst_het_antwoord_de_weg() -> None:
         probleem = await _verify(_request({"X-ZAD-OTP": "123456"}, owner=EIGENAAR))
 
     assert probleem is not None
-    assert probleem.cause is StepUpCause.FACTOR_ONTBREEKT
+    assert probleem.cause is StepUpCause.FACTOR_MISSING
     assert probleem.enroll_url == OTP_ENROLL_PATH
 
 
@@ -128,7 +128,7 @@ async def test_een_ongeldige_of_hergebruikte_code_geeft_een_reden_zonder_details
         probleem = await _verify(_request({"X-ZAD-OTP": "000000"}, owner=EIGENAAR))
 
     assert probleem is not None
-    assert probleem.cause is StepUpCause.CODE_ONGELDIG
+    assert probleem.cause is StepUpCause.CODE_INVALID
     assert probleem.blocked_until is None
     assert "000000" not in probleem.detail
 
@@ -141,7 +141,7 @@ async def test_geblokkeerd_zegt_wanneer_het_weer_mag() -> None:
         probleem = await _verify(_request({"X-ZAD-OTP": "000000"}, owner=EIGENAAR))
 
     assert probleem is not None
-    assert probleem.cause is StepUpCause.GEBLOKKEERD
+    assert probleem.cause is StepUpCause.BLOCKED
     assert probleem.blocked_until == tot.isoformat()
 
 
@@ -156,7 +156,7 @@ async def test_het_probleem_noemt_de_handeling_en_waarom() -> None:
     assert probleem is not None
     assert probleem.type == STEP_UP_PROBLEM_TYPE
     assert probleem.status == 403
-    assert probleem.action == "deployment-verwijderen"
+    assert probleem.action == "deployment-delete"
     assert probleem.reason == "de deployment 'prod' staat op productie"
     assert probleem.instance == f"/api/projects/{PROJECT}"
 

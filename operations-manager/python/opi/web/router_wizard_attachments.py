@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
@@ -192,6 +193,7 @@ def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
 
 
 @wizard_attachments_router.get("/{flow_id}/attachments/list")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def list_staged(request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")):
     """Render the unified attachments list (used on section load)."""
@@ -200,6 +202,7 @@ async def list_staged(request: Request, flow_id: str, wizard_token: str | None =
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/stage")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def stage_attachment(
     request: Request,
@@ -266,6 +269,7 @@ async def stage_attachment(
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/validate-id")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def validate_attachment_id(
     request: Request,
@@ -297,6 +301,7 @@ async def validate_attachment_id(
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/unstage/{attachment_id}")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def unstage_attachment(
     request: Request,
@@ -324,6 +329,7 @@ async def unstage_attachment(
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/remove-existing/{attachment_id}")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def remove_existing_attachment(
     request: Request,

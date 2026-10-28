@@ -30,7 +30,7 @@ STORED_DATA: dict[str, Any] = {
     "name": PROJECT_NAME,
     "display-name": "Selectieproef",
     "clusters": ["sandboxed-local"],
-    "users": [{"email": OWNER_EMAIL, "role": "owner"}],
+    "users": [{"email": OWNER_EMAIL, "roles": ["admin", "ops"]}],
     "config": {
         "api-key": AGE_BLOB,
         "age-public-key": "age1publicpublicpublic",

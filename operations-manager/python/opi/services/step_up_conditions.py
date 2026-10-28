@@ -45,28 +45,14 @@ def vraagt_altijd_step_up(request: Request, **_: Any) -> bool:
     return True
 
 
-def project_in_production(request: Request, *, project_name: str = "", **_: Any) -> bool:
-    """Een van de deployments van het project staat effectief op productie."""
-    return requires_production_step_up(StepUpKind.PROJECT, _project_data(request, project_name))
-
-
-def deployment_in_production(request: Request, *, project_name: str = "", deployment_name: str = "", **_: Any) -> bool:
-    """De effectieve markering van deze deployment is productie."""
-    return requires_production_step_up(StepUpKind.DEPLOYMENT, _project_data(request, project_name), deployment_name)
-
-
-def component_in_production(request: Request, *, project_name: str = "", component_name: str = "", **_: Any) -> bool:
-    """Een deployment op productie gebruikt dit component."""
-    return requires_production_step_up(StepUpKind.COMPONENT, _project_data(request, project_name), component_name)
-
-
-def deployment_environment_downgrade(
+def deployment_environment_change(
     request: Request, *, project_name: str = "", deployment_data: Any = None, **_: Any
 ) -> bool:
-    """De aanroep haalt een BESTAANDE deployment van productie af.
+    """De aanroep ZET of VERLAAGT de OTAP-markering van deze deployment.
 
-    Een nieuwe deployment kan niets verlagen, en een aanroep zonder markering laat de
-    bestaande staan.
+    Een aanroep zonder markering laat de bestaande staan. Welke wijzigingen meetellen
+    staat in :func:`opi.core.step_up.any_marking_change`; een deployment die nog niet
+    bestaat gaat daar als nieuw naar binnen, zonder voor-staat.
     """
     gevraagd = getattr(deployment_data, "environment", None)
     if gevraagd is None:
@@ -74,8 +60,6 @@ def deployment_environment_downgrade(
     project_data = _project_data(request, project_name)
     naam = str(getattr(deployment_data, "deploymentName", ""))
     bestaand = deployment_by_name(project_data, naam)
-    if bestaand is None:
-        return False
-    before = {naam: effective_environment(bestaand)}
+    before = {naam: effective_environment(bestaand)} if bestaand is not None else {}
     after = {naam: Omgeving(gevraagd)}
     return requires_production_step_up(StepUpKind.ENVIRONMENT, project_data, change=(before, after))

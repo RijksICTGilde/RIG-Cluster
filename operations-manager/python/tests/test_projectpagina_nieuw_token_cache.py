@@ -47,7 +47,7 @@ def _projectbestand(publieke_sleutel: str) -> dict[str, Any]:
         "name": PROJECT,
         "display-name": "Cachetoets",
         "clusters": ["odcn-production"],
-        "users": [{"email": LID, "role": "admin"}],
+        "users": [{"email": LID, "roles": ["admin", "ops"]}],
         "config": {"age-public-key": publieke_sleutel, "age-private-key": "ingepakt-door-de-kek"},
     }
 
@@ -82,7 +82,7 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, pad: str, sessie: dict[str, A
     # gemeten wordt: de header op het antwoord.
     monkeypatch.setattr(router, "unwrap_project_key", _vast(project_prive))
     monkeypatch.setattr(router, "is_user_authorized_for_project", lambda *_: True)
-    monkeypatch.setattr(router, "get_user_role_for_project", lambda *_: "admin")
+    monkeypatch.setattr(router, "get_user_roles_for_project", lambda *_: ["admin", "ops"])
     project = ProjectSummary(
         name=PROJECT,
         filename=f"{PROJECT}.yaml",

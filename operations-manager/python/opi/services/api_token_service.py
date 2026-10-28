@@ -20,22 +20,29 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from opi.api.principaal import SCHRIJFROLLEN
 from opi.core.actor import user_actor
+from opi.core.authz.engine import Role, effective_roles
 from opi.core.config import settings
 from opi.core.leden import LidSoort
 from opi.services.project_leden import TOKEN_PREFIX, hash_van, is_verlopen, lid_met_naam, nieuw_token, vervaldatum
+from opi.services.project_roles import roles_from_value
 from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from datetime import datetime
 
     from opi.services.project_service import ProjectUser
 
 logger = logging.getLogger(__name__)
 
-#: De rollen die een lid kan hebben. Dezelfde vier als in het schema.
-ROLLEN = ("admin", "owner", "member", "developer")
+#: De rollen die een lid kan hebben, als sleutels. Uit het register, zodat een rol die
+#: daar bijkomt hier niet vergeten kan worden.
+ROLLEN: tuple[str, ...] = tuple(rol.value for rol in Role)
+
+#: De rollen die een nieuw lid vooraf gekozen krijgt (B12). Een voorinvulling, geen vaste
+#: toekenning: de admin die het lid toevoegt kiest.
+STANDAARD_ROLLEN: tuple[str, ...] = (Role.DEVELOPER.value,)
 
 #: Een service-accountnaam is een DNS-label: hij reist mee in de actor en in de
 #: git-trailer, dus hij moet overal als een label te schrijven zijn.
@@ -66,10 +73,10 @@ def _lid(project_name: str, naam: str) -> ProjectUser | None:
     return lid_met_naam(project, naam) if project is not None else None
 
 
-def _rol(project_name: str, naam: str) -> str | None:
-    """De huidige rol van dit lid in dit project, of None als het geen lid is."""
+def _rollen(project_name: str, naam: str) -> list[str]:
+    """De huidige rollen van dit lid in dit project; leeg als het geen lid is."""
     lid = _lid(project_name, naam)
-    return lid.role if lid is not None else None
+    return list(lid.roles) if lid is not None else []
 
 
 def _eis_lid(project_name: str, door: str) -> None:
@@ -78,7 +85,7 @@ def _eis_lid(project_name: str, door: str) -> None:
     Zonder deze eis gaf een intrekking op een BESTAAND project een stille no-op en op een
     onbestaand een 500, en dat verschil leest als "bestaat deze projectnaam".
     """
-    if _rol(project_name, door) is None:
+    if not _rollen(project_name, door):
         raise TokenAanvraagGeweigerd("Je bent geen lid van dit project.")
 
 
@@ -88,11 +95,11 @@ def is_projectbeheerder(project_name: str, naam: str) -> bool:
     Voor de interface, zodat een knop dezelfde bron leest als de weigering erachter: een
     platformbeheerder die geen lid is krijgt hier False en ziet de knoppen dus niet.
     """
-    return _rol(project_name, naam) in SCHRIJFROLLEN
+    return Role.ADMIN in effective_roles(roles_from_value(_rollen(project_name, naam)))
 
 
 def _eis_beheerder(project_name: str, door: str) -> None:
-    if _rol(project_name, door) not in SCHRIJFROLLEN:
+    if Role.ADMIN not in effective_roles(roles_from_value(_rollen(project_name, door))):
         raise TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")
 
 
@@ -124,20 +131,19 @@ async def _wijzig(project_name: str, change: Any, *, bericht: str, door: str) ->
     await get_project_store().mutate(project_name, change, message=bericht, actor=user_actor(door))
 
 
-async def voeg_service_account_toe(*, project_name: str, naam: str, rol: str, door: str) -> None:
+async def voeg_service_account_toe(*, project_name: str, naam: str, rollen: list[str], door: str) -> None:
     """Zet een service account in de ledenlijst van dit project."""
     _eis_beheerder(project_name, door)
     if not NAAM_PATROON.match(naam):
         raise TokenAanvraagGeweigerd(
             "Een naam bestaat uit kleine letters, cijfers en streepjes, en begint met een letter."
         )
-    if rol not in ROLLEN:
-        raise TokenAanvraagGeweigerd(f"Onbekende rol '{rol}'.")
+    gekozen = schoon_rollen(rollen)
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
         if _zoek_lid(data, naam) is not None:
             return None
-        _leden(data).append({"type": LidSoort.SERVICE_ACCOUNT.value, "name": naam, "role": rol, "tokens": []})
+        _leden(data).append({"type": LidSoort.SERVICE_ACCOUNT.value, "name": naam, "roles": gekozen, "tokens": []})
         return data
 
     await _wijzig(project_name, change, bericht=f"Service account '{naam}' toegevoegd", door=door)
@@ -157,22 +163,74 @@ async def verwijder_service_account(*, project_name: str, naam: str, door: str) 
     await _wijzig(project_name, change, bericht=f"Service account '{naam}' verwijderd", door=door)
 
 
-async def wijzig_rol(*, project_name: str, naam: str, rol: str, door: str) -> None:
-    """Geef een lid een andere rol. Zijn tokens volgen die rol meteen."""
+def schoon_rollen(rollen: Iterable[str]) -> list[str]:
+    """De gekozen rollen als geldige, ontdubbelde, gesorteerde lijst.
+
+    Raises:
+        TokenAanvraagGeweigerd: Bij een lege lijst of een rol die niet bestaat.
+    """
+    gekozen = sorted({str(rol) for rol in rollen if str(rol)})
+    if not gekozen:
+        raise TokenAanvraagGeweigerd("Kies minstens een rol.")
+    onbekend = [rol for rol in gekozen if rol not in ROLLEN]
+    if onbekend:
+        raise TokenAanvraagGeweigerd(f"Onbekende rol: {', '.join(onbekend)}.")
+    return gekozen
+
+
+def eis_een_admin(data: dict[str, Any]) -> None:
+    """Weiger een ledenlijst waarin niemand de rol admin heeft.
+
+    De ENE lezer van die eis: zowel een rolwijziging per lid als de team-wizard, die de
+    hele lijst in een keer schrijft, lopen hier langs.
+
+    Raises:
+        TokenAanvraagGeweigerd: Als er geen lid met de rol admin overblijft.
+    """
+    if not any(isinstance(lid, dict) and Role.ADMIN.value in (lid.get("roles") or []) for lid in _leden(data)):
+        raise TokenAanvraagGeweigerd("Een project houdt minstens een lid met de rol admin.")
+
+
+def zet_rollen_in_data(data: dict[str, Any], naam: str, rollen: list[str]) -> dict[str, Any] | None:
+    """Zet de rollen van dit lid in de projectdata. None als er niets verandert.
+
+    Apart van :func:`set_member_roles`, omdat die het bestand uitleest en wegschrijft en
+    deze stap alleen de data raakt; de taakomgeving van de wijziging hoort niet in de
+    guard.
+
+    Raises:
+        TokenAanvraagGeweigerd: Als het lid er niet is, of als het project zonder admin
+            zou achterblijven.
+    """
+    lid = _zoek_lid(data, naam)
+    if lid is None:
+        raise TokenAanvraagGeweigerd(f"'{naam}' is geen lid van dit project.")
+    if list(lid.get("roles") or []) == rollen:
+        return None
+    was = lid.get("roles")
+    lid["roles"] = rollen
+    try:
+        eis_een_admin(data)
+    except TokenAanvraagGeweigerd:
+        lid["roles"] = was
+        raise
+    return data
+
+
+async def set_member_roles(*, project_name: str, naam: str, rollen: list[str], door: str) -> None:
+    """Geef een lid andere rollen. Zijn tokens volgen die rollen meteen.
+
+    De ENE schrijfweg voor rollen (ontwerp paragraaf 7): de Team-kaart, de API-route en
+    de team-wizard lopen hier langs, zodat de drie niet uit elkaar kunnen lopen op wat
+    een geldige rol is of op de eis dat er een admin overblijft.
+    """
     _eis_beheerder(project_name, door)
-    if rol not in ROLLEN:
-        raise TokenAanvraagGeweigerd(f"Onbekende rol '{rol}'.")
+    gekozen = schoon_rollen(rollen)
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
-        lid = _zoek_lid(data, naam)
-        if lid is None:
-            raise TokenAanvraagGeweigerd(f"'{naam}' is geen lid van dit project.")
-        if lid.get("role") == rol:
-            return None
-        lid["role"] = rol
-        return data
+        return zet_rollen_in_data(data, naam, gekozen)
 
-    await _wijzig(project_name, change, bericht=f"Rol van '{naam}' is nu '{rol}'", door=door)
+    await _wijzig(project_name, change, bericht=f"Rollen van '{naam}' zijn nu {gekozen}", door=door)
 
 
 def _eis_mag_uitgeven(project_name: str, naam: str, door: str) -> int:
@@ -271,7 +329,8 @@ def leden_overzicht(project_name: str) -> list[dict[str, Any]]:
         {
             "naam": lid.principaal,
             "soort": lid.type.value,
-            "rol": lid.role,
+            "rollen": list(lid.roles),
+            "rol_labels": lid.rol_labels,
             "tokens": [{"naam": t.name, "vervalt": t.expires, "verlopen": is_verlopen(t.expires)} for t in lid.tokens],
         }
         for lid in (project.users or [] if project else [])
@@ -281,15 +340,19 @@ def leden_overzicht(project_name: str) -> list[dict[str, Any]]:
 __all__ = [
     "NAAM_PATROON",
     "ROLLEN",
+    "STANDAARD_ROLLEN",
     "TOKEN_PREFIX",
     "TokenAanvraagGeweigerd",
+    "eis_een_admin",
     "geef_token_uit",
     "hash_van",
     "is_projectbeheerder",
     "leden_overzicht",
     "roteer_token",
+    "schoon_rollen",
+    "set_member_roles",
     "trek_token_in",
     "verwijder_service_account",
     "voeg_service_account_toe",
-    "wijzig_rol",
+    "zet_rollen_in_data",
 ]

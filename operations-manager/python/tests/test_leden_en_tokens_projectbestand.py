@@ -25,7 +25,6 @@ from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION_VALUE,
     PROJECT_API_ACCOUNT,
-    PROJECT_API_ROL,
     migrate_to_latest,
 )
 from pydantic import ValidationError
@@ -52,8 +51,8 @@ def test_een_mens_en_een_service_account_staan_in_dezelfde_lijst() -> None:
     validate_project_schema(
         _bestand(
             [
-                {"email": "beheerder@rijksoverheid.nl", "role": "admin"},
-                {"type": "service-account", "name": "bouwstraat", "role": "developer"},
+                {"email": "beheerder@rijksoverheid.nl", "roles": ["admin", "ops"]},
+                {"type": "service-account", "name": "bouwstraat", "roles": ["developer"]},
             ]
         )
     )
@@ -65,19 +64,21 @@ def test_een_service_account_heeft_geen_e_mailadres() -> None:
     ``human_members`` moet voorkomen."""
     with pytest.raises(ProjectSchemaError):
         validate_project_schema(
-            _bestand([{"type": "service-account", "name": "bouwstraat", "role": "admin", "email": "x@y.nl"}])
+            _bestand([{"type": "service-account", "name": "bouwstraat", "roles": ["admin", "ops"], "email": "x@y.nl"}])
         )
 
 
 def test_een_mens_heeft_geen_naam() -> None:
     with pytest.raises(ProjectSchemaError):
-        validate_project_schema(_bestand([{"email": "a@b.nl", "role": "admin", "name": "bouwstraat"}]))
+        validate_project_schema(_bestand([{"email": "a@b.nl", "roles": ["admin", "ops"], "name": "bouwstraat"}]))
 
 
 def test_een_service_accountnaam_is_een_dns_label() -> None:
     """De naam reist mee in de actor en in de git-trailer, dus hij moet overal te schrijven zijn."""
     with pytest.raises(ProjectSchemaError):
-        validate_project_schema(_bestand([{"type": "service-account", "name": "Bouw Straat", "role": "admin"}]))
+        validate_project_schema(
+            _bestand([{"type": "service-account", "name": "Bouw Straat", "roles": ["admin", "ops"]}])
+        )
 
 
 def test_een_token_draagt_een_naam_een_vervaldatum_en_een_hash() -> None:
@@ -86,7 +87,7 @@ def test_een_token_draagt_een_naam_een_vervaldatum_en_een_hash() -> None:
             [
                 {
                     "email": "a@b.nl",
-                    "role": "admin",
+                    "roles": ["admin", "ops"],
                     "tokens": [{"name": "cli", "expires": "2027-01-01T00:00:00+00:00", "hash": EEN_HASH}],
                 }
             ]
@@ -98,7 +99,7 @@ def test_een_token_zonder_vervaldatum_bestaat_niet() -> None:
     """Een uitzondering die eenmaal bestaat wordt de norm, dus die is er niet."""
     with pytest.raises(ProjectSchemaError):
         validate_project_schema(
-            _bestand([{"email": "a@b.nl", "role": "admin", "tokens": [{"name": "cli", "hash": EEN_HASH}]}])
+            _bestand([{"email": "a@b.nl", "roles": ["admin", "ops"], "tokens": [{"name": "cli", "hash": EEN_HASH}]}])
         )
 
 
@@ -111,7 +112,7 @@ def test_een_token_draagt_nooit_de_waarde_zelf() -> None:
                 [
                     {
                         "email": "a@b.nl",
-                        "role": "admin",
+                        "roles": ["admin", "ops"],
                         "tokens": [
                             {
                                 "name": "cli",
@@ -136,7 +137,7 @@ def test_een_niet_verplaatste_projectsleutel_houdt_het_bestand_geldig() -> None:
     """
     validate_project_schema(
         _bestand(
-            [{"email": "a@b.nl", "role": "admin"}],
+            [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
             config={"api-key": "base64+age:ZmFrZQ=="},
         )
     )
@@ -162,7 +163,7 @@ def _op_2_11(api_key: str = "de-oude-sleutel") -> dict:
     return {
         "schema-version": "2.11",
         "name": "bouwput",
-        "users": [{"email": "beheerder@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "beheerder@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "config": {"age-public-key": "age1x", "api-key": api_key},
     }
 
@@ -176,7 +177,8 @@ def test_de_projectsleutel_wordt_een_token_van_project_api() -> None:
 
     account = next(lid for lid in gemigreerd["users"] if lid.get("name") == PROJECT_API_ACCOUNT)
     assert account["type"] == LidSoort.SERVICE_ACCOUNT.value
-    assert account["role"] == PROJECT_API_ROL
+    # 2.12 schrijft role: admin; de stap naar 2.13 maakt er [admin, ops] van.
+    assert account["roles"] == ["admin", "ops"]
     assert account["tokens"][0]["hash"] == hash_van("de-oude-sleutel")
     validate_project_schema(gemigreerd)
 
@@ -197,7 +199,7 @@ def test_een_bestand_zonder_projectsleutel_verandert_niet() -> None:
     zonder = {
         "schema-version": "2.11",
         "name": "bouwput",
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         "config": {"age-public-key": "age1x"},
     }
     gemigreerd, _ = migrate_to_latest(zonder)
@@ -211,7 +213,7 @@ def _op_2_11_versleuteld() -> dict:
     return {
         "schema-version": "2.11",
         "name": "bouwput",
-        "users": [{"email": "beheerder@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "beheerder@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "config": {
             "age-public-key": "age1x",
             "age-private-key": "-----BEGIN AGE ENCRYPTED FILE-----\ningepakte-sleutel\n-----END AGE ENCRYPTED FILE-----",

@@ -14,9 +14,10 @@ from typing import Any
 
 from pydantic import BaseModel, model_validator
 
+from opi.core.authz.engine import role_label
 from opi.core.leden import LidSoort
 from opi.services.project import Project
-from opi.services.schema_migration import migrate_to_latest
+from opi.services.schema_migration import ROLE_MIGRATION, migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
 
@@ -36,10 +37,28 @@ class ProjectUser(BaseModel):
     """Een lid van een project: een mens met een e-mailadres, of een service account."""
 
     email: str | None = None
-    role: str
+    roles: list[str]
     type: LidSoort = LidSoort.PERSOON
     name: str | None = None
     tokens: list[ProjectToken] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def accepteer_de_oude_ene_rol(cls, data: Any) -> Any:
+        """``role: admin`` leest als ``roles: [...]``.
+
+        De projectstore migreert een bestand bij het inlezen (schemaversie 2.13), maar dit
+        model leest ook gegevens die die weg niet zijn gegaan: een testfixture, een
+        formulierinzending, een bestand dat de migratie nog moet krijgen. Eén vertaaltabel
+        voor alle drie, dezelfde als de migratie gebruikt.
+        """
+        if isinstance(data, dict) and "role" in data and "roles" not in data:
+            # Een onbekende rol wordt GEEN rol: hier wordt gelezen, niet gemigreerd, en
+            # een lid met een onleesbare rol hoort niets te openen. De migratie geeft zo
+            # iemand wel ``viewer``, want daar moet het bestand na afloop geldig zijn.
+            data = {**data, "roles": list(ROLE_MIGRATION.get(str(data["role"]), ()))}
+            data.pop("role", None)
+        return data
 
     @model_validator(mode="after")
     def validate_principaal_bestaat(self) -> ProjectUser:
@@ -54,6 +73,11 @@ class ProjectUser(BaseModel):
         elif not self.email:
             raise ValueError("Een lid heeft een email nodig")
         return self
+
+    @property
+    def rol_labels(self) -> list[str]:
+        """De rollen zoals een mens ze ziet (B13). Een onbekende sleutel toont zichzelf."""
+        return [role_label(rol) for rol in self.roles]
 
     @property
     def principaal(self) -> str:

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.core.errors import log_render_failure
 from opi.services.services import ServiceAdapter
@@ -37,6 +38,7 @@ def replacement_marker(service_type) -> str | None:
 
 
 @services_router.get("/services", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def services_overview(request: Request):
     """

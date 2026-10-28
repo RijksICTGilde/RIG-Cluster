@@ -103,7 +103,7 @@
             {# De hoogste OTAP-markering van de deployments, afgeleid en dus niet te
                bewerken. De markering zelf staat op het paneel van een deployment. #}
             <c-tag type="default" label="{{ highest_environment_label(project) }}" />
-            {% if user_role in ["admin", "owner"] %}
+            {% if can('project.edit') %}
                 {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
                 <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"
                           @click="{{ identiteit_bewerken }}" />
@@ -143,7 +143,7 @@
            zonder een vraag te beantwoorden. Weg op verzoek. #}
 
         {# ---- Acties (project-details/section-actions.html.j2) ---------------- #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Acties", "gear") %}
                 <c-action-group align="start">
                     <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
@@ -163,7 +163,7 @@
            daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
            nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
            zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
                     <c-stack gap="xs">
                         <c-heading type="h3" size="6" label="Project Naam" />
@@ -347,7 +347,7 @@
            tabblad gekregen (Toegang, hieronder): zie de toelichting daar. #}
 
         {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
                 {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
                    genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
@@ -380,20 +380,25 @@
            titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
            knop. Een van de twee moet daar weg, en het is niet de knop. #}
         {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
-        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ team_bewerken }}" />{% endif %}{% endset %}
-        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
+        {% set team_bewerken_knop %}{% if can('member.manage') %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ team_bewerken }}" />{% endif %}{% endset %}
+        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een lid kan meer dan een rol hebben. Wat elke rol opent staat op de pagina Rollen en rechten.") %}
             <c-table columns="2fr 1fr">
                 <c-table-head>
                     <c-th>E-mailadres</c-th>
-                    <c-th>Rol</c-th>
+                    <c-th>Rollen</c-th>
                 </c-table-head>
                 {% for member in project.users | sort(attribute='email') %}
                     <c-table-row>
                         <c-td>{{ member.email }}</c-td>
-                        <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
+                        <c-td>{{ member.rol_labels | join(', ') }}</c-td>
                     </c-table-row>
                 {% endfor %}
             </c-table>
+            {% if project.is_platform_admin %}
+                <c-paragraph>
+                    <c-link href="/admin/rollen" label="Bekijk wat elke rol precies mag" />
+                </c-paragraph>
+            {% endif %}
         {% endcall %}
 
         {# Tokens en service accounts horen bij hetzelfde onderwerp als de ledenlijst
@@ -409,7 +414,7 @@
            Componenten zelf, boven de lijst, en las daar als iets dat bij het eerste
            component hoorde. De uitleg erbij is weg: wat een component is hoort in de
            hulptekst en niet boven elke lijst. #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Acties", "gear") %}
                 {% set component_toevoegen = "openEditModal('modal-edit-component-" ~ (project.components | length) ~ "', 'Component toevoegen')" %}
                 <c-cluster gap="sm">
@@ -456,16 +461,28 @@
                                         <c-heading type="h3" size="4" label="{{ component.name }}" />
                                         <c-paragraph size="sm">{{ component.type | title }}</c-paragraph>
                                     </c-stack>
-                                    {% if user_role in ["admin", "owner"] %}
+                                    {# De env-vars-knop heeft zijn EIGEN poort, niet die van de kaart: de route
+                                       erachter vraagt env-vars.manage, en die opent een component dat op productie
+                                       staat alleen voor ops. Een component kan in meerdere deployments zitten, dus
+                                       de scope weegt het component (COMPONENT_IN_PRODUCTION), niet een deployment. #}
+                                    {% set mag_bewerken = can('project.edit') %}
+                                    {% set mag_env_vars = can('env-vars.manage', component=component.name) %}
+                                    {% if mag_bewerken or mag_env_vars %}
                                         {# Omgevingsvariabelen staan nergens op de pagina (RC-388): de knop opent het
                                            venster dat eerst een verse step-up vraagt. htmx, geen JS: het antwoord
                                            opent de modal zelf via de haak in edit_modal.js. #}
                                         {% set env_vars_url = "/projects/" ~ project.name ~ "/componenten/" ~ (component.name | urlencode) ~ "/env-vars" %}
                                         <c-action-group align="end">
-                                            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ component_bewerken }}" />
-                                            <c-button type="secondary" size="sm" label="Omgevingsvariabelen bewerken" icon="key" show-icon="before"
-                                                      hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
-                                            <c-button type="warning" size="sm" label="Verwijderen" @click="{{ component_verwijderen }}" />
+                                            {% if mag_bewerken %}
+                                                <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ component_bewerken }}" />
+                                            {% endif %}
+                                            {% if mag_env_vars %}
+                                                <c-button type="secondary" size="sm" label="Omgevingsvariabelen bewerken" icon="key" show-icon="before"
+                                                          hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
+                                            {% endif %}
+                                            {% if mag_bewerken %}
+                                                <c-button type="warning" size="sm" label="Verwijderen" @click="{{ component_verwijderen }}" />
+                                            {% endif %}
                                         </c-action-group>
                                     {% endif %}
                                 </c-cluster>
@@ -747,7 +764,7 @@
            titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
            knop. Een van de twee moet daar weg, en het is niet de knop. #}
         {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
-        {% set diensten_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ diensten_bewerken }}" />{% endif %}{% endset %}
+        {% set diensten_bewerken_knop %}{% if can('project.edit') %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ diensten_bewerken }}" />{% endif %}{% endset %}
         {% call panel("Services & Integraties", "cylinder-split", aside=diensten_bewerken_knop, info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
             {% if project.services %}
                 <c-auto-grid min="280px" gap="md">
@@ -784,7 +801,7 @@
                                 {% if config_hint %}
                                     <c-paragraph size="sm">{{ config_hint }}</c-paragraph>
                                 {% endif %}
-                                {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
+                                {% if can('project.edit') and service.value in service_config_sections %}
                                     {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
                                     <c-action-group align="start">
                                         <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" @click="{{ configureer }}" />
@@ -860,7 +877,7 @@
         {# Alleen zonder deployments. Zodra er een is staat deze knop in de Acties-kaart,
            naast "Images bewerken"; die kaart rendert niet op een leeg project, en dan zou
            er geen enkele weg naar een eerste deployment zijn. #}
-        {% if user_role in ["admin", "owner"] and not project.deployments %}
+        {% if can('deployment.write') and not project.deployments %}
             <c-action-group align="start">
                 <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
             </c-action-group>
@@ -892,7 +909,7 @@
                    blok. Het komt uit _section-deployments; deployment-card is de klasse
                    die het paneel afbakent (zie static/css/project-details.css). #}
                 <div class="deployment-card" id="deployment-{{ deployment_geopend.name }}">
-                    {{ deployment_panel(deployment_geopend, project, approval_notices | default({}), user_role | default('')) }}
+                    {{ deployment_panel(deployment_geopend, project, approval_notices | default({})) }}
                 </div>
             {% else %}
                 <c-alert type="info" heading="Nog geen deployments">

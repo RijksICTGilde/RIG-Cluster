@@ -2,8 +2,8 @@
 
 Net als de componentkaart toont ook deze kaart geen waarde, naam of aantal: de
 overschrijvingen van een deployment kunnen evengoed geheimen zijn. De knop
-"Omgevingsvariabelen bewerken" opent het step-up-venster en is daarom de enige ingang;
-hij hangt af van de rol en wijst naar de deployment-variant van de venster-route.
+"Bekijken en bewerken" opent het step-up-venster en is daarom de enige ingang; hij hangt
+af van env-vars.manage en wijst naar de deployment-variant van de venster-route.
 
 De componentkaart-kant dekt ``tests/test_lotc_componentkaart_waarden.py``; de route zelf
 ``tests/test_router_env_vars_web.py``. Hier staat de koppeling ertussen: het sjabloon
@@ -29,9 +29,9 @@ PROJECT = {
 }
 
 
-def _render(user_role: str = "admin") -> str:
+def _render(mag: bool = True) -> str:
     return templates.env.get_template("bg/_section-deployments.html.j2").render(
-        {"project": PROJECT, "user_role": user_role}
+        {"project": PROJECT, "can": lambda *_a, **_k: mag}
     )
 
 
@@ -63,4 +63,4 @@ def test_de_knop_staat_ook_bij_een_component_zonder_overschrijving() -> None:
 
 
 def test_zonder_bewerkrol_is_er_geen_knop() -> None:
-    assert "Omgevingsvariabelen bewerken" not in _render(user_role="member")
+    assert "Bekijken en bewerken" not in _render(mag=False)

@@ -222,7 +222,7 @@ class TestCreateProject:
         """
         account = next(lid for lid in created["project"]["users"] if lid.get("name") == "project-api")
         assert account["type"] == "service-account"
-        assert account["role"] == "admin"
+        assert account["roles"] == ["admin", "ops"]
         assert account["tokens"][0]["hash"] == hash_van(created["response"]["api_key"])
 
     def test_het_eerste_token_verloopt_langs_het_platformplafond(self, created: Any) -> None:
@@ -277,7 +277,7 @@ class TestCreateProject:
 
     def test_the_creator_becomes_the_admin(self, created: Any) -> None:
         mensen = [lid for lid in created["project"]["users"] if lid.get("type") != "service-account"]
-        assert mensen == [{"email": CALLER, "role": "admin"}]
+        assert mensen == [{"email": CALLER, "roles": ["admin", "ops"]}]
 
     def test_nothing_is_declared_to_run_yet(self, created: Any) -> None:
         """Explicitly no deployment: that is configured afterwards."""

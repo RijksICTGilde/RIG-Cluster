@@ -14,6 +14,7 @@ from opi.connectors.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.core import config as opi_config
+from opi.core.authz.engine import Role
 from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -55,12 +56,12 @@ class FieldWarning(Exception):
 
 
 class AdminRequiredEnforcer:
-    """Ensures at least one user has role='admin'."""
+    """Minstens een lid met de rol ``admin``; zonder admin beheert niemand de leden nog."""
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         if not value or not isinstance(value, list):
             raise ValueError("Er moet minimaal één gebruiker zijn")
-        has_admin = any(isinstance(user, dict) and user.get("role") == "admin" for user in value)
+        has_admin = any(isinstance(user, dict) and Role.ADMIN.value in (user.get("roles") or []) for user in value)
         if not has_admin:
             raise ValueError("Er moet minimaal één administrator zijn")
         return value

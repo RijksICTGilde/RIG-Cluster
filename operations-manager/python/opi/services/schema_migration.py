@@ -36,7 +36,23 @@ logger = logging.getLogger(__name__)
 #: quietly rejecting files that declare the new version.
 SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
     parse_schema_version(text)
-    for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11", "2.12")
+    for text in (
+        "1",
+        "2",
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5",
+        "2.6",
+        "2.7",
+        "2.8",
+        "2.9",
+        "2.10",
+        "2.11",
+        "2.12",
+        "2.13",
+    )
 )
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
@@ -1332,6 +1348,10 @@ def approve_existing_acl_key_prefix_optout(project_data: dict[str, Any]) -> bool
             ],
         }
         return True
+    # Niets te doen. Expliciet en niet door het einde vallen: de stap belooft een bool,
+    # en None leest in de lus van migrate_to_latest als "niet gewijzigd" zonder het te
+    # zeggen.
+    return False
 
 
 def introduce_environment(project_data: dict[str, Any]) -> bool:
@@ -1349,12 +1369,15 @@ def introduce_environment(project_data: dict[str, Any]) -> bool:
 #: waar hij eerst alleen "het project" was.
 PROJECT_API_ACCOUNT = "project-api"
 
-#: De rol van dat account. ADMIN, omdat de projectsleutel vandaag de hele schrijfkant van
-#: een project opent, tot en met het verwijderen ervan en het terugzetten van een backup.
-#: Een smallere rol zou de migratie draaiende pijplijnen laten breken, en dat is een keuze
-#: voor de projectbeheerder (een lid verwijderen of zijn rol verlagen) en niet voor de
-#: migratie.
+#: De rol van dat account bij de migratie naar 2.12. ADMIN, omdat de projectsleutel de
+#: hele schrijfkant van een project opende, tot en met het verwijderen ervan en het
+#: terugzetten van een backup. Een smallere rol zou draaiende pijplijnen laten breken, en
+#: dat is een keuze voor de projectbeheerder en niet voor de migratie. De stap naar 2.13
+#: maakt er ``[admin, ops]`` van, net als bij elke andere admin.
 PROJECT_API_ROL = "admin"
+
+#: Dezelfde rollen, maar dan zoals een NIEUW project ze meteen schrijft (2.13).
+PROJECT_API_ROLLEN: tuple[str, ...] = ("admin", "ops")
 
 #: De vervaldatum van het overgenomen token. Een vaste datum en geen ``now() + N dagen``:
 #: de migratie draait bij elke lezing van een nog niet weggeschreven bestand, en een datum
@@ -1375,7 +1398,7 @@ def relocate_api_key_to_service_account(project_data: dict[str, Any]) -> bool:
     want dat is wat een aanroeper presenteert. Gaat het ontsleutelen niet, dan BLIJFT
     ``config.api-key`` staan: weghalen zou de pijplijn van dat project buitensluiten op
     grond van een sleutel die we niet hebben kunnen lezen. Zo'n bestand blijft GELDIG,
-    want 2.12 laat het veld nog toe, en ``herken_principaal`` aanvaardt die sleutel dan
+    want 2.12 laat het veld nog toe, en ``recognise_principal`` aanvaardt die sleutel dan
     ook nog. Dat is de keuze: een foutregel en een volgende ronde, en niet een bestand dat
     de validatie afkeurt en dus bij elke verwerking stil blijft staan. Het veld verdwijnt
     pas uit het schema als de meting zegt dat niemand de oude sleutel meer gebruikt.
@@ -1441,6 +1464,67 @@ def _set_service_config(project_data: dict[str, Any], service_name: str, config:
     Project(project_data).set(f"services/{service_name}/config", config)
 
 
+#: De vertaling van de oude ene rol naar de rollenlijst (v2.12 -> 2.13, RC-392). Dezelfde
+#: tabel als ``LEGACY_ROLES`` in ``opi/services/project_roles.py``, hier als waarden omdat
+#: de migratie schrijft wat er in het bestand komt te staan en niet wat de code leest.
+ROLE_MIGRATION: dict[str, list[str]] = {
+    "admin": ["admin", "ops"],
+    "owner": ["admin", "ops"],
+    "developer": ["developer"],
+    "member": ["viewer"],
+}
+
+#: Wat een lid krijgt waarvan de rol niet in de tabel staat. Niet overslaan: een lid zonder
+#: rollen valideert niet, en dan blijft het hele project staan. Viewer is de smalste rol,
+#: dus de fout kost niemand meer dan hij al had.
+ROLE_FALLBACK: list[str] = ["viewer"]
+
+
+def roles_as_a_list(project_data: dict[str, Any]) -> bool:
+    """``users[].role: x`` wordt ``users[].roles: [...]`` (v2.12 -> 2.13, B1 en B2).
+
+    ``admin`` en ``owner`` worden ``[admin, ops]``: admin is sinds dit ontwerp alleen
+    gebruikersbeheer, en wie vandaag admin is doet ook het operationele werk. ``member``
+    wordt ``[viewer]``, ``developer`` blijft ``[developer]``.
+
+    Heeft het project daarna geen enkel lid met ``admin``, dan krijgt het eerste lid die
+    rol erbij: zonder admin kan niemand nog leden of tokens beheren, en het schema weigert
+    zo'n bestand. Idempotent: een lid dat al ``roles`` draagt wordt niet aangeraakt.
+    """
+    leden = project_data.get("users")
+    if not isinstance(leden, list):
+        return False
+
+    gewijzigd = False
+    for lid in leden:
+        if not isinstance(lid, dict) or "role" not in lid:
+            continue
+        oud = str(lid.pop("role"))
+        nieuw = ROLE_MIGRATION.get(oud)
+        if nieuw is None:
+            logger.warning(
+                "Lid in project '%s' had de onbekende rol '%s'; die wordt %s",
+                project_data.get("name"),
+                oud,
+                ROLE_FALLBACK,
+            )
+            nieuw = ROLE_FALLBACK
+        lid["roles"] = list(nieuw)
+        gewijzigd = True
+
+    if gewijzigd and not any(isinstance(lid, dict) and "admin" in (lid.get("roles") or []) for lid in leden):
+        eerste = next((lid for lid in leden if isinstance(lid, dict)), None)
+        if eerste is not None:
+            logger.warning(
+                "Project '%s' had na de rolmigratie geen admin; '%s' krijgt die rol erbij",
+                project_data.get("name"),
+                eerste.get("email") or eerste.get("name"),
+            )
+            eerste["roles"] = sorted({*(eerste.get("roles") or []), "admin"})
+
+    return gewijzigd
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1458,6 +1542,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.10"), approve_existing_acl_key_prefix_optout),
     (parse_schema_version("2.11"), introduce_environment),
     (parse_schema_version("2.12"), relocate_api_key_to_service_account),
+    (parse_schema_version("2.13"), roles_as_a_list),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

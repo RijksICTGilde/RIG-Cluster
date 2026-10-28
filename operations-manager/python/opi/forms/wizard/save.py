@@ -27,7 +27,7 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import build_resolver_map
 from opi.forms.visualizers.flows import COMPONENTS_SELECTABLE
 from opi.forms.visualizers.visualizer import EditableVisualizer
-from opi.forms.wizard.leden import zet_verborgen_leden_terug
+from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst, zet_verborgen_leden_terug
 from opi.forms.wizard.secrets import restore_redacted_secrets
 from opi.forms.wizard.selection import selectable_names, splice_selection
 from opi.forms.wizard.state import _strip_cleared_fields
@@ -352,6 +352,13 @@ async def apply_modal_edit(
     # Hetzelfde voor de ledenlijst: het teamformulier rendert alleen het adres en de rol
     # van een mens, maar bezit het pad ``users`` als geheel. Zonder deze stap gooit het
     # bewerken van het Team-blok elk API-token en elk service account van het project weg.
+    # Wie de ledenlijst niet bezit, schrijft hem niet; wie hem wel bezit houdt zich aan
+    # de rollen en aan de eis dat er een admin overblijft (ontwerp paragraaf 7).
+    try:
+        bewaak_ledenlijst(merged_data, existing_data, bezit_users="users" in flow_write_paths(list(flow.sections)))
+    except LedenlijstGeweigerd as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
     zet_verborgen_leden_terug(merged_data, existing_data)
 
     # A new list item has no stored version to protect, so it is appended

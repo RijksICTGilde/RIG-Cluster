@@ -133,9 +133,18 @@ def _all_list_editables() -> dict[str, EditableVisualizer]:
 
 
 def _writes_nothing_when_empty(visualizer: EditableVisualizer) -> bool:
-    """Whether leaving this field empty leaves the key out of the project file."""
+    """Of leeg laten veilig is: de sleutel valt weg, of het formulier weigert hem.
+
+    Twee uitkomsten zijn goed. De sleutel weglaten werkt voor een veld dat weg MAG zijn.
+    Voor een veld dat het schema verplicht (``users[*]/roles``) is weglaten net zo
+    onopslaanbaar als leeg, en dan hoort het formulier het te zeggen: een validator die
+    leeg weigert geeft een veldmelding in plaats van een afgekeurd projectbestand.
+    """
     editable = visualizer.editable
     if editable.remove_when_none:
+        return True
+    validator = editable.validator
+    if validator is not None and validator.validate([]):
         return True
     # A converter that turns an empty input into None hands the processor a None,
     # which it drops -- the route the start command takes.

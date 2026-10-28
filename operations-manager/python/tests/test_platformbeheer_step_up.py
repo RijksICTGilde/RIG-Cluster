@@ -20,7 +20,7 @@ from fastapi import HTTPException
 from opi.api import admin_router as admin_module
 from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.v2 import router as v2_router_module
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 
 Aanroep = Callable[[dict[str, str]], Awaitable[Any]]
 
@@ -90,13 +90,13 @@ async def _rotate_project_key(headers: dict[str, str]) -> Any:
 
 
 #: De wijzigende beheerroutes, met de handeling die ze in het problem-detail noemen.
-WIJZIGENDE_ROUTES: dict[str, tuple[Aanroep, StepUpActie]] = {
-    "cleanup/trigger": (_cleanup, StepUpActie.OPRUIMING_STARTEN),
-    "reconciliation/trigger": (_reconciliation, StepUpActie.RECONCILIATIE_STARTEN),
-    "marked-for-deletion/{mark_id}": (_delete_mark, StepUpActie.MARKERING_INTREKKEN),
-    "orphans/confirm": (_confirm_orphans, StepUpActie.WEZEN_BEVESTIGEN),
-    "projects/:reconcile": (_reconcile_projects, StepUpActie.PROJECTEN_HERINLEZEN),
-    ":rotate-project-key": (_rotate_project_key, StepUpActie.PROJECTSLEUTEL_VERVANGEN),
+WIJZIGENDE_ROUTES: dict[str, tuple[Aanroep, StepUpAction]] = {
+    "cleanup/trigger": (_cleanup, StepUpAction.CLEANUP_START),
+    "reconciliation/trigger": (_reconciliation, StepUpAction.RECONCILIATION_START),
+    "marked-for-deletion/{mark_id}": (_delete_mark, StepUpAction.MARKING_REVOKE),
+    "orphans/confirm": (_confirm_orphans, StepUpAction.ORPHANS_CONFIRM),
+    "projects/:reconcile": (_reconcile_projects, StepUpAction.PROJECTS_RELOAD),
+    ":rotate-project-key": (_rotate_project_key, StepUpAction.PROJECT_KEY_REPLACE),
 }
 
 
@@ -130,7 +130,7 @@ async def test_zonder_otp_weigert_de_route_met_het_problem_detail(naam, platform
     assert response.media_type == STEP_UP_PROBLEM_MEDIA_TYPE
     probleem = json.loads(response.body)
     assert probleem["type"] == STEP_UP_PROBLEM_TYPE
-    assert probleem["cause"] == StepUpCause.OTP_ONTBREEKT.value
+    assert probleem["cause"] == StepUpCause.OTP_MISSING.value
     assert probleem["action"] == actie.value
     assert probleem["otp_header"] == "X-ZAD-OTP"
     assert probleem["reason"]
@@ -159,7 +159,7 @@ async def test_een_hergebruikte_code_weigert(naam, platformbeheerder_token, vers
 
     assert eerste.status_code in (200, 202)
     assert tweede.status_code == 403
-    assert json.loads(tweede.body)["cause"] == StepUpCause.CODE_ONGELDIG.value
+    assert json.loads(tweede.body)["cause"] == StepUpCause.CODE_INVALID.value
 
 
 @pytest.mark.asyncio

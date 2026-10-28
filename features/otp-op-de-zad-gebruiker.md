@@ -126,17 +126,17 @@ blijft 401.
 
 | veld | wat het zegt |
 |---|---|
-| `action` | welke handeling een step-up vraagt, bijvoorbeeld `deployment-verwijderen` |
+| `action` | welke handeling een step-up vraagt, bijvoorbeeld `deployment-delete` |
 | `reason` | waarom, bijvoorbeeld dat de deployment op productie staat |
 | `remedy` | wat er moet gebeuren |
 | `cause` | waarom er geweigerd werd, als waarde om op te sturen |
 | `otp_header` | de header waarin de code hoort |
-| `enroll_url` | waar je je factor inricht, alleen bij `factor-ontbreekt` |
+| `enroll_url` | waar je je factor inricht, alleen bij `factor-missing` |
 | `blocked_until` | wanneer het weer mag, alleen bij `geblokkeerd` |
 
-`cause` onderscheidt vijf gevallen: `otp-ontbreekt`, `factor-ontbreekt` (met
-`enroll_url: /account/otp`), `code-ongeldig`, `geblokkeerd` (met `blocked_until`) en
-`tokensoort-niet-toegestaan` (de projectsleutel). `code-ongeldig` dekt zowel een verkeerde
+`cause` onderscheidt vijf gevallen: `otp-missing`, `factor-missing` (met
+`enroll_url: /account/otp`), `code-invalid`, `geblokkeerd` (met `blocked_until`) en
+`principal-kind-not-allowed` (de projectsleutel). `code-invalid` dekt zowel een verkeerde
 als een al gebruikte code: `detail` zegt nooit welk deel van een code fout was.
 
 Elke route met `@requires_step_up` documenteert dit in de OpenAPI: `X-ZAD-OTP` als

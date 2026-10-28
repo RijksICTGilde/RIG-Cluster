@@ -19,18 +19,18 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from opi.core.auth_decorators import requires_sso, requires_step_up
+from opi.core.authz.actions import Action, action
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.forms.editables.converters import KeyValueConverter, keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.validators import KeyValueValidator
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import ConflictError
-from opi.services.step_up_conditions import vraagt_altijd_step_up
 from opi.utils.age import unwrap_project_key
 from opi.utils.yaml_util import dump_yaml_to_string
+from opi.web.authz import authorize
 from opi.web.lotc_switch import render_fragment
-from opi.web.project_edit_security import require_project_edit_access
 from opi.web.task_progress import create_task_and_render_progress
 
 logger = logging.getLogger(__name__)
@@ -104,17 +104,24 @@ async def _render_window(
     "/{project_name}/componenten/{component_name}/env-vars",
     response_class=HTMLResponse,
 )
+@action(Action.ENV_VARS_MANAGE)
 @env_vars_web_router.get(
     "/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
     response_class=HTMLResponse,
 )
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.ENV_VARS_BEHEREN)
+@requires_step_up(actie=StepUpAction.ENV_VARS_MANAGE)
 async def show_env_vars_window(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> HTMLResponse:
     """Het bewerkvenster met de echte waarden. Alleen na een verse step-up."""
-    project, _email = require_project_edit_access(request, project_name)
+    project, _email = authorize(
+        request,
+        action=Action.ENV_VARS_MANAGE,
+        project_name=project_name,
+        deployment=deployment_name,
+        component=component_name,
+    )
     project_data = project.data or {}
     holder = _scope_holder(project_data, component_name, deployment_name)
 
@@ -145,12 +152,13 @@ async def show_env_vars_window(
     "/{project_name}/componenten/{component_name}/env-vars",
     response_class=HTMLResponse,
 )
+@action(Action.ENV_VARS_MANAGE)
 @env_vars_web_router.post(
     "/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
     response_class=HTMLResponse,
 )
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.ENV_VARS_BEHEREN, velden=("vars",))
+@requires_step_up(actie=StepUpAction.ENV_VARS_MANAGE, velden=("vars",))
 async def save_env_vars(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> Response:
@@ -159,7 +167,13 @@ async def save_env_vars(
     De step-up wordt hier opnieuw getoetst (de decorator), dus ook na het vijfminuten-
     venster volgt de OTP-vraag in plaats van een opslag.
     """
-    require_project_edit_access(request, project_name)
+    authorize(
+        request,
+        action=Action.ENV_VARS_MANAGE,
+        project_name=project_name,
+        deployment=deployment_name,
+        component=component_name,
+    )
     text = str((await request.form()).get("vars", ""))
 
     errors = _VALIDATOR.validate(text)

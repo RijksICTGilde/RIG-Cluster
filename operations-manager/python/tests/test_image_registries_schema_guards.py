@@ -94,7 +94,7 @@ def _project(registry: dict[str, Any]) -> dict[str, Any]:
         "schema-version": 2.9,
         "name": "demo",
         "description": "Basisproject voor de schemabewakers",
-        "users": [{"email": "iemand@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "iemand@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "clusters": ["odcn-production"],
         "services": [{"name": "image-registries", "config": {"registries": [registry]}}],
         "config": {"age-public-key": "age1d489e9c48pmwam6603vecp7y29zz9fx5cgpe9uk6cu9l7asfzg9sx5s0tq"},

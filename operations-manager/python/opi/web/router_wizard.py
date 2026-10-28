@@ -14,9 +14,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
+from opi.core.leden import ledenlijst_wijzigt
 from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
-from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, save_requires_step_up
+from opi.core.step_up import any_marking_change, has_fresh_step_up, log_step_up_refusal, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.path import resolve_path
@@ -50,6 +52,7 @@ from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.authz import authorize
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import get_navigation, to_nldd_icon
@@ -388,6 +391,7 @@ def _detect_locked_presets(
 
 
 @wizard_router.get("/restart")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def wizard_restart(request: Request) -> RedirectResponse:
     """Clear any existing wizard state and redirect to the start page."""
@@ -401,6 +405,7 @@ async def wizard_restart(request: Request) -> RedirectResponse:
 
 
 @wizard_router.get("/start", response_class=HTMLResponse)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def wizard_start(request: Request) -> Response:
     """Render the wizard introduction / landing page."""
@@ -434,6 +439,7 @@ def flow_uit_pad(flow_id: str, **context: Any) -> FormFlow:
 
 
 @wizard_router.get("/{flow_id}", response_class=HTMLResponse)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     """Render the full wizard page, resuming existing state if available."""
@@ -555,18 +561,16 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
 
 @wizard_router.get("/{flow_id}/edit/{project_name}", response_class=HTMLResponse)
+@action(Action.PROJECT_EDIT)
 @requires_sso
 async def wizard_edit_page(request: Request, flow_id: str, project_name: str) -> HTMLResponse:
     """Render the wizard page pre-filled from an existing project."""
-    from opi.web.project_edit_security import require_project_edit_access
-
     flow = flow_uit_pad(flow_id)
     user = get_current_user(request)
 
-    # Enforce admin/owner role: the wizard edit flow exposes users/role and
-    # config fields as editable, so a plain member must not be able to enter
-    # it (project takeover).
-    project, _user_email = require_project_edit_access(request, project_name)
+    # De wizard-bewerkstroom toont users en config als bewerkbaar, dus een lid dat het
+    # projectbestand niet mag wijzigen hoort er niet in (projectovername).
+    project, _user_email = authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
 
     project_data = project.data
     if not project_data:
@@ -802,6 +806,7 @@ async def _navigate_to_step(
 
 
 @wizard_router.get("/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a wizard step via HTMX or direct browser navigation.
@@ -889,6 +894,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
 
 
 @wizard_router.post("/{flow_id}/step/{section_id}", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse | RedirectResponse:
     """Process form data and navigate to the requested step.
@@ -909,9 +915,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Edit-mode only: fail fast per step instead of stripping data at final
     # save. Also covers any future step-driven side-effects (e.g. auto-save).
     if state.project_name:
-        from opi.web.project_edit_security import require_project_edit_access
-
-        require_project_edit_access(request, state.project_name)
+        authorize(request, action=Action.PROJECT_EDIT, project_name=state.project_name)
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
@@ -1151,6 +1155,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
 
 @wizard_router.post("/{flow_id}/preset/{section_id}/{preset_id}", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def toggle_preset(
     request: Request,
@@ -1266,6 +1271,7 @@ HELP_TEMPLATE_VORM = re.compile(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9_-]+\.(?:html\.j
 
 
 @wizard_router.get("/help/{template_name:path}", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def service_help(request: Request, template_name: str) -> HTMLResponse:
     """Render a help text inside a modal-friendly HTML fragment.
@@ -1588,6 +1594,7 @@ def _is_service_config_child(relative_path: str) -> bool:
 
 
 @wizard_router.get("/{flow_id}/review", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def review_page(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Render the review page."""
@@ -2230,6 +2237,7 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
 
 
 @wizard_router.post("/{flow_id}/submit", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Final submission: validate all steps and create/update the project."""
@@ -2604,10 +2612,10 @@ async def _save_existing_project(
 ) -> HTMLResponse:
     """Save updated data to an existing project."""
     from opi.manager.project_manager import ProjectManager
-    from opi.web.project_edit_security import apply_form_data_to_project, require_project_edit_access
+    from opi.web.project_edit_security import apply_form_data_to_project
 
     # TOCTOU recheck on the mutating request.
-    require_project_edit_access(request, project_name)
+    authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
 
     # Read fresh from Git, not the cache, so the form merges onto current state and a
     # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
@@ -2626,6 +2634,19 @@ async def _save_existing_project(
         zet_verborgen_leden_terug(existing_data, stored_data)
 
         ensure_approval_requests(existing_data)
+
+        # De rolpoort op de leden, op dezelfde grens als de Team-kaart en de rolroute:
+        # deze wizard draagt ``project.edit``, en die heeft een developer sinds RC-392 ook
+        # op een project zonder productie. Zonder deze poort kon hij zichzelf hier admin
+        # maken, want de step-up hieronder toetst alleen de VERSHEID en niet de rol.
+        if ledenlijst_wijzigt(stored_data, existing_data):
+            authorize(request, action=Action.MEMBER_MANAGE, project_name=project_name)
+
+        # Dezelfde poort als op de modaalweg, om dezelfde reden: de step-up hieronder
+        # toetst alleen de VERSHEID, dus zonder deze regel zette een developer hier de
+        # markering op productie met een step-up die hij via env-vars.manage zelf haalt.
+        if any_marking_change(environment_before, environment_markings(existing_data)):
+            authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
 
         # Een kale 403 en niet de dialoog uit bg/_step-up.html.j2: die hangt aan de
         # gedeelde modal van de projectpagina, en de volledige wizard heeft die niet.

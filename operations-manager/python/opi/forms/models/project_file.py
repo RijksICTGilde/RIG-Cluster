@@ -110,15 +110,15 @@ class ProjectUserModel(BaseModel):
     #: actor en in de git-trailer, dus hij moet overal als een label te schrijven zijn.
     name: str | None = Field(default=None, pattern=r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
 
-    role: Annotated[
-        str,
+    roles: Annotated[
+        list[str],
         FormMeta(
-            label="user.role",
-            description="user.role.description",
-            widget="select",
+            label="user.roles",
+            description="user.roles.description",
+            widget="multiselect",
             options_provider="UserRoleOptionsProvider",
         ),
-    ] = Field(default="developer")
+    ] = Field(default_factory=lambda: ["developer"])
 
     tokens: list[ApiTokenModel] = Field(default_factory=list)
 
@@ -639,7 +639,7 @@ class ProjectFileModel(BaseModel):
         if not self.users:
             return self  # Empty users list is handled by min_items constraint
 
-        admin_users = [u for u in self.users if u.role == "admin" and u.type is not LidSoort.SERVICE_ACCOUNT]
+        admin_users = [u for u in self.users if "admin" in u.roles and u.type is not LidSoort.SERVICE_ACCOUNT]
         if not admin_users:
             raise ValueError("At least one user must have the 'admin' role")
         return self

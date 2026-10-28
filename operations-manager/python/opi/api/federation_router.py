@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from opi.api.user_token_auth import validate_platform_admin_token
 from opi.connectors.opi import OpiConnector
+from opi.core.authz.actions import Action, action
 
 if TYPE_CHECKING:
     from opi.core.federation_config import FederationRegistry
@@ -34,6 +35,7 @@ def _registry_of_404(request: Request) -> FederationRegistry:
 
 
 @federation_router.get("/peers")
+@action(Action.PLATFORM_FEDERATION)
 @validate_platform_admin_token
 async def list_peers(request: Request) -> JSONResponse:
     """Return the list of configured federation peers (no secrets)."""
@@ -51,6 +53,7 @@ async def list_peers(request: Request) -> JSONResponse:
 
 
 @federation_router.get("/health")
+@action(Action.PLATFORM_FEDERATION)
 @validate_platform_admin_token
 async def federation_health(request: Request) -> JSONResponse:
     """Health-check each federation peer via its /health endpoint."""

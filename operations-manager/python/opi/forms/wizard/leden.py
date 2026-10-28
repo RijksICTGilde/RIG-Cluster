@@ -14,12 +14,17 @@ import copy
 import logging
 from typing import Any
 
-from opi.core.leden import LidSoort
+from opi.core.leden import LidSoort, ledenlijst_wijzigt
+from opi.services.api_token_service import TokenAanvraagGeweigerd, eis_een_admin, schoon_rollen
 
 logger = logging.getLogger(__name__)
 
 #: Velden van een lid die het formulier niet rendert en dus ook niet schrijft.
 VERBORGEN_LEDENVELDEN = ("tokens",)
+
+
+class LedenlijstGeweigerd(ValueError):
+    """De ingediende ledenlijst mag zo niet opgeslagen worden."""
 
 
 def _is_service_account(lid: dict[str, Any]) -> bool:
@@ -85,3 +90,43 @@ def zet_verborgen_leden_terug(merged_data: dict[str, Any], stored_data: dict[str
         logger.info("Tokens ingetrokken met het lid dat ze bezat: %s", ", ".join(sorted(vertrokken)))
 
     merged_data["users"] = mensen + copy.deepcopy(service_accounts)
+
+
+def bewaak_ledenlijst(merged_data: dict[str, Any], stored_data: dict[str, Any], *, bezit_users: bool) -> None:
+    """Weiger een inzending die ``users`` schrijft zonder die lijst te bezitten.
+
+    Een flow die het teamformulier niet rendert, rendert ook geen rollen; een inzending
+    die ``users`` toch anders meebrengt komt dus niet uit een formulier. Weigeren in
+    plaats van negeren, zodat een gemanipuleerde POST zichtbaar afketst (ontwerp
+    paragraaf 7).
+
+    De drie regels OVER de rollen zelf komen uit :mod:`opi.services.api_token_service`:
+    de wizard schrijft de hele lijst in een keer en de rolroute een lid per keer, maar
+    wat een geldige rol is en dat er een admin overblijft, staat op een plek.
+
+    Raises:
+        LedenlijstGeweigerd: Bij een wijziging van ``users`` door een flow die hem niet
+            bezit, bij een onbekende rol, bij een lid zonder rollen, of als het project
+            zonder admin zou achterblijven.
+    """
+    ingediend = merged_data.get("users")
+    if not bezit_users:
+        if ledenlijst_wijzigt(stored_data, merged_data):
+            raise LedenlijstGeweigerd("Deze stap bewerkt de projectleden niet.")
+        return
+
+    if not isinstance(ingediend, list) or not ingediend:
+        raise LedenlijstGeweigerd("Een project houdt minstens een lid.")
+
+    for lid in ingediend:
+        if not isinstance(lid, dict):
+            continue
+        try:
+            schoon_rollen(lid.get("roles") or [])
+        except TokenAanvraagGeweigerd as exc:
+            raise LedenlijstGeweigerd(f"{exc} ({lid.get('email') or lid.get('name')})") from exc
+
+    try:
+        eis_een_admin(merged_data)
+    except TokenAanvraagGeweigerd as exc:
+        raise LedenlijstGeweigerd(str(exc)) from exc

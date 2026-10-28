@@ -12,7 +12,7 @@ curl -X POST "https://zad.sandbox.rijksapp.dev/api/v2/projects/demo/:rotate-proj
   -H "X-ZAD-OTP: 123456"
 ```
 
-Alleen met het token van een platformbeheerder, plus een verse code uit zijn authenticator: een projectlid kan zijn eigen sleutel niet vervangen. Zonder token `401`, met het token van een gewone gebruiker `403`, zonder code `403` met `type: urn:zad:step-up-required` en `action: projectsleutel-vervangen`. Zie `features/platformbeheer-via-de-api.md`. Het antwoord is `202` met een `task_id`; de voortgang staat op `/api/tasks/{task_id}`.
+Alleen met het token van een platformbeheerder, plus een verse code uit zijn authenticator: een projectlid kan zijn eigen sleutel niet vervangen. Zonder token `401`, met het token van een gewone gebruiker `403`, zonder code `403` met `type: urn:zad:step-up-required` en `action: project-key-replace`. Zie `features/platformbeheer-via-de-api.md`. Het antwoord is `202` met een `task_id`; de voortgang staat op `/api/tasks/{task_id}`.
 
 Het resultaat van de taak:
 

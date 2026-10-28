@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from fastapi import HTTPException
 from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
 from opi.manager.job_manager import ANNOT_COMMAND, ANNOT_IMAGE, JobError, JobManager, JobRun
@@ -419,21 +418,29 @@ def _role_request(email: str, form: dict[str, str]):
     )
 
 
-@pytest.mark.asyncio
-async def test_job_start_rejects_the_read_role(project_with_roles) -> None:
-    from opi.services.catalog.shared.jobs import job_start
+@pytest.mark.parametrize(("rollen", "mag"), [(["viewer"], False), (["developer"], True), (["ops"], True)])
+def test_een_job_starten_hangt_aan_job_run(rollen: list[str], mag: bool) -> None:
+    """De rolpoort staat sinds RC-392 op de route en niet in de handler.
 
-    with (
-        patch("opi.services.catalog.shared.jobs.get_job_manager") as get_manager,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await job_start(
-            request=_role_request(MEMBER_EMAIL, {"deployment": "dep1", "image": "img", "command": ""}),
-            project_name=PROJECT_NAME,
-        )
+    ``job_start`` draagt ``job.run``; de dependency op de web-router beslist daarop
+    voordat de handler draait. Wat hier vast moet staan is welk recht de route noemt en
+    wat dat opent: een viewer niet, een developer buiten productie wel.
+    """
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
+    from opi.services.catalog.shared.jobs import job_start, job_stop
 
-    assert exc.value.status_code == 403
-    get_manager.assert_not_called()
+    assert action_of(job_start) is Action.JOB_RUN
+    assert action_of(job_stop) is Action.JOB_RUN
+
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name=MEMBER_EMAIL,
+        project=PROJECT_NAME,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    resource = Resource(project=PROJECT_NAME, path=f"project/{PROJECT_NAME}/deployment/dep1", deployment="dep1")
+    assert decide(principal, Action.JOB_RUN, resource, step_up_fresh=True).allowed is mag
 
 
 @pytest.mark.asyncio
@@ -461,24 +468,6 @@ async def test_job_start_allows_developer(project_with_roles) -> None:
         started_by=DEVELOPER_EMAIL,
     )
     assert result == "rendered"
-
-
-@pytest.mark.asyncio
-async def test_job_stop_rejects_the_read_role(project_with_roles) -> None:
-    from opi.services.catalog.shared.jobs import job_stop
-
-    with (
-        patch("opi.services.catalog.shared.jobs.get_job_manager") as get_manager,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await job_stop(
-            request=_role_request(MEMBER_EMAIL, {"deployment": "dep1"}),
-            project_name=PROJECT_NAME,
-            session_id="run1",
-        )
-
-    assert exc.value.status_code == 403
-    get_manager.assert_not_called()
 
 
 @pytest.mark.asyncio

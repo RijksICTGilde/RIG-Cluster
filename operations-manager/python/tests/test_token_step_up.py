@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.otp_step_up import OTP_CODE_HEADER, STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 if TYPE_CHECKING:
@@ -30,48 +30,48 @@ LID = "bouwstraat"
 
 #: De zes schrijvende handelingen, met de dienst die ze aanroepen en de actie die ze in het
 #: problem-detail noemen. De naam is de sleutel waarop de parametrisatie leest.
-ROUTES: dict[str, tuple[str, str, dict[str, Any] | None, str, StepUpActie]] = {
-    "service-account-toevoegen": (
+ROUTES: dict[str, tuple[str, str, dict[str, Any] | None, str, StepUpAction]] = {
+    "service-account-add": (
         "POST",
         f"/api/v2/projects/{PROJECT}/leden",
-        {"naam": LID, "rol": "developer"},
+        {"naam": LID, "roles": ["developer"]},
         "voeg_service_account_toe",
-        StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN,
+        StepUpAction.SERVICE_ACCOUNT_ADD,
     ),
-    "service-account-verwijderen": (
+    "service-account-remove": (
         "DELETE",
         f"/api/v2/projects/{PROJECT}/leden/{LID}",
         None,
         "verwijder_service_account",
-        StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN,
+        StepUpAction.SERVICE_ACCOUNT_REMOVE,
     ),
-    "rol-wijzigen": (
+    "role-change": (
         "PUT",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/rol",
-        {"rol": "admin"},
-        "wijzig_rol",
-        StepUpActie.ROL_WIJZIGEN,
+        {"roles": ["admin"]},
+        "set_member_roles",
+        StepUpAction.ROLE_CHANGE,
     ),
-    "token-uitgeven": (
+    "token-issue": (
         "POST",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/tokens",
         {"naam": "pijplijn", "dagen": 30},
         "geef_token_uit",
-        StepUpActie.TOKEN_UITGEVEN,
+        StepUpAction.TOKEN_ISSUE,
     ),
-    "token-roteren": (
+    "token-rotate": (
         "POST",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/tokens/pijplijn/:roteer",
         {"naam": "pijplijn", "dagen": 30},
         "roteer_token",
-        StepUpActie.TOKEN_ROTEREN,
+        StepUpAction.TOKEN_ROTATE,
     ),
-    "token-intrekken": (
+    "token-revoke": (
         "DELETE",
         f"/api/v2/projects/{PROJECT}/leden/{LID}/tokens/pijplijn",
         None,
         "trek_token_in",
-        StepUpActie.TOKEN_INTREKKEN,
+        StepUpAction.TOKEN_REVOKE,
     ),
 }
 
@@ -128,11 +128,11 @@ def test_zonder_otp_weigert_de_route_met_het_problem_detail(
 ) -> None:
     probleem = _probleem(_aanroep(test_client, naam, platformbeheerder_token["headers_gewone_gebruiker"]))
 
-    assert probleem["cause"] == StepUpCause.OTP_ONTBREEKT.value
+    assert probleem["cause"] == StepUpCause.OTP_MISSING.value
     assert probleem["action"] == ROUTES[naam][4].value
     assert probleem["otp_header"] == OTP_CODE_HEADER
     assert PROJECT in probleem["reason"]
-    if naam != "service-account-toevoegen":
+    if naam != "service-account-add":
         # Het lid zit in het pad, dus is het doelwit: de reden noemt hem, niet alleen het
         # project. service-account-toevoegen draagt het lid in de body, niet in het pad.
         assert LID in probleem["reason"]
@@ -152,7 +152,7 @@ def test_een_foute_code_weigert_de_route(
 
     probleem = _probleem(_aanroep(test_client, naam, headers))
 
-    assert probleem["cause"] == StepUpCause.CODE_ONGELDIG.value
+    assert probleem["cause"] == StepUpCause.CODE_INVALID.value
     diensten[ROUTES[naam][3]].assert_not_awaited()
 
 
@@ -164,7 +164,7 @@ def test_zonder_ingerichte_factor_wijst_de_weigering_de_weg(
 
     probleem = _probleem(_aanroep(test_client, naam, headers))
 
-    assert probleem["cause"] == StepUpCause.FACTOR_ONTBREEKT.value
+    assert probleem["cause"] == StepUpCause.FACTOR_MISSING.value
     assert probleem["enroll_url"] == "/account/otp"
 
 
@@ -190,7 +190,7 @@ def test_de_code_wordt_tegen_de_eigenaar_van_het_bearertoken_getoetst(
     """Niet tegen het lid in het pad: de code bewijst de AANROEPER, niet het doelwit."""
     headers = platformbeheerder_token["headers_gewone_gebruiker"] | otp["headers"]
 
-    response = _aanroep(test_client, "token-intrekken", headers)
+    response = _aanroep(test_client, "token-revoke", headers)
 
     assert response.status_code == 200
     assert otp["getoetst"] == [("iemand@example.test", "123456")]

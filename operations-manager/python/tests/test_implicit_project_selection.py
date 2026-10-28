@@ -317,7 +317,7 @@ class TestTheCatalogAnswer:
             "name": "proj",
             "description": "test",
             "clusters": ["odcn-production"],
-            "users": [{"email": "a@b.nl", "role": "admin"}],
+            "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
             "services": [
                 service.implicit_project_entry()
                 for service in SERVICES.values()
@@ -333,7 +333,7 @@ def _project() -> dict[str, Any]:
         "name": "proj",
         "description": "test",
         "clusters": ["odcn-production"],
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         "services": [],
         "components": [
             {

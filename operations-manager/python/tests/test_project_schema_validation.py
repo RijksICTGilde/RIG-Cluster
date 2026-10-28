@@ -32,7 +32,7 @@ def _valid_project() -> dict:
         "name": "valid-project",
         "description": "A valid project",
         "clusters": ["local", "odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",
@@ -716,6 +716,8 @@ class TestBareDomainComponentIsDeclared:
     def _with_bare_domain(self, value) -> dict:
         project = _valid_project()
         project["schema-version"] = 2.6
+        # Een 2.6-bestand draagt de ledenvorm van voor 2.13.
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
         project["deployments"][0]["expose-component-on-bare-domain"] = value
         return project
 
@@ -816,6 +818,7 @@ class TestWebAddressLeftTheDeploymentRoot:
             }
         )
         project["schema-version"] = 2.6
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
         validate_declared_project_schema(project)
 
     def test_a_v2_6_file_validates_after_migration(self) -> None:
@@ -824,6 +827,7 @@ class TestWebAddressLeftTheDeploymentRoot:
 
         project = self._deployment(**{"base-domain": "rijksapp.nl", "domain-format": "subdomain"})
         project["schema-version"] = 2.6
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
         migrated, was_migrated = migrate_to_latest(project)
         assert was_migrated is True
         validate_project_schema(migrated)
@@ -891,19 +895,19 @@ class TestEmailPatternOpUsers:
 
     def test_een_adres_met_whitespace_wordt_geweigerd(self) -> None:
         project = _valid_project()
-        project["users"] = [{"email": "admin @rijksoverheid.nl", "role": "admin"}]
+        project["users"] = [{"email": "admin @rijksoverheid.nl", "roles": ["admin", "ops"]}]
         with pytest.raises(ProjectSchemaError):
             validate_project_schema(project)
 
     def test_een_adres_met_een_afsluitend_regeleinde_wordt_geweigerd(self) -> None:
         project = _valid_project()
-        project["users"] = [{"email": "admin@rijksoverheid.nl\n", "role": "admin"}]
+        project["users"] = [{"email": "admin@rijksoverheid.nl\n", "roles": ["admin", "ops"]}]
         with pytest.raises(ProjectSchemaError):
             validate_project_schema(project)
 
     def test_een_normaal_adres_passeert(self) -> None:
         project = _valid_project()
-        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}]
         validate_project_schema(project)
 
 

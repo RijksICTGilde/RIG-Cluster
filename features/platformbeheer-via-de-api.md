@@ -51,12 +51,12 @@ geen, want hij vraagt geen OTP.
 |---|---|---|---|
 | `GET /api/v2/admin/marked-for-deletion` | de resources die voor verwijdering gemarkeerd staan | nee | |
 | `GET /api/v2/admin/orphans/report` | het wezenrapport, zonder mutaties | nee | |
-| `POST /api/v2/admin/cleanup/trigger` | de opruiming van verlopen markeringen starten | ja | `opruiming-starten` |
-| `POST /api/v2/admin/reconciliation/trigger` | een volledige reconciliatie starten | ja | `reconciliatie-starten` |
-| `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` | een markering intrekken | ja | `markering-intrekken` |
-| `POST /api/v2/admin/orphans/confirm` | bevestigde wezen markeren | ja | `wezen-bevestigen` |
-| `POST /api/v2/admin/projects/:reconcile` | de projects-repo nu inlezen | ja | `projecten-herinlezen` |
-| `POST /api/v2/projects/{project_name}/:rotate-project-key` | de projectsleutel vervangen (`features/projectsleutel-vervangen.md`) | ja | `projectsleutel-vervangen` |
+| `POST /api/v2/admin/cleanup/trigger` | de opruiming van verlopen markeringen starten | ja | `cleanup-start` |
+| `POST /api/v2/admin/reconciliation/trigger` | een volledige reconciliatie starten | ja | `reconciliation-start` |
+| `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` | een markering intrekken | ja | `marking-revoke` |
+| `POST /api/v2/admin/orphans/confirm` | bevestigde wezen markeren | ja | `orphans-confirm` |
+| `POST /api/v2/admin/projects/:reconcile` | de projects-repo nu inlezen | ja | `projects-reload` |
+| `POST /api/v2/projects/{project_name}/:rotate-project-key` | de projectsleutel vervangen (`features/projectsleutel-vervangen.md`) | ja | `project-key-replace` |
 
 ## Een verse OTP bij een wijziging
 
@@ -76,7 +76,7 @@ curl -X POST "https://zad.rijksapps.nl/api/v2/admin/projects/:reconcile" \
 Er is geen venster: elk verzoek draagt zijn eigen code, en een hergebruikte code faalt.
 
 Zonder code is het antwoord `403` met `application/problem+json`, `type:
-urn:zad:step-up-required` en `cause: otp-ontbreekt`. Een client hoort daaraan te zien dat hij
+urn:zad:step-up-required` en `cause: otp-missing`. Een client hoort daaraan te zien dat hij
 om een code moet vragen en de aanroep te herhalen. `action` zegt welke handeling het was,
 `reason` waarom ze een step-up vraagt, `remedy` wat er moet gebeuren.
 

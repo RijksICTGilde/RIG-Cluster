@@ -16,6 +16,7 @@ from freezegun import freeze_time
 from opi.core.project_environment import Omgeving
 from opi.core.step_up import (
     STEP_UP_SESSION_KEY,
+    StepUpAction,
     StepUpKind,
     has_fresh_step_up,
     record_step_up,
@@ -93,27 +94,12 @@ def test_stempel_van_het_verkeerde_type_is_niet_vers() -> None:
 
 
 # ---------------------------------------------------------------------------
-# requires_production_step_up: de vier soorten
+# requires_production_step_up: de drie soorten
 # ---------------------------------------------------------------------------
 
 
 def _project(deployments: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     return {"name": "demo", "deployments": deployments or []}
-
-
-def test_project_met_een_productiedeployment() -> None:
-    project = _project([{"name": "d1", "environment": "productie"}, {"name": "d2", "environment": "test"}])
-    assert requires_production_step_up(StepUpKind.PROJECT, project) is True
-
-
-def test_project_zonder_productiedeployment() -> None:
-    project = _project([{"name": "d1", "environment": "acceptatie"}, {"name": "d2"}])
-    assert requires_production_step_up(StepUpKind.PROJECT, project) is False
-
-
-def test_project_zonder_deployments_vraagt_niets() -> None:
-    """Een project heeft sinds RC-330 geen eigen markering: zonder deployments is er niets."""
-    assert requires_production_step_up(StepUpKind.PROJECT, _project()) is False
 
 
 def test_deployment_met_productiemarkering() -> None:
@@ -155,12 +141,12 @@ def test_component_door_niemand_gebruikt() -> None:
     ("before", "after", "verwacht"),
     [
         (Omgeving.PRODUCTIE, Omgeving.ACCEPTATIE, True),
-        (Omgeving.ACCEPTATIE, Omgeving.PRODUCTIE, False),
-        (Omgeving.ACCEPTATIE, Omgeving.TEST, False),
+        (Omgeving.ACCEPTATIE, Omgeving.PRODUCTIE, True),
+        (Omgeving.ACCEPTATIE, Omgeving.TEST, True),
         (Omgeving.PRODUCTIE, Omgeving.PRODUCTIE, False),
     ],
 )
-def test_environment_kind_leest_de_verlaging(before: Omgeving, after: Omgeving, verwacht: bool) -> None:
+def test_environment_kind_leest_elke_markeringswijziging(before: Omgeving, after: Omgeving, verwacht: bool) -> None:
     assert requires_production_step_up(StepUpKind.ENVIRONMENT, {}, change=({"d1": before}, {"d1": after})) is verwacht
 
 
@@ -168,10 +154,15 @@ def test_environment_kind_zonder_change_vraagt_geen_step_up() -> None:
     assert requires_production_step_up(StepUpKind.ENVIRONMENT, {}) is False
 
 
-def test_environment_kind_leest_een_verdwenen_productiedeployment() -> None:
-    """Een deployment die uit de lijst valt, verlaat productie net zo goed."""
+def test_environment_kind_laat_een_verdwenen_deployment_aan_de_verwijderregel() -> None:
+    """Een deployment die uit de lijst valt heeft zijn EIGEN regel.
+
+    ``save_requires_step_up`` leest het verwijderen eerst, met een eigen tekst; hem hier
+    ook als markeringswijziging tellen zou het verwijderen van een productiedeployment
+    'de OTAP-markering zetten' laten heten.
+    """
     change = ({"d1": Omgeving.PRODUCTIE}, {})
-    assert requires_production_step_up(StepUpKind.ENVIRONMENT, {}, change=change) is True
+    assert requires_production_step_up(StepUpKind.ENVIRONMENT, {}, change=change) is False
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +193,7 @@ def test_verwijderen_van_een_component_dat_in_productie_draait() -> None:
 def test_markering_verlagen_vraagt_step_up() -> None:
     before = _project([{"name": "d1", "environment": "productie"}])
     after = _project([{"name": "d1", "environment": "acceptatie"}])
-    assert save_requires_step_up(before, after) == "de markering productie te verlagen"
+    assert save_requires_step_up(before, after) == StepUpAction.MARKING_SET.phrase
 
 
 def test_geen_wijziging_vraagt_niets() -> None:
@@ -210,10 +201,11 @@ def test_geen_wijziging_vraagt_niets() -> None:
     assert save_requires_step_up(project, dict(project)) is None
 
 
-def test_markering_verhogen_naar_productie_vraagt_niets() -> None:
+def test_markering_verhogen_naar_productie_vraagt_ook_step_up() -> None:
+    """Ontwerp paragraaf 7: zetten en verlagen vragen hetzelfde."""
     before = _project([{"name": "d1", "environment": "acceptatie"}])
     after = _project([{"name": "d1", "environment": "productie"}])
-    assert save_requires_step_up(before, after) is None
+    assert save_requires_step_up(before, after) == StepUpAction.MARKING_SET.phrase
 
 
 def test_deployment_verwijderen_gaat_voor_de_markering_als_beide_spelen() -> None:

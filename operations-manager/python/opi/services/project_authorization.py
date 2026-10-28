@@ -14,6 +14,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from opi.services.project_leden import human_members
+from opi.services.project_roles import PLATFORM_ADMIN_ROLES
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
@@ -22,22 +23,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The roles that may change a project, and therefore the roles that may hold its
-# API key: that key opens every mutating per-project API route and carries no role
-# of its own, so handing it out wider than this gate widens the gate.
-PROJECT_EDIT_ROLES: tuple[str, ...] = ("admin", "owner")
-
-# De rollen die job, databaseconsole en restore mogen starten: voeren code uit met
-# databasecredentials of overschrijven data (RC-323, BIO2 8.02), dus member valt erbuiten.
-PROJECT_OPERATE_ROLES: tuple[str, ...] = ("admin", "owner", "developer")
-
 
 def get_project_users(project_name: str) -> list[ProjectUser] | None:
     """De MENSEN in een project, of None als het project onbekend is.
 
     Alleen de mensen: deze twee functies beantwoorden "mag deze aanmelding dit project
     openen", en een service account meldt zich nergens aan. Wat een service account mag
-    loopt langs :mod:`opi.api.principaal`, dat de hele ledenlijst leest.
+    loopt langs :mod:`opi.api.principal`, dat de hele ledenlijst leest.
     """
     project = get_project_store().get(project_name)
     if project is None:
@@ -68,24 +60,25 @@ def is_user_authorized_for_project(project_name: str, user_email: str, audit: bo
 
     for user in users:
         if (user.email or "").lower() == user_email.lower():
-            logger.debug(f"User {user_email} authorized for project {project_name} with role: {user.role}")
+            logger.debug(f"User {user_email} authorized for project {project_name} with roles: {user.roles}")
             return True
 
     logger.debug(f"User {user_email} not authorized for project: {project_name}")
     return False
 
 
-def get_user_role_for_project(project_name: str, user_email: str) -> str | None:
-    """Return a user's role in a project. Platform admins always get "admin"."""
+def get_user_roles_for_project(project_name: str, user_email: str) -> list[str]:
+    """De rollen van deze gebruiker op dit project; een platformbeheerder krijgt die van B6.
+
+    Leeg betekent "geen rol hier". Voor een beslissing: gebruik
+    :func:`opi.web.authz.authorize`; dit is de lezing die een pagina in zijn context zet.
+    """
     if get_user_service().is_platform_admin(user_email):
-        return "admin"
+        return sorted(rol.value for rol in PLATFORM_ADMIN_ROLES)
 
     users = get_project_users(project_name)
-    if not users:
-        return None
-
-    for user in users:
+    for user in users or []:
         if (user.email or "").lower() == user_email.lower():
-            return user.role
+            return list(user.roles)
 
-    return None
+    return []

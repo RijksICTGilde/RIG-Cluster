@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.core.authz.actions import Action
 from opi.services.catalog.base import (
     ConfigLayer,
     DetailPageSection,
@@ -101,7 +102,7 @@ class KeycloakService(Service):
         # RC-5 relocated them; the general template used to read the old project-level
         # ``config.keycloak``, which no longer exists, so the section silently stopped
         # rendering. Owning the block here keeps it pinned to the config's real home.
-        if ctx.user_role not in ("admin", "owner"):
+        if not ctx.can(Action.PROJECT_KEY_READ):
             return []
         from opi.services.project import Project
 

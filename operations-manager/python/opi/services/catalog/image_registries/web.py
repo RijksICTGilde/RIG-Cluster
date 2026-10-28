@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse
 
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_image_registries_config, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services.catalog.image_registries.naming import organization_name
@@ -34,6 +35,7 @@ image_registries_router = APIRouter()
 
 
 @image_registries_router.get("/projects/details/{project_name}/image-registries/status", response_class=HTMLResponse)
+@action(Action.SERVICE_READ)
 @requires_sso
 async def registry_status_fragment(request: Request, project_name: str) -> HTMLResponse:
     """De toestand van de proxy-organisaties van dit project, opgehaald uit het cluster.
