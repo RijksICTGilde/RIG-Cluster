@@ -20,15 +20,17 @@ De review en de security-gate van taak 2 lieten punten bij deze taak achter, omd
 
 ### 2. De hook
 
-Eén middleware die na het antwoord `request.state.authz_action` leest. Is die er niet, dan gebeurt er niets. Is hij er wel, dan schrijft de middleware een rij als de beslissing een weigering is, of als de action geen leesactie is (de markering `read` uit het register van taak 1). De argumenten van `record_action`:
+**Eén verzoek, meer dan één beslissing.** Taak 1 (RC-392) neemt op sommige routes twee beslissingen: een upsert met `cloneFrom` weegt eerst het doel en daarna apart de bron (`Action.DEPLOYMENT_CLONE_FROM`, `opi/api/endpoint_util.py`). `record_decision` in `opi/core/authz/engine.py` overschrijft de vier attributen bij elke beslissing, dus de audit zou alleen de laatste zien. Laat `record_decision` daarom ook elke beslissing toevoegen aan een lijst `request.state.authz_decisions` (action, resource, beslissing, step-up). De vier losse attributen blijven, want `opi/core/auth_decorators.py` leest `authz_decision`. De middleware hieronder schrijft een rij per beslissing in die lijst; statuscode, commit-SHA's, taak-id en origin zijn per verzoek en staan op elke rij gelijk.
+
+Eén middleware die na het antwoord `request.state.authz_decisions` leest. Is die er niet of leeg, dan gebeurt er niets. Anders schrijft de middleware per beslissing een rij als die een weigering is, of als de action geen leesactie is (de markering `read` uit het register van taak 1). De argumenten van `record_action`:
 
 | argument | bron |
 |---|---|
 | `actor` | de actor van het verzoek; zie de **actor-kolom** hieronder |
-| `action` | `str(request.state.authz_action)` |
-| `resource_path`, `project`, `deployment`, `environment` | `request.state.authz_resource` |
-| `allowed`, `cause`, `grant` | `request.state.authz_decision` |
-| `step_up` | `request.state.authz_step_up` |
+| `action` | `str(action)` van de beslissing |
+| `resource_path`, `project`, `deployment`, `environment` | de resource van de beslissing |
+| `allowed`, `cause`, `grant` | de beslissing |
+| `step_up` | de step-up van de beslissing |
 | `status_code` | het antwoord |
 | `commit_shas` | de contextvar uit stap 1 |
 | `task_id` | de taak die het verzoek startte, als die er is; zoek waar `async_task_service` een taak aanmaakt en leg de id op dezelfde manier vast als de SHA |
@@ -41,7 +43,7 @@ Waarden die niet in het projectbestand staan (welk image, welke back-up): kijk w
 
 **De actor-kolom (overdracht taak 2).** Het gebeurtenissenontwerp (`features/futures/gebeurtenissen-vastleggen-en-melden.md`, de rij over BIO2 8.15.01) laat `actor` leeg op de projectsleutel, omdat die geen persoon droeg. Die sleutel bestaat niet meer: sinds schema 2.12 heeft een project tokens per rol, en elke ingang kent zijn actor. `record_action` vult `actor` daarom altijd, zoals taak 2 het al doet, ook voor een scheduler (de procesnaam is geen persoonsgegeven). Pas `record_action` hier niet op aan.
 
-De oude projectsleutel staat nog als terugval in `herken_principaal` (`opi/api/principal.py`, voorheen `principaal.py`), voor een bestand dat de migratie naar 2.12 niet open kreeg. Die terugval valt buiten deze taak; hij schrijft `actor_kind` `project-api-key` met de projectnaam als identiteit, en dat is goed genoeg voor de audit.
+De oude projectsleutel staat nog als terugval in `recognise_principal` (`opi/api/principal.py`), voor een bestand dat de migratie naar 2.12 niet open kreeg. Die terugval valt buiten deze taak; hij schrijft `actor_kind` `project-api-key` met de projectnaam als identiteit, en dat is goed genoeg voor de audit.
 
 **`fields` (overdracht taak 2).** De bewaarlus zet na 90 dagen alleen de kolommen `actor` en `origin` op `NULL`. Wat in `data.fields` staat blijft een jaar staan. Er mag dus nooit een persoonsgegeven in `fields`: geen e-mailadres, geen lidnaam, geen IP-adres, ook niet als waarde van een veld dat de route noemt. Een route waarvan een genoemd veld zo'n waarde kan dragen (de ledenroutes bijvoorbeeld) noemt dat veld niet; de commit-SHA wijst de wijziging dan aan. Breid de bewaarlus hiervoor niet uit: komt er toch een persoonsgegeven in `data`, dan is de fout de route, niet de lus.
 
@@ -49,6 +51,7 @@ De oude projectsleutel staat nog als terugval in `herken_principaal` (`opi/api/p
 
 - een test die door **elke** route uit de routetabel loopt waarvan de action geen leesactie is, hem één keer toegestaan en één keer geweigerd aanroept, en per aanroep precies één rij ziet met de juiste actor, action, resource en uitkomst;
 - een leesroute die toegestaan wordt levert geen rij; een leesroute die geweigerd wordt wel;
+- een upsert met `cloneFrom` die toegestaan wordt levert twee rijen, een voor het doel (`deployment.write`) en een voor de bron (`deployment.clone-from`); wordt de bron geweigerd, dan staat die weigering als rij in de audit;
 - een opslag in een projectbestand levert een rij met de SHA van die commit, en `git show` van die SHA in de test-repo bevat de wijziging;
 - een gefaalde `record_action` laat het antwoord ongemoeid;
 - een verzoek met een token van een gebruiker en een met een token van een service account leveren elk een rij met `actor` en `actor_kind` gevuld;
