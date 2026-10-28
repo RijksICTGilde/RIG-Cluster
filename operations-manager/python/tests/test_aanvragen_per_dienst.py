@@ -202,7 +202,7 @@ class TestWatErOpHetSchermStaat:
         html = _render(_items())
 
         assert "E-mail versturen" in html
-        assert 'name="envelope"' in html, "het icoon van de dienst ontbreekt"
+        assert 'icon="envelope"' in html, "het icoon van de dienst ontbreekt"
         assert "Gebruik van de dienst" in html
         assert 'text="Aangevraagd"' in html
 

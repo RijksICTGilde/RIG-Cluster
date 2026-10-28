@@ -52,7 +52,7 @@ TEKEN_PROBE = """
   const bak = document.createElement('div');
   bak.id = 'icoonproef';
   document.body.appendChild(bak);
-  bak.innerHTML = namen.map(n => `<nldd-icon name="${n}"></nldd-icon>`).join('');
+  bak.innerHTML = namen.map(n => `<nldd-icon icon="${n}"></nldd-icon>`).join('');
   return new Promise(klaar => setTimeout(() => {
     const uit = {};
     bak.querySelectorAll('nldd-icon').forEach(el => {

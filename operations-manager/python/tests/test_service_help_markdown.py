@@ -50,7 +50,7 @@ def _icoonnamen(html: str) -> list[str]:
     systeem lost zijn eigen aliassen op (``database`` wordt ``cylinder-split``), dus een
     vergelijking met onze naam zou daar vals alarm geven.
     """
-    return re.findall(r'<nldd-icon[^>]*\bname="([^"]+)"', html)
+    return re.findall(r'<nldd-icon[^>]*\bicon="([^"]+)"', html)
 
 
 def _visible(html: str) -> str:
