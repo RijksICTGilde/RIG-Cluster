@@ -246,6 +246,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 except Exception as e:
                     logger.error("Failed to start resource tuning scheduler: %s", e)
 
+            # Start audit retention loop (geen schakelaar: zie AUDIT_RETENTION_HOUR)
+            try:
+                from opi.core.audit_retention_scheduler import AuditRetentionScheduler
+
+                _audit_retention_scheduler = AuditRetentionScheduler()
+                await _audit_retention_scheduler.start()
+                app.state.audit_retention_scheduler = _audit_retention_scheduler
+            except Exception as e:
+                logger.error("Failed to start audit retention scheduler: %s", e)
+
             # Start reconciliation scheduler if enabled
             if settings.RECONCILIATION_SCHEDULER_ENABLED:
                 try:
@@ -387,6 +397,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     resource_tuning_scheduler = getattr(app.state, "resource_tuning_scheduler", None)
     if resource_tuning_scheduler is not None:
         await resource_tuning_scheduler.stop()
+
+    # Stop audit retention scheduler
+    audit_retention_scheduler = getattr(app.state, "audit_retention_scheduler", None)
+    if audit_retention_scheduler is not None:
+        await audit_retention_scheduler.stop()
 
     # Stop reconciliation scheduler
     reconciliation_scheduler = getattr(app.state, "reconciliation_scheduler", None)

@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
 
+    # De OIN in ``notification_events.source``. Tot uitgifte is dit een placeholder, dus
+    # rijen zijn CloudEvents-vormig maar niet geldig; exporteurs moeten dit weigeren.
+    EVENT_SOURCE_OIN: str = "oin-nog-niet-toegekend"
+
     # Idle session timeout. The session cookie is re-signed on every response that
     # mutates the session, and the server-side row renews on activity via touch: a
     # session expires only after this many seconds of inactivity.
@@ -473,6 +477,10 @@ class Settings(BaseSettings):
     RECONCILIATION_SCHEDULER_ENABLED: bool = True
     RECONCILIATION_HOUR: int = 3  # local time (Europe/Amsterdam)
     RECONCILIATION_DRY_RUN: bool = True
+
+    # De bewaarlus van het audittrail. Geen schakelaar om hem uit te zetten: zonder lus
+    # bewaart notification_events persoonsgegevens zonder termijn.
+    AUDIT_RETENTION_HOUR: int = 4  # local time (Europe/Amsterdam)
 
     # Async task worker settings
     TASK_WORKER_ENABLED: bool = True

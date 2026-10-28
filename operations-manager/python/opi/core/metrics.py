@@ -119,6 +119,23 @@ class OPICollector(Collector):
             logger.debug("Failed to collect credential metrics", exc_info=True)
         yield credentials
 
+        # --- Mislukte auditschrijfacties ---
+        #
+        # record_action gooit niets naar de aanroeper, dus zonder deze teller zou een
+        # kapotte audit stil zijn. De naam volgt het huisvoorvoegsel opi_, niet het
+        # zad_ uit het ontwerp.
+        audit_failures = CounterMetricFamily(
+            "opi_audit_write_failures",
+            "Mislukte schrijfacties naar het audittrail sinds de start",
+        )
+        try:
+            from opi.services.audit import write_failures
+
+            audit_failures.add_metric([], write_failures())
+        except Exception:
+            logger.debug("Failed to collect audit write failures", exc_info=True)
+        yield audit_failures
+
         # --- Rate limiter ---
         rl_clients = GaugeMetricFamily(
             "opi_rate_limiter_tracked_clients",
