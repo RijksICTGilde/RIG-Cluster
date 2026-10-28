@@ -70,7 +70,7 @@ Een platformbeheerder krijgt op elk project `admin` (`get_user_role_for_project`
 | B9 | Step-up is een voorwaarde **per grant**. |
 | B10 | Code-identifiers en opgeslagen of verstuurde waarden worden Engels: `Handeling`, `StepUpActie`, de `cause`-waarden, de nieuwe engine. Commentaar en docstrings blijven Nederlands met Engelse vaktermen, zoals CLAUDE.md voorschrijft. |
 | B11 | Audit sluit aan op het datamodel `notification_events` uit `features/futures/gebeurtenissen-vastleggen-en-melden.md` punt 7. Geen tweede tabel. |
-| B12 | Een nieuw lid dat via de team-wizard wordt toegevoegd krijgt `[developer]`. |
+| B12 | Een admin kiest en wijzigt in de UI welke rol of rollen een lid heeft, bij het toevoegen en daarna. Bij het toevoegen staat `[developer]` vooraf gekozen; dat is een voorinvulling, geen vaste toekenning. In de API kan een admin de rollen van een bestaand lid wijzigen; een mens toevoegen via de API valt buiten dit plan (paragraaf 9). |
 | B13 | De **sleutel** van een rol (`developer`) is wat in het projectbestand, de API en de audit staat. De **weergave** (`Ontwikkelaar`) is een label op één plek in code, zodat een andere naam op het scherm geen migratie is. Elke plek die een rol aan een mens toont, gebruikt het label. |
 
 ## 4. De rollen en de matrix
@@ -337,8 +337,9 @@ Wat wordt schrijfbaar dat het niet was, en welke guard staat erop:
 
 | schrijfweg | nu | na dit plan |
 |---|---|---|
-| `roles` via de Team-kaart en `token_router` | rol, achter step-up | `Action.MEMBER_MANAGE`, admin met step-up |
-| `roles` via de team-wizard | verborgen veld, standaard `admin`, geen step-up, POST kan elke rol zetten | de wizard schrijft **geen** rollen. Bij opslaan komen de opgeslagen rollen terug, zoals `zet_verborgen_leden_terug` nu tokens terugzet. Een nieuw lid krijgt `[developer]` (B12). Opslaan van de team-sectie vraagt `MEMBER_MANAGE` met step-up. |
+| `roles` via de Team-kaart en `token_router` | rol, achter step-up | `Action.MEMBER_MANAGE`, admin met step-up. De API-route `PUT .../leden/{naam}/rol` neemt `roles: [...]` in plaats van `rol`. |
+| `roles` via de team-wizard | verborgen veld, standaard `admin`, geen step-up, POST kan elke rol zetten | de wizard toont per lid een **meerkeuze** met de rollen (met `role_label`), vooraf `[developer]` voor een nieuw lid (B12). Opslaan van de team-sectie vraagt `MEMBER_MANAGE` met step-up. |
+| beide wegen | twee eigen implementaties | **één** servicefunctie (VOORSTEL `set_member_roles`) die beide wegen aanroepen. Hij weigert een onbekende rol, een lege lijst, en een wijziging die het project zonder `admin` laat (ook als een admin zichzelf degradeert). Tokens en service accounts komen terug zoals `zet_verborgen_leden_terug` dat nu doet. |
 | `users` via een andere wizard-flow | niet afgeschermd door `apply_form_data_to_project` | een flow die `users` niet bezit en het toch indient, wordt geweigerd, met een test |
 | `environment` op een deployment | verlagen achter step-up (`MARKERING_VERLAGEN`) | zetten en verlagen vragen `ops` met step-up |
 | de audit-tabel | bestaat niet | alleen de hook schrijft; geen route, geen API |
@@ -411,11 +412,11 @@ De `cause` en de step-up-`action` staan in API-antwoorden. Werk `features/leden-
 
 *Controle:* een test die de gegenereerde matrix vergelijkt met de tabel in paragraaf 4, cel voor cel.
 
-**C4. De schrijfwegen uit paragraaf 7.** De team-wizard schrijft geen rollen meer, nieuwe leden krijgen de standaardrol, opslaan vraagt `member.manage` met step-up; andere flows mogen `users` niet indienen; de markering vraagt `ops`.
+**C4. De schrijfwegen uit paragraaf 7.** De team-wizard en de Team-kaart schrijven rollen allebei via `set_member_roles`; opslaan vraagt `member.manage` met step-up; andere flows mogen `users` niet indienen; de markering vraagt `ops`.
 
-*Controle:* een test die een gemanipuleerde POST van de team-wizard met een andere rol stuurt en ziet dat de opgeslagen rol niet verandert; een test dat een developer de markering van een productiedeployment niet kan verlagen of zetten.
+*Controle:* een developer die de POST van de team-wizard of de rolroute stuurt krijgt 403 en het bestand verandert niet; een admin zonder verse step-up krijgt `step-up-required`; een onbekende rol, een lege lijst en het weghalen van de laatste admin worden geweigerd, via beide wegen; een test dat een developer de markering van een productiedeployment niet kan verlagen of zetten.
 
-**C5. De Team-kaart** toont per lid de rollen als meerkeuze, met `role_label` en `ROLE_DESCRIPTIONS`, achter de bestaande step-up. De waarde die het formulier verstuurt is de sleutel. De keuzelijst `UserRoleOptionsProvider` (`opi/forms/visualizers/providers.py:306`, nu met de ongeldige rol `operator`) leest uit hetzelfde register of verdwijnt.
+**C5. De Team-kaart en de team-wizard** tonen per lid de rollen als meerkeuze, met `role_label` en `ROLE_DESCRIPTIONS`, achter de bestaande step-up. De waarde die het formulier verstuurt is de sleutel. De keuzelijst `UserRoleOptionsProvider` (`opi/forms/visualizers/providers.py:306`, nu met de ongeldige rol `operator`) leest uit hetzelfde register of verdwijnt.
 
 *Controle:* een test die `ROLE_LABELS[Role.DEVELOPER]` in de test wijzigt en ziet dat Team-kaart en matrix het nieuwe label tonen, terwijl het projectbestand `developer` houdt; `grep` op een rolsleutel in `opi/templates_lotc` levert geen getoonde tekst op.
 
@@ -424,6 +425,7 @@ De `cause` en de step-up-`action` staan in API-antwoorden. Werk `features/leden-
 - **Productie en ontwikkeling in één projectbestand.** B5 maakt zichtbaar dat dat onhandig is: in een project met productie kan een developer geen service meer wijzigen.
 - **Platformbeheerder als grant met vervaltijd**, in plaats van `is_platform_admin()`.
 - **`ApproverScope`** (`platform-admin`, `project-admin`, `project-member`) samenvoegen met de rollen. Nodig voordat er veldrechten komen.
+- **Een mens toevoegen via de API.** Service accounts kunnen dat al (`POST .../leden`); mensen alleen via de UI. Als het komt, roept het `set_member_roles` aan.
 - **Veldrechten**, en **pad-scope op een grant** (een token alleen voor deployment X).
 - **De lijstvraag**: de projectenlijst filtert nu op lidmaatschap, en dat volstaat zolang rechten per project zijn.
 
