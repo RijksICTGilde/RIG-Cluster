@@ -16,15 +16,20 @@ Usage:
 
 import logging
 import os
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
 from tests.inmemory_session_store import InMemorySessionStore
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +310,23 @@ def get_in_memory_herlogin_service() -> InMemoryHerloginService:
 def _mock_get_otp_service() -> InMemoryUserOtpService:
     """Drop-in replacement for router_otp._get_otp_service."""
     return get_in_memory_otp_service()
+
+
+@contextmanager
+def _otp_stubs() -> Iterator[None]:
+    """De 2-factor en de herlogin zonder Postgres en Keycloak.
+
+    Op /account, /account/otp en de resetknop in het gebruikersbeheer. Eén context in plaats
+    van vier, want een ``with`` kent maximaal twintig geneste contexten en dit blok zit
+    ertegenaan.
+    """
+    with (
+        patch("opi.web.router_user_admin._get_otp_service", _mock_get_otp_service),
+        patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
+        patch("opi.web.router_otp._get_herlogin_service", get_in_memory_herlogin_service),
+        patch("opi.web.router.UserOtpService", _mock_get_otp_service),
+    ):
+        yield
 
 
 #: Vaste metriekreeksen voor /admin/diensten, gesleuteld op de naam die de meetlaag
@@ -660,12 +682,7 @@ def create_test_app():
                 return_value="0" * 40,
             ),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
-            # De tweede factor, op /account, /account/otp en de resetknop in het
-            # gebruikersbeheer; alle drie zonder Postgres.
-            patch("opi.web.router_user_admin._get_otp_service", _mock_get_otp_service),
-            patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
-            patch("opi.web.router_otp._get_herlogin_service", get_in_memory_herlogin_service),
-            patch("opi.web.router.UserOtpService", _mock_get_otp_service),
+            _otp_stubs(),
             # De server-side sessies (RC-390): de middleware vraagt per request om de
             # store, en krijgt hier de in-memory variant.
             patch(

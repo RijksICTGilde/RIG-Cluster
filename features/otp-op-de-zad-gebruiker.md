@@ -213,9 +213,10 @@ formulier om te beginnen verschijnt pas na een geslaagde herlogin.
   `/start` zet, en een tweede poort zou een registratie vernietigen die je al gescand hebt als het
   venster tijdens het scannen verloopt.
 - De state van de herlogin (state, nonce, PKCE-verifier) en de uitkomst staan in de tabel
-  `otp_herlogins`, niet in de sessiecookie. authlib zou ze normaal in de cookie zetten, en die zit op
-  een ingelogde sessie al dicht tegen de 4 KB-grens. De rij is gebonden aan het `login_at` van de
-  sessie waarin de herlogin begon, dus een andere sessie van dezelfde gebruiker heeft er niets aan.
+  `otp_herlogins`. Dat is gebouwd toen de sessie nog in een cookie van ~4 KB zat; sinds RC-390 staat
+  de sessie server-side en kan dit ook daarin, zodat de tabel kan vervallen (open vraag). De rij is
+  gebonden aan het `login_at` van de sessie waarin de herlogin begon, dus een andere sessie van
+  dezelfde gebruiker heeft er niets aan.
   De uurlijkse schoonmaaklus ruimt verlopen rijen op.
 - Mislukt de herlogin (verlopen, een ander account, geen `auth_time` in de id_token), dan staat er
   op de pagina dat opnieuw inloggen niet gelukt is, en niets opent.

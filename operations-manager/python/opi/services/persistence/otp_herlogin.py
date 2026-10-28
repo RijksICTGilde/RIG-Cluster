@@ -1,8 +1,8 @@
 """ORM-model voor ``otp_herlogins``: een herlogin bij Keycloak voor het inrichten van een 2-factor.
 
 Een rij is een lopende of geslaagde herlogin. De OIDC-state (state, nonce, PKCE-verifier)
-staat hier en niet in de sessiecookie: authlib zet die normaal in de sessie, en op een sessie
-met een volle id_token loopt die cookie dan over de ~4 KB die een browser geruisloos weglaat.
+staat hier en niet in de sessie, omdat dit gebouwd is toen de sessie nog in een cookie van
+~4 KB zat. Sinds RC-390 staat de sessie server-side, dus deze tabel kan vervallen (open vraag).
 
 ``login_at`` bindt de rij aan de sessie waarin de herlogin begon, zodat een andere sessie van
 dezelfde gebruiker er niets aan heeft. ``expires_at`` is eerst de tijd om bij Keycloak in te
