@@ -164,6 +164,9 @@ COPY --chown=appuser:appuser operations-manager/python/alembic.ini /app/
 COPY --chown=appuser:appuser operations-manager/docker-entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
+# Het beveiligingsbeleid uit de root van de repo, voor de pagina /security.
+COPY --chown=appuser:appuser SECURITY.md /app/
+
 # Copy application code and resources, van zelden naar vaak wijzigend: een laag die
 # opnieuw gebouwd wordt sleept elke laag eronder mee. Zet je iets nieuws in static/, dan
 # hoort het in een van deze regels; tests/test_image_layer_guard.py meet dat.

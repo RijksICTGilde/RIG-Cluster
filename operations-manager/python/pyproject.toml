@@ -81,6 +81,9 @@ dependencies = [
     # script van een CDN op een pagina die een geheim draagt is geen optie; zie de
     # aanwijzing in features/keycloak-realm-admin-otp.md.
     "segno>=1.6.1",
+    # Zet SECURITY.md om voor de pagina /security. Kwam al transitief mee; een import
+    # die alleen via een ander pakket binnenkomt valt weg zodra dat pakket hem laat vallen.
+    "markdown-it-py>=4.0.0",
 ]
 
 [dependency-groups]
