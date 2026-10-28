@@ -18,20 +18,21 @@ Meld ook vermoedens. We waarderen het als je bevindingen vertrouwelijk houdt tot
 
 ## Hoe we beveiliging geregeld hebben
 
-- **Toegang**: inloggen gaat via Keycloak SSO-Rijk ([`opi/api/auth_routes.py`](operations-manager/python/opi/api/auth_routes.py), [`opi/configs/keycloak/bootstrap.yaml`](operations-manager/python/opi/configs/keycloak/bootstrap.yaml)).
-- **Autorisatie**: een lid heeft per project een of meer rollen (`viewer`, `developer`, `ops`, `admin`, en voor een pijplijn `developer-ci` en `ops-ci`). Wat een rol mag staat op één plek, een regelregister dat voor de API en het portaal beslist en waaruit de rolmatrix in het portaal wordt opgebouwd ([`opi/core/authz/rules.py`](operations-manager/python/opi/core/authz/rules.py), [`features/rollen-en-rechten.md`](features/rollen-en-rechten.md)). Wat productie raakt vraagt `ops`, en gevoelige handelingen vragen daarbovenop een verse code uit de tweede factor. Machine-toegang loopt over tokens die bij een lid of service account horen en nooit meer mogen dan dat lid ([`opi/services/api_token_service.py`](operations-manager/python/opi/services/api_token_service.py)).
-- **Geheimen in git**: alles wat een geheim is, staat versleuteld met SOPS en AGE ([`opi/utils/sops.py`](operations-manager/python/opi/utils/sops.py), [`decrypt-sops.yaml`](infrastructure/bootstrap/infrastructure/secrets/config/overlays/odcn/decrypt-sops.yaml)).
-- **Geheimen in logs**: een logfilter maskeert wachtwoorden, tokens, AGE-sleutels en API-sleutels voordat een regel wordt weggeschreven ([`opi/utils/logging_redact.py`](operations-manager/python/opi/utils/logging_redact.py)).
-- **Herleidbaarheid**: wie of wat wijzigde, wordt server-side vastgesteld en gaat mee in commits en taakadministratie ([`opi/core/actor.py`](operations-manager/python/opi/core/actor.py)).
-- **Secret-scan**: iedere pull request en iedere push naar `main` draait een eigen scan over de volledige boom op gecommitte geheimen ([`scripts/scan-secrets.py`](scripts/scan-secrets.py), job `secret-scan` in [`security.yml`](.github/workflows/security.yml)).
-- **Dependencies**: `pip-audit` toetst de Python-dependencies tegen OSV, bij iedere pull request, bij iedere push naar `main` en wekelijks (job `dependency-audit` in [`security.yml`](.github/workflows/security.yml)).
-- **Container-images**: Trivy scant de Operations Manager, de back-upimage, de SOPS-sidecar en onze eigen PostgreSQL-, Keycloak- en ArgoCD-image op kwetsbare OS-pakketten en bibliotheken; bevindingen komen als SARIF in de Security-tab van de repository (job `container-scan` in [`security.yml`](.github/workflows/security.yml)). Een image die we zelf bouwen, gaat pas de registry in als hij langs de poort komt, en wordt getekend; zie [De toeleverketen van de images](#de-toeleverketen-van-de-images).
-- **Eigen code**: semgrep en CodeQL lezen de code statisch op injectie en op een webroute die zonder authenticatie open staat; gitleaks scant de boom op sleutelvormen en wekelijks de hele historie (jobs `sast-semgrep`, `sast-codeql`, `gitleaks` en `gitleaks-history` in [`security.yml`](.github/workflows/security.yml)).
-- **Gegenereerde manifests**: kube-linter en checkov meten de manifests die ZAD voor elke tenant genereert op `securityContext`, niet-root en een vaste tag (job `manifest-posture` in [`security.yml`](.github/workflows/security.yml)).
-- **Het draaiende portaal**: nuclei vuurt ruim 11.000 templates af op een instantie die de run zelf opzet op de loopback van de runner, met en zonder sessie ([`aanvalsproef.yml`](.github/workflows/aanvalsproef.yml)). Wat die scanners vinden gaat door een poort met een uitzonderingslijst met reden en vervaldatum; zie [`features/aanvalsproef-harnas.md`](features/aanvalsproef-harnas.md).
+- **Toegang**: inloggen gaat via Keycloak SSO-Rijk, met PKCE ([`features/pkce-op-de-opi-login.md`](features/pkce-op-de-opi-login.md)).
+- **Autorisatie**: een lid heeft per project een of meer rollen (`viewer`, `developer`, `ops`, `admin`, en voor een pijplijn `developer-ci` en `ops-ci`). Wat een rol mag staat op één plek, een regelregister dat voor de API en het portaal beslist en waaruit de rolmatrix in het portaal wordt opgebouwd. Wat productie raakt vraagt `ops`, en gevoelige handelingen vragen daarbovenop een verse code uit de tweede factor ([`features/rollen-en-rechten.md`](features/rollen-en-rechten.md)).
+- **Machine-toegang**: via tokens die bij een lid of service account horen en nooit meer mogen dan dat lid ([`features/leden-en-api-tokens.md`](features/leden-en-api-tokens.md)).
+- **Geheimen in git**: alles wat een geheim is, staat versleuteld met SOPS en AGE, en de sleutel wordt elk kwartaal geroteerd ([`features/sops-sleutel-roteren.md`](features/sops-sleutel-roteren.md)).
+- **Geheimen in logs**: een logfilter maskeert wachtwoorden, tokens, AGE-sleutels en API-sleutels voordat een regel wordt weggeschreven ([`features/logniveau-en-redactie.md`](features/logniveau-en-redactie.md)).
+- **Herleidbaarheid**: wie of wat wijzigde, wordt server-side vastgesteld en gaat mee in commits en taakadministratie.
+- **Secret-scan**: iedere pull request en iedere push naar `main` draait een eigen scan over de volledige boom op gecommitte geheimen.
+- **Dependencies**: `pip-audit` toetst de Python-dependencies tegen OSV, bij iedere pull request, bij iedere push naar `main` en wekelijks.
+- **Container-images**: Trivy scant de Operations Manager, de back-upimage, de SOPS-sidecar en onze eigen PostgreSQL-, Keycloak- en ArgoCD-image op kwetsbare OS-pakketten en bibliotheken; bevindingen komen als SARIF in de Security-tab van de repository. Een image die we zelf bouwen, gaat pas de registry in als hij langs de poort komt, en wordt getekend; zie [De toeleverketen van de images](#de-toeleverketen-van-de-images).
+- **Eigen code**: semgrep en CodeQL lezen de code statisch op injectie en op een webroute die zonder authenticatie open staat; gitleaks scant de boom op sleutelvormen en wekelijks de hele historie.
+- **Gegenereerde manifests**: kube-linter en checkov meten de manifests die ZAD voor elke tenant genereert op `securityContext`, niet-root en een vaste tag.
+- **Het draaiende portaal**: nuclei vuurt ruim 11.000 templates af op een instantie die de run zelf opzet, met en zonder sessie. Wat die scanners vinden gaat door een poort met een uitzonderingslijst met reden en vervaldatum ([`features/aanvalsproef-harnas.md`](features/aanvalsproef-harnas.md)).
 - **Schotten op het cluster**: Kyverno-policies in waarschuwmodus en Falco voor runtime-detectie ([`features/kyverno-admission-audit.md`](features/kyverno-admission-audit.md), [`features/falco-runtime-detectie.md`](features/falco-runtime-detectie.md)).
 - **Dekking**: welke ASVS-eis door welke toets gedekt is, en wat handwerk blijft, staat in [`docs/asvs-zelfbeoordeling.md`](docs/asvs-zelfbeoordeling.md).
-- **Wijzigingen**: de testsuite, de linter en de typecontrole draaien op iedere pull request en iedere push naar `main` ([`ci.yml`](.github/workflows/ci.yml)); de gevoelige paden hebben een vaste eigenaar ([`.github/CODEOWNERS`](.github/CODEOWNERS)).
+- **Wijzigingen**: de testsuite, de linter en de typecontrole draaien op iedere pull request en iedere push naar `main`; de beveiligingsgevoelige delen hebben een vaste eigenaar.
 
 De volledige BIO-verantwoording per control wordt hier niet herhaald; die is intern belegd.
 
@@ -45,7 +46,7 @@ Elke job in `.github/workflows/` begint met `step-security/harden-runner` op `eg
 
 Dat geldt ook voor de jobs van `aanvalsproef.yml`, die een eigen allowlist hebben: die workflow haalt de nuclei-templates, de kind-binary en de Kyverno- en Falco-images op. Die lijst is afgeleid uit de bron van elk werktuig en op een echte GitHub-run nog niet gemeten.
 
-Dit is de vangrail achter de SHA-pins: elke externe action staat op een commit-SHA, dus de inhoud kan niet onder dezelfde naam veranderen. `tests/test_workflows_actions_op_sha.py` en `tests/test_workflows_harden_runner.py` bewaken die twee.
+Dit is de vangrail achter de SHA-pins: elke externe action staat op een commit-SHA, dus de inhoud kan niet onder dezelfde naam veranderen. Een test in de CI bewaakt allebei.
 
 ### De poort staat voor de push
 
@@ -64,7 +65,7 @@ De Kubernetes-manifesten in `bootstrap/` en `infrastructure/` worden met dezelfd
 
 Twee van de vijf images hebben geen eigen apt-laag: `postgresql-with-dictionaries` kopieert alleen woordenboeken in de CNPG-base, en `keycloak-zad` voegt providers toe aan de Keycloak-base. Voor die twee levert de nachtelijke herbouw alleen op wat de base-tag zelf intussen heeft gekregen.
 
-**Laag B, het bouwgereedschap, gaat via Renovate** (`renovate.json`, zie `features/renovate.md`) met twee afspraken:
+**Laag B, het bouwgereedschap, gaat via Renovate** ([`features/renovate.md`](features/renovate.md)) met twee afspraken:
 
 - een **cooldown** van 7 dagen (`minimumReleaseAge`): een net gepubliceerde versie wordt niet meteen een PR, zodat een gecompromitteerde of ingetrokken release de kans krijgt om op te vallen voordat wij hem binnenhalen;
 - **selectieve auto-merge**: alleen patch en minor, en alleen voor het bouwgereedschap (de GitHub Actions en `.tool-versions`). De manifesten, de base-images en de app-afhankelijkheden blijven een merge die iemand doet. Een major komt alleen op het Dependency Dashboard, en een digest-update gaat ook niet mee: bij een action die op een SHA staat met een major-only versiecommentaar komt een verplaatste tag binnen als digest-update, en dat is precies waar die pin tegen beschermt.
