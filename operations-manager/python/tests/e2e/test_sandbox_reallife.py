@@ -344,14 +344,9 @@ def _set_env_vars_via_ui(
         page.wait_for_load_state("networkidle")
         open_tab(page, "componenten")
         # Scopen op de kaart van DIT component: met vier componenten op de pagina zou een
-        # losse selector op de knoptekst de eerste kaart pakken. Heeft het component al
-        # variabelen, dan is de knop een potloodje met de naam in het accessible-label;
-        # anders de knop "Omgevingsvariabelen (0)" zonder naam erin.
+        # losse selector op de knoptekst de eerste kaart pakken.
         card = page.locator(".component-card").filter(has=page.get_by_text(component_name, exact=True)).first
-        knop = card.locator(
-            f"nldd-list-item-segment[accessible-label^='Omgevingsvariabelen van {component_name}'], "
-            "nldd-button:has-text('Omgevingsvariabelen')"
-        ).first
+        knop = card.locator("nldd-button:has-text('Omgevingsvariabelen bewerken')").first
         knop.wait_for(state="visible")
         knop.click()
         editor = page.locator("#edit-section-inner .kv-editor .cm-content")

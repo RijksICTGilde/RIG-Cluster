@@ -6,7 +6,7 @@ stand wordt door static/js/uitklap.js omgezet. Een controle op de uitgestuurde H
 alleen zien dat de rij er staat, niet dat de inhoud verborgen is en met een klik
 verschijnt - precies de twee dingen waar het om gaat.
 
-Aanleiding: de omgevingsvariabelen en de aliassen stonden uitgeklapt in de kaart en werden
+Aanleiding: de services en de aliassen stonden uitgeklapt in de kaart en werden
 soms zo lang dat het volgende component buiten beeld viel.
 """
 
@@ -47,20 +47,20 @@ def _kop_van(rij):
 
 
 def test_de_lange_lijsten_staan_ingeklapt(app_server: str, auth_page: Page) -> None:
-    """Omgevingsvariabelen en aliassen zijn er wel, maar hun inhoud staat niet open."""
+    """De aliassen zijn er wel, maar hun inhoud staat niet open. Omgevingsvariabelen staan er niet meer."""
     auth_page.goto(f"{app_server}{COMPONENTEN_URL}")
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "componenten")
 
-    env_rij = _rij(auth_page, "Omgevingsvariabelen")
-    env_rij.wait_for(state="visible", timeout=10000)
+    alias_rij = _rij(auth_page, "Aliassen")
+    alias_rij.wait_for(state="visible", timeout=10000)
 
     # Het AANTAL hoort in de kop: zonder dat is er geen reden om open te klappen.
-    assert env_rij.locator("nldd-text-cell").first.get_attribute("text") == "Omgevingsvariabelen (2)"
-    assert _rij(auth_page, "Aliassen").locator("nldd-text-cell").first.get_attribute("text") == "Aliassen (1)"
+    assert alias_rij.locator("nldd-text-cell").first.get_attribute("text") == "Aliassen (1)"
+    assert _rij(auth_page, "Omgevingsvariabelen").count() == 0
 
     # De geneste rijen staan in het slot en zijn niet zichtbaar zolang de rij dicht staat.
-    assert env_rij.locator('nldd-list-item[slot="children"]').first.is_visible() is False
+    assert alias_rij.locator('nldd-list-item[slot="children"]').first.is_visible() is False
 
 
 def test_een_klik_klapt_open_en_weer_dicht(app_server: str, auth_page: Page) -> None:
@@ -69,38 +69,33 @@ def test_een_klik_klapt_open_en_weer_dicht(app_server: str, auth_page: Page) -> 
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "componenten")
 
-    env_rij = _rij(auth_page, "Omgevingsvariabelen")
-    env_rij.wait_for(state="visible", timeout=10000)
-    inhoud = env_rij.locator('nldd-list-item[slot="children"]').first
+    alias_rij = _rij(auth_page, "Aliassen")
+    alias_rij.wait_for(state="visible", timeout=10000)
+    inhoud = alias_rij.locator('nldd-list-item[slot="children"]').first
 
-    _kop_van(env_rij).click()
+    _kop_van(alias_rij).click()
     inhoud.wait_for(state="visible", timeout=5000)
-    namen = env_rij.locator('nldd-list-item[slot="children"] nldd-text-cell')
-    assert "LOG_LEVEL" in [namen.nth(i).get_attribute("text") for i in range(namen.count())]
+    assert inhoud.locator("nldd-text-cell").first.get_attribute("text")
 
-    _kop_van(env_rij).click()
+    _kop_van(alias_rij).click()
     inhoud.wait_for(state="hidden", timeout=5000)
 
 
 def test_een_klik_in_de_inhoud_klapt_niet_dicht(app_server: str, auth_page: Page) -> None:
-    """In het uitgeklapte deel staat geen invoer meer, maar de bediening van de rij zelf
-    mag de stand niet omzetten: het potloodje (RC-388) draagt zijn eigen klik.
-
-    Voor RC-388 stonden hier geheimvelden met een oogje; sindsdien toont de rij alleen
-    namen en opent het potloodje het step-up-venster voor de waarden.
-    """
+    """Een klik in het uitgeklapte deel laat de rij open staan: de velden daarin moeten
+    bruikbaar blijven."""
     auth_page.goto(f"{app_server}{COMPONENTEN_URL}")
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "componenten")
 
-    env_rij = _rij(auth_page, "Omgevingsvariabelen")
-    env_rij.wait_for(state="visible", timeout=10000)
-    inhoud = env_rij.locator('nldd-list-item[slot="children"]').first
+    alias_rij = _rij(auth_page, "Aliassen")
+    alias_rij.wait_for(state="visible", timeout=10000)
+    inhoud = alias_rij.locator('nldd-list-item[slot="children"]').first
 
-    _kop_van(env_rij).click()
+    _kop_van(alias_rij).click()
     inhoud.wait_for(state="visible", timeout=5000)
 
-    # Een klik op een naamrij: er staat geen bediening meer in, dus de rij reageert niet.
+    # Een klik op een rij in het uitgeklapte deel klapt de rij niet dicht.
     inhoud.click()
     auth_page.wait_for_timeout(200)
     assert inhoud.is_visible() is True

@@ -48,9 +48,10 @@ def _open_window(auth_page: Page, app_server: str) -> None:
     auth_page.goto(f"{app_server}{COMPONENTEN_URL}")
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "componenten")
-    pencil = auth_page.locator("nldd-list-item-segment[accessible-label^='Omgevingsvariabelen van web-app']").first
-    pencil.wait_for(state="visible", timeout=10000)
-    pencil.click()
+    kaart = auth_page.locator(".component-card").filter(has=auth_page.get_by_text("web-app", exact=True)).first
+    knop = kaart.locator("nldd-button:has-text('Omgevingsvariabelen bewerken')").first
+    knop.wait_for(state="visible", timeout=10000)
+    knop.click()
     auth_page.wait_for_selector(".edit-section-modal.is-open", timeout=10000)
 
 
@@ -105,10 +106,10 @@ def task_started() -> object:
         yield started
 
 
-def test_saving_writes_encrypted_and_leaves_only_names_on_the_card(
+def test_saving_writes_encrypted_and_leaves_nothing_on_the_card(
     app_server: str, auth_page: Page, otp_factor: object, task_started: object
 ) -> None:
-    """Opslaan toetst de step-up opnieuw; het bestand krijgt een AGE-blok, de kaart niet."""
+    """Opslaan toetst de step-up opnieuw; het bestand krijgt een AGE-blok, de kaart geen naam en geen waarde."""
     _open_window(auth_page, app_server)
     code = auth_page.locator("#edit-section-inner input[name='otp'], #edit-section-inner [name='otp'] input").first
     code.fill("000000")
@@ -143,7 +144,7 @@ def test_saving_writes_encrypted_and_leaves_only_names_on_the_card(
         store = get_project_store()
         store._refresh_cache(PROJECT, data, f"{PROJECT}.yaml")
 
-        assert "LOG_LEVEL" in _names_on_page(auth_page, app_server)
+        assert "LOG_LEVEL" not in _names_on_page(auth_page, app_server)
 
 
 def _names_on_page(auth_page: Page, app_server: str) -> str:

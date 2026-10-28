@@ -23,17 +23,12 @@
         <div class="otp-qr">{{ qr_svg | safe }}</div>
 
         <c-paragraph size="sm">
-            Lukt scannen niet, dan voer je deze sleutel met de hand in. Het is een TOTP-geheim
-            van zes cijfers per dertig seconden.
+            Lukt scannen niet of gebruik je een passwordmanager, dan kun je onderstaande sleutel gebruiken.
         </c-paragraph>
         <c-code>{{ base32_secret }}</c-code>
     {% endcall %}
 
     {% call panel("Stap 2: bevestig met een code", "key") %}
-        <c-paragraph>
-            Pas een geldige code maakt de 2-factor echt. Tot dat moment blijft je oude 2-factor,
-            als je die had, gewoon werken.
-        </c-paragraph>
         {# novalidate: de server valideert dit veld. Zie FORMULIEREN_MET_SERVERVALIDATIE
            in tests/test_template_structure.py. #}
         <form autocomplete="off" method="post" action="/account/otp/bevestigen" novalidate>

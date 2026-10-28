@@ -2,16 +2,15 @@
 
 De `user-env-vars` van een component (en hun overschrijvingen per deployment) kunnen
 geheimen bevatten. Sinds RC-388 staan die waarden **nergens meer in de HTML van het
-portaal**: de detailpagina toont alleen de namen en het aantal. Wie de waarden wil zien
+portaal**, op het Componenten-tabblad ook niet meer als naam. Wie de waarden wil zien
 of wijzigen opent een eigen venster, en dat vraagt **altijd een verse step-up** - ook
 voor een deployment die in ontwikkeling staat. De OTAP-markering versoepelt dit dus niet.
 
 ## Wat je waar ziet
 
-- **Componenten-tabblad**: per componentkaart de regel "Omgevingsvariabelen (n)" met,
-  uitgeklapt, alleen de namen. Het potloodje opent het venster. Zonder variabelen staat
-  er "Omgevingsvariabelen (0)" als knop (alleen voor wie mag bewerken), want dit venster
-  is de enige weg om ze te zetten.
+- **Componenten-tabblad**: per componentkaart alleen de knop "Omgevingsvariabelen bewerken",
+  naast Bewerken en Verwijderen (alleen voor wie mag bewerken). Geen namen, geen aantal en
+  geen uitklaprij: ook dit venster is de enige weg om ze te zien of te zetten.
 - **Deployments-tabblad**: per deployment-component het aantal overschrijvingen en de
   namen, plus een knop "Bekijken en bewerken" voor die scope.
 - **Het venster**: na een verse step-up toont het de echte waarden als `KEY=value`-regels
