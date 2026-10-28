@@ -599,23 +599,6 @@ class TestWholeProject:
 # ---------------------------------------------------------------------------
 
 
-class TestOneEnvVarReader:
-    """The detail page and the API read env vars through the same function.
-
-    Two copies of a decrypt-and-parse path drift, and a drifting one is how a value ends
-    up where a name was meant. Pinned by identity: both modules must hold the very same
-    function object, so a private copy in either one fails here.
-    """
-
-    def test_page_and_api_share_the_reader(self) -> None:
-        import opi.api.v2.project_read as api_read
-        import opi.services.project_env_vars as shared
-        import opi.web.router as web_router
-
-        assert web_router.read_user_env_vars is shared.read_user_env_vars
-        assert api_read.read_user_env_vars is shared.read_user_env_vars
-
-
 class TestUserEnvVarsReader:
     """The shared reader itself: the shapes a project file may legally hold."""
 

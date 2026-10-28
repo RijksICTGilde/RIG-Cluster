@@ -38,7 +38,6 @@ from opi.services.project_authorization import (
     get_user_role_for_project,
     is_user_authorized_for_project,
 )
-from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_leden import human_members
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
@@ -1642,32 +1641,14 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 kc_config["totp_code"] = None
             kc_config["totp_secret"] = None
 
-        # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
-        # the page and the API can never disagree about what a component's variables are.
-        #
-        # Sinds RC-388 komen alleen de NAMEN in de context; waarden vragen een verse
-        # step-up (router_env_vars). De versleutelde blokken gaan ook mee uit de kopie,
-        # zodat er niets van dit veld in de HTML kan belanden.
-        async def _lees_env_var_namen(houder: dict[str, Any], waar: str) -> None:
-            raw = houder.pop("user-env-vars", None)
-            gelezen = await read_user_env_vars(raw, project_private_key, where=waar)
-            houder["user-env-var-namen"] = sorted(gelezen) if gelezen is not None else None
-
-        env_var_taken = [
-            _lees_env_var_namen(dep_component, f"deployment component '{dep_component.get('reference')}'")
-            for deployment in project_data_decrypted.get("deployments", [])
-            for dep_component in deployment.get("components", [])
-            if dep_component.get("user-env-vars")
-        ]
-
-        logger.info(f"Processing {len(project_data_decrypted.get('components', []))} components for user-env-vars")
-        env_var_taken += [
-            _lees_env_var_namen(component, f"component '{component.get('name', 'unknown')}'")
-            for component in project_data_decrypted.get("components", [])
-            if component.get("user-env-vars")
-        ]
-        if env_var_taken:
-            await asyncio.gather(*env_var_taken)
+        # Sinds RC-388 staat er niets van de omgevingsvariabelen op de pagina, ook geen naam:
+        # waarden en namen vragen een verse step-up (router_env_vars). De versleutelde
+        # blokken gaan uit de kopie, zodat er niets van dit veld in de HTML kan belanden.
+        for deployment in project_data_decrypted.get("deployments", []):
+            for dep_component in deployment.get("components", []):
+                dep_component.pop("user-env-vars", None)
+        for component in project_data_decrypted.get("components", []):
+            component.pop("user-env-vars", None)
 
         for component in project_data_decrypted.get("components", []):
             component_name = component.get("name", "unknown")
