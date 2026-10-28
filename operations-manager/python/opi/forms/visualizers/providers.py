@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol
 
+from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
 from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS
@@ -304,39 +305,24 @@ class ComponentTypeOptionsProvider:
 
 
 class UserRoleOptionsProvider:
-    """Provides user role options for project access."""
+    """De rollen die een lid kan hebben, uit het rechtenregister.
+
+    Geen eigen lijst: label en omschrijving komen uit ``ROLE_LABELS`` en
+    ``ROLE_DESCRIPTIONS`` (B13), zodat een andere naam op het scherm een wijziging op een
+    plek is en de keuzelijst nooit een rol kan tonen die geen regels heeft.
+    """
 
     def __init__(self, include_empty: bool = False) -> None:
         self.include_empty = include_empty
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available user role options."""
-        options: list[dict[str, Any]] = []
-
+        opties: list[dict[str, Any]] = []
         if self.include_empty:
-            options.append({"value": "", "label": "Selecteer rol"})
-
-        options.extend(
-            [
-                {
-                    "value": "admin",
-                    "label": "Administrator",
-                    "description": "Volledige toegang tot alle resources en instellingen",
-                },
-                {
-                    "value": "developer",
-                    "label": "Developer",
-                    "description": "Kan applicaties deployen en logs bekijken",
-                },
-                {
-                    "value": "member",
-                    "label": "Alleen lezen",
-                    "description": "Kan het project bekijken, niets starten of wijzigen",
-                },
-            ]
+            opties.append({"value": "", "label": "Selecteer rol"})
+        opties.extend(
+            {"value": rol.value, "label": role_label(rol), "description": ROLE_DESCRIPTIONS[rol]} for rol in Role
         )
-
-        return options
+        return opties
 
 
 class CpuRequestOptionsProvider:

@@ -357,7 +357,7 @@ class TestDeMigratie:
             "schema-version": 2.9,
             "name": "mb-grist-helmfile",
             "display-name": "Grist",
-            "users": [{"email": "beheerder@example.nl", "role": "admin"}],
+            "users": [{"email": "beheerder@example.nl", "roles": ["admin", "ops"]}],
             "clusters": ["sandboxed-local"],
             "services": [{"name": ServiceType.REDIS.value, "config": config}],
         }
@@ -490,7 +490,7 @@ class TestDeSchrijfwegenVanHetFormulier:
             "schema-version": LATEST_SCHEMA_VERSION_VALUE,
             "name": "p1",
             "display-name": "Project 1",
-            "users": [{"email": "beheerder@example.nl", "role": "admin"}],
+            "users": [{"email": "beheerder@example.nl", "roles": ["admin", "ops"]}],
             "clusters": ["sandboxed-local"],
             "services": [{"name": ServiceType.REDIS.value, "config": config}],
             "components": [{"name": "frontend", "type": "single", "services": [ServiceType.REDIS.value]}],

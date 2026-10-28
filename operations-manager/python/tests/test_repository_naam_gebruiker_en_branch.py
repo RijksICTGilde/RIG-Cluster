@@ -32,7 +32,7 @@ def _project(**repository: Any) -> dict[str, Any]:
         "schema-version": 2.9,
         "name": "demo",
         "clusters": ["odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {"name": "main-repo", "url": "https://example.org/demo.git", "branch": "main", "path": ".", **repository}
         ],

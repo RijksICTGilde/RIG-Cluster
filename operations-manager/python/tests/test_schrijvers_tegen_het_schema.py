@@ -60,7 +60,7 @@ def _basis_project() -> dict[str, Any]:
         "name": "schrijvers",
         "description": "Basisproject voor de schrijverstests",
         "clusters": ["odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",
@@ -581,10 +581,11 @@ async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> Non
     )
     with (
         patch.multiple(
-            "opi.web.project_edit_security",
-            get_project_store=lambda: SimpleNamespace(get=lambda _name: SimpleNamespace(data=project)),
-            is_user_authorized_for_project=lambda _p, _e: True,
-            get_user_role_for_project=lambda _p, _e: "admin",
+            "opi.web.authz",
+            get_project_store=lambda: SimpleNamespace(
+                get=lambda naam: SimpleNamespace(name=naam, data=project, users=[])
+            ),
+            get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: True),
         ),
         patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
         patch("opi.web.router_env_vars.create_task_and_render_progress", AsyncMock()),

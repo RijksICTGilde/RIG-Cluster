@@ -1,0 +1,24 @@
+{#
+  De regels die geen projectrecht zijn. Ze staan op de pagina omdat hun afwezigheid zou
+  lezen als "die routes zijn vrij".
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% for naam, regels in andere_regels %}
+    {% call panel(naam) %}
+        <c-paragraph>
+            Deze routes werken niet op een project, dus er is geen projectrol die ze opent.
+        </c-paragraph>
+        <c-table columns="2fr 1.4fr">
+            <c-table-head>
+                <c-th>Handeling</c-th>
+                <c-th>Action</c-th>
+            </c-table-head>
+            {% for regel in regels %}
+                <c-table-row>
+                    <c-td>{{ regel.label }}</c-td>
+                    <c-td>{{ regel.action.value }}</c-td>
+                </c-table-row>
+            {% endfor %}
+        </c-table>
+    {% endcall %}
+{% endfor %}

@@ -80,7 +80,10 @@ def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
         "display_name": project_data.get("display-name", project_name),
         "description": project_data.get("description", "Geen beschrijving beschikbaar"),
         "users": project_data.get("users", []),
-        "user_role": "admin",
+        "user_roles": ["admin", "ops"],
+        # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
+        # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
+        "can": lambda *_a, **_k: True,
         "services": services_with_info,
         "clusters": project_data.get("clusters", []),
         "components": project_data.get("components", []),
@@ -117,7 +120,10 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "title": f"Project Details - {project_data.get('display-name', name)}",
         "project": build_project_details(project_data),
         "user": {"email": "beheerder@voorbeeld.nl", "name": "Voorbeeldbeheerder"},
-        "user_role": "admin",
+        "user_roles": ["admin", "ops"],
+        # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
+        # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
+        "can": lambda *_a, **_k: True,
         "ServiceAdapter": ServiceAdapter,
         "service_selection_labels": {},
         "service_config_hint": {},
@@ -144,7 +150,7 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         # lijstje hier. Ze stonden leeg, en daardoor toonde de proefopstelling juist de
         # secties niet die het langst met roos-HTML in de LOTC-pagina stonden (RC-64) -
         # precies het soort gat dat een screenshot niet verraadt.
-        "service_detail_sections": collect_detail_page_sections(project_data, "admin"),
+        "service_detail_sections": collect_detail_page_sections(project_data, lambda _handeling: True),
     }
 
 

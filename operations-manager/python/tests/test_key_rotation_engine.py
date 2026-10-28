@@ -628,7 +628,7 @@ description: Project for the rotation test
 # A comment a naive YAML round trip throws away
 users:
   - email: someone@rijksoverheid.nl
-    role: admin
+    roles: [admin, ops]
 clusters:
   - odcn-production
 repositories:

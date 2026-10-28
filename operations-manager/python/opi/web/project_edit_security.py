@@ -1,92 +1,15 @@
-"""Shared guards for project-editing save handlers.
+"""Wat een formulier wel en niet in het projectbestand mag schrijven.
 
-- ``require_project_edit_access``: admin/owner role gate, re-check on every
-  mutating request (TOCTOU).
-- ``require_project_operate_access``: dezelfde poort voor operationele
-  handelingen (job, databaseconsole, terugzetten), waar ``developer`` wel bij
-  hoort en de leesrol ``member`` niet.
-- ``apply_form_data_to_project``: merge submitted form data into the stored
-  project; reject submissions that include immutable top-level fields.
-
-Role-based protection (e.g. only admin/owner may edit ``users``) lives in
-the role gate; this module does not duplicate that. See
-``features/futures/form-field-rbac.md`` for the proper field-level RBAC
-that would replace today's per-handler glue.
+De rolpoort is hier weg: die loopt sinds RC-392 via ``decide()``, in
+:mod:`opi.web.authz`. Wat hier blijft is de merge van ingediende formuliergegevens op het
+opgeslagen project, met de velden die geen formulier mag zetten.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import HTTPException, Request
-
-from opi.core.auth_decorators import get_current_user
-from opi.services.project_authorization import (
-    PROJECT_EDIT_ROLES,
-    PROJECT_OPERATE_ROLES,
-    get_user_role_for_project,
-    is_user_authorized_for_project,
-)
-from opi.services.project_store import ProjectSummary, get_project_store
-
-
-def _require_project_role(
-    request: Request,
-    project_name: str,
-    allowed_roles: tuple[str, ...],
-    denied_message: str,
-) -> tuple[ProjectSummary, str]:
-    """Require one of *allowed_roles* on the project. Returns (project, user_email).
-
-    Raises HTTPException 404 if the project does not exist, 403 if the user
-    is not authorized for the project or lacks the required role.
-    """
-    user = get_current_user(request)
-    project = get_project_store().get(project_name)
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in allowed_roles:
-        raise HTTPException(status_code=403, detail=denied_message)
-
-    return project, user_email
-
-
-def require_project_edit_access(request: Request, project_name: str):
-    """Require admin/owner role on the project. Returns (project, user_email)."""
-    return _require_project_role(
-        request,
-        project_name,
-        PROJECT_EDIT_ROLES,
-        "Onvoldoende rechten om dit project te bewerken",
-    )
-
-
-def require_project_operate_access(request: Request, project_name: str) -> tuple[ProjectSummary, str]:
-    """Require an operational role on the project. Returns (project, user_email)."""
-    return _require_project_role(
-        request,
-        project_name,
-        PROJECT_OPERATE_ROLES,
-        "Onvoldoende rechten voor deze handeling op dit project",
-    )
-
-
-def may_operate_on_project(request: Request, project_name: str) -> bool:
-    """Of deze gebruiker operationele handelingen op dit project mag doen.
-
-    Voor de knop, niet voor de grens: ``require_project_operate_access`` is de grens.
-    """
-    user = get_current_user(request) or {}
-    user_email = user.get("email", "").lower()
-    return get_user_role_for_project(project_name, user_email) in PROJECT_OPERATE_ROLES
-
+from fastapi import HTTPException
 
 # Top-level fields no form should ever submit. name=on-disk filename;
 # clusters=not yet editable (see features/futures/cluster-editing.md).

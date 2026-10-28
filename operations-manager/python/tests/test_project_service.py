@@ -70,15 +70,15 @@ class TestLoadProjectFromData:
             "name": "proj",
             "config": {"api-key": "k"},
             "users": [
-                {"email": "a@b.com", "role": "admin"},
-                {"email": "c@d.com", "role": "viewer"},
+                {"email": "a@b.com", "roles": ["admin"]},
+                {"email": "c@d.com", "roles": ["viewer"]},
             ],
         }
         service.load_project_from_data(data, "f.yaml")
         users = get_project_users("proj")
         assert len(users) == 2
         assert users[0].email == "a@b.com"
-        assert users[1].role == "viewer"
+        assert users[1].roles == ["viewer"]
 
     def test_rejects_missing_name(self, service):
         assert service.load_project_from_data({"config": {"api-key": "k"}}, "f.yaml") is False
@@ -98,7 +98,7 @@ class TestLoadProjectFromData:
             "name": "proj",
             "config": {"api-key": "k"},
             "users": [
-                {"email": "valid@x.com", "role": "admin"},
+                {"email": "valid@x.com", "roles": ["admin", "ops"]},
                 {"bad": "entry"},  # missing email/role
                 "not-a-dict",  # wrong type entirely
                 {"email": "no-role@x.com"},  # missing role
@@ -192,7 +192,7 @@ class TestApiKeyDecryptionOnLoad:
     def test_decrypt_failure_without_previous_registers_nothing(self, service, monkeypatch):
         """Een sleutel die niet open gaat legitimeert niemand, ook niet als zijn ciphertext.
 
-        De ciphertext teruggeven maakte hem zijn eigen wachtwoord: ``herken_principaal``
+        De ciphertext teruggeven maakte hem zijn eigen wachtwoord: ``recognise_principal``
         vergelijkt de aangeboden sleutel met de geregistreerde waarde.
         """
         import opi.services.project_service as ps
@@ -261,7 +261,7 @@ class TestRegisterSyncsAllowlist:
         data = {
             "name": "proj",
             "config": {"api-key": "k"},
-            "users": [{"email": "member@example.com", "role": "admin"}],
+            "users": [{"email": "member@example.com", "roles": ["admin", "ops"]}],
         }
         service.load_project_from_data(data, "f.yaml")
         assert get_user_service().is_email_allowed("member@example.com") is True
@@ -281,7 +281,7 @@ class TestRegisterSyncsAllowlist:
         """
         from opi.services.user_service import get_user_service
 
-        service.register("proj", "k", "f.yaml", users=[{"email": "dict.member@example.com", "role": "admin"}])
+        service.register("proj", "k", "f.yaml", users=[{"email": "dict.member@example.com", "roles": ["admin", "ops"]}])
 
         project = service.get_project("proj")
         assert project.users[0].email == "dict.member@example.com"

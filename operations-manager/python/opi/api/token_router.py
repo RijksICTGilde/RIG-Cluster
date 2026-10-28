@@ -7,7 +7,7 @@ misschien net uit is.
 
 Legitimatie gaat hier met een SSO-bearertoken en NIET met een projectsleutel of een
 API-token: een token aanmaken vraagt een geauthenticeerde persoon, want de aanroeper hoort
-niet zelf te kiezen wie hij is. Dezelfde regel staat als :data:`MENS_VERPLICHT` in het
+niet zelf te kiezen wie hij is. Dezelfde regel staat als :data:`HUMAN_REQUIRED` in het
 handhavingspunt, zodat een service account er ook via de gewone API niet bij kan.
 
 De uitgegeven waarde staat EEN keer in het antwoord op het aanmaken. Daarna is hij nergens
@@ -28,17 +28,18 @@ from fastapi.responses import JSONResponse
 from opi.api.params import ProjectNamePath
 from opi.api.user_token_auth import validate_user_token
 from opi.core.auth_decorators import get_current_user, requires_step_up
-from opi.core.handelingen import Handeling, handeling
-from opi.core.step_up import StepUpActie
+from opi.core.authz.actions import Action, action
+from opi.core.step_up import StepUpAction
 from opi.services.api_token_service import (
+    STANDAARD_ROLLEN,
     TokenAanvraagGeweigerd,
     geef_token_uit,
     leden_overzicht,
     roteer_token,
+    set_member_roles,
     trek_token_in,
     verwijder_service_account,
     voeg_service_account_toe,
-    wijzig_rol,
 )
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.step_up_conditions import vraagt_altijd_step_up
@@ -53,13 +54,17 @@ class ServiceAccountAanvraag(BaseModel):
     """Een service account toevoegen aan de leden van een project."""
 
     naam: str = Field(description="DNS-label; hieronder staat het account in het logboek en in de git-trailer")
-    rol: str = Field(default="developer", description="Dezelfde rollen als een mens: admin, owner, member, developer")
+    roles: list[str] = Field(
+        default_factory=lambda: list(STANDAARD_ROLLEN),
+        description="Dezelfde rollen als een mens. Wat elke rol opent staat op /admin/rollen",
+        examples=[["developer-ci"]],
+    )
 
 
 class RolAanvraag(BaseModel):
-    """De rol van een lid veranderen."""
+    """De rollen van een lid veranderen."""
 
-    rol: str
+    roles: list[str] = Field(description="De volledige nieuwe lijst; een lege lijst wordt geweigerd")
 
 
 class TokenAanvraag(BaseModel):
@@ -104,7 +109,7 @@ def _geweigerd(exc: TokenAanvraagGeweigerd) -> HTTPException:
 
 
 @token_router.get("/projects/{project_name}/leden", summary="De leden van dit project en hun tokens")
-@handeling(Handeling.TOKEN_LEZEN)
+@action(Action.TOKEN_READ)
 @validate_user_token
 async def project_leden(request: Request, project_name: ProjectNamePath) -> JSONResponse:
     """De mensen en de service accounts van dit project, met hun rol en hun tokens.
@@ -121,9 +126,9 @@ def _serialiseerbaar(leden: list[dict]) -> list[dict]:
 
 
 @token_router.post("/projects/{project_name}/leden", status_code=201, summary="Voeg een service account toe")
-@handeling(Handeling.TOKEN_BEHEREN)
+@action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.SERVICE_ACCOUNT_ADD)
 async def voeg_lid_toe(
     request: Request, project_name: ProjectNamePath, aanvraag: ServiceAccountAanvraag = Body(...)
 ) -> JSONResponse:
@@ -134,16 +139,16 @@ async def voeg_lid_toe(
     """
     email = _eis_lidmaatschap(project_name, _email(request))
     try:
-        await voeg_service_account_toe(project_name=project_name, naam=aanvraag.naam, rol=aanvraag.rol, door=email)
+        await voeg_service_account_toe(project_name=project_name, naam=aanvraag.naam, rollen=aanvraag.roles, door=email)
     except TokenAanvraagGeweigerd as exc:
         raise _geweigerd(exc) from exc
     return JSONResponse(content={"status": "toegevoegd", "naam": aanvraag.naam}, status_code=201)
 
 
 @token_router.delete("/projects/{project_name}/leden/{naam}", summary="Verwijder een service account")
-@handeling(Handeling.TOKEN_BEHEREN)
+@action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.SERVICE_ACCOUNT_REMOVE)
 async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: str) -> JSONResponse:
     """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
     email = _eis_lidmaatschap(project_name, _email(request))
@@ -154,26 +159,26 @@ async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: s
     return JSONResponse(content={"status": "verwijderd", "naam": naam})
 
 
-@token_router.put("/projects/{project_name}/leden/{naam}/rol", summary="Wijzig de rol van een lid")
-@handeling(Handeling.TOKEN_BEHEREN)
+@token_router.put("/projects/{project_name}/leden/{naam}/rol", summary="Wijzig de rollen van een lid")
+@action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.ROL_WIJZIGEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.ROLE_CHANGE)
 async def zet_rol(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: RolAanvraag = Body(...)
 ) -> JSONResponse:
-    """Geef een lid een andere rol. Zijn bestaande tokens volgen die rol meteen."""
+    """Geef een lid andere rollen. Zijn bestaande tokens volgen die rollen meteen."""
     email = _eis_lidmaatschap(project_name, _email(request))
     try:
-        await wijzig_rol(project_name=project_name, naam=naam, rol=aanvraag.rol, door=email)
+        await set_member_roles(project_name=project_name, naam=naam, rollen=aanvraag.roles, door=email)
     except TokenAanvraagGeweigerd as exc:
         raise _geweigerd(exc) from exc
-    return JSONResponse(content={"status": "gewijzigd", "naam": naam, "rol": aanvraag.rol})
+    return JSONResponse(content={"status": "gewijzigd", "naam": naam, "roles": aanvraag.roles})
 
 
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens", status_code=201, summary="Geef een token uit")
-@handeling(Handeling.TOKEN_BEHEREN)
+@action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_UITGEVEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.TOKEN_ISSUE)
 async def maak_token(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -194,9 +199,9 @@ async def maak_token(
 
 
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer", summary="Roteer een token")
-@handeling(Handeling.TOKEN_BEHEREN)
+@action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_ROTEREN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.TOKEN_ROTATE)
 async def roteer(
     request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -212,9 +217,9 @@ async def roteer(
 
 
 @token_router.delete("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}", summary="Trek een token in")
-@handeling(Handeling.TOKEN_BEHEREN)
+@action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.TOKEN_INTREKKEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.TOKEN_REVOKE)
 async def trek_in(request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str) -> JSONResponse:
     """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
     email = _eis_lidmaatschap(project_name, _email(request))

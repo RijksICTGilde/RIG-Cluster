@@ -21,7 +21,7 @@
   Het icoon en de soort komen ongewijzigd van de dienst.
 #}
 {% set deployment_service_actions = deployment_service_actions | default({}) %}
-{% if user_role in ["admin", "owner"] and deployment_geopend %}
+{% if deployment_geopend and can('deployment.write', deployment=deployment_geopend.name) %}
     {% set deployment = deployment_geopend %}
     {% set original_index = project.deployments.index(deployment) %}
     <div id="deployment-actions-{{ deployment.name }}">

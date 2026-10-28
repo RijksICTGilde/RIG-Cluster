@@ -8,15 +8,16 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import is_projectbeheerder
 from opi.services.argocd_operation import (
@@ -34,23 +35,19 @@ from opi.services.config_location import project_step_config_hint, selection_lab
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
-    PROJECT_EDIT_ROLES,
-    get_user_role_for_project,
+    get_user_roles_for_project,
     is_user_authorized_for_project,
 )
 from opi.services.project_leden import human_members
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
-from opi.services.step_up_conditions import (
-    component_in_production,
-    deployment_in_production,
-    project_in_production,
-)
 from opi.services.user_otp_service import UserOtpService
+from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
+from opi.web.authz import enforce_route_action, may
 from opi.web.lotc_switch import (
     STANDAARD_TAB,
     TABS_MET_DEPLOYMENT,
@@ -81,6 +78,7 @@ from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
 from .router_env_vars import env_vars_web_router
 from .router_otp import otp_router
+from .router_rolmatrix import rolmatrix_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
 from .router_step_up import step_up_router
@@ -96,7 +94,9 @@ logger = logging.getLogger(__name__)
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
-web_router = APIRouter()
+#: De poort van het portaal: elke route met een projectrecht loopt erlangs, zonder dat
+#: een handler eraan hoeft te denken. Zie opi/web/authz.py.
+web_router = APIRouter(dependencies=[Depends(enforce_route_action)])
 
 #: Proef- en testpagina's. Ze hangen aan een eigen router omdat opi/server.py ze alleen
 #: lokaal en in de sandbox registreert.
@@ -110,6 +110,7 @@ web_router.include_router(wizard_router)
 web_router.include_router(user_admin_router)
 web_router.include_router(usage_router)
 web_router.include_router(shared_services_router)
+web_router.include_router(rolmatrix_router)
 web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
@@ -329,6 +330,7 @@ def _progress_page_context(task: dict, task_id: str) -> dict:
 
 
 @web_router.get("/projects/progress/{task_id}", response_class=HTMLResponse)
+@action(Action.TASK_READ)
 @requires_sso
 async def project_progress_page(request: Request, task_id: str):
     """
@@ -388,6 +390,7 @@ async def project_progress_page(request: Request, task_id: str):
 
 
 @web_router.get("/projects/progress/{task_id}/fragment", response_class=HTMLResponse)
+@action(Action.TASK_READ)
 @requires_sso
 async def project_progress_page_fragment(request: Request, task_id: str) -> HTMLResponse:
     """The progress fragment as the full page polls it.
@@ -416,8 +419,9 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
 
 
 @web_router.post("/projects/delete/{project_name}", response_class=HTMLResponse)
+@action(Action.PROJECT_DELETE)
 @requires_sso
-@requires_step_up(project_in_production, actie=StepUpActie.PROJECT_VERWIJDEREN)
+@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
 async def delete_project_web(request: Request, project_name: str) -> HTMLResponse:
     """Delete a whole project from the UI, as a task you can follow.
 
@@ -430,16 +434,6 @@ async def delete_project_web(request: Request, project_name: str) -> HTMLRespons
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web project deletion request for '{project_name}' by user: {user_email}")
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen projecten verwijderen. Je rol: {user_role}",
-        )
 
     if not get_project_store().get(project_name):
         raise HTTPException(status_code=404, detail="Project niet gevonden")
@@ -455,24 +449,15 @@ async def delete_project_web(request: Request, project_name: str) -> HTMLRespons
 
 
 @web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}", response_class=HTMLResponse)
+@action(Action.DEPLOYMENT_DELETE)
 @requires_sso
-@requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
+@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Delete one deployment from the UI, as a task you can follow."""
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web deployment deletion request for '{deployment_name}' in '{project_name}' by user: {user_email}")
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen deployments verwijderen. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -491,8 +476,9 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
 
 
 @web_router.post("/projects/{project_name}/delete-component/{component_name}", response_class=HTMLResponse)
+@action(Action.COMPONENT_DELETE)
 @requires_sso
-@requires_step_up(component_in_production, actie=StepUpActie.COMPONENT_VERWIJDEREN)
+@requires_step_up(actie=StepUpAction.COMPONENT_DELETE)
 async def delete_component_web(request: Request, project_name: str, component_name: str) -> HTMLResponse:
     """Delete a component from the UI, as a task you can follow.
 
@@ -504,16 +490,6 @@ async def delete_component_web(request: Request, project_name: str, component_na
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web component deletion request for '{component_name}' in '{project_name}' by user: {user_email}")
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen components verwijderen. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -535,6 +511,7 @@ async def delete_component_web(request: Request, project_name: str, component_na
 
 
 @web_router.post("/projects/{project_name}/refresh", response_class=HTMLResponse)
+@action(Action.PROJECT_REFRESH)
 @requires_sso
 async def refresh_project_web(request: Request, project_name: str) -> HTMLResponse:
     """Reprocess a project from Git via web interface."""
@@ -543,16 +520,6 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web project refresh request for '{project_name}' by user: {user_email}")
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een project herverwerken. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -569,6 +536,7 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
 
 
 @web_router.post("/projects/{project_name}/refresh/{deployment_name}", response_class=HTMLResponse)
+@action(Action.DEPLOYMENT_REFRESH)
 @requires_sso
 async def refresh_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Reprocess a single deployment from Git via web interface."""
@@ -577,16 +545,6 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
     user_email = user.get("email", "").lower()
 
     logger.info(f"Web deployment refresh request for '{project_name}/{deployment_name}' by user: {user_email}")
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een deployment herverwerken. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -631,6 +589,7 @@ def _require_component(project_data: dict, project_name: str, component_name: st
 
 
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/wake")
+@action(Action.SLEEP_WAKE)
 @requires_sso
 async def wake_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Wake a sleeping deployment from the UI (session + CSRF + role auth).
@@ -641,16 +600,6 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een deployment wekken. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -671,6 +620,7 @@ async def wake_deployment_web(request: Request, project_name: str, deployment_na
 
 
 @web_router.post("/projects/{project_name}/deployments/{deployment_name}/sleep")
+@action(Action.SLEEP_WAKE)
 @requires_sso
 async def sleep_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Manually put a deployment to sleep from the UI (session + CSRF + role auth).
@@ -680,16 +630,6 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen een deployment slapen. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -715,6 +655,7 @@ async def sleep_deployment_web(request: Request, project_name: str, deployment_n
     "/projects/{project_name}/deployments/{deployment_name}/actions/{action_key}/confirm",
     response_class=HTMLResponse,
 )
+@action(Action.SERVICE_ACTION)
 @requires_sso
 async def deployment_action_confirm(
     request: Request, project_name: str, deployment_name: str, action_key: str
@@ -730,16 +671,6 @@ async def deployment_action_confirm(
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen deployment acties uitvoeren. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -764,6 +695,7 @@ async def deployment_action_confirm(
 
 
 @web_router.get("/projects/{project_name}/actions/{action_key}/confirm", response_class=HTMLResponse)
+@action(Action.SERVICE_ACTION)
 @requires_sso
 async def project_action_confirm(
     request: Request, project_name: str, action_key: str, target: str | None = None
@@ -778,16 +710,6 @@ async def project_action_confirm(
     """
     user = get_current_user(request)
     user_email = user.get("email", "").lower()
-
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    user_role = get_user_role_for_project(project_name, user_email)
-    if user_role not in ["admin", "owner"]:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Alleen admin of owner rollen kunnen deze actie uitvoeren. Je rol: {user_role}",
-        )
 
     project = get_project_store().get(project_name)
     if not project:
@@ -811,6 +733,7 @@ async def project_action_confirm(
 
 
 @dev_router.get("/test-hero", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def test_hero(request: Request):
     """Test route for hero component."""
@@ -830,6 +753,7 @@ async def test_hero(request: Request):
 
 
 @dev_router.get("/forms/formulier", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def formulier_demo_form(request: Request):
     """
@@ -1243,6 +1167,7 @@ async def collect_dashboard_metrics(
 
 
 @web_router.get("/dashboard", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def dashboard(request: Request):
     """
@@ -1417,6 +1342,7 @@ async def dashboard(request: Request):
 
 
 @web_router.get("/projects/{project_name}/details", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @web_router.get("/projects/{project_name}/team", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/componenten", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/services", response_class=HTMLResponse)
@@ -1432,6 +1358,7 @@ async def project_details(request: Request, project_name: str):
 
 
 @web_router.get("/projects/{project_name}/deployments/{deployment_name}", response_class=HTMLResponse)
+@action(Action.DEPLOYMENT_READ)
 @web_router.get("/projects/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/backups/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
@@ -1561,7 +1488,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
 
         # Get user's role for this project
-        user_role = get_user_role_for_project(project_name, user_email)
+        user_roles = get_user_roles_for_project(project_name, user_email)
 
         # Use project data from memory if available
         project_data = project.data or {}
@@ -1591,9 +1518,10 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         project_private_key = await unwrap_project_key(project_data["config"]["age-private-key"])
 
-        # Geheimen gaan alleen naar de context voor admin/owner (BIO2 5.15, 8.03).
-        # Dit stond voorheen alleen in het sjabloon en kon weg via een nieuw fragment.
-        mag_geheimen_zien = user_role in PROJECT_EDIT_ROLES
+        # Geheimen gaan alleen naar de context voor wie ze mag lezen (BIO2 5.15, 8.03).
+        # Uit het register en niet uit een rolnaam: wat de matrixpagina onder
+        # ``project-key.read`` toont is dan ook wat deze pagina doet.
+        mag_geheimen_zien = may(request, action=Action.PROJECT_KEY_READ, project_name=project_name)
 
         # De projectsleutel is er alleen nog in een bestand waarvan de migratie naar
         # schemaversie 2.12 hem niet open kreeg. Zonder deze ``if`` gaf elke projectpagina
@@ -1726,7 +1654,10 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             # Alleen de MENSEN: het Team-blok en zijn bewerkmodaal nodigen mensen uit en
             # sturen ze mail. De service accounts staan in het blok Leden en tokens.
             "users": human_members(project),
-            "user_role": user_role,
+            "user_roles": user_roles,
+            # Voor de link naar de rolmatrix op de Team-kaart: die pagina is voor
+            # platformbeheerders, dus een lid krijgt er geen link naartoe die 403 geeft.
+            "is_platform_admin": get_user_service().is_platform_admin(user_email),
             "services": services_with_info,
             "clusters": project_data.get("clusters", []),
             "components": project_data_decrypted.get("components", []),
@@ -1870,10 +1801,6 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             project_details["deployments"], deployment_states, argocd_statuses
         )
 
-        # A viewer whose role could not be determined is not a member with a role; the
-        # services gate on the role string, and an empty one matches no gate.
-        role_for_services = user_role or ""
-
         def deployment_page_context(dep: dict[str, Any]) -> DeploymentPageContext:
             """Wat een dienst nodig heeft om zijn blok voor DEZE deployment te maken.
 
@@ -1883,7 +1810,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             return DeploymentPageContext(
                 project_data=project_data_decrypted,
                 deployment=dep,
-                user_role=role_for_services,
+                user_roles=list(user_roles),
                 current_cluster=current_cluster,
                 backend_available={"prometheus": prometheus_available, "backups": backups_available},
             )
@@ -1934,7 +1861,12 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # service owns its own block instead of the general template hardcoding an
         # include. Built from the decrypted data so a service can surface its managed
         # credentials (e.g. keycloak realm admin details).
-        service_detail_sections = collect_detail_page_sections(project_data_decrypted, role_for_services)
+        service_detail_sections = collect_detail_page_sections(
+            project_data_decrypted,
+            # Een dienstblok dat een geheim toont leest dezelfde regel als de route
+            # erachter, in plaats van een eigen rolnaam.
+            lambda handeling: may(request, action=handeling, project_name=project_name),
+        )
 
         # Die blokken hebben sinds RC-101 een EIGEN tabblad (Toegang): het zijn de
         # adressen, sleutels en bestanden waarmee je de diensten gebruikt, en daarvoor kom
@@ -1974,7 +1906,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "menu_items": get_menu_items(user),
                 "project": project_details,
                 "user": user,
-                "user_role": user_role,
+                "user_roles": user_roles,
                 "ServiceAdapter": ServiceAdapter,
                 # How a service is chosen, and -- when it has no project-wide settings --
                 # where it IS configured. Both derived from the registry (RC-33).
@@ -2208,6 +2140,7 @@ async def _fetch_argocd_deployment_status(
 
 
 @web_router.get("/dashboard/resource-usage", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
     """Het resourcegebruik van het dashboard, apart opgehaald.
@@ -2279,6 +2212,7 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
 
 
 @web_router.get("/projects/details/{project_name}/resource-usage", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def project_resource_usage_fragment(request: Request, project_name: str) -> HTMLResponse:
     """Compact project-wide CPU and memory totals (HTMX lazy-load).
@@ -2382,6 +2316,7 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
 
 
 @web_router.get("/projects/details/{project_name}/argocd-status/{deployment_name}", response_class=HTMLResponse)
+@action(Action.DEPLOYMENT_READ)
 @requires_sso
 async def argocd_status_fragment(
     request: Request, project_name: str, deployment_name: str, prefix: str = ""
@@ -2450,6 +2385,7 @@ async def argocd_status_fragment(
 
 
 @web_router.get("/projects/details/{project_name}/oom-status/{deployment_name}", response_class=HTMLResponse)
+@action(Action.DEPLOYMENT_READ)
 @requires_sso
 async def oom_status_fragment(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Geheugengebrek van EEN deployment, als los fragment (HTMX, lui geladen).
@@ -2551,6 +2487,7 @@ def _heeft_metingen(metrics: dict[str, dict[str, Any]], pvc_storage: dict[str, d
 
 
 @web_router.get("/projects/details/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
+@action(Action.DEPLOYMENT_READ)
 @requires_sso
 async def deployment_metrics_fragment(
     request: Request, project_name: str, deployment_name: str, duration: int = 60
@@ -2717,7 +2654,7 @@ def _projects_for_user(user: dict) -> list[dict]:
                     "display_name": project_data.get("display-name", project_name),
                     "description": project_data.get("description", ""),
                     "users": human_members(project),
-                    "user_role": get_user_role_for_project(project_name, user_email),
+                    "user_roles": get_user_roles_for_project(project_name, user_email),
                     "services": project_data.get("services", []),
                     "clusters": project_data.get("clusters", []),
                     "components": project_data.get("components", []),
@@ -2733,6 +2670,7 @@ def _projects_for_user(user: dict) -> list[dict]:
 
 
 @web_router.get("/projects", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def projects_overview(request: Request):
     """
@@ -2777,6 +2715,7 @@ async def projects_overview(request: Request):
 
 
 @web_router.get("/cli", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def cli_pagina(request: Request):
     """De ZAD CLI: wat het is, hoe je hem installeert, wat je ermee doet.
@@ -2788,6 +2727,7 @@ async def cli_pagina(request: Request):
 
 
 @web_router.get("/actions", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def actions_pagina(request: Request):
     """De ZAD Actions: uitrollen vanuit je eigen pijplijn."""
@@ -2811,6 +2751,7 @@ def _wegwijzer(request: Request, roos: str, lotc: str, pad: str):
 
 
 @web_router.get("/account", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def account_pagina(request: Request):
     """Je eigen account: wat er in de sessie staat, plus je tweede factor.
@@ -2918,6 +2859,7 @@ async def security_policy(request: Request) -> HTMLResponse:
 
 
 @dev_router.get("/test-template-variables", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def test_template_variables(request: Request):
     """Test route for debugging Jinja variables in componenttags."""
@@ -2943,6 +2885,7 @@ async def test_template_variables(request: Request):
 
 
 @dev_router.get("/example", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def example_page(request: Request):
     """
@@ -2968,6 +2911,7 @@ async def example_page(request: Request):
 
 
 @web_router.get("/tools", response_class=HTMLResponse)
+@action(Action.TOOLS_USE)
 @requires_sso
 async def tools_page(request: Request):
     """
@@ -2993,6 +2937,7 @@ async def tools_page(request: Request):
 
 
 @web_router.post("/tools/encrypt")
+@action(Action.TOOLS_USE)
 @requires_sso
 async def encrypt_text(request: Request):
     """
@@ -3030,6 +2975,7 @@ async def encrypt_text(request: Request):
 
 
 @web_router.post("/tools/decrypt")
+@action(Action.TOOLS_USE)
 @requires_sso
 async def decrypt_text(request: Request):
     """
@@ -3168,6 +3114,7 @@ async def _require_task_of_project(request: Request, task_service: Any, project_
 
 
 @web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
+@action(Action.TASK_READ)
 @requires_sso
 async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
     """Generic task progress fragment for HTMX polling.

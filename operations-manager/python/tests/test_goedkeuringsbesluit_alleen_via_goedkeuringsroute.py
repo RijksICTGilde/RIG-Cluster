@@ -46,7 +46,7 @@ def _project(domains: dict[str, Any] | None = None) -> dict[str, Any]:
         "schema-version": 2,
         "name": PROJECT_NAME,
         "display-name": "Aanvrager",
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "clusters": ["sandboxed-local"],
         "services": [{"name": "publish-on-web", "config": publish_config}],
         "components": [{"name": "frontend", "type": "single", "services": ["publish-on-web"]}],

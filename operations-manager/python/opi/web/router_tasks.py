@@ -13,8 +13,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.services.runs_service import get_runs_service
-from opi.web.router_detail_edit import _require_project_member_access
+from opi.web.authz import authorize
 from opi.web.stap_labels import stap_label
 
 logger = logging.getLogger(__name__)
@@ -113,10 +114,11 @@ def _normalize_task(task: dict) -> dict:
 
 
 @tasks_router.get("/{project_name}/tasks", response_class=HTMLResponse)
+@action(Action.TASK_READ)
 @requires_sso
 async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
     """Unified Taken table: console/job runs + background tasks (upserts, refreshes)."""
-    _require_project_member_access(request, project_name)
+    authorize(request, action=Action.TASK_READ, project_name=project_name)
     items: list[dict] = []
 
     try:

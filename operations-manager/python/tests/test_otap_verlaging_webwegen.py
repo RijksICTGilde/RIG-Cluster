@@ -51,11 +51,30 @@ def _patch_project_manager_voor_wizard(stored: dict[str, Any]):
     return patch("opi.manager.project_manager.ProjectManager", _FakeProjectManager)
 
 
-def _request_for(email: str) -> Any:
+def _request_for(email: str, project: str = "demo") -> Any:
     """Een verzoek met een VERSE step-up: sinds RC-332 weigert een verlaging zonder."""
     return SimpleNamespace(
         state=SimpleNamespace(user={"email": email}),
         session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
+        path_params={"project_name": project},
+    )
+
+
+def _patch_markeringsrecht(stored: dict[str, Any]):
+    """De poort op ``environment.set``: de markering zetten of verlagen vraagt ops.
+
+    Deze twee toetsen gaan over de MELDING, niet over het recht; de gebruiker is hier dus
+    een platformbeheerder, die op elk project ops heeft.
+    """
+    from opi.services.project_service import ProjectSummary
+
+    store = MagicMock()
+    store.get.return_value = ProjectSummary(name=stored["name"], filename=f"{stored['name']}.yaml", data=stored)
+    gebruikers = MagicMock()
+    gebruikers.is_platform_admin.return_value = True
+    return (
+        patch("opi.web.authz.get_project_store", return_value=store),
+        patch("opi.web.authz.get_user_service", return_value=gebruikers),
     )
 
 
@@ -68,7 +87,7 @@ async def test_wizard_edit_meldt_een_verlaging_met_de_echte_gebruiker(
     stored = _productieproject()
 
     with (
-        patch("opi.web.project_edit_security.require_project_edit_access"),
+        patch("opi.web.router_wizard.authorize"),
         _patch_project_manager_voor_wizard(stored),
         patch("opi.web.router_wizard.clear_wizard_state"),
         caplog.at_level("WARNING", logger="opi.core.project_environment"),
@@ -88,7 +107,7 @@ async def test_wizard_edit_meldt_niets_als_productie_blijft(caplog: pytest.LogCa
     stored = _productieproject()
 
     with (
-        patch("opi.web.project_edit_security.require_project_edit_access"),
+        patch("opi.web.router_wizard.authorize"),
         _patch_project_manager_voor_wizard(stored),
         patch("opi.web.router_wizard.clear_wizard_state"),
         caplog.at_level("WARNING", logger="opi.core.project_environment"),
@@ -124,7 +143,10 @@ async def test_modal_edit_meldt_een_verlaging_met_de_echte_gebruiker(
     flow.flow_id = "modal-edit-identity"
     request = _request_for(OWNER_EMAIL)
 
+    recht_store, recht_gebruikers = _patch_markeringsrecht(stored)
     with (
+        recht_store,
+        recht_gebruikers,
         patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=na_wijziging)),
         patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
         caplog.at_level("WARNING", logger="opi.core.project_environment"),

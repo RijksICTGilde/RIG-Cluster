@@ -23,7 +23,7 @@ def _project(*, repo_password: str = AGE_BLOCK, private_key: str = AGE_BLOCK) ->
         "schema-version": 2,
         "name": "demo",
         "clusters": ["odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",

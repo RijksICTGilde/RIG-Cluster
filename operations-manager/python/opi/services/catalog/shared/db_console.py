@@ -22,7 +22,8 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import requires_sso
+from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.manager.db_console_manager import (
     DbConsoleError,
@@ -31,9 +32,8 @@ from opi.manager.db_console_manager import (
 )
 from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind, get_runs_service
+from opi.web.authz import may
 from opi.web.lotc_switch import render
-from opi.web.project_edit_security import may_operate_on_project, require_project_operate_access
-from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
 
@@ -94,32 +94,33 @@ async def _render(
             "error": error,
             "ttl_seconds": settings.DB_CONSOLE_TTL_SECONDS,
             "enabled": settings.DB_CONSOLE_ENABLED,
-            "mag_uitvoeren": may_operate_on_project(request, project_name),
+            "mag_uitvoeren": may(request, action=Action.DATABASE_CONSOLE, project_name=project_name),
         },
     )
 
 
 @db_console_router.get("/{project_name}/db-console/{deployment_name}/modal", response_class=HTMLResponse)
+@action(Action.DATABASE_SCHEMA_READ)
 @requires_sso
 async def db_console_modal(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Modal body, loaded when the user opens the console modal."""
-    _require_project_member_access(request, project_name)
     return await _render(request, project_name, deployment_name)
 
 
 @db_console_router.get("/{project_name}/db-console/{deployment_name}/status", response_class=HTMLResponse)
+@action(Action.DATABASE_SCHEMA_READ)
 @requires_sso
 async def db_console_status(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Polled by the modal while a console is starting up."""
-    _require_project_member_access(request, project_name)
     return await _render(request, project_name, deployment_name, include_pending=True)
 
 
 @db_console_router.post("/{project_name}/db-console", response_class=HTMLResponse)
+@action(Action.DATABASE_CONSOLE)
 @requires_sso
 async def db_console_start(request: Request, project_name: str) -> HTMLResponse:
     """Start a console: validate + register synchronously, provision in the background."""
-    _, user_email = require_project_operate_access(request, project_name)
+    user_email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     form = await request.form()
     deployment_name = str(form.get("deployment", ""))
@@ -153,10 +154,11 @@ async def db_console_start(request: Request, project_name: str) -> HTMLResponse:
 
 
 @db_console_router.post("/{project_name}/db-console/{session_id}/stop", response_class=HTMLResponse)
+@action(Action.DATABASE_CONSOLE)
 @requires_sso
 async def db_console_stop(request: Request, project_name: str, session_id: str) -> HTMLResponse:
     """Stop a console immediately; returns the modal body (back to the start form)."""
-    _, user_email = require_project_operate_access(request, project_name)
+    user_email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     form = await request.form()
     deployment_name = str(form.get("deployment", ""))

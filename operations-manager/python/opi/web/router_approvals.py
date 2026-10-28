@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.visualizers.flows import get_flow
@@ -262,6 +263,7 @@ def groepeer_per_dienst(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 @approvals_router.get("", response_class=HTMLResponse)
+@action(Action.PLATFORM_APPROVALS)
 @requires_sso
 async def list_subdomains(request: Request) -> Response:
     """List all approval requests across all projects."""
@@ -312,6 +314,7 @@ async def list_subdomains(request: Request) -> Response:
 
 
 @approvals_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
+@action(Action.PLATFORM_APPROVALS)
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize the domain approval modal wizard for a project."""
@@ -360,6 +363,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     "/{project_name}/modal-wizard/{flow_id}/step/{section_id}",
     response_class=HTMLResponse,
 )
+@action(Action.PLATFORM_APPROVALS)
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate and submit the approval step."""

@@ -31,7 +31,9 @@ LEZER = re.compile(r"""\.users\b|\[["']users["']\]|\.get\(\s*["']users["']""")
 #: account gewoon mee. Een bestand dat hier niet in staat en de lijst wel kaal leest is een
 #: nieuwe lezer die nog moet kiezen.
 BEKENDE_LEZERS: dict[str, str] = {
-    "api/principaal.py": "zoekt een token bij een lid; beide soorten dragen tokens",
+    "api/principal.py": "zoekt een token bij een lid; beide soorten dragen tokens",
+    "core/authz/actions.py": "de naam van de action platform.users, geen ledenlijst",
+    "core/leden.py": "vergelijkt de leden en hun rollen voor en na een opslag; beide soorten",
     "bootstrap/keycloak_setup.py": "de users van een Keycloak-sjabloon, niet van een project",
     "forms/i18n.py": "het label van de sectie",
     "forms/models/project.py": "de ledenlijst als formulierveld",

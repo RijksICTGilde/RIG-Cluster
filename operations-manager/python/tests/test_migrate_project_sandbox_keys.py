@@ -64,7 +64,7 @@ def production_project(keys: Keys) -> dict[str, Any]:
         "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "name": "demo",
         "clusters": ["odcn-production"],
-        "users": [{"email": "team@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "team@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "services": [
             "publish-on-web",
             {
@@ -209,7 +209,7 @@ class TestEverythingOnTheNewKey:
         production_project["users"] = [
             {
                 "email": "lid@rijksoverheid.nl",
-                "role": "admin",
+                "roles": ["admin", "ops"],
                 "tokens": [{"name": "cli", "expires": "2030-01-01T00:00:00+00:00", "hash": "a" * 64}],
             }
         ]

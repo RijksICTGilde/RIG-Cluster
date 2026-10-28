@@ -4,7 +4,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token
+from opi.api.endpoint_util import (
+    deployment_in_body,
+    eis_doelwitten_uit_de_upsertbody,
+    eis_handeling,
+    validate_api_token,
+)
 from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
 from opi.api.params import DeploymentNamePath, ProjectNamePath
 from opi.api.rate_limiter import IPRateLimiter
@@ -23,11 +28,11 @@ from opi.connectors.subdomain import (
     SubdomainValidationError,
 )
 from opi.core.auth_decorators import requires_step_up
+from opi.core.authz.actions import Action, action, deployment_from
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
-from opi.core.handelingen import Handeling, handeling
 from opi.core.project_environment import Omgeving
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.core.task_handlers_operations import terminated_sync_fields
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
@@ -39,11 +44,7 @@ from opi.services.catalog.image_registries.config_model import (
 )
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
-from opi.services.step_up_conditions import (
-    deployment_environment_downgrade,
-    deployment_in_production,
-    project_in_production,
-)
+from opi.services.step_up_conditions import deployment_environment_change
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
@@ -861,7 +862,7 @@ class SelfServiceProjectRequest(BaseModel):
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
-    user_role: list[str] | None = None  # Maps to name="user-role[]"
+    user_roles: list[str] | None = None  # Maps to name="user-role[]"
 
     # Services (checkboxes)
     services: list[str] | None = None  # Maps to name="services[]"
@@ -885,9 +886,10 @@ api_router: APIRouter = APIRouter(
         201: {"model": UpsertDeploymentResponse, "description": "Deployment created successfully"},
     },
 )
-@handeling(Handeling.DEPLOYMENT_SCHRIJVEN)
+@action(Action.DEPLOYMENT_WRITE)
+@deployment_from(deployment_in_body)
 @validate_api_token
-@requires_step_up(deployment_environment_downgrade, actie=StepUpActie.MARKERING_VERLAGEN)
+@requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
 async def upsert_deployment(
     request: Request,
     project_name: str,
@@ -948,6 +950,13 @@ async def upsert_deployment(
             {"newImageUrl": comp.image},
             UPDATE_IMAGE_VALIDATORS,
         )
+
+    # De markering zetten is een eigen recht: ops met step-up (ontwerp paragraaf 7). Hij
+    # staat in de BODY en niet in het pad, dus de routepoort kan hem niet wegen.
+    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
+        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
+
+    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
 
     # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
     if not sync:
@@ -1158,7 +1167,7 @@ class UpdateComponentRequest(BaseModel):
         201: {"description": "Component added successfully"},
     },
 )
-@handeling(Handeling.COMPONENT_TOEVOEGEN)
+@action(Action.COMPONENT_ADD)
 @validate_api_token
 async def add_component(
     request: Request,
@@ -1340,7 +1349,7 @@ async def add_component(
         200: {"description": "Component updated successfully"},
     },
 )
-@handeling(Handeling.COMPONENT_WIJZIGEN)
+@action(Action.COMPONENT_UPDATE)
 @validate_api_token
 async def update_component(
     request: Request,
@@ -1472,7 +1481,7 @@ async def update_component(
         201: {"description": "Component added to deployment successfully"},
     },
 )
-@handeling(Handeling.COMPONENT_KOPPELEN)
+@action(Action.COMPONENT_LINK)
 @validate_api_token
 async def add_component_to_deployment(
     request: Request,
@@ -1633,7 +1642,7 @@ async def add_component_to_deployment(
         201: {"description": "Service added (or already present) successfully"},
     },
 )
-@handeling(Handeling.DIENST_TOEVOEGEN)
+@action(Action.SERVICE_ADD)
 @validate_api_token
 async def add_service(
     request: Request,
@@ -1785,7 +1794,7 @@ async def add_service(
 
 
 @api_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
-@handeling(Handeling.DEPLOYMENT_IMAGE_VERVANGEN)
+@action(Action.DEPLOYMENT_IMAGE_REPLACE)
 @validate_api_token
 async def update_deployment_image(
     request: Request,
@@ -1947,7 +1956,7 @@ async def update_deployment_image(
 #         "project_description": "Test project",
 #         "cluster": "local",
 #         "user_email": ["user@example.com"],
-#         "user_role": ["Developer"],
+#         "user_roles": ["Developer"],
 #         "services": ["service-web", "service-sso"],
 #         "components": [{
 #           "type": "deployment",
@@ -1966,7 +1975,7 @@ async def update_deployment_image(
         200: {"model": RefreshProjectResponse, "description": "Project refreshed successfully"},
     },
 )
-@handeling(Handeling.PROJECT_VERVERSEN)
+@action(Action.PROJECT_REFRESH)
 @validate_api_token
 async def refresh_project(request: Request, project_name: str, force_clone: bool = False) -> JSONResponse:
     """
@@ -2067,7 +2076,7 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         200: {"model": RefreshProjectResponse, "description": "Deployment refreshed successfully"},
     },
 )
-@handeling(Handeling.DEPLOYMENT_VERVERSEN)
+@action(Action.DEPLOYMENT_REFRESH)
 @validate_api_token
 async def refresh_deployment(
     request: Request,
@@ -2187,9 +2196,9 @@ async def refresh_deployment(
 
 
 @api_router.delete("/projects/{project_name}")
-@handeling(Handeling.PROJECT_VERWIJDEREN)
+@action(Action.PROJECT_DELETE)
 @validate_api_token
-@requires_step_up(project_in_production, actie=StepUpActie.PROJECT_VERWIJDEREN)
+@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
 async def delete_project(
     request: Request, project_name: ProjectNamePath, delete_data: ProjectDeleteRequest = Body(...)
 ) -> JSONResponse:
@@ -2283,9 +2292,9 @@ async def delete_project(
 
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
-@handeling(Handeling.DEPLOYMENT_VERWIJDEREN)
+@action(Action.DEPLOYMENT_DELETE)
 @validate_api_token
-@requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
+@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_project_deployment(
     request: Request,
     project_name: ProjectNamePath,
@@ -2383,7 +2392,7 @@ async def delete_project_deployment(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
-@handeling(Handeling.DATABASE_KLONEN)
+@action(Action.DATABASE_CLONE)
 @validate_api_token
 async def clone_database_from_external(
     request: Request,
@@ -2556,7 +2565,7 @@ async def clone_database_from_external(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
-@handeling(Handeling.BUCKET_KLONEN)
+@action(Action.BUCKET_CLONE)
 @validate_api_token
 async def clone_bucket_from_external(
     request: Request,
@@ -2728,7 +2737,7 @@ async def clone_bucket_from_external(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")
-@handeling(Handeling.KLOON_VALIDEREN)
+@action(Action.CLONE_VALIDATE)
 @validate_api_token
 async def validate_clone_configuration(
     request: Request, project_name: ProjectNamePath, deployment_name: str
@@ -2830,7 +2839,7 @@ async def create_self_service_project(
         "project_description": "Test project",
         "cluster": "local",
         "user_email": ["user@example.com"],
-        "user_role": ["Developer"],
+        "user_roles": ["Developer"],
         "services": ["service-web", "service-sso"],
         "components": [{
           "type": "deployment",
@@ -3048,7 +3057,7 @@ class SubdomainListResponse(BaseModel):
         200: {"description": "Paginated list of subdomain registrations"},
     },
 )
-@handeling(Handeling.SUBDOMEIN_LEZEN)
+@action(Action.SUBDOMAIN_READ)
 @validate_api_token
 async def list_subdomains(
     request: Request,
@@ -3134,7 +3143,7 @@ async def list_subdomains(
         200: {"description": "Registry updated successfully"},
     },
 )
-@handeling(Handeling.REGISTRY_TOEVOEGEN)
+@action(Action.REGISTRY_ADD)
 @validate_api_token
 async def add_registry_by_secret(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryBySecretRequest = Body(...)
@@ -3232,7 +3241,7 @@ async def add_registry_by_secret(
         200: {"description": "Registry updated successfully"},
     },
 )
-@handeling(Handeling.REGISTRY_TOEVOEGEN)
+@action(Action.REGISTRY_ADD)
 @validate_api_token
 async def add_registry_by_credentials(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryByCredentialsRequest = Body(...)

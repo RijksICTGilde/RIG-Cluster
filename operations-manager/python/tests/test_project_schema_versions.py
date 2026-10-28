@@ -45,16 +45,35 @@ from opi.services.schema_migration import (
 )
 
 
+def _lid(versie: object) -> dict:
+    """Het lid in de vorm die DEZE versie kent: ``role`` tot 2.12, ``roles`` vanaf 2.13."""
+    if versie in (LATEST_SCHEMA_VERSION_VALUE, version_key(LATEST_SCHEMA_VERSION)):
+        return {"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}
+    return {"email": "admin@rijksoverheid.nl", "role": "admin"}
+
+
 def _project(**extra: object) -> dict:
     """Minimal project that validates at every version."""
+    versie = extra.get("schema-version", LATEST_SCHEMA_VERSION_VALUE)
     base: dict = {
         "name": "voorbeeld",
         "schema-version": LATEST_SCHEMA_VERSION_VALUE,
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [_lid(versie)],
         "components": [{"name": "frontend", "type": "deployment"}],
     }
     base.update(extra)
     return base
+
+
+def _oud_project(**extra: object) -> dict:
+    """Hetzelfde, maar met de ledenvorm van VOOR 2.13 (``role`` in plaats van ``roles``).
+
+    Voor een toets die dezelfde gegevens tegen twee OUDE versies legt: geen enkele
+    ledenvorm valideert zowel onder 2.12 als onder 2.13, want 2.13 verving het veld.
+    """
+    data = _project(**extra)
+    data["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
+    return data
 
 
 class TestSchemaSetCompleteness:
@@ -147,43 +166,43 @@ class TestMigrationsCanBeFinished:
     """
 
     def test_keycloak_config_block_accepted_at_2_2_rejected_at_2_3(self) -> None:
-        data = _project(config={"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]})
+        data = _oud_project(config={"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]})
         validate_project_schema(data, schema_version=parse_schema_version("2.2"))
         with pytest.raises(ProjectSchemaError, match="config"):
             validate_project_schema(data, schema_version=parse_schema_version("2.3"))
 
     def test_string_path_accepted_at_2_1_rejected_at_2_2(self) -> None:
-        data = _project(components=[{"name": "frontend", "path": "/api", "rewrite-path": "/"}])
+        data = _oud_project(components=[{"name": "frontend", "path": "/api", "rewrite-path": "/"}])
         validate_project_schema(data, schema_version=parse_schema_version("2.1"))
         with pytest.raises(ProjectSchemaError, match="path"):
             validate_project_schema(data, schema_version=parse_schema_version("2.2"))
 
     def test_component_root_flag_accepted_at_2_rejected_at_2_1(self) -> None:
-        data = _project(components=[{"name": "frontend", "root": True}])
+        data = _oud_project(components=[{"name": "frontend", "root": True}])
         validate_project_schema(data, schema_version=parse_schema_version("2"))
         with pytest.raises(ProjectSchemaError, match="root"):
             validate_project_schema(data, schema_version=parse_schema_version("2.1"))
 
     def test_root_domains_block_accepted_at_2_4_rejected_at_2_5(self) -> None:
-        data = _project(domains={"allowed-domains": [{"domain": "rijksapps.nl", "status": "approved"}]})
+        data = _oud_project(domains={"allowed-domains": [{"domain": "rijksapps.nl", "status": "approved"}]})
         validate_project_schema(data, schema_version=parse_schema_version("2.4"))
         with pytest.raises(ProjectSchemaError, match="domains"):
             validate_project_schema(data, schema_version=parse_schema_version("2.5"))
 
     def test_root_invites_block_accepted_at_2_5_rejected_at_2_6(self) -> None:
-        data = _project(invites={"settings": {"default_language": "nl"}, "active": []})
+        data = _oud_project(invites={"settings": {"default_language": "nl"}, "active": []})
         validate_project_schema(data, schema_version=parse_schema_version("2.5"))
         with pytest.raises(ProjectSchemaError, match="invites"):
             validate_project_schema(data, schema_version=parse_schema_version("2.6"))
 
     def test_uses_services_accepted_at_v1_rejected_at_v2(self) -> None:
-        data = _project(components=[{"name": "frontend", "uses-services": ["publish-on-web"]}])
+        data = _oud_project(components=[{"name": "frontend", "uses-services": ["publish-on-web"]}])
         validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="uses-services"):
             validate_project_schema(data, schema_version=parse_schema_version("2"))
 
     def test_v0_publish_on_web_boolean_accepted_at_v1_rejected_at_v2(self) -> None:
-        data = _project(components=[{"name": "frontend", "publish-on-web": True}])
+        data = _oud_project(components=[{"name": "frontend", "publish-on-web": True}])
         validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="publish-on-web"):
             validate_project_schema(data, schema_version=parse_schema_version("2"))

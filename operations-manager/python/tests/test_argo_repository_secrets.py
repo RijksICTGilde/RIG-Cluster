@@ -83,7 +83,7 @@ display-name: {name}
 description: Project for the argo round test
 users:
   - email: someone@rijksoverheid.nl
-    role: admin
+    roles: [admin, ops]
 clusters:
   - {cluster}
 repositories:

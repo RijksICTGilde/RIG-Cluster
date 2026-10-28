@@ -30,8 +30,8 @@ PROJECT: dict[str, Any] = {
     "name": "regel-k4c",
     "display-name": "Regelbeheer",
     "users": [
-        {"email": "beheer@rijksoverheid.nl", "role": "admin"},
-        {"email": "tweede@rijksoverheid.nl", "role": "member"},
+        {"email": "beheer@rijksoverheid.nl", "roles": ["admin", "ops"]},
+        {"email": "tweede@rijksoverheid.nl", "roles": ["viewer"]},
     ],
 }
 

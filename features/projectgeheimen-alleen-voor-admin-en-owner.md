@@ -19,9 +19,12 @@ voor die rollen. Wat de pagina ziet en wat de pagina in handen heeft, waren dus 
 hetzelfde, en een nieuw fragment of een dump van `config` kon erbij.
 
 De selectie van gegevens trekt de grens nu zelf (least privilege, BIO2 5.15 en 8.03):
-`opi/web/router.py` ontsleutelt deze vier alleen als de rol in `PROJECT_EDIT_ROLES`
-(`opi/services/project_authorization.py`) zit, en zet ze anders op `None`. Dat is dezelfde
-constante die de bewerkpoort en de API-sleutel in de leesroute gebruiken.
+`opi/web/router.py` ontsleutelt deze vier alleen als het rechtensysteem
+`project-key.read` opent voor deze gebruiker, en zet ze anders op `None`. Sinds RC-392
+komt dat uit het regelregister (`opi/core/authz/rules.py`) in plaats van uit een rollijst,
+dus wat de matrixpagina onder die handeling toont, is wat deze pagina doet. Het
+Keycloak-blok en het uitnodigingsblok lezen dezelfde handeling via `ctx.can(...)`; de
+bijlagen hangen aan `attachment.manage`.
 
 De AGE-private-key wordt wel voor elke rol ontsleuteld, want de pagina leest er de
 env-vars, aliassen en helm-values uit; hij blijft dan server-side en gaat de context niet
@@ -32,6 +35,12 @@ in.
 Niets aan wat iemand mag of ziet: de sjablonen toonden deze waarden al alleen aan admin en
 owner, en een veld met `None` rendert niet. Wat verdwijnt is de ontsleutelde waarde in de
 context van een lid dat hem toch niet te zien kreeg.
+
+Sinds RC-392 is de rol die de poort opent wel veranderd: `project-key.read` staat bij
+`admin`, en de blokken hingen aan `ops`. Een lid met alleen `[ops]` kreeg de geheimen dus
+wel en een lid met alleen `[admin]` niet, precies omgekeerd aan de regel. Voor bestaande
+leden verandert er niets: de schemamigratie naar 2.13 geeft elke oude `admin` of `owner`
+de rollen `[admin, ops]`.
 
 Buiten scope blijven de `aliases` en `helm-values` van componenten en deployments: die
 ziet elk lid bewust (zie `features/futures/rechten-plan-van-aanpak.md`, 5.6). Voor de

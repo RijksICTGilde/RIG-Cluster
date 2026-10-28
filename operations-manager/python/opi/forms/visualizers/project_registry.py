@@ -55,7 +55,7 @@ from opi.forms.visualizers.fields.services import (
 )
 from opi.forms.visualizers.fields.team import (
     USER_EMAIL,
-    USER_ROLE,
+    USER_ROLES,
     USERS_SEQUENCE,
 )
 from opi.services.catalog.aliases.visualizers import COMPONENT_ALIASES
@@ -97,7 +97,7 @@ __all__ = [
     "SERVICES",
     "USERS_SEQUENCE",
     "USER_EMAIL",
-    "USER_ROLE",
+    "USER_ROLES",
     "get_all_project_editables",
     "get_project_form_layout",
 ]

@@ -54,6 +54,7 @@ import logging
 import secrets
 from typing import Any
 
+from opi.core.authz.actions import Action
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPageContext, Service, config_path
 from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
@@ -338,8 +339,8 @@ class InviteService(Service):
     @on(UIEvent.PROJECT_SECTIONS)
     def invites_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # The link is the secret, so this is an authorization choice, not a display one:
-        # admin/owner only, like the keycloak realm block.
-        if ctx.user_role not in ("admin", "owner"):
+        # the same rule as the project key, read from the register.
+        if not ctx.can(Action.PROJECT_KEY_READ):
             return []
         from opi.handlers.project_file_handler import ProjectFileHandler
 

@@ -21,12 +21,11 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from opi.core.leden import ledenlijst_wijzigt
 from opi.core.project_environment import (
     Omgeving,
     effective_environment,
     environment_markings,
-    highest_environment,
-    is_production_downgrade,
 )
 
 if TYPE_CHECKING:
@@ -44,13 +43,12 @@ STEP_UP_SESSION_KEY = "step_up_at"
 class StepUpKind(StrEnum):
     """Waar de handeling over gaat, en daarmee hoe "in productie" gelezen wordt."""
 
-    PROJECT = "project"
     DEPLOYMENT = "deployment"
     COMPONENT = "component"
     ENVIRONMENT = "environment"
 
 
-class StepUpActie(StrEnum):
+class StepUpAction(StrEnum):
     """Welke handeling een step-up vraagt, zoals een client hem leest.
 
     De waarde gaat als ``action`` mee in het problem-detail van de API, en is daarmee het
@@ -58,76 +56,76 @@ class StepUpActie(StrEnum):
     twee teksten die bij de handeling horen, zodat een route er maar een ding over zegt.
     """
 
-    PROJECT_VERWIJDEREN = "project-verwijderen"
-    DEPLOYMENT_VERWIJDEREN = "deployment-verwijderen"
-    COMPONENT_VERWIJDEREN = "component-verwijderen"
-    MARKERING_VERLAGEN = "markering-verlagen"
-    OPRUIMING_STARTEN = "opruiming-starten"
-    RECONCILIATIE_STARTEN = "reconciliatie-starten"
-    MARKERING_INTREKKEN = "markering-intrekken"
-    WEZEN_BEVESTIGEN = "wezen-bevestigen"
-    PROJECTEN_HERINLEZEN = "projecten-herinlezen"
-    PROJECTSLEUTEL_VERVANGEN = "projectsleutel-vervangen"
-    TOKEN_UITGEVEN = "token-uitgeven"  # noqa: S105 -- naam van een handeling, geen secret
-    TOKEN_ROTEREN = "token-roteren"  # noqa: S105 -- naam van een handeling, geen secret
-    TOKEN_INTREKKEN = "token-intrekken"  # noqa: S105 -- naam van een handeling, geen secret
-    ROL_WIJZIGEN = "rol-wijzigen"
-    SERVICE_ACCOUNT_TOEVOEGEN = "service-account-toevoegen"
-    SERVICE_ACCOUNT_VERWIJDEREN = "service-account-verwijderen"
-    ENV_VARS_BEHEREN = "env-vars-beheren"
+    PROJECT_DELETE = "project-delete"
+    DEPLOYMENT_DELETE = "deployment-delete"
+    COMPONENT_DELETE = "component-delete"
+    MARKING_SET = "marking-set"
+    CLEANUP_START = "cleanup-start"
+    RECONCILIATION_START = "reconciliation-start"
+    MARKING_REVOKE = "marking-revoke"
+    ORPHANS_CONFIRM = "orphans-confirm"
+    PROJECTS_RELOAD = "projects-reload"
+    PROJECT_KEY_REPLACE = "project-key-replace"
+    TOKEN_ISSUE = "token-issue"  # noqa: S105 -- naam van een handeling, geen secret
+    TOKEN_ROTATE = "token-rotate"  # noqa: S105 -- naam van een handeling, geen secret
+    TOKEN_REVOKE = "token-revoke"  # noqa: S105 -- naam van een handeling, geen secret
+    ROLE_CHANGE = "role-change"
+    SERVICE_ACCOUNT_ADD = "service-account-add"
+    SERVICE_ACCOUNT_REMOVE = "service-account-remove"
+    ENV_VARS_MANAGE = "env-vars-manage"
 
     @property
-    def handeling(self) -> str:
+    def phrase(self) -> str:
         """De handeling als te-infinitief, voor de dialoog en de log."""
-        return _HANDELING[self]
+        return _PHRASE[self]
 
-    def reden(self, doelwit: str, *, project: str = "") -> str:
+    def reason(self, doelwit: str, *, project: str = "") -> str:
         """Waarom DEZE aanroep een step-up vraagt, voor het problem-detail."""
-        return _REDEN[self].format(doelwit=doelwit, project=project)
+        return _REASON[self].format(doelwit=doelwit, project=project)
 
 
-_HANDELING = {
-    StepUpActie.PROJECT_VERWIJDEREN: "dit project te verwijderen",
-    StepUpActie.DEPLOYMENT_VERWIJDEREN: "deze deployment te verwijderen",
-    StepUpActie.COMPONENT_VERWIJDEREN: "dit component te verwijderen",
-    StepUpActie.MARKERING_VERLAGEN: "de markering productie te verlagen",
-    StepUpActie.OPRUIMING_STARTEN: "de opruiming te starten",
-    StepUpActie.RECONCILIATIE_STARTEN: "een reconciliatie te starten",
-    StepUpActie.MARKERING_INTREKKEN: "deze verwijdermarkering in te trekken",
-    StepUpActie.WEZEN_BEVESTIGEN: "deze wezen te bevestigen",
-    StepUpActie.PROJECTEN_HERINLEZEN: "de projects-repo nu in te lezen",
-    StepUpActie.PROJECTSLEUTEL_VERVANGEN: "de projectsleutel te vervangen",
-    StepUpActie.TOKEN_UITGEVEN: "een token uit te geven",
-    StepUpActie.TOKEN_ROTEREN: "dit token te roteren",
-    StepUpActie.TOKEN_INTREKKEN: "dit token in te trekken",
-    StepUpActie.ROL_WIJZIGEN: "de rol van dit lid te wijzigen",
-    StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN: "een service account toe te voegen",
-    StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN: "dit service account te verwijderen",
-    StepUpActie.ENV_VARS_BEHEREN: "de omgevingsvariabelen van dit component te zien en te wijzigen",
+_PHRASE = {
+    StepUpAction.PROJECT_DELETE: "dit project te verwijderen",
+    StepUpAction.DEPLOYMENT_DELETE: "deze deployment te verwijderen",
+    StepUpAction.COMPONENT_DELETE: "dit component te verwijderen",
+    StepUpAction.MARKING_SET: "de OTAP-markering te zetten of te verlagen",
+    StepUpAction.CLEANUP_START: "de opruiming te starten",
+    StepUpAction.RECONCILIATION_START: "een reconciliatie te starten",
+    StepUpAction.MARKING_REVOKE: "deze verwijdermarkering in te trekken",
+    StepUpAction.ORPHANS_CONFIRM: "deze wezen te bevestigen",
+    StepUpAction.PROJECTS_RELOAD: "de projects-repo nu in te lezen",
+    StepUpAction.PROJECT_KEY_REPLACE: "de projectsleutel te vervangen",
+    StepUpAction.TOKEN_ISSUE: "een token uit te geven",
+    StepUpAction.TOKEN_ROTATE: "dit token te roteren",
+    StepUpAction.TOKEN_REVOKE: "dit token in te trekken",
+    StepUpAction.ROLE_CHANGE: "de leden of hun rollen te wijzigen",
+    StepUpAction.SERVICE_ACCOUNT_ADD: "een service account toe te voegen",
+    StepUpAction.SERVICE_ACCOUNT_REMOVE: "dit service account te verwijderen",
+    StepUpAction.ENV_VARS_MANAGE: "de omgevingsvariabelen van dit component te zien en te wijzigen",
 }
 
-_REDEN = {
-    StepUpActie.PROJECT_VERWIJDEREN: "het project '{doelwit}' heeft een deployment op productie",
-    StepUpActie.DEPLOYMENT_VERWIJDEREN: "de deployment '{doelwit}' staat op productie",
-    StepUpActie.COMPONENT_VERWIJDEREN: "het component '{doelwit}' wordt gebruikt door een deployment op productie",
-    StepUpActie.MARKERING_VERLAGEN: "de wijziging haalt een deployment van '{doelwit}' van productie af",
-    StepUpActie.OPRUIMING_STARTEN: "de opruiming verwijdert resources van '{doelwit}' waarvan de genadeperiode voorbij is",
-    StepUpActie.RECONCILIATIE_STARTEN: "een reconciliatie over het hele platform kan resources verwijderen",
-    StepUpActie.MARKERING_INTREKKEN: "de markering '{doelwit}' vervalt, en de geplande verwijdering ermee",
-    StepUpActie.WEZEN_BEVESTIGEN: "bevestigde wezen worden na de genadeperiode van het platform verwijderd",
-    StepUpActie.PROJECTEN_HERINLEZEN: "het inlezen vervangt de projectstore van dit cluster",
-    StepUpActie.PROJECTSLEUTEL_VERVANGEN: (
+_REASON = {
+    StepUpAction.PROJECT_DELETE: "het project '{doelwit}' heeft een deployment op productie",
+    StepUpAction.DEPLOYMENT_DELETE: "de deployment '{doelwit}' staat op productie",
+    StepUpAction.COMPONENT_DELETE: "het component '{doelwit}' wordt gebruikt door een deployment op productie",
+    StepUpAction.MARKING_SET: (
+        "de markering van een deployment in '{doelwit}' verandert, en wie hem kan verlagen omzeilt elke productieregel"
+    ),
+    StepUpAction.CLEANUP_START: "de opruiming verwijdert resources van '{doelwit}' waarvan de genadeperiode voorbij is",
+    StepUpAction.RECONCILIATION_START: "een reconciliatie over het hele platform kan resources verwijderen",
+    StepUpAction.MARKING_REVOKE: "de markering '{doelwit}' vervalt, en de geplande verwijdering ermee",
+    StepUpAction.ORPHANS_CONFIRM: "bevestigde wezen worden na de genadeperiode van het platform verwijderd",
+    StepUpAction.PROJECTS_RELOAD: "het inlezen vervangt de projectstore van dit cluster",
+    StepUpAction.PROJECT_KEY_REPLACE: (
         "de sleutel van '{doelwit}' wordt vervangen en elke versleutelde waarde opnieuw versleuteld"
     ),
-    StepUpActie.TOKEN_UITGEVEN: "'{doelwit}' krijgt een bewijsmiddel voor project '{project}'",
-    StepUpActie.TOKEN_ROTEREN: "het token van '{doelwit}' in project '{project}' krijgt een nieuwe waarde",
-    StepUpActie.TOKEN_INTREKKEN: "een token van '{doelwit}' in project '{project}' werkt daarna niet meer",
-    StepUpActie.ROL_WIJZIGEN: "de rol van '{doelwit}' in project '{project}' bepaalt wat zijn tokens mogen",
-    StepUpActie.SERVICE_ACCOUNT_TOEVOEGEN: (
-        "er komt een lid bij in project '{project}', en dat lid kan een token dragen"
-    ),
-    StepUpActie.SERVICE_ACCOUNT_VERWIJDEREN: "'{doelwit}' en al zijn tokens gaan uit project '{project}'",
-    StepUpActie.ENV_VARS_BEHEREN: (
+    StepUpAction.TOKEN_ISSUE: "'{doelwit}' krijgt een bewijsmiddel voor project '{project}'",
+    StepUpAction.TOKEN_ROTATE: "het token van '{doelwit}' in project '{project}' krijgt een nieuwe waarde",
+    StepUpAction.TOKEN_REVOKE: "een token van '{doelwit}' in project '{project}' werkt daarna niet meer",
+    StepUpAction.ROLE_CHANGE: "de rol van '{doelwit}' in project '{project}' bepaalt wat zijn tokens mogen",
+    StepUpAction.SERVICE_ACCOUNT_ADD: ("er komt een lid bij in project '{project}', en dat lid kan een token dragen"),
+    StepUpAction.SERVICE_ACCOUNT_REMOVE: "'{doelwit}' en al zijn tokens gaan uit project '{project}'",
+    StepUpAction.ENV_VARS_MANAGE: (
         "de omgevingsvariabelen van '{doelwit}' in project '{project}' kunnen geheimen bevatten"
     ),
 }
@@ -145,16 +143,27 @@ def _uses_component(deployment: dict[str, Any], component_name: str) -> bool:
     return any(isinstance(c, dict) and c.get("reference") == component_name for c in deployment.get("components") or [])
 
 
-def _any_downgrade(before: dict[str, Omgeving], after: dict[str, Omgeving]) -> bool:
-    """Of een deployment productie verlaat: door een lagere markering of door te verdwijnen.
+def any_marking_change(before: dict[str, Omgeving], after: dict[str, Omgeving]) -> bool:
+    """Of deze opslag de OTAP-markering van een deployment ZET of VERLAAGT.
 
-    Een project heeft sinds RC-330 zelf geen markering, dus er is niets anders te
-    vergelijken dan de deployments.
+    Drie gevallen, en alle drie zijn "de markering zetten" uit ontwerp paragraaf 7: een
+    bestaande deployment krijgt een andere markering, omhoog of omlaag, en een NIEUWE
+    deployment komt meteen op productie.
+
+    Een nieuwe deployment BUITEN productie valt er bewust niet onder: dat is een
+    deployment schrijven, en de scope van die regel weegt hem al. Anders zou een
+    pijplijn met ``developer-ci`` geen acceptatiedeployment meer kunnen aanmaken, want
+    een markering zetten vraagt een mens met een tweede factor. Een deployment die
+    VERDWIJNT valt er ook niet onder: het verwijderen heeft zijn eigen regel, met zijn
+    eigen tekst.
     """
-    return any(
-        is_production_downgrade(before_value, after.get(name, Omgeving.ONTWIKKELING))
-        for name, before_value in before.items()
-    )
+    for naam, na in after.items():
+        if naam not in before:
+            if na is Omgeving.PRODUCTIE:
+                return True
+        elif before[naam] is not na:
+            return True
+    return False
 
 
 def requires_production_step_up(
@@ -169,8 +178,6 @@ def requires_production_step_up(
     markeringen van voor en na, en alleen bij :attr:`StepUpKind.ENVIRONMENT` gevuld.
     """
     match kind:
-        case StepUpKind.PROJECT:
-            return highest_environment(project_data) is Omgeving.PRODUCTIE
         case StepUpKind.DEPLOYMENT:
             deployment = deployment_by_name(project_data, target or "")
             return deployment is not None and effective_environment(deployment) is Omgeving.PRODUCTIE
@@ -181,7 +188,7 @@ def requires_production_step_up(
                 if _uses_component(d, target or "")
             )
         case StepUpKind.ENVIRONMENT:
-            return change is not None and _any_downgrade(*change)
+            return change is not None and any_marking_change(*change)
 
 
 def log_step_up_refusal(
@@ -212,8 +219,17 @@ def record_step_up(request: Request) -> None:
 
 
 def step_up_until(request: Request) -> datetime | None:
-    """Het moment waarop de verse step-up in de sessie verloopt, of None als er geen is."""
-    stamp = request.session.get(STEP_UP_SESSION_KEY)
+    """Het moment waarop de verse step-up in de sessie verloopt, of None als er geen is.
+
+    Geen sessie is geen step-up: op een ``/api/``-pad draait de sessiemiddleware niet, en
+    Starlette werpt daar een AssertionError op ``request.session``. Sinds RC-392 leest ook
+    het rechtensysteem deze functie, en dat doet het op beide paden.
+    """
+    try:
+        sessie = request.session
+    except AssertionError, AttributeError:
+        return None
+    stamp = sessie.get(STEP_UP_SESSION_KEY)
     if not isinstance(stamp, str):
         return None
     try:
@@ -249,5 +265,7 @@ def save_requires_step_up(before: dict[str, Any], after: dict[str, Any]) -> str 
     if requires_production_step_up(
         StepUpKind.ENVIRONMENT, before, change=(environment_markings(before), environment_markings(after))
     ):
-        return "de markering productie te verlagen"
+        return StepUpAction.MARKING_SET.phrase
+    if ledenlijst_wijzigt(before, after):
+        return StepUpAction.ROLE_CHANGE.phrase
     return None

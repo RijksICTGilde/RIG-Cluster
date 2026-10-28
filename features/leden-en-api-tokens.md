@@ -2,8 +2,8 @@
 
 Een project heeft leden, en een lid kan API-tokens hebben. Een lid is een mens met een
 e-mailadres, of een service account met een naam. Allebei staan ze in `users:` van het
-projectbestand, allebei dragen ze dezelfde vier rollen, en wat hun token mag volgt uit die
-rol.
+projectbestand, allebei dragen ze dezelfde rollen, en wat hun token mag volgt uit die
+rollen. Welke rollen er zijn en wat ze openen staat in `features/rollen-en-rechten.md`.
 
 De afwegingen staan in `features/futures/rechten-modellen-en-tokens.md` (paragraaf 5) en
 `features/futures/rechten-plan-van-aanpak.md` (fase 1 en fase 5); dit document beschrijft
@@ -12,17 +12,17 @@ wat er gebouwd is.
 ## Wat er in het projectbestand staat
 
 ```yaml
-schema-version: '2.12'
+schema-version: '2.13'
 users:
   - email: beheerder@rijksoverheid.nl
-    role: admin
+    roles: [admin, ops]
     tokens:
       - name: cli
         expires: '2027-01-14T09:12:00+00:00'
         hash: 9f2c...64 hextekens
   - type: service-account
     name: bouwstraat
-    role: developer
+    roles: [developer-ci]
     tokens:
       - name: pijplijn
         expires: '2027-06-01T00:00:00+00:00'
@@ -34,7 +34,7 @@ users:
 | `type` | `person` (de standaard, mag weg) of `service-account` |
 | `email` | alleen bij een mens; bij een service account verboden |
 | `name` | alleen bij een service account, en dan een DNS-label |
-| `role` | `admin`, `owner`, `member` of `developer`, voor allebei dezelfde |
+| `roles` | een lijst met minstens een van `viewer`, `developer`, `ops`, `admin`, `developer-ci`, `ops-ci`, voor allebei dezelfde |
 | `tokens[].name` | korte naam, uniek binnen dit lid; hiermee trek je hem in |
 | `tokens[].expires` | verplicht; een token zonder vervaldatum is niet aanmaakbaar |
 | `tokens[].hash` | sha256 van de waarde, in hex. Nooit de waarde zelf |
@@ -50,29 +50,35 @@ lid staan in plaats van in een tabel, en tegelijk de winst.
 
 ## Wat een rol opent
 
-De handelingencatalogus koppelt een ROUTE aan een HANDELING; de rol koppelt een HANDELING
-aan een LID. Samen bepalen die twee wat een token mag.
+Elke route draagt een **action**; het regelregister zegt welke rol die action opent, op
+welke resource en onder welke voorwaarde. Eén functie beslist dat voor de API en voor het
+portaal, dus een token opent nooit meer dan zijn eigenaar op het scherm kan.
 
-| rol | wat zijn token opent |
+| rol | kort |
 |---|---|
-| `admin`, `owner` | alle handelingen op dit project |
-| `member`, `developer` | alleen `LEESHANDELINGEN` |
+| `viewer` | lezen, behalve env-var-waarden en secrets |
+| `developer` | bouwen op alles wat niet productie is |
+| `ops` | hetzelfde op productie, en de OTAP-markering |
+| `admin` | leden, rollen, tokens, service accounts, project verwijderen |
+| `developer-ci` | voor een pijplijn: deployments die niet productie zijn |
+| `ops-ci` | voor een pijplijn: image vervangen op elke deployment |
 | iets anders | niets |
 
-Dat is exact de grens die `require_project_edit_access` in de interface trekt: een token
-opent nooit meer dan zijn eigenaar op het scherm kan. Scopes per token bestaan niet, zodat
-er geen tweede plek is waar rechten staan en die uit de pas kan lopen.
+De volledige tabel staat op `/admin/rollen` en wordt uit de regels in de code gelezen;
+`features/rollen-en-rechten.md` beschrijft hoe je er een regel aan toevoegt. Scopes per
+token bestaan niet, zodat er geen tweede plek is waar rechten staan en die uit de pas kan
+lopen.
 
-De rol wordt bij ELKE beslissing opnieuw uit het projectbestand gelezen. Verlaat iemand het
-project of krijgt hij een lagere rol, dan werkt dat dezelfde seconde door op al zijn
-tokens, zonder dat er iets ingetrokken hoeft te worden.
+De rollen worden bij ELKE beslissing opnieuw uit het projectbestand gelezen. Verlaat
+iemand het project of krijgt hij lagere rollen, dan werkt dat dezelfde seconde door op al
+zijn tokens, zonder dat er iets ingetrokken hoeft te worden.
 
 ### Wat een service account nooit mag
 
-`MENS_VERPLICHT` (`opi/api/principaal.py`) zijn de handelingen die een geverifieerde MENS
-vragen, ongeacht het doelwit. Vandaag staat daar `token.beheren` in: wie een token kan
+`HUMAN_REQUIRED` (`opi/api/principal.py`) zijn de handelingen die een geverifieerde MENS
+vragen, ongeacht het doelwit. Vandaag staat daar `token.manage` in: wie een token kan
 maken kan zijn eigen bewijsmiddel vermenigvuldigen, en dat hoort geen pijplijn te kunnen.
-Een service account krijgt daarop altijd een 403 met `cause: tokensoort-niet-toegestaan`:
+Een service account krijgt daarop altijd een 403 met `cause: principal-kind-not-allowed`:
 een eigen reden en niet "te weinig rechten", want zijn rol klopt en zijn SOORT niet.
 
 ### De step-up op een token
@@ -85,9 +91,9 @@ de eigenaar van een persoonlijk token op `request.state.user`, en dat is precies
 
 | bewijsmiddel | productiehandeling zonder code | met een geldige code | met een foute code |
 |---|---|---|---|
-| token van een mens | 403 `otp-ontbreekt` | gaat door | 403 `code-ongeldig` |
-| token van een service account | 403 `tokensoort-niet-toegestaan` | idem, de factor wordt niet eens geraadpleegd | idem |
-| de oude projectsleutel | 403 `tokensoort-niet-toegestaan` | idem | idem |
+| token van een mens | 403 `otp-missing` | gaat door | 403 `code-invalid` |
+| token van een service account | 403 `principal-kind-not-allowed` | idem, de factor wordt niet eens geraadpleegd | idem |
+| de oude projectsleutel | 403 `principal-kind-not-allowed` | idem | idem |
 
 Het antwoord is een problem-detail (RFC 7807) met `type: urn:zad:step-up-required`, zodat
 een client ziet welke handeling het was, waarom ze een step-up vraagt en wat hij moet doen.
@@ -103,7 +109,7 @@ project, ook als dat project niet op productie staat (BIO2 8.05 en 8.32).
 |---|---|---|
 | een service account toevoegen | `POST /api/v2/projects/{p}/leden` | tabblad Team |
 | een service account verwijderen | `DELETE .../leden/{naam}` | tabblad Team |
-| een rol wijzigen | `PUT .../leden/{naam}/rol` | tabblad Team |
+| rollen wijzigen | `PUT .../leden/{naam}/rol`, body `{"roles": [...]}` | tabblad Team |
 | een token uitgeven | `POST .../leden/{naam}/tokens` | tabblad Team |
 | een token roteren | `POST .../tokens/{tokennaam}/:roteer` | tabblad Team |
 | een token intrekken | `DELETE .../tokens/{tokennaam}` | tabblad Team |
@@ -111,8 +117,8 @@ project, ook als dat project niet op productie staat (BIO2 8.05 en 8.32).
 De leesroute (`GET .../leden`) vraagt er geen: die verandert niets.
 
 In de API gaat de code als `X-ZAD-OTP` mee, per aanroep, en wordt getoetst tegen de eigenaar
-van het bearertoken. Zonder code is het 403 `otp-ontbreekt`, met een foute code 403
-`code-ongeldig`, en zonder ingerichte factor 403 `factor-ontbreekt` met de weg naar
+van het bearertoken. Zonder code is het 403 `otp-missing`, met een foute code 403
+`code-invalid`, en zonder ingerichte factor 403 `factor-missing` met de weg naar
 `/account/otp`. In het portaal neemt de dialoog de plaats van het formulier in; een geldige
 code dekt vijf minuten en voert de handeling daarna alsnog uit. Zie
 [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
@@ -120,11 +126,11 @@ code dekt vijf minuten en voert de handeling daarna alsnog uit. Zie
 Een service account komt hier nooit aan toe: deze routes vragen een bearertoken van een
 persoon, en een service account heeft geen tweede factor.
 
-**`MENS_VERPLICHT` en de step-upcatalogus zijn met opzet NIET dezelfde verzameling.** Ze
-beslissen een andere vraag: `MENS_VERPLICHT` zegt of deze SOORT aanroeper dit ooit mag, en
+**`HUMAN_REQUIRED` en de step-upcatalogus zijn met opzet NIET dezelfde verzameling.** Ze
+beslissen een andere vraag: `HUMAN_REQUIRED` zegt of deze SOORT aanroeper dit ooit mag, en
 dat is onvoorwaardelijk; een step-up weegt doorgaans het DOELWIT, dus een deployment op
 productie vraagt er een en dezelfde op acceptatie niet. Een handeling kan beide dragen, en
-de zes hierboven doen dat: ze vragen altijd een step-up EN nooit een service account. `project.verwijderen` in `MENS_VERPLICHT`
+de zes hierboven doen dat: ze vragen altijd een step-up EN nooit een service account. `project.delete` in `HUMAN_REQUIRED`
 zetten zou een pijplijn ook uitsluiten van een project zonder productie, en dat is een
 verruiming van de weigering die niemand gevraagd heeft. Welke step-upactie bij welke
 handeling hoort staat per route in `tests/test_handelingen.py`, zodat de twee catalogi niet
@@ -135,18 +141,18 @@ stil uit elkaar lopen.
 Een scope noemt HANDELINGEN en geen paden. Een lijst paden veroudert bij de eerstvolgende
 route; een handeling niet, want een nieuwe route moet er een kiezen.
 
-De catalogus is `Handeling` in `operations-manager/python/opi/core/handelingen.py`. Elke
+De catalogus is `Action` in `operations-manager/python/opi/core/authz/actions.py`. Elke
 token-bereikbare route wijst er precies een aan:
 
 ```python
 @v2_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
-@handeling(Handeling.DEPLOYMENT_IMAGE_VERVANGEN)
+@handeling(Action.DEPLOYMENT_IMAGE_REPLACE)
 @validate_api_token
 async def update_image_v2(...): ...
 ```
 
 `controleer_handelingen` draait bij het opstarten over `app.routes` en WEIGERT te starten
-als een token-bereikbare route geen handeling noemt. Zonder die controle zou zo'n route
+als een BEWAAKTE route geen action noemt of als die action geen regel heeft. Zonder die controle zou zo'n route
 stilzwijgend alles openen wat het token mag.
 
 De markering staat BOVEN de authenticatiedecorator, zodat hij op het object komt dat
@@ -154,7 +160,7 @@ FastAPI als endpoint registreert.
 
 ## Het handhavingspunt
 
-`opi/api/principaal.py` vertaalt elk binnenkomend bewijsmiddel naar een principaal en
+`opi/api/principal.py` vertaalt elk binnenkomend bewijsmiddel naar een principaal en
 beslist een keer:
 
 1. hash de gepresenteerde `X-API-Key` en zoek hem bij de tokens van de leden van het
@@ -165,7 +171,7 @@ beslist een keer:
    aflezen, en een verschil tussen die twee antwoorden maakt projectnamen aftastbaar;
 4. bij een mens wordt ook de platformtoegang gelezen, want offboarding in het
    gebruikersbeheer raakt geen projectbestand;
-5. daarna beslist `beslis()` op de rol van het lid, opnieuw uit het bestand gelezen.
+5. daarna beslist `decide()` op de rollen van het lid, opnieuw uit het bestand gelezen.
 
 De actor wordt SERVER-SIDE gezet, op de ingang, nooit uit een body:
 
@@ -189,7 +195,7 @@ nieuwe lezer moet dus kiezen: alle leden, of alleen de mensen.
 ## Het Team-blok bewerken raakt de tokens niet
 
 `users:` draagt sinds 2.12 twee soorten lid en de tokenhashes van beide, terwijl het
-bewerkmodaal van het tabblad Team alleen het e-mailadres en de rol van een MENS rendert.
+bewerkmodaal van het tabblad Team alleen het e-mailadres en de rollen van een MENS rendert.
 Dat formulier bezit het pad `users` als geheel (`USERS_SEQUENCE_EDITABLE`), dus zonder
 voorziening gooide een collega toevoegen elk token en elk service account van het project
 weg, onder een commit die "Projectleden bijgewerkt" heet.
@@ -226,10 +232,10 @@ persoon, want de aanroeper hoort niet zelf te kiezen wie hij is.
 
 | route | wat het doet |
 |---|---|
-| `GET /leden` | de leden met hun rol en hun tokens, zonder hashes |
+| `GET /leden` | de leden met hun rollen en hun tokens, zonder hashes |
 | `POST /leden` | een service account toevoegen (beheerder) |
 | `DELETE /leden/{naam}` | een service account verwijderen, met zijn tokens |
-| `PUT /leden/{naam}/rol` | de rol van een lid wijzigen (beheerder) |
+| `PUT /leden/{naam}/rol` | de rollen van een lid wijzigen, body `{"roles": [...]}` (beheerder) |
 | `POST /leden/{naam}/tokens` | een token uitgeven |
 | `POST /leden/{naam}/tokens/{token}/:roteer` | intrekken en opnieuw uitgeven |
 | `DELETE /leden/{naam}/tokens/{token}` | intrekken |
@@ -279,7 +285,7 @@ een token:
 ```yaml
 - type: service-account
   name: project-api
-  role: admin
+  roles: [admin, ops]
   tokens:
     - name: projectsleutel
       expires: '2031-01-01T00:00:00+00:00'
@@ -290,7 +296,7 @@ Dezelfde waarde blijft dus werken en een draaiende pijplijn merkt niets, maar hi
 een eigenaar, een naam, een vervaldatum en een rol, en hij is in te trekken zonder het
 project te raken.
 
-**Waarom rol `admin`**: de projectsleutel opende de hele schrijfkant van een project, tot
+**Waarom de rollen van een beheerder**: de projectsleutel opende de hele schrijfkant van een project, tot
 en met het verwijderen ervan en het terugzetten van een backup. Een smallere rol zou de
 migratie draaiende pijplijnen laten breken, en de keuze om een pijplijn minder te geven
 hoort bij de projectbeheerder (verlaag de rol, of verwijder het account), niet bij de

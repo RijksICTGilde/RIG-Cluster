@@ -37,6 +37,7 @@ from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, SECURITY_PROOF_HEADER, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
@@ -888,6 +889,7 @@ def create_app() -> FastAPI:
     # scripts in Python en kunnen geen nonce dragen (features/security-headers.md). De
     # assets komen uit static/ in plaats van cdn.jsdelivr.net (zie static/HERKOMST.md).
     @app.get("/docs", include_in_schema=False)
+    @action(Action.PORTAL_READ)
     @requires_sso
     async def swagger_ui(request: Request) -> Response:
         return render(
@@ -897,6 +899,7 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/redoc", include_in_schema=False)
+    @action(Action.PORTAL_READ)
     @requires_sso
     async def redoc_ui(request: Request) -> Response:
         return render(

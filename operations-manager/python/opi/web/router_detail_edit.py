@@ -17,10 +17,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, save_requires_step_up
+from opi.core.step_up import any_marking_change, has_fresh_step_up, log_step_up_refusal, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -57,14 +58,11 @@ from opi.forms.wizard.session import (
 from opi.handlers.project_file_handler import extract_attachment_catalog
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
-from opi.services.project_authorization import (
-    is_user_authorized_for_project,
-)
 from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.authz import authorize
 from opi.web.lotc_switch import render_fragment
 from opi.web.navigation_lotc import to_nldd_icon
-from opi.web.project_edit_security import require_project_edit_access, require_project_operate_access
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
@@ -206,20 +204,17 @@ def _render_section_html(
     return html
 
 
-def _require_project_member_access(request: Request, project_name: str):
-    """Check auth for project member access (any role). Returns (project, user_email)."""
-
-    user = get_current_user(request)
-    project = get_project_store().get(project_name)
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    return project, user_email
+#: Welke action een modal-wizard-stroom vraagt. De route zelf draagt ``project.read``
+#: als bodem; welk recht de stroom ECHT vraagt hangt af van ``flow_id``, en dat is een
+#: padparameter. Een back-up aanmaken mag elk projectlid; terugzetten overschrijft data
+#: of schrijft een nieuwe deployment, dus dat vraagt de operationele rol (RC-323); elke
+#: andere stroom bewerkt het projectbestand.
+FLOW_ACTIONS: dict[str, Action] = {
+    "modal-backup": Action.BACKUP_CREATE,
+    "modal-restore": Action.RESTORE_RUN,
+    # De team-wizard bezit ``users``, dus hij vraagt hetzelfde recht als de Team-kaart.
+    "modal-edit-team": Action.MEMBER_MANAGE,
+}
 
 
 def _extract_deployment_index_from_sections(state: WizardState) -> int | None:
@@ -237,18 +232,9 @@ def _is_backup_restore_flow(flow_id: str) -> bool:
     return flow_id in ("modal-backup", "modal-restore")
 
 
-def _require_flow_access(request: Request, project_name: str, flow_id: str):
-    """De rolpoort van een modal-wizard-stroom. Returns (project, user_email).
-
-    Een back-up aanmaken mag elk projectlid. Terugzetten overschrijft de data van een
-    deployment of schrijft een nieuwe deployment in het projectbestand, dus dat vraagt
-    een operationele rol (RC-323); elke andere stroom bewerkt het projectbestand.
-    """
-    if flow_id == "modal-backup":
-        return _require_project_member_access(request, project_name)
-    if flow_id == "modal-restore":
-        return require_project_operate_access(request, project_name)
-    return require_project_edit_access(request, project_name)
+def _require_flow_access(request: Request, project_name: str, flow_id: str) -> tuple[ProjectSummary, str]:
+    """De poort van een modal-wizard-stroom. Returns (project, user_email)."""
+    return authorize(request, action=FLOW_ACTIONS.get(flow_id, Action.PROJECT_EDIT), project_name=project_name)
 
 
 def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
@@ -617,10 +603,11 @@ async def _start_deployment(
 
 
 @detail_edit_router.post("/{project_name}/edit/{section_id}/sequence", response_class=HTMLResponse)
+@action(Action.PROJECT_EDIT)
 @requires_sso
 async def sequence_action(request: Request, project_name: str, section_id: str) -> HTMLResponse:
     """Handle add/remove sequence item and re-render the section form."""
-    project, _user_email = require_project_edit_access(request, project_name)
+    project, _user_email = authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
 
     section = _get_edit_section(section_id)
     project_data = project.data or {}
@@ -670,6 +657,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
 
 @detail_edit_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize modal wizard and return the first step HTML."""
@@ -883,6 +871,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
 
 @detail_edit_router.get("/{project_name}/modal-wizard/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
@@ -909,6 +898,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate step data and advance to next step, or complete the flow."""
@@ -1197,6 +1187,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/skip", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """'Later configureren' - save accumulated data and trigger deployment."""
@@ -1212,6 +1203,7 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/confirm", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Confirm after review - execute the final submit."""
@@ -1230,10 +1222,11 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
     "/{project_name}/modal-wizard/modal-backup/select-deployment",
     response_class=HTMLResponse,
 )
+@action(Action.PROJECT_READ)
 @requires_sso
 async def backup_select_deployment(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the backup step partial when deployment changes."""
-    _require_project_member_access(request, project_name)
+    authorize(request, action=Action.BACKUP_CREATE, project_name=project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1258,10 +1251,11 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     "/{project_name}/modal-wizard/modal-restore/select-restore-mode",
     response_class=HTMLResponse,
 )
+@action(Action.PROJECT_READ)
 @requires_sso
 async def restore_select_mode(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the restore target step when mode changes."""
-    require_project_operate_access(request, project_name)
+    authorize(request, action=Action.RESTORE_RUN, project_name=project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1587,6 +1581,13 @@ async def _process_and_save_modal_edit(
     # De step-up hoort hier en niet op de route: pas na de merge is er een NA-staat om de
     # verlaging of de verwijdering aan af te lezen. Nog voor het opslaan, dus een weigering
     # laat niets achter.
+    # De markering is geen gewone bewerking van het projectbestand: ze bepaalt wat
+    # 'productie' is, en daarmee wat elke andere regel afdwingt. Welke flow de gebruiker
+    # ervoor opende doet niet mee, dus de poort staat op de SCHRIJFWEG en niet op de
+    # route; dat ``environment`` ook in een restore-flow te zetten is, is precies waarom.
+    if any_marking_change(environment_before, environment_markings(existing_data)):
+        authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
+
     handeling = save_requires_step_up(before_data, existing_data)
     if handeling is not None and not has_fresh_step_up(request):
         log_step_up_refusal(
@@ -1673,7 +1674,7 @@ async def _handle_backup_restore_submit(
 
     else:  # trigger_restore
         # Guard tegen een tussenstap die de poort mist: terugzetten is geen back-up.
-        require_project_operate_access(request, project_name)
+        authorize(request, action=Action.RESTORE_RUN, project_name=project_name)
 
         from opi.services import RestoreMode
 
@@ -1743,6 +1744,7 @@ async def _handle_backup_restore_submit(
 
 
 @detail_edit_router.get("/{project_name}/modal-wizard/progress/{task_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_progress_html(request: Request, project_name: str, task_id: str) -> HTMLResponse:
     """Return server-rendered progress fragment for HTMX polling.

@@ -35,6 +35,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.connectors.mail import MailRelayError
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.prometheus import get_metrics_connector
+from opi.core.authz.rules import check_register
 from opi.core.caa_reconciler import reconcile_caa_records
 from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespace
 from opi.core.config import settings
@@ -959,9 +960,11 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # niet kan importeren is een configuratiefout en stopt de opstart.
     load_git_signing_identity()
 
-    # Een route die met een token bereikbaar is maar geen handeling noemt zou stilzwijgend
-    # alles openen wat het token mag. Dat stopt de start hier, niet een 403 die ontbreekt.
+    # Een bewaakte route zonder action zou stilzwijgend alles openen wat de aanroeper al
+    # mocht, en een rol zonder enkele grant opent niets zonder dat iemand dat merkt. Dat
+    # stopt de start hier, niet een 403 die ontbreekt.
     controleer_handelingen(app.routes)
+    check_register()
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")

@@ -1,0 +1,26 @@
+{#
+  Hoe je de markeringen in de matrix leest.
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% call panel("Hoe je deze tabel leest", "information") %}
+    <c-stack gap="sm">
+        <c-paragraph>
+            <strong>v</strong> betekent dat de rol het mag. <strong>v s</strong> betekent dat het mag
+            met een verse code uit je tweede factor. Een lege cel betekent dat het niet mag.
+        </c-paragraph>
+        <c-paragraph>
+            Rollen stapelen: ops omvat ontwikkelaar, en ontwikkelaar omvat viewer. Een lid kan
+            meer dan een rol hebben; dan telt alles bij elkaar op.
+        </c-paragraph>
+        <c-paragraph>
+            Een service account kan geen tweede factor geven, dus alles met <strong>s</strong> is
+            voor een pijplijn dicht.
+        </c-paragraph>
+        <c-paragraph>
+            De scopes productie en niet-productie wegen de deployment waar de aanroep op werkt.
+            Noemt een aanroep er geen, dan weegt hij tegen de hoogste markering van het project:
+            een cel met <strong>v</strong> valt dan strenger uit dan deze tabel belooft, nooit
+            ruimer.
+        </c-paragraph>
+    </c-stack>
+{% endcall %}

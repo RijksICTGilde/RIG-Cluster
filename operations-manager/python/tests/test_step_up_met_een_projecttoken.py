@@ -10,11 +10,11 @@ de code wordt getoetst, met een token dat als token binnenkomt.
 Vijf uitkomsten, over de echte ``delete_project``, dus door ``validate_api_token``,
 ``handhaaf`` en ``requires_step_up`` heen:
 
-1. token van een mens, productie, zonder code  -> 403 ``otp-ontbreekt``
+1. token van een mens, productie, zonder code  -> 403 ``otp-missing``
 2. token van een mens, productie, geldige code -> door, en de code is tegen HEM getoetst
-3. token van een mens, productie, foute code   -> 403 ``code-ongeldig``
-4. token van een service account, ook met code -> 403 ``tokensoort-niet-toegestaan``
-5. de oude projectsleutel, ook met code        -> 403 ``tokensoort-niet-toegestaan``
+3. token van een mens, productie, foute code   -> 403 ``code-invalid``
+4. token van een service account, ook met code -> 403 ``principal-kind-not-allowed``
+5. de oude projectsleutel, ook met code        -> 403 ``principal-kind-not-allowed``
 
 De laatste twee raken de tweede factor niet aan: een machine heeft er geen, dus
 ``UserOtpService`` hoort daar niet eens aangeroepen te worden.
@@ -31,7 +31,7 @@ import pytest
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
 from opi.core.leden import LidSoort
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_otp_service import OtpStatus, OtpVerification
@@ -127,7 +127,7 @@ def _probleem(antwoord) -> dict[str, Any]:
     assert antwoord.media_type == "application/problem+json"
     inhoud = json.loads(antwoord.body)
     assert inhoud["type"] == STEP_UP_PROBLEM_TYPE
-    assert inhoud["action"] == StepUpActie.PROJECT_VERWIJDEREN.value
+    assert inhoud["action"] == StepUpAction.PROJECT_DELETE.value
     return inhoud
 
 
@@ -136,7 +136,7 @@ async def test_een_token_van_een_mens_zonder_code_weigert_met_een_problem_detail
     antwoord, manager, _ = await _verwijder({"X-API-Key": TOKEN_MENS}, project=_project())
 
     inhoud = _probleem(antwoord)
-    assert inhoud["cause"] == StepUpCause.OTP_ONTBREEKT.value
+    assert inhoud["cause"] == StepUpCause.OTP_MISSING.value
     assert inhoud["otp_header"] == "X-ZAD-OTP"
     manager.delete_project.assert_not_awaited()
 
@@ -164,7 +164,7 @@ async def test_een_token_van_een_mens_met_een_foute_code_weigert() -> None:
         {"X-API-Key": TOKEN_MENS, "X-ZAD-OTP": "000000"}, project=_project(), otp=otp
     )
 
-    assert _probleem(antwoord)["cause"] == StepUpCause.CODE_ONGELDIG.value
+    assert _probleem(antwoord)["cause"] == StepUpCause.CODE_INVALID.value
     manager.delete_project.assert_not_awaited()
 
 
@@ -175,7 +175,7 @@ async def test_een_service_account_weigert_ook_met_een_code() -> None:
         {"X-API-Key": TOKEN_BOUWSTRAAT, "X-ZAD-OTP": "123456"}, project=_project()
     )
 
-    assert _probleem(antwoord)["cause"] == StepUpCause.TOKENSOORT_NIET_TOEGESTAAN.value
+    assert _probleem(antwoord)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
     service_cls.assert_not_called()
     manager.delete_project.assert_not_awaited()
 
@@ -188,6 +188,6 @@ async def test_de_oude_projectsleutel_weigert_ook_met_een_code() -> None:
         {"X-API-Key": OUDE_SLEUTEL, "X-ZAD-OTP": "123456"}, project=_project(met_oude_sleutel=True)
     )
 
-    assert _probleem(antwoord)["cause"] == StepUpCause.TOKENSOORT_NIET_TOEGESTAAN.value
+    assert _probleem(antwoord)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
     service_cls.assert_not_called()
     manager.delete_project.assert_not_awaited()

@@ -461,7 +461,7 @@ async def test_een_tweede_uitrol_zonder_symlink_blijft_groen(tmp_path: Path) -> 
 def _project(**extra: Any) -> dict[str, Any]:
     return {
         "name": "helm-project",
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         **extra,
     }
 

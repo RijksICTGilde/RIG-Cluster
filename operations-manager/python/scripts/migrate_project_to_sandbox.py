@@ -54,7 +54,7 @@ from opi.services.catalog.sleep_mode import token as wake_token  # noqa: E402
 from opi.services.project_leden import nieuw_token  # noqa: E402
 from opi.services.schema_migration import (  # noqa: E402
     PROJECT_API_ACCOUNT,
-    PROJECT_API_ROL,
+    PROJECT_API_ROLLEN,
     PROJECT_API_VERVALT,
 )
 from opi.services.services import service_entry_data, service_entry_name  # noqa: E402
@@ -96,7 +96,7 @@ DEFAULT_PROBE_PORT = 8080
 #: content of an attachment, and whatever ``replace_remaining_secrets`` finds. Recognisable
 #: on sight in a manifest or a pod, so nobody mistakes a sandbox copy for real configuration.
 SANDBOX_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
-SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "role": "admin"}
+SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "roles": list(PROJECT_API_ROLLEN)}
 SANDBOX_REPOSITORIES = [
     {
         "name": "main-repo",
@@ -341,7 +341,7 @@ def migrate_project(
             {
                 "type": LidSoort.SERVICE_ACCOUNT.value,
                 "name": PROJECT_API_ACCOUNT,
-                "role": PROJECT_API_ROL,
+                "roles": list(PROJECT_API_ROLLEN),
                 "tokens": [{"name": "projectsleutel", "expires": PROJECT_API_VERVALT, "hash": ""}],
             }
         )

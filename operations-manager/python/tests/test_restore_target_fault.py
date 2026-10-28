@@ -248,7 +248,7 @@ def _project_file() -> dict[str, Any]:
     return {
         "schema-version": 2,
         "name": PROJECT,
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "components": [
             {

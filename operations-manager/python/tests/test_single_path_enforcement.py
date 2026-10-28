@@ -334,7 +334,7 @@ async def test_central_save_refreshes_cache_with_new_state(tmp_path) -> None:
         "name": "cache-refresh-demo",
         "description": "x",
         "clusters": ["local"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "config": {"age-public-key": "age1nepnepnep"},
         "repositories": [{"name": "r", "url": "ssh://git@h:2222/srv/git/x.git", "branch": "main", "path": "infra"}],
         "components": [{"name": "frontend", "type": "deployment"}],

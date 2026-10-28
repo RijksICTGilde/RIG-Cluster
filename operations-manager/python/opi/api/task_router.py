@@ -13,7 +13,7 @@ from opi.api.user_token_auth import (
     extract_bearer_token,
     verify_user_token,
 )
-from opi.core.handelingen import Handeling, handeling
+from opi.core.authz.actions import Action, action
 from opi.services.project_store import get_project_store
 from pydantic import BaseModel
 
@@ -165,7 +165,7 @@ task_router: APIRouter = APIRouter(
         404: {"description": "Task not found"},
     },
 )
-@handeling(Handeling.TAAK_LEZEN)
+@action(Action.TASK_READ)
 async def get_task(request: Request, task_id: str) -> JSONResponse:
     """Get the current status of a task by its ID.
 
@@ -242,7 +242,7 @@ async def get_task(request: Request, task_id: str) -> JSONResponse:
     "",
     response_model=TaskListResponse,
 )
-@handeling(Handeling.TAAK_LEZEN)
+@action(Action.TASK_READ)
 async def list_tasks(
     request: Request,
     project_name: str | None = Query(default=None),
@@ -300,7 +300,7 @@ async def list_tasks(
         409: {"description": "Task cannot be cancelled in its current state"},
     },
 )
-@handeling(Handeling.TAAK_ANNULEREN)
+@action(Action.TASK_CANCEL)
 async def cancel_task(request: Request, task_id: str) -> JSONResponse:
     """Cancel a pending task. Requires the project's API key."""
     _validate_task_id(task_id)

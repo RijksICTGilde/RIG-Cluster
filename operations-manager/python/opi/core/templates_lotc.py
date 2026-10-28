@@ -36,6 +36,7 @@ from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
 from opi.services.registry import deployment_action_key
+from opi.web.authz import template_can as _template_can
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,11 @@ templates_lotc.env.globals["field_attrs"] = field_attrs
 # De CSP-nonce van het huidige verzoek, voor nonce="{{ csp_nonce }}" op elk eigen
 # <script>. Als context_processor en niet als global: de waarde is per verzoek anders.
 templates_lotc.context_processors.append(lambda request: {"csp_nonce": csp_nonce(request)})
+
+# can(action, project=..., deployment=...) voor de sjablonen: dezelfde regels als de poort
+# achter de knop. Een global met de context erbij, zodat ook een los gerenderd fragment
+# hem heeft; hij leest het verzoek uit de context.
+templates_lotc.env.globals["can"] = _template_can
 
 
 # Hier stonden twee overgangsdingen. render_roos() rendeerde een dienstblok zonder

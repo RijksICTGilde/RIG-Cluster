@@ -19,8 +19,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.user_token_auth import validate_platform_admin_token
 from opi.core.auth_decorators import requires_step_up
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
 from opi.services.step_up_conditions import vraagt_altijd_step_up
@@ -45,6 +46,7 @@ def _get_marked_for_deletion_service() -> MarkedForDeletionService:
 
 
 @admin_router.get("/marked-for-deletion")
+@action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
 async def list_marked_for_deletion(
     request: Request,
@@ -78,8 +80,9 @@ async def list_marked_for_deletion(
 
 
 @admin_router.post("/cleanup/trigger")
+@action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.OPRUIMING_STARTEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.CLEANUP_START)
 async def trigger_cleanup(
     request: Request,
     project_name: str = Query(..., description="Project name to clean up (required)"),
@@ -113,8 +116,9 @@ async def trigger_cleanup(
 
 
 @admin_router.post("/reconciliation/trigger")
+@action(Action.PLATFORM_RECONCILE)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.RECONCILIATIE_STARTEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.RECONCILIATION_START)
 async def trigger_reconciliation(
     request: Request,
     dry_run: bool = Query(True, description="Preview actions without executing (default: true)"),
@@ -160,8 +164,9 @@ async def trigger_reconciliation(
 
 
 @admin_router.delete("/marked-for-deletion/{mark_id}")
+@action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.MARKERING_INTREKKEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.MARKING_REVOKE)
 async def delete_mark(
     request: Request,
     mark_id: str,
@@ -191,6 +196,7 @@ async def delete_mark(
 
 
 @admin_router.get("/orphans/report")
+@action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
 async def orphan_sweep_report(request: Request) -> JSONResponse:
     """Run the read-only service-orphan sweep and return the report.
@@ -214,8 +220,9 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
 
 
 @admin_router.post("/orphans/confirm")
+@action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.WEZEN_BEVESTIGEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.ORPHANS_CONFIRM)
 async def confirm_orphans(request: Request) -> JSONResponse:
     """Mark confirmed orphan candidates for grace-period deletion.
 
@@ -303,8 +310,9 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 
 
 @admin_router.post("/projects/:reconcile")
+@action(Action.PLATFORM_RECONCILE)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpActie.PROJECTEN_HERINLEZEN)
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.PROJECTS_RELOAD)
 async def reconcile_projects(request: Request) -> JSONResponse:
     """Pull the projects repo into the store now, instead of waiting for the poll.
 

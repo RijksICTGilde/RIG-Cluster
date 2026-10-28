@@ -55,6 +55,7 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/eigen-domein"): "vaste uitleg over domeinnamen",
     ("GET", "/weergave"): "vaste uitleg over de weergave",
     ("GET", "/permission-denied"): "de pagina waar de middleware naartoe stuurt bij een weigering",
+    ("GET", "/security"): "SECURITY.md als pagina; wie een kwetsbaarheid wil melden is meestal niet ingelogd",
     # De proefopstelling van de componentbibliotheek. De router zegt zelf dat hij publiek is
     # en dat er daarom alleen verzonnen waarden in mogen (opi/web/lotc_router.py).
     ("GET", "/lotc/"): "proefopstelling van de componentbibliotheek, verzonnen waarden",

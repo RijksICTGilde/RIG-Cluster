@@ -6,21 +6,30 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
-from opi.api.principaal import (
-    NietHerkend,
-    PrincipaalSoort,
-    ToegangGeweigerd,
+from opi.api.principal import (
+    AccessDenied,
+    NotRecognised,
+    PrincipalKind,
     beslis,
-    herken_principaal,
     hoort_bij_project,
+    recognise_principal,
     tel_gebruik,
 )
 from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
-from opi.api.user_token_auth import REQUIRES_USER_TOKEN, UserTokenError, extract_bearer_token
+from opi.api.user_token_auth import (
+    REQUIRES_PLATFORM_ADMIN_TOKEN,
+    REQUIRES_USER_TOKEN,
+    UserTokenError,
+    extract_bearer_token,
+)
 from opi.core.actor import set_actor
+from opi.core.authz.actions import Action, action_of, deployment_of
+from opi.core.authz.engine import RuleError, rule_for
 from opi.core.config import settings
-from opi.core.handelingen import handeling_van
+from opi.manager.run_support import find_deployment
+from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_store import get_project_store
+from opi.services.services_enums import CloneFromType
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
 if TYPE_CHECKING:
@@ -68,7 +77,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
             refuse_after_auth_failure(request, x_api_key)
             raise HTTPException(status_code=401, detail="Invalid API key")
 
-        await handhaaf(request, x_api_key, wrapper, project)
+        await handhaaf(request, x_api_key, wrapper, project, route_kwargs=kwargs)
 
         # Add project_id to kwargs so the route function can access it if needed
         kwargs["project_name"] = project.name
@@ -78,11 +87,18 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
-async def handhaaf(request: Request, presented: str, endpoint: Callable[..., Any], project: ProjectSummary) -> None:
+async def handhaaf(
+    request: Request,
+    presented: str,
+    endpoint: Callable[..., Any],
+    project: ProjectSummary,
+    *,
+    route_kwargs: dict[str, Any] | None = None,
+) -> None:
     """Herken deze ``X-API-Key`` en laat de handeling van deze route toe.
 
     Een route legt hier zijn eigen endpoint-object in, want daar staat de markering die
-    :func:`opi.core.handelingen.handeling` erop zette. Gedeeld met de routers die hun
+    :func:`opi.core.authz.actions.action` erop zette. Gedeeld met de routers die hun
     sleutelcontrole met de hand doen (taken, slaapstand), zodat een token daar hetzelfde
     werkt als op de rest van de API.
 
@@ -94,7 +110,7 @@ async def handhaaf(request: Request, presented: str, endpoint: Callable[..., Any
     plek waar :func:`opi.api.otp_step_up.verify_api_step_up` de eigenaar van het token
     leest, zodat een step-up op een ``zad_``-token precies dezelfde weg loopt als op een
     SSO-bearer. Een service account en de oude projectsleutel laten hem leeg, en ketsen
-    daar dus af op ``tokensoort-niet-toegestaan``.
+    daar dus af op ``principal-kind-not-allowed``.
 
     Raises:
         HTTPException: 401 als het bewijsmiddel niet herkend wordt, 403 als het deze
@@ -102,33 +118,161 @@ async def handhaaf(request: Request, presented: str, endpoint: Callable[..., Any
     """
     logger = logging.getLogger(__name__)
     project_name = project.name
-    gevraagde = handeling_van(endpoint)
+    gevraagde = action_of(endpoint)
     if gevraagde is None:
         # De opstartcontrole hoort dit onmogelijk te maken; komt het hier toch langs, dan
         # is stilzwijgend doorlaten de verkeerde uitkomst.
         raise RuntimeError(f"Route {getattr(endpoint, '__name__', endpoint)} draagt geen handeling")
 
     try:
-        principaal = await herken_principaal(presented, project)
-    except NietHerkend as exc:
+        principaal = await recognise_principal(presented, project)
+    except NotRecognised as exc:
         logger.warning("Authenticatie mislukt voor project %s: %s", project_name, exc)
         refuse_after_auth_failure(request, presented)
         raise HTTPException(status_code=401, detail="Invalid API key") from exc
 
+    # De deployment en het component uit het PAD, zodat de productiescopes op de API
+    # hetzelfde wegen als in het portaal. Staat de deployment niet in het pad, dan zegt de
+    # route met ``@deployment_from`` waar hij wel staat; zonder die verklaring weegt
+    # ``build_resource`` de aanroep tegen de hoogste markering van het project.
+    deployment = request.path_params.get("deployment_name") or deployment_of(endpoint, route_kwargs or {})
+    component = request.path_params.get("component_name")
+    resource = build_resource(
+        project,
+        project_name=project_name,
+        path=resource_path(project_name, deployment, component),
+        deployment=deployment,
+        component=component,
+    )
+
     try:
-        beslis(principaal, project=project, handeling=gevraagde)
-    except ToegangGeweigerd as exc:
+        beslis(principaal, project=project, handeling=gevraagde, resource=resource, request=request)
+    except AccessDenied as exc:
         logger.warning("Geweigerd voor %s op %s (%s): %s", principaal.actor, project_name, gevraagde.value, exc)
         # De reden als eigen veld en niet alleen in de tekst: een aanroeper moet "deze
         # soort aanroeper mag dit nooit" kunnen onderscheiden van "je rol is te smal",
         # want dat zijn twee verschillende dingen om op te lossen.
         raise HTTPException(status_code=403, detail={"cause": exc.cause, "message": str(exc)}) from exc
 
-    tel_gebruik(project_name, principaal.soort)
+    # De principal op het verzoek, zodat een handler een TWEEDE handeling kan laten
+    # toetsen zonder het bewijsmiddel opnieuw te herkennen (:func:`eis_handeling`).
+    request.state.authz_principal = principaal
+    tel_gebruik(project_name, principaal.kind)
     set_actor(principaal.actor)
-    if principaal.soort is PrincipaalSoort.PERSOON:
-        request.state.user = {"email": principaal.naam}
+    if principaal.kind is PrincipalKind.HUMAN:
+        request.state.user = {"email": principaal.name}
     logger.debug("Toegestaan: %s mag %s op %s", principaal.actor, gevraagde.value, project_name)
+
+
+def eis_handeling(request: Request, project_name: str, handeling: Action, *, deployment: str | None = None) -> None:
+    """Laat een TWEEDE handeling op dit verzoek toe, naast die van de route.
+
+    Voor een body die meer vraagt dan het pad laat zien: een deployment schrijven die
+    ook de OTAP-markering zet vraagt ``environment.set`` naast ``deployment.write``. De
+    principal van dit verzoek staat al op het verzoek, dus het bewijsmiddel wordt niet
+    opnieuw herkend en de twee toetsen kunnen niet op verschillende aanroepers uitkomen.
+
+    *deployment* zegt op WELKE deployment deze tweede handeling werkt, als dat een andere
+    is dan die van de route: een upsert met ``cloneFrom`` leest de database van de BRON,
+    en zonder dat doelwit zou die tweede toets tegen de hoogste markering van het project
+    wegen in plaats van tegen de bron (RC-392 securityreview). Zonder naam blijft het
+    gedrag wat het was.
+
+    Raises:
+        HTTPException: 403 als het bewijsmiddel deze handeling hier niet opent.
+        RuntimeError: Als de route geen sleutelcontrole droeg; dan is er geen principal
+            en zou stilzwijgend doorlaten de verkeerde uitkomst zijn.
+    """
+    logger = logging.getLogger(__name__)
+    principaal = getattr(request.state, "authz_principal", None)
+    project = get_project_store().get(project_name)
+    if principaal is None or project is None:
+        raise RuntimeError(f"'{handeling.value}' getoetst op een verzoek zonder herkend bewijsmiddel")
+    doel = (
+        build_resource(
+            project,
+            project_name=project_name,
+            path=resource_path(project_name, deployment),
+            deployment=deployment,
+        )
+        if deployment
+        else None
+    )
+    try:
+        beslis(principaal, project=project, handeling=handeling, resource=doel, request=request)
+    except AccessDenied as exc:
+        logger.warning("Geweigerd voor %s op %s (%s): %s", principaal.actor, project_name, handeling.value, exc)
+        raise HTTPException(status_code=403, detail={"cause": exc.cause, "message": str(exc)}) from exc
+
+
+def deployment_in_body(deployment_data: Any = None, **_: Any) -> str | None:
+    """De deployment die een upsert-body aanwijst, voor :func:`deployment_from`.
+
+    De naam staat daar in het veld ``deploymentName``; zonder deze verklaring zou de
+    upsert-route tegen de hoogste markering van het project wegen, en kan een pijplijn met
+    ``developer-ci`` niets meer zodra het project ergens productie heeft.
+    """
+    naam = getattr(deployment_data, "deploymentName", None)
+    return str(naam) if naam else None
+
+
+def eis_doelwitten_uit_de_upsertbody(request: Request, project_name: str, deployment_data: Any) -> None:
+    """Toets de doelwitten in een upsert-body die de routepoort niet ziet.
+
+    De poort weegt ``deploymentName``; in dezelfde body wijzen drie velden iets anders
+    aan (RC-392 securityreview). ``cloneFrom`` kopieert de database van de BRON hierheen,
+    dus die bron wordt apart gewogen: klonen vanaf productie is ops, ongeacht het doel.
+    ``forceClone`` ZONDER ``cloneFrom`` laat de kloon lopen die al op de deployment staat,
+    want de overslag op "mode once en afgerond" wijkt voor force_clone
+    (``opi/manager/database_manager.py``); de bron staat dan in het projectbestand en
+    weegt daar. Het domeindrietal verzet de hostnaam van een BESTAANDE deployment, en die
+    kan door de goedkeuring per project dezelfde zijn als die van productie; een nieuwe
+    deployment krijgt zijn domeinvelden mee uit ``deployment.write``.
+
+    Raises:
+        HTTPException: 403 als het bewijsmiddel een van deze handelingen niet opent.
+    """
+    doel = _deployment_van(project_name, deployment_data.deploymentName)
+    opgeslagen_kloon = _opgeslagen_kloon(doel)
+    if deployment_data.cloneFrom:
+        eis_handeling(request, project_name, Action.DEPLOYMENT_CLONE_FROM, deployment=deployment_data.cloneFrom)
+    elif deployment_data.forceClone and opgeslagen_kloon is not None:
+        eis_handeling(
+            request, project_name, Action.DEPLOYMENT_CLONE_FROM, deployment=_bron_deployment(opgeslagen_kloon)
+        )
+    verzet_domein = (
+        deployment_data.domain_format is not None
+        or deployment_data.subdomain is not None
+        or deployment_data.base_domain is not None
+    )
+    if verzet_domein and doel is not None:
+        eis_handeling(request, project_name, Action.DEPLOYMENT_DOMAIN_SET)
+
+
+def _deployment_van(project_name: str, deployment_name: str) -> dict[str, Any] | None:
+    """De deployment met deze naam in dit project, of None."""
+    project = get_project_store().get(project_name)
+    if project is None:
+        return None
+    return find_deployment(project.data or {}, deployment_name)
+
+
+def _opgeslagen_kloon(deployment: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Het ``clone-from``-blok dat al op deze deployment staat."""
+    kloon = (deployment or {}).get("clone-from")
+    return kloon if isinstance(kloon, dict) else None
+
+
+def _bron_deployment(kloon: dict[str, Any]) -> str | None:
+    """De deployment waarvan dit blok kloont, of None als de bron er geen is.
+
+    Een backup of een externe bron is geen deployment van dit project; zonder doelwit
+    weegt de toets tegen de hoogste markering van het project, en dus strenger.
+    """
+    if kloon.get("type") != CloneFromType.DEPLOYMENT.value:
+        return None
+    verwijzing = kloon.get("reference")
+    return str(verwijzing) if verwijzing else None
 
 
 async def legitimeert(presented: str | None, project_name: str) -> bool:
@@ -142,8 +286,8 @@ async def legitimeert(presented: str | None, project_name: str) -> bool:
     if not presented or project is None:
         return False
     try:
-        principaal = await herken_principaal(presented, project)
-    except NietHerkend:
+        principaal = await recognise_principal(presented, project)
+    except NotRecognised:
         return False
     return hoort_bij_project(principaal, project)
 
@@ -234,33 +378,45 @@ def validate_metrics_scrape_token(func: Callable[..., Any]) -> Callable[..., Any
 
 
 def controleer_handelingen(routes: Iterable[Any]) -> None:
-    """Weiger op te starten als een token-bereikbare route geen handeling noemt.
+    """Weiger op te starten als een BEWAAKTE route geen action noemt, of een action geen regel.
 
-    Token-bereikbaar is: de route draagt :data:`REQUIRES_PROJECT_NAME` of
-    :data:`REQUIRES_USER_TOKEN`. Een nieuwe route die een van die decorators krijgt moet
-    dus een handeling kiezen, en dat is precies waarom een scope handelingen noemt en geen
-    paden: de lijst veroudert niet, de controle wel.
+    Bewaakt is: de route draagt een van de herkenningen (een sessie, een projectsleutel,
+    een persoonlijk token of een platformbeheerderstoken). Een nieuwe route die zo'n
+    decorator krijgt moet dus een action kiezen, en die action moet een regel hebben in
+    ``opi/core/authz/rules.py``. Een route zonder action zou stil openstaan voor alles wat
+    de aanroeper al mocht, en een action zonder regel zou bij elke aanroep falen in plaats
+    van bij de start.
 
     De routers die hun sleutelcontrole met de hand doen (``task_router``, de slaapstand)
-    dragen geen markering en zijn hier dus niet te vinden; ``tests/test_handelingen.py``
-    legt die vijf apart vast.
+    dragen geen markering en zijn hier dus niet te vinden; ``tests/test_actions.py`` legt
+    die vijf apart vast.
 
     Raises:
-        RuntimeError: Als een token-bereikbare route geen handeling draagt.
+        RuntimeError: Als een bewaakte route geen action draagt of de action geen regel heeft.
     """
-    zonder = []
+    bewaakt = ("_requires_sso", REQUIRES_PROJECT_NAME, REQUIRES_USER_TOKEN, REQUIRES_PLATFORM_ADMIN_TOKEN)
+    zonder_action = []
+    zonder_regel = []
     for route in routes:
         endpoint = getattr(route, "endpoint", None)
-        if endpoint is None:
+        if endpoint is None or not any(getattr(endpoint, markering, False) for markering in bewaakt):
             continue
-        if not getattr(endpoint, REQUIRES_PROJECT_NAME, False) and not getattr(endpoint, REQUIRES_USER_TOKEN, False):
+        methods = ",".join(sorted(getattr(route, "methods", None) or []))
+        gevraagd = action_of(endpoint)
+        if gevraagd is None:
+            zonder_action.append(f"{methods} {getattr(route, 'path', '?')}")
             continue
-        if handeling_van(endpoint) is None:
-            methods = ",".join(sorted(getattr(route, "methods", None) or []))
-            zonder.append(f"{methods} {getattr(route, 'path', '?')}")
+        try:
+            rule_for(gevraagd)
+        except RuleError:
+            zonder_regel.append(f"{methods} {getattr(route, 'path', '?')} ({gevraagd.value})")
 
-    if zonder:
+    if zonder_action:
         raise RuntimeError(
-            "Deze routes zijn met een token bereikbaar maar noemen geen handeling: "
-            f"{', '.join(sorted(zonder))}. Zet @handeling(Handeling.X) boven de authenticatiedecorator."
+            "Deze routes zijn bewaakt maar noemen geen action: "
+            f"{', '.join(sorted(zonder_action))}. Zet @action(Action.X) boven de authenticatiedecorator."
+        )
+    if zonder_regel:
+        raise RuntimeError(
+            f"Deze routes noemen een action zonder regel in opi/core/authz/rules.py: {', '.join(sorted(zonder_regel))}."
         )

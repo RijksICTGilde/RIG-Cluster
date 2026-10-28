@@ -21,7 +21,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 API_KEY = "sleutel-123"
@@ -41,6 +41,7 @@ def _request(headers: dict[str, str]) -> SimpleNamespace:
         headers=headers,
         state=SimpleNamespace(),
         url=SimpleNamespace(path="/api/projects/demo"),
+        path_params={"project_name": "demo"},
     )
 
 
@@ -53,13 +54,9 @@ def _patches(data: dict[str, Any]):
     manager = MagicMock()
     manager.delete_project = AsyncMock(return_value={"success": True})
     manager.close = AsyncMock(return_value=None)
+    store = MagicMock(get=MagicMock(return_value=record))
     return (
-        patch("opi.api.endpoint_util.get_project_store", return_value=MagicMock(get=MagicMock(return_value=record))),
-        patch(
-            "opi.services.step_up_conditions.get_project_store",
-            return_value=MagicMock(get=MagicMock(return_value=record)),
-        ),
-        patch("opi.services.step_up_conditions.is_user_authorized_for_project", return_value=True),
+        patch("opi.api.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.router.create_project_manager", return_value=manager),
         manager,
     )
@@ -70,21 +67,27 @@ PRODUCTIE = {"name": "demo", "deployments": [{"name": "prod", "environment": "pr
 
 
 @pytest.mark.asyncio
-async def test_niet_productie_met_de_projectsleutel_zonder_otp_slaagt() -> None:
-    p1, p2, p3, p4, manager = _patches(NIET_PRODUCTIE)
-    with p1, p2, p3, p4:
+async def test_niet_productie_met_de_projectsleutel_weigert_ook() -> None:
+    """Het register zegt ``admin@any`` met step-up: een project zonder productie ook.
+
+    Dit was voor RC-392 de enige API-weg waarop een projectsleutel een project kon
+    verwijderen; de step-up kwam toen uit een conditie die alleen naar productie keek.
+    """
+    p1, p2, manager = _patches(NIET_PRODUCTIE)
+    with p1, p2:
         response = await delete_project(
             request=_request({"X-API-Key": API_KEY}), project_name="demo", delete_data=_delete_data()
         )
 
-    assert response.status_code == 200
-    manager.delete_project.assert_awaited_once()
+    assert response.status_code == 403
+    assert json.loads(response.body)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
+    manager.delete_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_productie_met_de_projectsleutel_zonder_otp_weigert_en_verwijdert_niets() -> None:
-    p1, p2, p3, p4, manager = _patches(PRODUCTIE)
-    with p1, p2, p3, p4:
+    p1, p2, manager = _patches(PRODUCTIE)
+    with p1, p2:
         response = await delete_project(
             request=_request({"X-API-Key": API_KEY}), project_name="demo", delete_data=_delete_data()
         )
@@ -93,16 +96,16 @@ async def test_productie_met_de_projectsleutel_zonder_otp_weigert_en_verwijdert_
     assert response.media_type == "application/problem+json"
     probleem = json.loads(response.body)
     assert probleem["type"] == STEP_UP_PROBLEM_TYPE
-    assert probleem["cause"] == StepUpCause.TOKENSOORT_NIET_TOEGESTAAN.value
-    assert probleem["action"] == StepUpActie.PROJECT_VERWIJDEREN.value
+    assert probleem["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
+    assert probleem["action"] == StepUpAction.PROJECT_DELETE.value
     manager.delete_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_productie_met_de_projectsleutel_en_een_code_weigert_ook() -> None:
     """Een machine heeft geen tweede factor; een code aan een projectsleutel hangen mag niet."""
-    p1, p2, p3, p4, manager = _patches(PRODUCTIE)
-    with p1, p2, p3, p4, patch("opi.api.otp_step_up.UserOtpService") as service_cls:
+    p1, p2, manager = _patches(PRODUCTIE)
+    with p1, p2, patch("opi.api.otp_step_up.UserOtpService") as service_cls:
         response = await delete_project(
             request=_request({"X-API-Key": API_KEY, "X-ZAD-OTP": "123456"}),
             project_name="demo",
@@ -110,7 +113,7 @@ async def test_productie_met_de_projectsleutel_en_een_code_weigert_ook() -> None
         )
 
     assert response.status_code == 403
-    assert json.loads(response.body)["cause"] == StepUpCause.TOKENSOORT_NIET_TOEGESTAAN.value
+    assert json.loads(response.body)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
     service_cls.assert_not_called()
     manager.delete_project.assert_not_awaited()
 
@@ -122,11 +125,11 @@ async def test_productie_met_de_eigen_code_van_een_persoonlijk_token_slaagt() ->
     Vandaag draagt geen step-up-route ``validate_user_token``, dus hier staat
     ``request.state.user`` zoals die decorator hem zou zetten.
     """
-    p1, p2, p3, p4, manager = _patches(PRODUCTIE)
+    p1, p2, manager = _patches(PRODUCTIE)
     request = _request({"X-API-Key": API_KEY, "X-ZAD-OTP": "654321"})
     request.state.user = {"email": LID}
     service = MagicMock(verify=AsyncMock(return_value=OtpVerification.OK))
-    with p1, p2, p3, p4, patch("opi.api.otp_step_up.UserOtpService", return_value=service):
+    with p1, p2, patch("opi.api.otp_step_up.UserOtpService", return_value=service):
         response = await delete_project(request=request, project_name="demo", delete_data=_delete_data())
 
     assert response.status_code == 200
@@ -136,26 +139,26 @@ async def test_productie_met_de_eigen_code_van_een_persoonlijk_token_slaagt() ->
 
 @pytest.mark.asyncio
 async def test_productie_met_een_ongeldige_code_van_de_eigenaar_weigert() -> None:
-    p1, p2, p3, p4, manager = _patches(PRODUCTIE)
+    p1, p2, manager = _patches(PRODUCTIE)
     request = _request({"X-API-Key": API_KEY, "X-ZAD-OTP": "000000"})
     request.state.user = {"email": LID}
     service = MagicMock(
         verify=AsyncMock(return_value=OtpVerification.INVALID),
         status=AsyncMock(return_value=OtpStatus(registered=True)),
     )
-    with p1, p2, p3, p4, patch("opi.api.otp_step_up.UserOtpService", return_value=service):
+    with p1, p2, patch("opi.api.otp_step_up.UserOtpService", return_value=service):
         response = await delete_project(request=request, project_name="demo", delete_data=_delete_data())
 
     assert response.status_code == 403
-    assert json.loads(response.body)["cause"] == StepUpCause.CODE_ONGELDIG.value
+    assert json.loads(response.body)["cause"] == StepUpCause.CODE_INVALID.value
     manager.delete_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_zonder_projectsleutel_komt_niet_tot_de_step_up() -> None:
     """``validate_api_token`` gaat voor: geen sleutel, geen poging tot step-up."""
-    p1, p2, p3, p4, manager = _patches(PRODUCTIE)
-    with p1, p2, p3, p4, pytest.raises(HTTPException) as excinfo:
+    p1, p2, manager = _patches(PRODUCTIE)
+    with p1, p2, pytest.raises(HTTPException) as excinfo:
         await delete_project(request=_request({}), project_name="demo", delete_data=_delete_data())
 
     assert excinfo.value.status_code == 401

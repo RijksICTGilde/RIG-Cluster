@@ -15,8 +15,8 @@ SAMPLE_YAML = {
     "description": "Een test project",
     "clusters": ["local"],
     "users": [
-        {"email": "admin@test.nl", "role": "admin"},
-        {"email": "dev@test.nl", "role": "developer"},
+        {"email": "admin@test.nl", "roles": ["admin", "ops"]},
+        {"email": "dev@test.nl", "roles": ["developer"]},
     ],
     "services": ["publish-on-web", "keycloak"],
     "components": [
@@ -159,10 +159,10 @@ class TestSequenceRendering:
         users_field = fields["users"]
         first_item = users_field.children[0]
         assert first_item.widget_type == "sequence_item"
-        assert len(first_item.children) == 2  # email + role
+        assert len(first_item.children) == 2  # email + roles
         child_names = [c.name for c in first_item.children]
         assert "users[0]/email" in child_names
-        assert "users[0]/role" in child_names
+        assert "users[0]/roles" in child_names
 
     def test_components_sequence_field(self):
         renderer = _create_renderer()

@@ -88,15 +88,15 @@ class _StoredProject:
     def __init__(self, name: str, api_key: str, description: str, users: list[dict[str, str]]) -> None:
         self.name = name
         self.api_key = api_key
-        self.users = [MagicMock(email=user["email"], role=user["role"]) for user in users]
+        self.users = [MagicMock(email=user["email"], roles=user["roles"]) for user in users]
         self.data = {"name": name, "description": description, "users": users}
 
 
 PROJECTS = [
-    _StoredProject("beta-project", "key-beta", "De tweede", [{"email": MEMBER, "role": "developer"}]),
-    _StoredProject("alpha-project", "key-alpha", "De eerste", [{"email": MEMBER, "role": "admin"}]),
-    _StoredProject("andermans-project", "key-ander", "Niet van jou", [{"email": OUTSIDER, "role": "admin"}]),
-    _StoredProject("gamma-project", "key-gamma", "De derde", [{"email": MEMBER, "role": "owner"}]),
+    _StoredProject("beta-project", "key-beta", "De tweede", [{"email": MEMBER, "roles": ["developer"]}]),
+    _StoredProject("alpha-project", "key-alpha", "De eerste", [{"email": MEMBER, "roles": ["admin", "ops"]}]),
+    _StoredProject("andermans-project", "key-ander", "Niet van jou", [{"email": OUTSIDER, "roles": ["admin", "ops"]}]),
+    _StoredProject("gamma-project", "key-gamma", "De derde", [{"email": MEMBER, "roles": ["admin", "ops"]}]),
 ]
 
 
@@ -181,18 +181,18 @@ class TestWhatTheCallerSees:
     def test_each_entry_carries_name_description_and_role(self, listed: Any) -> None:
         """What a CLI needs to set its context and to know what it may offer."""
         assert listed[0]["description"] == "De eerste"
-        assert listed[0]["role"] == "admin"
+        assert listed[0]["roles"] == ["admin", "ops"]
         assert listed[1]["description"] == "De tweede"
-        assert listed[1]["role"] == "developer"
+        assert listed[1]["roles"] == ["developer"]
 
     def test_an_admin_gets_the_key_in_the_same_call(self, listed: Any) -> None:
         """Decision A: for who may act, one call is enough to act straight away."""
-        assert listed[0]["role"] == "admin"
+        assert listed[0]["roles"] == ["admin", "ops"]
         assert listed[0]["api_key"] == "key-alpha"
 
     def test_an_owner_gets_the_key_too(self, listed: Any) -> None:
         """The gate is the pair admin/owner, exactly as the web edit gate is."""
-        assert listed[2]["role"] == "owner"
+        assert listed[2]["roles"] == ["admin", "ops"]
         assert listed[2]["api_key"] == "key-gamma"
 
     def test_a_developer_gets_the_project_but_not_the_key(self, listed: Any) -> None:
@@ -202,7 +202,7 @@ class TestWhatTheCallerSees:
         secrets block) and every mutation (403). Handing it out here would be a
         way around that gate, so the list mirrors it: project yes, key no.
         """
-        assert listed[1]["role"] == "developer"
+        assert listed[1]["roles"] == ["developer"]
         assert listed[1]["api_key"] is None
         assert "key-beta" not in str(listed)
 
@@ -254,7 +254,7 @@ class TestPlatformAdministrator:
         ]
 
     def test_an_administrator_is_reported_as_admin_everywhere(self, listed_for_admin: Any) -> None:
-        assert {project["role"] for project in listed_for_admin} == {"admin"}
+        assert {tuple(project["roles"]) for project in listed_for_admin} == {("admin", "ops")}
 
 
 class TestTheDocumentationSaysSo:

@@ -138,7 +138,7 @@ def _project() -> dict[str, Any]:
                 "backup": {"schedule": "FREQ=DAILY;BYHOUR=3"},
             }
         ],
-        "users": [{"email": "admin@sandbox.rijksapp.dev", "role": "admin"}],
+        "users": [{"email": "admin@sandbox.rijksapp.dev", "roles": ["admin", "ops"]}],
     }
 
 

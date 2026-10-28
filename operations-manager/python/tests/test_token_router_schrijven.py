@@ -101,12 +101,12 @@ def test_een_service_account_toevoegen(test_client: TestClient, realm: Any, vers
     with patch("opi.api.token_router.voeg_service_account_toe", AsyncMock()) as mock:
         response = test_client.post(
             "/api/v2/projects/bouwput/leden",
-            json={"naam": "bouwstraat", "rol": "developer"},
+            json={"naam": "bouwstraat", "roles": ["developer"]},
             headers=_headers(realm, verse_otp),
         )
 
     assert response.status_code == 201
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", rol="developer", door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", rollen=["developer"], door=EMAIL)
 
 
 def test_een_ontwikkelaar_krijgt_403_op_een_service_account(
@@ -150,21 +150,25 @@ def test_een_service_account_verwijderen_geweigerd_is_een_403(
 
 
 def test_een_rol_wijzigen(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
-    with patch("opi.api.token_router.wijzig_rol", AsyncMock()) as mock:
+    with patch("opi.api.token_router.set_member_roles", AsyncMock()) as mock:
         response = test_client.put(
-            "/api/v2/projects/bouwput/leden/bouwstraat/rol", json={"rol": "admin"}, headers=_headers(realm, verse_otp)
+            "/api/v2/projects/bouwput/leden/bouwstraat/rol",
+            json={"roles": ["admin", "ops"]},
+            headers=_headers(realm, verse_otp),
         )
 
     assert response.status_code == 200
-    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", rol="admin", door=EMAIL)
+    mock.assert_awaited_once_with(project_name="bouwput", naam="bouwstraat", rollen=["admin", "ops"], door=EMAIL)
 
 
 def test_een_rol_wijzigen_geweigerd_is_een_403(test_client: TestClient, realm: Any, verse_otp: Any) -> None:
     with patch(
-        "opi.api.token_router.wijzig_rol", AsyncMock(side_effect=TokenAanvraagGeweigerd("Onbekende rol 'root'."))
+        "opi.api.token_router.set_member_roles", AsyncMock(side_effect=TokenAanvraagGeweigerd("Onbekende rol 'root'."))
     ):
         response = test_client.put(
-            "/api/v2/projects/bouwput/leden/bouwstraat/rol", json={"rol": "root"}, headers=_headers(realm, verse_otp)
+            "/api/v2/projects/bouwput/leden/bouwstraat/rol",
+            json={"roles": ["root"]},
+            headers=_headers(realm, verse_otp),
         )
 
     assert response.status_code == 403

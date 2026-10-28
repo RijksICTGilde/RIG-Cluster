@@ -49,7 +49,7 @@
     </form>
 {% endmacro %}
 
-{% call panel("Leden en tokens", "key", info_text="Een lid is een mens of een service account. Wat een token mag volgt uit de rol van zijn lid, dus een rol verlagen of een lid verwijderen werkt meteen door op al zijn tokens. Intrekken is een commit en staat dus in de historie van het project.") %}
+{% call panel("Leden en tokens", "key", info_text="Een lid is een mens of een service account. Wat een token mag volgt uit de rollen van zijn lid, dus rollen wijzigen of een lid verwijderen werkt meteen door op al zijn tokens. Intrekken is een commit en staat dus in de historie van het project.") %}
     <c-stack gap="lg">
         {% for lid in leden %}
             {# Het nummer van dit lid, voor de ids verderop: binnen de tokenlus wijst
@@ -68,7 +68,7 @@
                         <c-heading type="h3" size="5" label="{{ lid.naam }}" />
                     {% endif %}
                     <c-paragraph size="sm">
-                        {{ 'Service account' if lid.is_service_account else 'Lid' }}, rol {{ lid.rol }}
+                        {{ 'Service account' if lid.is_service_account else 'Lid' }}, {{ lid.rol_labels | join(', ') }}
                     </c-paragraph>
 
                     {% if is_project_beheerder %}
@@ -79,14 +79,16 @@
                               hx-target="#edit-section-inner" hx-swap="innerHTML">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                             <c-stack gap="sm">
-                                <c-select-field native="true" id="rol-{{ loop.index }}" name="rol" label="Rol"
-                                                data-no-optional-badge="true">
+                                <c-fieldset legend="Rollen">
                                     {% for rol in rollen %}
-                                        <option value="{{ rol }}"{% if rol == lid.rol %} selected{% endif %}>{{ rol }}</option>
+                                        <c-checkbox-field id="rol-{{ loop.index0 }}-{{ lid.naam | replace('@','-') }}"
+                                                          name="roles" value="{{ rol.sleutel }}"
+                                                          label="{{ rol.label }}" help="{{ rol.uitleg }}"
+                                                          :checked="rol.sleutel in lid.rollen" />
                                     {% endfor %}
-                                </c-select-field>
+                                </c-fieldset>
                                 <c-action-group align="start">
-                                    <c-button type="secondary" size="sm" label="Rol opslaan" html-type="submit" />
+                                    <c-button type="secondary" size="sm" label="Rollen opslaan" html-type="submit" />
                                 </c-action-group>
                             </c-stack>
                         </form>
@@ -198,12 +200,13 @@
                         <c-stack gap="sm">
                             <c-text-input-field id="sa-naam" name="naam" label="Naam" required
                                                 help="Kleine letters, cijfers en streepjes, beginnend met een letter." />
-                            <c-select-field native="true" id="sa-rol" name="rol" label="Rol"
-                                            data-no-optional-badge="true">
+                            <c-fieldset legend="Rollen">
                                 {% for rol in rollen %}
-                                    <option value="{{ rol }}"{% if rol == 'developer' %} selected{% endif %}>{{ rol }}</option>
+                                    <c-checkbox-field id="sa-rol-{{ loop.index0 }}" name="roles" value="{{ rol.sleutel }}"
+                                                      label="{{ rol.label }}" help="{{ rol.uitleg }}"
+                                                      :checked="rol.sleutel in standaard_rollen" />
                                 {% endfor %}
-                            </c-select-field>
+                            </c-fieldset>
                             <c-action-group align="start">
                                 <c-button type="primary" size="sm" label="Toevoegen" html-type="submit" />
                             </c-action-group>

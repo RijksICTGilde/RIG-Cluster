@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
-from opi.core.step_up import StepUpActie, has_fresh_step_up, log_step_up_refusal
+from opi.core.step_up import StepUpAction, has_fresh_step_up, log_step_up_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,18 +91,22 @@ def require_platform_admin(request) -> dict[str, Any]:
 
 
 #: Markering op een route die zich voor een step-up heeft aangemeld, met de
-#: :class:`~opi.core.step_up.StepUpActie` als waarde. ``tests/test_step_up_routes.py``
+#: :class:`~opi.core.step_up.StepUpAction` als waarde. ``tests/test_step_up_routes.py``
 #: leest hem, en ``custom_openapi`` documenteert de header en de 403 eruit: zonder
 #: markering zou een route die de decorator kwijtraakt stilzwijgend weer open staan.
 REQUIRES_STEP_UP = "zad_requires_step_up"
 
 
-def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie, velden: tuple[str, ...] = ()) -> Callable:
+def requires_step_up(
+    condition: Callable[..., Any] | None = None, *, actie: StepUpAction, velden: tuple[str, ...] = ()
+) -> Callable:
     """Laat een handeling zelf verklaren dat ze een verse step-up vraagt (RC-332).
 
-    ``condition`` krijgt het verzoek en de argumenten van de route en zegt of DEZE
-    aanroep er een vraagt; is hij onwaar, dan gebeurt er niets extra. ``actie`` zegt welke
-    handeling het is, en draagt zelf de teksten voor de dialoog, de log en de client.
+    Zonder ``condition`` komt het antwoord uit het rechtensysteem: de route draagt een
+    action, en de grant die hem opent zegt of er een verse tweede factor bij hoort
+    (``Cause.STEP_UP_REQUIRED``). Dat is sinds RC-392 de bron; een eigen ``condition``
+    blijft voor wat een scope niet kan zien, zoals een WIJZIGING die een markering
+    verlaagt. ``actie`` draagt de teksten voor de dialoog, de log en de client.
 
     Twee wegen, omdat er twee soorten aanroepers zijn: het portaal heeft een sessie en
     krijgt een dialoog, de API heeft die niet en draagt de code van de eigenaar van het
@@ -123,9 +127,12 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie, velde
             request: Request = kwargs.get("request") or args[0]
             argumenten = {sleutel: waarde for sleutel, waarde in kwargs.items() if sleutel != "request"}
 
-            nodig = condition(request, **argumenten)
-            if inspect.isawaitable(nodig):
-                nodig = await nodig
+            if condition is None:
+                nodig = _register_vraagt_step_up(request)
+            else:
+                nodig = condition(request, **argumenten)
+                if inspect.isawaitable(nodig):
+                    nodig = await nodig
             if not nodig:
                 return await func(*args, **kwargs)
 
@@ -148,14 +155,14 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie, velde
 
             email = str((get_current_user(request) or {}).get("email", ""))
             if not has_fresh_step_up(request):
-                tekst = log_step_up_refusal(actie.handeling, project_name=project_name, actor=email, doelwit=doelwit)
+                tekst = log_step_up_refusal(actie.phrase, project_name=project_name, actor=email, doelwit=doelwit)
                 return await _step_up_refusal(
-                    request, actie.handeling, tekst, velden=await _velden(request, velden), methode=request.method
+                    request, actie.phrase, tekst, velden=await _velden(request, velden), methode=request.method
                 )
 
             logger.info(
                 "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
-                actie.handeling,
+                actie.phrase,
                 doelwit,
                 project_name,
                 email,
@@ -169,11 +176,22 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie, velde
 
 
 async def _velden(request: Request, namen: tuple[str, ...]) -> dict[str, str]:
-    """De genoemde velden uit het formulier van dit verzoek, voor de herhaling."""
+    """De genoemde velden uit het formulier van dit verzoek, voor de herhaling.
+
+    Een veld dat meer dan een keer is ingevuld (een meerkeuze, zoals de rollen van een
+    lid) gaat als kommalijst mee: de dialoog herhaalt het als een verborgen veld, en de
+    route die het leest splitst er weer op.
+    """
     if not namen:
         return {}
     formulier = await request.form()
-    return {naam: str(formulier[naam]) for naam in namen if naam in formulier}
+    getlist = getattr(formulier, "getlist", None)
+    gevonden: dict[str, str] = {}
+    for naam in namen:
+        waarden = getlist(naam) if getlist is not None else ([formulier[naam]] if naam in formulier else [])
+        if waarden:
+            gevonden[naam] = ",".join(str(waarde) for waarde in waarden)
+    return gevonden
 
 
 async def _step_up_refusal(
@@ -193,3 +211,18 @@ async def _step_up_refusal(
         )
         return step_up_dialog_response(html)
     raise HTTPException(status_code=403, detail=tekst)
+
+
+def _register_vraagt_step_up(request: Request) -> bool:
+    """Of de beslissing van DIT verzoek een verse tweede factor vraagt.
+
+    De poort heeft ``decide()`` al aangeroepen en de uitkomst op het verzoek gezet
+    (``record_decision``): ``enforce_route_action`` in het portaal, ``handhaaf`` op de
+    API. Nog een keer beslissen zou een tweede lezing van het projectbestand zijn, en
+    dus een tweede antwoord op dezelfde vraag.
+
+    Ontbreekt de beslissing, dan is de poort niet gedraaid en is om een tweede factor
+    vragen de veilige uitkomst.
+    """
+    beslissing = getattr(request.state, "authz_decision", None)
+    return beslissing.requires_step_up if beslissing is not None else True

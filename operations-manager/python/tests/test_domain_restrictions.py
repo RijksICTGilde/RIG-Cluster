@@ -419,7 +419,7 @@ class TestDomainsModel:
         data = {
             "name": "test-project",
             "display-name": "Test Project",
-            "users": [{"email": "admin@test.nl", "role": "admin"}],
+            "users": [{"email": "admin@test.nl", "roles": ["admin", "ops"]}],
             "domains": {
                 "allowed-subdomains": [
                     {
@@ -445,7 +445,7 @@ class TestDomainsModel:
         data = {
             "name": "test-project",
             "display-name": "Test Project",
-            "users": [{"email": "admin@test.nl", "role": "admin"}],
+            "users": [{"email": "admin@test.nl", "roles": ["admin", "ops"]}],
         }
         model = ProjectFileModel.model_validate(data)
         assert model.domains is None

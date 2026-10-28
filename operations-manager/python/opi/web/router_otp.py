@@ -35,6 +35,7 @@ from joserfc.errors import JoseError
 from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.services.otp_herlogin_service import OtpHerloginService, herlogin_klopt
 from opi.services.user_otp_service import OtpRegistration, OtpVerification, UserOtpService
 from opi.utils.csrf import ensure_csrf_token
@@ -117,6 +118,7 @@ def _registration_page(request: Request, registratie: OtpRegistration, fout: str
 
 
 @otp_router.get("", response_class=HTMLResponse)
+@action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_status_pagina(request: Request) -> Response:
     """Of je een 2-factor hebt, en de weg om hem in te richten of te vervangen."""
@@ -125,6 +127,7 @@ async def otp_status_pagina(request: Request) -> Response:
 
 
 @otp_router.post("/start", response_model=None)
+@action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_start(request: Request) -> Response:
     """Maak een seed en toon de QR. Schrijft nog niets in de database.
@@ -163,6 +166,7 @@ async def otp_start(request: Request) -> Response:
 
 
 @otp_router.get("/herlogin", response_model=None)
+@action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_herlogin(request: Request) -> Response:
     """Stuur naar Keycloak voor een verse login, voordat een 2-factor ingericht wordt.
@@ -189,6 +193,7 @@ async def otp_herlogin(request: Request) -> Response:
 
 
 @otp_router.get("/herlogin/terug", response_model=None, name="otp_herlogin_terug")
+@action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_herlogin_terug(request: Request) -> Response:
     """Keycloak komt hier terug. Een geslaagde herlogin opent het venster voor ``/start``."""
@@ -226,6 +231,7 @@ async def otp_herlogin_terug(request: Request) -> Response:
 
 
 @otp_router.post("/bevestigen", response_model=None)
+@action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_bevestigen(request: Request) -> Response:
     """Bevestig de lopende registratie. Pas hier gaat de nieuwe 2-factor in."""
@@ -272,6 +278,7 @@ async def otp_bevestigen(request: Request) -> Response:
 
 
 @otp_router.post("/afbreken", response_model=None)
+@action(Action.ACCOUNT_OTP)
 @requires_sso
 async def otp_afbreken(request: Request) -> Response:
     """Vergeet de lopende registratie. De bestaande factor blijft zoals hij was."""

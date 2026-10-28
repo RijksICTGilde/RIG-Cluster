@@ -111,7 +111,7 @@ class OPICollector(Collector):
             labels=["project", "credential"],
         )
         try:
-            from opi.api.principaal import gebruik_per_project
+            from opi.api.principal import gebruik_per_project
 
             for (project, soort), aantal in gebruik_per_project().items():
                 credentials.add_metric([project, soort], aantal)

@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
@@ -107,6 +108,7 @@ def _user_form_response(
 
 
 @user_admin_router.get("", response_class=HTMLResponse)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def list_users(request: Request) -> Response:
     """List all platform users."""
@@ -137,6 +139,7 @@ async def list_users(request: Request) -> Response:
 
 
 @user_admin_router.get("/create", response_class=HTMLResponse)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def create_user_form(request: Request) -> Response:
     """Show the create user form."""
@@ -151,6 +154,7 @@ async def create_user_form(request: Request) -> Response:
 
 
 @user_admin_router.post("/create", response_model=None)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
@@ -205,6 +209,7 @@ async def create_user_submit(request: Request) -> Response:
 
 
 @user_admin_router.get("/{user_id}/edit", response_class=HTMLResponse)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def edit_user_form(request: Request, user_id: str) -> Response:
     """Show the edit user form, pre-filled."""
@@ -225,6 +230,7 @@ async def edit_user_form(request: Request, user_id: str) -> Response:
 
 
 @user_admin_router.post("/{user_id}/edit", response_model=None)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
@@ -292,6 +298,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 
 
 @user_admin_router.post("/{user_id}/revoke-sessions", response_model=None)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def revoke_user_sessions(request: Request, user_id: str) -> Response:
     """Beëindig elke lopende portaalsessie van deze gebruiker."""
@@ -318,6 +325,7 @@ async def revoke_user_sessions(request: Request, user_id: str) -> Response:
 
 
 @user_admin_router.post("/{user_id}/delete", response_model=None)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
@@ -343,6 +351,7 @@ async def delete_user(request: Request, user_id: str) -> Response:
 
 
 @user_admin_router.post("/{user_id}/otp-reset", response_model=None)
+@action(Action.PLATFORM_USERS)
 @requires_sso
 async def reset_user_otp(request: Request, user_id: str) -> Response:
     """Maak de tweede factor van een ANDERE gebruiker leeg.

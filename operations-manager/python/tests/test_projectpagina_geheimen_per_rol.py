@@ -38,7 +38,7 @@ async def _projectbestand(globale_publieke_sleutel: str) -> tuple[dict[str, Any]
         "name": "geheimtoets",
         "display-name": "Geheimtoets",
         "clusters": ["odcn-production"],
-        "users": [{"email": "baas@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "baas@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "services": [
             {
                 "name": "keycloak",
@@ -91,7 +91,7 @@ def _contextwaarden(context: dict[str, Any]) -> list[str]:
 
 async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, Any], str, str]:
     """Rendert de detailpagina voor een lid met deze rol: (context, html, private key)."""
-    from opi.web import lotc_switch, router
+    from opi.web import authz, lotc_switch, router
 
     _, globale_publiek = generate_sops_key_pair()
     data, project_prive = await _projectbestand(globale_publiek)
@@ -103,7 +103,7 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
     monkeypatch.setattr(
         KeycloakService,
         "realm_block",
-        lambda zelf, ctx: echte_realm_block(zelf, replace(ctx, user_role="admin")),
+        lambda zelf, ctx: echte_realm_block(zelf, replace(ctx, can=lambda _handeling: True)),
     )
 
     # De projectsleutel wordt sinds RC-254 met de KEK uitgepakt (``unwrap_project_key``) en
@@ -112,20 +112,19 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
     # pagina nodig heeft, zodat er geen KEK bij komt.
     monkeypatch.setattr(router, "unwrap_project_key", _vast(project_prive))
     monkeypatch.setattr(router, "is_user_authorized_for_project", lambda *_: True)
-    monkeypatch.setattr(router, "get_user_role_for_project", lambda *_: rol)
-    monkeypatch.setattr(
-        router,
-        "get_project_store",
-        lambda: _Store(
-            ProjectSummary(
-                name=naam,
-                api_key="niet-gebruikt",
-                filename=f"{naam}.yaml",
-                users=[ProjectUser(email="lid@rijksoverheid.nl", role=rol)],
-                data=data,
-            )
-        ),
+    monkeypatch.setattr(router, "get_user_roles_for_project", lambda *_: rol)
+    # Ook op authz: het sjabloon roept can(...) aan, en die leest dezelfde store.
+    store = _Store(
+        ProjectSummary(
+            name=naam,
+            api_key="niet-gebruikt",
+            filename=f"{naam}.yaml",
+            users=[ProjectUser(email="lid@rijksoverheid.nl", role=rol)],
+            data=data,
+        )
     )
+    monkeypatch.setattr(router, "get_project_store", lambda: store)
+    monkeypatch.setattr(authz, "get_project_store", lambda: store)
 
     opgevangen: dict[str, Any] = {}
 
@@ -163,6 +162,7 @@ def _verzoek(project_naam: str) -> Request:
         "type": "http",
         "method": "GET",
         "path": f"/projects/{project_naam}/details",
+        "path_params": {"project_name": project_naam},
         "raw_path": f"/projects/{project_naam}/details".encode(),
         "query_string": b"",
         "headers": [],

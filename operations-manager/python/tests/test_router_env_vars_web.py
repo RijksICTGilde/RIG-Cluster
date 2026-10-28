@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.step_up import STEP_UP_SESSION_KEY, STEP_UP_WINDOW
+from opi.services.project_service import ProjectUser
 from opi.services.project_store import ConflictError
 from opi.web.router_env_vars import save_env_vars, show_env_vars_window
 from opi.web.step_up_dialog import MODAL_TARGET
@@ -62,12 +63,17 @@ def _request(
 
 
 def _access_patch():
-    """De rol- en projectpoort staat open; de store levert het vaste project."""
+    """De rolpoort staat open; de store levert het vaste project.
+
+    Sinds RC-392 beslist ``opi.web.authz``, dus daar staan de twee lezingen die de poort
+    voedt: het projectbestand en of de aanroeper platformbeheerder is.
+    """
     return patch.multiple(
-        "opi.web.project_edit_security",
-        get_project_store=lambda: SimpleNamespace(get=lambda _name: SimpleNamespace(data=PROJECT_DATA)),
-        is_user_authorized_for_project=lambda _p, _e: True,
-        get_user_role_for_project=lambda _p, _e: "admin",
+        "opi.web.authz",
+        get_project_store=lambda: SimpleNamespace(
+            get=lambda _name: SimpleNamespace(name=PROJECT, data=PROJECT_DATA, users=[])
+        ),
+        get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: True),
     )
 
 
@@ -192,10 +198,13 @@ async def test_an_unknown_component_is_a_404() -> None:
 async def test_a_reader_without_the_edit_role_gets_a_403() -> None:
     with (
         patch.multiple(
-            "opi.web.project_edit_security",
-            get_project_store=lambda: SimpleNamespace(get=lambda _name: SimpleNamespace(data=PROJECT_DATA)),
-            is_user_authorized_for_project=lambda _p, _e: True,
-            get_user_role_for_project=lambda _p, _e: "member",
+            "opi.web.authz",
+            get_project_store=lambda: SimpleNamespace(
+                get=lambda _name: SimpleNamespace(
+                    name=PROJECT, data=PROJECT_DATA, users=[ProjectUser(email=EMAIL, roles=["viewer"])]
+                )
+            ),
+            get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: False),
         ),
         pytest.raises(HTTPException) as info,
     ):

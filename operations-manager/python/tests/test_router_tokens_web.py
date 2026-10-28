@@ -177,11 +177,11 @@ async def test_intrekken_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None
 
 async def test_een_service_account_toevoegen() -> None:
     with patch("opi.web.router_tokens.voeg_service_account_toe", AsyncMock()) as mock:
-        verzoek = _verzoek(EMAIL, {"naam": "bouwstraat", "rol": "developer"})
+        verzoek = _verzoek(EMAIL, {"naam": "bouwstraat", "roles": "developer"})
         antwoord = await voeg_service_account_toe_web(verzoek, PROJECT)
 
     assert antwoord.status_code == 303
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", rol="developer", door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", rollen=["developer"], door=EMAIL)
 
 
 async def test_een_service_account_toevoegen_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
@@ -189,7 +189,7 @@ async def test_een_service_account_toevoegen_weigering_komt_in_de_sessie_en_geef
         "opi.web.router_tokens.voeg_service_account_toe",
         AsyncMock(side_effect=TokenAanvraagGeweigerd("Alleen een beheerder van dit project kan dit doen.")),
     ):
-        verzoek = _verzoek("dev@rijksoverheid.nl", {"naam": "bouwstraat", "rol": "developer"})
+        verzoek = _verzoek("dev@rijksoverheid.nl", {"naam": "bouwstraat", "roles": "developer"})
         antwoord = await voeg_service_account_toe_web(verzoek, PROJECT)
 
     assert antwoord.status_code == 303
@@ -219,19 +219,19 @@ async def test_een_geweigerde_verwijdering_komt_in_de_sessie_en_geeft_geen_500()
 
 
 async def test_een_rol_wijzigen() -> None:
-    with patch("opi.web.router_tokens.wijzig_rol", AsyncMock()) as mock:
-        verzoek = _verzoek(EMAIL, {"rol": "admin"})
+    with patch("opi.web.router_tokens.set_member_roles", AsyncMock()) as mock:
+        verzoek = _verzoek(EMAIL, {"roles": "admin,ops"})
         antwoord = await wijzig_rol_web(verzoek, PROJECT, "bouwstraat")
 
     assert antwoord.status_code == 303
-    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", rol="admin", door=EMAIL)
+    mock.assert_awaited_once_with(project_name=PROJECT, naam="bouwstraat", rollen=["admin", "ops"], door=EMAIL)
 
 
 async def test_een_rol_wijzigen_weigering_komt_in_de_sessie_en_geeft_geen_500() -> None:
     with patch(
-        "opi.web.router_tokens.wijzig_rol", AsyncMock(side_effect=TokenAanvraagGeweigerd("Onbekende rol 'root'."))
+        "opi.web.router_tokens.set_member_roles", AsyncMock(side_effect=TokenAanvraagGeweigerd("Onbekende rol 'root'."))
     ):
-        verzoek = _verzoek("dev@rijksoverheid.nl", {"rol": "root"})
+        verzoek = _verzoek("dev@rijksoverheid.nl", {"roles": "root"})
         antwoord = await wijzig_rol_web(verzoek, PROJECT, "bouwstraat")
 
     assert antwoord.status_code == 303
@@ -247,11 +247,11 @@ def _overzicht() -> list[dict[str, Any]]:
         {
             "naam": EMAIL,
             "soort": "person",
-            "rol": "admin",
+            "rollen": ["admin", "ops"],
             "tokens": [{"naam": "cli", "vervalt": vervalt, "verlopen": False}],
         },
-        {"naam": "dev@rijksoverheid.nl", "soort": "person", "rol": "developer", "tokens": []},
-        {"naam": "bouwstraat", "soort": "service-account", "rol": "developer", "tokens": []},
+        {"naam": "dev@rijksoverheid.nl", "soort": "person", "rollen": ["developer"], "tokens": []},
+        {"naam": "bouwstraat", "soort": "service-account", "rollen": ["developer"], "tokens": []},
     ]
 
 

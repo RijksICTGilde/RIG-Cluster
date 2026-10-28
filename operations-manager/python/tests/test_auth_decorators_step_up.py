@@ -14,10 +14,10 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_step_up
-from opi.core.step_up import StepUpActie
+from opi.core.step_up import StepUpAction
 
-ACTIE = StepUpActie.PROJECT_VERWIJDEREN
-HANDELING = ACTIE.handeling
+ACTIE = StepUpAction.PROJECT_DELETE
+HANDELING = ACTIE.phrase
 
 
 def _request(path: str, *, htmx: bool = False, email: str = "eigenaar@example.org") -> SimpleNamespace:
@@ -159,7 +159,7 @@ async def test_portaal_met_verse_step_up_voert_de_handeling_uit() -> None:
 async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_project() -> None:
     """``doelwit`` kiest de deployment- of componentnaam boven de projectnaam."""
 
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
+    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.DEPLOYMENT_DELETE)
     async def route(request: Any, project_name: str, deployment_name: str) -> str:
         return "uitgevoerd"
 
@@ -175,7 +175,7 @@ async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_proj
     render.assert_awaited_once_with(
         ANY,
         vervolg="/projects/demo/delete-deployment/prod",
-        handeling=StepUpActie.DEPLOYMENT_VERWIJDEREN.handeling,
+        handeling=StepUpAction.DEPLOYMENT_DELETE.phrase,
         vervolg_velden={},
         methode="POST",
     )

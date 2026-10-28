@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
@@ -85,6 +86,7 @@ def _get_prometheus_external_url() -> str:
 
 
 @metrics_explorer_router.get("/metrics-explorer", response_class=HTMLResponse)
+@action(Action.PLATFORM_METRICS)
 @requires_sso
 async def metrics_explorer_page(request: Request):
     """Serve the metrics explorer page.
@@ -113,6 +115,7 @@ async def metrics_explorer_page(request: Request):
 
 
 @metrics_explorer_router.get("/ui/metrics-explorer/metrics/{service_id}", response_class=JSONResponse)
+@action(Action.PLATFORM_METRICS)
 @requires_sso
 async def get_service_metrics(request: Request, service_id: str):
     """

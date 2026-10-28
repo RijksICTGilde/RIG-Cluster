@@ -7,12 +7,11 @@ HANDELINGEN noemt niet, want een nieuwe route moet een handeling kiezen. Dat wer
 als "een route zonder handeling" onmogelijk is, en dat is wat hier wordt vastgelegd:
 
 1. de opstartcontrole faalt op een token-bereikbare route zonder handeling;
-2. elke rol opent een afgebakende verzameling handelingen, en een leesrol komt niet
-   verder dan de leeshandelingen.
+2. elke action die een route vraagt heeft een regel in het register, en een leesrol komt
+   niet verder dan de leesacties.
 
-Punt 2 is de plek waar een verruiming binnensluipt: een handeling die nergens in
-``ROL_HANDELINGEN`` valt opent voor niemand, en een handeling die per ongeluk in
-``LEESHANDELINGEN`` belandt opent voor iedereen.
+Punt 2 is de plek waar een verruiming binnensluipt: een action die per ongeluk met
+``read=True`` in het register staat opent voor iedereen.
 """
 
 from __future__ import annotations
@@ -21,373 +20,374 @@ from typing import ClassVar
 
 import pytest
 from opi.api.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
-from opi.api.principaal import ALLE_HANDELINGEN, MENS_VERPLICHT, ROL_HANDELINGEN
 from opi.api.user_token_auth import REQUIRES_USER_TOKEN
 from opi.core.auth_decorators import REQUIRES_STEP_UP
-from opi.core.handelingen import HANDELING_ATTR, LEESHANDELINGEN, Handeling, handeling, handeling_van
-from opi.core.step_up import StepUpActie
+from opi.core.authz.actions import ACTION_ATTR, Action, action, action_of
+from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, RuleError, all_rules, decide, rule_for
+from opi.core.step_up import StepUpAction
 from opi.server import app
+from opi.services.project_roles import roles_from_value
 
 #: Welke handeling elke route achter de PROJECTSLEUTEL vraagt. Plan stap 5: niet alleen de
 #: verzameling handelingen staat vast maar de koppeling per route, want die koppeling IS de
 #: grens tussen een admin- en een developer-token. Zonder deze tabel kon
-#: ``DELETE /api/projects/{project_name}`` van ``project.verwijderen`` naar ``project.lezen``
+#: ``DELETE /api/projects/{project_name}`` van ``project.delete`` naar ``project.read``
 #: gezet worden zonder dat een poort rood werd, en dan verwijdert een developer een project.
 #:
 #: Loopt dit uit de pas, dan is er een route bij gekomen, verdwenen, of van handeling
 #: veranderd. Verander deze tabel alleen samen met die route, en kijk dan of de nieuwe
 #: handeling bij de methode past: een route die iets WIJZIGT hoort geen leeshandeling te
 #: vragen (``test_een_leesrol_komt_niet_verder_dan_lezen`` legt die kant vast).
-SLEUTELROUTES: dict[tuple[str, str], Handeling] = {
-    ("GET", "/api/logs/{project_name}"): Handeling.LOGS_LEZEN,
-    ("DELETE", "/api/projects/{project_name}"): Handeling.PROJECT_VERWIJDEREN,
-    ("GET", "/api/projects/{project_name}/:refresh"): Handeling.PROJECT_VERVERSEN,
-    ("POST", "/api/projects/{project_name}/:upsert-deployment"): Handeling.DEPLOYMENT_SCHRIJVEN,
-    ("POST", "/api/projects/{project_name}/components"): Handeling.COMPONENT_TOEVOEGEN,
-    ("PATCH", "/api/projects/{project_name}/components/{component_name}"): Handeling.COMPONENT_WIJZIGEN,
+SLEUTELROUTES: dict[tuple[str, str], Action] = {
+    ("GET", "/api/logs/{project_name}"): Action.LOGS_READ,
+    ("DELETE", "/api/projects/{project_name}"): Action.PROJECT_DELETE,
+    ("GET", "/api/projects/{project_name}/:refresh"): Action.PROJECT_REFRESH,
+    ("POST", "/api/projects/{project_name}/:upsert-deployment"): Action.DEPLOYMENT_WRITE,
+    ("POST", "/api/projects/{project_name}/components"): Action.COMPONENT_ADD,
+    ("PATCH", "/api/projects/{project_name}/components/{component_name}"): Action.COMPONENT_UPDATE,
     (
         "POST",
         "/api/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external",
-    ): Handeling.BUCKET_KLONEN,
+    ): Action.BUCKET_CLONE,
     (
         "POST",
         "/api/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external",
-    ): Handeling.DATABASE_KLONEN,
-    ("GET", "/api/projects/{project_name}/deployments/{deployment_name}/:refresh"): Handeling.DEPLOYMENT_VERVERSEN,
-    ("POST", "/api/projects/{project_name}/deployments/{deployment_name}/:validate-clone"): Handeling.KLOON_VALIDEREN,
-    ("POST", "/api/projects/{project_name}/deployments/{deployment_name}/components"): Handeling.COMPONENT_KOPPELEN,
-    ("PUT", "/api/projects/{project_name}/deployments/{deployment_name}/image"): Handeling.DEPLOYMENT_IMAGE_VERVANGEN,
-    ("POST", "/api/projects/{project_name}/registries/by-credentials"): Handeling.REGISTRY_TOEVOEGEN,
-    ("POST", "/api/projects/{project_name}/registries/by-secret"): Handeling.REGISTRY_TOEVOEGEN,
-    ("POST", "/api/projects/{project_name}/services"): Handeling.DIENST_TOEVOEGEN,
-    ("DELETE", "/api/projects/{project_name}/{deployment_name}"): Handeling.DEPLOYMENT_VERWIJDEREN,
-    ("POST", "/api/resources/{project_name}/sanitize"): Handeling.RESOURCES_OPSCHONEN,
-    ("POST", "/api/resources/{project_name}/tune"): Handeling.RESOURCES_BIJSTELLEN,
-    ("GET", "/api/subdomains"): Handeling.SUBDOMEIN_LEZEN,
-    ("POST", "/api/v1/backup/project/{project_name}/deployment/{deployment_name}"): Handeling.BACKUP_MAKEN,
-    ("GET", "/api/v1/backup/runs/{project_name}/{deployment_name}"): Handeling.BACKUP_LEZEN,
-    ("DELETE", "/api/v1/backup/snapshot/{project_name}/{deployment_name}/{snapshot_id}"): Handeling.BACKUP_VERWIJDEREN,
-    ("POST", "/api/v1/projects/{project_name}/images/push"): Handeling.IMAGE_PUSHEN,
-    ("POST", "/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}"): Handeling.HERSTEL_UITVOEREN,
-    ("POST", "/api/v1/restore/database/{cluster}/{namespace}/{reference_name}"): Handeling.HERSTEL_UITVOEREN,
-    ("POST", "/api/v1/restore/project/{project_name}"): Handeling.HERSTEL_UITVOEREN,
-    ("POST", "/api/v1/restore/project/{project_name}/deployment/{deployment_name}"): Handeling.HERSTEL_UITVOEREN,
+    ): Action.DATABASE_CLONE,
+    ("GET", "/api/projects/{project_name}/deployments/{deployment_name}/:refresh"): Action.DEPLOYMENT_REFRESH,
+    ("POST", "/api/projects/{project_name}/deployments/{deployment_name}/:validate-clone"): Action.CLONE_VALIDATE,
+    ("POST", "/api/projects/{project_name}/deployments/{deployment_name}/components"): Action.COMPONENT_LINK,
+    ("PUT", "/api/projects/{project_name}/deployments/{deployment_name}/image"): Action.DEPLOYMENT_IMAGE_REPLACE,
+    ("POST", "/api/projects/{project_name}/registries/by-credentials"): Action.REGISTRY_ADD,
+    ("POST", "/api/projects/{project_name}/registries/by-secret"): Action.REGISTRY_ADD,
+    ("POST", "/api/projects/{project_name}/services"): Action.SERVICE_ADD,
+    ("DELETE", "/api/projects/{project_name}/{deployment_name}"): Action.DEPLOYMENT_DELETE,
+    ("POST", "/api/resources/{project_name}/sanitize"): Action.RESOURCES_CLEANUP,
+    ("POST", "/api/resources/{project_name}/tune"): Action.RESOURCES_ADJUST,
+    ("GET", "/api/subdomains"): Action.SUBDOMAIN_READ,
+    ("POST", "/api/v1/backup/project/{project_name}/deployment/{deployment_name}"): Action.BACKUP_CREATE,
+    ("GET", "/api/v1/backup/runs/{project_name}/{deployment_name}"): Action.BACKUP_READ,
+    ("DELETE", "/api/v1/backup/snapshot/{project_name}/{deployment_name}/{snapshot_id}"): Action.BACKUP_DELETE,
+    ("POST", "/api/v1/projects/{project_name}/images/push"): Action.IMAGE_PUSH,
+    ("POST", "/api/v1/restore/bucket/{cluster}/{namespace}/{reference_name}"): Action.RESTORE_RUN,
+    ("POST", "/api/v1/restore/database/{cluster}/{namespace}/{reference_name}"): Action.RESTORE_RUN,
+    ("POST", "/api/v1/restore/project/{project_name}"): Action.RESTORE_RUN,
+    ("POST", "/api/v1/restore/project/{project_name}/deployment/{deployment_name}"): Action.RESTORE_RUN,
     (
         "POST",
         "/api/v1/restore/project/{project_name}/deployment/{deployment_name}/run/{backup_run_id}",
-    ): Handeling.HERSTEL_UITVOEREN,
-    ("POST", "/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}"): Handeling.HERSTEL_UITVOEREN,
-    ("GET", "/api/v1/restore/snapshots/{cluster}/{namespace}"): Handeling.HERSTEL_LEZEN,
-    ("GET", "/api/v1/restore/snapshots/{cluster}/{namespace}/{pvc_name}"): Handeling.HERSTEL_LEZEN,
-    ("GET", "/api/v2/projects/{project_name}"): Handeling.PROJECT_LEZEN,
-    ("POST", "/api/v2/projects/{project_name}/:refresh"): Handeling.PROJECT_VERVERSEN,
-    ("POST", "/api/v2/projects/{project_name}/:upsert-deployment"): Handeling.DEPLOYMENT_SCHRIJVEN,
-    ("GET", "/api/v2/projects/{project_name}/clusters"): Handeling.CLUSTER_LEZEN,
-    ("GET", "/api/v2/projects/{project_name}/components"): Handeling.COMPONENT_LEZEN,
-    ("POST", "/api/v2/projects/{project_name}/components"): Handeling.COMPONENT_TOEVOEGEN,
-    ("DELETE", "/api/v2/projects/{project_name}/components/{component_name}"): Handeling.COMPONENT_VERWIJDEREN,
-    ("PATCH", "/api/v2/projects/{project_name}/components/{component_name}"): Handeling.COMPONENT_WIJZIGEN,
-    ("GET", "/api/v2/projects/{project_name}/deployments"): Handeling.DEPLOYMENT_LEZEN,
-    ("GET", "/api/v2/projects/{project_name}/deployments/{deployment_name}"): Handeling.DEPLOYMENT_LEZEN,
-    ("POST", "/api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-bucket"): Handeling.BUCKET_KLONEN,
+    ): Action.RESTORE_RUN,
+    ("POST", "/api/v1/restore/pvc/{cluster}/{namespace}/{pvc_name}"): Action.RESTORE_RUN,
+    ("GET", "/api/v1/restore/snapshots/{cluster}/{namespace}"): Action.RESTORE_READ,
+    ("GET", "/api/v1/restore/snapshots/{cluster}/{namespace}/{pvc_name}"): Action.RESTORE_READ,
+    ("GET", "/api/v2/projects/{project_name}"): Action.PROJECT_READ,
+    ("POST", "/api/v2/projects/{project_name}/:refresh"): Action.PROJECT_REFRESH,
+    ("POST", "/api/v2/projects/{project_name}/:upsert-deployment"): Action.DEPLOYMENT_WRITE,
+    ("GET", "/api/v2/projects/{project_name}/clusters"): Action.CLUSTER_READ,
+    ("GET", "/api/v2/projects/{project_name}/components"): Action.COMPONENT_READ,
+    ("POST", "/api/v2/projects/{project_name}/components"): Action.COMPONENT_ADD,
+    ("DELETE", "/api/v2/projects/{project_name}/components/{component_name}"): Action.COMPONENT_DELETE,
+    ("PATCH", "/api/v2/projects/{project_name}/components/{component_name}"): Action.COMPONENT_UPDATE,
+    ("GET", "/api/v2/projects/{project_name}/deployments"): Action.DEPLOYMENT_READ,
+    ("GET", "/api/v2/projects/{project_name}/deployments/{deployment_name}"): Action.DEPLOYMENT_READ,
+    ("POST", "/api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-bucket"): Action.BUCKET_CLONE,
     (
         "POST",
         "/api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-database",
-    ): Handeling.DATABASE_KLONEN,
-    ("POST", "/api/v2/projects/{project_name}/deployments/{deployment_name}/:refresh"): Handeling.DEPLOYMENT_VERVERSEN,
+    ): Action.DATABASE_CLONE,
+    ("POST", "/api/v2/projects/{project_name}/deployments/{deployment_name}/:refresh"): Action.DEPLOYMENT_REFRESH,
     (
         "POST",
         "/api/v2/projects/{project_name}/deployments/{deployment_name}/:rotate-credentials",
-    ): Handeling.DIENST_ACTIE,
-    ("POST", "/api/v2/projects/{project_name}/deployments/{deployment_name}/components"): Handeling.COMPONENT_KOPPELEN,
+    ): Action.SERVICE_ACTION,
+    ("POST", "/api/v2/projects/{project_name}/deployments/{deployment_name}/components"): Action.COMPONENT_LINK,
     (
         "PUT",
         "/api/v2/projects/{project_name}/deployments/{deployment_name}/image",
-    ): Handeling.DEPLOYMENT_IMAGE_VERVANGEN,
-    ("GET", "/api/v2/projects/{project_name}/pending-rollout"): Handeling.PROJECT_LEZEN,
-    ("GET", "/api/v2/projects/{project_name}/services"): Handeling.DIENST_LEZEN,
-    ("POST", "/api/v2/projects/{project_name}/services"): Handeling.DIENST_TOEVOEGEN,
+    ): Action.DEPLOYMENT_IMAGE_REPLACE,
+    ("GET", "/api/v2/projects/{project_name}/pending-rollout"): Action.PROJECT_READ,
+    ("GET", "/api/v2/projects/{project_name}/services"): Action.SERVICE_READ,
+    ("POST", "/api/v2/projects/{project_name}/services"): Action.SERVICE_ADD,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/aliases/values/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "GET",
         "/api/v2/projects/{project_name}/services/aliases/values/component/{component_name}",
-    ): Handeling.DIENST_LEZEN,
+    ): Action.SERVICE_READ,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/aliases/values/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/aliases/values/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/aliases/values/component/{component_name}/:delete",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/aliases/values/component/{component_name}/{value_key}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
-    ("POST", "/api/v2/projects/{project_name}/services/attachments/attachment"): Handeling.DIENST_ACTIE,
+    ): Action.SERVICE_WRITE_VALUES,
+    ("POST", "/api/v2/projects/{project_name}/services/attachments/attachment"): Action.SERVICE_ACTION,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}",
-    ): Handeling.DIENST_ACTIE,
-    ("PUT", "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"): Handeling.DIENST_ACTIE,
+    ): Action.SERVICE_ACTION,
+    ("PUT", "/api/v2/projects/{project_name}/services/attachments/attachment/{attachment_id}"): Action.SERVICE_ACTION,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment",
-    ): Handeling.DIENST_ACTIE,
+    ): Action.SERVICE_ACTION,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/attachments/component/{component_name}/attachment/{attachment_id}",
-    ): Handeling.DIENST_ACTIE,
+    ): Action.SERVICE_ACTION,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/attachments/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/attachments/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/attachments/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/authorization-wall/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/authorization-wall/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}/inbound",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/deployment/{deployment_name}/outbound",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/project/inbound",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/cross-domain-access/config/project/outbound",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/health-check/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/health-check/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/image-registries/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/image-registries/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/image-registries/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/image-registries/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("DELETE", "/api/v2/projects/{project_name}/services/invite/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/invite/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PATCH", "/api/v2/projects/{project_name}/services/invite/config/project/active"): Handeling.DIENST_CONFIGUREREN,
-    ("DELETE", "/api/v2/projects/{project_name}/services/keycloak/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/keycloak/config/project"): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/image-registries/config/project"): Action.SERVICE_CONFIGURE,
+    ("DELETE", "/api/v2/projects/{project_name}/services/invite/config/project"): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/invite/config/project"): Action.SERVICE_CONFIGURE,
+    ("PATCH", "/api/v2/projects/{project_name}/services/invite/config/project/active"): Action.SERVICE_CONFIGURE,
+    ("DELETE", "/api/v2/projects/{project_name}/services/keycloak/config/project"): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/keycloak/config/project"): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/metrics-scraper/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/metrics-scraper/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/minio-storage/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/minio-storage/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
-    ("DELETE", "/api/v2/projects/{project_name}/services/minio-storage/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/minio-storage/config/project"): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
+    ("DELETE", "/api/v2/projects/{project_name}/services/minio-storage/config/project"): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/minio-storage/config/project"): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/namespace-postgresql-database/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/namespace-postgresql-database/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/persistent-storage/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/persistent-storage/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/persistent-storage/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/postgresql-database/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/postgresql-database/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/postgresql-database/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/postgresql-database/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
-    ("GET", "/api/v2/projects/{project_name}/services/postgresql-database/schemas"): Handeling.DATABASE_SCHEMA_LEZEN,
-    ("POST", "/api/v2/projects/{project_name}/services/postgresql-database/schemas"): Handeling.DATABASE_SCHEMA_BEHEREN,
+    ): Action.SERVICE_CONFIGURE,
+    ("GET", "/api/v2/projects/{project_name}/services/postgresql-database/schemas"): Action.DATABASE_SCHEMA_READ,
+    ("POST", "/api/v2/projects/{project_name}/services/postgresql-database/schemas"): Action.DATABASE_SCHEMA_MANAGE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/postgresql-database/schemas/{postfix}",
-    ): Handeling.DATABASE_SCHEMA_BEHEREN,
+    ): Action.DATABASE_SCHEMA_MANAGE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/publish-on-web/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/publish-on-web/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/publish-on-web/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/publish-on-web/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
-    ("DELETE", "/api/v2/projects/{project_name}/services/redis/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/redis/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("DELETE", "/api/v2/projects/{project_name}/services/send-email/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/send-email/config/project"): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
+    ("DELETE", "/api/v2/projects/{project_name}/services/redis/config/project"): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/redis/config/project"): Action.SERVICE_CONFIGURE,
+    ("DELETE", "/api/v2/projects/{project_name}/services/send-email/config/project"): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/send-email/config/project"): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/seaweedfs-storage/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/seaweedfs-storage/config/deployment/{deployment_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/seaweedfs-storage/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/seaweedfs-storage/config/project",
-    ): Handeling.DIENST_CONFIGUREREN,
-    ("DELETE", "/api/v2/projects/{project_name}/services/sleep-mode/config/project"): Handeling.DIENST_CONFIGUREREN,
-    ("PUT", "/api/v2/projects/{project_name}/services/sleep-mode/config/project"): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
+    ("DELETE", "/api/v2/projects/{project_name}/services/sleep-mode/config/project"): Action.SERVICE_CONFIGURE,
+    ("PUT", "/api/v2/projects/{project_name}/services/sleep-mode/config/project"): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/sleep-mode/config/project/match",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/temp-storage/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/temp-storage/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "PUT",
         "/api/v2/projects/{project_name}/services/temp-storage/config/component/{component_name}",
-    ): Handeling.DIENST_CONFIGUREREN,
+    ): Action.SERVICE_CONFIGURE,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "GET",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/component/{component_name}",
-    ): Handeling.DIENST_LEZEN,
+    ): Action.SERVICE_READ,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/component/{component_name}/:delete",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/component/{component_name}/{value_key}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/deployment/{deployment_name}/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "GET",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/deployment/{deployment_name}/component/{component_name}",
-    ): Handeling.DIENST_LEZEN,
+    ): Action.SERVICE_READ,
     (
         "PATCH",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/deployment/{deployment_name}/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/deployment/{deployment_name}/component/{component_name}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "POST",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/deployment/{deployment_name}/component/{component_name}/:delete",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
+    ): Action.SERVICE_WRITE_VALUES,
     (
         "DELETE",
         "/api/v2/projects/{project_name}/services/user-env-vars/values/deployment/{deployment_name}/component/{component_name}/{value_key}",
-    ): Handeling.DIENST_WAARDEN_SCHRIJVEN,
-    ("GET", "/api/v2/projects/{project_name}/services/{service_name}/config"): Handeling.DIENST_LEZEN,
-    ("GET", "/api/v2/projects/{project_name}/subdomains/check/{subdomain}"): Handeling.SUBDOMEIN_LEZEN,
-    ("DELETE", "/api/v2/projects/{project_name}/{deployment_name}"): Handeling.DEPLOYMENT_VERWIJDEREN,
+    ): Action.SERVICE_WRITE_VALUES,
+    ("GET", "/api/v2/projects/{project_name}/services/{service_name}/config"): Action.SERVICE_READ,
+    ("GET", "/api/v2/projects/{project_name}/subdomains/check/{subdomain}"): Action.SUBDOMAIN_READ,
+    ("DELETE", "/api/v2/projects/{project_name}/{deployment_name}"): Action.DEPLOYMENT_DELETE,
 }
 
 
@@ -395,37 +395,39 @@ SLEUTELROUTES: dict[tuple[str, str], Handeling] = {
 #: (inventarisatie paragraaf 5). Ze zijn niet uit de routetabel te vinden, dus ze staan hier.
 #: Loopt dit uit de pas, dan is er een handgeschreven controle bij gekomen of verdwenen.
 HANDGESCHREVEN = {
-    ("GET", "/api/tasks/{task_id}"): Handeling.TAAK_LEZEN,
-    ("GET", "/api/tasks"): Handeling.TAAK_LEZEN,
-    ("POST", "/api/tasks/{task_id}/:cancel"): Handeling.TAAK_ANNULEREN,
-    ("POST", "/api/sleep-mode/{project_name}/{deployment_name}/wake"): Handeling.SLAAPSTAND_WEKKEN,
-    ("GET", "/api/sleep-mode/{project_name}/{deployment_name}/status"): Handeling.SLAAPSTAND_LEZEN,
+    ("GET", "/api/tasks/{task_id}"): Action.TASK_READ,
+    ("GET", "/api/tasks"): Action.TASK_READ,
+    ("POST", "/api/tasks/{task_id}/:cancel"): Action.TASK_CANCEL,
+    ("POST", "/api/sleep-mode/{project_name}/{deployment_name}/wake"): Action.SLEEP_WAKE,
+    ("GET", "/api/sleep-mode/{project_name}/{deployment_name}/status"): Action.SLEEP_READ,
 }
 
 #: Wat de bearerroutes vragen. Ze nemen een SSO-bearer en geen projectsleutel: bij het
 #: projectoverzicht bestaat het project nog niet, en een token hoort geen token te maken.
 BEARERROUTES = {
-    ("GET", "/api/v2/projects"): Handeling.PROJECT_LIJSTEN,
-    ("POST", "/api/v2/projects"): Handeling.PROJECT_AANMAKEN,
-    ("GET", "/api/v2/projects/{project_name}/api-key"): Handeling.PROJECTSLEUTEL_LEZEN,
-    ("GET", "/api/v2/projects/{project_name}/leden"): Handeling.TOKEN_LEZEN,
-    ("POST", "/api/v2/projects/{project_name}/leden"): Handeling.TOKEN_BEHEREN,
-    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}"): Handeling.TOKEN_BEHEREN,
-    ("PUT", "/api/v2/projects/{project_name}/leden/{naam}/rol"): Handeling.TOKEN_BEHEREN,
-    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens"): Handeling.TOKEN_BEHEREN,
-    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer"): Handeling.TOKEN_BEHEREN,
-    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}"): Handeling.TOKEN_BEHEREN,
+    ("GET", "/api/v2/projects"): Action.PROJECT_LIST,
+    ("POST", "/api/v2/projects"): Action.PROJECT_CREATE,
+    ("GET", "/api/v2/projects/{project_name}/api-key"): Action.PROJECT_KEY_READ,
+    ("GET", "/api/v2/projects/{project_name}/leden"): Action.TOKEN_READ,
+    # Een lid toevoegen, weghalen of zijn rollen wijzigen is member.manage; een TOKEN
+    # van dat lid beheren is token.manage. Twee rechten, allebei admin met step-up.
+    ("POST", "/api/v2/projects/{project_name}/leden"): Action.MEMBER_MANAGE,
+    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}"): Action.MEMBER_MANAGE,
+    ("PUT", "/api/v2/projects/{project_name}/leden/{naam}/rol"): Action.MEMBER_MANAGE,
+    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens"): Action.TOKEN_MANAGE,
+    ("POST", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer"): Action.TOKEN_MANAGE,
+    ("DELETE", "/api/v2/projects/{project_name}/leden/{naam}/tokens/{tokennaam}"): Action.TOKEN_MANAGE,
 }
 
 
-def _gemarkeerde_routes(markering: str) -> dict[tuple[str, str], Handeling | None]:
-    gevonden: dict[tuple[str, str], Handeling | None] = {}
+def _gemarkeerde_routes(markering: str) -> dict[tuple[str, str], Action | None]:
+    gevonden: dict[tuple[str, str], Action | None] = {}
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
         if endpoint is None or not getattr(endpoint, markering, False):
             continue
         for methode in getattr(route, "methods", None) or []:
-            gevonden[(methode, route.path)] = handeling_van(endpoint)
+            gevonden[(methode, route.path)] = action_of(endpoint)
     return gevonden
 
 
@@ -450,13 +452,13 @@ def test_de_handgeschreven_controles_noemen_een_handeling() -> None:
     Ze dragen geen markering, dus de opstartcontrole vindt ze niet. Deze lijst is wat
     daarvoor in de plaats komt.
     """
-    paden: dict[tuple[str, str], Handeling | None] = {}
+    paden: dict[tuple[str, str], Action | None] = {}
     for route in app.routes:
         endpoint = getattr(route, "endpoint", None)
         if endpoint is None:
             continue
         for methode in getattr(route, "methods", None) or []:
-            paden[(methode, route.path)] = handeling_van(endpoint)
+            paden[(methode, route.path)] = action_of(endpoint)
 
     for sleutel, verwacht in HANDGESCHREVEN.items():
         assert paden.get(sleutel) == verwacht, f"{sleutel} hoort {verwacht.value} te vragen"
@@ -478,7 +480,7 @@ def test_de_opstartcontrole_faalt_op_een_route_zonder_handeling() -> None:
         path = "/api/v2/projects/{project_name}/iets-nieuws"
         methods: ClassVar[set[str]] = {"POST"}
 
-    with pytest.raises(RuntimeError, match="noemen geen handeling"):
+    with pytest.raises(RuntimeError, match="noemen geen action"):
         controleer_handelingen([_Route()])
 
 
@@ -488,8 +490,13 @@ def test_elke_route_vraagt_een_handeling_die_een_rol_kan_openen() -> None:
     gevraagd |= set(HANDGESCHREVEN.values())
     gevraagd |= set(BEARERROUTES.values())
 
-    nooit_te_openen = sorted(h.value for h in gevraagd if h not in ALLE_HANDELINGEN)
-    assert not nooit_te_openen, f"deze handelingen opent geen enkele rol: {nooit_te_openen}"
+    zonder_regel = []
+    for h in sorted(gevraagd, key=str):
+        try:
+            rule_for(h)
+        except RuleError:
+            zonder_regel.append(h.value)
+    assert not zonder_regel, f"deze actions hebben geen regel in het register: {zonder_regel}"
 
 
 def test_een_leesrol_komt_niet_verder_dan_lezen() -> None:
@@ -498,26 +505,28 @@ def test_een_leesrol_komt_niet_verder_dan_lezen() -> None:
     Dezelfde grens die ``require_project_edit_access`` in de interface trekt. Loopt deze
     test rood, dan opent een token meer dan zijn eigenaar op het scherm kan.
     """
-    for rol in ("member", "developer"):
-        assert ROL_HANDELINGEN[rol] == LEESHANDELINGEN
+    viewer = Principal(kind=PrincipalKind.HUMAN, name="kijker", project="demo", roles=frozenset({Role.VIEWER}))
+    resource = Resource(project="demo", path="project/demo")
+    # Andersom geformuleerd dan "viewer mag elke leesactie": ``audit.read`` is een
+    # leesactie die alleen een admin mag (ontwerp 6.3). Wat vast moet staan is dat een
+    # viewer NIETS mag wat geen leesactie is.
+    for regel in all_rules():
+        if decide(viewer, regel.action, resource, step_up_fresh=True).allowed:
+            assert regel.read, f"{regel.action.value} is geen leesactie maar staat wel open voor een viewer"
 
-    for rol in ("admin", "owner"):
-        assert ROL_HANDELINGEN[rol] == ALLE_HANDELINGEN
-
-    schrijfhandelingen = ALLE_HANDELINGEN - LEESHANDELINGEN
-    assert Handeling.PROJECT_VERWIJDEREN in schrijfhandelingen
-    assert Handeling.HERSTEL_UITVOEREN in schrijfhandelingen
+    assert rule_for(Action.PROJECT_DELETE).read is False
+    assert rule_for(Action.RESTORE_RUN).read is False
 
 
 def test_een_onbekende_rol_opent_niets() -> None:
     """Een rol die iemand in het bestand verzint is geen reden om iets toe te laten."""
-    assert ROL_HANDELINGEN.get("beheerder") is None
+    assert roles_from_value("beheerder") == frozenset()
 
 
 def test_tokens_beheren_vraagt_een_mens() -> None:
     """Een token aanmaken vraagt een geverifieerde persoon, en een pijplijn is er geen."""
-    assert Handeling.TOKEN_BEHEREN in MENS_VERPLICHT
-    assert Handeling.TOKEN_LEZEN not in MENS_VERPLICHT
+    assert all(grant.needs_human for grant in rule_for(Action.TOKEN_MANAGE).grants)
+    assert not any(grant.needs_human for grant in rule_for(Action.TOKEN_READ).grants)
 
 
 #: Welke step-upactie van RC-332 op welke handeling van deze catalogus zit, voor de routes
@@ -525,21 +534,21 @@ def test_tokens_beheren_vraagt_een_mens() -> None:
 #: nemen ``validate_platform_admin_token`` en zijn met geen ``zad_``-token te bereiken.
 #:
 #: Deze tabel bestaat omdat het twee catalogi zijn die hetzelfde LIJKEN. Ze beslissen een
-#: andere vraag, en de noot bij ``MENS_VERPLICHT`` zegt waarom ze niet gelijkgetrokken zijn.
+#: andere vraag, en de noot bij ``Requirement.HUMAN_ONLY`` zegt waarom ze niet gelijkgetrokken zijn.
 #: Wat wel vast moet staan is de koppeling: komt er een step-up-route bij of verschuift er
 #: een handeling, dan valt dat hier op in plaats van bij een aanroeper die hem kwijt is.
 STAP_OP_PER_HANDELING = {
-    StepUpActie.PROJECT_VERWIJDEREN: Handeling.PROJECT_VERWIJDEREN,
-    StepUpActie.DEPLOYMENT_VERWIJDEREN: Handeling.DEPLOYMENT_VERWIJDEREN,
-    StepUpActie.COMPONENT_VERWIJDEREN: Handeling.COMPONENT_VERWIJDEREN,
-    StepUpActie.MARKERING_VERLAGEN: Handeling.DEPLOYMENT_SCHRIJVEN,
+    StepUpAction.PROJECT_DELETE: Action.PROJECT_DELETE,
+    StepUpAction.DEPLOYMENT_DELETE: Action.DEPLOYMENT_DELETE,
+    StepUpAction.COMPONENT_DELETE: Action.COMPONENT_DELETE,
+    StepUpAction.MARKING_SET: Action.DEPLOYMENT_WRITE,
 }
 
 
 def test_elke_step_up_route_met_een_token_hoort_bij_zijn_handeling() -> None:
     """De koppeling tussen de twee catalogi, per route."""
     gevonden = {
-        getattr(route.endpoint, REQUIRES_STEP_UP): handeling_van(route.endpoint)
+        getattr(route.endpoint, REQUIRES_STEP_UP): action_of(route.endpoint)
         for route in app.routes
         if getattr(route, "endpoint", None) is not None
         and getattr(route.endpoint, REQUIRES_PROJECT_NAME, False)
@@ -549,15 +558,26 @@ def test_elke_step_up_route_met_een_token_hoort_bij_zijn_handeling() -> None:
     assert gevonden == STAP_OP_PER_HANDELING
 
 
-def test_een_step_up_handeling_staat_niet_onvoorwaardelijk_in_mens_verplicht() -> None:
-    """De twee catalogi overlappen met OPZET niet.
+#: De action waarvoor de regel hieronder BEWUST niet geldt. Ontwerp paragraaf 4, rij 19:
+#: een project verwijderen vraagt altijd een admin met een verse step-up, ook zonder
+#: productie. Een pijplijn hoort geen project te kunnen opheffen.
+ALTIJD_EEN_MENS = {Action.PROJECT_DELETE}
 
-    Een step-up weegt het DOELWIT: een deployment op productie vraagt een verse factor,
-    dezelfde op acceptatie niet. Zou dezelfde handeling in ``MENS_VERPLICHT`` staan, dan
-    was een pijplijn ook uitgesloten van het niet-productiegeval, en dat is een verruiming
-    van de weigering die niemand gevraagd heeft.
+
+def test_een_step_up_op_een_doelwit_sluit_een_pijplijn_niet_overal_uit() -> None:
+    """Een step-up die het DOELWIT weegt, laat het andere geval open.
+
+    Een deployment op productie vraagt een verse factor, dezelfde op acceptatie niet. Zou
+    zo'n action ALLEEN grants hebben die een mens vragen, dan was een pijplijn ook
+    uitgesloten van het niet-productiegeval, en dat is een verruiming van de weigering
+    die niemand gevraagd heeft. ``ALTIJD_EEN_MENS`` noemt waar dat wel de bedoeling is.
     """
-    assert not (set(STAP_OP_PER_HANDELING.values()) & MENS_VERPLICHT)
+    onvoorwaardelijk = [
+        h.value
+        for h in set(STAP_OP_PER_HANDELING.values()) - ALTIJD_EEN_MENS
+        if all(g.needs_human for g in rule_for(h).grants)
+    ]
+    assert not onvoorwaardelijk
 
 
 def test_de_markering_wikkelt_de_functie_niet() -> None:
@@ -568,6 +588,6 @@ def test_de_markering_wikkelt_de_functie_niet() -> None:
 
     async def route() -> None: ...
 
-    gemarkeerd = handeling(Handeling.PROJECT_LEZEN)(route)
+    gemarkeerd = action(Action.PROJECT_READ)(route)
     assert gemarkeerd is route
-    assert getattr(route, HANDELING_ATTR) is Handeling.PROJECT_LEZEN
+    assert getattr(route, ACTION_ATTR) is Action.PROJECT_READ

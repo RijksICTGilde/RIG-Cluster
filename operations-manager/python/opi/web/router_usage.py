@@ -13,6 +13,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_cluster_config, get_namespace_prefix
 from opi.core.config import settings
 from opi.services.project_store import get_project_store
@@ -212,6 +213,7 @@ async def _query_month_usage(
 
 
 @usage_router.get("", response_class=HTMLResponse)
+@action(Action.PLATFORM_USAGE)
 @requires_sso
 async def usage_overview(request: Request) -> Response:
     """Show the usage and cost overview page."""

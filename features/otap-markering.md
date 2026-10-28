@@ -113,17 +113,22 @@ verzinnen.
 ## Productie verlaten
 
 `is_production_downgrade(before, after)` zegt of een overgang een markering `productie`
-verlaat. Sinds RC-332 vraagt zo'n verlaging een verse step-up, en logt OPI hem per
-deployment op WARNING met wie, project en deployment. Een markering weghalen is ook een
-verlaging: de deployment komt dan op `ontwikkeling` uit.
+verlaat. OPI logt zo'n verlaging per deployment op WARNING met wie, project en deployment.
+Een markering weghalen is ook een verlaging: de deployment komt dan op `ontwikkeling` uit.
+
+Sinds RC-392 vraagt elke WIJZIGING van de markering `ops` met een verse step-up, dus ook
+hem op `productie` ZETTEN (`environment.set`, ontwerp paragraaf 7): wie hem mag verlagen
+omzeilt elke productieregel met een klik, en wie hem mag zetten bepaalt waar die regels
+gelden. `any_marking_change(before, after)` is de vergelijking die dat leest.
 
 De melding staat op de wegen die een BESTAANDE markering kunnen wijzigen: de twee
 portaalwegen (wizard-edit en modal-edit) en de upsert-deployment van de API. Ze noemen
 allemaal wie het doet. Op de API-weg komt die identiteit uit de taakpayload (`actor`,
 dezelfde bron als `created_by` op de taak zelf): het e-mailadres uit de sessie, anders
 "API". Elke weg logt NA de opslag, zodat een geweigerde wijziging niets meldt.
-`productie` zetten blijft vrij. Welke handelingen een step-up vragen staat in
-[otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
+Welke handelingen een step-up vragen staat in
+[otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md), en welke rol een handeling
+opent in [rollen-en-rechten.md](rollen-en-rechten.md).
 
 ## Schemaversie
 

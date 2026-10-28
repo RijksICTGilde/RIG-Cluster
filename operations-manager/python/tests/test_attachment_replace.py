@@ -133,7 +133,7 @@ def _project(public_key: str) -> dict[str, Any]:
         "schema-version": 2,
         "name": PROJECT_NAME,
         "display-name": "Bijlage vervangen",
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["sandboxed-local"],
         # De catalogus staat in de naam-als-sleutel vorm: normalize_service_entries laat
         # attachments daar met opzet in staan (zie _normalize_service_entry), dus dit is

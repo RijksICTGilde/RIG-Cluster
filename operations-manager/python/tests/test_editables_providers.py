@@ -100,17 +100,21 @@ class TestUserRoleOptionsProvider:
         for option in UserRoleOptionsProvider().get_options():
             project = {
                 "name": "voorbeeld",
-                "users": [{"email": "a@rijksoverheid.nl", "role": option["value"]}],
+                "users": [
+                    {"email": "beheer@rijksoverheid.nl", "roles": ["admin"]},
+                    {"email": "a@rijksoverheid.nl", "roles": [option["value"]]},
+                ],
             }
             validate_project_schema(project)
 
-    def test_the_read_role_is_offered_as_member_not_operator(self) -> None:
-        """De vorige keuzelijst bood ``operator`` aan, een waarde die het schema
-        altijd al weigerde; ``member`` is de leesrol die het schema wel kent.
+    def test_the_read_role_is_offered_as_viewer_not_operator(self) -> None:
+        """De keuzelijst komt sinds RC-392 uit het register, dus hij kan geen waarde
+        meer aanbieden die het schema weigert; ``operator`` was er zo een.
         """
         values = [o["value"] for o in UserRoleOptionsProvider().get_options()]
-        assert "member" in values
+        assert "viewer" in values
         assert "operator" not in values
+        assert "member" not in values, "member is met schemaversie 2.13 verdwenen"
 
 
 class TestServiceOptionsProviderVervangenDienst:

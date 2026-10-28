@@ -12,7 +12,7 @@ from opi.services.catalog.invite.defaults import default_contact_email
 
 
 def test_de_eerste_mens_wordt_het_contactadres() -> None:
-    yaml_data = {"users": [{"email": "eerste@rijksoverheid.nl", "role": "admin"}]}
+    yaml_data = {"users": [{"email": "eerste@rijksoverheid.nl", "roles": ["admin", "ops"]}]}
 
     assert default_contact_email(yaml_data) == "eerste@rijksoverheid.nl"
 
@@ -23,8 +23,8 @@ def test_een_service_account_voor_de_eerste_mens_wordt_overgeslagen() -> None:
     een service account heeft geen postvak dat mail ontvangt."""
     yaml_data = {
         "users": [
-            {"type": "service-account", "name": "bouwstraat", "role": "developer", "email": "bouwstraat@nergens"},
-            {"email": "tweede@rijksoverheid.nl", "role": "admin"},
+            {"type": "service-account", "name": "bouwstraat", "roles": ["developer"], "email": "bouwstraat@nergens"},
+            {"email": "tweede@rijksoverheid.nl", "roles": ["admin", "ops"]},
         ]
     }
 
@@ -32,7 +32,7 @@ def test_een_service_account_voor_de_eerste_mens_wordt_overgeslagen() -> None:
 
 
 def test_alleen_service_accounts_geeft_geen_contactadres() -> None:
-    yaml_data = {"users": [{"type": "service-account", "name": "bouwstraat", "role": "developer"}]}
+    yaml_data = {"users": [{"type": "service-account", "name": "bouwstraat", "roles": ["developer"]}]}
 
     assert default_contact_email(yaml_data) is None
 

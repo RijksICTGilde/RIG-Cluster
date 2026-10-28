@@ -54,5 +54,6 @@
 /features/kyverno-admission-audit.md @uittenbroekrobbert
 /features/falco-runtime-detectie.md @uittenbroekrobbert
 /features/asvs-zelfbeoordeling.md @uittenbroekrobbert
+/features/rollen-en-rechten.md @uittenbroekrobbert
 /docs/asvs-zelfbeoordeling.md @uittenbroekrobbert
 /architecture/asvs-zelfbeoordeling.yaml @uittenbroekrobbert

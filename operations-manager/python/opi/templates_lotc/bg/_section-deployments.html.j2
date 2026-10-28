@@ -29,7 +29,7 @@
 #}
 {% from "bg/_patterns.html.j2" import panel, approval_alerts %}
 
-{% macro deployment_panel(deployment, project, approval_notices={}, user_role='') %}
+{% macro deployment_panel(deployment, project, approval_notices={}) %}
 {% call panel("Deployment: " ~ deployment.name, "arrow-up-arrow-down") %}
     {# ---- De stand van deze deployment ------------------------------------------
 
@@ -97,7 +97,7 @@
                    dat je aanklikte; de andere componenten van de deployment staan niet in het
                    formulier en blijven bij het opslaan onaangeroerd. Alleen klikbaar voor wie
                    mag bewerken. #}
-                {% if user_role in ['admin', 'owner'] %}
+                {% if can('component.update', deployment=deployment.name) %}
                     {% set comp_index = project.deployments.index(deployment) %}
                     {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', '" ~ component.reference ~ " in " ~ deployment.name ~ "', {components: '" ~ component.reference ~ "'})" %}
                     <c-layer
@@ -191,8 +191,8 @@
                         </c-cluster>
                         {# htmx, geen JS: het antwoord vraagt zelf om de step-up of opent
                            het venster; de haak in edit_modal.js opent de modal. #}
-                        {% if user_role in ['admin', 'owner'] %}
-                            <c-button type="secondary" size="sm" label="Omgevingsvariabelen bewerken" icon="key" show-icon="before"
+                        {% if can('env-vars.manage', deployment=deployment.name, component=component.reference) %}
+                            <c-button type="tertiary" size="sm" label="Bekijken en bewerken" icon="pencil-on-square" show-icon="before"
                                       hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
                         {% endif %}
                     </c-cluster>
@@ -209,7 +209,7 @@
     {% if project.deployments %}
         <c-stack gap="md">
             {% for deployment in project.deployments | sort(attribute='name') %}
-                {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
+                {{ deployment_panel(deployment, project, approval_notices | default({})) }}
             {% endfor %}
         </c-stack>
     {% else %}

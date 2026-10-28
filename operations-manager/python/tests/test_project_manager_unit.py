@@ -204,7 +204,7 @@ def _valid_project_for_save() -> dict:
         "name": "valid-project",
         "description": "A valid project",
         "clusters": ["local", "odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",

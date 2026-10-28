@@ -17,7 +17,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.auth_decorators import requires_step_up
-from opi.core.step_up import STEP_UP_SESSION_KEY, StepUpActie
+from opi.core.step_up import STEP_UP_SESSION_KEY, StepUpAction
 
 OWNER_EMAIL = "eigenaar@example.org"
 TOKEN = "wt-123"
@@ -40,6 +40,25 @@ def _request(*, verse_step_up: bool) -> Any:
         method="POST",
         url=SimpleNamespace(path="/projects/demo/modal-wizard/modal-edit-identity/step/identity"),
         headers={},
+        path_params={"project_name": "demo"},
+    )
+
+
+def _markeringsrecht():
+    """De poort op ``environment.set``: de markering zetten of verlagen vraagt ops.
+
+    Deze toetsen gaan over de STEP-UP en niet over het recht, dus de gebruiker is hier
+    een platformbeheerder; die heeft ops op elk project, los van de inhoud ervan.
+    """
+    from opi.services.project_service import ProjectSummary
+
+    store = MagicMock()
+    store.get.return_value = ProjectSummary(name="demo", filename="demo.yaml", data={"name": "demo"})
+    gebruikers = MagicMock()
+    gebruikers.is_platform_admin.return_value = True
+    return (
+        patch("opi.web.authz.get_project_store", return_value=store),
+        patch("opi.web.authz.get_user_service", return_value=gebruikers),
     )
 
 
@@ -61,8 +80,11 @@ async def _modal_edit(
 
     flow = MagicMock()
     flow.flow_id = "modal-edit-identity"
+    recht_store, recht_gebruikers = _markeringsrecht()
 
     with (
+        recht_store,
+        recht_gebruikers,
         patch("opi.web.router_detail_edit.apply_modal_edit", new=AsyncMock(return_value=na_wijziging)),
         patch("opi.web.router_detail_edit.extract_attachment_catalog", return_value={}),
         patch("opi.web.router_detail_edit.render_step_up_dialog", new=dialoog),
@@ -118,7 +140,7 @@ async def test_modal_edit_laat_de_herhaling_naar_de_confirm_route_wijzen() -> No
     dialoog.assert_awaited_once_with(
         ANY,
         vervolg=f"/projects/demo/modal-wizard/modal-edit-identity/confirm?_wizard_token={TOKEN}",
-        handeling="de markering productie te verlagen",
+        handeling=StepUpAction.MARKING_SET.phrase,
         vervolg_token=TOKEN,
     )
 
@@ -139,12 +161,29 @@ async def test_modal_edit_met_verse_step_up_slaat_de_verlaging_wel_op() -> None:
 
 
 @pytest.mark.asyncio
-async def test_modal_edit_zonder_productie_vraagt_niets() -> None:
-    """Een verlaging buiten productie (test naar ontwikkeling) gaat gewoon door."""
+async def test_modal_edit_vraagt_ook_buiten_productie_om_de_markering() -> None:
+    """Sinds RC-392 vraagt ELKE markeringswijziging een step-up, niet alleen een verlaging
+    uit productie: wie de markering zet, bepaalt waar de productieregels gelden."""
     stored = _productieproject()
     stored["deployments"][0]["environment"] = "test"
     na = copy.deepcopy(stored)
     na["deployments"][0]["environment"] = "ontwikkeling"
+    manager = _project_manager(stored)
+    dialoog = AsyncMock(return_value="<dialoog/>")
+
+    response = await _modal_edit(na_wijziging=na, verse_step_up=False, manager=manager, dialoog=dialoog)
+
+    assert response == "<dialoog/>"
+    manager.save_and_commit_project.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_modal_edit_zonder_markeringswijziging_vraagt_niets() -> None:
+    """Een gewone bewerking op een productieproject gaat door: de poort staat op de
+    markering en op het verwijderen, niet op elke opslag."""
+    stored = _productieproject()
+    na = copy.deepcopy(stored)
+    na["display-name"] = "Andere naam"
     manager = _project_manager(stored)
     dialoog = AsyncMock(return_value="<dialoog/>")
 
@@ -208,7 +247,7 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
     verlaagd[0]["environment"] = "acceptatie"
 
     with (
-        patch("opi.web.project_edit_security.require_project_edit_access"),
+        patch("opi.web.router_wizard.authorize"),
         _patch_wizard_manager(stored, opslag),
         patch("opi.web.router_wizard.clear_wizard_state"),
         caplog.at_level("WARNING", logger="opi.core.step_up"),
@@ -229,7 +268,7 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
 
 @pytest.mark.asyncio
 async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptureFixture) -> None:
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
+    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.DEPLOYMENT_DELETE)
     async def route(request: Any, project_name: str, deployment_name: str) -> str:
         return "uitgevoerd"
 
@@ -248,7 +287,7 @@ async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptur
 
 @pytest.mark.asyncio
 async def test_decorator_meldt_een_gebruikte_step_up_als_info(caplog: pytest.LogCaptureFixture) -> None:
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpActie.PROJECT_VERWIJDEREN)
+    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.PROJECT_DELETE)
     async def route(request: Any, project_name: str) -> str:
         return "uitgevoerd"
 

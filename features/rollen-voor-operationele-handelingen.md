@@ -22,7 +22,7 @@ back-up maken, maar niets starten dat code uitvoert of data overschrijft.
 
 ## Wie mag wat
 
-| Handeling | admin | owner | developer | member |
+| Action | admin | owner | developer | member |
 |---|---|---|---|---|
 | Het project bekijken, de status van een job of console bekijken | ja | ja | ja | ja |
 | Een back-up aanmaken, de back-upstroom doorlopen | ja | ja | ja | ja |

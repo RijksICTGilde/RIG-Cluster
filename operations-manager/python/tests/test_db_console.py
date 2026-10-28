@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from fastapi import HTTPException
 from opi.core.db_console_reaper import DbConsoleReaper
 from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
@@ -359,21 +358,28 @@ def _role_request(email: str, form: dict[str, str]):
     )
 
 
-@pytest.mark.asyncio
-async def test_db_console_start_rejects_the_read_role(project_with_roles) -> None:
-    from opi.services.catalog.shared.db_console import db_console_start
+@pytest.mark.parametrize(("rollen", "mag"), [(["viewer"], False), (["developer"], True), (["ops"], True)])
+def test_de_databaseconsole_hangt_aan_database_console(rollen: list[str], mag: bool) -> None:
+    """De rolpoort staat sinds RC-392 op de route en niet in de handler.
 
-    with (
-        patch("opi.services.catalog.shared.db_console.get_db_console_manager") as get_manager,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await db_console_start(
-            request=_role_request(MEMBER_EMAIL, {"deployment": "dep1", "tool": "pgweb"}),
-            project_name=PROJECT_NAME,
-        )
+    ``db_console_start`` en ``db_console_stop`` dragen ``database.console``; de dependency
+    op de web-router beslist daarop voordat de handler draait.
+    """
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
+    from opi.services.catalog.shared.db_console import db_console_start, db_console_stop
 
-    assert exc.value.status_code == 403
-    get_manager.assert_not_called()
+    assert action_of(db_console_start) is Action.DATABASE_CONSOLE
+    assert action_of(db_console_stop) is Action.DATABASE_CONSOLE
+
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name=MEMBER_EMAIL,
+        project=PROJECT_NAME,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    resource = Resource(project=PROJECT_NAME, path=f"project/{PROJECT_NAME}/deployment/dep1", deployment="dep1")
+    assert decide(principal, Action.DATABASE_CONSOLE, resource, step_up_fresh=True).allowed is mag
 
 
 @pytest.mark.asyncio
@@ -397,24 +403,6 @@ async def test_db_console_start_allows_developer(project_with_roles) -> None:
     _, kwargs = manager.begin.call_args
     assert kwargs["opened_by"] == DEVELOPER_EMAIL
     assert result == "rendered"
-
-
-@pytest.mark.asyncio
-async def test_db_console_stop_rejects_the_read_role(project_with_roles) -> None:
-    from opi.services.catalog.shared.db_console import db_console_stop
-
-    with (
-        patch("opi.services.catalog.shared.db_console.get_db_console_manager") as get_manager,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await db_console_stop(
-            request=_role_request(MEMBER_EMAIL, {"deployment": "dep1"}),
-            project_name=PROJECT_NAME,
-            session_id="run1",
-        )
-
-    assert exc.value.status_code == 403
-    get_manager.assert_not_called()
 
 
 @pytest.mark.asyncio

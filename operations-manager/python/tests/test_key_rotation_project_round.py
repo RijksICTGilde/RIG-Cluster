@@ -136,7 +136,7 @@ display-name: {name}
 description: Project for the rotation test
 users:
   - email: someone@rijksoverheid.nl
-    role: admin
+    roles: [admin, ops]
 clusters:
   - odcn-production
 repositories:

@@ -88,15 +88,15 @@ class _StoredProject:
     def __init__(self, name: str, api_key: str, users: list[dict[str, str]]) -> None:
         self.name = name
         self.api_key = api_key
-        self.users = [MagicMock(email=user["email"], role=user["role"]) for user in users]
+        self.users = [MagicMock(email=user["email"], roles=user["roles"]) for user in users]
 
 
 PROJECTS = [
-    _StoredProject("alpha-project", "key-alpha", [{"email": MEMBER, "role": "admin"}]),
-    _StoredProject("beta-project", "key-beta", [{"email": MEMBER, "role": "developer"}]),
-    _StoredProject("gamma-project", "key-gamma", [{"email": MEMBER, "role": "owner"}]),
-    _StoredProject("andermans-project", "key-ander", [{"email": OUTSIDER, "role": "admin"}]),
-    _StoredProject("gemigreerd-project", None, [{"email": MEMBER, "role": "admin"}]),
+    _StoredProject("alpha-project", "key-alpha", [{"email": MEMBER, "roles": ["admin", "ops"]}]),
+    _StoredProject("beta-project", "key-beta", [{"email": MEMBER, "roles": ["developer"]}]),
+    _StoredProject("gamma-project", "key-gamma", [{"email": MEMBER, "roles": ["admin", "ops"]}]),
+    _StoredProject("andermans-project", "key-ander", [{"email": OUTSIDER, "roles": ["admin", "ops"]}]),
+    _StoredProject("gemigreerd-project", None, [{"email": MEMBER, "roles": ["admin", "ops"]}]),
 ]
 
 
