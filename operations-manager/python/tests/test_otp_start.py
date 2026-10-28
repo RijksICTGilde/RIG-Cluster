@@ -94,7 +94,7 @@ async def test_een_bestaande_factor_vervangen_zonder_de_juiste_code_start_niets(
     assert antwoord == "de statuspagina"
     dienst.start_registration.assert_not_awaited()
     context = pagina.call_args[0][1]
-    assert "klopt niet" in context["fout"]
+    assert "klopt niet" in context["code_fout"]
 
 
 async def test_een_bestaande_factor_vervangen_tijdens_een_blokkade_meldt_dat() -> None:
@@ -108,4 +108,4 @@ async def test_een_bestaande_factor_vervangen_tijdens_een_blokkade_meldt_dat() -
     assert antwoord == "de statuspagina"
     dienst.start_registration.assert_not_awaited()
     context = pagina.call_args[0][1]
-    assert "geblokkeerd" in context["fout"]
+    assert "geblokkeerd" in context["code_fout"]

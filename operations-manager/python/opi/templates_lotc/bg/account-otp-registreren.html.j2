@@ -47,7 +47,7 @@
                     name="code"
                     label="Code uit je app"
                     type="text"
-                    autocomplete="one-time-code"
+                    autocomplete="one-time-code" :error="code_fout or none"
                     placeholder="123456"
                     required="true" />
                 <c-action-group align="start">

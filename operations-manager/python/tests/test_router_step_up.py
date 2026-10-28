@@ -143,7 +143,7 @@ async def test_foute_code_zet_niets_en_toont_de_foutmelding() -> None:
 
     assert STEP_UP_SESSION_KEY not in request.session
     dialoog.assert_awaited_once()
-    assert dialoog.call_args.kwargs["fout"] == "Die code klopt niet. Vul de code in die je app nu toont."
+    assert dialoog.call_args.kwargs["code_fout"] == "Die code klopt niet. Vul de code in die je app nu toont."
     assert response.body == b"<dialoog/>"
 
 
@@ -159,7 +159,7 @@ async def test_geblokkeerd_toont_de_blokkadetekst_en_zet_niets() -> None:
         await step_up(request)
 
     assert STEP_UP_SESSION_KEY not in request.session
-    assert "geblokkeerd" in dialoog.call_args.kwargs["fout"]
+    assert "geblokkeerd" in dialoog.call_args.kwargs["code_fout"]
 
 
 @pytest.mark.asyncio
