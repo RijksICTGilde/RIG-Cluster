@@ -27,7 +27,7 @@ from opi.web.navigation_lotc import to_nldd_icon
 from starlette.middleware.sessions import SessionMiddleware
 from tests.test_lotc_icon_mapping import _gerenderde_naam
 
-KAARTKOP = re.compile(r'<nldd-icon[^>]*name="([^"]+)"[^>]*>\s*</nldd-icon>\s*<nldd-title[^>]*>\s*<h3>([^<]+)</h3>')
+KAARTKOP = re.compile(r'<nldd-icon[^>]*icon="([^"]+)"[^>]*>\s*</nldd-icon>\s*<nldd-title[^>]*>\s*<h3>([^<]+)</h3>')
 
 
 @pytest.fixture(scope="module")

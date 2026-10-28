@@ -74,7 +74,7 @@ def _gerenderde_naam(icon: str) -> str:
     verkeerde kant van de aliaslaag.
     """
     html = templates_lotc.env.from_string(f'<c-icon icon="{icon}"/>').render()
-    treffer = re.search(r'name="([^"]*)"', html)
+    treffer = re.search(r'<nldd-icon[^>]*\sicon="([^"]*)"', html)
     return treffer.group(1) if treffer else icon
 
 

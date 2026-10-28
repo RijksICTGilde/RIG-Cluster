@@ -67,7 +67,7 @@
 <div class="lotc-copyfield">
   <code class="lotc-copyfield__value" data-value="{{ value | e }}">{{ value }}</code>
   <button type="button" class="lotc-copyfield__btn" data-lotc-copy aria-label="Kopiëren" title="Kopiëren">
-    {% if 'nldd' in lotc_design_systems %}<nldd-icon name="clipboard" size="20"></nldd-icon>{% else %}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img" aria-label="Kopiëren"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>{% endif %}
+    {% if 'nldd' in lotc_design_systems %}<nldd-icon icon="clipboard" size="20"></nldd-icon>{% else %}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img" aria-label="Kopiëren"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>{% endif %}
   </button>
 </div>
 {%- endmacro %}
