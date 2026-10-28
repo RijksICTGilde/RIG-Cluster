@@ -299,7 +299,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
-        "oom_pod_watch": False,
+        "oom_pod_watch": True,
         # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
         # challenge for a domain of the user's own can complete here.
         "supports_custom_domain_certificates": True,
@@ -483,7 +483,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
-        "oom_pod_watch": False,
+        "oom_pod_watch": True,
         "supports_custom_domain_certificates": True,
         # Een PLAATSHOUDER, net als in de sandbox: er is geen VLAM op staging. Alleen de
         # bedrading van de dienst is zo end-to-end te doorlopen; het adres wijst naar een
