@@ -2,7 +2,7 @@
 
 De `user-env-vars` van een component (en hun overschrijvingen per deployment) kunnen
 geheimen bevatten. Sinds RC-388 staan die waarden **nergens meer in de HTML van het
-portaal**, op het Componenten-tabblad ook niet meer als naam. Wie de waarden wil zien
+portaal**, ook niet meer als naam of aantal. Wie de waarden wil zien
 of wijzigen opent een eigen venster, en dat vraagt **altijd een verse step-up** - ook
 voor een deployment die in ontwikkeling staat. De OTAP-markering versoepelt dit dus niet.
 
@@ -11,8 +11,8 @@ voor een deployment die in ontwikkeling staat. De OTAP-markering versoepelt dit 
 - **Componenten-tabblad**: per componentkaart alleen de knop "Omgevingsvariabelen bewerken",
   naast Bewerken en Verwijderen (alleen voor wie mag bewerken). Geen namen, geen aantal en
   geen uitklaprij: ook dit venster is de enige weg om ze te zien of te zetten.
-- **Deployments-tabblad**: per deployment-component het aantal overschrijvingen en de
-  namen, plus een knop "Bekijken en bewerken" voor die scope.
+- **Deployments-tabblad**: per deployment-component alleen de knop "Omgevingsvariabelen
+  bewerken" voor die scope. Geen namen en geen aantal overschrijvingen.
 - **Het venster**: na een verse step-up toont het de echte waarden als `KEY=value`-regels
   in dezelfde editor als de wizard kende. Leeg opslaan haalt de variabelen van die scope
   weg. Na het opslaan wordt het project opnieuw verwerkt.

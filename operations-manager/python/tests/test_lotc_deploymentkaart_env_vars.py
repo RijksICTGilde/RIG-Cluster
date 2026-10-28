@@ -1,8 +1,8 @@
 """Het omgevingsvariabelen-blok op de deploymentkaart (RC-388).
 
-Net als de componentkaart toont ook deze kaart sindsdien alleen de NAMEN en het aantal,
-nooit een waarde: de overschrijvingen van een deployment kunnen evengoed geheimen zijn.
-De knop "Bekijken en bewerken" opent het step-up-venster en is daarom de enige ingang;
+Net als de componentkaart toont ook deze kaart geen waarde, naam of aantal: de
+overschrijvingen van een deployment kunnen evengoed geheimen zijn. De knop
+"Omgevingsvariabelen bewerken" opent het step-up-venster en is daarom de enige ingang;
 hij hangt af van de rol en wijst naar de deployment-variant van de venster-route.
 
 De componentkaart-kant dekt ``tests/test_lotc_componentkaart_waarden.py``; de route zelf
@@ -39,12 +39,12 @@ def _env_blok(html: str) -> str:
     return html.split("Omgevingsvariabelen", 1)[1]
 
 
-def test_alleen_de_namen_en_de_teller_nooit_een_waarde() -> None:
+def test_geen_naam_geen_teller_en_nooit_een_waarde() -> None:
     blok = _env_blok(_render())
 
-    assert "API_TOKEN" in blok
-    assert "VLG" in blok
-    assert "2 overschrijvingen" in blok
+    assert "API_TOKEN" not in blok
+    assert "VLG" not in blok
+    assert "overschrijving" not in blok
     assert "c-secret-field" not in blok
     assert "value=" not in blok, "een waarde-attribuut hoort niet in dit blok"
 
@@ -60,8 +60,7 @@ def test_de_knop_staat_ook_bij_een_component_zonder_overschrijving() -> None:
     blok = _env_blok(_render())
 
     assert 'hx-get="/projects/proef/deployments/prod/componenten/worker/env-vars"' in blok
-    assert "0 overschrijvingen" in blok
 
 
 def test_zonder_bewerkrol_is_er_geen_knop() -> None:
-    assert "Bekijken en bewerken" not in _render(user_role="member")
+    assert "Omgevingsvariabelen bewerken" not in _render(user_role="member")
