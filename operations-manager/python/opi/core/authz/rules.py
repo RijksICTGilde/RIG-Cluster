@@ -273,7 +273,7 @@ rule(Action.AUDIT_READ, label="De audit van dit project lezen", section=MEMBERS,
 rule(Action.PORTAL_READ, label="Portaalpagina's lezen", section=PORTAL, read=True, audience=Audience.SIGNED_IN)
 rule(Action.WIZARD_USE, label="De aanmaakwizard gebruiken", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.PROJECT_CREATE, label="Een project aanmaken", section=PORTAL, audience=Audience.SIGNED_IN)
-rule(Action.ACCOUNT_OTP, label="De eigen tweede factor inrichten", section=PORTAL, audience=Audience.SIGNED_IN)
+rule(Action.ACCOUNT_OTP, label="De eigen 2-factor inrichten", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.STEP_UP_VERIFY, label="Een step-up-code bevestigen", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.TOOLS_USE, label="Het versleutelgereedschap gebruiken", section=PORTAL, audience=Audience.SIGNED_IN)
 

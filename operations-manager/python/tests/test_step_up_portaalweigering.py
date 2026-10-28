@@ -256,7 +256,7 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
         await _save_existing_project(_request(verse_step_up=False), "demo", {"deployments": verlaagd})
 
     assert excinfo.value.status_code == 403
-    assert "verse code uit je tweede factor" in excinfo.value.detail
+    assert "verse code uit je 2-factor" in excinfo.value.detail
     assert opslag == []
     assert any("Geweigerd, geen verse step-up" in record.getMessage() for record in caplog.records)
 

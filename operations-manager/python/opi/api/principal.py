@@ -215,7 +215,7 @@ def beslis(
         return beslissing
     if beslissing.cause is Cause.PRINCIPAL_KIND_NOT_ALLOWED:
         raise AccessDenied(
-            f"'{handeling.value}' vraagt een geverifieerde persoon; een service account heeft geen tweede factor",
+            f"'{handeling.value}' vraagt een geverifieerde persoon; een service account heeft geen 2-factor",
             cause=PRINCIPAL_KIND_NOT_ALLOWED,
         )
     raise AccessDenied(f"de rollen van '{principal.name}' openen '{handeling.value}' niet in dit project")

@@ -210,7 +210,7 @@ def log_step_up_refusal(
         project_name,
         actor,
     )
-    return f"Om {handeling} is een verse code uit je tweede factor nodig."
+    return f"Om {handeling} is een verse code uit je 2-factor nodig."
 
 
 def record_step_up(request: Request) -> None:

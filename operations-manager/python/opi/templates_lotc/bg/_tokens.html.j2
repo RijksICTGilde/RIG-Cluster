@@ -192,7 +192,7 @@
             <c-card outline padding="md">
                 <c-stack gap="sm">
                     <c-heading type="h3" size="5" label="Service account toevoegen" />
-                    <c-paragraph size="sm">Een niet-menselijke aanroeper van dit project, bijvoorbeeld een bouwstraat. Hij krijgt geen Keycloak-gebruiker, geen uitnodiging en geen tweede factor.</c-paragraph>
+                    <c-paragraph size="sm">Een niet-menselijke aanroeper van dit project, bijvoorbeeld een bouwstraat. Hij krijgt geen Keycloak-gebruiker, geen uitnodiging en geen 2-factor.</c-paragraph>
                     <form autocomplete="off" method="post" action="/projects/{{ project.name }}/leden/toevoegen" novalidate
                           hx-post="/projects/{{ project.name }}/leden/toevoegen"
                           hx-target="#edit-section-inner" hx-swap="innerHTML">

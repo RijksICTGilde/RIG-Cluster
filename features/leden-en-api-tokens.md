@@ -83,7 +83,7 @@ een eigen reden en niet "te weinig rechten", want zijn rol klopt en zijn SOORT n
 
 ### De step-up op een token
 
-Een handeling die productie raakt vraagt een VERSE tweede factor (RC-332), en met een
+Een handeling die productie raakt vraagt een VERSE 2-factor (RC-332), en met een
 `zad_`-token loopt dat langs dezelfde weg als met een SSO-bearer. Het handhavingspunt zet
 de eigenaar van een persoonlijk token op `request.state.user`, en dat is precies waar
 `verify_api_step_up` (`opi/api/otp_step_up.py`) de persoon leest tegen wie de code uit
@@ -97,7 +97,7 @@ de eigenaar van een persoonlijk token op `request.state.user`, en dat is precies
 
 Het antwoord is een problem-detail (RFC 7807) met `type: urn:zad:step-up-required`, zodat
 een client ziet welke handeling het was, waarom ze een step-up vraagt en wat hij moet doen.
-De eigen tweede factor richt een mens in op `/account/otp`.
+De eigen 2-factor richt een mens in op `/account/otp`.
 
 ### Uitgeven, roteren en intrekken vragen zelf een step-up
 
@@ -124,7 +124,7 @@ code dekt vijf minuten en voert de handeling daarna alsnog uit. Zie
 [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
 
 Een service account komt hier nooit aan toe: deze routes vragen een bearertoken van een
-persoon, en een service account heeft geen tweede factor.
+persoon, en een service account heeft geen 2-factor.
 
 **`HUMAN_REQUIRED` en de step-upcatalogus zijn met opzet NIET dezelfde verzameling.** Ze
 beslissen een andere vraag: `HUMAN_REQUIRED` zegt of deze SOORT aanroeper dit ooit mag, en
@@ -186,7 +186,7 @@ De actor wordt SERVER-SIDE gezet, op de ingang, nooit uit een body:
 Elke lezer van `users:` die iets met een MENS doet (een Keycloak-gebruiker, een
 uitnodiging, een mail, OTP, de inloglijst, de databaseconsole) gebruikt
 `human_members(project)` uit `opi/services/project_leden.py`. Een service account heeft
-geen postvak en geen tweede factor, dus zou daar een toegang opleveren die niemand kan
+geen postvak en geen 2-factor, dus zou daar een toegang opleveren die niemand kan
 gebruiken.
 
 `tests/test_human_members_guard.py` somt elke lezer op en faalt als er een bijkomt. Een
