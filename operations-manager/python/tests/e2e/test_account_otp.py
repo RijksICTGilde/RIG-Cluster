@@ -1,4 +1,4 @@
-"""De registratiepagina van de tweede factor, door de echte route en sjablonen (RC-329).
+"""De registratiepagina van de 2-factor, door de echte route en sjablonen (RC-329).
 
 De test kent het zaad niet uit de service maar LEEST het van de pagina (de Base32 die een
 gebruiker met de hand zou invoeren) en rekent daar de code uit. Dat is precies de weg die
@@ -214,9 +214,9 @@ class TestMetEenDikkeSessie:
 
         auth_page.goto(f"{app_server}/account")
         inhoud = auth_page.content()
-        assert "Je hebt een tweede factor ingericht op" in inhoud
-        assert "Tweede factor beheren" in inhoud
-        assert "Tweede factor inrichten" not in inhoud
+        assert "Je hebt een 2-factor ingericht op" in inhoud
+        assert "2-factor beheren" in inhoud
+        assert "2-factor inrichten" not in inhoud
 
     def test_een_verkeerde_bevestigingscode_slaat_niets_op(self, app_server: str, auth_page: Page) -> None:
         _start_registratie(auth_page, app_server)
