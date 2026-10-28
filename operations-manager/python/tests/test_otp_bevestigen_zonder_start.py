@@ -9,12 +9,27 @@ vallen: bevestigen deed toen niets, zonder melding. Dezelfde oplossing als AMT/T
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from opi.web.router_otp import PENDING_FIELD, _fingerprint, otp_afbreken, otp_bevestigen, otp_start
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 EMAIL = "iemand@rijksoverheid.nl"
+
+
+@pytest.fixture(autouse=True)
+def _herlogin_is_vers() -> Iterator[None]:
+    """Deze tests gaan over wat NA de herlogin komt; de poort zelf staat in test_otp_herlogin.py."""
+    dienst = MagicMock()
+    dienst.is_fresh = AsyncMock(return_value=True)
+    with patch("opi.web.router_otp._get_herlogin_service", return_value=dienst):
+        yield
+
+
 ZAAD = "-----BEGIN AGE ENCRYPTED FILE-----versleuteld-----END AGE ENCRYPTED FILE-----"
 
 

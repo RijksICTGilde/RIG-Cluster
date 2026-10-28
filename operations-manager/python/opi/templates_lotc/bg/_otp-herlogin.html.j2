@@ -1,0 +1,10 @@
+{# De uitleg en de knop voor de herlogin bij Keycloak, voordat een 2-factor ingericht wordt. #}
+<c-paragraph>
+    Om een 2-factor in te richten log je eerst opnieuw in bij Keycloak. Dat doen we zodat niemand
+    met een open sessie op jouw computer een 2-factor onder jouw naam kan instellen. Daarna kom je
+    vanzelf terug op deze pagina en heb je vijf minuten om te beginnen.
+</c-paragraph>
+<c-action-group align="start">
+    <c-button type="primary" label="Opnieuw inloggen" href="/account/otp/herlogin" />
+    <c-button type="secondary" label="Terug naar account" href="/account" />
+</c-action-group>

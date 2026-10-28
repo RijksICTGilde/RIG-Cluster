@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from opi.utils.totp import totp_now
-from tests.e2e.testserver import get_in_memory_otp_service
+from tests.e2e.testserver import get_in_memory_herlogin_service, get_in_memory_otp_service
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -33,6 +33,7 @@ def lege_factor() -> None:
     """Elke test begint zonder factor; de stub is een singleton over de hele sessie."""
     get_in_memory_otp_service()._rows.clear()
     get_in_memory_otp_service()._pending.clear()
+    get_in_memory_herlogin_service().vers.clear()
 
 
 def _code_van_de_pagina(page: Page) -> str:
@@ -43,6 +44,8 @@ def _code_van_de_pagina(page: Page) -> str:
 
 
 def _start_registratie(page: Page, basis: str) -> None:
+    """Na de herlogin bij Keycloak (die deze suite niet heeft) naar de QR."""
+    get_in_memory_herlogin_service().vers.add(EMAIL)
     page.goto(f"{basis}{OTP_URL}")
     page.locator("text=2-factor inrichten").last.click()
     page.wait_for_selector(".otp-qr svg")
@@ -82,6 +85,36 @@ class TestStatuspagina:
     def test_de_accountpagina_wijst_naar_de_tweede_factor(self, app_server: str, auth_page: Page) -> None:
         auth_page.goto(f"{app_server}/account")
         assert auth_page.locator("a[href='/account/otp']").first.is_visible()
+
+
+class TestHerlogin:
+    """Een 2-factor inrichten vraagt eerst een herlogin, en de pagina zegt dat vooraf."""
+
+    def test_zonder_herlogin_staat_er_uitleg_en_een_knop_naar_de_herlogin(
+        self, app_server: str, auth_page: Page
+    ) -> None:
+        auth_page.goto(f"{app_server}{OTP_URL}")
+        inhoud = auth_page.content()
+
+        assert "log je eerst opnieuw in bij Keycloak" in inhoud
+        assert auth_page.locator("a[href='/account/otp/herlogin']").first.is_visible()
+        assert auth_page.locator("form[action='/account/otp/start']").count() == 0
+        assert RAW_COMPONENT_PATTERN.findall(inhoud) == []
+
+    def test_met_een_verse_herlogin_staat_het_formulier_er(self, app_server: str, auth_page: Page) -> None:
+        get_in_memory_herlogin_service().vers.add(EMAIL)
+        auth_page.goto(f"{app_server}{OTP_URL}")
+
+        assert auth_page.locator("form[action='/account/otp/start']").count() == 1
+        assert "log je eerst opnieuw in" not in auth_page.content()
+
+    def test_met_een_factor_vraagt_vervangen_ook_eerst_een_herlogin(self, app_server: str, auth_page: Page) -> None:
+        _bevestig_registratie(auth_page, app_server)
+        get_in_memory_herlogin_service().vers.clear()
+        auth_page.goto(f"{app_server}{OTP_URL}")
+
+        assert auth_page.locator("input[name='huidige_code']").count() == 0
+        assert auth_page.locator("a[href='/account/otp/herlogin']").first.is_visible()
 
 
 class TestMetEenDikkeSessie:

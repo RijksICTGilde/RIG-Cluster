@@ -155,8 +155,9 @@ Er zijn er twee, met verschillende doelen. Zie ook
 
 1. Ga naar **Account** (je naam rechtsboven) en kies **Tweede factor inrichten**, of ga
    rechtstreeks naar `/account/otp`.
-2. Scan de QR, of voer de Base32-sleutel met de hand in.
-3. Vul een code uit je app in. **Pas een geldige code maakt de factor echt**: tot dat moment is er
+2. Je logt eerst opnieuw in bij Keycloak, zie [Eerst opnieuw inloggen](#eerst-opnieuw-inloggen). Daarna kom je vanzelf terug en kun je beginnen.
+3. Scan de QR, of voer de Base32-sleutel met de hand in.
+4. Vul een code uit je app in. **Pas een geldige code maakt de factor echt**: tot dat moment is er
    niets opgeslagen.
 
 Het zaad van een nog niet bevestigde registratie staat niet in de database. Daardoor
@@ -177,12 +178,49 @@ opnieuw in het portaal. Verwijder hem ook op **Gebruikersbeheer** (`/admin/users
 de rij zichtbaar staat. Projectgegevens van anderen krijgt hij er niet mee, want de
 projectenlijst en de rechten per project gaan over lidmaatschap en niet over deze lijst.
 
+## Eerst opnieuw inloggen
+
+Een 2-factor inrichten of vervangen vraagt eerst een herlogin bij Keycloak. Zonder die poort kan
+iedereen met een open sessie op een ontgrendelde computer een eigen 2-factor instellen onder de
+naam van een ander, en daarmee de step-up-handelingen doen (verwijderen op productie, tokens,
+platformbeheer). Dit is hoe GitHub (sudo mode) en Google ("verifieer dat jij het bent") het ook
+doen. Een bevestigingsmail als poort is zwakker, want wie de computer heeft, heeft meestal ook de
+open mail.
+
+De pagina `/account/otp` zegt vooraf dat dit gaat gebeuren, met een knop **Opnieuw inloggen**. Het
+formulier om te beginnen verschijnt pas na een geslaagde herlogin.
+
+- `GET /account/otp/herlogin` stuurt naar Keycloak met `prompt=login` en `max_age=0`. Keycloak vraagt
+  dan opnieuw om je wachtwoord, ook als je daar nog een sessie hebt.
+- `GET /account/otp/herlogin/terug` controleert de id_token: dezelfde `sub` en hetzelfde
+  e-mailadres als de ingelogde gebruiker, `email_verified`, en een `auth_time` van hooguit een
+  minuut oud. Pas dan opent het venster.
+- Het venster is **vijf minuten** en schuift niet mee (`HERLOGIN_VENSTER`). De poort staat op
+  `POST /account/otp/start`. `/bevestigen` heeft hem niet: die wordt beschermd door de rij die
+  `/start` zet, en een tweede poort zou een registratie vernietigen die je al gescand hebt als het
+  venster tijdens het scannen verloopt.
+- De state van de herlogin (state, nonce, PKCE-verifier) en de uitkomst staan in de tabel
+  `otp_herlogins`, niet in de sessiecookie. authlib zou ze normaal in de cookie zetten, en die zit op
+  een ingelogde sessie al dicht tegen de 4 KB-grens. De rij is gebonden aan het `login_at` van de
+  sessie waarin de herlogin begon, dus een andere sessie van dezelfde gebruiker heeft er niets aan.
+  De uurlijkse schoonmaaklus ruimt verlopen rijen op.
+- Mislukt de herlogin (verlopen, een ander account, geen `auth_time` in de id_token), dan staat er
+  op de pagina dat opnieuw inloggen niet gelukt is, en niets opent.
+
+Vereist: de OPI-client in Keycloak moet `auth_time` in de id_token zetten. Dat doet de standaard
+scope `basic` van Keycloak 26. Ontbreekt hij, dan staat dat in de log van OPI en kan niemand een
+2-factor inrichten.
+
+Voor een gebruiker zonder eigen wachtwoord bij ons (SSO Rijk) kan de IdP de herlogin stil
+afhandelen. Hun 2-factor staat bij SSO Rijk en niet hier.
+
 ## Opnieuw inrichten
 
 Een bestaande, bevestigde factor vervangen vraagt eerst een geldige code van die factor.
 Zonder die stap zou wie een sessie overneemt ook de tweede factor kunnen overnemen. Wie
 die code niet meer kan maken, vraagt een platformbeheerder om een reset. Je eigen factor
-registreren of vervangen vraagt verder nooit een verhoogde stap: dat is zelfbediening.
+registreren of vervangen vraagt verder nooit een verhoogde stap: dat is zelfbediening. De
+herlogin hierboven komt daar wel bovenop, ook als je al een factor hebt.
 
 ## Waar een gestarte registratie staat
 
@@ -192,9 +230,17 @@ AGE-versleutelde zaad uit het verborgen formulierveld, tien minuten geldig, met 
 opruiming via de uurlijkse schoonmaaklus van de taakwerker. Niets daarvan staat in de
 sessie. De sessiecookie droeg toen de hele inhoud, met al een id_token erin, en
 daarbovenop (gezien op 27-10-2026 op de sandbox) viel de browser zo'n cookie geruisloos
-weg boven ~4 KB. De bug van toen: geen fout, geen opslag. Nu krijg je een melding die
-zegt dat je opnieuw begint. (Inmiddels staat de hele sessie server-side en draagt de
-cookie alleen een ondertekend id, zie `server-side-sessies.md`.)
+weg boven ~4 KB. (Inmiddels staat de hele sessie server-side en draagt de cookie alleen een
+ondertekend id, zie `server-side-sessies.md`.)
+
+De eigenlijke oorzaak van de mislukte bevestiging was ook een andere: de seed is AGE-armor met
+regeleinden, en een browser stuurt elke LF van een verborgen veld als CRLF terug, dus de
+vingerafdruk klopte nooit. `otp_bevestigen` normaliseert dat nu.
+
+Een registratie die verlopen is (tien minuten) maar waarvan de afdruk nog in de tabel staat, toont
+dezelfde QR opnieuw met de melding dat hij verlopen was en dat een nieuwe code volstaat
+(`renew_expired_pending_registration`). Opnieuw scannen hoeft dan niet. Een seed die niet van een
+echte `/start` komt, krijgt die verlenging niet. De fout staat in de pagina zelf en nooit in de URL.
 
 ## Blokkade na mislukte codes
 
