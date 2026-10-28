@@ -167,7 +167,8 @@ Er zijn er twee, met verschillende doelen. Zie ook
 ## Registreren
 
 1. Ga naar **Account** (je naam rechtsboven) en kies **Tweede factor inrichten**, of ga
-   rechtstreeks naar `/account/otp`.
+   rechtstreeks naar `/account/otp`. Op `/account/otp` zelf heet de startknop **2-factor
+   inrichten**.
 2. Je logt eerst opnieuw in bij Keycloak, zie [Eerst opnieuw inloggen](#eerst-opnieuw-inloggen). Daarna kom je vanzelf terug en kun je beginnen.
 3. Scan de QR, of voer de Base32-sleutel met de hand in.
 4. Vul een code uit je app in. **Pas een geldige code maakt de factor echt**: tot dat moment is er
@@ -221,9 +222,12 @@ formulier om te beginnen verschijnt pas na een geslaagde herlogin.
 - Mislukt de herlogin (verlopen, een ander account, geen `auth_time` in de id_token), dan staat er
   op de pagina dat opnieuw inloggen niet gelukt is, en niets opent.
 
-Vereist: de OPI-client in Keycloak moet `auth_time` in de id_token zetten. Dat doet de standaard
-scope `basic` van Keycloak 26. Ontbreekt hij, dan staat dat in de log van OPI en kan niemand een
-2-factor inrichten.
+Vereist: de OPI-client in Keycloak moet `auth_time` in de id_token zetten. Dat doet de
+default client scope `basic`, die Keycloak sinds versie 25 aan een nieuwe client meegeeft. Een
+client die op een oudere Keycloak is aangemaakt heeft hem niet achteraf gekregen, dus controleer
+hem per cluster: `GET /admin/realms/<realm>/clients` moet `basic` in `defaultClientScopes` van de
+OPI-client noemen. Ontbreekt hij, dan staat dat in de log van OPI ("de id_token mist auth_time")
+en kan niemand een 2-factor inrichten.
 
 Voor een gebruiker zonder eigen wachtwoord bij ons (SSO Rijk) kan de IdP de herlogin stil
 afhandelen. Hun 2-factor staat bij SSO Rijk en niet hier.
@@ -255,6 +259,12 @@ Een registratie die verlopen is (tien minuten) maar waarvan de afdruk nog in de 
 dezelfde QR opnieuw met de melding dat hij verlopen was en dat een nieuwe code volstaat
 (`renew_expired_pending_registration`). Opnieuw scannen hoeft dan niet. Een seed die niet van een
 echte `/start` komt, krijgt die verlenging niet. De fout staat in de pagina zelf en nooit in de URL.
+
+Die verlenging loopt nooit voorbij `PENDING_MAX_AGE` (twintig minuten) na de `/start`. Onbegrensd
+verlengen hield een achtergelaten registratiepagina bevestigbaar: wie later aan de ontgrendelde
+computer gaat zitten, scant de QR die nog op het scherm staat, krijgt met zijn eerste poging een
+verlenging, en richt daarmee een eigen 2-factor in zonder herlogin en zonder een code van de
+bestaande factor. Dat is precies de open sessie waar de poort op `/start` tegen is.
 
 ## Blokkade na mislukte codes
 

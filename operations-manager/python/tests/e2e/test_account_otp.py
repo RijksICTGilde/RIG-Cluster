@@ -11,10 +11,13 @@ import asyncio
 import base64
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import pytest
 from opi.utils.totp import totp_now
+from tests.e2e.conftest import TEST_USER, _sign_session
 from tests.e2e.testserver import get_in_memory_herlogin_service, get_in_memory_otp_service
 
 if TYPE_CHECKING:
@@ -122,10 +125,6 @@ class TestVerhoogdeRechtenInHetMenu:
 
     @staticmethod
     def _pagina_met_sessie(browser, app_server: str, extra: dict) -> Page:
-        from urllib.parse import urlparse
-
-        from tests.e2e.conftest import TEST_USER, _sign_session
-
         context = browser.new_context()
         host = urlparse(app_server).hostname or "127.0.0.1"
         context.add_cookies(
@@ -136,8 +135,6 @@ class TestVerhoogdeRechtenInHetMenu:
         return page
 
     def test_met_een_verse_step_up_toont_het_menu_het_schild(self, app_server: str, browser) -> None:
-        from datetime import UTC, datetime
-
         page = self._pagina_met_sessie(browser, app_server, {"step_up_at": datetime.now(UTC).isoformat()})
         try:
             item = page.locator("nldd-menu-bar-item[icon='shield-check-mark']")
@@ -149,8 +146,6 @@ class TestVerhoogdeRechtenInHetMenu:
             page.context.close()
 
     def test_het_schild_is_echt_anders_van_kleur_dan_het_gewone_icoon(self, app_server: str, browser) -> None:
-        from datetime import UTC, datetime
-
         kleur = (
             "() => { const el = document.querySelector('nldd-menu-bar-item[text]:not([text=Weergave]):not([text=Beheer])');"
             " const b = el.shadowRoot.querySelector('.menu-bar-item'); return getComputedStyle(b).color; }"
@@ -182,10 +177,6 @@ class TestMetEenDikkeSessie:
     cookie ver over de grens had gezeten: de inhoud is dik, de cookie blijft klein."""
 
     def test_bevestigen_werkt_met_een_dikke_sessie_en_een_dunne_cookie(self, app_server: str, browser) -> None:
-        from urllib.parse import urlparse
-
-        from tests.e2e.conftest import TEST_USER, _sign_session
-
         # 5000 bytes aan id_token: als cookie was dit allang gedropt; server-side is het
         # gewoon inhoud.
         dikke_sessie = _sign_session({"user": TEST_USER, "id_token": "x" * 5000})
