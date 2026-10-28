@@ -44,6 +44,10 @@ OTP_KEY_VERSION = 1
 #: Hoe lang een gestarte registratie zijn bevestiging accepteert.
 PENDING_TTL = timedelta(minutes=10)
 
+#: De absolute levensduur van een gestarte registratie, verlengingen meegerekend. Zonder
+#: deze grens blijft een achtergelaten registratiepagina te bevestigen (RC-394).
+PENDING_MAX_AGE = 2 * PENDING_TTL
+
 #: De kolommen die een reset leegmaakt. Ook de feature-documentatie noemt ze, voor wie
 #: een gebruiker met de hand moet helpen.
 OTP_COLUMNS_CLEARED_BY_RESET = (
@@ -255,6 +259,10 @@ class UserOtpService:
 
         Alleen een rij van een echte /start kan dat: een eigen seed heeft een andere afdruk,
         dus de controle op de huidige 2-factor in /start blijft niet te omzeilen.
+
+        De verlenging loopt nooit voorbij :data:`PENDING_MAX_AGE` na de /start. Onbegrensd
+        verlengen houdt een achtergelaten registratiepagina bevestigbaar, en dat is precies
+        de open sessie op de ontgrendelde computer waar de herlogin op /start tegen is.
         """
         now = datetime.now(UTC)
         async with session_scope() as session:
@@ -263,7 +271,10 @@ class UserOtpService:
             ).scalar_one_or_none()
             if row is None or row.expires_at > now or not hmac.compare_digest(row.fingerprint, fingerprint):
                 return False
-            row.expires_at = now + PENDING_TTL
+            uiterlijk = row.created_at + PENDING_MAX_AGE
+            if uiterlijk <= now:
+                return False
+            row.expires_at = min(now + PENDING_TTL, uiterlijk)
             return True
 
     async def discard_pending_registration(self, email: str) -> None:

@@ -9,9 +9,12 @@ beheerder; herstelcodes bestaan niet.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from opi.core.db import session_scope
+from opi.services import user_otp_service
+from opi.services.persistence.otp_pending import OtpPendingRegistration
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_otp_service import OTP_MAX_FAILED_ATTEMPTS, OtpVerification, UserOtpService
 from opi.utils.totp import totp_now
@@ -372,3 +375,50 @@ async def test_een_verlopen_rij_wordt_verlengd_alleen_met_haar_eigen_afdruk(orm_
     assert await svc.consume_pending_registration(EMAIL, "afdruk") is True
     # Een lopende (niet verlopen) rij heeft geen verlenging nodig.
     assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is False
+
+
+async def test_verlengen_stopt_bij_de_absolute_levensduur(orm_db, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Onbegrensd verlengen houdt een achtergelaten registratiepagina bevestigbaar (RC-394)."""
+    svc = UserOtpService()
+    with monkeypatch.context() as verlopen:
+        verlopen.setattr(user_otp_service, "PENDING_TTL", timedelta(seconds=-1))
+        await svc.note_pending_registration(EMAIL, "afdruk")
+        assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is True
+
+    # Een /start van een uur geleden komt niet meer terug, hoe vaak je ook probeert.
+    async with session_scope() as session:
+        rij = await session.get(OtpPendingRegistration, EMAIL)
+        assert rij is not None
+        rij.created_at = datetime.now(UTC) - timedelta(hours=1)
+        rij.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is False
+    assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is False
+    assert await svc.consume_pending_registration(EMAIL, "afdruk") is False
+
+
+async def test_verlengen_capt_op_de_resterende_tijd_niet_op_een_volle_ttl_erbij(orm_db) -> None:
+    """Kort voor de absolute levensduur krijgt een rij alleen de resterende tijd, geen
+    volle :data:`PENDING_TTL` erbij: anders zou de verlenging zelf over
+    :data:`PENDING_MAX_AGE` heen schieten (RC-394)."""
+    svc = UserOtpService()
+    await svc.note_pending_registration(EMAIL, "afdruk")
+
+    async with session_scope() as session:
+        rij = await session.get(OtpPendingRegistration, EMAIL)
+        assert rij is not None
+        # Nog maar dertig seconden tot de absolute levensduur, ver minder dan de volle
+        # PENDING_TTL (tien minuten) die een onbegrensde verlenging erbij zou geven.
+        rij.created_at = datetime.now(UTC) - user_otp_service.PENDING_MAX_AGE + timedelta(seconds=30)
+        rij.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is True
+
+    async with session_scope() as session:
+        rij = await session.get(OtpPendingRegistration, EMAIL)
+        assert rij is not None
+        uiterlijk = rij.created_at + user_otp_service.PENDING_MAX_AGE
+        assert rij.expires_at <= uiterlijk
+        # Een onbegrensde verlenging had tien minuten teruggegeven; de rij houdt het bij
+        # de dertig seconden die nog over waren.
+        assert rij.expires_at < datetime.now(UTC) + timedelta(minutes=1)

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from joserfc.errors import InvalidClaimError
 from opi.services import otp_herlogin_service
 from opi.services.otp_herlogin_service import Herlogin, OtpHerloginService, herlogin_klopt
 from opi.web.router_otp import otp_herlogin, otp_herlogin_terug, otp_start
@@ -126,6 +127,46 @@ async def test_terug_zonder_geldige_state_of_code_opent_niets(query: dict[str, s
     assert antwoord.status_code == 200
     assert "niet gelukt" in pagina.call_args.args[1]["fout"]
     dienst.mark_verified.assert_not_awaited()
+
+
+async def test_terug_met_een_nonce_die_niet_klopt_opent_niets() -> None:
+    """De nonce toetst authlib in ``parse_id_token``; die fout mag geen venster openen.
+
+    ``authlib.oidc.core.claims`` werpt de ``joserfc``-variant van ``InvalidClaimError``, niet
+    de ``authlib.jose``-variant. Dat geldt ook voor ``iss`` en ``aud``.
+    """
+    verzoek = _verzoek({"state": "st", "code": "abc"})
+    keycloak = verzoek.app.state.oauth.keycloak
+    keycloak.fetch_access_token = AsyncMock(return_value={"id_token": "x"})
+    keycloak.parse_id_token = AsyncMock(side_effect=InvalidClaimError("nonce"))
+    dienst = _dienst()
+    otp = MagicMock()
+    otp.status = AsyncMock(return_value=SimpleNamespace(registered=False))
+    with (
+        patch("opi.web.router_otp._get_herlogin_service", return_value=dienst),
+        patch("opi.web.router_otp._get_otp_service", return_value=otp),
+        patch("opi.web.router_otp._status_page", return_value=MagicMock(status_code=200)) as pagina,
+    ):
+        antwoord = await otp_herlogin_terug(verzoek)
+
+    assert antwoord.status_code == 200
+    assert "niet gelukt" in pagina.call_args.args[1]["fout"]
+    dienst.mark_verified.assert_not_awaited()
+
+
+async def test_start_toetst_de_herlogin_van_deze_sessie() -> None:
+    """Het venster hangt aan ``login_at``, dus een herlogin uit een andere sessie telt niet."""
+    otp = MagicMock()
+    verzoek = _verzoek()
+    verzoek.form = AsyncMock(return_value={})
+    dienst = _dienst(is_fresh=AsyncMock(return_value=False))
+    with (
+        patch("opi.web.router_otp._get_herlogin_service", return_value=dienst),
+        patch("opi.web.router_otp._get_otp_service", return_value=otp),
+    ):
+        await otp_start(verzoek)
+
+    dienst.is_fresh.assert_awaited_once_with(EMAIL, LOGIN_AT)
 
 
 async def test_terug_met_een_fout_van_keycloak_opent_niets() -> None:
