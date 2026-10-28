@@ -10,6 +10,25 @@ Dit is deel 3 van drie. Deel 1 (`features/futures/gebeurtenissen-inventarisatie.
 
 ---
 
+## Stand: wat er inmiddels gebouwd is
+
+**De tabel bestaat.** `notification_events` staat er sinds RC-393, als Alembic-migratie
+`013` met een model in `opi/services/persistence/notification_events.py`, in de vorm van
+deel 2 punt 7. De **audit** is de eerste schrijver geworden en niet de resource-tuner: de
+rechten-opdracht (`plans/rechten-op-paden-tad-en-wies.md`, paragraaf 6) had hem nodig, en
+die weg legt ook weigeringen vast. Zie `features/audit.md`.
+
+**De retentielus hoort daar wel bij, anders dan de kleinste eerste stap hieronder zegt.**
+De audit legt persoonsgegevens vast (`actor` en `origin`), dus de twee klokken uit deel 2
+punt 6 (90 dagen pseudonimiseren, een jaar bewaren) zijn meteen meegebouwd. Zonder lus
+bewaart de tabel die gegevens zonder termijn, en dat is geen latere fase.
+
+**Wat er nog niet is:** de tijdlijn in de portal, het postvak, de voorkeuren, de
+uitwaaiering naar ontvangers, elk push-kanaal, de export, en elke andere schrijfweg dan de
+audit. De fasering hieronder staat verder ongewijzigd.
+
+---
+
 ## De aanbeveling in een alinea
 
 Leg gebeurtenissen vast in een eigen tabel in rig-db, als vijfde Alembic-migratie naast `async_tasks`, `runs`, `users` en `marked_for_deletion`, met een gesloten enum van soorten waarvan de waarden meteen in reverse-DNS-notatie staan zodat een CloudEvents-projectie later alleen nog `source` hoeft in te vullen. Toon ze eerst in de portal als tijdlijn per project en per deployment, achter de autorisatie die er al is. Zet daar het postvak per persoon bovenop zodra de gebeurtenissen die je vastlegt de goede blijken. Bouw pas daarna push-kanalen, en dan in de volgorde webhook, Alertmanager, mail, Mattermost, omdat dat de volgorde is van "in ons beheer" naar "afhankelijk van een keten die aantoonbaar nog niet af is".
