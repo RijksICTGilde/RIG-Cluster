@@ -59,7 +59,7 @@ async def test_zonder_lopende_registratie_wordt_er_niets_bevestigd() -> None:
         patch("opi.web.router_otp._get_otp_service", return_value=dienst),
         patch("opi.web.router_otp._status_page", return_value=MagicMock(status_code=200)) as pagina,
     ):
-        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: ZAAD, "code": "123456"}))
+        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: ZAAD, "otp": "123456"}))
 
     # Geen redirect met de melding in de URL: de fout staat in het antwoord zelf.
     assert antwoord.status_code == 200
@@ -75,7 +75,7 @@ async def test_bij_een_andere_seed_dan_die_van_start_wordt_er_niets_bevestigd() 
         patch("opi.web.router_otp._get_otp_service", return_value=dienst),
         patch("opi.web.router_otp._status_page", return_value=MagicMock(status_code=200)),
     ):
-        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: "een eigen seed", "code": "123456"}))
+        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: "een eigen seed", "otp": "123456"}))
 
     assert antwoord.status_code == 200
     dienst.confirm_registration.assert_not_awaited()
@@ -85,7 +85,7 @@ async def test_bij_een_andere_seed_dan_die_van_start_wordt_er_niets_bevestigd() 
 async def test_de_seed_van_start_wordt_wel_bevestigd() -> None:
     dienst = _dienst()
     with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
-        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: ZAAD, "code": "123456"}))
+        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: ZAAD, "otp": "123456"}))
 
     assert antwoord.status_code == 303
     assert antwoord.headers["location"] == "/account/otp"
@@ -104,7 +104,7 @@ async def test_een_formulier_post_met_crlf_regels_bevestigt_alsnog() -> None:
     pantser = "-----BEGIN AGE ENCRYPTED FILE-----\nregel-1\nregel-2\n-----END AGE ENCRYPTED FILE-----\n"
     dienst = _dienst()
     with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
-        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: pantser.replace("\n", "\r\n"), "code": "123456"}))
+        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: pantser.replace("\n", "\r\n"), "otp": "123456"}))
 
     assert antwoord.status_code == 303
     assert antwoord.headers["location"] == "/account/otp"

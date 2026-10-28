@@ -77,7 +77,7 @@ async def test_een_bestaande_factor_vervangen_met_de_juiste_code_lukt() -> None:
         patch("opi.web.router_otp._get_otp_service", return_value=dienst),
         patch("opi.web.router_otp._registration_page", return_value="de registratiepagina"),
     ):
-        antwoord = await otp_start(_verzoek({"huidige_code": "123456"}))
+        antwoord = await otp_start(_verzoek({"otp": "123456"}))
 
     assert antwoord == "de registratiepagina"
     dienst.start_registration.assert_awaited_once_with(EMAIL)
@@ -89,7 +89,7 @@ async def test_een_bestaande_factor_vervangen_zonder_de_juiste_code_start_niets(
         patch("opi.web.router_otp._get_otp_service", return_value=dienst),
         patch("opi.web.router_otp._status_page", return_value="de statuspagina") as pagina,
     ):
-        antwoord = await otp_start(_verzoek({"huidige_code": "000000"}))
+        antwoord = await otp_start(_verzoek({"otp": "000000"}))
 
     assert antwoord == "de statuspagina"
     dienst.start_registration.assert_not_awaited()
@@ -103,7 +103,7 @@ async def test_een_bestaande_factor_vervangen_tijdens_een_blokkade_meldt_dat() -
         patch("opi.web.router_otp._get_otp_service", return_value=dienst),
         patch("opi.web.router_otp._status_page", return_value="de statuspagina") as pagina,
     ):
-        antwoord = await otp_start(_verzoek({"huidige_code": "000000"}))
+        antwoord = await otp_start(_verzoek({"otp": "000000"}))
 
     assert antwoord == "de statuspagina"
     dienst.start_registration.assert_not_awaited()

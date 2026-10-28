@@ -115,7 +115,7 @@ def test_uitgeven_vraagt_eerst_een_code(app_server: str, auth_page: Page, factor
 
     dialoog = auth_page.locator("#edit-section-inner")
     assert "een token uit te geven" in dialoog.inner_text()
-    assert dialoog.locator('input[name="code"], [name="code"] input').count() >= 1
+    assert dialoog.locator('input[name="otp"], [name="otp"] input').count() >= 1
     # De velden van het formulier rijden mee, want de dialoog nam de plaats ervan in.
     velden = dialoog.locator('input[name="vervolg_velden"]').input_value()
     assert "pijplijn" in velden

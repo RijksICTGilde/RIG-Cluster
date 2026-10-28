@@ -61,7 +61,7 @@ def test_opening_asks_for_a_code_first_and_shows_no_value(app_server: str, auth_
     dialoog = auth_page.locator("#edit-section-inner")
     dialoog.locator("[data-step-up]").wait_for(state="visible", timeout=10000)
     assert "omgevingsvariabelen" in dialoog.inner_text().lower()
-    assert dialoog.locator('input[name="code"], [name="code"] input').count() >= 1
+    assert dialoog.locator('input[name="otp"], [name="otp"] input').count() >= 1
     assert dialoog.locator('input[name="vervolg_methode"]').input_value() == "GET"
 
     # De waarden van het fixtureproject horen hier nog niet te staan. Naam-WAARDE-paren,
@@ -79,7 +79,7 @@ def test_after_the_code_the_window_shows_the_real_values(app_server: str, auth_p
     """De dialoog herhaalt de handeling als GET, en het venster is de enige plek met de waarden."""
     _open_window(auth_page, app_server)
 
-    code = auth_page.locator("#edit-section-inner input[name='code'], #edit-section-inner [name='code'] input").first
+    code = auth_page.locator("#edit-section-inner input[name='otp'], #edit-section-inner [name='otp'] input").first
     code.fill("000000")
     auth_page.locator("#edit-section-inner button:has-text('Bevestigen')").first.click()
 
@@ -110,7 +110,7 @@ def test_saving_writes_encrypted_and_leaves_only_names_on_the_card(
 ) -> None:
     """Opslaan toetst de step-up opnieuw; het bestand krijgt een AGE-blok, de kaart niet."""
     _open_window(auth_page, app_server)
-    code = auth_page.locator("#edit-section-inner input[name='code'], #edit-section-inner [name='code'] input").first
+    code = auth_page.locator("#edit-section-inner input[name='otp'], #edit-section-inner [name='otp'] input").first
     code.fill("000000")
     auth_page.locator("#edit-section-inner button:has-text('Bevestigen')").first.click()
     editor = auth_page.locator("#edit-section-inner .kv-editor .cm-content")
