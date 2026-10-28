@@ -175,7 +175,7 @@ uitgeschakeld is, en doet verder niets.
 
 | Waar | Sleutel | Standaard |
 |---|---|---|
-| `cluster_config.py` | `oom_pod_watch` | `False` op elk cluster |
+| `cluster_config.py` | `oom_pod_watch` | `True` op `odcn-production` en `odcn-staging`, `False` op de rest |
 | `config.py` | `OOM_METRIC_SWEEP_INTERVAL_SECONDS` | `3600` |
 
 De watch gaat per cluster aan, niet door gemerged te worden: hij houdt een lange stream
