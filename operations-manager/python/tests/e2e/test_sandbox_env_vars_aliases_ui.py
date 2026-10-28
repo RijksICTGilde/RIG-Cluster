@@ -154,12 +154,13 @@ def _open_window_and_fill(page: Page, sandbox_url: str, project_name: str, tekst
     page.goto(f"{sandbox_url}/projects/{project_name}/componenten")
     page.wait_for_load_state("networkidle")
     open_tab(page, "componenten")
-    pencil = page.locator(
-        "nldd-list-item-segment[accessible-label^='Omgevingsvariabelen van web'], "
-        "nldd-button:has-text('Omgevingsvariabelen')"
-    ).first
-    pencil.wait_for(state="visible")
-    pencil.click()
+    knop = (
+        page.locator(".component-card")
+        .filter(has=page.get_by_text("web", exact=True))
+        .first.locator("nldd-button:has-text('Omgevingsvariabelen bewerken')")
+    )
+    knop.wait_for(state="visible")
+    knop.click()
     editor = page.locator("#edit-section-inner .kv-editor .cm-content")
     editor.wait_for(state="visible")
     editor.click()
@@ -260,7 +261,7 @@ def test_deployment_component_env_vars_override_through_the_step_up_window(
         page.goto(f"{sandbox_url}/projects/{envali_project}/deployments")
         page.wait_for_load_state("networkidle")
         open_tab(page, "deployments")
-        button = page.locator("nldd-button[text='Bekijken en bewerken']").first
+        button = page.locator("nldd-button:has-text('Omgevingsvariabelen bewerken')").first
         button.wait_for(state="visible")
         button.click()
         editor = page.locator("#edit-section-inner .kv-editor .cm-content")
