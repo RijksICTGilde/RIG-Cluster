@@ -64,7 +64,7 @@
         {# Kale nldd-markup, want <c-toolbar> en <c-top-title-bar> gooien elk kind weg:
            die componenten hebben alleen benoemde slots en geen standaard-slot. Datzelfde
            staat in bg/projects.html.j2, waar het voor het eerst gemeten is. #}
-        <nldd-toolbar slot="toolbar" size="sm" label="Logbediening">
+        <nldd-toolbar slot="toolbar" size="sm" accessible-label="Logbediening">
             <nldd-toolbar-item slot="end">
                 {# De pauzeknop DRAAGT een toestand, en daar is een toggle-button voor:
                    die zet aria-pressed en tekent zijn eigen aan-stand. Vroeger was dat

@@ -4,7 +4,7 @@
   Dit was een eigen <nav> met een <ol class="wizard-steps__list">, een genummerde bol per
   stap, een streep ertussen via ::after en een handgetekende voortgangsbalk eronder - bij
   elkaar vijftien selectors in wizard.css. Daar bestaat een component voor:
-  <c-step-indicator> met <c-step-indicator-item>-kinderen. bg/_wizard-steps.html.j2 deed
+  <c-step-bar> met <c-step-bar-item>-kinderen. bg/_wizard-steps.html.j2 deed
   het al zo; dit is dezelfde omzetting voor de bestaande wizard.
 
   Het component leidt "past / current / future" zelf af uit `current`, maar wij zetten de
@@ -37,7 +37,7 @@
 {% set query_params = step_query_params | default('') %}
 {% set current_index = (steps.index + 1) if steps.current in steps.all else (steps.count + 1) %}
 
-<c-step-indicator current="{{ current_index }}" accessible-label="Wizard voortgang">
+<c-step-bar current="{{ current_index }}" accessible-label="Wizard voortgang">
     {% for section_id in steps.all %}
         {% set is_current = section_id == steps.current %}
         {% set is_completed = section_id in steps.completed %}
@@ -60,15 +60,15 @@
                 'hx-ext': 'json-enc',
                 'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
             } %}
-            <c-step-indicator-item
+            <c-step-bar-item
                 text="{{ steps.titles[section_id] }}"
                 status="past"
                 href="{{ base_url }}{{ section_id }}{{ query_params }}"
                 :attrs="stap_attrs" />
         {% else %}
-            <c-step-indicator-item
+            <c-step-bar-item
                 text="{{ steps.titles[section_id] }}"
                 status="{{ 'current' if is_current else 'future' }}" />
         {% endif %}
     {% endfor %}
-</c-step-indicator>
+</c-step-bar>

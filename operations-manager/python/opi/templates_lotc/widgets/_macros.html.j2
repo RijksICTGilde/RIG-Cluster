@@ -172,7 +172,7 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
     <c-icon-button
         icon="question-mark-circle"
         accessible-label="Uitleg over {{ name|e }}"
-        variant="neutral-transparent"
+        appearance="neutral-transparent"
         size="sm"
         @click="{{ hulp_js }}" :attrs="{'class': 'service-card__help-btn'}" />
     {% endif %}
@@ -265,7 +265,7 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 
 {% macro progress_task_list(tasks, show_errors=True) %}
 {% if tasks %}
-<c-list variant="simple" accessible-label="Voortgang per taak">
+<c-list appearance="simple" accessible-label="Voortgang per taak">
     {% for task in tasks %}
     <c-list-item size="sm">
         <c-icon-cell size="20" icon="{{ task_status_icon_name(task.status) | trim }}"/>

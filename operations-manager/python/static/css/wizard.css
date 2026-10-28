@@ -47,12 +47,12 @@
    aanroepers zijn om, dus deze regels hadden geen gebruiker meer.
 
    De STAPPENBALK stond hier ook: vijftien selectors voor een genummerde bol per stap, een
-   streep ertussen en een handgetekende voortgangsbalk. Dat is <c-step-indicator> met
-   <c-step-indicator-item>-kinderen, en die kent past/current/future zelf. Zie
+   streep ertussen en een handgetekende voortgangsbalk. Dat is <c-step-bar> met
+   <c-step-bar-item>-kinderen, en die kent past/current/future zelf. Zie
    wizard/wizard_steps_indicator.html.j2. */
 
 /* De stappenbalk in de dialoog krijgt een lijn eronder. GEEN component: dit is de scheiding
-   tussen de balk en de inhoud van het venster, en <c-step-indicator> heeft daar geen stand
+   tussen de balk en de inhoud van het venster, en <c-step-bar> heeft daar geen stand
    voor. */
 .edit-step-indicator {
     border-bottom: 1px solid var(--semantics-dividers-color, #E0E0E0);

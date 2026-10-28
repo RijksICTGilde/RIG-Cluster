@@ -9,7 +9,7 @@ in het sjabloon staat; een berekende waarde gaat er ongezien langs::
     :status="step.status or none"       -> gaat er stil door
 
 Precies zo stond het hier: de proefopstelling van de wizard gaf ``complete`` mee en de enum
-van step-indicator-item is past/current/future. Het component valt dan terug op zijn
+van step-bar-item is past/current/future. Het component valt dan terug op zijn
 standaard, dus een afgeronde stap ziet eruit als een stap waar nog niets aan gedaan is, en
 er komt nergens een melding voorbij. Gevonden met de sweep van stap 8, niet door een toets.
 
@@ -43,7 +43,7 @@ from opi.core.templates_lotc import templates_lotc
 from opi.web.lotc_fixtures import page_data
 from tests.berekende_attribuutwaarden import sjablonen_met_berekende_waarde
 
-STAP = re.compile(r"<nldd-step-indicator-item\b[^>]*>")
+STAP = re.compile(r"<nldd-step-bar-item\b[^>]*>")
 STAND = re.compile(r'\sstatus="([^"]*)"')
 
 
@@ -73,7 +73,7 @@ def _echte_wizard(sjabloon: str) -> str:
     return templates_lotc.env.get_template(sjabloon).render(request=_request(), steps=_wizard_steps(), flow_id="f1")
 
 
-#: Elke plek die een <c-step-indicator-item> tekent met een stand die de compiler niet leest.
+#: Elke plek die een <c-step-bar-item> tekent met een stand die de compiler niet leest.
 BALKEN: dict[str, Any] = {
     "bg/wizard.html.j2": _proefopstelling,
     "wizard/wizard_steps_indicator.html.j2": lambda: _echte_wizard("wizard/wizard_steps_indicator.html.j2"),
@@ -103,11 +103,7 @@ def _accepteert_de_compiler(waarde: str) -> bool:
     met toegestane standen hier niet te staan: een nieuwe themaversie die er iets aan
     verandert, verandert deze meting mee.
     """
-    bron = (
-        '<c-step-indicator current="1" accessible-label="x">'
-        f'<c-step-indicator-item text="S" status="{waarde}" />'
-        "</c-step-indicator>"
-    )
+    bron = f'<c-step-bar current="1" accessible-label="x"><c-step-bar-item text="S" status="{waarde}" /></c-step-bar>'
     try:
         templates_lotc.env.from_string(bron).render()
     except ComponentError:
@@ -153,7 +149,7 @@ def test_balken_kent_elk_sjabloon_dat_een_stand_berekent() -> None:
     die eraf moet is even goed een melding waard: dan rendert de toets een sjabloon dat
     zijn stand inmiddels letterlijk zet, en staat de meting op de verkeerde plek.
     """
-    gemeten = sjablonen_met_berekende_waarde("c-step-indicator-item", "status")
+    gemeten = sjablonen_met_berekende_waarde("c-step-bar-item", "status")
 
     assert gemeten == set(BALKEN), (
         f"BALKEN en de sjablonen lopen uiteen. Niet gedekt: {sorted(gemeten - set(BALKEN))}; "

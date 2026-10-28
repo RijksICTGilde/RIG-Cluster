@@ -198,7 +198,7 @@ class EditModalHelper:
     def get_step_labels(self) -> list[str]:
         """Return the visible step labels from the wizard step indicator."""
         # Twee vormen. De bestaande wizard tekent zijn stappen zelf en zet het opschrift
-        # in .wizard-steps__label; het nieuwe thema gebruikt <nldd-step-indicator-item>,
+        # in .wizard-steps__label; het nieuwe thema gebruikt <nldd-step-bar-item>,
         # dat zijn opschrift in het attribuut text draagt. Een selector op de eerste vindt
         # de tweede niet, en dan komt hier een LEGE lijst terug - waarna een test meldt dat
         # een stap ontbreekt terwijl hij gewoon op het scherm staat.
@@ -206,7 +206,7 @@ class EditModalHelper:
         if oud.count():
             return [oud.nth(i).text_content() or "" for i in range(oud.count())]
 
-        nieuw = self.page.locator("#modal-wizard-steps nldd-step-indicator-item")
+        nieuw = self.page.locator("#modal-wizard-steps nldd-step-bar-item")
         return [nieuw.nth(i).get_attribute("text") or "" for i in range(nieuw.count())]
 
     def select_with_rerender(self, select_locator, value: str, timeout: float = 10000) -> None:

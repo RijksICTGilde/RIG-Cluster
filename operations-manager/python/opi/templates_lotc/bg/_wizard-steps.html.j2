@@ -4,7 +4,7 @@
   Een OVERNAME van wizard/wizard_steps_indicator.html.j2, niet een herontwerp: dezelfde
   stappen, dezelfde volgorde, dezelfde klikbaarheid (alleen afgeronde stappen), en
   dezelfde htmx-bedrading. Wat verdwijnt is de eigen markup met wizard-steps__*-klassen
-  en de handgetekende voortgangsbalk - die zit nu in <c-step-indicator> en verandert dus
+  en de handgetekende voortgangsbalk - die zit nu in <c-step-bar> en verandert dus
   mee met het thema.
 
   Het component leidt "past / current / future" zelf af uit `current`, maar wij zetten
@@ -22,7 +22,7 @@
 {% set query_params = step_query_params | default('') %}
 {% set current_index = (steps.index + 1) if steps.current in steps.all else (steps.count + 1) %}
 
-<c-step-indicator current="{{ current_index }}" accessible-label="Wizard voortgang">
+<c-step-bar current="{{ current_index }}" accessible-label="Wizard voortgang">
     {% for section_id in steps.all %}
         {% set is_current = section_id == steps.current %}
         {% set is_completed = section_id in steps.completed %}
@@ -46,15 +46,15 @@
                 'hx-ext': 'json-enc',
                 'hx-headers': '{"X-CSRF-Token": "' ~ request.state.csrf_token ~ '"}',
             } %}
-            <c-step-indicator-item
+            <c-step-bar-item
                 text="{{ steps.titles[section_id] }}"
                 status="past"
                 href="{{ base_url }}{{ section_id }}{{ query_params }}"
                 :attrs="stap_attrs" />
         {% else %}
-            <c-step-indicator-item
+            <c-step-bar-item
                 text="{{ steps.titles[section_id] }}"
                 status="{{ 'current' if is_current else 'future' }}" />
         {% endif %}
     {% endfor %}
-</c-step-indicator>
+</c-step-bar>

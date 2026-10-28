@@ -71,10 +71,10 @@ def test_het_zoekveld_blijft_even_breed_na_de_swap(auth_page: Page, app_server: 
     )
 
     # En de OORZAAK, want de breedte hierboven kan ook per ongeluk goed uitkomen: het
-    # component leidt --_width af uit zijn width-attribuut, en die afleiding is wat na een
+    # component leidt --_search-field-width af uit zijn width-attribuut, en die afleiding is wat na een
     # swap wegviel. Staat hij er weer, dan heeft het component zijn eigen werk overgedaan.
-    assert "--_width" in (na["host_inline"] or ""), (
-        f"het component heeft --_width niet opnieuw afgeleid: {na['host_inline']!r}"
+    assert "--_search-field-width" in (na["host_inline"] or ""), (
+        f"het component heeft --_search-field-width niet opnieuw afgeleid: {na['host_inline']!r}"
     )
 
     # Het invoerveld BINNEN de huls mag wel smaller worden: zodra er tekst staat verschijnt

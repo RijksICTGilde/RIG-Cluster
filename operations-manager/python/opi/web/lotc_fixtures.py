@@ -300,7 +300,7 @@ def page_data(slug: str) -> dict[str, Any]:
             "flow_description": "Vul de gegevens in. Je kunt tussentijds terug zonder iets kwijt te raken.",
             "current_step": 2,
             "steps": [
-                # "past", niet "complete": de enum van step-indicator-item is
+                # "past", niet "complete": de enum van step-bar-item is
                 # past/current/future. "complete" rendert zonder klacht (ook onder
                 # LOTC_STRICT, want dat leest geen :expr-waarde) en levert dan geen
                 # afgeronde stap op. Gevonden met de sweep van stap 8.

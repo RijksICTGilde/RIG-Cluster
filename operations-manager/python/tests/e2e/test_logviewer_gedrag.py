@@ -81,6 +81,12 @@ def _open_paneel(page: Page) -> None:
         "() => openLogViewer('test-project-detail', 'deployment-1', 'component-1',"
         " [{reference: 'component-1'}, {reference: 'component-2'}])"
     )
+    # De muis staat nergens boven het paneel. NLDD 0.13 laat een zichtbare tooltip Escape
+    # eerst zelf afhandelen (eerst de tooltip dicht, dan pas het venster), en het paneel
+    # opent onder de plek waar de vorige test de muis liet staan. De tooltip heeft een
+    # korte vertraging voor hij weggaat, en die is van buiten niet te lezen: gemeten, 600 ms.
+    page.mouse.move(5, 5)
+    page.wait_for_timeout(600)
 
 
 def _stuur_regel(page: Page, regel: str) -> None:
@@ -167,14 +173,13 @@ def test_de_kop_noemt_deployment_en_component(paneel: Page) -> None:
     kiezer = paneel.locator("#log-component-selector")
     assert kiezer.input_value() == "component-1"
 
-    # De naam die de gebruiker LEEST staat niet in de <option> maar in wat de dropdown
-    # zelf tekent, en dat doet hij in zijn shadow root. Er dus gericht in kijken, want
-    # een get_by_text vindt anders de verborgen <option> en is dan altijd groen terwijl
-    # het veld leeg oogt - dat is precies de fout die hier gevangen wordt.
-    getekend = paneel.evaluate(
-        "() => document.getElementById('log-component-selector').closest('nldd-dropdown').shadowRoot.textContent"
-    )
-    assert "component-1" in getekend
+    # De naam die de gebruiker LEEST tekent sinds NLDD 0.13 de gewone <select> in het slot
+    # van <nldd-dropdown>; de shadow root bevat alleen een slot en het pijltje. Dus de
+    # gekozen optie en de zichtbaarheid van het veld meten: een lege keuze oogt als een leeg
+    # veld, en dat is de fout die hier gevangen wordt.
+    assert kiezer.evaluate("e => e.selectedOptions[0].textContent") == "component-1"
+    expect(kiezer).to_be_visible()
+    assert kiezer.bounding_box()["width"] > 50
 
 
 def test_regels_komen_binnen_terwijl_hij_openstaat(paneel: Page) -> None:

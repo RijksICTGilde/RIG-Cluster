@@ -201,11 +201,11 @@ class WizardHelper:
     #:
     #: De wizard bestaat tijdens de omzetting in twee weergaven: de bestaande
     #: roos-markup (een <li> met eigen klassen) en de LOTC-weergave (een
-    #: <nldd-step-indicator-item>, waar het label een attribuut is en geen tekst).
+    #: <nldd-step-bar-item>, waar het label een attribuut is en geen tekst).
     #: Deze helper draait tegen allebei, zodat de gedragstests over GEDRAG blijven gaan
     #: en niet over welk componentensysteem de pagina toevallig rendert.
     ROOS_ACTIVE_STEP_LABEL = "li[aria-current='step'] .wizard-steps__label"
-    LOTC_ACTIVE_STEP_ITEM = "nldd-step-indicator-item[status='current']"
+    LOTC_ACTIVE_STEP_ITEM = "nldd-step-bar-item[status='current']"
     ACTIVE_STEP_LABEL = f"{ROOS_ACTIVE_STEP_LABEL}, {LOTC_ACTIVE_STEP_ITEM}"
 
     #: De knop die de stap indient. In de LOTC-weergave is dat een <nldd-button> en geen
@@ -546,7 +546,7 @@ class WizardHelper:
     #: "Dashboard, Projecten, Beheer..." in plaats van de stappen van de wizard, en dan
     #: faalt een test op iets dat niets met de wizard te maken heeft. Alleen de balk zelf
     #: dus, in beide vormen.
-    STEP_ITEMS = "#wizard-steps li, nldd-step-indicator-item"
+    STEP_ITEMS = "#wizard-steps li, nldd-step-bar-item"
 
     def get_visible_step_titles(self) -> list[str]:
         """Return all visible step titles from the step indicator."""
