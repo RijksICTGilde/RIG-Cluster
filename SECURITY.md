@@ -8,7 +8,7 @@ RIG-Cluster draait ZAD (Zelfservice Applicatie Deployment), een Rijksvoorziening
 - Of mail het team direct: [robbert.uittenbroek@rijksoverheid.nl](mailto:robbert.uittenbroek@rijksoverheid.nl). Wij lossen het op.
 - Of meld het via [Coordinated Vulnerability Disclosure van het NCSC](https://www.ncsc.nl/contact/kwetsbaarheid-melden) als je het team niet kunt bereiken.
 
-Meld ook vermoedens en houd bevindingen vertrouwelijk totdat het team heeft kunnen reageren.
+Meld ook vermoedens. We waarderen het als je bevindingen vertrouwelijk houdt totdat het team heeft kunnen reageren.
 
 ## Wat je van ons mag verwachten
 
