@@ -1,7 +1,7 @@
 """Bevestigen kan alleen na een /start die de controle heeft doorstaan (RC-329, vernieuwd 27-10).
 
 De lopende registratie staat server-side in de tabel ``otp_pending_registrations``
-(vingerafdruk van het zaad, plus verloop). Tot 27-10 zat die in de sessiecookie, op een
+(vingerafdruk van de seed, plus verloop). Tot 27-10 zat die in de sessiecookie, op een
 sessie met een volle id_token liep die erover heen en de browser liet hem geruisloos
 vallen: bevestigen deed toen niets, zonder melding. Dezelfde oplossing als AMT/TAD.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlparse
 
 from opi.web.router_otp import PENDING_FIELD, _fingerprint, otp_afbreken, otp_bevestigen, otp_start
 
@@ -31,47 +30,52 @@ def _dienst(**overrides: Any) -> Any:
     dienst.confirm_registration = AsyncMock(return_value=True)
     dienst.consume_pending_registration = AsyncMock(return_value=True)
     dienst.note_pending_registration = AsyncMock()
+    dienst.renew_expired_pending_registration = AsyncMock(return_value=False)
     dienst.discard_pending_registration = AsyncMock()
     for naam, waarde in overrides.items():
         setattr(dienst, naam, waarde)
     return dienst
 
 
-def _melding(antwoord: Any) -> str:
-    query = parse_qs(urlparse(antwoord.headers["location"]).query)
-    return query["melding"][0]
-
-
 async def test_zonder_lopende_registratie_wordt_er_niets_bevestigd() -> None:
     dienst = _dienst(consume_pending_registration=AsyncMock(return_value=False))
-    with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
+    dienst.status = AsyncMock(return_value=SimpleNamespace(registered=False))
+    with (
+        patch("opi.web.router_otp._get_otp_service", return_value=dienst),
+        patch("opi.web.router_otp._status_page", return_value=MagicMock(status_code=200)) as pagina,
+    ):
         antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: ZAAD, "code": "123456"}))
 
-    assert antwoord.status_code == 303
-    assert "Begin opnieuw" in _melding(antwoord).replace("+", " ")
+    # Geen redirect met de melding in de URL: de fout staat in het antwoord zelf.
+    assert antwoord.status_code == 200
+    assert "Begin opnieuw" in pagina.call_args.args[1]["fout"]
     dienst.confirm_registration.assert_not_awaited()
 
 
-async def test_bij_een_ander_zaad_dan_dat_van_start_wordt_er_niets_bevestigd() -> None:
-    """De rij hoort bij het zaad uit /start; een eigen zaad heeft een andere afdruk."""
+async def test_bij_een_andere_seed_dan_die_van_start_wordt_er_niets_bevestigd() -> None:
+    """De rij hoort bij de seed uit /start; een eigen seed heeft een andere afdruk."""
     dienst = _dienst(consume_pending_registration=AsyncMock(return_value=False))
-    with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
-        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: "een eigen zaad", "code": "123456"}))
+    dienst.status = AsyncMock(return_value=SimpleNamespace(registered=False))
+    with (
+        patch("opi.web.router_otp._get_otp_service", return_value=dienst),
+        patch("opi.web.router_otp._status_page", return_value=MagicMock(status_code=200)),
+    ):
+        antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: "een eigen seed", "code": "123456"}))
 
-    assert antwoord.status_code == 303
+    assert antwoord.status_code == 200
     dienst.confirm_registration.assert_not_awaited()
     dienst.consume_pending_registration.assert_awaited_once()
 
 
-async def test_het_zaad_van_start_wordt_wel_bevestigd() -> None:
+async def test_de_seed_van_start_wordt_wel_bevestigd() -> None:
     dienst = _dienst()
     with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
         antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: ZAAD, "code": "123456"}))
 
     assert antwoord.status_code == 303
-    assert antwoord.headers["location"] == "/account/otp?melding=Tweede+factor+ingericht"
+    assert antwoord.headers["location"] == "/account/otp"
     dienst.confirm_registration.assert_awaited_once()
-    # De controle liep over de vingerafdruk van precies dit zaad.
+    # De controle liep over de vingerafdruk van precies deze seed.
     dienst.consume_pending_registration.assert_awaited_once_with(EMAIL, _fingerprint(ZAAD))
 
 
@@ -87,18 +91,19 @@ async def test_een_formulier_post_met_crlf_regels_bevestigt_alsnog() -> None:
     with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
         antwoord = await otp_bevestigen(_verzoek({PENDING_FIELD: pantser.replace("\n", "\r\n"), "code": "123456"}))
 
-    assert "Begin opnieuw" not in _melding(antwoord).replace("+", " ")
+    assert antwoord.status_code == 303
+    assert antwoord.headers["location"] == "/account/otp"
     dienst.consume_pending_registration.assert_awaited_once_with(EMAIL, _fingerprint(pantser))
     dienst.confirm_registration.assert_awaited_once()
 
 
-async def test_afbreken_vergeet_de_rij_en_laat_de_bestaande_factor_staan() -> None:
+async def test_afbreken_vergeet_de_rij_en_laat_de_bestaande_2_factor_staan() -> None:
     dienst = _dienst()
     with patch("opi.web.router_otp._get_otp_service", return_value=dienst):
         antwoord = await otp_afbreken(_verzoek({}))
 
     assert antwoord.status_code == 303
-    assert antwoord.headers["location"] == "/account/otp?melding=Registratie+afgebroken"
+    assert antwoord.headers["location"] == "/account/otp"
     dienst.discard_pending_registration.assert_awaited_once_with(EMAIL)
 
 

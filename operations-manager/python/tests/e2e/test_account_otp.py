@@ -44,7 +44,7 @@ def _code_van_de_pagina(page: Page) -> str:
 
 def _start_registratie(page: Page, basis: str) -> None:
     page.goto(f"{basis}{OTP_URL}")
-    page.locator("text=Tweede factor inrichten").last.click()
+    page.locator("text=2-factor inrichten").last.click()
     page.wait_for_selector(".otp-qr svg")
 
 
@@ -109,7 +109,7 @@ class TestMetEenDikkeSessie:
             page = context.new_page()
             try:
                 _bevestig_registratie(page, app_server)
-                assert "Tweede factor ingericht" in page.content(), (
+                assert "Ingericht" in page.content(), (
                     "de flow strandde weer op de sessie: de registratie is nu server-side"
                 )
             finally:
@@ -127,7 +127,6 @@ class TestMetEenDikkeSessie:
         _bevestig_registratie(auth_page, app_server)
 
         inhoud = auth_page.content()
-        assert "Tweede factor ingericht" in inhoud
         assert "Ingericht" in inhoud
 
     def test_de_accountpagina_toont_de_registratie_na_bevestigen(self, app_server: str, auth_page: Page) -> None:

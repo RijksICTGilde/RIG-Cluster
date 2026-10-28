@@ -250,6 +250,22 @@ class UserOtpService:
                 return False
             return hmac.compare_digest(row.fingerprint, fingerprint)
 
+    async def renew_expired_pending_registration(self, email: str, fingerprint: str) -> bool:
+        """Geef een VERLOPEN registratie nog een termijn, als de afdruk bij de rij hoort.
+
+        Alleen een rij van een echte /start kan dat: een eigen seed heeft een andere afdruk,
+        dus de controle op de huidige 2-factor in /start blijft niet te omzeilen.
+        """
+        now = datetime.now(UTC)
+        async with session_scope() as session:
+            row = (
+                await session.execute(select(OtpPendingRegistration).where(OtpPendingRegistration.email == email))
+            ).scalar_one_or_none()
+            if row is None or row.expires_at > now or not hmac.compare_digest(row.fingerprint, fingerprint):
+                return False
+            row.expires_at = now + PENDING_TTL
+            return True
+
     async def discard_pending_registration(self, email: str) -> None:
         async with session_scope() as session:
             row = (

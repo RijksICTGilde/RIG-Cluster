@@ -1,12 +1,12 @@
-"""Webroutes waarmee een gebruiker zijn eigen tweede factor inricht (RC-329).
+"""Webroutes waarmee een gebruiker zijn eigen 2-factor inricht (RC-329).
 
 Zelfbediening: deze pagina's raken alleen de factor van de INGELOGDE gebruiker. De
 factor van een ander resetten is beheer en staat in ``router_user_admin.py``.
 
 Een nog niet bevestigde registratie staat niet in de database als factor: de oude factor
-verdwijnt pas als de gebruiker een geldige code van de nieuwe heeft ingevoerd. Het zaad
+verdwijnt pas als de gebruiker een geldige code van de nieuwe heeft ingevoerd. De seed
 reist AGE-versleuteld mee in een verborgen veld van het formulier; dat die registratie
-loopt, staat met de vingerafdruk van dat zaad in de tabel ``otp_pending_registrations``.
+loopt, staat met de vingerafdruk van die seed in de tabel ``otp_pending_registrations``.
 
 Server-side, zoals AMT/TAD hetzelfde probleem oploste: tot 27-10-2026 ontving de
 sessiecookie die vingerafdruk, en op de sandbox liep zo'n cookie (hij draagt al een
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 otp_router = APIRouter(prefix="/account/otp", tags=["account-otp"])
 
-#: Het verborgen veld dat het versleutelde zaad draagt.
+#: Het verborgen veld dat de versleutelde seed draagt.
 PENDING_FIELD = "pending"
 
 #: PENDING_TTL van de service bepaalt hoe lang een /start zijn bevestiging accepteert.
@@ -94,15 +94,15 @@ def _registration_page(request: Request, registratie: OtpRegistration, fout: str
 @otp_router.get("", response_class=HTMLResponse)
 @requires_sso
 async def otp_status_pagina(request: Request) -> Response:
-    """Of je een tweede factor hebt, en de weg om hem in te richten of te vervangen."""
+    """Of je een 2-factor hebt, en de weg om hem in te richten of te vervangen."""
     status = await _get_otp_service().status(_email(request))
-    return _status_page(request, {"status": status, "melding": request.query_params.get("melding")})
+    return _status_page(request, {"status": status})
 
 
 @otp_router.post("/start", response_model=None)
 @requires_sso
 async def otp_start(request: Request) -> Response:
-    """Maak een zaad en toon de QR. Schrijft nog niets in de database.
+    """Maak een seed en toon de QR. Schrijft nog niets in de database.
 
     Een BESTAANDE, bevestigde factor vervangen vraagt eerst een code van die factor:
     anders neemt wie een sessie overneemt ook de factor over. Wie die code niet heeft,
@@ -137,7 +137,7 @@ async def otp_start(request: Request) -> Response:
 @otp_router.post("/bevestigen", response_model=None)
 @requires_sso
 async def otp_bevestigen(request: Request) -> Response:
-    """Bevestig de lopende registratie. Pas hier gaat de nieuwe factor in."""
+    """Bevestig de lopende registratie. Pas hier gaat de nieuwe 2-factor in."""
     form = await request.form()
     # Een formulier-POST maakt CRLF van de LF's in het AGE-pantser (form-encoding);
     # de afdruk en de ontsleuteling horen de kanonieke vorm te zien.
@@ -145,12 +145,22 @@ async def otp_bevestigen(request: Request) -> Response:
     email = _email(request)
     if not encrypted or not await _get_otp_service().consume_pending_registration(email, _fingerprint(encrypted)):
         logger.warning("OTP-bevestiging zonder lopende registratie voor %s", email)
-        # Stil wegvallen was de bug van 27-10: de gebruiker keek op "niets gebeurd". Zeg
-        # in dat geval wat er aan de hand is: de getoonde afspraak was verlopen of nooit van
-        # deze start, en de weg terug is opnieuw beginnen.
-        return RedirectResponse(
-            url=f"{_PATH}?melding=Die+registratie+was+verlopen+of+is+al+afgebroken.+Begin+opnieuw.",
-            status_code=303,
+        service = _get_otp_service()
+        if encrypted and await service.renew_expired_pending_registration(email, _fingerprint(encrypted)):
+            return _registration_page(
+                request,
+                await service.resume_registration(email, encrypted),
+                fout=(
+                    "De registratie was verlopen. Probeer het nogmaals: scan de QR niet opnieuw, "
+                    "maar vul een nieuwe code uit je app in."
+                ),
+            )
+        return _status_page(
+            request,
+            {
+                "status": await _get_otp_service().status(email),
+                "fout": "Die registratie was verlopen of is al afgebroken. Begin opnieuw.",
+            },
         )
 
     user = get_current_user(request) or {}
@@ -167,7 +177,7 @@ async def otp_bevestigen(request: Request) -> Response:
             request, registratie, fout="Die code klopt niet. Probeer de volgende code uit je app."
         )
 
-    return RedirectResponse(url=f"{_PATH}?melding=Tweede+factor+ingericht", status_code=303)
+    return RedirectResponse(url=_PATH, status_code=303)
 
 
 @otp_router.post("/afbreken", response_model=None)
@@ -175,4 +185,4 @@ async def otp_bevestigen(request: Request) -> Response:
 async def otp_afbreken(request: Request) -> Response:
     """Vergeet de lopende registratie. De bestaande factor blijft zoals hij was."""
     await _get_otp_service().discard_pending_registration(_email(request))
-    return RedirectResponse(url=f"{_PATH}?melding=Registratie+afgebroken", status_code=303)
+    return RedirectResponse(url=_PATH, status_code=303)

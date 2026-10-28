@@ -353,3 +353,22 @@ async def test_een_verlopen_rij_doet_niet_mee_en_de_schoonmaak_ruimt_op(orm_db, 
     assert await svc.consume_pending_registration(EMAIL, "afdruk") is False
     assert await svc.purge_expired_pending_registrations() == 1
     assert await svc.purge_expired_pending_registrations() == 0
+
+
+async def test_een_verlopen_rij_wordt_verlengd_alleen_met_haar_eigen_afdruk(orm_db, otp_keys, monkeypatch) -> None:
+    from datetime import timedelta
+
+    from opi.services import user_otp_service
+    from opi.services.user_otp_service import UserOtpService as S
+
+    svc = S()
+    with monkeypatch.context() as verlopen:
+        verlopen.setattr(user_otp_service, "PENDING_TTL", timedelta(seconds=-1))
+        await svc.note_pending_registration(EMAIL, "afdruk")
+
+    assert await svc.renew_expired_pending_registration(EMAIL, "een-eigen-afdruk") is False
+    assert await svc.consume_pending_registration(EMAIL, "afdruk") is False
+    assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is True
+    assert await svc.consume_pending_registration(EMAIL, "afdruk") is True
+    # Een lopende (niet verlopen) rij heeft geen verlenging nodig.
+    assert await svc.renew_expired_pending_registration(EMAIL, "afdruk") is False

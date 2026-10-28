@@ -4,16 +4,16 @@
   De QR is een inline SVG die de server maakt (opi/utils/qr.py). Geen script van een CDN:
   deze pagina draagt een geheim.
 
-  Deze pagina is het ANTWOORD op POST /account/otp/start en heeft geen eigen GET: het
-  zaad staat in een verborgen veld en zou na een omleiding weg zijn.
+  Deze pagina is het ANTWOORD op POST /account/otp/start en heeft geen eigen GET: de
+  seed staat in een verborgen veld en zou na een omleiding weg zijn.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
 
-{% block page_title %}Tweede factor inrichten - Self Service Portal{% endblock %}
+{% block page_title %}2-factor inrichten - Self Service Portal{% endblock %}
 
 {% block content %}
-    {{ page_head("Tweede factor inrichten", "Scan de QR, vul daarna de code in die je app geeft.") }}
+    {{ page_head("2-factor inrichten", "Scan de QR, vul daarna de code in die je app geeft.") }}
 
     {% if fout %}
         <c-alert type="error" heading="{{ fout }}" />
@@ -31,14 +31,14 @@
 
     {% call panel("Stap 2: bevestig met een code", "key") %}
         <c-paragraph>
-            Pas een geldige code maakt de factor echt. Tot dat moment blijft je oude factor,
+            Pas een geldige code maakt de 2-factor echt. Tot dat moment blijft je oude 2-factor,
             als je die had, gewoon werken.
         </c-paragraph>
         {# novalidate: de server valideert dit veld. Zie FORMULIEREN_MET_SERVERVALIDATIE
            in tests/test_template_structure.py. #}
         <form autocomplete="off" method="post" action="/account/otp/bevestigen" novalidate>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-            {# Het versleutelde zaad reist hier mee; dat hij loopt staat server-side
+            {# De versleutelde seed reist hier mee; dat hij loopt staat server-side
                (tabel otp_pending_registrations), niet in de sessiecookie. Zie router_otp.py. #}
             <input type="hidden" name="{{ pending_field }}" value="{{ pending }}" />
             <c-stack gap="md">
