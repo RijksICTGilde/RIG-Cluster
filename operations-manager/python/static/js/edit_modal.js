@@ -210,13 +210,18 @@
         if (window.isEditSubmitting) {
             return;
         }
-        if (
-            window.isEditDirty &&
-            !window.confirm('Er zijn niet-opgeslagen wijzigingen. Weet je zeker dat je de bewerking wilt sluiten?')
-        ) {
+        if (!window.isEditDirty) {
+            window.closeEditModal();
             return;
         }
-        window.closeEditModal();
+        /* De dialoog komt in de toplaag en staat boven deze bewerkmodal,
+           die een gewone div is. */
+        window.vraagBevestiging(
+            'De bewerking sluiten?',
+            'Niet-opgeslagen wijzigingen gaan verloren.',
+            'Sluiten zonder opslaan',
+            window.closeEditModal
+        );
     };
 
     /* De projectnaam staat op de dialoog zelf (data-project-name). Die stond hiervoor via

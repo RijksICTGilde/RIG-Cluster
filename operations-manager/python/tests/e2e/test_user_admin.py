@@ -242,34 +242,65 @@ class TestMenuIntegration:
 
 
 class TestBevestigingMetVijandigeNaam:
-    """De naam in een confirm() is gegeven, geen code (RC-287).
+    """Een bevestiging is een dialoog van het thema, en de naam erin is gegeven (RC-287).
 
-    De naam komt uit Keycloak en staat in een JS-tekenreeks binnen een
-    onsubmit-attribuut. HTML-escaping alleen is daar niet genoeg: de browser draait die
-    terug voordat de JS gelezen wordt, dus een apostrof sloot de tekenreeks af en de
-    rest van de naam werd code. Zonder de fix komt er geen dialoog op.
+    Twee dingen in een meting, omdat ze aan elkaar vastzitten. Er mag geen systeemvenster
+    meer komen: ``page.on("dialog")`` vangt elke ``confirm()`` en ``alert()``, en als die
+    lijst niet leeg is, is het venster terug. En de naam komt uit Keycloak, dus hij hoort
+    letterlijk op het scherm te staan en nergens code te worden. Hij stond eerst in een
+    JS-tekenreeks binnen ``onsubmit``, en daar beschermt HTML-escaping niet: de browser
+    draait die terug voordat de JS gelezen wordt, dus een apostrof sloot de tekenreeks af.
+    Nu is het een gewone attribuutwaarde (``data-bevestig``), waar autoescape wel geldt.
     """
 
     VIJANDIGE_NAAM = "O'Brien\"><img src=x onerror=alert(1)>"
 
-    def test_de_naam_staat_letterlijk_in_beide_dialogen(self, app_server: str, auth_page: Page) -> None:
-        """De pagina rendert, en beide bevestigingen tonen de naam zoals hij is."""
+    def _maak_gebruiker(self, app_server: str, auth_page: Page, email: str) -> str:
+        """Een verse gebruiker met de vijandige naam. Elke toets zijn eigen adres: de
+        gebruikersdienst van de testserver leeft zolang de server leeft."""
         auth_page.goto(f"{app_server}{CREATE_URL}")
-        auth_page.locator("input[name='email']").fill("obrien@example.nl")
+        auth_page.locator("input[name='email']").fill(email)
         auth_page.locator("input[name='full_name']").fill(self.VIJANDIGE_NAAM)
         auth_page.locator("button[type='submit'], input[type='submit']").first.click()
         auth_page.wait_for_url(f"**{USERS_URL}**")
 
         service = get_in_memory_user_service()
-        user_id = next(uid for uid, u in service._users.items() if u["full_name"] == self.VIJANDIGE_NAAM)
+        return next(uid for uid, u in service._users.items() if u["email"] == email)
 
+    def test_elke_bevestiging_is_de_dialoog_van_het_thema(self, app_server: str, auth_page: Page) -> None:
+        """De drie handelingen op deze pagina vragen in <nldd-modal-dialog>, met de naam erin."""
+        user_id = self._maak_gebruiker(app_server, auth_page, "obrien@example.nl")
         assert auth_page.locator("img[src='x']").count() == 0, "de naam leverde een element op"
 
-        meldingen: list[str] = []
-        auth_page.on("dialog", lambda d: (meldingen.append(d.message), d.dismiss()))
-        for actie in ("revoke-sessions", "delete"):
+        systeemvensters: list[str] = []
+        auth_page.on("dialog", lambda d: (systeemvensters.append(d.message), d.dismiss()))
+
+        dialoog = auth_page.locator("#bevestiging-dialoog")
+        for actie in ("revoke-sessions", "delete", "otp-reset"):
             formulier = auth_page.locator(f"form[action='/admin/users/{user_id}/{actie}']")
             formulier.locator("button[type='submit']").first.click()
+            dialoog.wait_for(state="visible", timeout=5000)
+            vraag = dialoog.get_attribute("text") or ""
+            assert self.VIJANDIGE_NAAM in vraag, f"{actie}: de naam staat niet in de vraag: {vraag!r}"
+            auth_page.locator("#bevestiging-annuleren").click()
+            dialoog.wait_for(state="hidden", timeout=5000)
 
-        assert len(meldingen) == 2, f"niet elke bevestiging kwam op: {meldingen}"
-        assert all(self.VIJANDIGE_NAAM in melding for melding in meldingen), meldingen
+        assert not systeemvensters, f"er kwam alsnog een systeemvenster: {systeemvensters}"
+
+    def test_annuleren_doet_niets_en_bevestigen_verwijdert(self, app_server: str, auth_page: Page) -> None:
+        """De POST loopt pas na een klik op de bevestigknop."""
+        user_id = self._maak_gebruiker(app_server, auth_page, "obrien-weg@example.nl")
+        verwijderen = auth_page.locator(f"form[action='/admin/users/{user_id}/delete']")
+        dialoog = auth_page.locator("#bevestiging-dialoog")
+
+        verwijderen.locator("button[type='submit']").first.click()
+        dialoog.wait_for(state="visible", timeout=5000)
+        auth_page.locator("#bevestiging-annuleren").click()
+        dialoog.wait_for(state="hidden", timeout=5000)
+        assert get_in_memory_user_service()._users.get(user_id), "annuleren verwijderde de gebruiker alsnog"
+
+        verwijderen.locator("button[type='submit']").first.click()
+        dialoog.wait_for(state="visible", timeout=5000)
+        auth_page.locator("#bevestiging-doorgaan").click()
+        auth_page.wait_for_url(f"**{USERS_URL}?success=*")
+        assert not get_in_memory_user_service()._users.get(user_id), "bevestigen verwijderde de gebruiker niet"

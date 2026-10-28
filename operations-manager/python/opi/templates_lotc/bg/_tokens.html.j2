@@ -113,12 +113,14 @@
                                     </c-td>
                                     <c-td>
                                         {% if lid.mag_intrekken %}
-                                            {# hx-confirm en geen onsubmit: htmx vangt de submit af, en zijn eigen
-                                               bevestiging is geen JS-tekenreeks waar autoescape niet in beschermt. #}
+                                            {# De vraag gaat naar de dialoog uit bg/_bevestiging.html.j2; hx-confirm
+                                               zou bij een niet-geladen script terugvallen op een systeemvenster. #}
                                             <form autocomplete="off" method="post"
                                                   action="/projects/{{ project.name }}/leden/{{ lid.naam }}/tokens/{{ token.naam }}/intrekken"
                                                   hx-post="/projects/{{ project.name }}/leden/{{ lid.naam }}/tokens/{{ token.naam }}/intrekken"
-                                                  hx-confirm="Dit token werkt daarna niet meer. Doorgaan?"
+                                                  data-bevestig="Token '{{ token.naam }}' van {{ lid.naam }} intrekken?"
+                                                  data-bevestig-uitleg="Dit token werkt daarna niet meer."
+                                                  data-bevestig-knop="Token intrekken"
                                                   hx-target="#edit-section-inner" hx-swap="innerHTML">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                                 <c-button type="warning" size="sm" label="Intrekken" html-type="submit" />
@@ -170,7 +172,9 @@
                         <form autocomplete="off" method="post"
                               action="/projects/{{ project.name }}/leden/{{ lid.naam }}/verwijderen"
                               hx-post="/projects/{{ project.name }}/leden/{{ lid.naam }}/verwijderen"
-                              hx-confirm="Dit service account en al zijn tokens gaan weg. Doorgaan?"
+                              data-bevestig="Service account '{{ lid.naam }}' verwijderen?"
+                              data-bevestig-uitleg="Het account en al zijn tokens gaan weg."
+                              data-bevestig-knop="Service account verwijderen"
                               hx-target="#edit-section-inner" hx-swap="innerHTML">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                             <c-action-group align="start">
