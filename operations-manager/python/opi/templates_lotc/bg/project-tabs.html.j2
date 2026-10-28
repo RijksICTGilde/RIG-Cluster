@@ -560,7 +560,7 @@
                                        Gemeld als "wel mooi vormgegeven maar veel te veel ruimte".
                                        Zelfde uitklaprij als hieronder, dus een component leest nu
                                        als drie regels met een aantal erachter. #}
-                                    <c-list variant="simple" dividers="never" accessible-label="Services van {{ component.name }}">
+                                    <c-list appearance="simple" dividers="never" accessible-label="Services van {{ component.name }}">
                                         <c-list-item button :attrs="{'data-uitklap': 'true'}">
                                             <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
                                             <c-spacer-cell size="8" />
@@ -607,7 +607,7 @@
                                    AliasesService.owned_value_is_secret en komt hier binnen als
                                    het filter is_verwijzing, zodat er niet twee regels ontstaan. #}
                                 {% if component.get('aliases') and component['aliases'] is mapping and component['aliases'] | length > 0 %}
-                                    <c-list variant="simple" dividers="never">
+                                    <c-list appearance="simple" dividers="never">
                                         <c-list-item button :attrs="{'data-uitklap': 'true'}">
                                             {# disclosure via :attrs, want c-icon-cell kent het attribuut niet als eigen
                                                    eigenschap; het thema selecteert erop
