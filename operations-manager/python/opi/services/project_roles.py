@@ -10,10 +10,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.core.authz.engine import Resource, Role, effective_roles
+from opi.core.actor import ActorKind, get_actor
+from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide, effective_roles
 from opi.core.project_environment import Omgeving, effective_environment, highest_environment
+from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
+    from opi.core.authz.actions import Action
     from opi.services.project_service import ProjectSummary, ProjectUser
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,31 @@ def roles_from_value(value: Any) -> frozenset[Role]:
 def member_roles(member: ProjectUser) -> frozenset[Role]:
     """De rollen van dit lid."""
     return roles_from_value(member.roles)
+
+
+def actor_may_set(action: Action, project_data: dict[str, Any], *, environment: Omgeving) -> bool:
+    """Of de ingelogde gebruiker deze action mag op een deployment met deze markering.
+
+    Voor een keuzelijst, die geen verzoek kent: de actor komt uit de contextvar die de
+    ingang zet. Zonder ingelogde persoon zegt dit ja, want dan rendert er geen scherm voor
+    een gebruiker en beslist de handhaving bij het opslaan.
+    """
+    actor = get_actor()
+    if actor.kind is not ActorKind.USER or not actor.identity:
+        return True
+    email = actor.identity.lower()
+    if get_user_service().is_platform_admin(email):
+        roles = PLATFORM_ADMIN_ROLES
+    else:
+        roles = frozenset()
+        for member in project_data.get("users") or []:
+            if isinstance(member, dict) and str(member.get("email", "")).lower() == email:
+                roles = roles_from_value(member.get("roles", member.get("role")))
+                break
+    name = str(project_data.get("name", ""))
+    principal = Principal(kind=PrincipalKind.HUMAN, name=email, project=name, roles=roles, actor=actor)
+    resource = Resource(project=name, path=resource_path(name), environment=environment.value)
+    return decide(principal, action, resource, step_up_fresh=True).allowed
 
 
 def project_has_production(project_data: dict[str, Any]) -> bool:

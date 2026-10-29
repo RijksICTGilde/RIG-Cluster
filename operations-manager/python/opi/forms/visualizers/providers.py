@@ -10,10 +10,11 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol
 
+from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
-from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS
+from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
@@ -34,6 +35,7 @@ from opi.services.catalog.shared.noncurrent_versions import (
     project_noncurrent_expire_days,
 )
 from opi.services.catalog.shared.storage import STORAGE_SIZES
+from opi.services.project_roles import actor_may_set
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -680,12 +682,27 @@ class EnvironmentOptionsProvider:
     # De waarden liggen vast; een opsomming is het goede antwoord.
     options_source: ClassVar[OptionsSource | None] = None
 
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
     def get_options(self) -> list[dict[str, Any]]:
+        # Productie is alleen te kiezen voor wie de markering mag zetten (environment.set);
+        # anders weigert het opslaan pas achteraf. Staat de deployment er al op, dan blijft
+        # de optie gewoon gekozen.
+        production_locked = self.current_value != Omgeving.PRODUCTIE.value and not actor_may_set(
+            Action.ENVIRONMENT_SET, self.yaml_data, environment=Omgeving.PRODUCTIE
+        )
         # .value: elke andere provider levert een gewone string, en een enumlid dat
         # ergens als waarde belandt breekt de YAML-dumper (gemeten in e257cee79).
         return [
             {"value": "", "label": f"{ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT]} (standaard)"},
-            *({"value": value.value, "label": label} for value, label in ENVIRONMENT_LABELS.items()),
+            *(
+                {"value": value.value, "label": f"{label} (alleen ops)", "disabled": True}
+                if value is Omgeving.PRODUCTIE and production_locked
+                else {"value": value.value, "label": label}
+                for value, label in ENVIRONMENT_LABELS.items()
+            ),
         ]
 
 
