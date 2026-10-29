@@ -1,5 +1,9 @@
 """Tests for the new options providers added in Sub-part C."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+from opi.core.actor import ACTOR_UNKNOWN, actor, set_actor, user_actor
 from opi.core.cluster_config import get_supported_domain_names
 from opi.core.config import settings
 from opi.core.project_schema import validate_project_schema
@@ -79,6 +83,67 @@ class TestEnvironmentOptionsProvider:
 
         assert [o["value"] for o in options[1:]] == ["ontwikkeling", "test", "acceptatie", "productie"]
         assert all("value" in o and "label" in o for o in options)
+
+
+_PROJECT = {
+    "name": "demo",
+    "users": [
+        {"email": "dev@example.org", "roles": ["developer"]},
+        {"email": "ops@example.org", "roles": ["ops"]},
+    ],
+}
+
+
+class TestProductionOnlyForOps:
+    """Productie is alleen te kiezen voor wie environment.set heeft; anders weigert pas het opslaan."""
+
+    @pytest.fixture(autouse=True)
+    def users(self):
+        users = MagicMock()
+        users.is_platform_admin.return_value = False
+        with patch("opi.services.project_roles.get_user_service", return_value=users):
+            yield users
+        actor.set(ACTOR_UNKNOWN)
+
+    @staticmethod
+    def _production(options):
+        return next(o for o in options if o["value"] == "productie")
+
+    def test_developer_sees_production_disabled(self):
+        set_actor(user_actor("dev@example.org"))
+
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert production["disabled"] is True
+        assert "alleen ops" in production["label"]
+
+    def test_ops_can_choose_production(self):
+        set_actor(user_actor("ops@example.org"))
+
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert "disabled" not in production
+
+    def test_platform_admin_can_choose_production(self, users):
+        users.is_platform_admin.return_value = True
+        set_actor(user_actor("beheer@example.org"))
+
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert "disabled" not in production
+
+    def test_deployment_already_on_production_keeps_its_choice(self):
+        set_actor(user_actor("dev@example.org"))
+
+        options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="productie").get_options()
+
+        assert "disabled" not in self._production(options)
+
+    def test_without_a_signed_in_person_everything_stays_open(self):
+        """Geen scherm voor een gebruiker; de handhaving beslist bij het opslaan."""
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert "disabled" not in production
 
 
 class TestBaseDomainOptionsProvider:
