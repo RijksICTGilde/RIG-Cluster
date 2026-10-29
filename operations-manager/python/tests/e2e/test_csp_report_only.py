@@ -47,26 +47,29 @@ PAGINAS = [
 #: werk dat schendingen wegneemt, en dan naar beneden. Een uitzondering hoort hier met
 #: reden bij te staan: ``/admin/users`` ging van 12 naar 14 handlers doordat elke
 #: gebruikersrij er een knop "Sessies beëindigen" bij kreeg (RC-287). ``/redoc`` staat op 1:
-#: zie ENFORCE_UITZONDERINGEN hierna.
+#: zie ENFORCE_UITZONDERINGEN hierna. Elke pagina ging er met RC-392 een handler bij
+#: hebben: het accountmenu kreeg het item "Rollen en rechten", en dat is op elke pagina een
+#: ``onclick``. De getallen hieronder zijn daarop bijgewerkt (RC-397).
 BASELINE: dict[str, tuple[int, int]] = {
-    "/dashboard": (3, 10),
+    "/dashboard": (3, 11),
     "/docs": (0, 0),
     "/redoc": (1, 0),
-    "/projects": (3, 10),
-    "/services": (3, 36),
+    "/projects": (3, 11),
+    "/services": (3, 38),
     "/admin/users": (3, 14),
-    "/admin/approvals": (3, 12),
-    "/admin/usage": (3, 10),
-    "/forms/wizard/start": (3, 10),
-    "/projects/test-project-detail/details": (3, 28),
-    "/projects/test-project-detail/team": (3, 26),
-    "/projects/test-project-detail/componenten": (3, 32),
-    "/projects/test-project-detail/services": (3, 28),
-    "/projects/test-project-detail/services-info": (3, 26),
-    "/projects/test-project-detail/deployments": (3, 37),
-    "/projects/test-project-detail/metrics": (3, 26),
-    "/projects/test-project-detail/backups": (3, 28),
-    "/projects/test-project-detail/taken": (3, 25),
+    "/admin/approvals": (3, 13),
+    "/admin/usage": (3, 11),
+    "/forms/wizard/start": (3, 11),
+    "/projects/test-project-detail/details": (3, 29),
+    "/projects/test-project-detail/team": (3, 27),
+    "/projects/test-project-detail/componenten": (3, 33),
+    "/projects/test-project-detail/services": (3, 29),
+    "/projects/test-project-detail/services-info": (3, 27),
+    "/projects/test-project-detail/deployments": (3, 38),
+    "/projects/test-project-detail/metrics": (3, 27),
+    "/projects/test-project-detail/backups": (3, 29),
+    "/projects/test-project-detail/taken": (3, 26),
+    "/projects/test-project-detail/audit": (3, 26),
 }
 
 #: Inline event-handlers in de DOM. Die staan NIET in de schendingen hierboven: een

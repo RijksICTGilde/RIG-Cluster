@@ -1051,6 +1051,63 @@
         <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load" hx-swap="innerHTML">
             <c-paragraph>Taken worden opgehaald...</c-paragraph>
         </div>
+
+    {% elif active_tab == 'audit' %}
+    {# Wie deed wat op dit project, en of het mocht. Alleen voor audit.read, dus staat dit
+       tabblad niet in de balk van een lid dat hem niet mag lezen.
+
+       De oorsprong (het client-IP) staat NIET in de tabel: die kolom is volgens het
+       gebeurtenissenontwerp voor platformbeheerders, en die lezen hem in de database. #}
+    <c-stack gap="lg">
+        {% call panel("Audit", "clipboard-bullet-list", info_text="Elke schrijfactie en elke weigering op dit project. Een wijziging in het projectbestand draagt de commit waarin ze landde.") %}
+            {% if audit_fout %}
+                <c-alert type="warning" heading="De audit kon niet worden opgehaald">
+                    De gebeurtenissen staan in de database, en die antwoordde niet. Probeer het
+                    over een minuut opnieuw.
+                </c-alert>
+            {% elif audit_rijen %}
+                <c-table class="lange-waarden-breken" columns="1fr 1.8fr 1.5fr 1.3fr 1.4fr 1.1fr">
+                    <c-table-head>
+                        <c-th>Tijd</c-th>
+                        <c-th>Wie</c-th>
+                        <c-th>Wat</c-th>
+                        <c-th>Waarop</c-th>
+                        <c-th>Uitkomst</c-th>
+                        <c-th>Wijziging</c-th>
+                    </c-table-head>
+                    {% for rij in audit_rijen %}
+                        <c-table-row>
+                            <c-td>{{ rij.time.strftime('%d-%m-%Y %H:%M') }}</c-td>
+                            <c-td>{{ rij.actor or rij.actor_kind }}</c-td>
+                            <c-td>{{ rij.action }}</c-td>
+                            <c-td>{{ rij.subject }}</c-td>
+                            <c-td>
+                                {% if rij.allowed %}
+                                    <c-tag type="success" label="Toegestaan" />
+                                {% else %}
+                                    <c-tag type="warning" label="Geweigerd{% if rij.cause %}: {{ rij.cause }}{% endif %}" />
+                                {% endif %}
+                            </c-td>
+                            <c-td>
+                                {% for commit in rij.commits %}
+                                    {% if commit.url %}
+                                        <c-link href="{{ commit.url }}" label="{{ commit.short }}" />
+                                    {% else %}
+                                        {{ commit.short }}
+                                    {% endif %}
+                                {% endfor %}
+                            </c-td>
+                        </c-table-row>
+                    {% endfor %}
+                </c-table>
+            {% else %}
+                <c-alert type="info" heading="Nog niets vastgelegd">
+                    Zodra er iemand iets wijzigt in dit project, of een poging wordt geweigerd,
+                    komt die handeling hier te staan.
+                </c-alert>
+            {% endif %}
+        {% endcall %}
+    </c-stack>
     {% endif %}
 
     </c-stack>

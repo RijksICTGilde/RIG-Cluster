@@ -23,6 +23,7 @@ from opi.api.user_token_auth import (
     extract_bearer_token,
 )
 from opi.core.actor import set_actor
+from opi.core.audit_trail import capture_fields
 from opi.core.authz.actions import Action, action_of, deployment_of
 from opi.core.authz.engine import RuleError, rule_for
 from opi.core.config import settings
@@ -131,6 +132,16 @@ async def handhaaf(
         refuse_after_auth_failure(request, presented)
         raise HTTPException(status_code=401, detail="Invalid API key") from exc
 
+    # Hier en niet na de beslissing: een WEIGERING hoort de handelende partij te noemen
+    # (BIO2 8.15.01), en die is bekend zodra het bewijsmiddel herkend is. Gemeten op de
+    # sandbox: zonder deze regel droeg een geweigerde API-aanroep een lege actor.
+    set_actor(principaal.actor)
+
+    # Voor de audit, en pas na het herkennen: de hook draait na het antwoord, als de
+    # velden van dit verzoek niet meer te lezen zijn, en een onbekende aanroeper hoort
+    # geen body te laten ontleden.
+    await capture_fields(request, endpoint)
+
     # De deployment en het component uit het PAD, zodat de productiescopes op de API
     # hetzelfde wegen als in het portaal. Staat de deployment niet in het pad, dan zegt de
     # route met ``@deployment_from`` waar hij wel staat; zonder die verklaring weegt
@@ -158,7 +169,6 @@ async def handhaaf(
     # toetsen zonder het bewijsmiddel opnieuw te herkennen (:func:`eis_handeling`).
     request.state.authz_principal = principaal
     tel_gebruik(project_name, principaal.kind)
-    set_actor(principaal.actor)
     if principaal.kind is PrincipalKind.HUMAN:
         request.state.user = {"email": principaal.name}
     logger.debug("Toegestaan: %s mag %s op %s", principaal.actor, gevraagde.value, project_name)

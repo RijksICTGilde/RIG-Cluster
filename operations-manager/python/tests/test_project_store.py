@@ -24,6 +24,7 @@ import hashlib
 from typing import Any
 
 import pytest
+from opi.core.audit_trail import begin_trail, trail
 from opi.core.project_schema import ProjectSchemaError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import (
@@ -924,3 +925,53 @@ async def test_persist_reports_a_write_that_changed_nothing(harness: StoreHarnes
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("store-persist") and "no change" in m for m in messages), messages
     assert not any(m.startswith("store-push") for m in messages), messages
+
+
+# ----------------------------------------------------------------------------
+# het spoor voor de audit: welke commits maakte DIT verzoek
+# ----------------------------------------------------------------------------
+
+
+async def test_elke_commit_komt_in_het_spoor_van_het_verzoek(harness: StoreHarness) -> None:
+    """Twee keer opslaan binnen een verzoek levert twee SHA's voor de auditrij."""
+    begin_trail()
+    eerste = await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add dep-1", actor="tester")
+    tweede = await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-2"), message="add dep-2", actor="tester")
+
+    assert trail().commit_shas == [eerste.ref, tweede.ref]
+
+
+async def test_een_idempotente_opslag_voegt_geen_sha_toe(harness: StoreHarness) -> None:
+    begin_trail()
+    await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add", actor="tester")
+    na_eerste = list(trail().commit_shas)
+
+    result = await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add again", actor="tester")
+
+    assert result.committed is False
+    assert trail().commit_shas == na_eerste
+
+
+async def test_een_ander_verzoek_ziet_de_shas_niet(harness: StoreHarness) -> None:
+    """Een verzoek draait in zijn eigen context, dus het spoor lekt er niet uit."""
+
+    async def verzoek(naam: str) -> list[str]:
+        begin_trail()
+        await harness.store.mutate(PROJECT_NAME, _add_deployment(naam), message=f"add {naam}", actor="tester")
+        return trail().commit_shas
+
+    eerste = await asyncio.create_task(verzoek("dep-1"))
+    tweede = await asyncio.create_task(verzoek("dep-2"))
+
+    assert len(eerste) == 1
+    assert len(tweede) == 1
+    assert eerste != tweede
+    assert trail().commit_shas == [], "deze aanroeper sloeg zelf niets op"
+
+
+async def test_een_commit_buiten_een_verzoek_groeit_niet_aan(harness: StoreHarness) -> None:
+    """De nachtelijke tuner commit in EEN langlevende taak; zonder spoor blijft dat leeg."""
+    for ronde in ("sweep-1", "sweep-2"):
+        await harness.store.mutate(PROJECT_NAME, _add_deployment(ronde), message=f"add {ronde}", actor="tuner")
+
+    assert trail().commit_shas == []

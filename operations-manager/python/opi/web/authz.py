@@ -24,6 +24,7 @@ from jinja2 import pass_context
 from starlette.requests import Request  # noqa: TC002 -- FastAPI leest de dependency op runtime
 
 from opi.core.actor import user_actor
+from opi.core.audit_trail import capture_fields
 from opi.core.auth_decorators import get_current_user
 from opi.core.authz.actions import Action, action_of
 from opi.core.authz.engine import (
@@ -166,6 +167,11 @@ async def enforce_route_action(request: Request) -> None:
         deployment=request.path_params.get("deployment_name"),
         component=request.path_params.get("component_name"),
     )
+
+    # Voor de audit, en pas NA het toelaten, zoals ``handhaaf`` het op de API doet: de
+    # hook draait na het antwoord en kan het formulier dan niet meer lezen, maar een
+    # aanroeper die niets mag hoort geen body te laten ontleden.
+    await capture_fields(request, endpoint)
 
 
 @pass_context

@@ -15,6 +15,7 @@ from typing import Any
 from sqlalchemy import delete, func, literal, or_, select, tuple_, update
 from sqlalchemy.orm import aliased
 
+from opi.core.audit_trail import record_task
 from opi.core.db import session_scope
 from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
 from opi.core.task_rollout import PROCESSING_TASK_TYPES
@@ -214,6 +215,9 @@ class AsyncTaskService:
             session.add(row)
             await session.flush()
             await session.refresh(row)  # server defaults (id, timestamps, status)
+            # Voor de auditrij van het verzoek dat deze taak startte; de hook leest hem na
+            # het antwoord, als deze functie al klaar is (opi/core/audit_trail.py).
+            record_task(row.id)
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
                 row.id,

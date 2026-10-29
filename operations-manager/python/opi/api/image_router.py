@@ -26,7 +26,7 @@ image_router = APIRouter(prefix="/api/v1/projects", tags=["images"])
 
 
 @image_router.post("/{project_name}/images/push")
-@action(Action.IMAGE_PUSH)
+@action(Action.IMAGE_PUSH, audit_fields=("image_name", "tag"))
 @validate_api_token
 async def push_image(
     project_name: ProjectNamePath,

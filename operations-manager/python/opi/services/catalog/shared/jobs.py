@@ -114,7 +114,9 @@ async def job_status(request: Request, project_name: str, deployment_name: str) 
 
 
 @jobs_router.post("/{project_name}/jobs", response_class=HTMLResponse)
-@action(Action.JOB_RUN)
+# ``command`` blijft erbuiten: een vrij in te tikken shell-regel kan een credential
+# dragen, en de audit bewaart ``fields`` een jaar.
+@action(Action.JOB_RUN, audit_fields=("deployment", "image"))
 @requires_sso
 async def job_start(request: Request, project_name: str) -> HTMLResponse:
     """Start a job for a deployment; returns the modal body (now monitoring)."""

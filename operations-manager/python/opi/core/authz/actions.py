@@ -120,15 +120,28 @@ ACTION_ATTR = "zad_action"
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def action(which: Action) -> Callable[[F], F]:
+#: Markering met de velden die de audit van DEZE route in de rij mag zetten. Alleen door
+#: ``audit_fields=`` hieronder: ``velden=`` van ``@requires_step_up`` staat er los van,
+#: want dat is wat de dialoog herhaalt en mag ook een vrij tekstveld noemen.
+AUDIT_FIELDS_ATTR = "zad_audit_fields"
+
+
+def action(which: Action, *, audit_fields: tuple[str, ...] = ()) -> Callable[[F], F]:
     """Zet de handeling die deze route vraagt op de route zelf.
 
     Hoort BOVEN de authenticatiedecorator te staan, zodat de markering op het object komt
     dat FastAPI als endpoint registreert. De functie zelf wordt niet gewikkeld.
+
+    ``audit_fields`` noemt de velden die in de auditrij komen, voor een route waarvan de
+    waarde niet in het projectbestand landt (welke snapshot, welk image) en die geen
+    step-up heeft om ze met ``velden=`` te noemen. Nooit een veld dat een persoon
+    aanwijst: wat hier in komt blijft een jaar staan (``features/audit.md``).
     """
 
     def markeer(func: F) -> F:
         setattr(func, ACTION_ATTR, which)
+        if audit_fields:
+            setattr(func, AUDIT_FIELDS_ATTR, audit_fields)
         return func
 
     return markeer
@@ -137,6 +150,11 @@ def action(which: Action) -> Callable[[F], F]:
 def action_of(endpoint: Any) -> Action | None:
     """De handeling van een route-endpoint, of None als hij er geen draagt."""
     return getattr(endpoint, ACTION_ATTR, None)
+
+
+def audit_fields_of(endpoint: Any) -> tuple[str, ...]:
+    """De velden die deze route in de auditrij noemt, of een leeg paar haken."""
+    return tuple(getattr(endpoint, AUDIT_FIELDS_ATTR, ()))
 
 
 #: Markering op een route die zijn deployment niet in het PAD heeft, met de functie die

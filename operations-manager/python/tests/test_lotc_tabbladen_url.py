@@ -92,7 +92,10 @@ def test_elk_tabbladadres_komt_bij_de_projectpagina_uit() -> None:
             None,
         )
         assert gevonden is not None, f"{pad} wordt door geen enkele route bediend"
-        assert gevonden.endpoint.__name__ == "project_details", f"{pad} komt uit bij {gevonden.path}"
+        # Audit heeft een eigen endpoint omdat het een eigen action draagt
+        # (``Action.AUDIT_READ``), maar het rendert dezelfde pagina.
+        verwacht = "project_audit" if tab == "audit" else "project_details"
+        assert gevonden.endpoint.__name__ == verwacht, f"{pad} komt uit bij {gevonden.path}"
 
 
 # --------------------------------------------------- de deployment in het pad (RC-92)

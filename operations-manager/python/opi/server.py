@@ -55,6 +55,7 @@ from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks, warm_connector_singletons
 from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
+from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.body_limit import BodyLimitMiddleware
 from opi.middleware.client_ip import PeerAddressMiddleware
@@ -776,6 +777,12 @@ def create_app() -> FastAPI:
 
     # Als eerste toegevoegd, dus als binnenste uitgevoerd: het document wordt pas
     # beantwoord nadat onderhoud en autorisatie het verzoek hebben doorgelaten.
+    #
+    # De audit staat daar nog binnen, direct om de router. Niet uit smaak: de commit-SHA's
+    # en de taak-id van dit verzoek reizen als contextvar, en een BaseHTTPMiddleware
+    # (CSRF, autorisatie, onderhoud) draait de rest van de applicatie in een eigen taak,
+    # waardoor een contextvar die daarbinnen wordt gezet niet meer terugkomt.
+    app.add_middleware(AuditMiddleware)
     app.add_middleware(OpenApiETagMiddleware)
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)

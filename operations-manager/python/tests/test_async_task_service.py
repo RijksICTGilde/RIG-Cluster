@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 import pytest
 from opi.core.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
+from opi.core.audit_trail import begin_trail, trail
 from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
@@ -46,6 +47,25 @@ async def test_create_defaults_and_roundtrip(orm_db):
     assert row["max_attempts"] == 3
     assert row["attempt_count"] == 0
     assert row["created_at"]
+
+
+async def test_create_task_legt_de_taak_vast_voor_de_audit(orm_db):
+    """De hook leest dit na het antwoord, als deze functie al klaar is (RC-397)."""
+    begin_trail()
+    svc = _svc()
+    row = await _create(svc)
+
+    assert str(trail().task_id) == row["id"]
+
+
+async def test_create_task_laat_de_eerst_vastgelegde_taak_staan(orm_db):
+    """De kolom draagt er een, niet een lijst: de eerste taak van dit verzoek blijft."""
+    begin_trail()
+    svc = _svc()
+    eerste = await _create(svc, project="p1")
+    await _create(svc, project="p2")
+
+    assert str(trail().task_id) == eerste["id"]
 
 
 async def test_create_custom_max_attempts(orm_db):

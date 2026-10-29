@@ -58,6 +58,7 @@ from deepdiff.delta import DeltaError
 from deepdiff.path import extract
 
 from opi.connectors.git import GitConnector, GitPushConflictError, create_git_connector_for_project_files
+from opi.core.audit_trail import record_commit
 from opi.core.config import settings
 from opi.core.project_schema import (
     ProjectIntegrityError,
@@ -857,6 +858,11 @@ class GitProjectStore(ProjectStore):
 
         # The checkout is stale now that the ref moved; keep the warm copy mirroring HEAD.
         await connector.sync_worktree_to_head()
+        # Hier en niet per muterende methode: dit is de enige plek waar een commit van een
+        # projectbestand ontstaat, dus save, mutate, create en delete leggen hem alle vier
+        # vast. Een idempotente opslag komt hier langs met commit is None en levert dus
+        # geen SHA, wat juist is: er is niets gewijzigd om naar te verwijzen.
+        record_commit(commit)
         return commit, True
 
     def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> ProjectSummary:

@@ -43,6 +43,29 @@ async def _leg_neer(dagen_oud: int, naam: str) -> None:
         )
 
 
+async def _leg_andere_soort_neer(dagen_oud: int, naam: str) -> None:
+    """Een gebeurtenis van een soort die de audit niet schrijft, met een eigen termijn."""
+    async with session_scope() as db:
+        db.add(
+            NotificationEvent(
+                source=audit.event_source(),
+                type="nl.rig.zad.security.suspicious-login.v1",
+                subject="demo",
+                time=datetime.now(UTC) - timedelta(days=dagen_oud),
+                category=audit.CATEGORY,
+                severity=audit.SEVERITY_DENIED,
+                cluster="local",
+                project="demo",
+                actor="ops@rijksoverheid.nl",
+                actor_kind=ActorKind.USER.value,
+                origin="10.0.0.7",
+                summary=f"demo: {naam}",
+                dedup_key=f"security:{naam}:demo",
+                data={"action": naam},
+            )
+        )
+
+
 async def _rijen() -> dict[str, NotificationEvent]:
     async with session_scope() as db:
         rijen = (await db.execute(select(NotificationEvent))).scalars()
@@ -100,3 +123,18 @@ async def test_start_zet_de_scheduler_actor_en_stop_annuleert_de_lus() -> None:
 
     mock_set_actor.assert_called_once_with(scheduler_actor("audit-retention"))
     assert scheduler._task is None
+
+
+async def test_de_lus_raakt_alleen_de_auditsoorten(orm_db: None) -> None:
+    """Een latere soort heeft zijn eigen termijn en mag niet met deze lus mee verdwijnen."""
+    await _leg_neer(366, "audit-stokoud")
+    await _leg_neer(91, "audit-oud")
+    await _leg_andere_soort_neer(366, "andere-soort")
+
+    uitkomst = await audit.run_retention()
+
+    rijen = await _rijen()
+    assert "audit-stokoud" not in rijen
+    assert rijen["audit-oud"].actor is None
+    assert rijen["andere-soort"].actor == "ops@rijksoverheid.nl", "een andere soort houdt zijn actor"
+    assert uitkomst == {"pseudonymized": 1, "deleted": 1}

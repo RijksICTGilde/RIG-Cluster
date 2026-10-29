@@ -157,7 +157,11 @@ def requires_step_up(
             if not has_fresh_step_up(request):
                 tekst = log_step_up_refusal(actie.phrase, project_name=project_name, actor=email, doelwit=doelwit)
                 return await _step_up_refusal(
-                    request, actie.phrase, tekst, velden=await _velden(request, velden), methode=request.method
+                    request,
+                    actie.phrase,
+                    tekst,
+                    velden=await velden_uit_formulier(request, velden),
+                    methode=request.method,
                 )
 
             logger.info(
@@ -175,8 +179,14 @@ def requires_step_up(
     return decorator
 
 
-async def _velden(request: Request, namen: tuple[str, ...]) -> dict[str, str]:
-    """De genoemde velden uit het formulier van dit verzoek, voor de herhaling.
+async def velden_uit_formulier(request: Request, namen: tuple[str, ...]) -> dict[str, str]:
+    """De genoemde velden uit het formulier van dit verzoek.
+
+    Twee lezers: de herhaling van de step-up hieronder, en de audit, die de velden leest
+    die de route met ``audit_fields=`` noemt (``opi/core/audit_trail.py``). Die twee
+    lijsten staan los van elkaar: ``velden`` is er om de dialoog het formulier te laten
+    herhalen en noemt daarom ook een vrij tekstveld, en dat hoort niet in een rij die een
+    jaar blijft staan.
 
     Een veld dat meer dan een keer is ingevuld (een meerkeuze, zoals de rollen van een
     lid) gaat als kommalijst mee: de dialoog herhaalt het als een verborgen veld, en de

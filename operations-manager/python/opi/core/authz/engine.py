@@ -362,15 +362,31 @@ def decide(principal: Principal, action: Action, resource: Resource, *, step_up_
     return Decision(allowed=False, cause=Cause.STEP_UP_REQUIRED, step_up_would_help=True)
 
 
+@dataclass(frozen=True)
+class RecordedDecision:
+    """Een beslissing zoals de audit hem vastlegt. Een verzoek kan er meer dan een nemen."""
+
+    action: Action
+    resource: Resource
+    decision: Decision
+    step_up: bool
+
+
 def record_decision(
     request: Any, *, action: Action, resource: Resource, decision: Decision, step_up_fresh: bool
 ) -> None:
-    """Zet de vier attributen uit ontwerp 8.3 op het verzoek.
+    """Zet de vier attributen uit ontwerp 8.3 op het verzoek, en voeg de beslissing toe aan de lijst.
 
-    Ook bij een weigering: de audit van taak 3 legt juist die vast. Hier en niet in de
-    web- of API-laag, zodat er maar een plek is die ze schrijft.
+    Ook bij een weigering: de audit legt juist die vast. Hier en niet in de web- of
+    API-laag, zodat er maar een plek is die ze schrijft.
+
+    De vier losse attributen dragen de LAATSTE beslissing, want ``@requires_step_up``
+    leest ze voor DEZE aanroep. De lijst draagt ze allemaal: een upsert met ``cloneFrom``
+    weegt eerst het doel en daarna de bron, en de audit wil beide rijen.
     """
     request.state.authz_action = action
     request.state.authz_resource = resource
     request.state.authz_decision = decision
     request.state.authz_step_up = step_up_fresh
+    eerdere: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
+    request.state.authz_decisions = [*eerdere, RecordedDecision(action, resource, decision, step_up_fresh)]

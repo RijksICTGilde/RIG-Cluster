@@ -45,6 +45,12 @@ SEVERITY_DENIED = "actionable"
 #: CloudEvents-vormig maar geen geldig CloudEvent. Een exporteur hoort hem te weigeren.
 OIN_PLACEHOLDER = "oin-nog-niet-toegekend"
 
+#: Hoeveel rijen een lezer per keer krijgt, en het plafond daarop. ``list_actions``
+#: neemt elke ``limit``; de route is de guard en knipt hem hierop af. Bladeren gaat met
+#: ``before``, want een offset laat de database alle overgeslagen rijen alsnog sorteren.
+LIST_DEFAULT_LIMIT = 50
+LIST_MAX_LIMIT = 200
+
 #: De twee klokken op dezelfde rij, uit punt 6.
 PSEUDONYMIZE_AFTER = timedelta(days=90)
 DELETE_AFTER = timedelta(days=365)
@@ -167,7 +173,7 @@ async def record_action(
 async def list_actions(
     project: str,
     *,
-    limit: int = 50,
+    limit: int = LIST_DEFAULT_LIMIT,
     before: datetime | None = None,
 ) -> list[NotificationEvent]:
     """Het audittrail van één project, nieuwste eerst. ``before`` pagineert op ``time``."""
@@ -186,18 +192,28 @@ async def list_actions(
 async def run_retention(now: datetime | None = None) -> dict[str, int]:
     """Eén ronde van de bewaarlus: twee passes, op de twee indexen uit punt 7.
 
+    Alleen op :data:`ACTION_TYPES`. De audit is vandaag de enige soort in deze tabel, maar
+    het gebeurtenissenontwerp geeft een latere soort zijn eigen termijn, en zonder deze
+    grens zou die soort stil met de termijn van de audit worden gewist.
+
     Geeft terug hoeveel rijen zijn gepseudonimiseerd en hoeveel er zijn verwijderd.
     """
     moment = now or datetime.now(UTC)
     async with session_scope() as session:
         # Opruimen eerst, zodat een rij die toch weggaat niet eerst nog wordt leeggemaakt.
-        deleted = await session.execute(delete(NotificationEvent).where(NotificationEvent.time < moment - DELETE_AFTER))
+        deleted = await session.execute(
+            delete(NotificationEvent).where(
+                NotificationEvent.time < moment - DELETE_AFTER,
+                NotificationEvent.type.in_(ACTION_TYPES),
+            )
+        )
         # Allebei de kolommen op NULL, nooit op een tekst: anders blijft het predicaat van
         # idx_notification_events_actor_sweep waar en krimpt die index nooit (punt 6).
         pseudonymized = await session.execute(
             update(NotificationEvent)
             .where(
                 NotificationEvent.time < moment - PSEUDONYMIZE_AFTER,
+                NotificationEvent.type.in_(ACTION_TYPES),
                 (NotificationEvent.actor.is_not(None)) | (NotificationEvent.origin.is_not(None)),
             )
             .values(actor=None, origin=None)
