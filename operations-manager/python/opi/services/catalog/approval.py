@@ -249,10 +249,10 @@ class _ApprovalState:
 def _notice_text(activity: str, consequence: str, status: ApprovalStatus) -> str:
     """De drie zinnen voor de aanvrager, op een plek zodat ze niet uit elkaar lopen."""
     if status is ApprovalStatus.DENIED:
-        return f"{activity} is afgewezen. {consequence}"
+        return f"{activity} is afgewezen. {consequence}".rstrip()
     if status is ApprovalStatus.REQUESTED:
-        return f"{activity} is aangevraagd en wacht op goedkeuring. {consequence}"
-    return f"{activity} is nog niet aangevraagd. {consequence}"
+        return f"{activity} is aangevraagd en wacht op goedkeuring. {consequence}".rstrip()
+    return f"{activity} is nog niet aangevraagd. {consequence}".rstrip()
 
 
 def _notice(
@@ -407,18 +407,40 @@ def service_use_approval(
     )
 
 
+#: Achtervoegsel van het goedkeuringsblok bij een waarde: ``from-address`` ->
+#: ``from-address-approval``. Een vaste vorm, zodat een lezer van een projectbestand bij
+#: elk aanvraagbaar veld weet waar het oordeel erover staat.
+VALUE_APPROVAL_SUFFIX = "-approval"
+
+#: Sleutel waaronder het blok de LAATST goedgekeurde waarde onthoudt. Het oordeel hangt aan
+#: de waarde, dus een gewijzigde waarde is een nieuwe aanvraag; zonder dit geheugen zou een
+#: openstaande aanvraag ook weghalen wat er al gold.
+LAST_APPROVED_KEY = "approved-value"
+
+
 @dataclass(frozen=True)
 class ConfigValueApproval:
     """De complete vorm van "deze WAARDE mag pas gelden als iemand hem goedkeurt".
 
-    Wat :func:`config_value_approval` teruggeeft, met dezelfde drie onderdelen als
-    :class:`ServiceUseApproval`. Het verschil zit in waar het besluit over gaat: niet over
-    de dienst, maar over een waarde in zijn config, en dus geldt een goedkeuring alleen
-    voor de waarde die is goedgekeurd.
+    Wat :func:`config_value_approval` teruggeeft. Het verschil met
+    :class:`ServiceUseApproval` zit in waar het besluit over gaat: niet over de dienst,
+    maar over een waarde in zijn config, en dus geldt een goedkeuring alleen voor de
+    waarde die is goedgekeurd.
+
+    Attributes:
+        spec: de :class:`ApprovalSpec` voor ``config_approvals()``.
+        is_approved: DE POORT: vraagt de config een besluit, en is dat er?
+        approved_value: de gevraagde waarde als tekst als die is goedgekeurd, anders leeg.
+        last_approved_value: de laatste waarde waarover een beheerder "ja" zei, ook als het
+            project daarna iets anders vroeg. Leeg als er nooit iets is goedgekeurd.
+        ensure_requested: de waarde zetten IS de aanvraag; dit legt hem vast.
+            Toestandsvormig en dus idempotent.
     """
 
     spec: ApprovalSpec
     is_approved: Callable[[dict[str, Any]], bool]
+    approved_value: Callable[[dict[str, Any]], str]
+    last_approved_value: Callable[[dict[str, Any]], str]
     ensure_requested: Callable[[dict[str, Any]], None]
 
 
@@ -427,71 +449,110 @@ def config_value_approval(
     *,
     field: str,
     label: str,
-    activity: str,
-    consequence: str,
-    required_when: Callable[[dict[str, Any]], bool],
+    activity: str | Callable[[Any], str],
+    consequence: str | Callable[[dict[str, Any], dict[str, Any]], str],
+    required_when: Callable[[dict[str, Any]], bool] | None = None,
+    requested_value: Callable[[dict[str, Any]], str] | None = None,
+    subject: Callable[[dict[str, Any], str], str] | None = None,
     approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
 ) -> ConfigValueApproval:
     """De goedkeuring op een configwaarde: deze stand van dit veld vraagt een besluit.
 
     De tegenhanger van :func:`service_use_approval`. Daar is de dienst zelf het onderwerp
-    en is er een besluit per project; hier is een WAARDE het onderwerp, vraagt alleen de
-    stand die ``required_when`` aanwijst een besluit, en geldt een goedkeuring voor die
-    waarde. Verandert de waarde, dan ontstaat een nieuwe aanvraag.
+    en is er een besluit per project; hier is een WAARDE het onderwerp, vraagt alleen een
+    gevraagde waarde een besluit, en geldt een goedkeuring voor die waarde. Verandert de
+    waarde, dan ontstaat een nieuwe aanvraag.
 
     De toestand staat onder de dienst, op ``services/[<dienst>]/config/<veld>-approval``,
-    met ``status``, de goedgekeurde ``value`` en ``history``. Markeer dat veld als
-    ``PLATFORM_MANAGED`` in het configmodel: een project dat zijn eigen status mag zetten
-    heeft geen goedkeuring.
+    met ``status``, de gevraagde ``value``, de laatst goedgekeurde ``approved-value`` en
+    ``history``. Markeer dat veld als ``PLATFORM_MANAGED`` in het configmodel: een project
+    dat zijn eigen status mag zetten heeft geen goedkeuring.
 
-    Naast redis (``acl-key-prefix`` uit) is dit de vorm voor het eigen afzenderadres van
-    send-email op aanvraag (#177): een string in plaats van een boolean, verder hetzelfde.
+    Twee manieren om te zeggen WAT er gevraagd is, precies een van beide:
+
+    - ``required_when``: een predicaat op de config. De waarde van ``field`` is de vraag
+      zolang het predicaat waar is. Redis (``acl-key-prefix`` uit) werkt zo.
+    - ``requested_value``: de gevraagde waarde als tekst, leeg als er niets gevraagd is. De
+      dienst bepaalt wat "niets gevraagd" is: een leeg veld, of een getal binnen wat het
+      project al mag. Send-email (afzenderadres, dagbudget) werkt zo.
+
+    Terug naar de laatst goedgekeurde waarde is geen aanvraag: het blok houdt dan alleen
+    die waarde vast, zonder open aanvraag. De status wordt daarbij NIET op ``approved``
+    gezet, want een besluit komt alleen van de goedkeuringsroute
+    (``validate_approval_decisions``).
 
     Args:
         service_type: de dienst waar het veld bij hoort.
         field: de sleutel in de projectconfig van de dienst waar het besluit over gaat.
         label: het opschrift van de aanvraag in de beheerpagina.
-        activity: waar het besluit over gaat, als onderwerp van een zin. Ook wat de
-            beheerpagina als onderwerp van de aanvraag toont.
-        consequence: wat er zolang gebeurt, in de woorden van de dienst.
+        activity: waar het besluit over gaat, als onderwerp van een zin. Een functie van
+            de gevraagde waarde als die in de zin hoort ("Het afzenderadres ...").
+        consequence: wat er zolang gebeurt, in de woorden van de dienst. Een functie van
+            project en deployment als dat ervan afhangt; leeg mag.
         required_when: of de config zoals hij er staat een besluit vraagt.
+        requested_value: de gevraagde waarde als tekst, leeg voor geen aanvraag.
+        subject: hoe de aanvraag in de beheerpagina heet; standaard ``activity``.
         approver: wie mag beslissen.
     """
-    state = _ApprovalState(service_type.value, f"{field}-approval")
+    if (required_when is None) == (requested_value is None):
+        raise TypeError("config_value_approval vraagt precies een van required_when en requested_value")
 
-    def _value(project_data: dict[str, Any]) -> Any:
-        return state.service_config(project_data).get(field)
+    state = _ApprovalState(service_type.value, f"{field}{VALUE_APPROVAL_SUFFIX}")
 
-    def _needs_approval(project_data: dict[str, Any]) -> bool:
-        return required_when(state.service_config(project_data))
+    def _requested(project_data: dict[str, Any]) -> Any:
+        """De waarde waarover een besluit nodig is, of None als er niets gevraagd is."""
+        if requested_value is not None:
+            return requested_value(project_data) or None
+        config = state.service_config(project_data)
+        return config.get(field) if required_when is not None and required_when(config) else None
+
+    def _activity(value: Any) -> str:
+        return activity(value) if callable(activity) else activity
+
+    def _consequence(project_data: dict[str, Any], deployment: dict[str, Any]) -> str:
+        return consequence(project_data, deployment) if callable(consequence) else consequence
+
+    def _last_approved(project_data: dict[str, Any]) -> Any:
+        return (state.read(project_data) or {}).get(LAST_APPROVED_KEY)
 
     def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
         """De CHECK. Een oordeel geldt alleen voor de waarde waarover het ging."""
         block = state.read(project_data)
-        if block is None or block.get("value") != value:
+        if block is None:
             return ApprovalStatus.NONE
-        return state.status(project_data)
+        if "value" in block and block.get("value") == value:
+            return state.status(project_data)
+        if LAST_APPROVED_KEY in block and block.get(LAST_APPROVED_KEY) == value:
+            return ApprovalStatus.APPROVED
+        return ApprovalStatus.NONE
 
     def _is_approved(project_data: dict[str, Any]) -> bool:
         """DE POORT: staat het veld in een stand die een besluit vraagt, en is dat er?"""
-        return (
-            _needs_approval(project_data) and _status_of(project_data, _value(project_data)) is ApprovalStatus.APPROVED
-        )
+        value = _requested(project_data)
+        return value is not None and _status_of(project_data, value) is ApprovalStatus.APPROVED
+
+    def _approved_value(project_data: dict[str, Any]) -> str:
+        return str(_requested(project_data)) if _is_approved(project_data) else ""
+
+    def _last_approved_value(project_data: dict[str, Any]) -> str:
+        last = _last_approved(project_data)
+        return "" if last is None else str(last)
 
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
-        """De LIJST. Een item zolang de waarde om een besluit vraagt."""
+        """De LIJST. Een item zolang er een aanvraag open staat of is beoordeeld."""
         block = state.read(project_data)
-        if block is None or not _needs_approval(project_data):
+        value = _requested(project_data)
+        if block is None or "value" not in block or value is None:
             return []
         return [
             {
                 "type": field,
-                "subject": activity,
+                "subject": subject(project_data, str(value)) if subject else _activity(value),
                 # De gevraagde waarde als identiteit van het item. De bewaking op
                 # goedkeuringsbesluiten (``validate_approval_decisions``) paart items op
                 # onder meer dit veld, dus zo is een andere waarde een ander item en kan
                 # een goedkeuring niet meeliften op een waarde die intussen veranderde.
-                "domain": str(_value(project_data)),
+                "domain": str(value),
                 "name": project_data.get("name", ""),
                 "current_status": block.get("status", ""),
                 "status": "skip",
@@ -500,27 +561,40 @@ def config_value_approval(
         ]
 
     def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-        """De RECORD. Het oordeel landt bij de waarde waarover het ging."""
-        state.write(
-            project_data,
-            {"status": item.get("status", "skip"), "value": _value(project_data)},
-            history_entry,
-        )
+        """De RECORD. Het oordeel landt bij de waarde waarover het ging.
+
+        Een oordeel over een andere waarde dan er nu gevraagd wordt, schrijft niets: het
+        project kan het veld wijzigen tussen het renderen van de lijst en het insturen.
+        """
+        value = _requested(project_data)
+        if value is None or item.get("domain", "") != str(value):
+            return
+        status = item.get("status", "skip")
+        fields: dict[str, Any] = {"status": status, "value": value}
+        if status == ApprovalStatus.APPROVED.value:
+            fields[LAST_APPROVED_KEY] = value
+        state.write(project_data, fields, history_entry)
+        if status == ApprovalStatus.DENIED.value and _last_approved(project_data) == value:
+            # Afwijzen van precies de staande goedkeuring neemt die terug. Zonder dit is
+            # een goedgekeurde waarde niet in te trekken. Een afwijzing van een ANDERE
+            # gevraagde waarde raakt de staande goedkeuring niet.
+            (state.read(project_data) or {}).pop(LAST_APPROVED_KEY, None)
 
     def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
         """De NOTICE. Wat de eigenaar te horen krijgt zolang de waarde niet geldt."""
-        if not state.selected(project_data) or not _needs_approval(project_data):
+        value = _requested(project_data)
+        if not state.selected(project_data) or value is None:
             return []
-        status = _status_of(project_data, _value(project_data))
+        status = _status_of(project_data, value)
         if status is ApprovalStatus.APPROVED:
             return []
         return [
             _notice(
                 state,
                 project_data,
-                subject=activity,
+                subject=_activity(value),
                 status=status,
-                text=_notice_text(activity, consequence, status),
+                text=_notice_text(_activity(value), _consequence(project_data, deployment), status),
             )
         ]
 
@@ -528,17 +602,31 @@ def config_value_approval(
         """De waarde zetten IS de aanvraag. Een andere waarde is een nieuwe aanvraag."""
         if not state.selected(project_data):
             return
-        if not _needs_approval(project_data):
+        value = _requested(project_data)
+        if value is None:
             # Een besluit geldt alleen voor de stand waarvoor het is gegeven. Blijft het
             # blok staan als het veld terug naar de onschuldige stand gaat, dan geldt die
             # goedkeuring later opnieuw zonder besluit.
             state.clear(project_data)
             return
-        value = _value(project_data)
         block = state.read(project_data)
-        if block is not None and block.get("value") == value:
+        last = _last_approved(project_data)
+        if block is not None:
+            if "value" in block and block.get("value") == value:
+                return
+            if "value" not in block and last == value:
+                return
+        # Een nieuwe waarde begint met een lege geschiedenis: de vorige oordelen gingen over
+        # een andere waarde. De laatst goedgekeurde waarde gaat WEL mee: die geldt zolang
+        # deze aanvraag openstaat.
+        state.clear(project_data)
+        if last is not None and last == value:
+            state.write(project_data, {LAST_APPROVED_KEY: last})
             return
-        state.write(project_data, {"status": ApprovalStatus.REQUESTED.value, "value": value})
+        fields: dict[str, Any] = {"status": ApprovalStatus.REQUESTED.value, "value": value}
+        if last is not None:
+            fields[LAST_APPROVED_KEY] = last
+        state.write(project_data, fields)
 
     return ConfigValueApproval(
         spec=ApprovalSpec(
@@ -549,8 +637,14 @@ def config_value_approval(
             list_items=_items,
             record=_record,
             notices_for=_notices,
-            requires_approval_for=lambda config: required_when(config if isinstance(config, dict) else {}),
+            requires_approval_for=(
+                (lambda config: required_when(config if isinstance(config, dict) else {}))
+                if required_when is not None
+                else None
+            ),
         ),
         is_approved=_is_approved,
+        approved_value=_approved_value,
+        last_approved_value=_last_approved_value,
         ensure_requested=_ensure_requested,
     )
