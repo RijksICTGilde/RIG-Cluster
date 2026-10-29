@@ -70,18 +70,17 @@ class TestPullPolicyOptionsProvider:
 
 
 class TestEnvironmentOptionsProvider:
-    """De vier OTAP-fasen, met de standaard als lege eerste keuze."""
+    """De vier OTAP-fasen, met de standaard als lege eerste keuze en niet nog een keer."""
 
     def test_first_option_is_the_default_with_an_empty_value(self):
         options = EnvironmentOptionsProvider().get_options()
 
-        assert options[0]["value"] == ""
-        assert "Ontwikkeling" in options[0]["label"]
+        assert options[0] == {"value": "", "label": "Ontwikkeling"}
 
     def test_returns_the_four_otap_fases(self):
         options = EnvironmentOptionsProvider().get_options()
 
-        assert [o["value"] for o in options[1:]] == ["ontwikkeling", "test", "acceptatie", "productie"]
+        assert [o["value"] for o in options] == ["", "test", "acceptatie", "productie"]
         assert all("value" in o and "label" in o for o in options)
 
 
@@ -138,7 +137,7 @@ class TestProductionOnlyForOps:
 
         options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="acceptatie").get_options()
 
-        assert [o["value"] for o in options if "disabled" not in o] == ["", "ontwikkeling", "test", "acceptatie"]
+        assert [o["value"] for o in options if "disabled" not in o] == ["", "test", "acceptatie"]
 
     def test_developer_cannot_leave_production(self):
         set_actor(user_actor("dev@example.org"))
