@@ -322,45 +322,69 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
 
 
 # ---------------------------------------------------------------------------
-# Route-level gate: the GET handler wires through authorize(project.edit)
+# Route-level gate: the GET handler carries @action(project.edit)
 #
 # The helper-level tests above prove the gate function itself rejects a
-# member. This test pins the route -> gate wiring so a future refactor
-# cannot silently drop the gate call from `wizard_edit_page` without a test
-# failure. The route does light setup (get_flow / get_current_user /
-# de templateomgeving) before calling the gate, all mocked here.
+# member. Sinds RC-398 weegt ``enforce_route_action`` die action als
+# router-dependency, en leest de handler alleen nog wat de poort toeliet. Wat hier
+# gepind blijft is dus de MARKERING: zonder die action gaat de route langs de poort
+# heen, en dan is het lek van deze testbundel terug.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_wizard_edit_page_invokes_role_gate(project_service: ProjectService) -> None:
-    """`wizard_edit_page` must invoke ``authorize``; if the
-    gate raises, the route propagates it.
-    """
-    from unittest.mock import MagicMock
-
+def test_wizard_edit_page_draagt_de_bewerkaction() -> None:
+    from opi.core.authz.actions import action_of
     from opi.web.router_wizard import wizard_edit_page
 
-    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+    assert action_of(wizard_edit_page) is Action.PROJECT_EDIT
 
-    with (
-        patch(
-            "opi.web.router_wizard.authorize",
-            side_effect=sentinel,
-        ) as gate,
-        patch("opi.web.router_wizard.get_current_user", return_value={"email": MEMBER_EMAIL}),
-        patch("opi.web.router_wizard.get_flow", return_value=MagicMock()),
-        patch("opi.web.router_wizard.templates_lotc", MagicMock()),
-        pytest.raises(HTTPException) as exc,
-    ):
-        await wizard_edit_page(  # @requires_sso just delegates; calling the wrapper is fine
-            request=_request_for(MEMBER_EMAIL),
-            flow_id="edit-project",
-            project_name=PROJECT_NAME,
-        )
 
+def _route_request(email: str, endpoint: Any) -> Any:
+    return SimpleNamespace(
+        state=SimpleNamespace(user={"email": email}),
+        session={},
+        headers={},
+        cookies={},
+        path_params={"project_name": PROJECT_NAME},
+        query_params={},
+        scope={"route": SimpleNamespace(endpoint=endpoint)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_wizard_edit_page_leest_het_project_dat_de_poort_al_toeliet(
+    project_service: ProjectService,
+) -> None:
+    """De GET gaat door ``enforce_route_action``; ``wizard_edit_page`` vraagt daarna
+    niets meer aan ``authorize``, maar leest het project dat de poort al toeliet.
+
+    Draait de echte handler, niet alleen de poort: een vergeten of verkeerd bedrade
+    ``authorized_project`` in de body zou hier een 500 of een verkeerd project geven.
+    """
+    from opi.web.authz import enforce_route_action
+    from opi.web.router_wizard import wizard_edit_page
+
+    request = _route_request(OWNER_EMAIL, wizard_edit_page)
+    await enforce_route_action(request)
+
+    with patch("opi.web.router_wizard.render", lambda _r, template, context: context):
+        pagina = await wizard_edit_page(request, "edit-project", PROJECT_NAME)
+
+    assert pagina["project_name"] == PROJECT_NAME
+
+
+@pytest.mark.asyncio
+async def test_wizard_edit_page_poort_weigert_een_lid(project_service: ProjectService) -> None:
+    """Dezelfde weigering als ``test_member_rejected_from_wizard_edit_gate``, nu op de
+    echte router-dependency: een lid komt de route niet meer in, ook al roept
+    ``wizard_edit_page`` zelf geen ``authorize`` meer aan.
+    """
+    from opi.web.authz import enforce_route_action
+    from opi.web.router_wizard import wizard_edit_page
+
+    with pytest.raises(HTTPException) as exc:
+        await enforce_route_action(_route_request(MEMBER_EMAIL, wizard_edit_page))
     assert exc.value.status_code == 403
-    gate.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -673,17 +697,39 @@ async def test_modal_wizard_load_step_invokes_flow_access_gate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
+    """`backup_select_deployment` re-renders a backup step; it must use the
+    operational gate, not plain membership (RC-323).
+    """
+    from opi.web.router_detail_edit import backup_select_deployment
+
+    request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
+
+    # ``require_action`` weegt met ``may`` en niet met ``authorize``: het formulier
+    # herrenderen is geen back-up, en de audit hoort er geen rij over te krijgen (RC-398).
+    with (
+        patch("opi.web.authz.may", return_value=False) as gate,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await backup_select_deployment(request=request, project_name=PROJECT_NAME)
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once_with(request, action=Action.BACKUP_CREATE, project_name=PROJECT_NAME)
+
+
+@pytest.mark.asyncio
 async def test_restore_select_mode_invokes_operate_access_gate() -> None:
     """`restore_select_mode` re-renders a restore step; it must use the
     operational gate, not plain membership (RC-323).
     """
     from opi.web.router_detail_edit import restore_select_mode
 
-    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
 
+    # ``require_action`` weegt met ``may`` en niet met ``authorize``: het formulier
+    # herrenderen is geen herstel, en de audit hoort er geen rij over te krijgen (RC-398).
     with (
-        patch("opi.web.router_detail_edit.authorize", side_effect=sentinel) as gate,
+        patch("opi.web.authz.may", return_value=False) as gate,
         pytest.raises(HTTPException) as exc,
     ):
         await restore_select_mode(request=request, project_name=PROJECT_NAME)

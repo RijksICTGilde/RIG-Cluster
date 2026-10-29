@@ -60,7 +60,7 @@ from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
-from opi.web.authz import authorize
+from opi.web.authz import authorize, authorized_project, require_action
 from opi.web.lotc_switch import render_fragment
 from opi.web.navigation_lotc import to_nldd_icon
 from opi.web.router_wizard import (
@@ -607,7 +607,7 @@ async def _start_deployment(
 @requires_sso
 async def sequence_action(request: Request, project_name: str, section_id: str) -> HTMLResponse:
     """Handle add/remove sequence item and re-render the section form."""
-    project, _user_email = authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
+    project = authorized_project(request)
 
     section = _get_edit_section(section_id)
     project_data = project.data or {}
@@ -1226,7 +1226,7 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
 @requires_sso
 async def backup_select_deployment(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the backup step partial when deployment changes."""
-    authorize(request, action=Action.BACKUP_CREATE, project_name=project_name)
+    require_action(request, Action.BACKUP_CREATE, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1255,7 +1255,7 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
 @requires_sso
 async def restore_select_mode(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the restore target step when mode changes."""
-    authorize(request, action=Action.RESTORE_RUN, project_name=project_name)
+    require_action(request, Action.RESTORE_RUN, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)

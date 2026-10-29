@@ -59,6 +59,21 @@ Eén rij per BESLISSING, niet per verzoek: een upsert met `cloneFrom` weegt eers
 (`deployment.write`) en daarna apart de bron (`deployment.clone-from`), en beide staan in
 de audit. Een toegestane leesactie levert geen rij, een geweigerde leesactie wel.
 
+Omgekeerd levert één handeling ook één rij: de poort beslist en de handler leest alleen
+wat zij toeliet, via `authorized_project(request)` (`opi/web/authz.py`). Een handler die
+in zijn body nog eens `authorize` aanroept met de action van zijn EIGEN route zou een
+tweede antwoord op dezelfde vraag geven, en dus een tweede rij;
+`tests/test_een_beslissing_per_handeling.py` loopt `opi/web` af en faalt daarop. Een
+ANDERE action in de body blijft een eigen vraag met een eigen rij (de wizardstap draagt
+`wizard.use` en weegt daarnaast `project.edit` op een bestaand project).
+
+Het herrenderen van een formulier is geen handeling. De twee HTMX-routes die een
+keuzelijst in de back-up- en herstelmodal opnieuw tekenen, wegen hun schrijfaction met
+`may(...)` in plaats van `authorize(...)`: de gebruiker krijgt zonder dat recht geen
+formulier, maar de audit krijgt geen rij `backup.create` of `restore.run` over een
+back-up of een herstel dat niet gebeurde. De POST die ze echt start houdt zijn
+schrijfaction en zijn rij.
+
 De rij wordt na het versturen van het antwoord geschreven, als achtergrondtaak met een
 eigen databasesessie, dus de audit houdt geen antwoord op.
 
@@ -113,7 +128,13 @@ elk project tokens per rol en kent elke ingang zijn actor.
 
 Op de projectpagina een tabblad **Audit** (`/projects/<naam>/audit`), achter
 `Action.AUDIT_READ`: tijd, wie, wat, waarop, uitkomst, en een link naar de commit als die
-er is. Het register geeft die action aan `admin`; een platformbeheerder heeft hem op elk
+er is. Die link komt uit `GIT_PROJECTS_WEB_URL` als die gezet is, en anders uit
+`GIT_PROJECTS_SERVER_URL` met `/commit/<sha>` erachter (GitHub en Forgejo tonen hem op
+hetzelfde adres). Is de kloon-URL geen http(s)-adres of een hostnaam die alleen binnen
+het cluster bestaat (`*.cluster.local`, zoals in de sandbox), dan toont de pagina de SHA
+als tekst: een link daarheen opent in geen browser.
+
+Het register geeft die action aan `admin`; een platformbeheerder heeft hem op elk
 project, en wie hem niet heeft ziet het tabblad niet en krijgt op de route een 403.
 
 Het project komt uit het PAD, dezelfde naam waarover `decide()` besliste; `list_actions`
@@ -186,6 +207,7 @@ weggehaald in plaats van dat er nooit een was.
 |---|---|---|
 | `EVENT_SOURCE_OIN` | `oin-nog-niet-toegekend` | de OIN in `source`; de standaard is een placeholder |
 | `AUDIT_RETENTION_HOUR` | `4` | het uur (Europe/Amsterdam) waarop de bewaarlus draait |
+| `GIT_PROJECTS_WEB_URL` | leeg | het webadres van de projecten-repo voor de commitlinks; leeg laten waar de kloon-URL zelf een webadres is |
 
 Er is geen schakelaar om de bewaarlus uit te zetten: zonder lus bewaart de tabel
 persoonsgegevens zonder termijn. Hij start met de taakwerker mee

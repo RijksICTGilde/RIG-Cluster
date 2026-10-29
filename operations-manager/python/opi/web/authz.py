@@ -26,7 +26,7 @@ from starlette.requests import Request  # noqa: TC002 -- FastAPI leest de depend
 from opi.core.actor import user_actor
 from opi.core.audit_trail import capture_fields
 from opi.core.auth_decorators import get_current_user
-from opi.core.authz.actions import Action, action_of
+from opi.core.authz.actions import Action, action_of, query_targets_of
 from opi.core.authz.engine import (
     Audience,
     Cause,
@@ -46,6 +46,10 @@ if TYPE_CHECKING:
     from opi.services.project_store import ProjectSummary
 
 logger = logging.getLogger(__name__)
+
+#: De 403 van een te smalle rol. Eén tekst, want :func:`authorize` en
+#: :func:`require_action` weigeren om dezelfde reden.
+TE_SMALLE_ROL = "Onvoldoende rechten voor deze handeling op dit project"
 
 
 def portal_principal(request: Request, project: ProjectSummary) -> Principal:
@@ -114,7 +118,27 @@ def authorize(
     )
     if not principal.roles:
         raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-    raise HTTPException(status_code=403, detail="Onvoldoende rechten voor deze handeling op dit project")
+    raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+
+
+def authorized_project(request: Request) -> ProjectSummary:
+    """Het project dat de poort voor DIT verzoek al toeliet.
+
+    Zo leest een handler het projectbestand uit de beslissing die er al is, in plaats van
+    ``authorize`` nog een keer aan te roepen: dat zou een tweede beslissing over dezelfde
+    vraag zijn, en de audit legt er een tweede rij voor vast.
+
+    Alleen :func:`enforce_route_action` zet dit, zodat een tweede ``authorize`` voor een
+    ANDERE action in de body het project van de route niet kan overschrijven.
+
+    Raises:
+        HTTPException: 500 als de poort niet gedraaid heeft, want dan is de route
+            verkeerd opgehangen en is doorgaan zonder beslissing geen optie.
+    """
+    project = getattr(request.state, "authz_project", None)
+    if project is None:
+        raise HTTPException(status_code=500, detail="Autorisatiepoort niet gedraaid voor deze route")
+    return project
 
 
 def may(
@@ -143,6 +167,29 @@ def may(
     return decide(portal_principal(request, project), action, resource, step_up_fresh=True).allowed
 
 
+def require_action(request: Request, needed: Action, project_name: str) -> None:
+    """403 als de rollen *needed* niet openen, zonder er een beslissing van te maken.
+
+    Voor een GET die alleen een formulier herrendert: de poort weegt het lezen, en de
+    audit hoort geen rij te krijgen over een back-up of een herstel dat niet gebeurde.
+    """
+    if not may(request, action=needed, project_name=project_name):
+        raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+
+
+def _doelwit(request: Request, uit_de_query: frozenset[str], naam: str) -> str | None:
+    """De deployment of het component waar deze route op werkt, uit pad of query.
+
+    De query telt alleen mee als de route zich met ``@targets_in_query`` verklaart. Zonder
+    die verklaring kon een aanroeper een deployment bij plakken die de handler negeert, en
+    dan weegt de poort een andere resource dan de handler gebruikt.
+    """
+    waarde = request.path_params.get(naam)
+    if not waarde and naam in uit_de_query:
+        waarde = request.query_params.get(naam)
+    return str(waarde) if waarde else None
+
+
 async def enforce_route_action(request: Request) -> None:
     """Handhaaf de action van DEZE route, voordat de handler draait.
 
@@ -160,13 +207,15 @@ async def enforce_route_action(request: Request) -> None:
     if not project_name:
         return
 
-    authorize(
+    uit_de_query = query_targets_of(endpoint)
+    project, _ = authorize(
         request,
         action=gevraagd,
         project_name=str(project_name),
-        deployment=request.path_params.get("deployment_name"),
-        component=request.path_params.get("component_name"),
+        deployment=_doelwit(request, uit_de_query, "deployment_name"),
+        component=_doelwit(request, uit_de_query, "component_name"),
     )
+    request.state.authz_project = project
 
     # Voor de audit, en pas NA het toelaten, zoals ``handhaaf`` het op de API doet: de
     # hook draait na het antwoord en kan het formulier dan niet meer lezen, maar een

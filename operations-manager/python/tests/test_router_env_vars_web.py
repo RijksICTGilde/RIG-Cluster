@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from opi.core.step_up import STEP_UP_SESSION_KEY, STEP_UP_WINDOW
 from opi.services.project_service import ProjectUser
 from opi.services.project_store import ConflictError
+from opi.web.authz import enforce_route_action
 from opi.web.router_env_vars import save_env_vars, show_env_vars_window
 from opi.web.step_up_dialog import MODAL_TARGET
 
@@ -59,7 +60,38 @@ def _request(
         method="POST" if velden is not None else "GET",
         headers={"HX-Request": "true"} if htmx else {},
         form=AsyncMock(return_value=velden or {}),
+        scope={},
+        path_params={},
+        query_params={},
     )
+
+
+async def _venster(request: Any, component: str, deployment: str | None = None) -> Any:
+    """De poort en daarna de handler, zoals de router ze achter elkaar zet.
+
+    De handler weegt sinds RC-398 niets meer zelf: hij leest het project uit de
+    beslissing van de poort, en die staat hier dus voor hem.
+    """
+    await _poort(request, show_env_vars_window, component, deployment)
+    return await show_env_vars_window(request, PROJECT, component, deployment)
+
+
+async def _opslaan(request: Any, component: str, deployment: str | None = None) -> Any:
+    """Idem voor de opslagroute."""
+    await _poort(request, save_env_vars, component, deployment)
+    return await save_env_vars(request, PROJECT, component, deployment)
+
+
+async def _poort(request: Any, endpoint: Any, component: str, deployment: str | None) -> None:
+    """``enforce_route_action`` zoals de router hem als dependency ophangt.
+
+    De deployment komt op de componentroute uit de QUERY, net als in de browser: de poort
+    hoort daar dezelfde resource te wegen als de handeling raakt.
+    """
+    request.scope = {"route": SimpleNamespace(endpoint=endpoint)}
+    request.path_params = {"project_name": PROJECT, "component_name": component}
+    request.query_params = {"deployment_name": deployment} if deployment else {}
+    await enforce_route_action(request)
 
 
 def _access_patch():
@@ -85,7 +117,7 @@ async def test_opening_without_step_up_returns_the_dialog_and_no_value() -> None
         _access_patch(),
         patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")) as dialoog,
     ):
-        antwoord = await show_env_vars_window(_request(step_up=False), PROJECT, "web")
+        antwoord = await _venster(_request(step_up=False), "web")
 
     assert antwoord.headers["HX-Retarget"] == MODAL_TARGET
     assert dialoog.await_args is not None
@@ -99,7 +131,7 @@ async def test_opening_with_an_expired_step_up_returns_the_dialog_again() -> Non
         _access_patch(),
         patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")) as dialoog,
     ):
-        antwoord = await show_env_vars_window(_request(oud=True), PROJECT, "web")
+        antwoord = await _venster(_request(oud=True), "web")
 
     assert antwoord.headers["HX-Retarget"] == MODAL_TARGET
     assert dialoog.await_count == 1
@@ -111,7 +143,7 @@ async def test_saving_without_step_up_writes_nothing() -> None:
         patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")),
         patch("opi.web.router_env_vars.ProjectManager") as pm,
     ):
-        await save_env_vars(_request({"vars": "A=1"}, step_up=False), PROJECT, "web")
+        await _opslaan(_request({"vars": "A=1"}, step_up=False), "web")
 
     pm.assert_not_called()
 
@@ -122,14 +154,14 @@ async def test_saving_with_an_expired_step_up_writes_nothing() -> None:
         patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")),
         patch("opi.web.router_env_vars.ProjectManager") as pm,
     ):
-        await save_env_vars(_request({"vars": "A=1"}, oud=True), PROJECT, "web")
+        await _opslaan(_request({"vars": "A=1"}, oud=True), "web")
 
     pm.assert_not_called()
 
 
 async def test_without_htmx_the_refusal_is_a_plain_403() -> None:
     with _access_patch(), pytest.raises(HTTPException) as info:
-        await show_env_vars_window(_request(step_up=False, htmx=False), PROJECT, "web")
+        await _venster(_request(step_up=False, htmx=False), "web")
 
     assert info.value.status_code == 403
 
@@ -144,7 +176,7 @@ async def test_the_window_shows_the_real_values() -> None:
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value={"A": "1", "B": "geheim"})) as lees,
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
-        antwoord = await show_env_vars_window(_request(), PROJECT, "web")
+        antwoord = await _venster(_request(), "web")
 
     assert antwoord.status_code == 200
     html = antwoord.body.decode()
@@ -162,7 +194,7 @@ async def test_the_window_of_an_unreadable_block_warns_and_stays_empty() -> None
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value=None)),
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
-        antwoord = await show_env_vars_window(_request(), PROJECT, "web")
+        antwoord = await _venster(_request(), "web")
 
     assert antwoord.status_code == 200
     html = antwoord.body.decode()
@@ -177,7 +209,7 @@ async def test_the_deployment_scope_reads_the_override() -> None:
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value={})) as lees,
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
-        antwoord = await show_env_vars_window(_request(), PROJECT, "web", "prod")
+        antwoord = await _venster(_request(), "web", "prod")
 
     assert lees.await_args.args[0] == "AGE-OVERRIDE"
     html = antwoord.body.decode()
@@ -190,7 +222,7 @@ async def test_an_unknown_component_is_a_404() -> None:
         _access_patch(),
         pytest.raises(HTTPException) as info,
     ):
-        await show_env_vars_window(_request(), PROJECT, "bestaat-niet")
+        await _venster(_request(), "bestaat-niet")
 
     assert info.value.status_code == 404
 
@@ -208,9 +240,53 @@ async def test_a_reader_without_the_edit_role_gets_a_403() -> None:
         ),
         pytest.raises(HTTPException) as info,
     ):
-        await show_env_vars_window(_request(), PROJECT, "web")
+        await _venster(_request(), "web")
 
     assert info.value.status_code == 403
+
+
+async def test_een_developer_mag_een_productiecomponent_niet_openen_via_de_query() -> None:
+    """De deployment in de QUERY mag de poort niet milder maken (RC-392 securityreview).
+
+    ``web`` draait in de productiedeployment, dus de developer-grant opent hem niet, ook
+    niet als de aanroeper er een andere deployment bij zet.
+    """
+    data = copy.deepcopy(PROJECT_DATA)
+    data["deployments"] = [
+        {"name": "prod", "environment": "productie", "components": [{"reference": "web"}]},
+        {"name": "test", "environment": "ontwikkeling", "components": [{"reference": "web"}]},
+    ]
+    with (
+        patch.multiple(
+            "opi.web.authz",
+            get_project_store=lambda: SimpleNamespace(
+                get=lambda _name: SimpleNamespace(
+                    name=PROJECT, data=data, users=[ProjectUser(email=EMAIL, roles=["developer"])]
+                )
+            ),
+            get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: False),
+        ),
+        pytest.raises(HTTPException) as info,
+    ):
+        await _venster(_request(), "web", "test")
+
+    assert info.value.status_code == 403
+
+
+async def test_het_venster_levert_een_beslissing_per_verzoek() -> None:
+    """De poort beslist, de handler leest. Twee rijen in de audit betekenen twee poorten."""
+    request = _request()
+    with (
+        _access_patch(),
+        patch("opi.web.router_env_vars.unwrap_project_key", AsyncMock(return_value="priv")),
+        patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value={})),
+        patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: ""),
+    ):
+        await _venster(request, "web", "prod")
+
+    assert len(request.state.authz_decisions) == 1
+    # De deployment komt op deze route uit de query; de poort hoort hem toch te wegen.
+    assert request.state.authz_resource.path == f"project/{PROJECT}/deployment/prod/component/web"
 
 
 async def test_an_unknown_deployment_is_a_404() -> None:
@@ -219,7 +295,7 @@ async def test_an_unknown_deployment_is_a_404() -> None:
         _access_patch(),
         pytest.raises(HTTPException) as info,
     ):
-        await show_env_vars_window(_request(), PROJECT, "web", "buiten")
+        await _venster(_request(), "web", "buiten")
 
     assert info.value.status_code == 404
 
@@ -230,7 +306,7 @@ async def test_a_component_not_in_an_existing_deployment_is_a_404() -> None:
         _access_patch(),
         pytest.raises(HTTPException) as info,
     ):
-        await show_env_vars_window(_request(), PROJECT, "api", "prod")
+        await _venster(_request(), "api", "prod")
 
     assert info.value.status_code == 404
 
@@ -275,7 +351,7 @@ async def test_saving_writes_the_encrypted_block() -> None:
             "opi.web.router_env_vars.create_task_and_render_progress", AsyncMock(return_value=SimpleNamespace(ok=True))
         ) as taak,
     ):
-        antwoord = await save_env_vars(_request({"vars": "A=1\nB=twee"}), PROJECT, "web")
+        antwoord = await _opslaan(_request({"vars": "A=1\nB=twee"}), "web")
 
     assert getattr(antwoord, "ok", False)
     stored = manager.saved["components"][0]["user-env-vars"]
@@ -296,7 +372,7 @@ async def test_saving_empty_removes_the_key() -> None:
             "opi.web.router_env_vars.create_task_and_render_progress", AsyncMock(return_value=SimpleNamespace(ok=True))
         ),
     ):
-        antwoord = await save_env_vars(_request({"vars": "  "}), PROJECT, "web")
+        antwoord = await _opslaan(_request({"vars": "  "}), "web")
 
     assert getattr(antwoord, "ok", False)
     assert "user-env-vars" not in manager.saved["components"][0]
@@ -311,7 +387,7 @@ async def test_invalid_input_rerenders_the_window_with_an_error_without_writing(
         patcher,
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
-        antwoord = await save_env_vars(_request({"vars": "geen-gelijke-teken"}), PROJECT, "web")
+        antwoord = await _opslaan(_request({"vars": "geen-gelijke-teken"}), "web")
 
     assert antwoord.status_code == 200
     html = antwoord.body.decode()
@@ -333,7 +409,7 @@ async def test_unchanged_text_does_not_reach_git() -> None:
             lambda bestaand, nieuw, _ctx: bestaand,
         ),
     ):
-        antwoord = await save_env_vars(_request({"vars": "A=1"}), PROJECT, "web")
+        antwoord = await _opslaan(_request({"vars": "A=1"}), "web")
 
     assert antwoord.status_code == 303 or "HX-Redirect" in getattr(antwoord, "headers", {})
     assert manager.saved is None
@@ -355,7 +431,7 @@ async def test_saving_in_a_deployment_scope_writes_only_the_override() -> None:
             "opi.web.router_env_vars.create_task_and_render_progress", AsyncMock(return_value=SimpleNamespace(ok=True))
         ),
     ):
-        antwoord = await save_env_vars(_request({"vars": "A=9"}), PROJECT, "web", "prod")
+        antwoord = await _opslaan(_request({"vars": "A=9"}), "web", "prod")
 
     assert getattr(antwoord, "ok", False)
     overschrijving = manager.saved["deployments"][0]["components"][0]["user-env-vars"]
@@ -379,7 +455,7 @@ async def test_saving_on_a_component_without_a_block_creates_it() -> None:
             "opi.web.router_env_vars.create_task_and_render_progress", AsyncMock(return_value=SimpleNamespace(ok=True))
         ),
     ):
-        antwoord = await save_env_vars(_request({"vars": "EERSTE=1"}), PROJECT, "api")
+        antwoord = await _opslaan(_request({"vars": "EERSTE=1"}), "api")
 
     assert getattr(antwoord, "ok", False)
     assert manager.saved["components"][1]["user-env-vars"].startswith("-----BEGIN AGE ENCRYPTED FILE-----")
@@ -408,7 +484,7 @@ async def test_a_git_conflict_on_save_rerenders_the_window_and_changes_nothing()
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
         patch("opi.web.router_env_vars.create_task_and_render_progress", AsyncMock()) as taak,
     ):
-        antwoord = await save_env_vars(_request({"vars": "A=1"}), PROJECT, "web")
+        antwoord = await _opslaan(_request({"vars": "A=1"}), "web")
 
     assert antwoord.status_code == 200
     html = antwoord.body.decode()
