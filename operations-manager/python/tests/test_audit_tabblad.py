@@ -193,19 +193,36 @@ def test_een_weigering_draagt_zijn_reden() -> None:
     assert rij["cause"] == "insufficient-role"
 
 
+def _commit_url(*, server: str, web: str = "") -> str:
+    with patch("opi.web.lotc_switch.settings") as instellingen:
+        instellingen.GIT_PROJECTS_SERVER_URL = server
+        instellingen.GIT_PROJECTS_WEB_URL = web
+        [rij] = build_lotc_audit([_rij()])
+    return str(rij["commits"][0]["url"])
+
+
 def test_een_commit_zonder_webadres_blijft_tekst() -> None:
     """Een ``git://``-herkomst heeft geen pagina om naartoe te wijzen."""
-    with patch("opi.web.lotc_switch.settings") as instellingen:
-        instellingen.GIT_PROJECTS_SERVER_URL = "git://localhost:9090/"
-        [rij] = build_lotc_audit([_rij()])
-    assert rij["commits"][0]["url"] == ""
+    assert _commit_url(server="git://localhost:9090/") == ""
 
 
 def test_een_https_herkomst_levert_een_commitadres() -> None:
-    with patch("opi.web.lotc_switch.settings") as instellingen:
-        instellingen.GIT_PROJECTS_SERVER_URL = "https://github.com/RijksICTGilde/rig-cluster-projects.git"
-        [rij] = build_lotc_audit([_rij()])
-    assert rij["commits"][0]["url"] == "https://github.com/RijksICTGilde/rig-cluster-projects/commit/abc1234def"
+    url = _commit_url(server="https://github.com/RijksICTGilde/rig-cluster-projects.git")
+    assert url == "https://github.com/RijksICTGilde/rig-cluster-projects/commit/abc1234def"
+
+
+def test_een_clusterintern_adres_blijft_tekst() -> None:
+    """De sandbox kloont van een hostnaam die geen browser kan openen."""
+    server = "http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git"
+    assert _commit_url(server=server) == ""
+
+
+def test_het_webadres_gaat_voor_de_kloon_url() -> None:
+    url = _commit_url(
+        server="http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git",
+        web="https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-projects",
+    )
+    assert url == "https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-projects/commit/abc1234def"
 
 
 # --- de route in de context van de pagina -----------------------------------

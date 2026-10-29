@@ -414,6 +414,22 @@ class TestDetermineFlowAction:
         assert _determine_flow_action(None, sections) == "process_project"
 
 
+async def _sequence_action(request: Any, project_name: str, section_id: str) -> Any:
+    """De poort en daarna de handler, zoals de router ze achter elkaar zet.
+
+    ``sequence_action`` weegt sinds RC-398 niets meer zelf: hij leest het project uit de
+    beslissing van ``enforce_route_action``.
+    """
+    from opi.web.authz import enforce_route_action
+    from opi.web.router_detail_edit import sequence_action
+
+    request.scope = {"route": SimpleNamespace(endpoint=sequence_action)}
+    request.path_params = {"project_name": project_name}
+    request.query_params = {}
+    await enforce_route_action(request)
+    return await sequence_action(request, project_name, section_id)
+
+
 class TestSequenceActionEndpoint:
     @pytest.mark.asyncio
     async def test_sequence_add_returns_html(self):
@@ -442,9 +458,7 @@ class TestSequenceActionEndpoint:
             patch("opi.web.authz.get_project_store", return_value=svc),
             patch("opi.web.authz.get_user_service", return_value=_platformdienst()),
         ):
-            from opi.web.router_detail_edit import sequence_action
-
-            response = await sequence_action(request, "test-project", "team-edit")
+            response = await _sequence_action(request, "test-project", "team-edit")
             assert response.status_code == 200
             assert len(response.body) > 0
 
@@ -469,10 +483,8 @@ class TestSequenceActionEndpoint:
             patch("opi.web.authz.get_project_store", return_value=svc),
             patch("opi.web.authz.get_user_service", return_value=_platformdienst()),
         ):
-            from opi.web.router_detail_edit import sequence_action
-
             with pytest.raises(HTTPException) as exc_info:
-                await sequence_action(request, "test-project", "team-edit")
+                await _sequence_action(request, "test-project", "team-edit")
             assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -493,8 +505,6 @@ class TestSequenceActionEndpoint:
             patch("opi.web.authz.get_project_store", return_value=svc),
             patch("opi.web.authz.get_user_service", return_value=_platformdienst(is_admin=False)),
         ):
-            from opi.web.router_detail_edit import sequence_action
-
             with pytest.raises(HTTPException) as exc_info:
-                await sequence_action(request, "test-project", "team-edit")
+                await _sequence_action(request, "test-project", "team-edit")
             assert exc_info.value.status_code == 403

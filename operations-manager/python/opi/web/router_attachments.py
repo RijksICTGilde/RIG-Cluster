@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from opi.core.auth_decorators import requires_sso
 from opi.core.authz.actions import Action, action
 from opi.handlers.project_file_handler import extract_attachment_catalog
-from opi.web.authz import authorize
+from opi.web.authz import authorized_project
 from opi.web.task_progress import create_task_and_render_progress
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ async def delete_attachment(request: Request, project_name: str, attachment_id: 
     not have is a 404 here rather than a task that fails a moment later, and it keeps
     a made-up id out of the task text the progress fragment renders.
     """
-    project, _ = authorize(request, action=Action.ATTACHMENT_MANAGE, project_name=project_name)
+    project = authorized_project(request)
 
     if attachment_id not in extract_attachment_catalog(project.data or {}):
         raise HTTPException(status_code=404, detail=f"Bijlage '{attachment_id}' niet gevonden in {project_name}")

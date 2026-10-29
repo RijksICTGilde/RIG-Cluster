@@ -183,3 +183,30 @@ def deployment_of(endpoint: Any, route_kwargs: dict[str, Any]) -> str | None:
     """De deployment die deze route uit zijn eigen argumenten aanwijst, of None."""
     resolve = getattr(endpoint, DEPLOYMENT_ATTR, None)
     return resolve(**route_kwargs) if resolve is not None else None
+
+
+#: Markering op een route die een doelwit in de QUERY draagt, met de namen die daar
+#: gelezen mogen worden.
+QUERY_TARGETS_ATTR = "zad_query_targets"
+
+
+def targets_in_query(*names: str) -> Callable[[F], F]:
+    """Zeg welke doelwitten van deze route in de query staan en niet in het pad.
+
+    De tegenhanger van :func:`deployment_from` voor het portaal, waar de poort het
+    verzoek heeft en niet de argumenten van de route. Zonder deze verklaring leest
+    ``enforce_route_action`` alleen het pad: een query die de poort een ANDERE deployment
+    aanwijst dan de handler gebruikt, zou de beslissing kunnen verruimen. Hoort op
+    dezelfde plek als ``@action``.
+    """
+
+    def markeer(func: F) -> F:
+        setattr(func, QUERY_TARGETS_ATTR, frozenset(names))
+        return func
+
+    return markeer
+
+
+def query_targets_of(endpoint: Any) -> frozenset[str]:
+    """De doelwitnamen die deze route uit de query laat lezen, of een lege verzameling."""
+    return frozenset(getattr(endpoint, QUERY_TARGETS_ATTR, frozenset()))

@@ -202,7 +202,7 @@ async def test_deleting_an_attachment_the_project_does_not_have_is_a_404() -> No
     from opi.web import router_attachments
 
     with (
-        patch.object(router_attachments, "authorize", return_value=(_project(PROJECT), "a@b.c")),
+        patch.object(router_attachments, "authorized_project", return_value=_project(PROJECT)),
         patch.object(router_attachments, "create_task_and_render_progress", new=AsyncMock()) as create,
         pytest.raises(HTTPException) as excinfo,
     ):
@@ -216,7 +216,7 @@ async def test_an_attachment_the_project_does_have_starts_the_task() -> None:
     from opi.web import router_attachments
 
     with (
-        patch.object(router_attachments, "authorize", return_value=(_project(PROJECT), "a@b.c")),
+        patch.object(router_attachments, "authorized_project", return_value=_project(PROJECT)),
         patch.object(router_attachments, "create_task_and_render_progress", new=AsyncMock()) as create,
     ):
         await router_attachments.delete_attachment(_request(), "demo", "a1")

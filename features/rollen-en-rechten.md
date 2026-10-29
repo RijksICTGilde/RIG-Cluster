@@ -127,6 +127,12 @@ de route haalt. De twee `:upsert-deployment`-routes doen dat (`deployment_in_bod
 die verklaring zou een pijplijn met `developer-ci` niets meer kunnen zodra het project
 ergens productie heeft.
 
+In het portaal heeft de poort het verzoek en niet de argumenten van de route, en daar
+heet die verklaring `@targets_in_query("deployment_name")`. Alleen de twee
+env-vars-routes dragen hem, want daar staat de deployment in de query. Zonder de
+verklaring leest `enforce_route_action` alleen het pad: een aangeplakte
+`?deployment_name=...` die de handler niet gebruikt mag de resource niet verschuiven.
+
 `env-vars.manage` staat daarom op de componentscopes en niet op die van een deployment,
 anders dan de rij in ontwerp paragraaf 4: de waarden hangen aan het component, en de route
 die ze bewerkt heeft geen deployment in het pad. Een component dat in een

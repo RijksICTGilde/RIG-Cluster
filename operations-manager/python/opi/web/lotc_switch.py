@@ -15,7 +15,7 @@ de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 
 from opi.core.config import settings
 from opi.core.step_up import step_up_until
@@ -759,15 +759,24 @@ def build_lotc_project_details(
     }
 
 
+#: Achtervoegsels van een hostnaam die alleen BINNEN het cluster bestaat. Een link
+#: daarheen opent in geen enkele browser, dus dan toont de pagina de SHA als tekst.
+_INTERNE_HOSTS = (".svc.cluster.local", ".cluster.local")
+
+
 def commit_adres(sha: str) -> str:
     """Het webadres van een commit in de projecten-repo, of leeg als het er geen is.
 
-    Alleen voor een http(s)-herkomst: GitHub en Forgejo tonen beide ``<repo>/commit/<sha>``.
-    Een ``git://``- of ``ssh://``-URL heeft geen pagina om naartoe te wijzen, en dan toont
-    de pagina de SHA als tekst.
+    ``GIT_PROJECTS_WEB_URL`` gaat voor: de kloon-URL is in de sandbox een clusteradres.
+    Zonder die instelling blijft de afleiding uit de kloon-URL, want op GitHub en Forgejo
+    is dat hetzelfde adres met ``/commit/<sha>`` erachter. Een ``git://``- of ``ssh://``-URL
+    heeft geen pagina om naartoe te wijzen.
     """
-    basis = settings.GIT_PROJECTS_SERVER_URL
+    web = settings.GIT_PROJECTS_WEB_URL.strip()
+    basis = web or settings.GIT_PROJECTS_SERVER_URL
     if not basis.startswith(("http://", "https://")):
+        return ""
+    if not web and (urlparse(basis).hostname or "").endswith(_INTERNE_HOSTS):
         return ""
     return f"{basis.removesuffix('.git').rstrip('/')}/commit/{quote(sha, safe='')}"
 

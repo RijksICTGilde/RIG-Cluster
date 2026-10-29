@@ -272,6 +272,8 @@ class Settings(BaseSettings):
     GIT_PROJECTS_SERVER_URL: str = "git://localhost:9090/"
     GIT_PROJECTS_SERVER_USERNAME: str | None = None  # Username for Git projects server authentication
     GIT_PROJECTS_SERVER_PASSWORD: str | None = None  # Password for Git projects server (can be SOPS encrypted)
+    # Webadres van de projecten-repo voor commitlinks in het audit-tabblad.
+    GIT_PROJECTS_WEB_URL: str = ""
     GIT_PROJECTS_SERVER_REPO_PATH: str = "/"
     GIT_PROJECTS_SERVER_FILE_PATH: str = "projects/simple-example.yaml"
     GIT_PROJECTS_SERVER_BRANCH: str = "main"

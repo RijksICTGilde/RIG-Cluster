@@ -15,6 +15,9 @@ data:
 
     ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
+    # De kloon-URL hierboven is een clusteradres; de commitlinks in het audit-tabblad
+    # hebben de hostnaam nodig die een browser bereikt.
+    GIT_PROJECTS_WEB_URL=https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-projects
     GIT_PROJECTS_SERVER_USERNAME=rig-admin
     GIT_PROJECTS_SERVER_PASSWORD=plain:admin1234
     GIT_PROJECTS_SERVER_REPO_PATH=/

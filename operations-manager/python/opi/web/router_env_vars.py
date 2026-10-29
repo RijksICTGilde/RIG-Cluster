@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from opi.core.auth_decorators import requires_sso, requires_step_up
-from opi.core.authz.actions import Action, action
+from opi.core.authz.actions import Action, action, targets_in_query
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.step_up import StepUpAction
 from opi.forms.editables.converters import KeyValueConverter, keep_existing_ciphertext_if_unchanged
@@ -29,7 +29,7 @@ from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import ConflictError
 from opi.utils.age import unwrap_project_key
 from opi.utils.yaml_util import dump_yaml_to_string
-from opi.web.authz import authorize
+from opi.web.authz import authorized_project
 from opi.web.lotc_switch import render_fragment
 from opi.web.task_progress import create_task_and_render_progress
 
@@ -105,6 +105,7 @@ async def _render_window(
     response_class=HTMLResponse,
 )
 @action(Action.ENV_VARS_MANAGE)
+@targets_in_query("deployment_name")
 @env_vars_web_router.get(
     "/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
     response_class=HTMLResponse,
@@ -115,13 +116,7 @@ async def show_env_vars_window(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> HTMLResponse:
     """Het bewerkvenster met de echte waarden. Alleen na een verse step-up."""
-    project, _email = authorize(
-        request,
-        action=Action.ENV_VARS_MANAGE,
-        project_name=project_name,
-        deployment=deployment_name,
-        component=component_name,
-    )
+    project = authorized_project(request)
     project_data = project.data or {}
     holder = _scope_holder(project_data, component_name, deployment_name)
 
@@ -153,6 +148,7 @@ async def show_env_vars_window(
     response_class=HTMLResponse,
 )
 @action(Action.ENV_VARS_MANAGE)
+@targets_in_query("deployment_name")
 @env_vars_web_router.post(
     "/{project_name}/deployments/{deployment_name}/componenten/{component_name}/env-vars",
     response_class=HTMLResponse,
@@ -167,13 +163,6 @@ async def save_env_vars(
     De step-up wordt hier opnieuw getoetst (de decorator), dus ook na het vijfminuten-
     venster volgt de OTP-vraag in plaats van een opslag.
     """
-    authorize(
-        request,
-        action=Action.ENV_VARS_MANAGE,
-        project_name=project_name,
-        deployment=deployment_name,
-        component=component_name,
-    )
     text = str((await request.form()).get("vars", ""))
 
     errors = _VALIDATOR.validate(text)

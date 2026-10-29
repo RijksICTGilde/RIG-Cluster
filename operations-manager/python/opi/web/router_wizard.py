@@ -52,7 +52,7 @@ from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 from opi.utils.csrf import reject_misfired_form_get
-from opi.web.authz import authorize
+from opi.web.authz import authorize, authorized_project
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import get_navigation, to_nldd_icon
@@ -569,8 +569,9 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     user = get_current_user(request)
 
     # De wizard-bewerkstroom toont users en config als bewerkbaar, dus een lid dat het
-    # projectbestand niet mag wijzigen hoort er niet in (projectovername).
-    project, _user_email = authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
+    # projectbestand niet mag wijzigen hoort er niet in (projectovername). De poort op de
+    # route weegt dat; hier staat alleen wat zij toeliet.
+    project = authorized_project(request)
 
     project_data = project.data
     if not project_data:
