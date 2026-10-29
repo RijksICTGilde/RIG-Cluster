@@ -74,15 +74,15 @@ def test_aanvinken_levert_een_eigen_stap_op(app_server: str, auth_page: Page) ->
     """De dienst heeft projectbrede instellingen, dus er hoort een stap te volgen. Blijft die
     weg, dan is een van de vier bedradingspunten vergeten.
 
-    TWEE VELDEN, EN DAT IS SINDS RC-114 DE HELE STAP. Hier stond ook "Deel voor de @ in het
-    afzenderadres". Dat veld bestaat niet meer: alle projecten versturen vanaf een vast
-    adres dat het platform zelf samenstelt uit de projectnaam, en de relay schrijft dat in
-    de From:. Zie de toelichting boven send_email/editables.py - het is geen opruiming maar
-    de enige opstelling die door DMARC komt.
+    DRIE VELDEN sinds RC-399: naast de naam en het dagbudget vraagt een project hier zijn
+    eigen afzenderADRES aan. Hier stond ook "Deel voor de @ in het afzenderadres", het veld
+    dat RC-114 weghaalde; dat is niet hetzelfde veld en hoort weg te blijven, want het
+    schreef een adres zonder goedkeuring.
     """
     _naar_de_mailstap(auth_page, app_server)
 
     expect(auth_page.get_by_text("Naam van de afzender")).to_be_visible()
+    expect(auth_page.get_by_text("E-mailadres van de afzender")).to_be_visible()
     expect(auth_page.get_by_text("Maximaal aantal berichten per dag")).to_be_visible()
     expect(auth_page.get_by_text("Deel voor de @ in het afzenderadres")).to_have_count(0)
 
@@ -136,3 +136,35 @@ def test_een_geldige_afzendernaam_gaat_door(app_server: str, auth_page: Page) ->
     # storing. Nu moet de stap echt achter ons liggen.
     assert "send-email-config" not in auth_page.url, auth_page.url
     expect(auth_page.get_by_text("Naam van de afzender")).to_have_count(0)
+
+
+def test_een_afzenderadres_buiten_ons_domein_komt_er_niet_door(app_server: str, auth_page: Page) -> None:
+    """Hetzelfde als bij de naam, nu op het ADRES (RC-399): het formulier mag niet iets
+    toelaten dat de API en de connector zouden weigeren.
+
+    ``minbzk.nl`` is het geval uit het plan: dat domein lijnt niet uit met de envelope en
+    haalt geen enkel bericht door DMARC, dus het hoort hier te stranden en niet pas in
+    ``_controleer_adres`` midden in het verwerken van een project.
+    """
+    wizard = _naar_de_mailstap(auth_page, app_server)
+
+    veldbesturing_eindigend_op(auth_page, "from-address").fill("noreply@minbzk.nl")
+    wizard.click_next()
+    auth_page.wait_for_load_state("networkidle")
+
+    # Op de foutmelding en niet op de regel zelf: de hulptekst bij het veld noemt dezelfde
+    # regel, dus een losse zoektocht op "een adres in rijksoverheid.nl" vindt er twee.
+    expect(auth_page.get_by_text(re.compile("Het afzenderadres moet een adres in"))).to_be_visible()
+
+
+def test_een_geldig_afzenderadres_gaat_door(app_server: str, auth_page: Page) -> None:
+    """De tegenproef, zodat de test hierboven niet groen blijft omdat de stap altijd blijft
+    staan."""
+    wizard = _naar_de_mailstap(auth_page, app_server)
+
+    veldbesturing_eindigend_op(auth_page, "from-address").fill("noreply@rijksoverheid.nl")
+    wizard.click_next()
+    auth_page.wait_for_load_state("networkidle")
+
+    assert "send-email-config" not in auth_page.url, auth_page.url
+    expect(auth_page.get_by_text("E-mailadres van de afzender")).to_have_count(0)

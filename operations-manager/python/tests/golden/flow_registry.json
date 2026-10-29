@@ -104,6 +104,7 @@
     "send-email-config": {
       "editables": [
         "services/send-email/config/from-name",
+        "services/send-email/config/from-address",
         "services/send-email/config/messages-per-day"
       ],
       "post_save_action": "process_project",
@@ -424,6 +425,7 @@
     "send-email": {
       "editables": [
         "services/send-email/config/from-name",
+        "services/send-email/config/from-address",
         "services/send-email/config/messages-per-day"
       ],
       "post_save_action": "process_project",

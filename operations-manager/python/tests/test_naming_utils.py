@@ -1212,3 +1212,54 @@ class TestGenerateMailSenderAddress:
         from opi.utils.naming import generate_mail_sender_address
 
         assert generate_mail_sender_address("post@voorbeeld.example", "x").endswith("@voorbeeld.example")
+
+
+class TestMailSenderAddressError:
+    """DE ENE REGEL (RC-399): het model, het formulier en de connector toetsen allemaal via
+    deze functie, zodat een adres dat een van de drie aanneemt niet bij een andere laag
+    alsnog strandt."""
+
+    def test_leeg_is_geldig(self) -> None:
+        """Betekent: leid het adres af uit de accountnaam."""
+        from opi.utils.naming import mail_sender_address_error
+
+        assert mail_sender_address_error("") is None
+
+    def test_een_geldig_adres_is_geldig(self) -> None:
+        from opi.utils.naming import mail_sender_address_error
+
+        assert mail_sender_address_error("noreply@rijksoverheid.nl") is None
+
+    def test_zonder_apenstaart_wordt_geweigerd(self) -> None:
+        from opi.utils.naming import mail_sender_address_error
+
+        fout = mail_sender_address_error("zonderapenstaart")
+        assert fout is not None
+        assert "@" in fout
+
+    def test_een_hoofdletter_in_het_lokale_deel_wordt_geweigerd(self) -> None:
+        from opi.utils.naming import mail_sender_address_error
+
+        fout = mail_sender_address_error("NoReply@rijksoverheid.nl")
+        assert fout is not None
+
+    def test_een_lokaal_deel_van_vijfenzestig_tekens_wordt_geweigerd(self) -> None:
+        from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH, mail_sender_address_error
+
+        fout = mail_sender_address_error("a" * (MAIL_LOCAL_PART_MAX_LENGTH + 1) + "@rijksoverheid.nl")
+        assert fout is not None
+        assert str(MAIL_LOCAL_PART_MAX_LENGTH) in fout
+
+    def test_precies_op_de_grens_mag(self) -> None:
+        from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH, mail_sender_address_error
+
+        assert mail_sender_address_error("a" * MAIL_LOCAL_PART_MAX_LENGTH + "@rijksoverheid.nl") is None
+
+    def test_een_ander_domein_wordt_geweigerd(self) -> None:
+        """De tegenproef voor de toets-eis: ``noreply@minbzk.nl`` moet weigeren, want dat
+        domein lijnt niet uit met de envelope en haalt geen enkel bericht door DMARC."""
+        from opi.utils.naming import mail_sender_address_error
+
+        fout = mail_sender_address_error("noreply@minbzk.nl")
+        assert fout is not None
+        assert "DMARC" in fout

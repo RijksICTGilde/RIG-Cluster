@@ -466,8 +466,9 @@ class Settings(BaseSettings):
     #: name can never carry a project. Wanting that ends the one-account arrangement.
     MAIL_KEYCLOAK_FROM_NAME: str = "Rijksapps"
 
-    # Default daily message budget for a project account when it sets none itself.
-    MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY: int = 500
+    # Default budget and the line between choosing and requesting: up to this number a
+    # project decides itself, above it requires platform approval (RC-400).
+    MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY: int = 1000
 
     # Metrics backend configuration
     # "prometheus" = direct Prometheus access (local/dev)

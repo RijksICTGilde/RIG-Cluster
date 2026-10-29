@@ -150,7 +150,10 @@ must-match-sender = false
 #    onder `zad.afzender.adres.` krijgt in het script hieronder een eigen From:-adres,
 #    terwijl de envelope hier de AFGELEIDE waarde houdt. Uitlijning blijft heel omdat OPI
 #    alleen adressen in ons eigen afzenderdomein toelaat, en het plusdeel blijft hier de
-#    bounce dragen. Vandaag geldt dat voor precies een account: dat van Keycloak.
+#    bounce dragen. Dat geldt voor het account van Keycloak en, sinds RC-399, voor elk
+#    project dat een eigen afzenderadres heeft aangevraagd en goedgekeurd gekregen. Welk
+#    project een bericht verstuurde staat dan niet meer in de From:, en daarom zet het
+#    script hieronder er een X-ZAD-Project-kopregel bij.
 [session.mail]
 rewrite = [
   {if = "starts_with(authenticated_as, 'project-')", eq = true, then = "'%{env:MAIL_FROM_LOCAL}%+' + strip_prefix(authenticated_as, 'project-') + '@%{env:MAIL_DOMAIN}%'"},
@@ -179,8 +182,8 @@ global "naam";
 set "naam" "";
 # En hetzelfde voor het ADRES. Bijna elk account heeft er geen: het adres wordt hieronder
 # uit de accountnaam AFGELEID. Een account dat het script wel een adres geeft, stapt uit
-# die afleiding - vandaag alleen het Keycloak-account van ZAD, zodat inlogpost te
-# onderscheiden is van de post van de portal.
+# die afleiding: het Keycloak-account van ZAD, zodat inlogpost te onderscheiden is van de
+# post van de portal, en sinds RC-399 ook een project met een goedgekeurd eigen adres.
 global "afzender";
 set "afzender" "";
 include :optional :personal "zad-afzenders";
@@ -198,7 +201,7 @@ if eval "starts_with(account, 'project-')" {
 # hierboven (`[session.mail] rewrite`) houdt de afgeleide waarde, en dat is geen
 # vergissing maar de bedoeling: DMARC-uitlijning vergelijkt de DOMEINEN van envelope en
 # From:, en die blijven gelijk zolang OPI alleen adressen in ons afzenderdomein toelaat
-# (MAIL_SENDER_DOMAIN_ALLOWLIST in opi/connectors/mail.py). Het plusdeel blijft
+# (MAIL_SENDER_DOMAIN_ALLOWLIST in opi/utils/naming.py). Het plusdeel blijft
 # ondertussen in de envelope staan en blijft dus de bounce dragen.
 if eval "afzender != ''" {
     set "adres" "${afzender}";
@@ -241,6 +244,19 @@ if eval "naam == ''" {
     addheader :last "From" "<${adres}>";
 } else {
     addheader :last "From" "\"${naam}\" <${adres}>";
+}
+
+# 2b. WELK PROJECT dit verstuurde, uit de LOGIN en niet uit het bericht. Met een
+#    goedgekeurd eigen afzenderadres zegt de From: dat niet meer, en de envelope komt
+#    alleen bij de ontvanger terug als de laatste mailserver er een Return-Path: van
+#    maakt. De deleteheader is de kern en staat BUITEN de if: zonder die regel zet een
+#    applicatie zelf een X-ZAD-Project en voert ze de naam van een ander project.
+#    De `let` staat er ook buiten, om dezelfde reden als bij `projectadres` hierboven.
+#    Platformaccounts krijgen de kopregel niet: die versturen niet namens een project.
+let "project" "strip_prefix(account, 'project-')";
+deleteheader "X-ZAD-Project";
+if eval "starts_with(account, 'project-')" {
+    addheader :last "X-ZAD-Project" "${project}";
 }
 
 # 6. Het Message-ID houdt zijn unieke deel maar krijgt ONS domein. Een applicatie zet
@@ -376,28 +392,35 @@ allow-invalid-certs = "%{env:MAIL_UPSTREAM_ALLOW_INVALID_CERTS}%"
 
 # --- Limieten (plans/mailrelay.md, "Limieten en uitgaande controle") --------
 #
-# Gekeyd op het geauthenticeerde account, dus precies op het project. Het echte werk
-# doen deze limieten, niet het spamfilter: ze vangen de retry-loop die tienduizend
-# berichten stuurt voordat iemand het merkt.
+# Het echte werk doen deze limieten, niet het spamfilter: ze vangen de retry-loop die
+# tienduizend berichten stuurt voordat iemand het merkt.
 #
-# LET OP, dit is een BOVENgrens per account en niet het getal dat het project zelf
-# invult. Stalwart v0.11 kent geen limiet op de principal (de management-API weigert
-# een 'limits'-veld), dus het per-projectgetal uit send-email is de afgesproken
-# begroting die OPI vastlegt en toont; de relay dwingt het plafond hieronder af, dat
-# gelijk is aan MAX_MESSAGES_PER_DAY in de dienst. Gemeten met rate = "3/1d": het
-# vierde bericht van hetzelfde account krijgt "452 4.4.5 Rate limit exceeded", een
-# ander account merkt daar niets van.
-[queue.limiter.inbound.account]
-enable = true
-key = ["authenticated_as"]
-rate = "5000/1d"
-
-# Globaal plafond bovenop de som van de projecten, zodat een fout in de provisioning
-# nooit de afspraak met het mailteam kan overschrijden.
+# De grens per project schrijft OPI via de API per account. Limiters stapelen en de laagste
+# wint (fase 0 punt 4), dus geen vaste grens hier.
+#
+# Vangnet tegen een fout in OPI. De match zorgt dat het per bericht telt, niet per
+# verbinding. Elk account krijgt van OPI een eigen limiter.
 [queue.limiter.inbound.platform]
 enable = true
 key = ["listener"]
-rate = "20000/1d"
+match = "authenticated_as != ''"
+rate = "1000000/1d"
+
+# De twee hieronder overschrijven ingebouwde standaarden (Stalwart zet die bij de start).
+# Sleutels uit dit bestand winnen van die in de database; weghalen = standaard keert terug (fase 0).
+
+# Ingebouwd standaard: 5/s per IP. Toepassingen die per bericht verbinden halen ~18K/uur.
+[queue.limiter.inbound.ip]
+enable = true
+key = ["remote_ip"]
+rate = "50/1s"
+
+# Ingebouwd standaard: sender_domain + rcpt, 25/h. Ons afzenderdomein is rijksoverheid.nl
+# voor alle projecten. Met authenticated_as telt het nu per project; getal blijft 25/h.
+[queue.limiter.inbound.sender]
+enable = true
+key = ["authenticated_as", "rcpt"]
+rate = "25/1h"
 
 [session.rcpt]
 max-recipients = 25

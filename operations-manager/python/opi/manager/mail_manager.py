@@ -33,7 +33,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.services import ServiceType
-from opi.services.catalog.send_email import is_approved
+from opi.services.catalog.send_email import approved_from_address, effective_messages_per_day, is_approved
 from opi.services.project import Project
 from opi.utils.age import (
     decrypt_password_smart,
@@ -145,15 +145,17 @@ class MailManager:
                 and ``From:`` were split by a plus part that bought nothing.
             from_name: Display name the recipient sees, or empty for none. Empty is a
                 valid outcome and not a fallback -- a project simply did not choose one.
-            messages_per_day: Daily budget recorded for this account. Not handed to the
-                relay: Stalwart v0.11 has no per-account limit, so the relay enforces one
-                ceiling for every account from its own configuration.
+            messages_per_day: Daily budget for this account, enforced by the relay via
+                ``set_rate_limit`` (RC-400). Set on all paths including platform accounts.
             is_platform_account: Only the platform caller sets this. Everything else is
                 the project path and may not touch ZAD's own account.
             sender_address: Address to pin the ``From:`` header to, or empty to let the
-                relay DERIVE it from the account name. Empty is the normal case and the
-                only correct value for a project: an address it chose itself would be a
-                spoofing button. Only the platform passes one.
+                relay DERIVE it from the account name. Empty is the normal case, and an
+                address a project chose itself would be a spoofing button (which is why
+                the project path only passes one for a value a platform administrator
+                approved via ``approved_from_address``, the gate in
+                ``create_resources_for_deployment``, and why the connector checks the
+                value again before it reaches the relay).
 
         Returns:
             The account as it now stands on the relay.
@@ -184,6 +186,7 @@ class MailManager:
         # that has one. An empty address is not a missing value: it means the relay works
         # the address out from the account name, which is what every project does.
         await connector.set_sender(username, from_name, sender_address)
+        await connector.set_rate_limit(username, messages_per_day)
 
         return MailAccount(
             username=username,
@@ -224,14 +227,23 @@ class MailManager:
         view = Project(project_data)
         config = view.get(_CONFIG_BASE) or {}
 
-        # De afzender van dit project: het adres draagt de PROJECTnaam (niet de accountnaam,
-        # die het voorvoegsel project- draagt en op een andere lengte wordt afgekapt), en de
-        # weergavenaam komt uit de projectconfiguratie. Leeg is een geldige uitkomst: dan
-        # vertrekt de post met een kaal projectadres en zonder naam.
-        from_address = self._sender_address(cluster, project_name)
-        bounce_address = from_address
+        # De afzender van dit project: het afgeleide adres draagt de PROJECTnaam (niet de
+        # accountnaam, die het voorvoegsel project- draagt en op een andere lengte wordt
+        # afgekapt), en de weergavenaam komt uit de projectconfiguratie. Leeg is een geldige
+        # uitkomst: dan vertrekt de post met een kaal projectadres en zonder naam.
+        derived_address = self._sender_address(cluster, project_name)
+        # DE POORT (RC-399). Alleen een adres dat een beheerder voor PRECIES DEZE WAARDE
+        # heeft goedgekeurd gaat naar de relay. In elk ander geval gaat een lege waarde mee,
+        # en die wist een adres dat er eerder stond: zo heeft intrekken geen eigen trigger
+        # nodig. De bounce blijft naar het afgeleide adres terugkomen, zodat hij
+        # herleidbaar blijft tot dit project.
+        sender_address = approved_from_address(project_data)
+        from_address = sender_address or derived_address
+        bounce_address = derived_address
         from_name = str(config.get("from-name") or "").strip()
-        messages_per_day = config.get("messages-per-day") or settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+        # Poort: naar relay gaat alleen tot standaard, of een goedgekeurde waarde; anders
+        # laatst goedgekeurde of standaard.
+        messages_per_day = effective_messages_per_day(project_data)
 
         entry, password = await self._existing_account_entry(view, project_data, cluster)
         if password is None:
@@ -247,6 +259,7 @@ class MailManager:
             bounce_address=bounce_address,
             from_name=from_name,
             messages_per_day=messages_per_day,
+            sender_address=sender_address,
         )
 
         # Also when the entry EXISTS but no longer says what the relay holds: a project that
@@ -554,6 +567,9 @@ class MailManager:
         # the relay's configuration after the project is gone, and hand it to whoever next
         # gets an account by that name.
         await connector.delete_sender_name(username)
+        # En het dagbudget, om dezelfde reden: een limiter die blijft staan geldt voor het
+        # volgende account dat zo gaat heten.
+        await connector.delete_rate_limit(username)
         return await connector.delete_principal(username)
 
     async def _revoke(self, project_data: dict[str, Any], cluster: str) -> None:
@@ -587,12 +603,15 @@ class MailManager:
 
     @staticmethod
     def _sender_address(cluster: str, project_name: str | None) -> str:
-        """The one address this account sends from: the ``From:`` header AND the envelope.
+        """The address this account's envelope carries, and its ``From:`` unless one is approved.
 
         One address for both, where those two used to differ by a plus part. The
         difference bought nothing -- SPF alignment looks at the DOMAIN, and that is the
         same either way -- while it cost the recipient the ability to see which project
-        wrote to them.
+        wrote to them. Since RC-399 they CAN differ again, for a project whose own address
+        was approved: the ``From:`` then carries that address and the envelope keeps this
+        one, so the bounce stays traceable. The relay's ``X-ZAD-Project`` header names the
+        project either way.
 
         The project goes in the plus part, which is what makes a bounce traceable without
         leaving the domain. Staying in ``rijksoverheid.nl`` is load-bearing: it publishes

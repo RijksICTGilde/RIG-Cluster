@@ -48,6 +48,12 @@ Er is dus geen half werkende tussentoestand. Dat is de reden dat er precies éé
 netwerkbeleid, of andersom, is een toestand die niemand kan uitleggen en die bij het
 opruimen overblijft.
 
+**Er is een tweede goedkeuring, en die staat los.** Deze gaat over het gebruik van de
+dienst; vraagt een project daarnaast een eigen afzenderadres aan, dan is dat een aanvraag
+over een WAARDE, met een eigen blok en een eigen oordeel (zie "Een eigen afzenderadres
+aanvragen"). Een project mag mailen zonder eigen adres, en zonder deze eerste goedkeuring
+gebeurt er sowieso niets.
+
 **Een ingetrokken goedkeuring ruimt op.** Wordt de status van goedgekeurd afgehaald, dan
 loopt de volgende verwerking van het project hetzelfde opruimpad als een projectverwijdering
 (`MailManager._delete_account`, de enige verwijdering die er is): het account gaat van de
@@ -69,7 +75,7 @@ Een component dat de dienst aanvinkt krijgt vijf variabelen uit de projectsecret
 | `SMTP_PORT` | 587 (submission) |
 | `SMTP_USERNAME` | het account van dit project |
 | `SMTP_PASSWORD` | het wachtwoord van dat account |
-| `SMTP_FROM` | het afzenderadres dat de relay afdwingt: `noreply-rijksapp+<project>@rijksoverheid.nl` |
+| `SMTP_FROM` | het afzenderadres waaronder de post werkelijk vertrekt: je goedgekeurde eigen adres, of anders `noreply-rijksapp+<project>@rijksoverheid.nl` |
 
 Elke variabele heeft ook een `APP_`-alias, net als bij de andere diensten.
 
@@ -80,15 +86,51 @@ Op projectniveau, in de wizard of via de API:
 | Veld | Betekenis |
 |---|---|
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
-| `messages-per-day` | het dagbudget van dit project, maximaal 5000. Zie de kanttekening hieronder: de relay dwingt vandaag één plafond af voor elk account |
+| `from-address` | het e-mailadres van de afzender, na goedkeuring. Laat je het leeg, dan stelt het platform er een samen uit de naam van je project |
+| `messages-per-day` | het dagbudget van dit project, dat de relay per account afdwingt. Tot en met 1000 kies je zelf; hoger is een aanvraag. Zie "Het dagbudget" hieronder |
 
-Dat is de hele lijst, en het ontbrekende veld is het punt: **het afzenderadres kies je
-niet zelf.** Het platform stelt het samen uit de naam van je project:
+Laat je `from-address` leeg, dan stelt het platform het adres samen uit de naam van je
+project:
 
 ```
-From:         <from-name> <noreply-rijksapp+<project>@rijksoverheid.nl>
-Return-Path:  noreply-rijksapp+<project>@rijksoverheid.nl
+From:           <from-name> <noreply-rijksapp+<project>@rijksoverheid.nl>
+Return-Path:    noreply-rijksapp+<project>@rijksoverheid.nl
+X-ZAD-Project:  <project>
 ```
+
+### Een eigen afzenderadres aanvragen
+
+Vul `from-address` in en het opslaan IS de aanvraag; een platformbeheerder keurt hem goed
+of af, langs dezelfde weg als een domeinaanvraag. Zolang dat niet gebeurd is, staat de
+stand op de projectpagina en in de API, met daarbij het adres waaronder je post
+ondertussen vertrekt. Na goedkeuring ziet een bericht er zo uit:
+
+```
+From:           <from-name> <noreply@rijksoverheid.nl>
+Return-Path:    noreply-rijksapp+<project>@rijksoverheid.nl
+X-ZAD-Project:  <project>
+```
+
+Drie dingen die daarbij horen:
+
+- **De goedkeuring hangt aan de WAARDE.** Wijzig je een goedgekeurd adres, dan is dat een
+  nieuwe aanvraag en vertrekt je post tot die is goedgekeurd weer onder het samengestelde
+  adres. Maak je het veld leeg, dan trek je de aanvraag in.
+- **De envelope blijft het samengestelde adres**, en dat is geen vergissing. DMARC
+  vergelijkt de DOMEINEN van envelope en `From:`, en die blijven gelijk; het plusdeel in de
+  envelope houdt ondertussen een bounce herleidbaar tot je project.
+- **`X-ZAD-Project` noemt je project.** De relay zet die kopregel uit de LOGIN van het
+  account, niet uit het bericht, en gooit een meegestuurde kopregel met die naam eerst weg.
+  Zonder die kopregel zegt een bericht met een gedeeld adres niet meer van wie het komt.
+  Post van het platform zelf heeft hem niet.
+
+Het domein ligt vast op `rijksoverheid.nl`: alleen het deel voor de `@` is te kiezen
+(hoogstens 64 tekens uit kleine letters, cijfers en `. _ + -`). Waarom het domein niet,
+staat hieronder.
+
+Er is geen controle op een adres dat een ander project al gebruikt. Twee projecten die
+allebei `noreply@rijksoverheid.nl` voeren is het verwachte geval; wie een bericht
+verstuurde lees je af aan de envelope en aan `X-ZAD-Project`.
 
 De relay schrijft die hele `From:` zelf. Zet je applicatie er een eigen in, dan wordt die
 weggegooid — adres én naam. Wat de ontvanger ziet komt dus uit `from-name` en nergens
@@ -99,8 +141,10 @@ Overschrijven en niet weigeren, want vrijwel elke maillibrary zet standaard een 
 550 op iets waar de ontwikkelaar niets aan kan doen is geen regel maar een val.
 
 **`Reply-To:` blijft wel van jou** en wordt niet aangeraakt. Dat is de scheiding: de `From:`
-is identiteit en ligt vast omdat wij op de mailserver van de organisatie zitten, de
-`Reply-To:` zegt alleen waar een antwoord heen moet.
+is identiteit en wordt door het platform geschreven omdat wij op de mailserver van de
+organisatie zitten, de `Reply-To:` zegt alleen waar een antwoord heen moet. Een `noreply`
+in je `From:` met een eigen `Reply-To:` is het verwachte gebruik: op het afzenderadres komt
+geen post binnen.
 
 Waarom een domein dat niet van ons is: onze post gaat de deur uit via de mailserver van de
 Rijksoverheid, dus hij draagt hun identiteit. Dat is ook de enige opzet die aankomt.
@@ -108,8 +152,9 @@ Rijksoverheid, dus hij draagt hun identiteit. Dat is ook de enige opzet die aank
 zone geen sleutel kunnen publiceren. Daarmee is SPF-uitlijning tussen envelope en `From:` het
 enige dat een bericht door DMARC krijgt, en die uitlijning bestaat alleen zolang beide in
 `rijksoverheid.nl` zitten. Een eigen afzenderDOMEIN breekt precies dat, en dan komt er bij
-elke ontvanger buiten de Rijksoverheid niets meer aan. Het project in het plusdeel raakt de
-uitlijning niet: het domein blijft hetzelfde, en een bounce blijft herleidbaar.
+elke ontvanger buiten de Rijksoverheid niets meer aan. Een eigen lokaal deel raakt de
+uitlijning niet: het domein blijft hetzelfde, en de envelope houdt het plusdeel, dus een
+bounce blijft herleidbaar.
 
 Wat `from-name` mag zijn: geen regeleindes of andere stuurtekens, geen `@`, geen punthaken,
 geen aanhalingstekens, backslash of dollarteken, en hoogstens 64 tekens. Dat is geen
@@ -131,22 +176,57 @@ services:
     config:
       from-name: Algoritmeregister   # de ontvanger ziet
                                      # Algoritmeregister <noreply-rijksapp+algor-odc@rijksoverheid.nl>
+      # from-address: noreply@rijksoverheid.nl   # pas na goedkeuring, zie hierboven
       messages-per-day: 750
       # accounts: door het platform geschreven, zie hieronder
 ```
 
 ## Wat het platform beheert
 
-`approval` en `accounts` zijn platformdata: een beheerder beslist, en OPI maakt het account
-aan op de relay en schrijft neer wat het gemaakt heeft (per cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en
-bounce-adres). Allebei dragen `platform_managed_fields`, dus de API kan ze niet wissen
-en niet overschrijven — een PUT die ze weglaat verliest ze niet. Bij `approval` is dat niet
+`approval`, `from-address-approval` en `accounts` zijn platformdata: een beheerder beslist,
+en OPI maakt het account aan op de relay en schrijft neer wat het gemaakt heeft (per
+cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en bounce-adres). Alle
+drie dragen `platform_managed_fields`, dus de API kan ze niet wissen en niet overschrijven,
+en een PUT die ze weglaat verliest ze niet. Bij de twee goedkeuringsblokken is dat niet
 alleen netjes maar de kern: een project dat zijn eigen status op `approved` kan zetten heeft
-geen goedkeuring.
+geen goedkeuring. `from-address-approval` draagt naast `status` en `history` ook de `value`
+waar het oordeel over ging, en dat is wat een goedkeuring aan een adres bindt in plaats van
+aan het project.
 
 Het wachtwoord wordt één keer gegenereerd en meteen weggeschreven, om dezelfde reden als bij
 het Keycloak-realm: het bestaat nergens anders, en een latere fout in dezelfde run zou een
 account op de relay achterlaten waar geen projectbestand het wachtwoord van heeft.
+
+## Het dagbudget
+
+Standaard mag een project **1000 berichten per dag** versturen. Een lager getal kiest het
+project zelf; een hoger getal is een aanvraag die een platformbeheerder goedkeurt, net als
+het adres.
+
+De goedkeuring hangt aan het GETAL: een goedgekeurde 20.000 die het project daarna verhoogt
+naar 50.000 is een nieuwe aanvraag. Zolang die openstaat geldt het laatst goedgekeurde
+getal, dus een aanvraag verlaagt nooit wat er al was. Verlagen gaat meteen. Een waarde die
+al eens is goedgekeurd blijft goedgekeurd als het project er na een wijziging op terugkomt,
+voor het getal en voor het adres.
+
+Wijst een beheerder precies de waarde af die gold, dan is die goedkeuring daarmee
+ingetrokken: het project valt terug op de standaard en terugkomen op die waarde is een
+nieuwe aanvraag. Een afwijzing van een HOGER gevraagd getal raakt de staande goedkeuring
+niet.
+
+De relay dwingt het getal per account af, per bericht en niet per ontvanger.
+
+### Uitrollen: eerst verwerken, dan is de limiter er
+
+Het getal komt op de relay te staan als een limiter per account, en die schrijft OPI bij een
+VERWERKING van het project. Er is geen periodieke reconciliatie. Omdat
+`[queue.limiter.inbound.account]` met zijn vaste 5000 per dag uit `config.toml` is gehaald,
+heeft een bestaand project na het uitrollen van die `config.toml` geen eigen limiet meer tot
+het een keer is verwerkt; wat er dan nog begrenst is het vangnet
+`[queue.limiter.inbound.platform]`, en dat is EEN emmer voor de hele relay.
+
+Dus: laat na het uitrollen van `config.toml` elk project met `send-email` opnieuw verwerken,
+voordat je de uitrol als klaar beschouwt. Pas dan heeft elk account zijn eigen limiter.
 
 ## Het account hangt aan het project
 
@@ -316,7 +396,7 @@ onderhoudspagina toont, en zonder platformmail hoort het portaal gewoon te werke
 | `MAIL_PLATFORM_ACCOUNT` | de naam van het account van ZAD zelf (het wachtwoord is géén instelling, zie hierboven) |
 | `MAIL_PLATFORM_SECRET_NAME` | de Secret in de eigen namespace waarin OPI dat wachtwoord bewaart |
 | `MAIL_PLATFORM_MESSAGES_PER_DAY` | het budget van dat account (de afzender is geen instelling: dit account hoort bij geen project en verstuurt daarom als het kale basisadres, zonder plusdeel en zonder naam) |
-| `MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY` | het budget van een project dat er zelf geen kiest |
+| `MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY` | het budget van een project dat er zelf geen kiest (1000), en de grens tussen zelf kiezen en aanvragen |
 | `MAIL_KEYCLOAK_ACCOUNT` | de naam van het account waarmee Keycloak verstuurt (zie `features/keycloak-mail.md`) |
 | `MAIL_KEYCLOAK_SECRET_NAME` | het Secret uit de BOOTSTRAP waaruit OPI dat wachtwoord leest - het genereert het hier niet |
 | `MAIL_KEYCLOAK_SECRET_KEY` | de sleutel in dat Secret, en de naam die het bootstraptemplate, de `secretKeyRef` van de Keycloak-deployment en de leesweg van OPI gemeen hebben |
@@ -496,7 +576,7 @@ staan — ze horen hier omdat ze allebei pas bij het aanzetten zichtbaar zouden 
   maakt het domein aan (idempotent) en `ensure_account` roept het aan voor het afzender- en
   het bounce-adres.
 
-En drie dingen die de relay vandaag niet dichtzet, met de reden erbij:
+En twee dingen die de relay vandaag niet dichtzet, met de reden erbij:
 
 - **De management-API loopt over plain HTTP met Basic auth** binnen het cluster, dus het
   beheerderswachtwoord gaat base64 over het podnetwerk. Wat het inperkt is het
@@ -504,10 +584,6 @@ En drie dingen die de relay vandaag niet dichtzet, met de reden erbij:
   certificaat op de listener.
 - **Submission heeft geen TLS** terwijl er PLAIN/LOGIN overheen gaat. Zelfde inperking en
   hetzelfde certificaat lost beide op.
-- **Een limiet per account bestaat niet in Stalwart v0.11**: de management-API weigert een
-  `limits`-veld op een principal. `messages-per-day` is dus de vastgelegde begroting, en de
-  relay dwingt een plafond af dat voor elk account gelijk is (5000/dag). Dat staat ook bij
-  het veld in de API-beschrijving.
 
 Verder nog niet gebouwd, en bewust:
 

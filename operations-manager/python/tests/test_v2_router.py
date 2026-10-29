@@ -341,10 +341,11 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "publish-on-web": ["domains"],
             # RC-114: the SMTP account and its password are written by the mail manager,
             # and the approval by the approver flow -- a project that could set its own
-            # status to approved would make the approval no approval at all. There is no
-            # sender-address field to protect: every project sends from one fixed address
-            # that the relay writes into the From: header itself.
-            "send-email": ["accounts", "approval"],
+            # status to approved would make the approval no approval at all. RC-399 added
+            # the second verdict: a project DOES choose its sender address now, but the
+            # verdict on that value is the platform's to write, not the applicant's.
+            # RC-400 added a third, same shape: the verdict on a requested daily budget.
+            "send-email": ["accounts", "approval", "from-address-approval", "messages-per-day-approval"],
             "temp-storage": ["generation", "revisions"],
         }
 
@@ -1418,3 +1419,53 @@ class TestServiceConfigWritesOnlyWhatWasSent:
 
         assert response.status_code == 422, response.text
         mock_task_service.create_task.assert_not_called()
+
+
+class TestHetAfzenderadresLangsDeApi:
+    """RC-399, toetsen 1 en 2 uit het plan: beide poorten op het adres, over HTTP.
+
+    De modeltoetsen staan in tests/test_send_email_service.py. Deze twee staan hier omdat
+    het plan ze expliciet LANGS DE API vraagt: het model is de ene helft, de route die hem
+    als body gebruikt en de weigering van het goedkeuringsblok de andere.
+    """
+
+    _URL = "/api/v2/projects/test-project/services/send-email/config/project"
+
+    def test_een_adres_buiten_ons_domein_is_een_422(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        response = v2_client.put(self._URL, headers={"X-API-Key": API_KEY}, json={"from-address": "noreply@minbzk.nl"})
+
+        assert response.status_code == 422
+        assert "DMARC" in response.text
+        mock_task_service.create_task.assert_not_called()
+
+    def test_het_goedkeuringsblok_is_niet_van_de_aanvrager(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """Een project dat zijn eigen oordeel op ``approved`` kan zetten heeft geen
+        goedkeuring, en dan is de poort op de schrijfweg naar de relay er geen."""
+        response = v2_client.put(
+            self._URL,
+            headers={"X-API-Key": API_KEY},
+            json={
+                "from-address": "noreply@rijksoverheid.nl",
+                "from-address-approval": {"value": "noreply@rijksoverheid.nl", "status": "approved", "history": []},
+            },
+        )
+
+        assert response.status_code == 422
+        assert "from-address-approval" in response.json()["detail"]
+        mock_task_service.create_task.assert_not_called()
+
+    def test_een_geldig_adres_gaat_gewoon_door(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        """De tegenproef: zonder deze blijven de twee hierboven groen als de route elke
+        body zou weigeren."""
+        mock_task_service.create_task.return_value = _make_task(task_type="configure_service")
+
+        response = v2_client.put(
+            self._URL, headers={"X-API-Key": API_KEY}, json={"from-address": "noreply@rijksoverheid.nl"}
+        )
+
+        _assert_accepted(response, "configure_service")
+        assert mock_task_service.create_task.call_args[1]["payload"]["config"] == {
+            "from-address": "noreply@rijksoverheid.nl"
+        }
