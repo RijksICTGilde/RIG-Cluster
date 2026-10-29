@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.programma import echt_programma
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -912,13 +913,14 @@ def _draai(tmp_path: Path, taak: str, *extra: str, **env_extra: str) -> Run:
     (tmp_path / "calls.log").write_text("")
 
     proc = subprocess.run(
-        ["task", taak, *extra],
+        # De echte binary en niet de naam: een shim van asdf of mise zoekt zijn versie in
+        # de WERKMAP, en die is hier een tijdelijke map zonder .tool-versions.
+        [echt_programma("task"), taak, *extra],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=120,
-        # De stubs ervoor en niet in plaats van het PATH: `task` is hier een mise-shim en
-        # git, awk en kustomize moeten gewoon te vinden blijven.
+        # Stubs toevoegen, niet PATH vervangen: git, awk en kustomize moeten bereikbaar zijn.
         env=os.environ
         | {"PATH": f"{bindir}:{os.environ['PATH']}", "STUB_LOG": str(tmp_path / "calls.log")}
         | env_extra,
@@ -942,10 +944,8 @@ PROEFTAG = "2026.09.26.1432-abcdef12"
 
 @pytest.fixture
 def task_aanwezig() -> None:
-    if shutil.which("task") is None:
-        pytest.skip("task niet gevonden op PATH")
-    if shutil.which("bash") is None:
-        pytest.skip("bash niet gevonden op PATH")
+    echt_programma("task")
+    echt_programma("bash")
 
 
 @pytest.mark.usefixtures("task_aanwezig")

@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 SECRET_KEY = "e2e-test-secret-key-padded-to-32-chars-minimum"
 
+#: De PAT-vorm die het schrijven van een projectbestand nodig heeft, uit de omgeving als
+#: die er staat. Zie de patch in create_test_app.
+PROJECT_REPO_PASSWORD = os.environ.get("PROJECT_REPO_PASSWORD") or "plain:repo-secret"
+
 
 @cache
 def test_age_keypair() -> tuple[str, str]:
@@ -664,6 +668,8 @@ def create_test_app():
             # "Missing public age key for encryption". The matching public key is
             # already defined above but was never wired to settings.
             patch("opi.core.config.settings.SOPS_AGE_PUBLIC_KEY", test_age_keypair()[1]),
+            # HTTP 500 zonder deze; wizards hangen op domains. Vorm telt (plain: + waarde).
+            patch("opi.core.config.settings.PROJECT_REPO_PASSWORD", PROJECT_REPO_PASSWORD),
             patch(
                 "opi.connectors.prometheus.get_metrics_connector",
                 return_value=SimpleNamespace(is_connected=False),

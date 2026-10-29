@@ -57,3 +57,10 @@
 /features/rollen-en-rechten.md @uittenbroekrobbert
 /docs/asvs-zelfbeoordeling.md @uittenbroekrobbert
 /architecture/asvs-zelfbeoordeling.yaml @uittenbroekrobbert
+
+# De maatregelen waar SECURITY.md naar verwijst als bewijs
+/features/leden-en-api-tokens.md @uittenbroekrobbert
+/features/logniveau-en-redactie.md @uittenbroekrobbert
+/features/portaalsessie-levensduur.md @uittenbroekrobbert
+/features/renovate.md @uittenbroekrobbert
+/features/sops-sleutel-roteren.md @uittenbroekrobbert

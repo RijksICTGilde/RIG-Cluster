@@ -16,8 +16,8 @@ De shell-stappen worden gemeten met stubs voor docker, kind en kubectl die hun a
 wegschrijven. Zo is de volgorde en de inhoud toetsbaar zonder een echt cluster.
 """
 
+import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -153,7 +153,8 @@ def _run(tmp_path: Path, *args: str, **env_extra: str) -> Run:
         (configs / f"{name}.toml").write_text(body)
 
     env = {
-        "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin",
+        # Stubs toevoegen, niet PATH vervangen: bash en tools staan niet in vaste locaties op macOS.
+        "PATH": f"{bindir}:{os.environ['PATH']}",
         "STUB_LOG": str(tmp_path / "calls.log"),
         "STUB_HOSTS_TOML": str(tmp_path / "hosts.toml"),
         "STUB_KUBECTL_STDIN": str(tmp_path / "kubectl-stdin"),
@@ -161,7 +162,7 @@ def _run(tmp_path: Path, *args: str, **env_extra: str) -> Run:
         **env_extra,
     }
     proc = subprocess.run(
-        ["bash", str(SCRIPT), *args],
+        [echt_programma("bash"), str(SCRIPT), *args],
         capture_output=True,
         text=True,
         env=env,
@@ -182,8 +183,7 @@ def kind_config() -> dict:
 
 @pytest.fixture(scope="module")
 def bash_available() -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash not available")
+    echt_programma("bash")
 
 
 @pytest.mark.usefixtures("bash_available")
@@ -441,11 +441,11 @@ def _prune(tmp_path: Path, *args: str, command: list[str] | None = None, **env_e
         stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
         stub.chmod(0o755)
     proc = subprocess.run(
-        command or ["bash", str(PRUNE_SCRIPT), *args],
+        command or [echt_programma("bash"), str(PRUNE_SCRIPT), *args],
         capture_output=True,
         text=True,
         env={
-            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin",
+            "PATH": f"{bindir}:{os.environ['PATH']}",
             "HOME": str(tmp_path),
             "STUB_LOG": str(tmp_path / "calls.log"),
             **env_extra,

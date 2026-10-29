@@ -25,19 +25,16 @@ This downloads the Chromium binary that E2E tests use. Without it, any `@pytest.
 
 De wizardtests laten de app een projectbestand schrijven, en
 `generate_self_service_project_yaml` (`opi/utils/project_utils.py`) weigert met een HTTP 500
-zolang `PROJECT_REPO_PASSWORD` niet gezet is. Staat hij niet in de omgeving, dan vallen de
-tests die de wizard doorlopen om op "geen projectbestand", zonder dat er iets met de code mis
-is.
-
-`task test-e2e` en `task test-e2e-random` zetten zelf een default (`plain:repo-secret`). Draai
-je pytest met de hand, zet hem dan mee:
+zolang `PROJECT_REPO_PASSWORD` niet gezet is. De e2e-testserver zet die instelling zelf
+(`tests/e2e/testserver.py`), dus een kale pytest-run werkt:
 
 ```bash
-PROJECT_REPO_PASSWORD=plain:repo-secret uv run pytest tests/e2e/ -m "e2e and not sandbox"
+uv run pytest tests/e2e/ -m "e2e and not sandbox"
 ```
 
-Alleen de VORM telt hier (het `plain:`-voorvoegsel plus een waarde), dus dit is geen secret.
-De echte waarde hoort in de uitrolconfiguratie van een cluster.
+Staat de variabele wel in de omgeving, dan gaat die voor. Alleen de VORM telt (het
+`plain:`-voorvoegsel plus een waarde), dus dit is geen secret. De echte waarde hoort in de
+uitrolconfiguratie van een cluster.
 
 ## Verify Setup
 
