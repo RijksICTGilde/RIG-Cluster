@@ -34,6 +34,10 @@ NA_PRODUCTIE = {
     "name": PROJECT,
     "deployments": [{"name": "acc", "environment": "productie"}],
 }
+AFTER_TEST = {
+    "name": PROJECT,
+    "deployments": [{"name": "acc", "environment": "test"}],
+}
 
 
 def _project(data: dict[str, Any]) -> ProjectSummary:
@@ -64,14 +68,14 @@ def _verzoek(email: str, *, verse_step_up: bool = False) -> Any:
     )
 
 
-async def _opslaan(email: str, *, na: dict[str, Any], verse_step_up: bool = False):
+async def _opslaan(email: str, *, na: dict[str, Any], verse_step_up: bool = False, before: dict[str, Any] = VOOR):
     """Laat de modal-opslag deze wijziging doen. Geeft de project_manager terug."""
     manager = MagicMock()
-    manager.get_contents = AsyncMock(return_value=copy.deepcopy(VOOR))
+    manager.get_contents = AsyncMock(return_value=copy.deepcopy(before))
     manager.save_and_commit_project = AsyncMock(return_value=None)
 
     store = MagicMock()
-    store.get.return_value = _project(VOOR)
+    store.get.return_value = _project(before)
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
 
@@ -102,6 +106,22 @@ async def test_een_developer_zet_de_markering_niet_via_de_opslag() -> None:
     with pytest.raises(HTTPException) as fout:
         await _opslaan(DEV, na=NA_PRODUCTIE)
     assert fout.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_developer_cannot_take_a_deployment_off_production() -> None:
+    """Terug van productie is ook de markering zetten: wie dat mag, schakelt elke
+    productieregel uit."""
+    with pytest.raises(HTTPException) as refused:
+        await _opslaan(DEV, before=NA_PRODUCTIE, na=AFTER_TEST, verse_step_up=True)
+    assert refused.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_developer_may_switch_between_the_other_stages() -> None:
+    """Van acceptatie naar test is een deployment schrijven, geen markering zetten."""
+    manager = await _opslaan(DEV, na=AFTER_TEST)
+    manager.save_and_commit_project.assert_awaited_once()
 
 
 @pytest.mark.asyncio

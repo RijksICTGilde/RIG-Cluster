@@ -18,7 +18,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.leden import ledenlijst_wijzigt
 from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
-from opi.core.step_up import any_marking_change, has_fresh_step_up, log_step_up_refusal, save_requires_step_up
+from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.path import resolve_path
@@ -2646,7 +2646,7 @@ async def _save_existing_project(
         # Dezelfde poort als op de modaalweg, om dezelfde reden: de step-up hieronder
         # toetst alleen de VERSHEID, dus zonder deze regel zette een developer hier de
         # markering op productie met een step-up die hij via env-vars.manage zelf haalt.
-        if any_marking_change(environment_before, environment_markings(existing_data)):
+        if production_marking_change(environment_before, environment_markings(existing_data)):
             authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
 
         # Een kale 403 en niet de dialoog uit bg/_step-up.html.j2: die hangt aan de

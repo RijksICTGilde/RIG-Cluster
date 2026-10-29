@@ -21,7 +21,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.core.step_up import any_marking_change, has_fresh_step_up, log_step_up_refusal, save_requires_step_up
+from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -1585,7 +1585,7 @@ async def _process_and_save_modal_edit(
     # 'productie' is, en daarmee wat elke andere regel afdwingt. Welke flow de gebruiker
     # ervoor opende doet niet mee, dus de poort staat op de SCHRIJFWEG en niet op de
     # route; dat ``environment`` ook in een restore-flow te zetten is, is precies waarom.
-    if any_marking_change(environment_before, environment_markings(existing_data)):
+    if production_marking_change(environment_before, environment_markings(existing_data)):
         authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
 
     handeling = save_requires_step_up(before_data, existing_data)

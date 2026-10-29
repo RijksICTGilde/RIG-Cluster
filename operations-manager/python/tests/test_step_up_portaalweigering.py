@@ -161,9 +161,9 @@ async def test_modal_edit_met_verse_step_up_slaat_de_verlaging_wel_op() -> None:
 
 
 @pytest.mark.asyncio
-async def test_modal_edit_vraagt_ook_buiten_productie_om_de_markering() -> None:
-    """Sinds RC-392 vraagt ELKE markeringswijziging een step-up, niet alleen een verlaging
-    uit productie: wie de markering zet, bepaalt waar de productieregels gelden."""
+async def test_modal_edit_needs_nothing_for_a_switch_outside_production() -> None:
+    """Van test naar ontwikkeling is een deployment schrijven, geen markering zetten: alleen
+    een overgang van of naar productie vraagt de step-up."""
     stored = _productieproject()
     stored["deployments"][0]["environment"] = "test"
     na = copy.deepcopy(stored)
@@ -173,8 +173,9 @@ async def test_modal_edit_vraagt_ook_buiten_productie_om_de_markering() -> None:
 
     response = await _modal_edit(na_wijziging=na, verse_step_up=False, manager=manager, dialoog=dialoog)
 
-    assert response == "<dialoog/>"
-    manager.save_and_commit_project.assert_not_awaited()
+    assert response is None
+    dialoog.assert_not_awaited()
+    manager.save_and_commit_project.assert_awaited_once()
 
 
 @pytest.mark.asyncio

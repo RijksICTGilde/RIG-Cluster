@@ -687,20 +687,23 @@ class EnvironmentOptionsProvider:
         self.current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        # Productie is alleen te kiezen voor wie de markering mag zetten (environment.set);
-        # anders weigert het opslaan pas achteraf. Staat de deployment er al op, dan blijft
-        # de optie gewoon gekozen.
-        production_locked = self.current_value != Omgeving.PRODUCTIE.value and not actor_may_set(
-            Action.ENVIRONMENT_SET, self.yaml_data, environment=Omgeving.PRODUCTIE
-        )
+        # Van en naar productie gaat alleen voor wie de markering mag zetten
+        # (environment.set); anders weigert het opslaan pas achteraf. De huidige waarde
+        # blijft altijd te kiezen.
+        may_set = actor_may_set(Action.ENVIRONMENT_SET, self.yaml_data, environment=Omgeving.PRODUCTIE)
+        in_production = self.current_value == Omgeving.PRODUCTIE.value
+
+        def option(value: str, label: str, *, production: bool) -> dict[str, Any]:
+            if may_set or production == in_production:
+                return {"value": value, "label": label}
+            return {"value": value, "label": f"{label} (alleen ops)", "disabled": True}
+
         # .value: elke andere provider levert een gewone string, en een enumlid dat
         # ergens als waarde belandt breekt de YAML-dumper (gemeten in e257cee79).
         return [
-            {"value": "", "label": f"{ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT]} (standaard)"},
+            option("", f"{ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT]} (standaard)", production=False),
             *(
-                {"value": value.value, "label": f"{label} (alleen ops)", "disabled": True}
-                if value is Omgeving.PRODUCTIE and production_locked
-                else {"value": value.value, "label": label}
+                option(value.value, label, production=value is Omgeving.PRODUCTIE)
                 for value, label in ENVIRONMENT_LABELS.items()
             ),
         ]

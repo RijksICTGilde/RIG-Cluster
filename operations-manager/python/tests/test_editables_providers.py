@@ -95,7 +95,8 @@ _PROJECT = {
 
 
 class TestProductionOnlyForOps:
-    """Productie is alleen te kiezen voor wie environment.set heeft; anders weigert pas het opslaan."""
+    """Van en naar productie is alleen te kiezen voor wie environment.set heeft; anders
+    weigert pas het opslaan."""
 
     @pytest.fixture(autouse=True)
     def users(self):
@@ -132,12 +133,26 @@ class TestProductionOnlyForOps:
 
         assert "disabled" not in production
 
-    def test_deployment_already_on_production_keeps_its_choice(self):
+    def test_developer_keeps_the_other_stages(self):
+        set_actor(user_actor("dev@example.org"))
+
+        options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="acceptatie").get_options()
+
+        assert [o["value"] for o in options if "disabled" not in o] == ["", "ontwikkeling", "test", "acceptatie"]
+
+    def test_developer_cannot_leave_production(self):
         set_actor(user_actor("dev@example.org"))
 
         options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="productie").get_options()
 
-        assert "disabled" not in self._production(options)
+        assert [o["value"] for o in options if "disabled" not in o] == ["productie"]
+
+    def test_ops_can_leave_production(self):
+        set_actor(user_actor("ops@example.org"))
+
+        options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="productie").get_options()
+
+        assert not any("disabled" in o for o in options)
 
     def test_without_a_signed_in_person_everything_stays_open(self):
         """Geen scherm voor een gebruiker; de handhaving beslist bij het opslaan."""
