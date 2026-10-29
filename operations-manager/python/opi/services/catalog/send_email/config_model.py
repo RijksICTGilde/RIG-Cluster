@@ -1,39 +1,29 @@
 """Typed config model for the ``send-email`` service.
 
-Everything sits on the PROJECT layer: an account belongs to a project, not to one
-container, and every component of the project that ticks the service uses that same
-account. What a user decides is small on purpose -- the identity rules that make mail
-arrive (envelope rewriting, the pinned ``From:`` domain, DKIM) are enforced on the relay
-and are deliberately not negotiable per project (``plans/mailrelay.md``).
+Everything sits on the PROJECT layer: one account per project, used by all components.
+Rules that make mail arrive (envelope, pinned domain, DKIM) are enforced on the relay,
+not configurable per project (``plans/mailrelay.md``).
 
-``accounts`` and ``approval`` are the platform's side of the block: OPI creates the account
-on the relay and writes down what it created, and an administrator decides whether the
-project may send at all. Both are marked ``PLATFORM_MANAGED`` so the API can neither clear
-nor rewrite them -- the same protection the Keycloak realm block got, declared here from the
-start instead of repaired afterwards (aanvulling 5 in the plan). ``approval`` in particular:
-a project that could set its own status to ``approved`` would be no approval at all.
-
-There is no field for the sender ADDRESS, and there deliberately is not going to be one:
-the platform composes it from the project name and the relay writes it into the ``From:``
-header itself. ``from-name`` (the display name) is all a project chooses -- and since
-RC-145 it is actually READ, which is why it now carries validation: it goes straight into
-a mail header.
+``accounts``, ``approval``, ``from-address-approval`` and ``messages-per-day-approval``
+are platform-managed:
+``PLATFORM_MANAGED`` marked so the API can neither clear nor rewrite them. A project
+chooses two things that go straight to mail headers and therefore carry validation:
+``from-name`` and ``from-address`` (latter only takes effect after admin approval).
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from opi.services.config_managed import PLATFORM_MANAGED
+from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH, MAIL_SENDER_DOMAIN_ALLOWLIST, mail_sender_address_error
 
-#: Upper bound on a project's daily budget, and the number the relay really enforces: it
-#: is the per-account rate in ``queue.limiter.inbound.account`` in the relay's configmap.
-#: Change one and the other moves with it. It is also the agreement with the mail team --
-#: the sum of the accounts must stay under the volume that was agreed, and a single project
-#: asking for a number with an extra zero is exactly how that is broken.
-MAX_MESSAGES_PER_DAY = 5000
+#: Schemaplafond tegen tikfouten, niet tegen te grote aanvragen. De relay dwingt het getal
+#: per account af (``queue.limiter.inbound.zad-<account>``), dus dit getal is niet meer het
+#: echte plafond.
+MAX_MESSAGES_PER_DAY = 1_000_000
 
 #: Longest display name a project may choose. Not a technical ceiling (RFC 5322 allows a
 #: much longer one) but a human one: a name is what the recipient reads next to the
@@ -61,6 +51,25 @@ MAX_FROM_NAME_LENGTH = 64
 #: what a stored project file is validated with, and the form reuses it through
 #: ``ModelFieldValidator`` so there is one definition and not two that drift.
 FROM_NAME_PATTERN = r'^[^@<>"$\\\x00-\x1F\x7F]*$'
+
+
+def _valid_sender_address(address: str) -> str:
+    """De regel uit ``opi.utils.naming``, zodat het model en de connector er een delen."""
+    error = mail_sender_address_error(address)
+    if error:
+        raise ValueError(error)
+    return address
+
+
+#: De uitleg die het formulier en de API geven als een adres niet mag. Een zin voor alle
+#: weigeringen samen: de pydantic-melding is Engels en praat over patronen.
+_ALLOWED_DOMAINS = ", ".join(sorted(MAIL_SENDER_DOMAIN_ALLOWLIST))
+FROM_ADDRESS_MESSAGE = (
+    f"Het afzenderadres moet een adres in {_ALLOWED_DOMAINS} zijn, met voor de @ hoogstens "
+    f"{MAIL_LOCAL_PART_MAX_LENGTH} tekens uit kleine letters, cijfers en . _ + - "
+    "(bijvoorbeeld noreply@rijksoverheid.nl). Een ander domein lijnt niet uit met de "
+    "envelope en komt niet door DMARC."
+)
 
 
 class SendEmailAccount(BaseModel):
@@ -103,6 +112,29 @@ class SendEmailApproval(BaseModel):
     )
 
 
+class SendEmailValueApproval(BaseModel):
+    """Whether an administrator approved a requested VALUE (address or budget).
+
+    Hangs on the VALUE, not the project: if approved for one value and the project changes
+    it, that is a new request. Both address and budget use this shape; both are text so a
+    single shape fits both.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    value: str = Field(description="The value this verdict is about. Written by the platform's approval flow.")
+    status: str = Field(description="requested, approved or denied. Written by the platform's approval flow.")
+    approved_value: str | None = Field(
+        default=None,
+        alias="approved-value",
+        description="The last value an administrator approved, which keeps applying while a new request is open.",
+    )
+    history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Verdict history: one {date, status, by, message} entry per decision.",
+    )
+
+
 class SendEmailConfig(BaseModel):
     """What a project may decide about its outgoing mail."""
 
@@ -120,14 +152,23 @@ class SendEmailConfig(BaseModel):
             ),
         )
     )
+    from_address: Annotated[str, AfterValidator(_valid_sender_address)] | None = Field(
+        default=None,
+        alias="from-address",
+        description=(
+            "Sender address this project asks to send from, e.g. 'noreply@rijksoverheid.nl'. It only "
+            "takes effect once a platform administrator has approved that exact value; until then the "
+            "platform composes the address from the project name. Leave it out for the composed address. "
+            f"{FROM_ADDRESS_MESSAGE}"
+        ),
+    )
     messages_per_day: Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)] | None = Field(
         default=None,
         alias="messages-per-day",
         description=(
-            f"Messages this project may send per day, at most {MAX_MESSAGES_PER_DAY}. "
-            "Leave it out for the platform default. This is the agreed budget, recorded on the account: "
-            f"the relay itself enforces one ceiling of {MAX_MESSAGES_PER_DAY} per account per day, because "
-            "an account on the relay carries no limit of its own."
+            "Messages per day, enforced by the relay per account. Up to and including the platform "
+            "default, the project chooses; above that is a REQUEST requiring approval. The "
+            f"{MAX_MESSAGES_PER_DAY} ceiling only catches typos."
         ),
     )
     approval: SendEmailApproval | None = Field(
@@ -137,6 +178,25 @@ class SendEmailConfig(BaseModel):
             "Whether an administrator has allowed this project to send mail. Written by the platform: "
             "until it says approved, no account is created, no network policy is written and no SMTP "
             "credentials reach the deployment."
+        ),
+    )
+    from_address_approval: SendEmailValueApproval | None = Field(
+        default=None,
+        alias="from-address-approval",
+        json_schema_extra={PLATFORM_MANAGED: True},
+        description=(
+            "Whether an administrator has allowed the requested sender address. Written by the platform: "
+            "until it says approved for exactly the address in from-address, the relay keeps deriving the "
+            "address from the project name."
+        ),
+    )
+    messages_per_day_approval: SendEmailValueApproval | None = Field(
+        default=None,
+        alias="messages-per-day-approval",
+        json_schema_extra={PLATFORM_MANAGED: True},
+        description=(
+            "Whether an administrator approved the requested budget. Until approved for exactly the "
+            "requested number, the relay enforces the last approved number or the default."
         ),
     )
     accounts: list[SendEmailAccount] = Field(

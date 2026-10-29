@@ -1,6 +1,6 @@
 # Een eigen afzenderadres op aanvraag
 
-**Status**: ontwerp, niets gebouwd.
+**Status**: GEBOUWD in RC-399 (29 oktober 2026). Wat er staat beschrijft `features/send-email.md`; dit document blijft staan voor de afwegingen eronder en voor wat er bewust niet is gebouwd. Twee besluiten van 29 oktober 2026 wijken af van de fasering hieronder: de vraag aan het mailteam uit fase 1 is geen voorwaarde geweest (welke adressen er mogen, bewaakt de goedkeurder), en een uniciteitscontrole tussen projecten is er niet gekomen (twee projecten met hetzelfde adres is het verwachte geval; de herleidbaarheid zit in de envelope en in `X-ZAD-Project`).
 
 **Meetbasis**: commit `06f3c3edd` van 22 september 2026. Alle veldnamen, sleutels, labels en foutteksten hieronder zijn een VOORSTEL, tenzij er een codeanker bij staat.
 
@@ -16,7 +16,7 @@ De aanleiding is een terugkerende verwarring die het waard is om apart te noemen
 
 **De weergavenaam wordt wel ingeladen.** Die valt nergens uit af te leiden, dus OPI genereert er een sieve-script voor (`zad-afzenders`) en schrijft dat via de management-API weg, met een sleutel per account onder `zad.afzender.naam.` (`MAIL_SENDER_NAME_PREFIX` in `opi/connectors/mail.py`). Een opzoektabel in het geheugen kon niet: die wordt maar een keer gebouwd en een reload ververst hem niet, gemeten op 20 augustus 2026 tegen v0.11.8.
 
-**Het mechanisme voor een AFWIJKEND adres bestaat al en heeft nul gebruikers.** RC-159 zette een tweede sleutelreeks naast de namen, `zad.afzender.adres.<account>` (`MAIL_SENDER_ADDRESS_PREFIX` in `opi/connectors/mail.py`). Een account met zo'n sleutel krijgt in hetzelfde script een eigen `From:`-adres, terwijl de envelope de afgeleide waarde houdt. De enige klant was het Keycloak-account, en RC-175 heeft dat teruggedraaid: inlogpost vertrekt sinds die wijziging onder het kale basisadres van het cluster en onderscheidt zich alleen nog door `MAIL_KEYCLOAK_FROM_NAME` (`opi/core/cluster_config.py:916`, `opi/manager/mail_manager.py:445`). De reeks staat er dus nog, met een allowlist eronder (`MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})`) en met de expliciete opmerking dat niets anders dan het platform hem bedient.
+**Het mechanisme voor een AFWIJKEND adres bestaat al en heeft nul gebruikers.** RC-159 zette een tweede sleutelreeks naast de namen, `zad.afzender.adres.<account>` (`MAIL_SENDER_ADDRESS_PREFIX` in `opi/connectors/mail.py`). Een account met zo'n sleutel krijgt in hetzelfde script een eigen `From:`-adres, terwijl de envelope de afgeleide waarde houdt. De enige klant was het Keycloak-account, en RC-175 heeft dat teruggedraaid omdat het kale basisadres overal het gewenste adres was, niet omdat het mechanisme tekortschoot (commit `5197dec03`). Daarbij is bewust opgegeven dat een bounce nog te herleiden is tot inlogpost: inlogpost vertrekt sinds die wijziging onder het kale basisadres van het cluster en onderscheidt zich alleen nog door `MAIL_KEYCLOAK_FROM_NAME` (`opi/core/cluster_config.py:916`, `opi/manager/mail_manager.py:445`). De reeks staat er dus nog, met een allowlist eronder (`MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})`) en met de expliciete opmerking dat niets anders dan het platform hem bedient.
 
 **Let op**: dezelfde verouderde claim staat nog in de configuratie van de relay zelf, waar het commentaar bij de identiteitsregels zegt dat het vandaag voor precies een account geldt, dat van Keycloak (`infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml`, regel 136). Die is bewust niet meegenomen: dat bestand zit in een configMapGenerator, dus een gewijzigd commentaar verandert de hash en rolt de relay opnieuw uit. Neem hem mee in een wijziging die die uitrol toch al veroorzaakt.
 
@@ -44,7 +44,7 @@ Een tweede `ApprovalSpec` op de dienst `send-email`, op de projectlaag, over een
 | aanvragen | `ensure_domain_requests` | het aanzetten van de dienst is de aanvraag | het opslaan van het veld is de aanvraag, via dezelfde `post_merge`-haak (`send_email/__init__.py:193`) |
 | poort | zonder goedkeuring wordt geen ingress gegenereerd | zonder goedkeuring geen secret en geen `envFrom` | zonder goedkeuring schrijft OPI de relaysleutel niet |
 
-Vier dingen die erbij horen en die niet uit de tabel volgen:
+Zes dingen die erbij horen en die niet uit de tabel volgen:
 
 1. **De poort zit in de schrijfweg, niet in de manifestlaag.** Bij een domein is de goedkeuring de enige waarheid, want zonder goedkeuring bestaat de ingress niet. Hier schrijft OPI een sleutel naar een relay die gelooft wat er staat. De controle hoort dus in `MailManager.ensure_account` waar `sender_address` wordt doorgegeven (`opi/manager/mail_manager.py:186`), op het pad dat werkelijk naar `set_sender` gaat, en niet alleen in `contribute_manifest_context`.
 
@@ -52,7 +52,21 @@ Vier dingen die erbij horen en die niet uit de tabel volgen:
 
 3. **Het lokale deel wordt gevalideerd zoals de weergavenaam.** Er staat al een nauwere regel dan RFC 5321 in de connector, en die bestaat omdat de waarde in een sieve-stringliteraal terechtkomt. Diezelfde regel moet gelden op het formulier en in de API, langs `ModelFieldValidator`, zodat het formulier niets toelaat wat de verwerking later laat struikelen. Dat patroon staat er voor `from-name` al (`opi/services/catalog/send_email/editables.py:28`).
 
-4. **Intrekken moet werken.** Een goedkeuring die wordt teruggedraaid moet de sleutel op de relay WISSEN, niet alleen het veld in het projectbestand. Anders blijft een project versturen onder een adres dat het niet meer mag voeren, en dat merkt niemand. `set_sender` kent een lege waarde als "leid het af", dus de weg bestaat; de herhaalbaarheid ervan is het punt dat getest moet worden.
+4. **Het project ziet wat er geldt.** Bij de dienst staan de weergavenaam en het afzenderadres naast elkaar. Het adres toont de gevraagde waarde met de status van de aanvraag (`requested`, `approved`, `denied`), en zolang er geen goedgekeurd adres is het afgeleide adres waaronder de post werkelijk vertrekt. Dat laatste is wat `SMTP_FROM` vandaag al aan de applicatie meegeeft, dus het scherm en de applicatie noemen hetzelfde adres.
+
+5. **Een X-header noemt het project.** Met een eigen of gedeeld adres zegt de `From:` niet meer van welk project een bericht komt. De envelope houdt het afgeleide adres en komt bij de ontvanger als `Return-Path:` terug, maar dat hangt af van de laatste mailserver. Daarom zet de relay een eigen header, in het sieve-script `identiteitsregels` naast de `From:`-regel. De naam `X-ZAD-Project` is een voorstel.
+
+   ```sieve
+   let "project" "strip_prefix(account, 'project-')";
+   deleteheader "X-ZAD-Project";
+   if eval "starts_with(account, 'project-')" {
+       addheader :last "X-ZAD-Project" "${project}";
+   }
+   ```
+
+   De waarde komt uit `authenticated_as`, dus uit de login op de relay en niet uit het bericht. De `deleteheader` ervoor is de kern: zonder die regel zet een applicatie zelf een `X-ZAD-Project` en voert ze de naam van een ander project. De `let` staat buiten de `if`, want een `let` binnen een blok overleeft dat blok niet (zie het commentaar bij `projectadres` in hetzelfde script). Platformaccounts krijgen de header niet: die versturen niet namens een project. Of de upstream onbekende X-headers doorlaat, is niet gemeten; dat hoort bij de toets in fase 5.
+
+6. **Intrekken moet werken.** Een goedkeuring die wordt teruggedraaid moet de sleutel op de relay WISSEN, niet alleen het veld in het projectbestand. Anders blijft een project versturen onder een adres dat het niet meer mag voeren, en dat merkt niemand. `set_sender` kent een lege waarde als "leid het af", dus de weg bestaat; de herhaalbaarheid ervan is het punt dat getest moet worden.
 
 ## Fasering
 
@@ -60,7 +74,7 @@ Vier dingen die erbij horen en die niet uit de tabel volgen:
 2. **Het commentaar bij de relay rechtzetten.** De docstring in `opi/connectors/mail.py` is op 22 september 2026 al bijgewerkt; wat rest is de identiteitsregel in `config.toml`, en die wacht op een uitrol die er toch al is. Toets: de tekst klopt met wat `ensure_keycloak_account` doorgeeft.
 3. **Het veld plus de goedkeuring.** Editable, validatie via het model, `ApprovalSpec` erbij op de projectlaag, aanvragen via de bestaande `post_merge`-haak. Toets: een opgeslagen adres verschijnt in dezelfde beheerpagina als een domeinaanvraag, en een oordeel landt in het projectbestand met geschiedenis.
 4. **De poort in de schrijfweg.** `sender_address` alleen doorgeven bij goedkeuring, intrekken wist de sleutel. Toets: twee opeenvolgende verwerkingen schrijven niets extra's, een ingetrokken goedkeuring laat het volgende bericht weer onder het afgeleide adres vertrekken, gemeten in de Mailpit-sink op de sandbox.
-5. **De uitlijning aantonen.** Een bericht vanaf een project met een eigen adres, met de kopregels uit de sink in de PR: `From:` op het goedgekeurde adres, `Return-Path:` op het afgeleide adres, beide in hetzelfde domein.
+5. **De uitlijning aantonen.** Een bericht vanaf een project met een eigen adres, met de kopregels uit de sink in de PR: `From:` op het goedgekeurde adres, `Return-Path:` op het afgeleide adres, beide in hetzelfde domein, en `X-ZAD-Project` met de projectnaam. Een bericht dat zelf een `X-ZAD-Project` met een andere naam meestuurt, komt aan met alleen de juiste. Daarna een bericht naar een extern adres via de echte upstream, om te zien of de header daar blijft staan.
 
 ## Valkuilen
 
