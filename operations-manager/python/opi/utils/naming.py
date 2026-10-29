@@ -721,6 +721,47 @@ def generate_mail_account_name(project_name: str) -> str:
 #: Longest local part an e-mail address may carry (RFC 5321, section 4.5.3.1.1).
 MAIL_LOCAL_PART_MAX_LENGTH = 64
 
+#: De domeinen waarin een ingesteld afzenderadres mag liggen.
+#:
+#: Een instelbaar afzenderadres is een spoofingknop, en sinds RC-399 bedient een project
+#: hem zelf: het vraagt een adres aan en een platformbeheerder keurt het goed. Deze lijst
+#: is wat de goedkeurder niet hoeft te bewaken. Uitlijning met de envelope is wat een
+#: bericht door DMARC krijgt (wij ondertekenen niet met DKIM), dus een adres buiten dit
+#: domein zou niet alleen andermans identiteit zijn, het zou ook bij elke ontvanger buiten
+#: de Rijksoverheid stuiten.
+MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})
+
+#: Het lokale deel van een ingesteld afzenderadres. Bewust nauwer dan RFC 5321 toelaat: een
+#: lokaal deel tussen aanhalingstekens mag daar een spatie, een aanhalingsteken en een
+#: backslash bevatten, en dit adres gaat een sieve-stringliteraal in.
+_MAIL_SENDER_LOCAL_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9._+-]*\Z")
+
+
+def mail_sender_address_error(address: str) -> str | None:
+    """Waarom dit afzenderadres niet gebruikt mag worden, of ``None`` als het mag.
+
+    DE ENE REGEL, en daarom hier en niet in de connector: het formulier, de API en de
+    connector toetsen hiermee, zodat een adres dat het formulier aanneemt de verwerking
+    niet halverwege laat struikelen. Een lege waarde is geldig en betekent "leid het adres
+    af uit de accountnaam".
+    """
+    if not address:
+        return None
+    local, at, domain = address.partition("@")
+    if not at:
+        return "een afzenderadres hoort een @ te bevatten"
+    if not _MAIL_SENDER_LOCAL_PATTERN.match(local):
+        return "het deel voor de @ mag alleen kleine letters, cijfers en . _ + - bevatten"
+    if len(local) > MAIL_LOCAL_PART_MAX_LENGTH:
+        return f"het deel voor de @ is langer dan {MAIL_LOCAL_PART_MAX_LENGTH} tekens (RFC 5321)"
+    if domain not in MAIL_SENDER_DOMAIN_ALLOWLIST:
+        return (
+            f"alleen een adres in {', '.join(sorted(MAIL_SENDER_DOMAIN_ALLOWLIST))} is toegestaan: "
+            "een ander domein lijnt niet uit met de envelope en komt niet door DMARC"
+        )
+    return None
+
+
 #: The bare sender address every cluster uses, minus its domain. Only used to work out the
 #: label ceiling below; the address itself comes from ``cluster_config``.
 _MAIL_SENDER_LOCAL_PART = "noreply-rijksapp"

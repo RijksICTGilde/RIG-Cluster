@@ -315,3 +315,240 @@ def service_use_approval(
         is_approved=_is_approved,
         ensure_requested=_ensure_requested,
     )
+
+
+#: Achtervoegsel van het goedkeuringsblok bij een waarde: ``from-address`` ->
+#: ``from-address-approval``. Een vaste vorm, zodat een lezer van een projectbestand bij
+#: elk aanvraagbaar veld weet waar het oordeel erover staat.
+VALUE_APPROVAL_SUFFIX = "-approval"
+
+#: Sleutel waaronder het blok de LAATST goedgekeurde waarde onthoudt. Het oordeel hangt aan
+#: de waarde, dus een gewijzigde waarde is een nieuwe aanvraag; zonder dit geheugen zou een
+#: openstaande aanvraag ook weghalen wat er al gold.
+LAST_APPROVED_KEY = "approved-value"
+
+
+@dataclass(frozen=True)
+class ConfigValueApproval:
+    """De complete vorm van "ja, dit project mag DEZE WAARDE gebruiken".
+
+    Wat :func:`config_value_approval` teruggeeft. Het verschil met
+    :class:`ServiceUseApproval` is waar het oordeel aan hangt: daar aan het project, hier
+    aan de waarde zelf, zodat een goedgekeurde waarde die het project daarna wijzigt een
+    nieuwe aanvraag is en geen oordeel dat stilzwijgend meereist.
+
+    Attributes:
+        spec: de :class:`ApprovalSpec` voor ``config_approvals()``.
+        approved_value: DE POORT. De gevraagde waarde als die voor PRECIES DIE WAARDE is
+            goedgekeurd, anders leeg.
+        last_approved_value: de laatste waarde waarover een beheerder "ja" zei, ook als het
+            project daarna iets anders vroeg. Leeg als er nooit iets is goedgekeurd.
+        ensure_requested: het veld invullen IS de aanvraag; dit legt hem vast.
+            Toestandsvormig en dus idempotent.
+    """
+
+    spec: ApprovalSpec
+    approved_value: Callable[[dict[str, Any]], str]
+    last_approved_value: Callable[[dict[str, Any]], str]
+    ensure_requested: Callable[[dict[str, Any]], None]
+
+
+def config_value_approval(
+    service_type: ServiceType,
+    *,
+    key: str,
+    label: str,
+    requested_value: Callable[[dict[str, Any]], str],
+    describe: Callable[[str], str],
+    consequence: Callable[[dict[str, Any], dict[str, Any]], str],
+    subject: Callable[[dict[str, Any], str], str] | None = None,
+    approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
+) -> ConfigValueApproval:
+    """De goedkeuring op een WAARDE in het configblok van een dienst.
+
+    De tweede vorm naast :func:`service_use_approval`, en om dezelfde reden een declaratie:
+    met de hand is dit acht functies (lezen, de status, de lijst, vastleggen, de mededeling,
+    de aanvraag), en de tweede waarde die hem nodig heeft zou ze kopieren.
+
+    De toestand staat op ``services/[<dienst>]/config/<key>-approval``, met ``value``
+    (waarover is geoordeeld), ``status``, ``approved-value`` en ``history``.
+
+    Args:
+        service_type: de dienst waar de goedkeuring bij hoort.
+        key: de configuratiesleutel met de GEVRAAGDE waarde.
+        label: het opschrift van de aanvraag in de beheerpagina.
+        requested_value: de gevraagde waarde als tekst, leeg als er niets is gevraagd. De
+            dienst bepaalt wat "niets gevraagd" is: een leeg veld, of een getal dat binnen
+            de standaard valt en dus geen goedkeuring nodig heeft.
+        describe: de gevraagde waarde als onderwerp van een zin, bijvoorbeeld
+            "Het afzenderadres noreply@rijksoverheid.nl". De drie mededelingen (afgewezen,
+            aangevraagd, nog niet aangevraagd) worden ermee gebouwd.
+        consequence: wat het voor de deployment BETEKENT zolang de waarde niet is
+            goedgekeurd. Leeg mag: dan staat er alleen de stand.
+        subject: hoe de aanvraag in de beheerpagina heet. Standaard de waarde zelf; een
+            dienst die er context bij wil (het getal dat nu geldt) schrijft het hier.
+        approver: wie mag beslissen.
+    """
+    naam = service_type.value
+    approval_key = f"{key}{VALUE_APPROVAL_SUFFIX}"
+
+    def _entry(project_data: dict[str, Any]) -> dict[str, Any] | None:
+        for entry in project_data.get("services", []) or []:
+            if service_entry_name(entry) == naam and isinstance(entry, dict):
+                return entry
+        return None
+
+    def _selected(project_data: dict[str, Any]) -> bool:
+        return naam in [service_entry_name(entry) for entry in project_data.get("services", []) or []]
+
+    def _block(project_data: dict[str, Any]) -> dict[str, Any] | None:
+        entry = _entry(project_data)
+        config = entry.get("config") if entry else None
+        block = config.get(approval_key) if isinstance(config, dict) else None
+        return block if isinstance(block, dict) else None
+
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+        """De CHECK. Een oordeel over een ANDERE waarde telt niet voor deze waarde."""
+        block = _block(project_data)
+        wanted = str(value) if value else requested_value(project_data)
+        if block is None or str(block.get("value", "")) != wanted:
+            return ApprovalStatus.NONE
+        try:
+            return ApprovalStatus(block.get("status", ""))
+        except ValueError:
+            return ApprovalStatus.NONE
+
+    def _approved_value(project_data: dict[str, Any]) -> str:
+        value = requested_value(project_data)
+        if not value:
+            return ""
+        return value if _status_of(project_data, value) is ApprovalStatus.APPROVED else ""
+
+    def _last_approved_value(project_data: dict[str, Any]) -> str:
+        return str((_block(project_data) or {}).get(LAST_APPROVED_KEY) or "")
+
+    def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+        """De LIJST. Een item zodra een project een waarde heeft gevraagd.
+
+        De beoordeelde waarde staat in ``domain``: dat veld POST het sjabloon wel en
+        ``subject`` niet, dus alleen zo weet het ingestuurde oordeel WELKE waarde het betrof.
+        """
+        block = _block(project_data)
+        if block is None:
+            return []
+        value = str(block.get("value", ""))
+        return [
+            {
+                "subject": subject(project_data, value) if subject else value,
+                "domain": value,
+                "name": project_data.get("name", ""),
+                "current_status": block.get("status", ""),
+                "status": "skip",
+                "history": block.get("history", []),
+            }
+        ]
+
+    def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+        """De RECORD. Het oordeel landt in het goedkeuringsblok, met geschiedenis.
+
+        Een oordeel over een andere waarde dan het blok nu draagt, schrijft niets: het
+        project kan het veld wijzigen tussen het renderen van de lijst en het insturen van
+        het oordeel.
+        """
+        block = _block(project_data)
+        if block is None or item.get("domain", "") != str(block.get("value", "")):
+            return
+        status = item.get("status", "skip")
+        block["status"] = status
+        if status == ApprovalStatus.APPROVED.value:
+            block[LAST_APPROVED_KEY] = block.get("value", "")
+        elif status == ApprovalStatus.DENIED.value and str(block.get(LAST_APPROVED_KEY, "")) == str(
+            block.get("value", "")
+        ):
+            # Afwijzen van precies de staande goedkeuring neemt die goedkeuring terug. Zonder
+            # dit blijft het een recht dat geen oordeel afneemt: het project keurt de waarde
+            # zelf weer goed door hem te wijzigen en terug te zetten, en een goedgekeurd
+            # getal is niet in te trekken. Een afwijzing van een HOGERE gevraagde waarde
+            # raakt de staande goedkeuring niet.
+            block.pop(LAST_APPROVED_KEY, None)
+        block.setdefault("history", []).append(history_entry)
+
+    def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
+        """De NOTICE. Wat het project merkt zolang zijn waarde niet is goedgekeurd."""
+        value = requested_value(project_data)
+        if not _selected(project_data) or not value:
+            return []
+        status = _status_of(project_data, value)
+        if status is ApprovalStatus.APPROVED:
+            return []
+
+        if status is ApprovalStatus.DENIED:
+            text = f"{describe(value)} is afgewezen."
+        elif status is ApprovalStatus.REQUESTED:
+            text = f"{describe(value)} is aangevraagd en wacht op goedkeuring."
+        else:
+            text = f"{describe(value)} is nog niet aangevraagd."
+        gevolg = consequence(project_data, deployment)
+        history = (_block(project_data) or {}).get("history") or []
+        verdict = history[-1] if isinstance(history, list) and history and isinstance(history[-1], dict) else {}
+        return [
+            {
+                "subject": value,
+                "status": status.value,
+                "text": f"{text} {gevolg}" if gevolg else text,
+                "by": verdict.get("by"),
+                "date": verdict.get("date"),
+                "message": verdict.get("message"),
+            }
+        ]
+
+    def _ensure_requested(project_data: dict[str, Any]) -> None:
+        """Een opgegeven waarde IS de aanvraag, en een gewijzigde waarde is een nieuwe.
+
+        Toestandsvormig: lees wat er staat en breng het goedkeuringsblok in lijn met het
+        veld. Het veld leegmaken haalt het blok weg en trekt de aanvraag daarmee in.
+        """
+        entry = _entry(project_data)
+        if entry is None:
+            return
+        config = entry.get("config")
+        if not isinstance(config, dict):
+            return
+
+        value = requested_value(project_data)
+        if not value:
+            config.pop(approval_key, None)
+            return
+
+        block = _block(project_data)
+        if block is not None and str(block.get("value", "")) == value:
+            return
+        # Een nieuwe waarde krijgt een lege geschiedenis: de vorige oordelen gingen over een
+        # andere waarde, en meeslepen zou ze bij deze waarde laten lezen als een oordeel
+        # erover. De laatst goedgekeurde waarde gaat WEL mee: die is wat er nu geldt zolang
+        # dit nieuwe verzoek openstaat.
+        laatst = (block or {}).get(LAST_APPROVED_KEY)
+        # Terug bij de waarde die een beheerder al goedkeurde: dat is de staande goedkeuring
+        # en geen aanvraag. Aangevraagd zou het project een beslissing laten wachten op een
+        # waarde die het al mag, en de poort op de waarde zou hem dichthouden.
+        staand = bool(laatst) and str(laatst) == value
+        status = ApprovalStatus.APPROVED if staand else ApprovalStatus.REQUESTED
+        nieuw: dict[str, Any] = {"value": value, "status": status.value, "history": []}
+        if laatst:
+            nieuw[LAST_APPROVED_KEY] = laatst
+        config[approval_key] = nieuw
+
+    return ConfigValueApproval(
+        spec=ApprovalSpec(
+            key=approval_key,
+            label=label,
+            approver=approver,
+            status_of=_status_of,
+            list_items=_items,
+            record=_record,
+            notices_for=_notices,
+        ),
+        approved_value=_approved_value,
+        last_approved_value=_last_approved_value,
+        ensure_requested=_ensure_requested,
+    )

@@ -19,7 +19,7 @@ import asyncio
 import inspect
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
@@ -28,8 +28,8 @@ import yaml
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 from opi.connectors.mail import (
+    MAIL_LIMITER_PREFIX,
     MAIL_SENDER_ADDRESS_PREFIX,
-    MAIL_SENDER_DOMAIN_ALLOWLIST,
     MAIL_SENDER_NAME_PREFIX,
     MAIL_SENDER_SCRIPT_NAME,
     MAIL_SENDER_TABLE_KEY,
@@ -59,6 +59,7 @@ from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     MAIL_LOCAL_PART_MAX_LENGTH,
     MAIL_PROJECT_ACCOUNT_PREFIX,
+    MAIL_SENDER_DOMAIN_ALLOWLIST,
     generate_mail_account_name,
 )
 from opi.utils.secrets import SendEmailSecret
@@ -148,7 +149,9 @@ class TestTheAccountBlockIsPlatformData:
     def test_the_platform_written_fields_are_declared(self) -> None:
         """``approval`` too, and that one is not a nicety: a project that could set its own
         status to approved would make the approval no approval at all."""
-        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset({"accounts", "approval"})
+        assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset(
+            {"accounts", "approval", "from-address-approval", "messages-per-day-approval"}
+        )
 
     def test_the_user_fields_are_not(self) -> None:
         managed = SERVICE.platform_managed_fields(ConfigLayer.PROJECT)
@@ -249,6 +252,7 @@ class TestTheOneAccountPath:
         # De weergavenaam is het tweede dat de relay moet horen: het ADRES leidt hij zelf
         # af uit de accountnaam, de naam valt nergens uit af te leiden.
         connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
         return connector
 
     @pytest.mark.asyncio
@@ -337,7 +341,9 @@ class TestHetPlatformaccountIsGeenProjectaccount:
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
         connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
         connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
+        connector.delete_rate_limit = AsyncMock()  # type: ignore[method-assign]
         return connector
 
     def test_a_project_account_never_carries_the_platform_name(self) -> None:
@@ -989,8 +995,12 @@ class TestDeAanvraagLooptViaDeBestaandeWeg:
 
     def test_de_dienst_declareert_een_goedkeuring_op_projectniveau(self) -> None:
         specs = SERVICE.config_approvals(ConfigLayer.PROJECT)
-        assert [spec.key for spec in specs] == ["send-email"]
-        assert specs[0].approver is ApproverScope.PLATFORM_ADMIN
+        assert [spec.key for spec in specs] == [
+            "send-email",
+            "from-address-approval",
+            "messages-per-day-approval",
+        ]
+        assert {spec.approver for spec in specs} == {ApproverScope.PLATFORM_ADMIN}
 
     def test_de_dienst_staat_in_de_generieke_lijst_van_goedkeurders(self) -> None:
         """De poort op "geen tweede mechanisme": de beheerdersinterface loopt hierlangs."""
@@ -1116,6 +1126,7 @@ class TestIntrekkenRuimtOp:
         connector = MailConnector("http://relay", "admin", "geheim")
         connector.delete_principal = AsyncMock(side_effect=lambda naam: verwijderd.append(naam) or True)  # type: ignore[method-assign]
         connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
+        connector.delete_rate_limit = AsyncMock()  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         saved: list[str] = []
@@ -1127,6 +1138,9 @@ class TestIntrekkenRuimtOp:
         # niet meer kent.
         assert project["services"][0]["config"]["accounts"] == []
         assert saved, "het opruimen hoort te worden vastgelegd"
+        # En de limiter, om dezelfde reden: blijft hij staan, dan geldt hij voor het
+        # volgende account dat zo gaat heten (RC-400, toets 6).
+        connector.delete_rate_limit.assert_awaited_once_with("myproject")
 
     @pytest.mark.asyncio
     async def test_zonder_account_valt_er_niets_op_te_ruimen(self, monkeypatch) -> None:
@@ -1183,6 +1197,816 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
             _approval_items=[item],
         )
         assert "E-mail versturen" in html
+
+
+class TestDeAanvraagVoorEenEigenAdres:
+    """RC-399: een opgegeven adres IS de aanvraag, en hangt aan de WAARDE.
+
+    ``ensure_approval_requests`` roept zowel de bestaande dienstgoedkeuring als
+    ``_ensure_from_address_request`` aan; deze suite dekt de tweede.
+    """
+
+    def _blok(self, project: dict) -> dict | None:
+        from opi.services.catalog.send_email import FROM_ADDRESS_APPROVAL
+
+        return project["services"][0]["config"].get(FROM_ADDRESS_APPROVAL.spec.key)
+
+    def test_een_adres_invullen_maakt_de_aanvraag(self) -> None:
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project) == {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "requested",
+            "history": [],
+        }
+
+    def test_nog_eens_aanroepen_verandert_niets(self) -> None:
+        """Toestandsvormig: dezelfde waarde opnieuw aanbieden mag een goedkeuring niet
+        terugzetten naar 'requested'."""
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "approved",
+            "history": [{"status": "approved", "by": "beheerder@example.nl"}],
+        }
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project)["status"] == "approved"
+        assert len(self._blok(project)["history"]) == 1
+
+    def test_het_adres_wijzigen_na_goedkeuring_maakt_een_nieuwe_aanvraag(self) -> None:
+        """Dit is aanvulling 29 oktober 2026: de oude goedkeuring gaat niet mee."""
+        project = _project(config={"from-address": "nieuw@rijksoverheid.nl"})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "oud@rijksoverheid.nl",
+            "status": "approved",
+            "history": [{"status": "approved", "by": "beheerder@example.nl"}],
+        }
+        SERVICE.ensure_approval_requests(project)
+        blok = self._blok(project)
+        assert blok == {"value": "nieuw@rijksoverheid.nl", "status": "requested", "history": []}
+
+    def test_het_veld_leegmaken_trekt_de_aanvraag_in(self) -> None:
+        project = _project(config={})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "oud@rijksoverheid.nl",
+            "status": "approved",
+            "history": [{"status": "approved"}],
+        }
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project) is None
+
+    def test_zonder_de_dienst_geen_aanvraag(self) -> None:
+        project = {"name": "myproject", "services": []}
+        SERVICE.ensure_approval_requests(project)
+        assert project["services"] == []
+
+
+class TestDeAfzenderadresAanvraagInDeGenericeLijst:
+    """Dezelfde generieke weg als de dienstgoedkeuring (``collect_approval_items`` /
+    ``apply_approval_verdicts``), nu voor de tweede spec."""
+
+    def test_de_aanvraag_komt_in_de_lijst(self) -> None:
+        from opi.services.approvals import collect_approval_items
+
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        SERVICE.ensure_approval_requests(project)
+        items = [item for item in collect_approval_items(project) if item["type"] == "from-address-approval"]
+        assert len(items) == 1
+        assert items[0]["subject"] == "noreply@rijksoverheid.nl"
+        assert items[0]["name"] == "myproject"
+        assert items[0]["current_status"] == "requested"
+
+    def test_zonder_aanvraag_staat_er_niets_in_de_lijst(self) -> None:
+        from opi.services.approvals import collect_approval_items
+
+        project = _project(config={})
+        items = [item for item in collect_approval_items(project) if item["type"] == "from-address-approval"]
+        assert items == []
+
+    def test_een_oordeel_landt_in_het_blok_met_geschiedenis(self) -> None:
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        SERVICE.ensure_approval_requests(project)
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] == "from-address-approval":
+                item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+
+        blok = project["services"][0]["config"]["from-address-approval"]
+        assert blok["status"] == "approved"
+        assert blok["history"][-1]["by"] == "beheerder@example.nl"
+
+    def test_een_oordeel_over_een_ander_adres_schrijft_niets(self) -> None:
+        """De waardebinding op de SCHRIJFweg: het sjabloon POST ``subject`` niet, dus het
+        oordeel draagt het beoordeelde adres in ``domain``. Wijzigt het project het veld
+        tussen lijst en insturen, dan hoort het oordeel bij een adres dat er niet meer is."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+        from opi.services.catalog.send_email import approved_from_address
+
+        project = _project(config={"from-address": "a@rijksoverheid.nl"})
+        SERVICE.ensure_approval_requests(project)
+        ingestuurd = [
+            {k: v for k, v in item.items() if k in {"service", "type", "label", "domain", "name", "current_status"}}
+            | {"status": "approved", "message": ""}
+            for item in collect_approval_items(project)
+            if item["type"] == "from-address-approval"
+        ]
+
+        project["services"][0]["config"]["from-address"] = "b@rijksoverheid.nl"
+        SERVICE.ensure_approval_requests(project)
+        apply_approval_verdicts(project, ingestuurd, admin_email="beheerder@example.nl")
+
+        blok = project["services"][0]["config"]["from-address-approval"]
+        assert blok == {"value": "b@rijksoverheid.nl", "status": "requested", "history": []}
+        assert approved_from_address(project) == ""
+
+
+class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
+    """RC-400: hetzelfde generieke mechanisme als het afzenderadres, met een eigen regel
+    erbovenop: alleen een getal BOVEN de standaard is een aanvraag, en een goedgekeurd
+    getal laat zijn ``approved-value`` achter voor de volgende, hogere aanvraag."""
+
+    def _blok(self, project: dict) -> dict | None:
+        return project["services"][0]["config"].get("messages-per-day-approval")
+
+    def test_een_getal_binnen_de_standaard_maakt_geen_aanvraag(self) -> None:
+        project = _project(config={"messages-per-day": settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY})
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project) is None
+
+    def test_een_getal_boven_de_standaard_maakt_de_aanvraag(self) -> None:
+        project = _project(config={"messages-per-day": 5000})
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project) == {"value": "5000", "status": "requested", "history": []}
+
+    def test_verlagen_onder_de_standaard_trekt_de_aanvraag_in(self) -> None:
+        project = _project(config={"messages-per-day": 5000})
+        SERVICE.ensure_approval_requests(project)
+        project["services"][0]["config"]["messages-per-day"] = 10
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project) is None
+
+    def test_een_goedkeuring_en_een_nieuwe_hogere_aanvraag_dragen_het_laatst_goedgekeurde_getal_mee(self) -> None:
+        """De kern van de aanname in ``TestDeBudgetpoortOpDeWaarde``, maar dan getoetst via
+        de WERKELIJKE aanvraag- en oordeelcyclus in plaats van een handgebouwd blok."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = _project(config={"messages-per-day": 5000})
+        SERVICE.ensure_approval_requests(project)
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] == "messages-per-day-approval":
+                item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+
+        assert effective_messages_per_day(project) == 5000
+
+        # Het project vraagt nu meer: een NIEUWE, nog niet beoordeelde aanvraag.
+        project["services"][0]["config"]["messages-per-day"] = 20000
+        SERVICE.ensure_approval_requests(project)
+
+        blok = self._blok(project)
+        assert blok["status"] == "requested"
+        assert blok["value"] == "20000"
+        assert blok.get("approved-value") == "5000", (
+            "de laatst goedgekeurde waarde moet meegaan naar het nieuwe blok, anders verlaagt "
+            "een openstaande aanvraag wat het project al mocht"
+        )
+        assert effective_messages_per_day(project) == 5000, "tot de 20000 is goedgekeurd, geldt de oude 5000"
+
+    def test_verlagen_binnen_een_goedgekeurd_getal_vraagt_niets_en_geldt_meteen(self) -> None:
+        """Verlagen vraagt geen goedkeuring, ook niet naar een getal boven de standaard: de
+        bestaande goedkeuring blijft staan en het lagere getal geldt direct."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = _project(config={"messages-per-day": 20000})
+        SERVICE.ensure_approval_requests(project)
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] == "messages-per-day-approval":
+                item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+        assert effective_messages_per_day(project) == 20000
+
+        project["services"][0]["config"]["messages-per-day"] = 5000
+        SERVICE.ensure_approval_requests(project)
+
+        blok = self._blok(project)
+        assert blok["status"] == "approved", "een verlaging mag geen nieuwe aanvraag openen"
+        assert blok["value"] == "20000"
+        assert blok.get("approved-value") == "20000"
+        assert effective_messages_per_day(project) == 5000
+
+    def test_verlagen_met_een_openstaande_verhoging_ertussen_laat_geen_aanvraag_achter(self) -> None:
+        """Dezelfde verlaging, maar nadat het project eerst hoger vroeg. Het blok draagt dan
+        een ANDER getal, dus het wordt opnieuw gebouwd: terug bij het goedgekeurde getal is
+        dat de staande goedkeuring, niet een aanvraag over een getal dat het project al mag."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = _project(config={"messages-per-day": 20000})
+        SERVICE.ensure_approval_requests(project)
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] == "messages-per-day-approval":
+                item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+
+        project["services"][0]["config"]["messages-per-day"] = 50000
+        SERVICE.ensure_approval_requests(project)
+        assert self._blok(project)["status"] == "requested"
+
+        project["services"][0]["config"]["messages-per-day"] = 5000
+        SERVICE.ensure_approval_requests(project)
+
+        blok = self._blok(project)
+        assert blok["status"] == "approved", (
+            "de openstaande 50000 is ingetrokken, niet vervangen door een nieuwe aanvraag"
+        )
+        assert blok["value"] == "20000"
+        assert blok.get("approved-value") == "20000"
+        assert effective_messages_per_day(project) == 5000
+
+    def test_terug_naar_een_goedgekeurd_adres_vraagt_niets_opnieuw(self) -> None:
+        """Dezelfde regel op de andere waarde van deze dienst: een adres dat al eens is
+        goedgekeurd blijft goedgekeurd als het project er na een wijziging op terugkomt."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+        from opi.services.catalog.send_email import approved_from_address
+
+        project = _project(config={"from-address": "a@rijksoverheid.nl"})
+        SERVICE.ensure_approval_requests(project)
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] == "from-address-approval":
+                item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+
+        project["services"][0]["config"]["from-address"] = "b@rijksoverheid.nl"
+        SERVICE.ensure_approval_requests(project)
+        assert project["services"][0]["config"]["from-address-approval"]["status"] == "requested"
+
+        project["services"][0]["config"]["from-address"] = "a@rijksoverheid.nl"
+        SERVICE.ensure_approval_requests(project)
+
+        blok = project["services"][0]["config"]["from-address-approval"]
+        assert blok["status"] == "approved"
+        assert approved_from_address(project) == "a@rijksoverheid.nl"
+
+
+class TestDePoortOpHetAfzenderadres:
+    """``approved_from_address`` is DE POORT: alleen een adres dat voor PRECIES DEZE
+    WAARDE is goedgekeurd komt terug, in elk ander geval leeg."""
+
+    def _project_met_blok(self, adres: str, status: str | None, blok_adres: str | None = None) -> dict:
+        project = _project(config={"from-address": adres} if adres else {})
+        if status is not None:
+            project["services"][0]["config"]["from-address-approval"] = {
+                "value": blok_adres if blok_adres is not None else adres,
+                "status": status,
+                "history": [],
+            }
+        return project
+
+    def test_zonder_adres_is_er_niets_goedgekeurd(self) -> None:
+        from opi.services.catalog.send_email import approved_from_address
+
+        assert approved_from_address(self._project_met_blok("", None)) == ""
+
+    def test_aangevraagd_maar_nog_niet_goedgekeurd_geeft_niets(self) -> None:
+        from opi.services.catalog.send_email import approved_from_address
+
+        project = self._project_met_blok("noreply@rijksoverheid.nl", "requested")
+        assert approved_from_address(project) == ""
+
+    def test_afgewezen_geeft_niets(self) -> None:
+        from opi.services.catalog.send_email import approved_from_address
+
+        project = self._project_met_blok("noreply@rijksoverheid.nl", "denied")
+        assert approved_from_address(project) == ""
+
+    def test_goedgekeurd_geeft_het_adres(self) -> None:
+        from opi.services.catalog.send_email import approved_from_address
+
+        project = self._project_met_blok("noreply@rijksoverheid.nl", "approved")
+        assert approved_from_address(project) == "noreply@rijksoverheid.nl"
+
+    def test_goedgekeurd_maar_daarna_gewijzigd_geeft_niets(self) -> None:
+        """De tegenproef voor "de goedkeuring hangt aan de waarde": het goedgekeurde
+        blok noemt nog het OUDE adres, het veld noemt het NIEUWE."""
+        from opi.services.catalog.send_email import approved_from_address
+
+        project = self._project_met_blok("nieuw@rijksoverheid.nl", "approved", blok_adres="oud@rijksoverheid.nl")
+        assert approved_from_address(project) == ""
+
+
+class TestDeWachtstandVoorEenEigenAdres:
+    """Dezelfde fout als bij de dienstgoedkeuring mag hier niet terugkomen: een project
+    dat wacht moet weten onder welk adres zijn post ONDERTUSSEN vertrekt."""
+
+    def _notices(self, project: dict) -> list[dict]:
+        from opi.services.approvals import collect_deployment_approval_notices
+
+        return [
+            notice
+            for notice in collect_deployment_approval_notices(project, project["deployments"][0])
+            if notice["type"] == "from-address-approval"
+        ]
+
+    def test_zonder_adres_meldt_niets(self) -> None:
+        assert self._notices(_project(config={})) == []
+
+    @pytest.mark.parametrize(
+        ("status", "kern"),
+        [("requested", "wacht op goedkeuring"), ("denied", "afgewezen")],
+    )
+    def test_elke_ongoedgekeurde_stand_meldt_zichzelf(self, status: str, kern: str) -> None:
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": status,
+            "history": [],
+        }
+        notices = self._notices(project)
+        assert len(notices) == 1
+        assert kern in notices[0]["text"]
+
+    def test_de_melding_noemt_het_afgeleide_adres(self) -> None:
+        """Zonder dat weet de aanvrager wel dat hij wacht, maar niet onder welk adres
+        zijn post nu vertrekt."""
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "requested",
+            "history": [],
+        }
+        notices = self._notices(project)
+        assert "noreply-rijksapp+myproject@rijksoverheid.nl" in notices[0]["text"]
+
+    def test_goedgekeurd_meldt_niets(self) -> None:
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "approved",
+            "history": [],
+        }
+        assert self._notices(project) == []
+
+    def test_een_adres_zonder_blok_meldt_nog_niet_aangevraagd(self) -> None:
+        """Een overgangstoestand: het veld staat al, het blok is er nog niet (bijvoorbeeld
+        voor ``_ensure_from_address_request`` is geweest). Geen crash, en geen status die
+        wacht/afgewezen/goedgekeurd beweert terwijl er niets is vastgelegd."""
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        notices = self._notices(project)
+        assert len(notices) == 1
+        assert "nog niet aangevraagd" in notices[0]["text"]
+        assert notices[0]["status"] == "none"
+
+    def test_een_onbekende_clusternaam_haalt_de_pagina_niet_omver(self) -> None:
+        """Een clusternaam die het platform niet kent komt door de schemacontrole
+        (``project_validation`` slaat zo'n deployment over), en deze mededeling wordt
+        ongevangen gerenderd op de projectpagina (``opi/web/router.py``) en in het
+        API-antwoord. Het afgeleide adres valt dan weg, de stand blijft staan."""
+        project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "requested",
+            "history": [],
+        }
+        project["deployments"][0]["cluster"] = "een-cluster-dat-niet-bestaat"
+
+        notices = self._notices(project)
+
+        assert len(notices) == 1
+        assert "wacht op goedkeuring" in notices[0]["text"]
+        assert "@" not in notices[0]["text"].split("goedkeuring")[1]
+
+
+class TestEenAfwijzingNeemtDeStaandeGoedkeuringTerug:
+    """RC-400 rework: ``approved-value`` was een recht dat geen oordeel afnam. Een afwijzing
+    van precies de staande goedkeuring haalt de sleutel nu weg, zodat een goedgekeurd getal
+    in te trekken is en het project een afgewezen waarde niet zelf weer goedkeurt."""
+
+    def _blok(self, project: dict, key: str) -> dict | None:
+        return project["services"][0]["config"].get(key)
+
+    def _oordeel(self, project: dict, status: str) -> None:
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+
+        items = collect_approval_items(project)
+        for item in items:
+            if item["type"] in ("messages-per-day-approval", "from-address-approval"):
+                item["status"] = status
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+
+    def test_een_afgewezen_dagbudget_geldt_niet_meer_op_de_relay(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = _project(config={"messages-per-day": 20000})
+        SERVICE.ensure_approval_requests(project)
+        self._oordeel(project, "approved")
+        assert effective_messages_per_day(project) == 20000
+
+        self._oordeel(project, "denied")
+
+        assert self._blok(project, "messages-per-day-approval").get("approved-value") is None
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    def test_terugkomen_op_een_afgewezen_waarde_is_een_nieuwe_aanvraag(self) -> None:
+        """Het project wijzigt het veld en zet het terug op de afgewezen waarde. Zonder de
+        intrekking zou dat het blok zelf op ``approved`` zetten, met een gewone opslagactie
+        en zonder platformrol."""
+        from opi.services.catalog.send_email import approved_from_address, effective_messages_per_day
+
+        config = {"messages-per-day": 20000, "from-address": "noreply@rijksoverheid.nl"}
+        project = _project(config=config)
+        SERVICE.ensure_approval_requests(project)
+        self._oordeel(project, "approved")
+        self._oordeel(project, "denied")
+
+        leefbaar = project["services"][0]["config"]
+        leefbaar["messages-per-day"] = 500
+        leefbaar["from-address"] = "anders@rijksoverheid.nl"
+        SERVICE.ensure_approval_requests(project)
+        leefbaar["messages-per-day"] = 20000
+        leefbaar["from-address"] = "noreply@rijksoverheid.nl"
+        SERVICE.ensure_approval_requests(project)
+
+        assert self._blok(project, "messages-per-day-approval")["status"] == "requested"
+        assert self._blok(project, "from-address-approval")["status"] == "requested"
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+        assert approved_from_address(project) == ""
+
+    def test_een_afwijzing_van_een_hoger_getal_raakt_de_staande_goedkeuring_niet(self) -> None:
+        """Tegenproef: "een openstaande aanvraag verlaagt nooit wat er al gold" blijft staan,
+        ook als die aanvraag wordt afgewezen."""
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = _project(config={"messages-per-day": 20000})
+        SERVICE.ensure_approval_requests(project)
+        self._oordeel(project, "approved")
+
+        project["services"][0]["config"]["messages-per-day"] = 50000
+        SERVICE.ensure_approval_requests(project)
+        self._oordeel(project, "denied")
+
+        assert self._blok(project, "messages-per-day-approval").get("approved-value") == "20000"
+        assert effective_messages_per_day(project) == 20000
+
+    def test_een_niet_decimaal_goedgekeurd_getal_valt_terug_op_de_standaard(self) -> None:
+        """``isdigit`` is ook waar voor cijfers buiten ASCII, waar ``int()`` omvalt."""
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = _project(config={"messages-per-day": 20000})
+        SERVICE.ensure_approval_requests(project)
+        project["services"][0]["config"]["messages-per-day-approval"]["approved-value"] = "\N{SUPERSCRIPT TWO}"
+
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+
+class TestDeBudgetpoortOpDeWaarde:
+    """RC-400: ``effective_messages_per_day`` is DE POORT. Een getal boven de standaard
+    telt alleen voor PRECIES DIE WAARDE, en een openstaande nieuwe aanvraag mag nooit minder
+    geven dan het project al mocht - dat is het verschil met de afzenderpoort hierboven,
+    die geen "laatst goedgekeurd" kent."""
+
+    def _project_met_budget(
+        self,
+        getal: int | None,
+        status: str | None = None,
+        blok_waarde: int | None = None,
+        laatst_goedgekeurd: int | None = None,
+    ) -> dict:
+        config: dict[str, Any] = {} if getal is None else {"messages-per-day": getal}
+        project = _project(config=config)
+        if status is not None:
+            blok: dict[str, Any] = {
+                "value": str(blok_waarde if blok_waarde is not None else getal),
+                "status": status,
+                "history": [],
+            }
+            if laatst_goedgekeurd is not None:
+                blok["approved-value"] = str(laatst_goedgekeurd)
+            project["services"][0]["config"]["messages-per-day-approval"] = blok
+        return project
+
+    def test_zonder_getal_is_de_standaard(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(None)
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    def test_een_laag_getal_geldt_direct_zonder_goedkeuring(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY - 1)
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY - 1
+
+    def test_de_standaard_zelf_telt_ook_als_gekozen_en_niet_als_aanvraag(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY)
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    def test_een_hoog_getal_zonder_blok_geeft_de_standaard(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(5000)
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    def test_aangevraagd_maar_nog_niet_goedgekeurd_geeft_de_standaard(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(5000, "requested")
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    def test_afgewezen_geeft_de_standaard(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(5000, "denied")
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    def test_goedgekeurd_geeft_het_gevraagde_getal(self) -> None:
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(5000, "approved")
+        assert effective_messages_per_day(project) == 5000
+
+    def test_goedgekeurd_maar_daarna_verhoogd_geeft_het_laatst_goedgekeurde_getal(self) -> None:
+        """De kern van RC-400: het blok draagt de NIEUWE, nog niet beoordeelde waarde
+        (20000, requested), maar zolang die niet is goedgekeurd blijft het eerder
+        goedgekeurde getal (5000) gelden - een openstaande aanvraag verlaagt dus nooit wat
+        er al gold."""
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(20000, "requested", laatst_goedgekeurd=5000)
+        assert effective_messages_per_day(project) == 5000
+
+    def test_verlagen_binnen_het_goedgekeurde_getal_geldt_direct(self) -> None:
+        """Het project gebruikt minder dan het mag: dat is zijn eigen keuze, dus het lagere
+        getal gaat direct naar de relay in plaats van de goedgekeurde 20000."""
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(5000, "approved", blok_waarde=20000, laatst_goedgekeurd=20000)
+        assert effective_messages_per_day(project) == 5000
+
+    def test_zonder_eerdere_goedkeuring_valt_een_nieuwe_aanvraag_terug_op_de_standaard(self) -> None:
+        """Tegenproef voor de vorige: zonder een eerder goedgekeurd getal is er niets om op
+        terug te vallen."""
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        project = self._project_met_budget(20000, "requested")
+        assert effective_messages_per_day(project) == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+
+class TestDePoortOpDeSchrijfwegNaarDeRelay:
+    """Toets 4 uit het plan: alleen bij goedgekeurd ontvangt ``set_sender`` het adres,
+    in elke andere stand gaat er een lege waarde heen (en die wist een eerder adres)."""
+
+    def _manager(self) -> MailManager:
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        async def get_name() -> str:
+            return "myproject"
+
+        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
+            pass
+
+        return MailManager(
+            project_manager=SimpleNamespace(  # type: ignore[arg-type]
+                _project_file_handler=ProjectFileHandler(),
+                get_name=get_name,
+                save_and_commit_project=save_and_commit_project,
+                _add_secret_to_create=lambda *a, **k: None,
+            )
+        )
+
+    def _connector(self) -> MailConnector:
+        connector = MailConnector("http://relay", "admin", "geheim")
+        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        return connector
+
+    async def _verwerk(self, project: dict, monkeypatch) -> MailConnector:
+        connector = self._connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        await self._manager().create_resources_for_deployment(project, project["deployments"][0])
+        return connector
+
+    def _project_met_adres(self, status: str | None, blok_adres: str | None = None) -> dict:
+        from opi.utils.sops import generate_sops_key_pair
+
+        adres = "noreply@rijksoverheid.nl"
+        project = _project(
+            component_services=[ServiceType.SEND_EMAIL.value],
+            config={"from-address": adres} if status else {},
+        )
+        if status is not None:
+            project["services"][0]["config"]["from-address-approval"] = {
+                "value": blok_adres if blok_adres is not None else adres,
+                "status": status,
+                "history": [],
+            }
+        _, public_key = generate_sops_key_pair()
+        project["config"] = {"age-public-key": public_key}
+        return project
+
+    @pytest.mark.asyncio
+    async def test_geen_adres_gaat_er_niets_heen(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_adres(None), monkeypatch)
+        _, _, sender_address = connector.set_sender.call_args.args
+        assert sender_address == ""
+
+    @pytest.mark.asyncio
+    async def test_aangevraagd_gaat_er_niets_heen(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_adres("requested"), monkeypatch)
+        _, _, sender_address = connector.set_sender.call_args.args
+        assert sender_address == ""
+
+    @pytest.mark.asyncio
+    async def test_goedgekeurd_gaat_het_adres_mee(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_adres("approved"), monkeypatch)
+        _, _, sender_address = connector.set_sender.call_args.args
+        assert sender_address == "noreply@rijksoverheid.nl"
+
+    @pytest.mark.asyncio
+    async def test_goedgekeurd_maar_gewijzigd_gaat_er_niets_heen(self, monkeypatch) -> None:
+        """De tegenproef: zet de waardebinding uit (in dit geval door het blok met een ander
+        adres te laten verwijzen) en de toets hierboven wordt rood -- precies waar de
+        plan-eis "tegenproef" om vraagt."""
+        connector = await self._verwerk(
+            self._project_met_adres("approved", blok_adres="ander@rijksoverheid.nl"), monkeypatch
+        )
+        _, _, sender_address = connector.set_sender.call_args.args
+        assert sender_address == ""
+
+
+class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
+    """Toets 4 uit het plan, voor het budget: een unittest op
+    ``create_resources_for_deployment`` met een nep-connector, voor geen getal, laag getal,
+    aangevraagd, goedgekeurd en goedgekeurd-maar-verhoogd."""
+
+    def _manager(self) -> MailManager:
+        from opi.handlers.project_file_handler import ProjectFileHandler
+
+        async def get_name() -> str:
+            return "myproject"
+
+        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
+            pass
+
+        return MailManager(
+            project_manager=SimpleNamespace(  # type: ignore[arg-type]
+                _project_file_handler=ProjectFileHandler(),
+                get_name=get_name,
+                save_and_commit_project=save_and_commit_project,
+                _add_secret_to_create=lambda *a, **k: None,
+            )
+        )
+
+    def _connector(self) -> MailConnector:
+        connector = MailConnector("http://relay", "admin", "geheim")
+        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        return connector
+
+    async def _verwerk(self, project: dict, monkeypatch) -> MailConnector:
+        connector = self._connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        await self._manager().create_resources_for_deployment(project, project["deployments"][0])
+        return connector
+
+    def _project_met_budget(
+        self,
+        getal: int | None,
+        status: str | None = None,
+        blok_waarde: int | None = None,
+        laatst_goedgekeurd: int | None = None,
+    ) -> dict:
+        from opi.utils.sops import generate_sops_key_pair
+
+        config: dict[str, Any] = {} if getal is None else {"messages-per-day": getal}
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], config=config)
+        if status is not None:
+            blok: dict[str, Any] = {
+                "value": str(blok_waarde if blok_waarde is not None else getal),
+                "status": status,
+                "history": [],
+            }
+            if laatst_goedgekeurd is not None:
+                blok["approved-value"] = str(laatst_goedgekeurd)
+            project["services"][0]["config"]["messages-per-day-approval"] = blok
+        _, public_key = generate_sops_key_pair()
+        project["config"] = {"age-public-key": public_key}
+        return project
+
+    @pytest.mark.asyncio
+    async def test_geen_getal_gaat_de_standaard_naar_de_relay(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_budget(None), monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    @pytest.mark.asyncio
+    async def test_een_laag_getal_gaat_rechtstreeks_mee(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_budget(500), monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == 500
+
+    @pytest.mark.asyncio
+    async def test_aangevraagd_maar_nog_niet_goedgekeurd_gaat_de_standaard_mee(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_budget(5000, "requested"), monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+    @pytest.mark.asyncio
+    async def test_goedgekeurd_gaat_het_gevraagde_getal_mee(self, monkeypatch) -> None:
+        connector = await self._verwerk(self._project_met_budget(5000, "approved"), monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == 5000
+
+    @pytest.mark.asyncio
+    async def test_goedgekeurd_maar_daarna_verhoogd_houdt_het_laatst_goedgekeurde_getal(self, monkeypatch) -> None:
+        """De tegenproef: laat de nieuwe, hogere aanvraag (20000) nog niet goedgekeurd zijn
+        en de toets hierboven wordt rood, want dan gaat er geen 5000 maar de standaard mee."""
+        connector = await self._verwerk(
+            self._project_met_budget(20000, "requested", laatst_goedgekeurd=5000), monkeypatch
+        )
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == 5000
+
+
+class TestDeAfzenderverwerkingIsHerhaalbaar:
+    """Toets 5 uit het plan: een tweede verwerking met een goedgekeurd adres schrijft
+    niets opnieuw naar de relay en maakt geen commit."""
+
+    @pytest.mark.asyncio
+    async def test_tweede_verwerking_slaat_niets_opnieuw_op(self, monkeypatch) -> None:
+        from opi.core.config import settings
+        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.utils.age import encrypt_age_content
+        from opi.utils.sops import generate_sops_key_pair
+
+        project = _project(
+            component_services=[ServiceType.SEND_EMAIL.value],
+            config={"from-address": "noreply@rijksoverheid.nl"},
+        )
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "approved",
+            "history": [],
+        }
+        platform_private, platform_public = generate_sops_key_pair()
+        project_private, project_public = generate_sops_key_pair()
+        monkeypatch.setattr(settings, "SOPS_AGE_PRIVATE_KEY", platform_private)
+        project["config"] = {
+            "age-public-key": project_public,
+            "age-private-key": await encrypt_age_content(project_private, platform_public),
+        }
+
+        async def get_name() -> str:
+            return "myproject"
+
+        opgeslagen: list[str] = []
+
+        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
+            opgeslagen.append(message)
+
+        manager = MailManager(
+            project_manager=SimpleNamespace(  # type: ignore[arg-type]
+                _project_file_handler=ProjectFileHandler(),
+                get_name=get_name,
+                save_and_commit_project=save_and_commit_project,
+                _add_secret_to_create=lambda *a, **k: None,
+            )
+        )
+
+        connector = MailConnector("http://relay", "admin", "geheim")
+        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+
+        await manager.create_resources_for_deployment(project, project["deployments"][0])
+        assert len(opgeslagen) == 1, "de eerste run schrijft het account weg"
+
+        # Het bestaande account dat de eerste run wegschreef, zit nu in het projectbestand
+        # (encrypted wachtwoord, from-address, bounce-address): de tweede run leest het
+        # terug en ziet geen verschil, dus geen tweede schrijfactie.
+        connector.get_principal = AsyncMock(return_value={"name": "project-myproject"})  # type: ignore[method-assign]
+
+        await manager.create_resources_for_deployment(project, project["deployments"][0])
+        assert len(opgeslagen) == 1, "een ongewijzigde tweede run mag geen tweede commit maken"
 
 
 class TestDeRelayAntwoordtGeen404:
@@ -1427,6 +2251,176 @@ class TestDeWeergavenaamStaatOpDeRelay:
         assert "project-zonder" not in geschreven[2]["values"][0][1]
 
 
+class TestSetRateLimitOpDeRelay:
+    """RC-400: ``set_rate_limit`` en ``delete_rate_limit`` schrijven de limiter van een
+    account via de settings-API. Zelfde opzet als ``TestDeWeergavenaamStaatOpDeRelay``: een
+    echte HTTP-server, want de vorm van het verzoek IS de afspraak met de relay."""
+
+    def _app(self, geschreven: list[dict], herladen: list[int], opgeslagen: dict[str, str]) -> web.Application:
+        async def list_settings(request: web.Request) -> web.Response:
+            prefix = request.query.get("prefix", "")
+            items = {k[len(prefix) :]: v for k, v in opgeslagen.items() if k.startswith(prefix)}
+            return web.json_response({"data": {"total": len(items), "items": items}})
+
+        async def post_settings(request: web.Request) -> web.Response:
+            wijzigingen = await request.json()
+            geschreven.extend(wijzigingen)
+            for wijziging in wijzigingen:
+                if wijziging["type"] == "insert":
+                    opgeslagen.update(dict(wijziging["values"]))
+                else:
+                    for sleutel in wijziging["keys"]:
+                        opgeslagen.pop(sleutel, None)
+            return web.json_response({"data": None})
+
+        async def reload(request: web.Request) -> web.Response:
+            herladen.append(1)
+            return web.json_response({"data": {"warnings": {}, "errors": {}}})
+
+        app = web.Application()
+        app.router.add_get("/api/settings/list", list_settings)
+        app.router.add_post("/api/settings", post_settings)
+        app.router.add_get("/api/reload", reload)
+        return app
+
+    async def _connector(self, geschreven: list[dict], herladen: list[int], opgeslagen: dict[str, str]):
+        server = TestServer(self._app(geschreven, herladen, opgeslagen))
+        await server.start_server()
+        return MailConnector(str(server.make_url("")).rstrip("/"), "admin", "geheim", verify_tls=False), server
+
+    @pytest.mark.asyncio
+    async def test_een_nieuwe_limiet_wordt_in_een_verzoek_geschreven_en_de_relay_herlaadt(self) -> None:
+        geschreven: list[dict] = []
+        herladen: list[int] = []
+        connector, server = await self._connector(geschreven, herladen, {})
+        try:
+            gewijzigd = await connector.set_rate_limit("project-ai1-uit", 500)
+        finally:
+            await server.close()
+
+        assert gewijzigd is True
+        prefix = f"{MAIL_LIMITER_PREFIX}-project-ai1-uit"
+        assert len(geschreven) == 1, "de vier sleutels horen in een enkel verzoek te gaan"
+        waarden = dict(geschreven[0]["values"])
+        assert waarden[f"{prefix}.enable"] == "true"
+        assert waarden[f"{prefix}.key"] == "authenticated_as"
+        assert waarden[f"{prefix}.match"] == "authenticated_as == 'project-ai1-uit'"
+        assert waarden[f"{prefix}.rate"] == "500/1d"
+        assert herladen == [1]
+
+    @pytest.mark.asyncio
+    async def test_dezelfde_limiet_nog_eens_schrijft_niets(self) -> None:
+        """Herhaalbaarheid (toets 5 uit het plan): elke schrijfactie sleept een herbouw van
+        de hele relayconfiguratie mee, en een project wordt bij elke wijziging opnieuw
+        verwerkt."""
+        geschreven: list[dict] = []
+        herladen: list[int] = []
+        prefix = f"{MAIL_LIMITER_PREFIX}-project-ai1-uit"
+        opgeslagen = {
+            f"{prefix}.enable": "true",
+            f"{prefix}.key": "authenticated_as",
+            f"{prefix}.match": "authenticated_as == 'project-ai1-uit'",
+            f"{prefix}.rate": "500/1d",
+        }
+        connector, server = await self._connector(geschreven, herladen, opgeslagen)
+        try:
+            gewijzigd = await connector.set_rate_limit("project-ai1-uit", 500)
+        finally:
+            await server.close()
+
+        assert gewijzigd is False
+        assert geschreven == []
+        assert herladen == []
+
+    @pytest.mark.asyncio
+    async def test_een_halve_limiter_wordt_gerepareerd(self) -> None:
+        """Een limiter met het juiste getal maar zonder ``match`` valt in de groep
+        ``remote`` en telt per verbinding; die stand moet worden hersteld in plaats van
+        voor bij-de-tijd doorgaan."""
+        geschreven: list[dict] = []
+        prefix = f"{MAIL_LIMITER_PREFIX}-project-ai1-uit"
+        opgeslagen = {f"{prefix}.enable": "true", f"{prefix}.rate": "500/1d"}
+        connector, server = await self._connector(geschreven, [], opgeslagen)
+        try:
+            gewijzigd = await connector.set_rate_limit("project-ai1-uit", 500)
+        finally:
+            await server.close()
+
+        assert gewijzigd is True
+        waarden = dict(geschreven[0]["values"])
+        assert waarden[f"{prefix}.match"] == "authenticated_as == 'project-ai1-uit'"
+        assert waarden[f"{prefix}.key"] == "authenticated_as"
+
+    @pytest.mark.asyncio
+    async def test_een_ander_getal_schrijft_wel(self) -> None:
+        geschreven: list[dict] = []
+        prefix = f"{MAIL_LIMITER_PREFIX}-project-ai1-uit"
+        opgeslagen = {f"{prefix}.enable": "true", f"{prefix}.rate": "500/1d"}
+        connector, server = await self._connector(geschreven, [], opgeslagen)
+        try:
+            gewijzigd = await connector.set_rate_limit("project-ai1-uit", 2000)
+        finally:
+            await server.close()
+
+        assert gewijzigd is True
+        waarden = dict(geschreven[0]["values"])
+        assert waarden[f"{prefix}.rate"] == "2000/1d"
+
+    @pytest.mark.asyncio
+    async def test_opruimen_verwijdert_de_vier_sleutels_en_herlaadt(self) -> None:
+        """Toets 6 uit het plan: een verwijderd project laat geen limitersleutels achter."""
+        geschreven: list[dict] = []
+        herladen: list[int] = []
+        prefix = f"{MAIL_LIMITER_PREFIX}-project-weg"
+        opgeslagen = {
+            f"{prefix}.enable": "true",
+            f"{prefix}.key": "authenticated_as",
+            f"{prefix}.match": "authenticated_as == 'project-weg'",
+            f"{prefix}.rate": "500/1d",
+        }
+        connector, server = await self._connector(geschreven, herladen, opgeslagen)
+        try:
+            await connector.delete_rate_limit("project-weg")
+        finally:
+            await server.close()
+
+        assert geschreven[0]["type"] == "delete"
+        assert sorted(geschreven[0]["keys"]) == sorted(
+            [f"{prefix}.enable", f"{prefix}.key", f"{prefix}.match", f"{prefix}.rate"]
+        )
+        assert opgeslagen == {}
+        assert herladen == [1]
+
+    @pytest.mark.asyncio
+    async def test_opruimen_zonder_bestaande_sleutels_doet_niets(self) -> None:
+        """Replay-safe: een tweede intrekking of een project dat zijn limiter nooit kreeg
+        mag geen verzoek en geen herlaadbeurt kosten."""
+        geschreven: list[dict] = []
+        herladen: list[int] = []
+        connector, server = await self._connector(geschreven, herladen, {})
+        try:
+            await connector.delete_rate_limit("project-had-nooit-een-limiet")
+        finally:
+            await server.close()
+
+        assert geschreven == []
+        assert herladen == []
+
+    @pytest.mark.asyncio
+    async def test_set_rate_limit_weigert_een_accountnaam_met_een_quote(self) -> None:
+        """Toets 7 uit het plan: de accountnaam komt tussen enkele quotes in de
+        ``match``-expressie, dus een naam die er een draagt mag die expressie niet openen."""
+        connector = MailConnector("http://relay", "admin", "geheim")
+        with pytest.raises(MailSenderNameError):
+            await connector.set_rate_limit("project-x' || '1'=='1", 500)
+
+    @pytest.mark.asyncio
+    async def test_delete_rate_limit_weigert_dezelfde_namen(self) -> None:
+        connector = MailConnector("http://relay", "admin", "geheim")
+        with pytest.raises(MailSenderNameError):
+            await connector.delete_rate_limit("project met een spatie")
+
+
 class TestDeGegenereerdeTabelIsGeenInvoerkanaal:
     """De tabel is CODE die uit projectdata wordt opgebouwd, en dat is de plek om streng te
     zijn.
@@ -1499,6 +2493,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.update_principal = AsyncMock()  # type: ignore[method-assign]
         connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
         return connector
 
     async def _ensure(self, connector: MailConnector, from_name: str = "Vrije Naam") -> None:
@@ -1630,6 +2625,61 @@ class TestDeWeergavenaamWordtGetoetst:
         assert veld["pattern"]
 
 
+class TestHetAfzenderadresWordtGetoetst:
+    """RC-399: het adres gaat net als de naam rechtstreeks een mailheader in.
+
+    Dezelfde regel toetst het model, het formulier en de connector
+    (``mail_sender_address_error`` in ``opi.utils.naming``), zodat een adres dat hier mag
+    ook echt in de sieve-stringliteraal past. Zie ``TestMailSenderAddressError`` in
+    ``test_naming_utils.py`` voor de regel zelf.
+    """
+
+    GOED: ClassVar[list[str]] = [
+        "",
+        "noreply@rijksoverheid.nl",
+        "noreply.team@rijksoverheid.nl",
+        "a" * MAIL_LOCAL_PART_MAX_LENGTH + "@rijksoverheid.nl",
+    ]
+
+    FOUT: ClassVar[dict[str, str]] = {
+        "zonder apenstaart": "zonderapenstaart",
+        "hoofdletter": "NoReply@rijksoverheid.nl",
+        "spatie": "no reply@rijksoverheid.nl",
+        "te lang lokaal deel": "a" * (MAIL_LOCAL_PART_MAX_LENGTH + 1) + "@rijksoverheid.nl",
+        "verkeerd domein": "noreply@minbzk.nl",
+    }
+
+    @pytest.mark.parametrize("adres", GOED)
+    def test_een_geldig_adres_mag(self, adres: str) -> None:
+        assert SendEmailConfig(**{"from-address": adres}).from_address == adres
+
+    @pytest.mark.parametrize(("geval", "adres"), list(FOUT.items()))
+    def test_de_api_weigert(self, geval: str, adres: str) -> None:
+        """Dit is de weg die het projectbestand schrijft: model en JSON-schema."""
+        with pytest.raises(ValidationError):
+            SendEmailConfig(**{"from-address": adres})
+
+    @pytest.mark.parametrize(("geval", "adres"), list(FOUT.items()))
+    def test_het_formulier_weigert_hetzelfde(self, geval: str, adres: str) -> None:
+        """En dit is de weg die de wizard schrijft; zonder deze toets kan de twee uit
+        elkaar lopen zoals bij de weergavenaam al eens gebeurde."""
+        from opi.services.catalog.send_email.editables import SEND_EMAIL_FROM_ADDRESS_EDITABLE
+
+        assert SEND_EMAIL_FROM_ADDRESS_EDITABLE.validator.validate(adres), f"{geval} hoort geweigerd te worden"
+
+    @pytest.mark.parametrize("adres", [a for a in GOED if a])
+    def test_het_formulier_laat_een_geldig_adres_door(self, adres: str) -> None:
+        from opi.services.catalog.send_email.editables import SEND_EMAIL_FROM_ADDRESS_EDITABLE
+
+        assert SEND_EMAIL_FROM_ADDRESS_EDITABLE.validator.validate(adres) == []
+
+    def test_leeg_betekent_het_afgeleide_adres(self) -> None:
+        """Leegmaken is een geldige uitkomst en geen fout: zie ``remove_when_none``."""
+        from opi.services.catalog.send_email.editables import SEND_EMAIL_FROM_ADDRESS_EDITABLE
+
+        assert SEND_EMAIL_FROM_ADDRESS_EDITABLE.remove_when_none is True
+
+
 class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
     """De hele weg een keer af: van ``from-name`` in het projectbestand tot het adres dat
     de applicatie in ``SMTP_FROM`` krijgt en de afzender die op de relay komt te staan.
@@ -1675,6 +2725,7 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         manager = self._manager(secrets, monkeypatch)
@@ -1698,6 +2749,7 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
         connector.create_principal = AsyncMock()  # type: ignore[method-assign]
         connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         await self._manager(secrets, monkeypatch).create_resources_for_deployment(project, project["deployments"][0])
@@ -1741,9 +2793,10 @@ class TestHetAfzenderadresPerAccount:
 
     De afleiding (accountnaam min het voorvoegsel ``project-``) is de regel en blijft dat.
     De uitzondering bestaat voor een account dat post moet versturen die van de post van de
-    portal te onderscheiden hoort te zijn -- vandaag alleen dat van Keycloak -- en het is
-    een uitzondering met een scherpe rand: een instelbaar afzenderadres is een spoofingknop,
-    en de enige reden dat hij hier mag bestaan is dat alleen het platform hem bedient.
+    portal te onderscheiden hoort te zijn: dat van Keycloak, en sinds RC-399 ook een project
+    met een goedgekeurd eigen adres. Het is een uitzondering met een scherpe rand: een
+    instelbaar afzenderadres is een spoofingknop, en de reden dat hij hier mag bestaan is dat
+    alleen een platformbeheerder hem openzet (``approved_from_address``).
     """
 
     def test_de_tabel_verklaart_beide_variabelen_global(self) -> None:
@@ -1865,6 +2918,95 @@ class TestHetAfzenderadresPerAccount:
         ).read_text()
         rewrite = config.split("[session.mail]", 1)[1].split("[session.data]", 1)[0]
         assert "afzender" not in rewrite, "de envelope mag het ingeladen adres NIET gebruiken"
+
+
+class TestDeXZadProjectKopregel:
+    """Punt 4 uit het plan: de kopregel noemt het project uit de LOGIN, niet uit het
+    bericht, en platformaccounts krijgen hem niet.
+
+    Dezelfde valkuil als bij ``projectadres`` hierboven staat letterlijk in het
+    commentaar: een ``let`` binnen een ``if``-blok overleeft dat blok niet. Zonder de
+    ``deleteheader`` BUITEN de ``if`` kan een applicatie de kopregel zelf meesturen en de
+    naam van een ander project voeren.
+    """
+
+    def _regels(self) -> list[str]:
+        config = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml"
+        ).read_text()
+        return config.splitlines()
+
+    def test_de_deleteheader_en_de_let_staan_buiten_het_if_blok(self) -> None:
+        regels = self._regels()
+        let_regel = next(r for r in regels if r.startswith('let "project"'))
+        delete_regel = next(r for r in regels if r.strip() == 'deleteheader "X-ZAD-Project";')
+        assert not let_regel.startswith((" ", "\t")), "de let hoort buiten de if, anders overleeft hij hem niet"
+        assert not delete_regel.startswith((" ", "\t")), (
+            "de deleteheader hoort buiten de if, anders zet een applicatie zelf de kopregel"
+        )
+
+    def test_de_addheader_staat_wel_binnen_het_if_blok(self) -> None:
+        """De tegenproef: alleen deze regel mag voorwaardelijk zijn, anders krijgt ook
+        een platformaccount de kopregel."""
+        regels = self._regels()
+        add_regel = next(r for r in regels if 'addheader :last "X-ZAD-Project"' in r)
+        assert add_regel.startswith((" ", "\t")), "zonder de if krijgt elk account de kopregel, ook platformaccounts"
+
+    def test_het_project_komt_uit_de_login_niet_uit_het_bericht(self) -> None:
+        config = "\n".join(self._regels())
+        x_zad_block = config.split('deleteheader "X-ZAD-Project"', 1)[1]
+        assert f"strip_prefix(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in config
+        assert f"starts_with(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in x_zad_block
+
+
+class TestDeLimietenInConfigToml:
+    """RC-400: ``queue.limiter.inbound.account`` is vervangen door een vangnet per bericht
+    en twee ingebouwde Stalwart-standaarden zijn overschreven (fase 0, punten 4 en 5 uit
+    het plan). Deze toets bestaat zodat een latere wijziging die een regel weghaalt -
+    waarna de ingebouwde standaard stil terugkeert - hier opvalt in plaats van pas in de
+    sandbox."""
+
+    def _limiters(self) -> dict[str, Any]:
+        import tomllib
+
+        config = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml"
+        ).read_bytes()
+        return tomllib.loads(config.decode()).get("queue", {}).get("limiter", {}).get("inbound", {})
+
+    def test_de_oude_vaste_limiet_per_account_is_weg(self) -> None:
+        """Die limiet gold voor elk account hetzelfde; het echte plafond staat sinds
+        RC-400 per account op de relay (``MailConnector.set_rate_limit``)."""
+        assert "account" not in self._limiters()
+
+    def test_het_platformplafond_telt_per_bericht_en_niet_per_verbinding(self) -> None:
+        """Zonder een ``match`` op ``authenticated_as`` valt deze limiter in de groep
+        ``remote`` en telt hij per VERBINDING (fase 0, punt 5): een pod die per bericht
+        verbindt zou dan ver boven het bedoelde plafond uitkomen."""
+        platform = self._limiters()["platform"]
+        assert platform["enable"] is True
+        assert "authenticated_as" in platform["match"]
+
+    def test_het_ip_plafond_overschrijft_de_ingebouwde_vijf_per_seconde(self) -> None:
+        """Ingebouwd standaard: 5 verbindingen per seconde per IP. Ongewijzigd haalt een
+        toepassing die per bericht verbindt zo'n 18.000 berichten per uur."""
+        ip = self._limiters()["ip"]
+        assert ip["key"] == ["remote_ip"]
+        assert ip["rate"] != "5/1s"
+
+    def test_het_ontvangerplafond_telt_per_project_en_niet_over_alle_projecten_samen(self) -> None:
+        """Ingebouwd standaard sleutelt op ``sender_domain`` + ``rcpt``; ons afzenderdomein
+        is voor elk project ``rijksoverheid.nl``, dus zonder wijziging zou ELK project
+        samen de grens van een ontvanger opsouperen. Met ``authenticated_as`` erbij telt
+        het weer per project."""
+        sender = self._limiters()["sender"]
+        assert sender["key"] == ["authenticated_as", "rcpt"]
+
+    def test_elke_limiter_staat_aan(self) -> None:
+        for naam, limiter in self._limiters().items():
+            assert limiter.get("enable") is True, f"{naam} staat uit en begrenst dus niets"
 
 
 class TestHetKeycloakAccountKomtUitDeBootstrap:

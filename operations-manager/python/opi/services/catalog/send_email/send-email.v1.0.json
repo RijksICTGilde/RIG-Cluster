@@ -64,6 +64,50 @@
       ],
       "title": "SendEmailApproval",
       "type": "object"
+    },
+    "SendEmailValueApproval": {
+      "additionalProperties": true,
+      "description": "Whether an administrator approved a requested VALUE (address or budget).\n\nHangs on the VALUE, not the project: if approved for one value and the project changes\nit, that is a new request. Both address and budget use this shape; both are text so a\nsingle shape fits both.",
+      "properties": {
+        "approved-value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The last value an administrator approved, which keeps applying while a new request is open.",
+          "title": "Approved-Value"
+        },
+        "history": {
+          "description": "Verdict history: one {date, status, by, message} entry per decision.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "status": {
+          "description": "requested, approved or denied. Written by the platform's approval flow.",
+          "title": "Status",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value this verdict is about. Written by the platform's approval flow.",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "status"
+      ],
+      "title": "SendEmailValueApproval",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -91,6 +135,32 @@
       "description": "Whether an administrator has allowed this project to send mail. Written by the platform: until it says approved, no account is created, no network policy is written and no SMTP credentials reach the deployment.",
       "x-platform-managed": true
     },
+    "from-address": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Sender address this project asks to send from, e.g. 'noreply@rijksoverheid.nl'. It only takes effect once a platform administrator has approved that exact value; until then the platform composes the address from the project name. Leave it out for the composed address. Het afzenderadres moet een adres in rijksoverheid.nl zijn, met voor de @ hoogstens 64 tekens uit kleine letters, cijfers en . _ + - (bijvoorbeeld noreply@rijksoverheid.nl). Een ander domein lijnt niet uit met de envelope en komt niet door DMARC.",
+      "title": "From-Address"
+    },
+    "from-address-approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SendEmailValueApproval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Whether an administrator has allowed the requested sender address. Written by the platform: until it says approved for exactly the address in from-address, the relay keeps deriving the address from the project name.",
+      "x-platform-managed": true
+    },
     "from-name": {
       "anyOf": [
         {
@@ -109,7 +179,7 @@
     "messages-per-day": {
       "anyOf": [
         {
-          "maximum": 5000,
+          "maximum": 1000000,
           "minimum": 1,
           "type": "integer"
         },
@@ -118,8 +188,21 @@
         }
       ],
       "default": null,
-      "description": "Messages this project may send per day, at most 5000. Leave it out for the platform default. This is the agreed budget, recorded on the account: the relay itself enforces one ceiling of 5000 per account per day, because an account on the relay carries no limit of its own.",
+      "description": "Messages per day, enforced by the relay per account. Up to and including the platform default, the project chooses; above that is a REQUEST requiring approval. The 1000000 ceiling only catches typos.",
       "title": "Messages-Per-Day"
+    },
+    "messages-per-day-approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SendEmailValueApproval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Whether an administrator approved the requested budget. Until approved for exactly the requested number, the relay enforces the last approved number or the default.",
+      "x-platform-managed": true
     }
   },
   "title": "SendEmailConfig",

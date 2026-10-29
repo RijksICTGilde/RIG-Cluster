@@ -9,14 +9,18 @@ What it hands a component is credentials, nothing more: host, port, username, pa
 the sender address. Everything that decides whether the mail actually ARRIVES -- the
 envelope sender, the whole ``From:`` header, the stripped ``Received`` chain -- is enforced
 on the relay and is never the application's to choose. A project that could set its own
-``From:`` domain would simply produce mail that fails DMARC; what it DOES get is its own
-name in the plus part and its own display name, both written by the platform.
+``From:`` DOMAIN would simply produce mail that fails DMARC, so the domain stays ours.
 
-The project-level block is small on purpose: a display name and a daily budget, and that
-is all. The ADDRESS is not in it -- the platform composes it from the project name
-(``noreply-rijksapp+<project>@rijksoverheid.nl``) and hands it to the relay, which writes
-the whole ``From:`` itself. ``accounts`` is the platform's side and carries
-``PLATFORM_MANAGED``.
+The project-level block is small on purpose: a display name, a sender address and a daily
+budget. Two of those do not take effect by being saved: a platform administrator approves
+THAT VALUE first. For the address (RC-399) that holds always; for the budget (RC-400) only
+above the platform default, because lowering your own ceiling asks nobody. Until the address
+is approved (and again after a withdrawal) the platform composes it from the project name
+(``noreply-rijksapp+<project>@rijksoverheid.nl``) and the relay derives it itself. The
+envelope keeps that composed address either way, so a bounce stays traceable; the relay
+adds an ``X-ZAD-Project`` header so a message stays traceable to a project even when the
+``From:`` no longer says so. ``accounts`` and the three approval blocks are the platform's
+side and carry ``PLATFORM_MANAGED``.
 
 **Nothing happens until an administrator says yes** (aanvulling 6 in the plan). The service
 declares its approval through the generic mechanism -- the same one publish-on-web uses for
@@ -43,11 +47,14 @@ import logging
 from typing import Any, ClassVar
 
 from opi.core.cluster_config import (
+    CLUSTER_CONFIG,
+    get_mail_from_address,
     get_mail_relay_host,
     get_mail_relay_namespace,
     get_mail_relay_port,
 )
-from opi.services.catalog.approval import service_use_approval
+from opi.core.config import settings
+from opi.services.catalog.approval import config_value_approval, service_use_approval
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -62,7 +69,7 @@ from opi.services.catalog.send_email.config_model import SendEmailConfig
 from opi.services.catalog.send_email.variables import SendEmailVariables
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
-from opi.utils.naming import generate_network_policy_name, generate_unique_name
+from opi.utils.naming import generate_mail_sender_address, generate_network_policy_name, generate_unique_name
 from opi.utils.secrets import SendEmailSecret
 
 logger = logging.getLogger(__name__)
@@ -100,6 +107,15 @@ APPROVAL = service_use_approval(
 is_approved = APPROVAL.is_approved
 
 
+#: Sleutel van het aangevraagde afzenderadres in het configblok van de dienst.
+FROM_ADDRESS_KEY = "from-address"
+
+#: Opschrift van de adresaanvraag in de beheerpagina. De vorm komt uit
+#: ``config_value_approval``: de goedkeuring hangt aan de WAARDE, dus een goedgekeurd adres
+#: dat het project daarna wijzigt is een nieuwe aanvraag (RC-399).
+FROM_ADDRESS_APPROVAL_LABEL = "Afzenderadres"
+
+
 def _selected(project_data: dict[str, Any]) -> bool:
     """Whether the project has the service in its services list at all."""
     return ServiceType.SEND_EMAIL.value in [
@@ -112,6 +128,148 @@ def _request_approval_on_save(project_data: dict[str, Any], wizard_data: dict[st
     from opi.services.approvals import ensure_approval_requests
 
     ensure_approval_requests(project_data)
+
+
+def _service_entry(project_data: dict[str, Any]) -> dict[str, Any] | None:
+    """De service-entry van deze dienst, als hij als dict in het project staat."""
+    for entry in project_data.get("services", []) or []:
+        if service_entry_name(entry) == ServiceType.SEND_EMAIL.value and isinstance(entry, dict):
+            return entry
+    return None
+
+
+def _config(project_data: dict[str, Any]) -> dict[str, Any]:
+    """Het configblok van de dienst, leeg als het er niet is."""
+    entry = _service_entry(project_data)
+    config = entry.get("config") if entry else None
+    return config if isinstance(config, dict) else {}
+
+
+def _requested_from_address(project_data: dict[str, Any]) -> str:
+    """Het adres dat het project vraagt, of leeg voor het afgeleide adres."""
+    return str(_config(project_data).get(FROM_ADDRESS_KEY) or "").strip()
+
+
+def _from_address_consequence(project_data: dict[str, Any], deployment: dict[str, Any]) -> str:
+    """Onder welk adres de post ondertussen vertrekt.
+
+    Zonder dit weet de aanvrager wel dat hij wacht, maar niet onder welk adres zijn post
+    de deur uitgaat.
+    """
+    # Een clusternaam die het platform niet kent is schemageldig (``project_validation``
+    # slaat zo'n deployment over), en deze mededeling is informatief: zonder deze controle
+    # haalde een onbekende naam met een ValueError de hele projectpagina omver. Zelfde
+    # vorm als ``display_blocks._get_default_domain``.
+    cluster = deployment.get("cluster") or settings.CLUSTER_MANAGER
+    if cluster not in CLUSTER_CONFIG:
+        return ""
+    derived = generate_mail_sender_address(get_mail_from_address(cluster), project_data.get("name", ""))
+    return f"Je post vertrekt onder {derived}." if derived else ""
+
+
+FROM_ADDRESS_APPROVAL = config_value_approval(
+    ServiceType.SEND_EMAIL,
+    key=FROM_ADDRESS_KEY,
+    label=FROM_ADDRESS_APPROVAL_LABEL,
+    requested_value=_requested_from_address,
+    describe=lambda adres: f"Het afzenderadres {adres}",
+    consequence=_from_address_consequence,
+)
+
+#: DE POORT op de schrijfweg: het goedgekeurde afzenderadres, of leeg.
+#:
+#: Leeg betekent dat de relay het adres afleidt uit de accountnaam, en het wist meteen een
+#: adres dat er eerder stond. Zo heeft intrekken geen eigen trigger nodig: elke verwerking
+#: schrijft opnieuw wat er nu geldt.
+approved_from_address = FROM_ADDRESS_APPROVAL.approved_value
+
+
+#: Sleutel van het gevraagde dagbudget in het configblok van de dienst.
+MESSAGES_PER_DAY_KEY = "messages-per-day"
+
+#: Opschrift van de budgetaanvraag in de beheerpagina.
+MESSAGES_PER_DAY_APPROVAL_LABEL = "Dagbudget e-mail"
+
+
+def _chosen_messages_per_day(project_data: dict[str, Any]) -> int | None:
+    """Het getal dat het project zelf heeft ingevuld, of None voor de standaard."""
+    waarde = _config(project_data).get(MESSAGES_PER_DAY_KEY)
+    if isinstance(waarde, bool) or not isinstance(waarde, int) or waarde < 1:
+        return None
+    return waarde
+
+
+def _last_approved_number(project_data: dict[str, Any]) -> str:
+    """Het laatst goedgekeurde getal als tekst, leeg als er geen bruikbaar getal staat.
+
+    ``isdigit`` is ook waar voor cijfertekens buiten ASCII, zoals een superscript twee,
+    waar ``int()`` omvalt; ``isascii`` erbij houdt alleen een gewoon decimaal getal over.
+    """
+    laatst = MESSAGES_PER_DAY_APPROVAL.last_approved_value(project_data)
+    return laatst if laatst.isdigit() and laatst.isascii() else ""
+
+
+def _granted_messages_per_day(project_data: dict[str, Any]) -> int:
+    """Het hoogste getal dat het project zonder nieuwe goedkeuring mag gebruiken.
+
+    De standaard, of hoger zodra een beheerder zo'n getal goedkeurde: binnen wat het al
+    mag kiest het project zelf.
+    """
+    standaard = settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+    laatst = _last_approved_number(project_data)
+    return max(standaard, int(laatst)) if laatst else standaard
+
+
+def _requested_messages_per_day(project_data: dict[str, Any]) -> str:
+    """Het getal waarover een beheerder moet oordelen. Leeg is geen aanvraag.
+
+    Verlagen vraagt niets, ook niet tot boven de standaard: blijft het project binnen een
+    eerder goedgekeurd getal, dan geeft dit dat getal terug, zodat de bestaande goedkeuring
+    blijft staan. Zou hier leeg staan, dan verdwijnt het goedkeuringsblok en daarmee het
+    laatst goedgekeurde getal, en valt het project terug op de standaard.
+    """
+    chosen = _chosen_messages_per_day(project_data)
+    if chosen is None:
+        return ""
+    if chosen > _granted_messages_per_day(project_data):
+        return str(chosen)
+    return _last_approved_number(project_data)
+
+
+def effective_messages_per_day(project_data: dict[str, Any]) -> int:
+    """DE POORT op de schrijfweg: het dagbudget dat de relay echt afdwingt.
+
+    Een verhoging geldt alleen als een beheerder PRECIES DAT getal heeft goedgekeurd.
+    Zolang dat niet zo is, geldt wat het project al mocht: een openstaande aanvraag
+    verlaagt nooit wat er gold, en een verlaging binnen dat getal geldt meteen.
+    """
+    chosen = _chosen_messages_per_day(project_data)
+    if chosen is None:
+        return settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+    if MESSAGES_PER_DAY_APPROVAL.spec.is_approved(project_data, str(chosen)):
+        return chosen
+    return min(chosen, _granted_messages_per_day(project_data))
+
+
+def _messages_per_day_consequence(project_data: dict[str, Any], deployment: dict[str, Any]) -> str:
+    """Hoeveel het project ondertussen mag versturen."""
+    return f"Je verstuurt voorlopig hoogstens {effective_messages_per_day(project_data)} berichten per dag."
+
+
+def _messages_per_day_subject(project_data: dict[str, Any], value: str) -> str:
+    """Wat de beheerpagina toont: het gevraagde getal en wat er nu geldt."""
+    return f"{value} berichten per dag (nu {effective_messages_per_day(project_data)})"
+
+
+MESSAGES_PER_DAY_APPROVAL = config_value_approval(
+    ServiceType.SEND_EMAIL,
+    key=MESSAGES_PER_DAY_KEY,
+    label=MESSAGES_PER_DAY_APPROVAL_LABEL,
+    requested_value=_requested_messages_per_day,
+    describe=lambda aantal: f"Een dagbudget van {aantal} berichten per dag",
+    consequence=_messages_per_day_consequence,
+    subject=_messages_per_day_subject,
+)
 
 
 class SendEmailService(Service):
@@ -151,12 +309,14 @@ class SendEmailService(Service):
         if layer is not ConfigLayer.PROJECT:
             return []
         from opi.services.catalog.send_email.editables import (
+            SEND_EMAIL_FROM_ADDRESS_EDITABLE,
             SEND_EMAIL_FROM_NAME_EDITABLE,
             SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE,
         )
 
         return [
             SEND_EMAIL_FROM_NAME_EDITABLE,
+            SEND_EMAIL_FROM_ADDRESS_EDITABLE,
             SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE,
         ]
 
@@ -168,6 +328,7 @@ class SendEmailService(Service):
         if cached is None:
             from opi.forms.visualizers.sections import FormSection
             from opi.services.catalog.send_email.visualizers import (
+                SEND_EMAIL_FROM_ADDRESS,
                 SEND_EMAIL_FROM_NAME,
                 SEND_EMAIL_MESSAGES_PER_DAY,
             )
@@ -183,14 +344,15 @@ class SendEmailService(Service):
                 ),
                 visible=self._config_selected,
                 post_save_action="process_project",
-                editables=[SEND_EMAIL_FROM_NAME, SEND_EMAIL_MESSAGES_PER_DAY],
+                editables=[SEND_EMAIL_FROM_NAME, SEND_EMAIL_FROM_ADDRESS, SEND_EMAIL_MESSAGES_PER_DAY],
                 # Doorlopen van deze stap IS de aanvraag. Via de generieke functie en niet
                 # via de eigen hook, zodat er geen tweede weg naar een aanvraag ontstaat;
                 # de API-kant roept dezelfde functie aan (project_manager, config-schrijf).
                 post_merge=_request_approval_on_save,
                 layout=[
                     config_path(ConfigLayer.PROJECT, self.service_type, "config", "from-name"),
-                    config_path(ConfigLayer.PROJECT, self.service_type, "config", "messages-per-day"),
+                    config_path(ConfigLayer.PROJECT, self.service_type, "config", FROM_ADDRESS_KEY),
+                    config_path(ConfigLayer.PROJECT, self.service_type, "config", MESSAGES_PER_DAY_KEY),
                 ],
             )
             self._config_section_cache = cached
@@ -201,19 +363,20 @@ class SendEmailService(Service):
         return _selected(project_data)
 
     def config_approvals(self, layer: ConfigLayer):
-        """One approval per project: may this project send mail at all.
-
-        Declared through the generic mechanism (``opi/services/catalog/approval.py``), so
-        the request shows up in the SAME approver interface as a domain request and the
-        waiting state comes back through the same API field. No second screen.
+        """Three approvals declared through the generic mechanism: may this project mail,
+        under which address, and how much. They are separate because a project may mail
+        without wanting an address or budget increase, and the last two hang on a VALUE:
+        changing either after a verdict asks again.
         """
         if layer is not ConfigLayer.PROJECT:
             return []
-        return [APPROVAL.spec]
+        return [APPROVAL.spec, FROM_ADDRESS_APPROVAL.spec, MESSAGES_PER_DAY_APPROVAL.spec]
 
     def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
-        """Switching the service on IS the request."""
+        """Switching the service on IS the request; so is an address or a budget above the default."""
         APPROVAL.ensure_requested(project_data)
+        FROM_ADDRESS_APPROVAL.ensure_requested(project_data)
+        MESSAGES_PER_DAY_APPROVAL.ensure_requested(project_data)
 
     async def provision(self, ctx: ProvisionContext) -> None:
         await ctx.mail_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)

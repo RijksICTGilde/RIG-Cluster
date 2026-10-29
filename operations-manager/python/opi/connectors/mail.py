@@ -23,7 +23,7 @@ import aiohttp
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto
 from opi.utils.connect_retry import retry_on_connect_error
-from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH
+from opi.utils.naming import mail_sender_address_error
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,7 @@ class MailAccount:
     #: Where bounces for this account come back to; carries the account name so a
     #: returned message is traceable to one project.
     bounce_address: str
-    #: Daily budget agreed for this account. Recorded here and in the project file; the
-    #: relay enforces one ceiling for every account (see the limiter in its configmap),
-    #: because a principal in Stalwart v0.11 carries no limit of its own.
+    #: Daily budget for this account; enforced by the relay via ``set_rate_limit``.
     messages_per_day: int
 
 
@@ -79,21 +77,17 @@ class MailAccount:
 #: when it changes.
 MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 
-#: Settings prefix for each account's sender address override. Normally unused: every
-#: account derives its address from its name; a key here only exists for an account that
-#: needs a different address. A second series (not a second field on the same key) because
-#: relay settings are flat: one key, one value. Both are rendered into the same script.
+#: Settings prefix for each account's sender address override. The exception and not the
+#: rule: an account derives its address from its name, and a key here exists only for an
+#: account that has a different one (Keycloak's, and since RC-399 a project whose
+#: requested address a platform administrator approved). A second series (not a second field
+#: on the same key) because relay settings are flat: one key, one value. Both are rendered
+#: into the same script.
 MAIL_SENDER_ADDRESS_PREFIX = "zad.afzender.adres"
 
-#: The domains a configured sender address may live in.
-#:
-#: A settable sender address is a spoofing button, and the only reason it may exist here is
-#: that nothing but the platform operates it -- no project path writes an address, and no
-#: form offers one. The list is what keeps that true even if a value ever arrives from
-#: somewhere else: alignment with the envelope is what carries a message through DMARC (we
-#: sign nothing with DKIM), so an address outside this domain would not just be someone
-#: else's identity, it would also bounce at every recipient outside the Rijksoverheid.
-MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})
+#: Settings prefix for each account's own rate limiter. ``queue.limiter.*`` is not a
+#: local key, so the API can write it and ``/api/reload`` makes it take effect.
+MAIL_LIMITER_PREFIX = "queue.limiter.inbound.zad"
 
 #: The sieve script name. The script is a projection of ``MAIL_SENDER_NAME_PREFIX`` and
 #: ``MAIL_SENDER_ADDRESS_PREFIX`` keys; lookup stores cannot be rewritten via the API,
@@ -125,13 +119,6 @@ _ACCOUNT_PATROON = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 #: read a variable instead of being text -- which is why it belongs in both lists, and why
 #: ``TestDeWeergavenaamWordtGetoetst`` runs its refused names past this layer too.
 _NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
-
-#: The local part of a configured sender address. Deliberately narrower than RFC 5321
-#: allows: a quoted local part may legally contain a space, a quote and a backslash, and
-#: all three would end the sieve string literal this value is written into. Nothing on the
-#: platform needs them, so refusing them costs nothing and removes the whole class.
-#: Anchored with ``\A``/``\Z`` for the same reason as ``_ACCOUNT_PATROON``.
-_ADRES_LOKAAL_PATROON = re.compile(r"\A[a-z0-9][a-z0-9._+-]*\Z")
 
 
 #: Serialises the read-modify-write of the generated table.
@@ -316,8 +303,8 @@ class MailConnector:
     async def get_sender_addresses(self) -> dict[str, str]:
         """Every account's configured sender address, as the relay currently holds it.
 
-        Normally empty or nearly so: an address is DERIVED from the account name unless a
-        key says otherwise (see ``MAIL_SENDER_ADDRESS_PREFIX``).
+        Nearly empty: an address is DERIVED from the account name unless a key says
+        otherwise (see ``MAIL_SENDER_ADDRESS_PREFIX``).
         """
         return await self._get_sender_keys(MAIL_SENDER_ADDRESS_PREFIX)
 
@@ -340,9 +327,10 @@ class MailConnector:
 
         An empty value is a REMOVAL, not an empty value stored: no display name is a valid
         outcome (the message then leaves with the account's address and nothing in front of
-        it) and no address means the including script derives one, which is what every
-        account but ZAD's Keycloak account does. A key that says nothing is one an
-        administrator reading the settings has to interpret.
+        it) and no address means the including script derives one, which is what nearly
+        every account does. A key that says nothing is one an administrator reading the
+        settings has to interpret. That removal is also how a withdrawn approval lands: the
+        next run passes an empty address and the account falls back to the derived one.
         """
         _controleer_naam(account, display_name)
         _controleer_adres(account, from_address)
@@ -359,8 +347,8 @@ class MailConnector:
     async def set_sender_name(self, account: str, display_name: str) -> bool:
         """Give this account the display name recipients see, keeping its address derived.
 
-        The project path: a project never chooses its own address, so passing an empty one
-        here is not a default that could be forgotten but the only correct value.
+        The short form for a caller that has no address to set; it WIPES any address the
+        account had, which is what makes "derive it again" a single call.
         """
         return await self.set_sender(account, display_name, "")
 
@@ -410,6 +398,76 @@ class MailConnector:
             f"Afzender van mailaccount {account} bijgewerkt op de relay: naam {display_name!r}, adres {from_address!r}"
         )
 
+    # Elk account krijgt zijn eigen limiter, zodat het getal uit het projectbestand ook
+    # echt wordt afgedwongen in plaats van alleen vastgelegd.
+
+    async def set_rate_limit(self, account: str, messages_per_day: int) -> bool:
+        """Give this account its own daily limit. Returns whether anything changed.
+
+        Idempotent by comparison, like ``set_sender`` and for the same reason: a project is
+        processed again on every change it makes, and every write drags a rebuild of the
+        relay's whole configuration behind it.
+
+        The account name ends up inside the limiter's ``match`` EXPRESSION, between single
+        quotes, so it is checked against the same pattern the sender script uses -- a name
+        with a quote or a space in it would break that expression open.
+        """
+        _controleer_account(account)
+        prefix = f"{MAIL_LIMITER_PREFIX}-{account}"
+        rate = f"{messages_per_day}/1d"
+        # Alle vier vergelijken: een limiter zonder ``match`` telt per verbinding, niet per bericht.
+        gewenst = {
+            "enable": "true",
+            "key": "authenticated_as",
+            "match": f"authenticated_as == '{account}'",
+            "rate": rate,
+        }
+        bestaand = await self._get_limiter_keys(prefix)
+        if all(bestaand.get(deel) == waarde for deel, waarde in gewenst.items()):
+            return False
+        await self._request(
+            "POST",
+            "/api/settings",
+            payload=[
+                {
+                    "type": "insert",
+                    "assert_empty": False,
+                    "values": [[f"{prefix}.{deel}", waarde] for deel, waarde in gewenst.items()],
+                }
+            ],
+        )
+        await self.reload()
+        logger.info(f"Dagbudget van mailaccount {account} op de relay gezet op {rate}")
+        return True
+
+    async def delete_rate_limit(self, account: str) -> None:
+        """Forget this account's daily limit. Replay-safe: missing keys are fine.
+
+        Without this the limiter stays behind after the account is gone, and the next
+        account by that name silently inherits a number nobody asked for.
+        """
+        _controleer_account(account)
+        prefix = f"{MAIL_LIMITER_PREFIX}-{account}"
+        if not await self._get_limiter_keys(prefix):
+            return
+        await self._request(
+            "POST",
+            "/api/settings",
+            payload=[{"type": "delete", "keys": [f"{prefix}.{deel}" for deel in ("enable", "key", "match", "rate")]}],
+        )
+        await self.reload()
+        logger.info(f"Dagbudget van mailaccount {account} van de relay verwijderd")
+
+    async def _get_limiter_keys(self, prefix: str) -> dict[str, str]:
+        """This account's limiter keys, by their last segment. Empty when it has none.
+
+        ``removeprefix`` because the relay strips the prefix it was asked for; doing it here
+        as well means a relay that ever stops doing so does not turn every run into a write.
+        """
+        result = await self._request("GET", f"/api/settings/list?prefix={prefix}.")
+        items = ((result or {}).get("data") or {}).get("items") or {}
+        return {sleutel.removeprefix(f"{prefix}."): waarde for sleutel, waarde in items.items()}
+
     async def reload(self) -> None:
         """Rebuild the relay's configuration, so a written value takes effect.
 
@@ -424,6 +482,24 @@ class MailConnector:
             logger.warning(f"De mailrelay meldt configuratiefouten bij het herladen: {list(errors)}")
 
 
+def _controleer_account(account: str) -> None:
+    """Refuse an account name that would not be text inside a generated expression.
+
+    Belt and braces around a value ``generate_mail_account_name`` computes, and the layer
+    that has to hold if it ever stops being computed: the name is written into a sieve
+    string literal (the sender script) and into a limiter ``match`` expression, both between
+    quotes.
+
+    Raises:
+        MailSenderNameError: The name carries a character that would end the string it is
+            written into.
+    """
+    if not _ACCOUNT_PATROON.match(account):
+        raise MailSenderNameError(
+            f"Mailaccountnaam {account!r} hoort alleen kleine letters, cijfers en streepjes te bevatten"
+        )
+
+
 def _controleer_naam(account: str, display_name: str) -> None:
     """Refuse anything that would not be text inside the generated sieve script.
 
@@ -431,10 +507,7 @@ def _controleer_naam(account: str, display_name: str) -> None:
         MailSenderNameError: The account name or the display name carries a character that
             would end the string it is written into.
     """
-    if not _ACCOUNT_PATROON.match(account):
-        raise MailSenderNameError(
-            f"Mailaccountnaam {account!r} hoort alleen kleine letters, cijfers en streepjes te bevatten"
-        )
+    _controleer_account(account)
     if _NAAM_VERBODEN.search(display_name):
         raise MailSenderNameError(
             f"Weergavenaam {display_name!r} bevat een teken dat niet in een mailheader hoort "
@@ -447,38 +520,20 @@ def _controleer_naam(account: str, display_name: str) -> None:
 def _controleer_adres(account: str, adres: str) -> None:
     """Refuse a sender address that may not be written into the generated sieve script.
 
-    A different check from ``_controleer_naam`` and not a shared one: a display name must
-    NOT contain an ``@`` and an address cannot do without it. Sharing the rule would mean
-    the loosest of the two, which is the wrong direction for both.
+    HET TWEEDE SLOT. Sinds RC-399 kan een adres uit een projectbestand komen, langs het
+    formulier, de API en een goedkeuring. Deze laag toetst het nog een keer, met dezelfde
+    regel (``mail_sender_address_error``), zodat een waarde die langs de goedkeuring heen
+    hier arriveert alsnog strandt voordat ze in de sieve-stringliteraal belandt.
 
-    An empty address is valid and means "derive it from the account name", which is what
-    every account except ZAD's own Keycloak account does.
+    Een leeg adres is geldig en betekent "leid het af uit de accountnaam".
 
     Raises:
         MailSenderNameError: The address is malformed or lives outside
-            ``MAIL_SENDER_DOMAIN_ALLOWLIST``.
+            ``MAIL_SENDER_DOMAIN_ALLOWLIST`` (``opi.utils.naming``).
     """
-    if not adres:
-        return
-    lokaal, apenstaart, domein = adres.partition("@")
-    if not apenstaart:
-        raise MailSenderNameError(f"Afzenderadres {adres!r} voor {account!r} heeft geen @")
-    if not _ADRES_LOKAAL_PATROON.match(lokaal):
-        raise MailSenderNameError(
-            f"Afzenderadres {adres!r} voor {account!r} heeft een lokaal deel dat alleen kleine letters, "
-            "cijfers en . _ + - mag bevatten"
-        )
-    if len(lokaal) > MAIL_LOCAL_PART_MAX_LENGTH:
-        raise MailSenderNameError(
-            f"Afzenderadres {adres!r} voor {account!r} heeft een lokaal deel langer dan "
-            f"{MAIL_LOCAL_PART_MAX_LENGTH} tekens (RFC 5321)"
-        )
-    if domein not in MAIL_SENDER_DOMAIN_ALLOWLIST:
-        raise MailSenderNameError(
-            f"Afzenderadres {adres!r} voor {account!r} staat in domein {domein!r}, en alleen "
-            f"{sorted(MAIL_SENDER_DOMAIN_ALLOWLIST)} is toegestaan: een ander domein lijnt niet uit met de "
-            "envelope en haalt DMARC niet"
-        )
+    fout = mail_sender_address_error(adres)
+    if fout:
+        raise MailSenderNameError(f"Afzenderadres {adres!r} voor {account!r}: {fout}")
 
 
 def render_sender_table(namen: dict[str, str], adressen: dict[str, str] | None = None) -> str:
