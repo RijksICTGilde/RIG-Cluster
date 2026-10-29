@@ -92,8 +92,9 @@ ander pad meestuurt verandert daar niets. Dat is dezelfde reikwijdte als de naam
 en het webadres die diezelfde flow al zette. `productie` zetten is vrij (zie hieronder), dus
 dit geeft geen weg om een markering te verlagen.
 
-In het keuzeveld is de eerste keuze leeg, met het label "Ontwikkeling (standaard)": zo
-hoeft de standaard niet in elk bestand te staan.
+In het keuzeveld heeft "Ontwikkeling" de lege waarde en staat het er een keer: zo hoeft
+de standaard niet in elk bestand te staan. Een bestand dat `ontwikkeling` expliciet
+draagt, valt in de lijst op die keuze terug.
 
 Het veld is niet platform-managed: het staat niet in `PLATFORM_MANAGED` en een
 projectbeheerder mag het wijzigen.

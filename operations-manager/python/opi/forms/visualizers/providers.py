@@ -675,8 +675,9 @@ class PullPolicyOptionsProvider:
 class EnvironmentOptionsProvider:
     """De OTAP-markering van een deployment: de vier vaste fasen.
 
-    De eerste keuze is leeg: een deployment zonder markering is ontwikkeling, en zo
-    hoeft die standaard niet in elk bestand te staan.
+    Ontwikkeling is de standaard en heeft de lege waarde: een deployment zonder markering
+    is ontwikkeling, en zo hoeft die standaard niet in elk bestand te staan. Een bestand dat
+    ``ontwikkeling`` expliciet draagt, valt in de lijst op die lege keuze terug.
     """
 
     # De waarden liggen vast; een opsomming is het goede antwoord.
@@ -701,10 +702,11 @@ class EnvironmentOptionsProvider:
         # .value: elke andere provider levert een gewone string, en een enumlid dat
         # ergens als waarde belandt breekt de YAML-dumper (gemeten in e257cee79).
         return [
-            option("", f"{ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT]} (standaard)", production=False),
+            option("", ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT], production=False),
             *(
                 option(value.value, label, production=value is Omgeving.PRODUCTIE)
                 for value, label in ENVIRONMENT_LABELS.items()
+                if value is not DEFAULT_ENVIRONMENT
             ),
         ]
 
