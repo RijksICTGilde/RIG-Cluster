@@ -35,8 +35,10 @@ from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
 from opi.services.user_otp_service import OtpStatus
+from opi.utils.qr import qr_svg
 from opi.web.lotc_switch import PROJECT_TABS
 from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
+from opi.web.security_policy import security_policy_html
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
 
@@ -178,6 +180,12 @@ def all_projects() -> list[dict[str, Any]]:
     return projects
 
 
+#: Een zichtbaar verzonnen seed voor de registratiepagina. Geen echt geheim: de pagina
+#: toont wat de generator ervan maakt, en deze proefopstelling heeft geen tweede factor.
+VOORBEELD_BASE32_SEED = "VOORBEELDWAARDEGEENECHTGEHEIM234"
+VOORBEELD_OTPAUTH_URI = f"otpauth://totp/ZAD:voorbeeld@rijksapp.dev?secret={VOORBEELD_BASE32_SEED}&issuer=ZAD"
+
+
 def _voorbeeld_otp_status() -> OtpStatus:
     """Een bevestigde, niet geblokkeerde tweede factor voor de accountpagina's."""
     return OtpStatus(registered=True, confirmed_at=datetime(2026, 9, 4, 10, 12, tzinfo=UTC))
@@ -210,6 +218,21 @@ def page_data(slug: str) -> dict[str, Any]:
         # De stand van een bevestigde factor: dat is de rijkste van de twee takken, met de
         # datum en het formulier dat de factor vervangt.
         return {"status": _voorbeeld_otp_status()}
+
+    if slug == "account-otp-registreren":
+        # Een lopende registratie: de QR komt uit de echte generator, met een otpauth-URI
+        # die zichtbaar verzonnen is.
+        return {
+            "qr_svg": qr_svg(VOORBEELD_OTPAUTH_URI),
+            "base32_secret": VOORBEELD_BASE32_SEED,
+            "pending": "VOORBEELDWAARDE-geen-echt-geheim",
+            "pending_field": "pending",
+        }
+
+    if slug == "security":
+        # Het ECHTE beleid, zoals introductie de echte catalogus toont: een verzonnen tekst
+        # zou de proefopstelling laten kloppen terwijl de pagina scheef staat.
+        return {"security_policy_html": security_policy_html()}
 
     if slug == "invite-landing":
         # Beide aanmeldkeuzes aan, zodat de pagina de keuze laat zien die hij uitlegt.

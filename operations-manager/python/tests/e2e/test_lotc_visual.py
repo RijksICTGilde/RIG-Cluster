@@ -212,6 +212,8 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
 # blijft.
 REDESIGNED_PAGES = [
     "account",
+    "account-otp",
+    "account-otp-registreren",
     "actions",
     "cli",
     "dashboard",
@@ -240,6 +242,7 @@ REDESIGNED_PAGES = [
     "invite-error",
     "introductie",
     "admin-gedeelde-diensten",
+    "security",
     "router",
 ]
 

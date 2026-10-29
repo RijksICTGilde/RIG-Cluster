@@ -278,15 +278,34 @@ def test_template_manifest_renders_generic_secret(connector):
 FAKE_KUBECTL = """#!/usr/bin/env python3
 import os
 import pathlib
+import subprocess
 import sys
+
+
+# /proc where it exists, ps elsewhere (macOS has no /proc), so this measures the property
+# on both and never skips itself quietly.
+def argv_of(pid):
+    cmdline = pathlib.Path(f"/proc/{pid}/cmdline")
+    if cmdline.exists():
+        return cmdline.read_bytes()
+    return subprocess.run(["ps", "-ww", "-o", "args=", "-p", str(pid)], capture_output=True).stdout
+
+
+def parent_of(pid):
+    stat = pathlib.Path(f"/proc/{pid}/stat")
+    if stat.exists():
+        return int(stat.read_text().rsplit(")", 1)[1].split()[1])
+    out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return int(out) if out else 1
+
 
 # Own command line plus that of every ancestor: an intermediate /bin/sh is what carries the
 # input in its argv, so dumping only this process would miss exactly the leak under test.
 cmdlines = []
 pid = os.getpid()
 while pid > 1:
-    cmdlines.append(pathlib.Path(f"/proc/{pid}/cmdline").read_bytes())
-    pid = int(pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+    cmdlines.append(argv_of(pid))
+    pid = parent_of(pid)
 pathlib.Path(os.environ["KUBECTL_ARGV_DUMP"]).write_bytes(b"\\n".join(cmdlines))
 pathlib.Path(os.environ["KUBECTL_STDIN_DUMP"]).write_bytes(sys.stdin.buffer.read())
 """

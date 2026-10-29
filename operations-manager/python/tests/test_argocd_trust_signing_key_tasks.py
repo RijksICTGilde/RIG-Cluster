@@ -11,7 +11,7 @@ Deze tests draaien de shell, zodat ze de dedup en guards in de taak-logica vange
 from __future__ import annotations
 
 import base64
-import shutil
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -40,10 +40,8 @@ def _statusshell(taak: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _gereedschap() -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash ontbreekt")
-    if shutil.which("gpg") is None:
-        pytest.skip("gpg ontbreekt")
+    echt_programma("bash")
+    echt_programma("gpg")
 
 
 def _generate_key(tmp_path: Path, naam: str) -> tuple[str, str, str]:
@@ -53,7 +51,7 @@ def _generate_key(tmp_path: Path, naam: str) -> tuple[str, str, str]:
     env = {"GNUPGHOME": str(home)}
     subprocess.run(
         [
-            "gpg",
+            echt_programma("gpg"),
             "--batch",
             "--quiet",
             "--passphrase",
@@ -69,14 +67,22 @@ def _generate_key(tmp_path: Path, naam: str) -> tuple[str, str, str]:
         env=env,
     )
     fpr_proc = subprocess.run(
-        ["gpg", "--batch", "--list-keys", "--with-colons"], check=True, capture_output=True, text=True, env=env
+        [echt_programma("gpg"), "--batch", "--list-keys", "--with-colons"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     fingerprint = next(line.split(":")[9] for line in fpr_proc.stdout.splitlines() if line.startswith("fpr:"))
     public = subprocess.run(
-        ["gpg", "--batch", "--armor", "--export", fingerprint], check=True, capture_output=True, text=True, env=env
+        [echt_programma("gpg"), "--batch", "--armor", "--export", fingerprint],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
     ).stdout
     secret = subprocess.run(
-        ["gpg", "--batch", "--armor", "--export-secret-keys", fingerprint],
+        [echt_programma("gpg"), "--batch", "--armor", "--export-secret-keys", fingerprint],
         check=True,
         capture_output=True,
         text=True,
@@ -132,12 +138,12 @@ def _draai(shell: str, tmp_path: Path, bin_dir: Path, log: Path) -> subprocess.C
     ``task`` meteen afbrak.
     """
     bash = echt_programma("bash")
-    gpg = echt_programma("gpg")
     return subprocess.run(
         [bash, "-ec", shell],
         cwd=tmp_path,
         env={
-            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            # Stubs toevoegen, niet PATH vervangen: gpg/sops staan niet in /usr/bin op macOS.
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "HOME": str(tmp_path),
             "KUBECTL_LOG": str(log),
             "TMPDIR": tempfile.gettempdir(),
@@ -418,7 +424,7 @@ class TestTrustGitSigningKey:
         herimport = tmp_path / "herimport"
         herimport.mkdir(mode=0o700)
         subprocess.run(
-            ["gpg", "--batch", "--quiet", "--import"],
+            [echt_programma("gpg"), "--batch", "--quiet", "--import"],
             input=exported,
             check=True,
             capture_output=True,
@@ -426,7 +432,7 @@ class TestTrustGitSigningKey:
             env={"GNUPGHOME": str(herimport)},
         )
         lijst = subprocess.run(
-            ["gpg", "--batch", "--list-keys", "--with-colons"],
+            [echt_programma("gpg"), "--batch", "--list-keys", "--with-colons"],
             check=True,
             capture_output=True,
             text=True,

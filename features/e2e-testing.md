@@ -37,9 +37,7 @@ uv sync
 uv run playwright install chromium firefox --with-deps
 
 # Layer 1: Local tests (no sandbox needed, ~15s)
-# PROJECT_REPO_PASSWORD: de wizardtests schrijven een projectbestand en vallen zonder deze
-# variabele om, zie workflow/prepare.md. `task test-e2e` zet zelf een default.
-PROJECT_REPO_PASSWORD=plain:repo-secret uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
 task test-e2e
 
 # Layer 2: Sandbox tests (requires running sandbox cluster)
@@ -49,6 +47,12 @@ task test-e2e-sandbox
 ```
 
 E2E tests are **excluded by default** from regular `pytest` runs via the `addopts` configuration.
+
+De wizardtests schrijven een projectbestand, en `generate_self_service_project_yaml` weigert
+dat zonder `PROJECT_REPO_PASSWORD`. De testserver zet die instelling zelf
+(`tests/e2e/testserver.py`), dus een kale pytest-run werkt; staat de variabele in de
+omgeving, dan gaat die voor. Alleen de VORM telt (`plain:` plus een waarde), dus het is
+geen secret.
 
 ## Test Structure
 

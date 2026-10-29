@@ -47,9 +47,12 @@ PAGINAS = [
 #: werk dat schendingen wegneemt, en dan naar beneden. Een uitzondering hoort hier met
 #: reden bij te staan: ``/admin/users`` ging van 12 naar 14 handlers doordat elke
 #: gebruikersrij er een knop "Sessies beëindigen" bij kreeg (RC-287). ``/redoc`` staat op 1:
-#: zie ENFORCE_UITZONDERINGEN hierna. Elke pagina ging er met RC-392 een handler bij
-#: hebben: het accountmenu kreeg het item "Rollen en rechten", en dat is op elke pagina een
-#: ``onclick``. De getallen hieronder zijn daarop bijgewerkt (RC-397).
+#: zie ENFORCE_UITZONDERINGEN hierna. ``/services`` ging van 36 naar 37 handlers doordat
+#: de catalogus er een dienst met een hulppagina bij kreeg (seaweedfs, RC-331): de pagina
+#: zet per dienst met hulp een ``openServiceHelp``-knop, dus die handler hoort erbij. Elke
+#: pagina ging er daarnaast met RC-392 een handler bij hebben: het accountmenu kreeg het
+#: item "Rollen en rechten", en dat is op elke pagina een ``onclick``. De getallen
+#: hieronder zijn op beide bijgewerkt (RC-397).
 BASELINE: dict[str, tuple[int, int]] = {
     "/dashboard": (3, 11),
     "/docs": (0, 0),
