@@ -17,7 +17,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
+from opi.core.config import settings
 from opi.core.step_up import step_up_until
+from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -623,6 +625,8 @@ PROJECT_TABS = {
     "metrics": {"label": "Metrics", "path": "metrics"},
     "backups": {"label": "Backups", "path": "backups"},
     "taken": {"label": "Taken", "path": "taken"},
+    # Achter Action.AUDIT_READ, dus niet voor elk lid in de balk; de route bepaalt dat.
+    "audit": {"label": "Audit", "path": "audit"},
 }
 
 #: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.
@@ -753,6 +757,60 @@ def build_lotc_project_details(
         "project": project,
         **filter_lotc_deployments(request, project.get("deployments") or [], deployment_open),
     }
+
+
+def commit_adres(sha: str) -> str:
+    """Het webadres van een commit in de projecten-repo, of leeg als het er geen is.
+
+    Alleen voor een http(s)-herkomst: GitHub en Forgejo tonen beide ``<repo>/commit/<sha>``.
+    Een ``git://``- of ``ssh://``-URL heeft geen pagina om naartoe te wijzen, en dan toont
+    de pagina de SHA als tekst.
+    """
+    basis = settings.GIT_PROJECTS_SERVER_URL
+    if not basis.startswith(("http://", "https://")):
+        return ""
+    return f"{basis.removesuffix('.git').rstrip('/')}/commit/{quote(sha, safe='')}"
+
+
+def audit_limit(request: Request) -> int:
+    """Hoeveel auditrijen deze pagina opvraagt: ``?limit=``, met een plafond.
+
+    Een te grote waarde levert het plafond en geen fout: het is een pagina en niet een
+    contract, en 200 rijen zijn een antwoord op "geef me een miljoen".
+    """
+    gevraagd = request.query_params.get("limit")
+    try:
+        aantal = int(gevraagd) if gevraagd else LIST_DEFAULT_LIMIT
+    except ValueError:
+        return LIST_DEFAULT_LIMIT
+    return max(1, min(aantal, LIST_MAX_LIMIT))
+
+
+def build_lotc_audit(rijen: list[Any]) -> list[dict[str, Any]]:
+    """De auditrijen van een project in de vorm die het tabblad leest.
+
+    ``origin`` komt er NIET in: die kolom is volgens het gebeurtenissenontwerp voor
+    platformbeheerders, en die lezen hem in de database.
+    """
+    getoond = []
+    for rij in rijen:
+        gegevens = rij.data or {}
+        getoond.append(
+            {
+                "time": rij.time,
+                "actor": rij.actor or "",
+                "actor_kind": rij.actor_kind,
+                "action": gegevens.get("action", ""),
+                "subject": rij.subject or "",
+                "allowed": bool(gegevens.get("allowed")),
+                "cause": gegevens.get("cause") or "",
+                "commits": [
+                    {"sha": sha, "short": sha[:8], "url": commit_adres(sha)}
+                    for sha in gegevens.get("commit_shas") or []
+                ],
+            }
+        )
+    return getoond
 
 
 #: Het koekje waarin de weergavekeuze (licht/donker) bewaard blijft.

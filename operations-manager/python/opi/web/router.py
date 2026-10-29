@@ -28,6 +28,7 @@ from opi.services.argocd_operation import (
     read_sync_operation,
 )
 from opi.services.argocd_overview import get_project_argocd_statuses
+from opi.services.audit import list_actions
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -52,7 +53,9 @@ from opi.web.lotc_switch import (
     STANDAARD_TAB,
     TABS_MET_DEPLOYMENT,
     TABS_MET_VOORWAARDE,
+    audit_limit,
     build_deployment_status_column,
+    build_lotc_audit,
     build_lotc_dashboard,
     build_lotc_introductie,
     build_lotc_project_details,
@@ -1357,6 +1360,19 @@ async def project_details(request: Request, project_name: str):
     return await render_project_page(request, project_name, "")
 
 
+@web_router.get("/projects/{project_name}/audit", response_class=HTMLResponse)
+@action(Action.AUDIT_READ)
+@requires_sso
+async def project_audit(request: Request, project_name: str):
+    """Het audittabblad. Een eigen route, want het draagt een eigen action.
+
+    Dezelfde pagina als de andere tabbladen (:func:`render_project_page`); alleen de
+    action verschilt, en die beslist via de router-dependency over DIT project uit het
+    pad. ``?limit=`` is het aantal rijen, afgekapt op :data:`LIST_MAX_LIMIT`.
+    """
+    return await render_project_page(request, project_name, "")
+
+
 @web_router.get("/projects/{project_name}/deployments/{deployment_name}", response_class=HTMLResponse)
 @action(Action.DEPLOYMENT_READ)
 @web_router.get("/projects/{project_name}/metrics/{deployment_name}", response_class=HTMLResponse)
@@ -1877,8 +1893,28 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # (``lege_tabs`` hieronder), en wie er via een gedeelde link toch op uitkomt gaat
         # naar Overzicht in plaats van naar het niets.
         lege_tabs = () if service_detail_sections else TABS_MET_VOORWAARDE
+        # Het audittabblad staat er alleen voor wie het mag lezen. Dat is geen lege tab
+        # maar een recht, dus het volgt niet uit TABS_MET_VOORWAARDE; de route erachter
+        # weigert met een 403, en een tabblad dat daarop uitkomt hoort niet in de balk.
+        if not may(request, action=Action.AUDIT_READ, project_name=project_name):
+            lege_tabs = (*lege_tabs, "audit")
         if tab_from_path(request.url.path) in lege_tabs:
             return RedirectResponse(url=project_tab_url(project_name, STANDAARD_TAB), status_code=302)
+
+        # De auditrijen van dit project, alleen op het tabblad dat ze toont (stap 3).
+        # Het project komt uit het PAD: dezelfde naam die @action(AUDIT_READ) heeft laten
+        # wegen, nooit een naam uit de querystring of de body.
+        audit_rijen: list[dict[str, Any]] = []
+        audit_fout = False
+        if tab_from_path(request.url.path) == "audit":
+            try:
+                audit_rijen = build_lotc_audit(await list_actions(project_name, limit=audit_limit(request)))
+            except SQLAlchemyError, OSError:
+                # Zelfde keuze als bij de uitrolmelding hieronder: een database die niet
+                # antwoordt mag de projectpagina niet meenemen. Wel met een melding op het
+                # tabblad, want "geen rijen" zou hier een onwaar antwoord zijn.
+                logger.exception("De audit van project %s kon niet worden gelezen", project_name)
+                audit_fout = True
 
         # Changes saved with rollout=false that nobody has rolled out yet (RC-46). Shown
         # above the tabs, because a project file that silently runs ahead of the cluster is
@@ -1931,6 +1967,10 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 # Het backupsblok van de open deployment, voor het tabblad Backups (RC-100).
                 # Leeg op elk ander tabblad, en leeg voor een project dat niets kan backuppen.
                 "backups_sections": backups_sections,
+                # De audit van dit project, voor het tabblad Audit. Leeg op elk ander
+                # tabblad en voor wie hem niet mag lezen.
+                "audit_rijen": audit_rijen,
+                "audit_fout": audit_fout,
                 # Detail-page sections the project's services own (WP2). Replaces the
                 # hardcoded per-service includes (e.g. the Keycloak realm block, which
                 # after RC-5's config move kept reading the old project-level

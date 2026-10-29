@@ -799,7 +799,7 @@ class DeleteSnapshotResponse(BaseModel):
     "/snapshot/{project_name}/{deployment_name}/{snapshot_id}",
     response_model=DeleteSnapshotResponse,
 )
-@action(Action.BACKUP_DELETE)
+@action(Action.BACKUP_DELETE, audit_fields=("snapshot_id",))
 @validate_api_token
 async def delete_snapshot(
     request: Request,

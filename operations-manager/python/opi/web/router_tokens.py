@@ -110,7 +110,7 @@ def _terug(request: Request, project_name: str) -> Response:
 async def _velden(request: Request) -> dict[str, str]:
     """Het formulier als vlakke dict; een meerkeuze wordt een kommalijst.
 
-    Dezelfde vorm als de step-up-herhaling teruggeeft (``_velden`` in auth_decorators),
+    Dezelfde vorm als de step-up-herhaling teruggeeft (``velden_uit_formulier`` in auth_decorators),
     zodat een route niet hoeft te weten of hij het formulier of de herhaling leest.
     """
     formulier = await request.form()
@@ -124,7 +124,7 @@ async def _velden(request: Request) -> dict[str, str]:
 def _rollen_uit(velden: dict[str, str]) -> list[str]:
     """De gekozen rollen uit het formulier.
 
-    De meerkeuze stuurt ``roles`` meerdere keren; ``_velden`` heeft die dan al tot een
+    De meerkeuze stuurt ``roles`` meerdere keren; ``velden_uit_formulier`` heeft die dan al tot een
     kommalijst samengevoegd, en de step-up-herhaling stuurt diezelfde vorm terug.
     """
     return [deel.strip() for deel in velden.get("roles", "").split(",") if deel.strip()]

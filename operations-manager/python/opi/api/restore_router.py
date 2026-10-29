@@ -1400,7 +1400,7 @@ def _set_generation(
     "/project/{project_name}/deployment/{deployment_name}/run/{backup_run_id}",
     response_model=BackupRunRestoreResponse,
 )
-@action(Action.RESTORE_RUN)
+@action(Action.RESTORE_RUN, audit_fields=("backup_run_id",))
 @validate_api_token
 async def restore_backup_run(
     request: Request,

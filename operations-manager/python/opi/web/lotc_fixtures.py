@@ -563,9 +563,38 @@ def page_data(slug: str) -> dict[str, Any]:
         # die een echte instantie doorgeeft als Prometheus niet bereikbaar is.
         context["usage"] = None
         context["usage_error"] = "Prometheus is niet verbonden in de proefopstelling."
+        # Het audittabblad leest zijn rijen uit de database; de proefopstelling heeft er
+        # geen, dus staan ze hier als twee voorbeelden in dezelfde vorm.
+        context["audit_rijen"] = _audit_voorbeelden()
         return context
 
     return {}
+
+
+def _audit_voorbeelden() -> list[dict[str, Any]]:
+    """Twee auditrijen in de vorm die ``build_lotc_audit`` oplevert: een actie en een weigering."""
+    return [
+        {
+            "time": datetime(2026, 10, 28, 9, 14, tzinfo=UTC),
+            "actor": "beheerder@sandbox.rijksapp.dev",
+            "actor_kind": "user",
+            "action": "deployment.write",
+            "subject": "demo/productie",
+            "allowed": True,
+            "cause": "",
+            "commits": [{"sha": "9f1c2ab7d4", "short": "9f1c2ab7", "url": ""}],
+        },
+        {
+            "time": datetime(2026, 10, 28, 8, 2, tzinfo=UTC),
+            "actor": "demo/pijplijn",
+            "actor_kind": "service-account",
+            "action": "deployment.image-replace",
+            "subject": "demo/productie",
+            "allowed": False,
+            "cause": "insufficient-role",
+            "commits": [],
+        },
+    ]
 
 
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
