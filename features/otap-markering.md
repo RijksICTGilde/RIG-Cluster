@@ -116,10 +116,14 @@ verzinnen.
 verlaat. OPI logt zo'n verlaging per deployment op WARNING met wie, project en deployment.
 Een markering weghalen is ook een verlaging: de deployment komt dan op `ontwikkeling` uit.
 
-Sinds RC-392 vraagt elke WIJZIGING van de markering `ops` met een verse step-up, dus ook
-hem op `productie` ZETTEN (`environment.set`, ontwerp paragraaf 7): wie hem mag verlagen
-omzeilt elke productieregel met een klik, en wie hem mag zetten bepaalt waar die regels
-gelden. `any_marking_change(before, after)` is de vergelijking die dat leest.
+Een deployment NAAR of VAN `productie` zetten vraagt `ops` met een verse step-up
+(`environment.set`, ontwerp paragraaf 7): wie hem van productie haalt omzeilt elke
+productieregel met een klik, en wie hem erop zet bepaalt waar die regels gelden. Een
+nieuwe deployment die meteen op productie komt telt mee. Een wissel tussen ontwikkeling,
+test en acceptatie is een deployment schrijven en vraagt verder niets.
+`production_marking_change(before, after)` is de vergelijking die dat leest. De keuzelijst
+in het portaal (`EnvironmentOptionsProvider`) zet de stages die je niet mag kiezen uit,
+met "(alleen ops)" erachter.
 
 De melding staat op de wegen die een BESTAANDE markering kunnen wijzigen: de twee
 portaalwegen (wizard-edit en modal-edit) en de upsert-deployment van de API. Ze noemen

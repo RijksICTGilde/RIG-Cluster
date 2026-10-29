@@ -107,14 +107,14 @@ Spelregel: een nieuwe rol komt er alleen als er een echte houder is die een stri
 | component verwijderen, in productie (`component_in_production`) | | | ✓ s | | | |
 | job, databaseconsole, restore, niet-productie | | ✓ | ✓ | | | |
 | job, databaseconsole, restore, productie | | | ✓ | | | |
-| OTAP-markering zetten of verlagen | | | ✓ s | | | |
+| OTAP-markering van of naar productie zetten | | | ✓ s | | | |
 | leden toevoegen, verwijderen, rol wijzigen | | | | ✓ s | | |
 | tokens en service accounts beheren | | | | ✓ s | | |
 | project verwijderen | | | | ✓ s | | |
 
 Deze tabel is de toets voor stap 7: de gegenereerde matrix moet hem opleveren. Wat het project verlaat (eigen domein, resources boven het quotum, iets publiek maken) blijft goedkeuring via `ApprovalSpec` (`opi/services/catalog/approval.py`). Dat is geen rolrecht en valt buiten dit plan.
 
-De markering staat bij `ops` met step-up, omdat wie de markering mag verlagen elke productieregel met één klik omzeilt.
+Van of naar productie staat bij `ops` met step-up, omdat wie een deployment van productie haalt elke productieregel met één klik omzeilt. Een wissel tussen de andere stages is een deployment schrijven (besluit 29-10-2026).
 
 ## 5. Het model
 

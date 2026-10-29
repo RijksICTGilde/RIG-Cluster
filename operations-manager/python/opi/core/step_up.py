@@ -143,25 +143,23 @@ def _uses_component(deployment: dict[str, Any], component_name: str) -> bool:
     return any(isinstance(c, dict) and c.get("reference") == component_name for c in deployment.get("components") or [])
 
 
-def any_marking_change(before: dict[str, Omgeving], after: dict[str, Omgeving]) -> bool:
-    """Of deze opslag de OTAP-markering van een deployment ZET of VERLAAGT.
+def production_marking_change(before: dict[str, Omgeving], after: dict[str, Omgeving]) -> bool:
+    """Of deze opslag een deployment NAAR of VAN ``productie`` zet.
 
-    Drie gevallen, en alle drie zijn "de markering zetten" uit ontwerp paragraaf 7: een
-    bestaande deployment krijgt een andere markering, omhoog of omlaag, en een NIEUWE
-    deployment komt meteen op productie.
+    Alleen die overgang is "de markering zetten" (``environment.set``): wie een deployment
+    van productie haalt omzeilt elke productieregel met een klik, en wie hem erop zet
+    bepaalt waar die regels gelden. Een NIEUWE deployment die meteen op productie komt telt
+    mee.
 
-    Een nieuwe deployment BUITEN productie valt er bewust niet onder: dat is een
-    deployment schrijven, en de scope van die regel weegt hem al. Anders zou een
-    pijplijn met ``developer-ci`` geen acceptatiedeployment meer kunnen aanmaken, want
-    een markering zetten vraagt een mens met een tweede factor. Een deployment die
-    VERDWIJNT valt er ook niet onder: het verwijderen heeft zijn eigen regel, met zijn
-    eigen tekst.
+    Een overgang tussen de andere stages (ontwikkeling, test, acceptatie) valt er bewust
+    niet onder: dat is een deployment schrijven, en de regel daarvan weegt hem al. Zo kan
+    een developer of een pijplijn met ``developer-ci`` een deployment van test naar
+    acceptatie zetten. Een deployment die VERDWIJNT valt er ook niet onder: het
+    verwijderen heeft zijn eigen regel, met zijn eigen tekst.
     """
-    for naam, na in after.items():
-        if naam not in before:
-            if na is Omgeving.PRODUCTIE:
-                return True
-        elif before[naam] is not na:
+    for name, after_value in after.items():
+        before_value = before.get(name)
+        if before_value is not after_value and Omgeving.PRODUCTIE in (before_value, after_value):
             return True
     return False
 
@@ -188,7 +186,7 @@ def requires_production_step_up(
                 if _uses_component(d, target or "")
             )
         case StepUpKind.ENVIRONMENT:
-            return change is not None and any_marking_change(*change)
+            return change is not None and production_marking_change(*change)
 
 
 def log_step_up_refusal(

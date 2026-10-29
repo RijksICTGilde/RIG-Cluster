@@ -71,6 +71,20 @@ def test_verhogen_naar_productie_vraagt_ook_step_up() -> None:
         )
 
 
+def test_switch_between_other_stages_needs_nothing() -> None:
+    """Van acceptatie naar test is een deployment schrijven: alleen productie telt mee."""
+    project = {**PROJECT, "deployments": [{"name": "d1", "environment": "acceptatie"}]}
+    p1, p2 = _patched(project)
+    with p1, p2:
+        deployment_data = SimpleNamespace(environment="test", deploymentName="d1")
+        assert (
+            conditions.deployment_environment_change(
+                _request(OWNER), project_name="demo", deployment_data=deployment_data
+            )
+            is False
+        )
+
+
 def test_downgrade_false_zonder_aangevraagde_markering() -> None:
     """Een aanroep die niets over de markering zegt laat de bestaande staan."""
     p1, p2 = _patched(PROJECT)

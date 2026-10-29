@@ -156,11 +156,12 @@ rule(
     grants=[Grant(Role.OPS)],
 )
 
-# De markering staat bij ops met een step-up, omdat wie hem mag verlagen elke
-# productieregel met een klik omzeilt (ontwerp paragraaf 4).
+# Van of naar productie staat bij ops met een step-up, omdat wie een deployment van
+# productie haalt elke productieregel met een klik omzeilt (ontwerp paragraaf 4). Een
+# overgang tussen de andere stages is een deployment schrijven.
 rule(
     Action.ENVIRONMENT_SET,
-    label="OTAP-markering zetten of verlagen",
+    label="OTAP-markering van of naar productie zetten",
     section=DEPLOYMENTS,
     grants=[Grant(Role.OPS, requires=STEP_UP)],
 )

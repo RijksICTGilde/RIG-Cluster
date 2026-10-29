@@ -51,7 +51,7 @@ def deployment_environment_change(
     """De aanroep ZET of VERLAAGT de OTAP-markering van deze deployment.
 
     Een aanroep zonder markering laat de bestaande staan. Welke wijzigingen meetellen
-    staat in :func:`opi.core.step_up.any_marking_change`; een deployment die nog niet
+    staat in :func:`opi.core.step_up.production_marking_change`; een deployment die nog niet
     bestaat gaat daar als nieuw naar binnen, zonder voor-staat.
     """
     gevraagd = getattr(deployment_data, "environment", None)
