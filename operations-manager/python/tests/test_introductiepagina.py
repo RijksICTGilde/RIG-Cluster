@@ -52,6 +52,14 @@ def test_root_stuurt_een_anonieme_bezoeker_naar_de_introductie(test_client: Test
     assert response.headers["location"] == "/introductie"
 
 
+
+def test_about_verwijst_permanent_door_naar_de_introductie(test_client: TestClient) -> None:
+    """Over ZAD is in de introductie opgegaan; een oude link moet daar uitkomen."""
+    response = test_client.get("/about", follow_redirects=False)
+
+    assert response.status_code == 301
+    assert response.headers["location"] == "/introductie"
+
 def _catalogus() -> tuple[list[str], list[str]]:
     """De labels die de catalogus levert, gesplitst zoals de pagina ze toont."""
     zelf = [d.name for d in SERVICE_DEFINITIONS.values() if not d.hidden and d.kind is not ServiceKind.SYSTEM]

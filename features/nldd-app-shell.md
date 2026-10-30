@@ -19,7 +19,7 @@ nldd-shell
 
 De menustructuur komt ongewijzigd uit `opi/web/navigation_lotc.py`, met onze iconen via `to_nldd_icon`. De inhoud van pagina's (tabs, kaarten, formulieren) is niet veranderd.
 
-De voettekst is `nldd-page-footer` met alleen de legal bar: links de versie (met link naar de commit), rechts Over het platform en Beveiliging. De hoofdrij met link-kolommen blijft leeg, want die zou herhalen wat de zijbalk al heeft.
+De voettekst is `nldd-page-footer` met alleen de legal bar: links de versie (met link naar de commit), rechts Beveiliging. "Over het platform" (`/about`) is opgegaan in de introductie en verwijst daar permanent naartoe. De hoofdrij met link-kolommen blijft leeg, want die zou herhalen wat de zijbalk al heeft.
 
 ## Gedrag
 

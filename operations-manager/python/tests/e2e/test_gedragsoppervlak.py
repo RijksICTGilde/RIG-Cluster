@@ -69,7 +69,7 @@ ROUTES = [
     "/admin/approvals",
     "/admin/usage",
     "/metrics-explorer",
-    "/about",
+    "/introductie",
     "/forms/wizard/start",
     "/platform",
 ]

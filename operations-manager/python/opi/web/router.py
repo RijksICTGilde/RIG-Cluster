@@ -2906,31 +2906,10 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
     return antwoord
 
 
-@web_router.get("/about", response_class=HTMLResponse)
-async def about_platform(request: Request):
-    """Serve the 'About the platform' page.
-
-    BEWUST ZONDER ``@requires_sso``: een publieke uitlegpagina, net als de introductie.
-    """
-    try:
-        user = get_current_user(request)
-        from opi.web.navigation_lotc import get_navigation
-
-        return render(
-            request,
-            template="bg/about.html.j2",
-            context={
-                "request": request,
-                "menu_items": get_menu_items(user),
-                "navigation": get_navigation(user, current_path="/about"),
-            },
-        )
-    except Exception as e:
-        log_render_failure(logger, "de pagina Over ZAD", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Deze pagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
-        ) from e
+@web_router.get("/about")
+async def about_platform() -> RedirectResponse:
+    """Over ZAD is opgegaan in de introductie; oude links blijven werken."""
+    return RedirectResponse(url="/introductie", status_code=301)
 
 
 @web_router.get("/security", response_class=HTMLResponse)
