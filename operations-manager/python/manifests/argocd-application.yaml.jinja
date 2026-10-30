@@ -37,10 +37,13 @@ spec:
       - PrunePropagationPolicy=foreground
       - PruneLast=true
       - SkipDryRunOnMissingResource=true
+    # The first auto-sync of a new Application can fail once (seen on the sandbox), and OPI waits for it
+    # to turn healthy before it rolls out the next level. A fixed 30s backoff made that
+    # wait most of a project's creation time; 5, 10, 20, 30 keeps the same window.
     retry:
-      limit: 2
+      limit: 4
       backoff:
-        duration: 30s
-        factor: 1
+        duration: 5s
+        factor: 2
         maxDuration: 30s
   revisionHistoryLimit: 3
