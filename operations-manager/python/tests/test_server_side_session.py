@@ -7,6 +7,7 @@ via write-through.
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -420,3 +421,42 @@ def test_a_failing_write_through_still_answers_and_logs(caplog: pytest.LogCaptur
     sid = TimestampSigner(SECRET).unsign(response.cookies["session"], max_age=MAX_AGE).decode()
     assert sid not in caplog.text, "the full session id is a bearer and stays out of the log"
     assert sid[:12] in caplog.text, "a prefix still identifies the failing session"
+
+
+class _ReorderingStore(InMemorySessionStore):
+    """A store whose earlier writes commit later, as separate database transactions can."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._delays = [0.05, 0.02, 0.0]
+
+    async def set(self, session_id: str, data: dict[str, Any]) -> None:
+        delay = self._delays.pop(0) if self._delays else 0.0
+        await asyncio.sleep(delay)
+        await super().set(session_id, data)
+
+
+def test_the_row_holds_the_last_mutation_when_writes_commit_out_of_order() -> None:
+    """The login callback mutates three times in a row; the row must end on the last state.
+
+    Without ordering the first upsert committed last, the row lost ``id_token``, and after
+    an OPI restart (empty cache) logout went to Keycloak without ``id_token_hint``.
+    """
+    store = _ReorderingStore()
+    app = FastAPI()
+
+    @app.get("/login")
+    async def login(request: Request) -> PlainTextResponse:
+        session = request.session
+        assert isinstance(session, ServerSideSession)
+        await session.regenerate()
+        request.session["user"] = {"email": "a@example.org"}
+        request.session["id_token"] = "the-id-token"
+        return PlainTextResponse("ok")
+
+    app.add_middleware(ServerSideSessionMiddleware, secret_key=SECRET, max_age=MAX_AGE, https_only=False, store=store)
+
+    response = TestClient(app).get("/login")
+
+    sid = TimestampSigner(SECRET).unsign(response.cookies["session"], max_age=MAX_AGE).decode()
+    assert store._rows[sid] == {"user": {"email": "a@example.org"}, "id_token": "the-id-token"}

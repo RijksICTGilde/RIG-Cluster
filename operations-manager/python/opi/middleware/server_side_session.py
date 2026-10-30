@@ -73,6 +73,7 @@ class ServerSideSession(MutableMapping[str, Any]):
         self._data = data
         self._loop = loop
         self._pending: set[Future[None]] = set()
+        self._last_write: Future[None] | None = None
         self.accessed = False
         self.modified = False
 
@@ -103,7 +104,21 @@ class ServerSideSession(MutableMapping[str, Any]):
     def _write_through(self) -> None:
         """Plan de persist van de huidige stand, zonder de aanroeper te laten wachten."""
         snapshot = deepcopy(self._data)
-        future = asyncio.run_coroutine_threadsafe(self._store.set(self.session_id, snapshot), self._loop)
+        session_id = self.session_id
+        previous = self._last_write
+        store = self._store
+
+        async def _persist() -> None:
+            # Each upsert is its own transaction; unchained, an earlier snapshot could commit
+            # last and the row would lose the later mutations (id_token after login). A failed
+            # predecessor is already logged by its own callback, and must not block this write.
+            if previous is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.wrap_future(previous)
+            await store.set(session_id, snapshot)
+
+        future = asyncio.run_coroutine_threadsafe(_persist(), self._loop)
+        self._last_write = future
         self._pending.add(future)
 
         def _log_failure(f: Future[None]) -> None:
