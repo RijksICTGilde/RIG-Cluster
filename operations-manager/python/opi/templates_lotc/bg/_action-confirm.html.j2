@@ -30,6 +30,9 @@
   taak loopt die deze vraag start. De step-up schrijft bovendien vast in
   #edit-section-inner.
 
+  Zolang de schil deze vraag toont, neemt hij de maat en de vorm van <nldd-modal-dialog>
+  aan (static/css/modal.css); zodra de voortgang de vraag vervangt, is hij weer breed.
+
   Annuleren roept closeEditModal() aan van die schil: de dialoog moet dicht en de pagina
   eronder moet blijven staan, daar is geen href voor.
 #}
@@ -40,16 +43,11 @@
     {# Verwijderen is onomkeerbaar. Volgens de NLDD-richtlijn is de uitweg dan de primary
        knop en de actie zelf destructive. Bij een omkeerbare actie is de actie primary. #}
     {% set destructief = action.kind in ('warning', 'warning-subtle') %}
-    {# Expliciet links: de foutplek hieronder staat altijd in de default slot, ook als hij
-       leeg en verborgen is, en de afgeleide uitlijning zou daar per ongeluk op leunen. #}
+    {# De default slot blijft leeg: dan is de dialoog een vraag en geen taak, en zet NLDD
+       icoon, tekst en knoppen gecentreerd en de knoppen onder elkaar, zoals
+       <nldd-modal-dialog> dat doet. De foutplek staat daarom onder de dialoog. #}
     <nldd-inline-dialog text="{{ blocked_reason or message }}"
-                        {% if destructief or blocked_reason %}variant="alert"{% endif %}
-                        horizontal-alignment="left">
-        {# De plek waar de modal-schil een foutmelding in schrijft als de POST mislukt.
-           Blijft een kale div met dezelfde id en dezelfde klassen: hij hoort bij die
-           schil, niet bij deze omzetting. #}
-        <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
-
+                        {% if destructief or blocked_reason %}variant="alert"{% endif %}>
         {# Een geblokkeerde actie heeft niets te bevestigen; de dialoog legt dan alleen uit
            waarom (de server weigert hem ook). #}
         {% if blocked_reason %}
@@ -70,4 +68,9 @@
                          hx-disabled-elt="this"></nldd-button>
         {% endif %}
     </nldd-inline-dialog>
+
+    {# De plek waar de modal-schil een foutmelding in schrijft als de POST mislukt.
+       Blijft een kale div met dezelfde id en dezelfde klassen: hij hoort bij die schil,
+       niet bij deze omzetting. #}
+    <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
 </div>
