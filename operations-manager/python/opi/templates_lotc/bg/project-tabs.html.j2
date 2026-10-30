@@ -122,11 +122,15 @@
 
     {% include "bg/_pending-rollout.html.j2" %}
 
-    <c-tabs aria-label="Aanzichten van dit project">
+    {# Plain nldd markup instead of <c-tabs>: under the NLDD theme <c-tab> falls back to the
+       RVO <li> with an RVO active class that nldd-tab-bar does not style, so the active tab
+       was not visible. The pinned nldd-tab-bar-item takes `current` and an `icon` attribute;
+       `selected` and the icon slot from the newer NLDD docs do nothing in this version. #}
+    <nldd-tab-bar navigation accessible-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
-            <c-tab label="{{ tab.label }}" href="{{ tab.url }}" :active="key == active_tab" />
+            <nldd-tab-bar-item text="{{ tab.label }}" href="{{ tab.url }}" icon="{{ tab.icon }}"{% if key == active_tab %} current{% endif %}></nldd-tab-bar-item>
         {% endfor %}
-    </c-tabs>
+    </nldd-tab-bar>
 
     {# De inhoud van het tabblad in een wikkel met dezelfde id als op de bestaande pagina
        (#tab-project, #tab-deployments, #tab-taken). Daar staan alle tabbladen in EEN

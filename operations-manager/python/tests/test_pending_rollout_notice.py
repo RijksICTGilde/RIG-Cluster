@@ -101,7 +101,7 @@ def test_the_notice_is_rendered_above_the_tabs() -> None:
     page = (_TEMPLATE_DIR / "bg" / "project-tabs.html.j2").read_text()
 
     assert _SECTION in page
-    assert page.index(_SECTION) < page.index("<c-tabs")
+    assert page.index(_SECTION) < page.index("<nldd-tab-bar")
 
 
 def test_the_page_handler_measures_the_drift() -> None:
