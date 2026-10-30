@@ -278,7 +278,8 @@ class TestDeSedRaaktElkeVerwijzing:
         voor = [r.strip() for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r and ":" in r]
 
         expressie = _sedexpressie("rig-cmp-argo-kustomize-sops", PROEFTAG, PROEFDIGEST)
-        subprocess.run(["sed", "-i", "-E", expressie, str(kopie)], check=True)
+        # -i.bak zoals de taak zelf: kale -i is GNU-syntax, macOS-sed leest -E dan als suffix.
+        subprocess.run(["sed", "-i.bak", "-E", expressie, str(kopie)], check=True)
 
         na = [r.strip() for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r]
         # Elke verwijzing, niet alleen de eerste: de component en de odcn-overlay noemen de
@@ -296,7 +297,7 @@ class TestDeSedRaaktElkeVerwijzing:
         shutil.copy(REPO_ROOT / bestand, kopie)
 
         expressie = _sedexpressie("rig-cmp-argo-kustomize-sops", PROEFTAG, PROEFDIGEST)
-        subprocess.run(["sed", "-i", "-E", expressie, str(kopie)], check=True)
+        subprocess.run(["sed", "-i.bak", "-E", expressie, str(kopie)], check=True)
 
         assert "image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig\n" in kopie.read_text()
 
@@ -307,7 +308,7 @@ class TestDeSedRaaktElkeVerwijzing:
 
         expressie = _sedexpressie("rig-cmp-argo-kustomize-sops", PROEFTAG, PROEFDIGEST)
         for _ in range(2):
-            subprocess.run(["sed", "-i", "-E", expressie, str(kopie)], check=True)
+            subprocess.run(["sed", "-i.bak", "-E", expressie, str(kopie)], check=True)
 
         verwijzingen = [r for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r]
         assert [r.count("@sha256:") for r in verwijzingen] == [1] * len(verwijzingen)
