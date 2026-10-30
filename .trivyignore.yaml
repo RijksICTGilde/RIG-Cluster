@@ -206,6 +206,12 @@ vulnerabilities:
       HIGH in sqlite-libs, via keycloak-base. Niet weg te nemen met een patch- of minor-bump in
       dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
     expired_at: 2027-01-27
+  - id: CVE-2026-102554
+    statement: >-
+      HIGH in com.google.guava:guava 33.0.0-jre, via keycloak-base. Niet weg te nemen in dit repo:
+      quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch en de fix zit pas in Keycloak 26,
+      een major die een eigen migratie vraagt.
+    expired_at: 2026-12-01
   - id: CVE-2026-103111
     purls:
       - pkg:rpm/redhat/pcre2
@@ -214,6 +220,53 @@ vulnerabilities:
       HIGH in pcre2, pcre2-syntax, via keycloak-base. Niet weg te nemen met een patch- of
       minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
     expired_at: 2027-01-27
+  - id: CVE-2026-111497
+    purls:
+      - pkg:deb/ubuntu/libbrotli1?distro=ubuntu-26.04
+    statement: >-
+      HIGH in libbrotli1, via argocd-rig. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.6 vraagt een rebase van de patches in
+      images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-images, en is een eigen taak.
+      De pin van argocd-rig is een deploybeslissing.
+    expired_at: 2026-12-01
+  - id: CVE-2026-111943
+    statement: >-
+      HIGH in stdlib (crypto/x509, fix in Go 1.26.10 en 1.27.3), via mc, kopia, sops, chisel,
+      weed, cmp-tools, argocd-base en argocd-rig. Nog niet weg te nemen in dit repo: er is geen
+      upstream-release met een Go-toolchain die de fix draagt (sops v3.13.3, kopia 0.23.1, chisel
+      1.12.0, helmfile 1.8.2, kustomize 5.8.3, yq 4.54.1, ksops 4.5.1 en helm-diff 3.15.15 zijn de
+      nieuwste, helm 3.22.1 draait nog op Go 1.26.9, mc is gearchiveerd); argocd-rig v3.5.1-rig2
+      herbouwen op v3.5.6 vraagt een rebase van de patches in images/argocd-rig/patches en een
+      push naar ghcr.io/minbzk/base-images, en is een eigen taak. Kijk opnieuw zodra een van deze
+      releases verschijnt.
+    expired_at: 2026-12-01
+  - id: CVE-2026-114406
+    purls:
+      - pkg:rpm/redhat/ca-certificates
+    statement: >-
+      CRITICAL in ca-certificates, via keycloak-base. Niet weg te nemen in dit repo:
+      quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch en de fix zit pas in Keycloak 26,
+      een major die een eigen migratie vraagt. De base heeft geen pakketbeheer waarmee wij het
+      pakket in onze laag kunnen verversen.
+    expired_at: 2026-12-01
+  - id: CVE-2026-114613
+    statement: >-
+      HIGH in msgpack 1.1.2, via de vendor-map van pip in de python-slim base van operations-
+      manager en rig-backup. Niet weg te nemen met een patch- of minor-bump in dit repo: deze
+      kopie staat in pip/_vendor en komt mee met pip 26.2.2, de nieuwste pip; onze eigen lock
+      staat op msgpack 1.2.2. Zelfde pakket als GHSA-6v7p-g79w-8964, nu onder een tweede id. Een
+      regressie in onze eigen boom valt op bij pip-audit --strict, dat de lock scant en niet deze
+      lijst gebruikt.
+    expired_at: 2026-12-01
+  - id: CVE-2026-116587
+    statement: >-
+      HIGH in github.com/go-jose/go-jose/v4 (fix in 4.1.6), via kopia, sops, weed, ksops,
+      helmfile, argocd-base en argocd-rig. Nog niet weg te nemen in dit repo: de nieuwste releases
+      van deze tools (sops v3.13.3, kopia 0.23.1, ksops 4.5.1, helmfile 1.8.2) dragen nog 4.1.4 en
+      argocd:v2.14.21 is de laatste 2.14-patch; argocd-rig v3.5.1-rig2 herbouwen op v3.5.6 vraagt
+      een rebase van de patches in images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-
+      images, en is een eigen taak. Kijk opnieuw zodra een van deze releases verschijnt.
+    expired_at: 2026-12-01
   - id: CVE-2026-11822
     purls:
       - pkg:rpm/redhat/sqlite-libs
@@ -863,6 +916,14 @@ vulnerabilities:
       HIGH in io.netty:netty-codec, via keycloak-base. Niet weg te nemen met een patch- of
       minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
     expired_at: 2027-01-27
+  - id: CVE-2026-63209
+    statement: >-
+      HIGH in github.com/klauspost/compress (fix in 1.18.7), via mc, kopia, argocd-base en argocd-
+      rig. Nog niet weg te nemen in dit repo: mc is gearchiveerd en kopia 0.23.1 is de nieuwste
+      release; argocd-rig v3.5.1-rig2 herbouwen op v3.5.6 vraagt een rebase van de patches in
+      images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-images, en is een eigen taak.
+      Kijk opnieuw zodra een nieuwe kopia-release verschijnt.
+    expired_at: 2026-12-01
   - id: CVE-2026-68494
     statement: >-
       HIGH in com.fasterxml.jackson.core:jackson-core, via keycloak-base. Niet weg te nemen met
@@ -1019,6 +1080,12 @@ vulnerabilities:
       een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
       25.0-patch.
     expired_at: 2027-01-27
+  - id: CVE-2026-9086
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen in dit repo:
+      quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch en de fix zit pas in Keycloak 26,
+      een major die een eigen migratie vraagt (fix in 26.6.4).
+    expired_at: 2026-12-01
   - id: CVE-2026-91776
     statement: >-
       HIGH in com.fasterxml.jackson.core:jackson-databind, via keycloak-base. Niet weg te nemen
@@ -1073,6 +1140,12 @@ vulnerabilities:
       patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
       25.0-patch.
     expired_at: 2027-01-27
+  - id: CVE-2026-9800
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen in dit repo:
+      quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch en de fix zit pas in Keycloak 26,
+      een major die een eigen migratie vraagt (fix in 26.6.4).
+    expired_at: 2026-12-01
   - id: GHSA-6v7p-g79w-8964
     statement: >-
       HIGH in msgpack 1.1.2, via de vendor-map van pip in de python-slim base van
