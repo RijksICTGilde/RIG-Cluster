@@ -4,6 +4,7 @@ Deze toetsen lezen de Taskfile en een manifest, geen Python. Dat is met opzet: e
 naar bron wijst die niemand kan opzoeken gaat stil fout, en draait daarna maanden mee.
 """
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,6 +48,9 @@ def _kopie(tmp_path: Path, met_remote: bool) -> Path:
     shutil.copy(BRON_TAG, repo / "scripts" / BRON_TAG.name)
     shutil.copy(CALVER_TAG, repo / "scripts" / CALVER_TAG.name)
     shutil.copy(TASKFILE, repo / TASKFILE.name)
+    # An asdf shim for task refuses to run in a directory without a pinned version.
+    if (REPO_ROOT / ".tool-versions").exists():
+        shutil.copy(REPO_ROOT / ".tool-versions", repo / ".tool-versions")
     (repo / "operations-manager").mkdir()
     (repo / "operations-manager/bron.txt").write_text("bron\n")
     (repo / PRODUCTIE_PATCH.parent).mkdir(parents=True)
@@ -82,13 +86,25 @@ def _draai_guard(tag: str, repo: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+#: What the fake ``docker buildx imagetools inspect`` reports for every tag.
+FAKE_DIGEST = "sha256:" + "a" * 64
+
+
 def _draai_pin(repo: Path, tag: str) -> subprocess.CompletedProcess[str]:
+    # The pin asks the registry for the digest of the tag (_pin-image-digest); a fake
+    # docker answers instead, since the test tag was never pushed.
+    fake_bin = repo.parent / "fake-bin"
+    fake_bin.mkdir(exist_ok=True)
+    docker = fake_bin / "docker"
+    docker.write_text(f"#!/bin/sh\necho 'Digest: {FAKE_DIGEST}'\n")
+    docker.chmod(0o755)
     return subprocess.run(
         ["task", PIN, f"IMAGE_TAG={tag}"],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=120,
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
     )
 
 
