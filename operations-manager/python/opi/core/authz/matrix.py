@@ -41,10 +41,10 @@ class Cell:
 
     @property
     def mark(self) -> str:
-        """De markering in de tabel: leeg, ``v`` of ``v s``."""
+        """Wat het icoon in de tabel zegt, voor een schermlezer."""
         if not self.allowed:
             return ""
-        return "v s" if self.step_up else "v"
+        return "mag, met 2-factor" if self.step_up else "mag"
 
 
 @dataclass(frozen=True)
