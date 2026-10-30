@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
-  "title": "ZAD Project File (v2.15)",
+  "title": "ZAD Project File (v2.16)",
   "description": "Schema for ZAD self-service project definition files at the LATEST schema version. Older versions are not described here: they are composed from this file plus the legacy patches in schemas/project_legacy/ (see opi/core/project_schema.py). Anything an existing migration already removes belongs in the patch of the version that still carried it, not here.",
-  "x-zad-schema-version": "2.15",
+  "x-zad-schema-version": "2.16",
   "type": "object",
   "required": [
     "name"
@@ -972,11 +972,32 @@
     "clone-from": {
       "type": "object",
       "additionalProperties": false,
+      "$comment": "run is de backup_run_id van de run die teruggezet moet worden en heeft alleen betekenis bij type backup, dus elk ander type weigert hem.",
+      "if": {
+        "properties": {
+          "type": {
+            "const": "backup"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "run"
+          ]
+        }
+      },
       "properties": {
         "type": {
           "type": "string"
         },
         "reference": {
+          "type": "string"
+        },
+        "run": {
           "type": "string"
         },
         "mode": {

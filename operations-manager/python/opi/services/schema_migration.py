@@ -54,6 +54,7 @@ SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
         "2.13",
         "2.14",
         "2.15",
+        "2.16",
     )
 )
 
@@ -1571,6 +1572,16 @@ def component_description(project_data: dict[str, Any]) -> bool:
     return False
 
 
+def restore_run_reference(project_data: dict[str, Any]) -> bool:
+    """Added deployments[].clone-from.run (v2.15 -> v2.16).
+
+    Nothing to migrate, and nothing that could be: a file still carrying the old
+    ``backup_items`` is rejected by the schema gate, which runs BEFORE this chain. The
+    step only registers the new version.
+    """
+    return False
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1591,6 +1602,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.13"), roles_as_a_list),
     (parse_schema_version("2.14"), remove_mail_accounts),
     (parse_schema_version("2.15"), component_description),
+    (parse_schema_version("2.16"), restore_run_reference),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

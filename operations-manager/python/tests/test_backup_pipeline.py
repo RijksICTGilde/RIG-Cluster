@@ -1062,7 +1062,7 @@ class TestHandleRestoreNewDeployment:
             "staging",
             "prod",
             deployment_config={"subdomain": "staging"},
-            backup_items=payload["backup_items"],
+            backup_run_id="20260325020000",
         )
         new_deploy_mocks["pre_restore"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()

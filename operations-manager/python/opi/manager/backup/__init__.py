@@ -41,6 +41,11 @@ from opi.manager.backup.pvc_backup import (
     PVCBackupManager,
     create_backup_manager,
 )
+from opi.manager.backup.runs import (
+    backup_run_items,
+    clone_backup_items,
+    group_snapshots_into_runs,
+)
 
 __all__ = [
     "BackupConfig",
@@ -59,10 +64,13 @@ __all__ = [
     "ResourceType",
     "RestoreResult",
     "SnapshotInfo",
+    "backup_run_items",
+    "clone_backup_items",
     "create_backup_manager",
     "create_bucket_backup_manager",
     "create_database_backup_manager",
     "get_backup_bucket_name",
+    "group_snapshots_into_runs",
     "normalize_bucket_name",
     "utc_now",
 ]
