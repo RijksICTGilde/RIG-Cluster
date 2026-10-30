@@ -99,8 +99,12 @@ def _component_kaart(page: Page, naam: str):
     Genest zoeken: de sectie zelf is ook een kaart en bevat de naam van elk component,
     dus een filter op tekst zonder deze verdieping levert de sectie op en daarmee de
     knop van het eerste component.
+
+    Op de kop en niet op ``has_text``: sinds RC-402 (bcb46f02c) kan een omschrijving de naam
+    van een ander component noemen ("praat met de worker"), en dan wint de eerste kaart.
     """
-    return page.locator("[data-lotc-component='card'] [data-lotc-component='card']").filter(has_text=naam).first
+    kop = page.get_by_role("heading", name=naam, exact=True)
+    return page.locator("[data-lotc-component='card'] [data-lotc-component='card']").filter(has=kop).first
 
 
 def _wait_for(recorded: list[str], timeout: float = 10.0) -> str:
