@@ -43,6 +43,7 @@ from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
+    from opi.core.authz.engine import Decision, Resource
     from opi.services.project_store import ProjectSummary
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,33 @@ def authorized_project(request: Request) -> ProjectSummary:
     return project
 
 
+def _weigh(
+    request: Request,
+    *,
+    action: Action,
+    project_name: str,
+    deployment: str | None = None,
+    component: str | None = None,
+) -> tuple[Resource, Decision] | None:
+    """The resource and the outcome, or ``None`` when the project does not exist.
+
+    Without :func:`record_decision`: the caller decides whether this weighing is worth
+    an audit row. A fresh step-up counts as present here, because it has its own answer
+    and is not a refusal on the role.
+    """
+    project = get_project_store().get(project_name)
+    if project is None:
+        return None
+    resource = build_resource(
+        project,
+        project_name=project_name,
+        path=resource_path(project_name, deployment, component),
+        deployment=deployment,
+        component=component,
+    )
+    return resource, decide(portal_principal(request, project), action, resource, step_up_fresh=True)
+
+
 def may(
     request: Request,
     *,
@@ -154,27 +182,30 @@ def may(
     Voor een knop. De grens is :func:`authorize`; een knop die zich toont terwijl de
     step-up nog moet komen is juist de bedoeling, want de dialoog volgt bij het klikken.
     """
-    project = get_project_store().get(project_name)
-    if project is None:
-        return False
-    resource = build_resource(
-        project,
-        project_name=project_name,
-        path=resource_path(project_name, deployment, component),
-        deployment=deployment,
-        component=component,
-    )
-    return decide(portal_principal(request, project), action, resource, step_up_fresh=True).allowed
+    weging = _weigh(request, action=action, project_name=project_name, deployment=deployment, component=component)
+    return weging is not None and weging[1].allowed
 
 
 def require_action(request: Request, needed: Action, project_name: str) -> None:
-    """403 als de rollen *needed* niet openen, zonder er een beslissing van te maken.
+    """403 als de rollen *needed* niet openen; alleen de WEIGERING wordt vastgelegd.
 
-    Voor een GET die alleen een formulier herrendert: de poort weegt het lezen, en de
-    audit hoort geen rij te krijgen over een back-up of een herstel dat niet gebeurde.
+    Voor een aanroep die zelf niets doet: een GET die een formulier herrendert, of een
+    stap van een modal-wizard. De audit hoort geen rij te krijgen over een back-up of een
+    herstel dat niet gebeurde, maar een geweigerde poging hoort er wel in te staan
+    (``features/audit.md``).
     """
-    if not may(request, action=needed, project_name=project_name):
-        raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+    weging = _weigh(request, action=needed, project_name=project_name)
+    if weging is not None:
+        resource, beslissing = weging
+        if beslissing.allowed:
+            return
+        # De weging liet een verse step-up aan, maar de rij draagt de sessie zoals ze is:
+        # een weigering hier is er altijd een op de ROL, en een rij die een tweede factor
+        # meldt die er niet was leest een onderzoek verkeerd voor.
+        record_decision(
+            request, action=needed, resource=resource, decision=beslissing, step_up_fresh=has_fresh_step_up(request)
+        )
+    raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
 
 
 def _doelwit(request: Request, uit_de_query: frozenset[str], naam: str) -> str | None:

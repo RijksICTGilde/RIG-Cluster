@@ -150,7 +150,7 @@ async def _load_step(request: Request, project_name: str, captured: dict[str, An
         return ""
 
     with (
-        patch.object(router_detail_edit, "authorize"),
+        patch.object(router_detail_edit, "_check_flow_access"),
         patch.object(router_detail_edit, "get_flow", return_value=MagicMock()),
         patch.object(router_detail_edit, "_get_section_from_flow", return_value=MagicMock()),
         patch.object(router_detail_edit, "_render_section_html", return_value=""),

@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from opi.api.endpoint_util import handhaaf
 from opi.api.principal import AccessDenied
 from opi.core.authz.actions import Action, action
-from opi.core.authz.engine import Cause, Decision, Resource
+from opi.core.authz.engine import Cause, Decision, Resource, record_decision
 from opi.core.leden import LidSoort
 from opi.services.project_leden import hash_van, vervaldatum
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
@@ -136,3 +136,64 @@ async def test_een_geweigerde_api_aanroep_zet_ze_ook() -> None:
 
     beslissing = _controleer(request, action_verwacht=Action.DEPLOYMENT_WRITE, toegestaan=False)
     assert beslissing.cause is Cause.INSUFFICIENT_ROLE
+
+
+# --- de lijst: een handeling levert een rij (RC-406) ------------------------
+
+
+def _resource(pad: str = "project/demo") -> Resource:
+    return Resource(project="demo", path=pad)
+
+
+def test_the_same_decision_twice_yields_one_element() -> None:
+    """The audit records a handling once, however many helpers weigh it."""
+    request = _verzoek(BEHEERDER)
+    beslissing = Decision(allowed=True)
+
+    for _ in range(2):
+        record_decision(
+            request, action=Action.RESTORE_RUN, resource=_resource(), decision=beslissing, step_up_fresh=False
+        )
+
+    assert len(request.state.authz_decisions) == 1
+    assert request.state.authz_decision is beslissing
+
+
+def test_target_and_source_of_a_clonefrom_yield_two_elements() -> None:
+    """Two different resources are two questions, so the audit wants both rows."""
+    request = _verzoek(BEHEERDER)
+
+    record_decision(
+        request,
+        action=Action.DEPLOYMENT_WRITE,
+        resource=_resource("project/demo/deployment/doel"),
+        decision=Decision(allowed=True),
+        step_up_fresh=False,
+    )
+    record_decision(
+        request,
+        action=Action.DEPLOYMENT_WRITE,
+        resource=_resource("project/demo/deployment/bron"),
+        decision=Decision(allowed=True),
+        step_up_fresh=False,
+    )
+
+    assert len(request.state.authz_decisions) == 2
+
+
+def test_a_refusal_after_a_permission_is_its_own_element() -> None:
+    """Same action and resource, different outcome: that is not the same decision."""
+    request = _verzoek(BEHEERDER)
+
+    record_decision(
+        request, action=Action.RESTORE_RUN, resource=_resource(), decision=Decision(allowed=True), step_up_fresh=False
+    )
+    record_decision(
+        request,
+        action=Action.RESTORE_RUN,
+        resource=_resource(),
+        decision=Decision(allowed=False, cause=Cause.INSUFFICIENT_ROLE),
+        step_up_fresh=False,
+    )
+
+    assert len(request.state.authz_decisions) == 2

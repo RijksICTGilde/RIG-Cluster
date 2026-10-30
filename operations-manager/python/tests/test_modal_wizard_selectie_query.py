@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 from opi.forms.wizard.session import get_modal_state_by_token
 from opi.services.project_service import ProjectService, ProjectUser
+from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
 PROJECT_NAME = "selectieproef"
@@ -65,7 +66,11 @@ def project_service() -> ProjectService:
 
 
 def _request(query: dict[str, str]) -> SimpleNamespace:
-    return SimpleNamespace(state=SimpleNamespace(user={"email": OWNER_EMAIL}), query_params=query)
+    """Het verzoek NA de poort: die zet het project op de state (``authorized_project``)."""
+    return SimpleNamespace(
+        state=SimpleNamespace(user={"email": OWNER_EMAIL}, authz_project=get_project_store().get(PROJECT_NAME)),
+        query_params=query,
+    )
 
 
 def _token_from_html(html: str) -> str:

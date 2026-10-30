@@ -595,7 +595,7 @@ async def test_submit_step_skips_gate_in_create_mode(project_service: ProjectSer
 
 
 # ---------------------------------------------------------------------------
-# Backup/restore flow-role split (RC-323): _require_flow_access
+# Backup/restore flow-role split (RC-323): the flow gate
 #
 # modal-backup stays membership-gated for every role. modal-restore moved to the
 # operational-role gate (developer/owner/admin, not member) because a restore
@@ -604,47 +604,47 @@ async def test_submit_step_skips_gate_in_create_mode(project_service: ProjectSer
 # ---------------------------------------------------------------------------
 
 
-def test_require_flow_access_backup_allows_developer(project_service: ProjectService) -> None:
+def test_authorize_flow_backup_allows_developer(project_service: ProjectService) -> None:
     """Een back-up maken is operationeel: een developer mag het, een viewer niet.
 
     Het portaal liet hier elk projectlid door; sinds RC-392 schrijft een viewer niets
     (ontwerp paragraaf 4), dus dit versmalt naar developer.
     """
-    from opi.web.router_detail_edit import _require_flow_access
+    from opi.web.router_detail_edit import _authorize_flow
 
-    project, user_email = _require_flow_access(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-backup")
+    project, user_email = _authorize_flow(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-backup")
     assert project.name == PROJECT_NAME
     assert user_email == DEVELOPER_EMAIL
 
 
-def test_require_flow_access_backup_rejects_a_viewer(project_service: ProjectService) -> None:
-    from opi.web.router_detail_edit import _require_flow_access
+def test_authorize_flow_backup_rejects_a_viewer(project_service: ProjectService) -> None:
+    from opi.web.router_detail_edit import _authorize_flow
 
     with pytest.raises(HTTPException) as exc:
-        _require_flow_access(_request_for(MEMBER_EMAIL), PROJECT_NAME, "modal-backup")
+        _authorize_flow(_request_for(MEMBER_EMAIL), PROJECT_NAME, "modal-backup")
     assert exc.value.status_code == 403
 
 
-def test_require_flow_access_restore_rejects_member(project_service: ProjectService) -> None:
-    from opi.web.router_detail_edit import _require_flow_access
+def test_authorize_flow_restore_rejects_member(project_service: ProjectService) -> None:
+    from opi.web.router_detail_edit import _authorize_flow
 
     with pytest.raises(HTTPException) as exc:
-        _require_flow_access(_request_for(MEMBER_EMAIL), PROJECT_NAME, "modal-restore")
+        _authorize_flow(_request_for(MEMBER_EMAIL), PROJECT_NAME, "modal-restore")
     assert exc.value.status_code == 403
 
 
-def test_require_flow_access_restore_allows_developer(project_service: ProjectService) -> None:
+def test_authorize_flow_restore_allows_developer(project_service: ProjectService) -> None:
     """developer is not admin/owner, so this proves the operate-gate runs here,
     not the stricter edit-gate (which would also happen to accept owner/admin).
     """
-    from opi.web.router_detail_edit import _require_flow_access
+    from opi.web.router_detail_edit import _authorize_flow
 
-    project, user_email = _require_flow_access(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-restore")
+    project, user_email = _authorize_flow(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-restore")
     assert project.name == PROJECT_NAME
     assert user_email == DEVELOPER_EMAIL
 
 
-def test_require_flow_access_other_flow_weegt_of_het_project_productie_heeft(
+def test_authorize_flow_other_flow_weegt_of_het_project_productie_heeft(
     project_service: ProjectService,
 ) -> None:
     """Elke stroom buiten back-up en terugzetten bewerkt het projectbestand.
@@ -653,14 +653,14 @@ def test_require_flow_access_other_flow_weegt_of_het_project_productie_heeft(
     (ontwerp paragraaf 4, rij 10 en 11): zonder productie mag een developer het, met
     productie vraagt het ops. Het fixtureproject heeft geen deployment op productie.
     """
-    from opi.web.router_detail_edit import _require_flow_access
+    from opi.web.router_detail_edit import _authorize_flow
 
-    project, _email = _require_flow_access(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-edit-identity")
+    project, _email = _authorize_flow(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-edit-identity")
     assert project.name == PROJECT_NAME
 
     project.data = {"deployments": [{"name": "live", "environment": "productie"}]}
     with pytest.raises(HTTPException) as exc:
-        _require_flow_access(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-edit-identity")
+        _authorize_flow(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-edit-identity")
     assert exc.value.status_code == 403
 
 
@@ -669,7 +669,7 @@ def test_require_flow_access_other_flow_weegt_of_het_project_productie_heeft(
 #
 # `modal_wizard_load_step` (back-navigation) used to always require admin/owner,
 # so a member doing backup/restore step back got 403 even though init/submit
-# allowed them. These pin that it now goes through the shared `_require_flow_access`,
+# allowed them. These pin that it now goes through the shared navigation gate,
 # like the other five modal-wizard routes.
 # ---------------------------------------------------------------------------
 
@@ -682,7 +682,7 @@ async def test_modal_wizard_load_step_invokes_flow_access_gate() -> None:
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}), query_params={})
 
     with (
-        patch("opi.web.router_detail_edit._require_flow_access", side_effect=sentinel) as gate,
+        patch("opi.web.router_detail_edit._check_flow_access", side_effect=sentinel) as gate,
         pytest.raises(HTTPException) as exc,
     ):
         await modal_wizard_load_step(
@@ -696,6 +696,10 @@ async def test_modal_wizard_load_step_invokes_flow_access_gate() -> None:
     gate.assert_called_once_with(request, PROJECT_NAME, "modal-backup")
 
 
+#: Wat een te smalle rol oplevert, zoals ``require_action`` hem weigert.
+_TE_SMALLE_ROL = HTTPException(status_code=403, detail="gate-fired-from-test")
+
+
 @pytest.mark.asyncio
 async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
     """`backup_select_deployment` re-renders a backup step; it must use the
@@ -705,16 +709,17 @@ async def test_backup_select_deployment_invokes_operate_access_gate() -> None:
 
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
 
-    # ``require_action`` weegt met ``may`` en niet met ``authorize``: het formulier
-    # herrenderen is geen back-up, en de audit hoort er geen rij over te krijgen (RC-398).
+    # ``require_action`` en niet ``authorize``: het formulier herrenderen is geen
+    # back-up, en de audit hoort er geen rij over te krijgen (RC-398).
     with (
-        patch("opi.web.authz.may", return_value=False) as gate,
+        patch("opi.web.router_detail_edit.require_action", side_effect=_TE_SMALLE_ROL) as gate,
+        patch("opi.web.router_detail_edit.authorize", side_effect=AssertionError("geen rij hierover")),
         pytest.raises(HTTPException) as exc,
     ):
         await backup_select_deployment(request=request, project_name=PROJECT_NAME)
 
     assert exc.value.status_code == 403
-    gate.assert_called_once_with(request, action=Action.BACKUP_CREATE, project_name=PROJECT_NAME)
+    gate.assert_called_once_with(request, Action.BACKUP_CREATE, PROJECT_NAME)
 
 
 @pytest.mark.asyncio
@@ -726,16 +731,17 @@ async def test_restore_select_mode_invokes_operate_access_gate() -> None:
 
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
 
-    # ``require_action`` weegt met ``may`` en niet met ``authorize``: het formulier
-    # herrenderen is geen herstel, en de audit hoort er geen rij over te krijgen (RC-398).
+    # ``require_action`` en niet ``authorize``: het formulier herrenderen is geen
+    # herstel, en de audit hoort er geen rij over te krijgen (RC-398).
     with (
-        patch("opi.web.authz.may", return_value=False) as gate,
+        patch("opi.web.router_detail_edit.require_action", side_effect=_TE_SMALLE_ROL) as gate,
+        patch("opi.web.router_detail_edit.authorize", side_effect=AssertionError("geen rij hierover")),
         pytest.raises(HTTPException) as exc,
     ):
         await restore_select_mode(request=request, project_name=PROJECT_NAME)
 
     assert exc.value.status_code == 403
-    gate.assert_called_once_with(request, action=Action.RESTORE_RUN, project_name=PROJECT_NAME)
+    gate.assert_called_once_with(request, Action.RESTORE_RUN, PROJECT_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +765,7 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
     sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
     with (
         patch("opi.core.task_helpers.get_task_service", return_value=MagicMock()),
-        patch("opi.web.router_detail_edit.authorize", side_effect=sentinel) as gate,
+        patch("opi.web.router_detail_edit.require_action", side_effect=sentinel) as gate,
         pytest.raises(HTTPException) as exc,
     ):
         await _handle_backup_restore_submit(
@@ -772,7 +778,7 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
         )
 
     assert exc.value.status_code == 403
-    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), action=Action.RESTORE_RUN, project_name=PROJECT_NAME)
+    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.RESTORE_RUN, PROJECT_NAME)
 
 
 @pytest.mark.asyncio
