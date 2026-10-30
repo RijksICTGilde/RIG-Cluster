@@ -14,11 +14,16 @@ import base64
 import os
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 import yaml
 from tests.programma import echt_programma
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -44,51 +49,62 @@ def _gereedschap() -> None:
     echt_programma("gpg")
 
 
-def _generate_key(tmp_path: Path, naam: str) -> tuple[str, str, str]:
+@contextmanager
+def _gnupg_home() -> Iterator[Path]:
+    """Een lege GNUPGHOME met een KORT pad.
+
+    gpg 2.2 zet de socket van zijn agent in deze map, en op macOS mag een socketpad niet
+    langer zijn dan 104 tekens. ``tmp_path`` van pytest draagt de testnaam en komt daar
+    ruim overheen; gpg meldt dan "can't connect to the agent: File name too long".
+    """
+    with tempfile.TemporaryDirectory(prefix="gpg-", dir="/tmp") as home:
+        yield Path(home)
+
+
+def _generate_key(naam: str) -> tuple[str, str, str]:
     """Een sleutel zonder passphrase. Geeft (fingerprint, armored public, armored secret)."""
-    home = tmp_path / naam
-    home.mkdir(mode=0o700)
-    env = {"GNUPGHOME": str(home)}
-    subprocess.run(
-        [
-            echt_programma("gpg"),
-            "--batch",
-            "--quiet",
-            "--passphrase",
-            "",
-            "--quick-generate-key",
-            f"{naam} <{naam}@example.com>",
-            "ed25519",
-            "sign",
-            "never",
-        ],
-        check=True,
-        capture_output=True,
-        env=env,
-    )
-    fpr_proc = subprocess.run(
-        [echt_programma("gpg"), "--batch", "--list-keys", "--with-colons"],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    fingerprint = next(line.split(":")[9] for line in fpr_proc.stdout.splitlines() if line.startswith("fpr:"))
-    public = subprocess.run(
-        [echt_programma("gpg"), "--batch", "--armor", "--export", fingerprint],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    ).stdout
-    secret = subprocess.run(
-        [echt_programma("gpg"), "--batch", "--armor", "--export-secret-keys", fingerprint],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    ).stdout
-    return fingerprint, public, secret
+    with _gnupg_home() as home:
+        env = {"GNUPGHOME": str(home)}
+        subprocess.run(
+            [
+                echt_programma("gpg"),
+                "--batch",
+                "--quiet",
+                "--passphrase",
+                "",
+                "--quick-generate-key",
+                f"{naam} <{naam}@example.com>",
+                "ed25519",
+                "sign",
+                "never",
+            ],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        fpr_proc = subprocess.run(
+            [echt_programma("gpg"), "--batch", "--list-keys", "--with-colons"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        fingerprint = next(line.split(":")[9] for line in fpr_proc.stdout.splitlines() if line.startswith("fpr:"))
+        public = subprocess.run(
+            [echt_programma("gpg"), "--batch", "--armor", "--export", fingerprint],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout
+        secret = subprocess.run(
+            [echt_programma("gpg"), "--batch", "--armor", "--export-secret-keys", fingerprint],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        ).stdout
+        return fingerprint, public, secret
 
 
 def _kubectl_stub(
@@ -198,7 +214,7 @@ class TestTrustPublicKey:
         assert regels == [f"get appproject zad-app-of-apps -n {NAMESPACE}"]
 
     def test_ontbrekende_configmap_wordt_aangemaakt_en_krijgt_de_sleutel(self, tmp_path: Path) -> None:
-        fingerprint, public, _secret = _generate_key(tmp_path, "sleutel-een")
+        fingerprint, public, _secret = _generate_key("sleutel-een")
         key_id = fingerprint[-16:]
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -225,7 +241,7 @@ class TestTrustPublicKey:
         assert _keyid_entries(patch_ap) == f'{{"spec":{{"signatureKeys":[{{"keyID":"{key_id}"}}]}}}}'
 
     def test_bestaande_configmap_wordt_niet_opnieuw_aangemaakt(self, tmp_path: Path) -> None:
-        fingerprint, public, _secret = _generate_key(tmp_path, "sleutel-twee")
+        fingerprint, public, _secret = _generate_key("sleutel-twee")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         log = tmp_path / "kubectl.log"
@@ -246,7 +262,7 @@ class TestTrustPublicKey:
 
     def test_een_al_vertrouwde_sleutel_komt_niet_dubbel_in_signaturekeys(self, tmp_path: Path) -> None:
         """Opnieuw draaien met dezelfde sleutel is idempotent: geen tweede keyID-vermelding."""
-        fingerprint, public, _secret = _generate_key(tmp_path, "sleutel-drie")
+        fingerprint, public, _secret = _generate_key("sleutel-drie")
         key_id = fingerprint[-16:]
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -291,7 +307,7 @@ class TestTrustPublicKey:
 
     def test_mislukte_lezing_van_signaturekeys_patcht_het_appproject_niet(self, tmp_path: Path) -> None:
         """Een lege CURRENT door een fout zou de merge-patch de hele array laten vervangen."""
-        _fingerprint, public, _secret = _generate_key(tmp_path, "sleutel-vijf")
+        _fingerprint, public, _secret = _generate_key("sleutel-vijf")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         log = tmp_path / "kubectl.log"
@@ -313,7 +329,7 @@ class TestTrustPublicKey:
 
     def test_een_andere_bestaande_sleutel_blijft_naast_de_nieuwe_staan(self, tmp_path: Path) -> None:
         """De beheerderssleutel en de OPI-sleutel staan samen in signatureKeys."""
-        fingerprint, public, _secret = _generate_key(tmp_path, "sleutel-vier")
+        fingerprint, public, _secret = _generate_key("sleutel-vier")
         key_id = fingerprint[-16:]
         bestaande_id = "AAAAAAAAAAAAAAAA"
         bin_dir = tmp_path / "bin"
@@ -354,7 +370,7 @@ class TestGitSigningKeyPublic:
         assert "this cluster signs nothing" in proc.stdout
 
     def test_met_secret_toont_fingerprint_en_publieke_sleutel(self, tmp_path: Path) -> None:
-        fingerprint, _public, secret = _generate_key(tmp_path, "sleutel-public-task")
+        fingerprint, _public, secret = _generate_key("sleutel-public-task")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         log = tmp_path / "kubectl.log"
@@ -383,7 +399,7 @@ class TestTrustGitSigningKey:
         assert proc.returncode == 0, proc.stderr
 
     def test_met_secret_slaat_task_de_taak_niet_over(self, tmp_path: Path) -> None:
-        _fingerprint, _public, secret = _generate_key(tmp_path, "sleutel-status")
+        _fingerprint, _public, secret = _generate_key("sleutel-status")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         log = tmp_path / "kubectl.log"
@@ -407,7 +423,7 @@ class TestTrustGitSigningKey:
         assert log.read_text() == ""
 
     def test_met_secret_exporteert_alleen_het_publieke_deel(self, tmp_path: Path) -> None:
-        fingerprint, _public, secret = _generate_key(tmp_path, "opi-sleutel")
+        fingerprint, _public, secret = _generate_key("opi-sleutel")
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         log = tmp_path / "kubectl.log"
@@ -421,23 +437,22 @@ class TestTrustGitSigningKey:
         assert "BEGIN PGP PUBLIC KEY BLOCK" in exported
         assert "BEGIN PGP PRIVATE KEY BLOCK" not in exported
 
-        herimport = tmp_path / "herimport"
-        herimport.mkdir(mode=0o700)
-        subprocess.run(
-            [echt_programma("gpg"), "--batch", "--quiet", "--import"],
-            input=exported,
-            check=True,
-            capture_output=True,
-            text=True,
-            env={"GNUPGHOME": str(herimport)},
-        )
-        lijst = subprocess.run(
-            [echt_programma("gpg"), "--batch", "--list-keys", "--with-colons"],
-            check=True,
-            capture_output=True,
-            text=True,
-            env={"GNUPGHOME": str(herimport)},
-        ).stdout
+        with _gnupg_home() as herimport:
+            subprocess.run(
+                [echt_programma("gpg"), "--batch", "--quiet", "--import"],
+                input=exported,
+                check=True,
+                capture_output=True,
+                text=True,
+                env={"GNUPGHOME": str(herimport)},
+            )
+            lijst = subprocess.run(
+                [echt_programma("gpg"), "--batch", "--list-keys", "--with-colons"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={"GNUPGHOME": str(herimport)},
+            ).stdout
         assert fingerprint in lijst
 
     def test_secret_zonder_sleutel_exporteert_niets_en_stopt_met_foutcode(self, tmp_path: Path) -> None:
