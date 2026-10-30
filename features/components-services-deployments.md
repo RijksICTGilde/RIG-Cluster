@@ -108,10 +108,12 @@ It answers:
 - What URL **path** does it serve?
 - How much **CPU and memory** does it need?
 - Which **services** does it use? (bindings)
+- What **is** it? An optional description (max 500 characters) shown on the component card in the portal.
 
 ```yaml
 components:
   - name: frontend
+    description: The public web interface, serves the search page
     type: single
     ports:
       inbound: [8080]
@@ -251,6 +253,7 @@ graph TD
 | Question                                    | Answer                                                          |
 |---------------------------------------------|-----------------------------------------------------------------|
 | Where do I define ports, paths, resources?  | In the **component**                                            |
+| Where do I say what a component is for?     | In the **component**, under `description` (optional, 500 chars) |
 | Where do I pick a database or SSO?          | In **services**, then bind them to a component via uses-services |
 | Where do I set the Docker image?            | In the **deployment**, under `components → image`               |
 | Can I have multiple deployments?            | Yes - production, staging, PR preview, anything                 |

@@ -70,7 +70,7 @@ class TestDeBestaandeDienstenStaanWaarZeStonden:
         identificatie = sequence.child_layout[0]
         assert identificatie.legend == "Identificatie"
         namen = [child for child in identificatie.children if isinstance(child, str)]
-        assert namen == ["name", "image", "command"]
+        assert namen == ["name", "description", "image", "command"]
 
     def test_de_gesloten_knopen_tekenen_hun_velden_in_de_identificatie(self) -> None:
         """Wat er in het slot landt hoort ook echt bij die fieldset getekend te worden."""

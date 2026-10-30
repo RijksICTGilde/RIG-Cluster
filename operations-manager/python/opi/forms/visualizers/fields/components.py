@@ -5,6 +5,7 @@ from __future__ import annotations
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.fields.components import (
     COMPONENT_COMMAND_EDITABLE,
+    COMPONENT_DESCRIPTION_EDITABLE,
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
     COMPONENT_PATH_EDITABLE,
@@ -40,6 +41,13 @@ COMPONENT_NAME = EditableVisualizer(
     ),
     help_text="Voorbeeld: frontend, api, worker.",
     readonly_on_edit=True,
+)
+
+COMPONENT_DESCRIPTION = EditableVisualizer(
+    editable=COMPONENT_DESCRIPTION_EDITABLE,
+    widget=WidgetType.TEXTAREA,
+    label="Omschrijving",
+    help_text="Wat dit component doet, in een of twee zinnen. Optioneel.",
 )
 
 COMPONENT_IMAGE = EditableVisualizer(
@@ -173,6 +181,7 @@ COMPONENTS_SEQUENCE = EditableVisualizer(
     label="Componenten",
     children=[
         COMPONENT_NAME,
+        COMPONENT_DESCRIPTION,
         COMPONENT_IMAGE,
         COMPONENT_COMMAND,
         COMPONENT_RESOURCES_CPU_REQUEST,

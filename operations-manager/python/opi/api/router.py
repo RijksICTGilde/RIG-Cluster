@@ -679,6 +679,12 @@ class AddComponentRequest(BaseModel):
     """Request to add a new component definition to an existing project."""
 
     name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)", examples=["frontend"])
+    description: str | None = Field(
+        None,
+        max_length=500,
+        examples=["API voor de zoekfunctie, leest uit de gedeelde database"],
+        description="Free text saying what this component is and does. Optional.",
+    )
     type: str = Field(
         "single",
         max_length=32,
@@ -1084,6 +1090,12 @@ async def upsert_deployment(
 class UpdateComponentRequest(BaseModel):
     """Partial update of an existing component. Only provided fields are changed."""
 
+    description: str | None = Field(
+        None,
+        max_length=500,
+        examples=["API voor de zoekfunctie, leest uit de gedeelde database"],
+        description="Free text saying what this component is and does.",
+    )
     image: str | None = Field(
         None, max_length=512, description="Container image URL", examples=["ghcr.io/rijksictgilde/mijn-app:1.4.0"]
     )
@@ -1233,6 +1245,7 @@ async def add_component(
             payload={
                 "project_name": project_name,
                 "name": component_data.name,
+                "description": component_data.description,
                 "type": component_data.type,
                 "image": component_data.image,
                 "deployment_names": component_data.deployment_names,
@@ -1264,6 +1277,7 @@ async def add_component(
         # Add the component
         result = await project_manager.add_component(
             name=component_data.name,
+            description=component_data.description,
             component_type=component_data.type,
             image=component_data.image,
             deployment_names=component_data.deployment_names,
@@ -1389,6 +1403,7 @@ async def update_component(
             payload={
                 "project_name": project_name,
                 "name": component_name,
+                "description": component_data.description,
                 "image": component_data.image,
                 "port": component_data.port,
                 "ports": component_data.ports,
@@ -1414,6 +1429,7 @@ async def update_component(
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
         result = await project_manager.update_component(
             name=component_name,
+            description=component_data.description,
             image=component_data.image,
             port=component_data.port,
             ports=component_data.ports,

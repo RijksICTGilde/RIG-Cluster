@@ -226,6 +226,15 @@ class ComponentModel(BaseModel):
         ),
     ] = Field(min_length=1)
 
+    description: Annotated[
+        str | None,
+        FormMeta(
+            label="component.description",
+            description="component.description.description",
+            widget="textarea",
+        ),
+    ] = Field(default=None, max_length=500)
+
     type: Annotated[
         str,
         FormMeta(

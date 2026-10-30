@@ -492,6 +492,9 @@
                                         </c-action-group>
                                     {% endif %}
                                 </c-cluster>
+                                {% if component.description %}
+                                    <c-paragraph size="sm">{{ component.description }}</c-paragraph>
+                                {% endif %}
                                 {# HET ADRES EERST. Dit is waar iemand voor komt: een component
                                    opzoeken om er daarna heen te gaan. Het stond onder de poorten,
                                    de resources en de diensten, dus je scrolde er elke keer

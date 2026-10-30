@@ -238,6 +238,18 @@ class TestV1AsyncUpdateComponent:
         assert call_kwargs["payload"]["name"] == "mgr"
         assert call_kwargs["payload"]["ports"] == [8443, 9443, 9444]
 
+    def test_forwards_description_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        client.patch(
+            "/api/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"description": "Nieuwe omschrijving"},
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["description"] == "Nieuwe omschrijving"
+
     def test_rejects_port_and_ports_together(self, client: TestClient) -> None:
         response = client.patch(
             "/api/projects/test-project/components/mgr",
