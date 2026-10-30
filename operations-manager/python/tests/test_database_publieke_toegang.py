@@ -383,12 +383,12 @@ def test_de_lijst_spiegelt_databases_yaml() -> None:
     assert uit_yaml == PLATFORM_DATABASE_ROLES
 
 
-def test_de_back_uprol_bestaat_als_managed_role() -> None:
-    """De GRANT gaat naar een rol die CNPG echt aanmaakt, niet naar een naam die is afgedreven."""
+def test_the_backup_role_exists_as_a_managed_role() -> None:
+    """The GRANT goes to a role CNPG actually creates, not to a name that drifted."""
     cluster = yaml.safe_load(_CLUSTER_YAML.read_text(encoding="utf-8"))
-    rollen = {rol["name"] for rol in cluster["spec"]["managed"]["roles"]}
+    roles = {role["name"] for role in cluster["spec"]["managed"]["roles"]}
 
-    assert PLATFORM_BACKUP_ROLE in rollen
+    assert PLATFORM_BACKUP_ROLE in roles
 
 
 def test_de_standaard_is_dry_run() -> None:
