@@ -169,9 +169,16 @@
            knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
            daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
            nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
-           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
-        {% if can('project.edit') %}
-            {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
+           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js.
+
+           Alleen voor platformbeheerders, niet meer voor iedereen met project.edit: de
+           sleutels hieronder zijn beheerinformatie, en de oude API key draagt de rollen van
+           een platformbeheerder. Een lid maakt zijn eigen token onder Leden en tokens. #}
+        {% if project.is_platform_admin %}
+            {% call panel("Configuratie & Secrets", "lock-closed") %}
+                    <c-alert type="info" heading="Alleen voor platformbeheerders">
+                        <c-paragraph>Je ziet dit blok omdat je platformbeheerder bent. Projectleden zien het niet.</c-paragraph>
+                    </c-alert>
                     <c-stack gap="xs">
                         <c-heading type="h3" size="6" label="Project Naam" />
                         {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
