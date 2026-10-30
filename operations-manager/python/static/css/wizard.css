@@ -57,6 +57,8 @@
 .edit-step-indicator {
     border-bottom: 1px solid var(--semantics-dividers-color, #E0E0E0);
     padding-bottom: 0.5rem;
+    /* The step heading below sat right against the bar's divider. */
+    margin-bottom: var(--primitives-space-24);
 }
 
 /* Wizard Step Content */
