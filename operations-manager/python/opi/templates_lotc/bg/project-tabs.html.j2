@@ -1075,7 +1075,53 @@
        De oorsprong (het client-IP) staat NIET in de tabel: die kolom is volgens het
        gebeurtenissenontwerp voor platformbeheerders, en die lezen hem in de database. #}
     <c-stack gap="lg">
-        {% call panel("Audit", "clipboard-bullet-list", info_text="Elke schrijfactie en elke weigering op dit project. Een wijziging in het projectbestand draagt de commit waarin ze landde.") %}
+        {% call panel("Audit", "clipboard-bullet-list", info_text="Elke schrijfactie en elke weigering op dit project. Een wijziging in het projectbestand draagt de commit waarin ze landde. Zoeken op een persoon vindt de laatste 90 dagen: daarna is die kolom leeg (bewaartermijn).") %}
+            {# EEN gebied: het zoekveld, de periode, de rijen en de bladerknoppen samen.
+               Zelfde keuze als op de projectenlijst (bg/projects.html.j2): de werkbalk
+               buiten de swap houden laat je zoekterm terugspringen, want het veld blijft
+               dan uit de oude render staan.
+
+               htmx haalt de PAGINA op en pakt daar dit gebied uit (hx-select) in plaats
+               van een apart fragmentadres: dan staat er na het zoeken
+               /projects/<naam>/audit?q=... in de adresbalk en is er geen tweede adres met
+               dezelfde gegevens dat kan gaan afwijken. #}
+            <c-stack id="audit-zoekgebied" gap="lg">
+            <form autocomplete="off" method="get" action="{{ audit_url }}"
+                  hx-get="{{ audit_url }}"
+                  hx-select="#audit-zoekgebied"
+                  hx-target="#audit-zoekgebied"
+                  hx-swap="outerHTML"
+                  hx-trigger="input delay:300ms, search, submit"
+                  hx-push-url="true">
+                {% if audit_limit_text %}<input type="hidden" name="limit" value="{{ audit_limit_text }}">{% endif %}
+                {# GEEN <nldd-toolbar> zoals op de projecten- en de deploymentlijst, en
+                   dat is gemeten: die balk duwt alles in slot="end" in een overloopmenu
+                   (de datumvelden verdwenen achter een "..."), en in slot="start" legt
+                   hij de labels over de velden heen. Hij gaat over knoppen, niet over
+                   invoervelden met een label. Een <c-cluster> breekt netjes af. #}
+                <c-cluster gap="md" align="end">
+                    {# De id is nodig voor het focusherstel in htmx-formgedrag.js: dat
+                       onthoudt bij een swap welk veld de focus had en geeft hem daarna
+                       terug, met de cursorpositie erbij. #}
+                    <c-search-field name="q"
+                                    :attrs="{'id': 'audit-zoekveld'}"
+                                    value="{{ audit_query }}"
+                                    placeholder="Zoek op persoon, actie, deployment of commit"
+                                    accessible-label="Zoek in de audit"
+                                    show-search-button
+                                    width="20rem" />
+                    {# De datumvelden in een <c-form-field>: dat zet het zichtbare label en
+                       geeft het veld zijn toegankelijke naam. Zonder wikkel staat er een
+                       datumvak zonder te zeggen of het de begin- of de einddatum is. #}
+                    <c-form-field label="Van" :attrs="{'style': 'width: 12rem'}">
+                        <c-date-field name="from" value="{{ audit_van }}" />
+                    </c-form-field>
+                    <c-form-field label="Tot en met" :attrs="{'style': 'width: 12rem'}">
+                        <c-date-field name="until" value="{{ audit_tot }}" />
+                    </c-form-field>
+                </c-cluster>
+            </form>
+
             {% if audit_fout %}
                 <c-alert type="warning" heading="De audit kon niet worden opgehaald">
                     De gebeurtenissen staan in de database, en die antwoordde niet. Probeer het
@@ -1116,12 +1162,31 @@
                         </c-table-row>
                     {% endfor %}
                 </c-table>
+            {% elif audit_filter_actief %}
+                <c-alert type="info" heading="Geen gebeurtenissen gevonden voor deze zoekopdracht">
+                    <c-link href="{{ audit_wis_url }}" label="Wis de filters" />
+                </c-alert>
             {% else %}
                 <c-alert type="info" heading="Nog niets vastgelegd">
                     Zodra er iemand iets wijzigt in dit project, of een poging wordt geweigerd,
                     komt die handeling hier te staan.
                 </c-alert>
             {% endif %}
+
+            {# Bladeren met een gewone href en een querystring, dus het werkt ook zonder
+               JavaScript. Geen attribuut-JSON op <c-button>: die route is op de kaart al
+               op de preprocessor gestrand. #}
+            {% if audit_nieuwer_url or audit_ouder_url %}
+                <c-cluster gap="md">
+                    {% if audit_nieuwer_url %}
+                        <c-link href="{{ audit_nieuwer_url }}" label="Nieuwer" />
+                    {% endif %}
+                    {% if audit_ouder_url %}
+                        <c-link href="{{ audit_ouder_url }}" label="Ouder" />
+                    {% endif %}
+                </c-cluster>
+            {% endif %}
+            </c-stack>
         {% endcall %}
     </c-stack>
     {% endif %}

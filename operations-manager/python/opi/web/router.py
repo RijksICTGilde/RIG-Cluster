@@ -28,7 +28,6 @@ from opi.services.argocd_operation import (
     read_sync_operation,
 )
 from opi.services.argocd_overview import get_project_argocd_statuses
-from opi.services.audit import list_actions
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -55,9 +54,8 @@ from opi.web.lotc_switch import (
     STANDAARD_TAB,
     TABS_MET_DEPLOYMENT,
     TABS_MET_VOORWAARDE,
-    audit_limit,
+    audit_pagina,
     build_deployment_status_column,
-    build_lotc_audit,
     build_lotc_dashboard,
     build_lotc_introductie,
     build_lotc_project_details,
@@ -1929,17 +1927,9 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # De auditrijen van dit project, alleen op het tabblad dat ze toont (stap 3).
         # Het project komt uit het PAD: dezelfde naam die @action(AUDIT_READ) heeft laten
         # wegen, nooit een naam uit de querystring of de body.
-        audit_rijen: list[dict[str, Any]] = []
-        audit_fout = False
+        audit_context: dict[str, Any] = {}
         if tab_from_path(request.url.path) == "audit":
-            try:
-                audit_rijen = build_lotc_audit(await list_actions(project_name, limit=audit_limit(request)))
-            except SQLAlchemyError, OSError:
-                # Zelfde keuze als bij de uitrolmelding hieronder: een database die niet
-                # antwoordt mag de projectpagina niet meenemen. Wel met een melding op het
-                # tabblad, want "geen rijen" zou hier een onwaar antwoord zijn.
-                logger.exception("De audit van project %s kon niet worden gelezen", project_name)
-                audit_fout = True
+            audit_context = await audit_pagina(request, project_name)
 
         # Changes saved with rollout=false that nobody has rolled out yet (RC-46). Shown
         # above the tabs, because a project file that silently runs ahead of the cluster is
@@ -1994,8 +1984,9 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "backups_sections": backups_sections,
                 # De audit van dit project, voor het tabblad Audit. Leeg op elk ander
                 # tabblad en voor wie hem niet mag lezen.
-                "audit_rijen": audit_rijen,
-                "audit_fout": audit_fout,
+                "audit_rijen": [],
+                "audit_fout": False,
+                **audit_context,
                 # Detail-page sections the project's services own (WP2). Replaces the
                 # hardcoded per-service includes (e.g. the Keycloak realm block, which
                 # after RC-5's config move kept reading the old project-level
