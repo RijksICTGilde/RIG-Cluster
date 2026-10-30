@@ -625,6 +625,9 @@ PROJECT_TABS = {
     "metrics": {"label": "Metrics", "path": "metrics"},
     "backups": {"label": "Backups", "path": "backups"},
     "taken": {"label": "Taken", "path": "taken"},
+    # De kaart van dit project: componenten, services, deployments en koppelingen. Het
+    # tabblad draagt alleen het element; de plaat komt van /projects/<naam>/kaart.json.
+    "kaart": {"label": "Kaart", "path": "kaart"},
     # Achter Action.AUDIT_READ, dus niet voor elk lid in de balk; de route bepaalt dat.
     "audit": {"label": "Audit", "path": "audit"},
 }

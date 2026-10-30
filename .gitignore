@@ -78,3 +78,7 @@ secrets-overview-*.yaml
 
 # De ingelogde sessie van scripts/kijk_sandbox.py: koekjes, hoort niet in git.
 operations-manager/python/scripts/.sandbox-sessie.json
+
+# De bouwafhankelijkheden van het kaartelement. Het resultaat (static/js/zad-map.js)
+# staat wel in de repo, zoals codemirror-bundle.js.
+/operations-manager/zad-map/node_modules/

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -69,6 +70,13 @@ def _patch(base: dict, patch: dict) -> None:
                     base[key][sub_key] = sub_value
         else:
             base[key] = value
+
+
+def direction_rules(config: Any, direction: str) -> list[dict]:
+    """The raw ``inbound``/``outbound`` rule dicts from a stored config block, or []."""
+    if not isinstance(config, dict):
+        return []
+    return [rule for rule in (config.get(direction) or []) if isinstance(rule, dict)]
 
 
 def merge_rules(project_rules: list[dict], deployment_rules: list[dict]) -> list[dict]:

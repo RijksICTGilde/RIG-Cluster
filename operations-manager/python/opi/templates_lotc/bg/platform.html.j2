@@ -1,0 +1,27 @@
+{#
+  De kaart van het platform: de Operations Manager en de systemen eromheen, voor het
+  cluster dat deze OPI beheert. De plaat komt van /platform.json; deze pagina draagt
+  alleen het element en geeft het een hoogte.
+#}
+{% extends "base_lotc.html.j2" %}
+
+{% block head_extra %}
+    <link rel="stylesheet" href="{{ static_url('css/zad-map.css') }}">
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/zad-map.js') }}"></script>
+{% endblock %}
+
+{% block page_title %}Platform{% endblock %}
+
+{% block content %}
+    <c-stack gap="sm">
+        <c-heading type="h1" size="3" label="Platform" />
+        <c-paragraph>
+            Wat er op dit cluster ({{ cluster }}) draait en waar ZAD mee praat. Klik een systeem
+            voor de uitleg, de connector en de services die erop leunen.
+        </c-paragraph>
+    </c-stack>
+
+    <div class="zad-map-frame">
+        <zad-map src="/platform.json"></zad-map>
+    </div>
+{% endblock %}

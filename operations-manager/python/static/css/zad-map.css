@@ -1,0 +1,9 @@
+/* De plek die <zad-map> krijgt. Het element vult zijn container, dus de pagina moet een
+   hoogte geven; zonder dit is de kaart nul pixels hoog. */
+.zad-map-frame {
+  height: calc(100vh - 320px);
+  min-height: 520px;
+  border: 1px solid var(--semantics-dividers-color, #cdd3d8);
+  border-radius: var(--semantics-surfaces-corner-radius, 6px);
+  overflow: hidden;
+}
