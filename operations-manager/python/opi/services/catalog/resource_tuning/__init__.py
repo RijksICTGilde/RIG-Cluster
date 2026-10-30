@@ -27,7 +27,7 @@ class ResourceTuningService(Service):
         ),
         help_template="resource_tuning/help.md",
         icon="grafiek",
-        color="grijs-600",
+        color="violet",
         selectable_per_component=False,
         variables=[],
         # Always on, never in the project file -> a system service (kind=SYSTEM also
