@@ -144,6 +144,10 @@ def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
       mee": resource-tuning hoogt geheugen op na een OOM, deployment-health beoordeelt wat
       de waargenomen toestand van een deployment betekent.
 
+    Een dienst die op dit cluster vervangen is (``replaced_on_cluster``, dezelfde vraag als de
+    dienstenkiezer stelt) blijft er ook af: die bestaat nog voor projecten die hem al hebben,
+    maar is geen keuze meer voor wie hier begint.
+
     Diensten met ``hidden=True`` blijven eraf. Anders dan op het dienstenoverzicht - dat
     toont ze bewust, want ze leveren omgevingsvariabelen die je moet kunnen opzoeken - valt
     hier niets op te zoeken: het zijn varianten die OPI zelf toekent, en op een pagina die
@@ -153,14 +157,14 @@ def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
     de pagina iets anders belooft dan de dienst zelf zegt, en dat is precies de fout die
     deze functie moet voorkomen.
     """
-    from opi.services.registry import SERVICE_DEFINITIONS
+    from opi.services.registry import SERVICE_DEFINITIONS, get_service
     from opi.services.services_enums import ServiceKind
     from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
     zelf: list[dict[str, str]] = []
     achtergrond: list[dict[str, str]] = []
     for service_type, definition in SERVICE_DEFINITIONS.items():
-        if definition.hidden:
+        if definition.hidden or get_service(service_type).replaced_on_cluster(settings.CLUSTER_MANAGER):
             continue
         kaart = {
             "name": service_type.value,
