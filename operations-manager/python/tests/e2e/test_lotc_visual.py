@@ -231,7 +231,6 @@ REDESIGNED_PAGES = [
     "admin-approvals",
     "wizard-start",
     "wizard-page",
-    "about",
     "metrics-explorer",
     "permission-denied",
     "project-progress",
@@ -244,6 +243,8 @@ REDESIGNED_PAGES = [
     "admin-gedeelde-diensten",
     "security",
     "router",
+    "platform",
+    "admin-rolmatrix",
 ]
 
 
