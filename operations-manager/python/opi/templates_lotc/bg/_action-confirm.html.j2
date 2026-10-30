@@ -22,57 +22,52 @@
   deze dialoog in - de vraag wordt de lopende taak. Vandaar hx-target="this" en
   hx-swap="innerHTML" op de wikkel.
 
-  WAAROM ANNULEREN GEEN <c-button> IS
+  WAAROM NLDD DIRECT EN GEEN <c-modal-dialog>
 
-  Annuleren roept closeEditModal() aan van de gedeelde modal-schil waarin dit fragment
-  geladen wordt; er is geen href die hetzelfde doet, want de dialoog moet dicht en de pagina
-  eronder moet blijven staan. Dat gaat via @click op <c-button>, net als bij de
-  deploymentacties. Hier stond een kale <button> met de toelichting dat <c-button> geen
-  klikafhandeling toeliet - dat klopte niet, en het kostte die knop al zijn vormgeving.
+  De inhoud heeft de vormgeving van <nldd-modal-dialog>: die tekent zelf ook een
+  <nldd-inline-dialog>. De schil eromheen blijft de gedeelde modal, omdat
+  <nldd-modal-dialog> zich met Escape en de backdrop altijd laat sluiten, ook terwijl de
+  taak loopt die deze vraag start. De step-up schrijft bovendien vast in
+  #edit-section-inner.
+
+  Annuleren roept closeEditModal() aan van die schil: de dialoog moet dicht en de pagina
+  eronder moet blijven staan, daar is geen href voor.
 #}
 <div data-confirm-action="{{ key }}"
      hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
      hx-target="this"
      hx-swap="innerHTML">
-    <c-stack gap="md">
-        {% if blocked_reason %}
-            <c-alert type="warning" heading="{{ blocked_reason }}" />
-        {% else %}
-            <c-paragraph>{{ message }}</c-paragraph>
-        {% endif %}
-
+    {# Verwijderen is onomkeerbaar. Volgens de NLDD-richtlijn is de uitweg dan de primary
+       knop en de actie zelf destructive. Bij een omkeerbare actie is de actie primary. #}
+    {% set destructief = action.kind in ('warning', 'warning-subtle') %}
+    {# Expliciet links: de foutplek hieronder staat altijd in de default slot, ook als hij
+       leeg en verborgen is, en de afgeleide uitlijning zou daar per ongeluk op leunen. #}
+    <nldd-inline-dialog text="{{ blocked_reason or message }}"
+                        {% if destructief or blocked_reason %}variant="alert"{% endif %}
+                        horizontal-alignment="left">
         {# De plek waar de modal-schil een foutmelding in schrijft als de POST mislukt.
            Blijft een kale div met dezelfde id en dezelfde klassen: hij hoort bij die
            schil, niet bij deze omzetting. #}
         <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
 
-        <c-action-group align="end">
-            {# Een <c-button> en GEEN kale <button>: die laatste krijgt geen enkele
-               stijlklasse en stond er kaal bij. De toelichting hierboven zei dat
-               <c-button> geen klikafhandeling toelaat; dat klopt niet, @click zet het
-               attribuut wel door - zo openen de deploymentacties hun dialogen ook. #}
-            {% set annuleren = "closeEditModal()" %}
-            <c-button type="secondary" label="Annuleren" @click="{{ annuleren }}" />
-            {# Niets te bevestigen als de actie vooraf geweigerd is; de dialoog legt dan
-               alleen uit waarom (de server weigert hem ook). #}
-            {% if not blocked_reason %}
-                {# ROOS-kinds en LOTC-types overlappen bijna volledig; wat er niet in zit
-                   valt terug op primary in plaats van de knop te laten struikelen op een
-                   onbekende enum-waarde. Verwijderen is "warning" en blijft dat dus.
-                   Het icoon draagt een ROOS-naam ("verwijderen", "refresh") waar NLDD geen
-                   tegenhanger voor heeft; zoals ROOS_TO_NLDD_ICONS voorschrijft gaat die
-                   ongewijzigd door en blijft de plek leeg, in plaats van een willekeurig
-                   ander icoon te tonen. #}
-                {% set knoptype = action.kind if action.kind in ('primary', 'secondary', 'tertiary', 'quaternary', 'warning', 'subtle', 'warning-subtle') else 'primary' %}
-                <c-button
-                    type="{{ knoptype }}"
-                    label="{{ action.label }}"
-                    show-icon="before"
-                    icon="{{ action.icon | default('', true) | nldd_icon }}"
-                    class="confirm-action-submit"
-                    hx-post="{{ action.endpoint }}"
-                    hx-disabled-elt="this" />
-            {% endif %}
-        </c-action-group>
-    </c-stack>
+        {# Een geblokkeerde actie heeft niets te bevestigen; de dialoog legt dan alleen uit
+           waarom (de server weigert hem ook). #}
+        {% if blocked_reason %}
+            <nldd-button slot="actions" appearance="primary" text="Sluiten" onclick="closeEditModal()"></nldd-button>
+        {% else %}
+            <nldd-button slot="actions"
+                         appearance="{{ 'primary' if destructief else 'secondary' }}"
+                         text="Annuleren"
+                         onclick="closeEditModal()"></nldd-button>
+            {# Het icoon draagt een ROOS-naam; nldd_icon zet hem om en laat de plek leeg
+               als NLDD er geen tegenhanger voor heeft. #}
+            <nldd-button slot="actions"
+                         appearance="{{ 'destructive' if destructief else 'primary' }}"
+                         text="{{ action.label }}"
+                         start-icon="{{ action.icon | default('', true) | nldd_icon }}"
+                         class="confirm-action-submit"
+                         hx-post="{{ action.endpoint }}"
+                         hx-disabled-elt="this"></nldd-button>
+        {% endif %}
+    </nldd-inline-dialog>
 </div>
