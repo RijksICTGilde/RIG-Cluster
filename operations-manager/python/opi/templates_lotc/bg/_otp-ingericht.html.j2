@@ -1,9 +1,9 @@
 {# De stand van een BEVESTIGDE factor, plus het formulier dat hem vervangt. #}
 {% from "bg/_patterns.html.j2" import panel %}
 {% call panel("Ingericht", "lock-closed") %}
-    <c-detail-list>
-        <c-detail-item label="Bevestigd op" value="{{ status.confirmed_at | dutch_date }}" />
-    </c-detail-list>
+    <nldd-rich-text><dl>
+        <dt>Bevestigd op</dt><dd>{{ status.confirmed_at | dutch_date }}</dd>
+    </dl></nldd-rich-text>
 
     {% if status.locked %}
         <c-alert type="warning" heading="Tijdelijk geblokkeerd">

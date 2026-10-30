@@ -71,11 +71,11 @@
     </c-auto-grid>
 
     {% call panel("Overzicht", "house") %}
-        <c-detail-list>
-            <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-            <c-detail-item label="Services" value="{{ project.services | map(attribute='value') | join(', ') }}" />
-            <c-detail-item label="Repositories" value="{{ project.repositories | length }}" />
-        </c-detail-list>
+        <nldd-rich-text><dl>
+            <dt>Cluster</dt><dd>{{ project.clusters | join(', ') }}</dd>
+            <dt>Services</dt><dd>{{ project.services | map(attribute='value') | join(', ') }}</dd>
+            <dt>Repositories</dt><dd>{{ project.repositories | length }}</dd>
+        </dl></nldd-rich-text>
         <c-paragraph size="sm">
             De andere aanzichten staan in de kolom links. In deze proef heeft alleen
             Overzicht inhoud.

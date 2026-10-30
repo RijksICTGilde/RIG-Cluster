@@ -15,8 +15,8 @@
   ``success_title``.
 
   De kaart met de toegangsgegevens is panel() uit bg/_patterns.html.j2, dezelfde vorm als
-  op de andere pagina's, en het e-mailadres staat in een c-detail-list in plaats van in
-  een alinea met een vet stukje ervoor.
+  op de andere pagina's, en het e-mailadres staat in een <dl> in nldd-rich-text in plaats
+  van in een alinea met een vet stukje ervoor.
 #}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
 
@@ -71,9 +71,9 @@
 
             {% call panel(access_heading, "key") %}
                 {% if email %}
-                    <c-detail-list>
-                        <c-detail-item label="{{ email_label }}" value="{{ email }}" />
-                    </c-detail-list>
+                    <nldd-rich-text><dl>
+                        <dt>{{ email_label }}</dt><dd>{{ email }}</dd>
+                    </dl></nldd-rich-text>
                 {% endif %}
 
                 {% if application_url %}

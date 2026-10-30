@@ -10,15 +10,15 @@
     {{ page_head("Account", "De gegevens waarmee je bent ingelogd.") }}
 
     {% call panel("Wie je bent", "person") %}
-        <c-detail-list>
-            <c-detail-item label="Naam" value="{{ account.name }}" />
+        <nldd-rich-text><dl>
+            <dt>Naam</dt><dd>{{ account.name }}</dd>
             {% if account.email %}
-                <c-detail-item label="E-mailadres" value="{{ account.email }}" />
+                <dt>E-mailadres</dt><dd>{{ account.email }}</dd>
             {% endif %}
             {% if account.organisatie %}
-                <c-detail-item label="Organisatie" value="{{ account.organisatie }}" />
+                <dt>Organisatie</dt><dd>{{ account.organisatie }}</dd>
             {% endif %}
-        </c-detail-list>
+        </dl></nldd-rich-text>
 
         <c-paragraph size="sm" color="grijs-500">
             Deze gegevens komen uit je inlogsessie en worden door ZAD niet zelf bijgehouden.
