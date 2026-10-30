@@ -101,7 +101,7 @@ De workflows volgen de OpenSSF Scorecard-checks "Pinned-Dependencies" en
   en `attestations: write` in `docker.yml` bij de job `publish`, die aan main hangt, en
   heeft `build` ze niet. `docker-images.yml` kent geen `pull_request`-trigger en houdt ze
   bij de bouwende jobs. `tests/test_workflows_actions_op_sha.py` bewaakt het, en het
-  verificatierecept in `SECURITY.md` ankert dezelfde grens in de regexp.
+  verificatierecept hieronder ankert dezelfde grens in de regexp.
 
 ### De poort voor de push
 
@@ -239,6 +239,95 @@ meet andere aantallen.
 Voor `argocd-rig` hoef je niets te bouwen: `trivy image` op
 `ghcr.io/minbzk/base-images/argocd-rig:<versie uit de overlay>` haalt hem zelf op.
 
+## De toeleverketen van de images
+
+De runner en de pins staan onder [Rechten en pins](#rechten-en-pins), de poort onder
+[De poort voor de push](#de-poort-voor-de-push). Hier staat hoe images gepatcht worden en
+hoe je zelf nameet dat wat er draait is wat wij gebouwd en getekend hebben.
+
+### Patchen in twee lagen
+
+**Laag A, de OS-pakketten, gaat zonder mens.** `docker.yml` en `docker-images.yml` hebben
+een `schedule` die elke nacht de images herbouwt zonder laagcache (`no-cache`), zodat de
+`apt-get upgrade` in de Dockerfile de verse security-updates ophaalt. Zo'n run publiceert op
+een `nightly-<datum>`-tag plus `latest` en zet geen git-tag: CalVer hoort bij een merge die
+iemand doet. De poort staat ook voor die nachtelijke push.
+
+Twee van de vijf images hebben geen eigen apt-laag: `postgresql-with-dictionaries` kopieert
+alleen woordenboeken in de CNPG-base, en `keycloak-zad` voegt providers toe aan de
+Keycloak-base. Voor die twee levert de nachtelijke herbouw alleen op wat de base-tag zelf
+intussen heeft gekregen.
+
+**Laag B, het bouwgereedschap, gaat via Renovate** (`features/renovate.md`) met twee
+afspraken:
+
+- een **cooldown** van 7 dagen (`minimumReleaseAge`): een net gepubliceerde versie wordt
+  niet meteen een PR, zodat een gecompromitteerde of ingetrokken release de kans krijgt om
+  op te vallen voordat wij hem binnenhalen;
+- **selectieve auto-merge**: alleen patch en minor, en alleen voor het bouwgereedschap (de
+  GitHub Actions en `.tool-versions`). De manifesten, de base-images en de
+  app-afhankelijkheden blijven een merge die iemand doet. Een major komt alleen op het
+  Dependency Dashboard, en een digest-update gaat ook niet mee: bij een action die op een
+  SHA staat met een major-only versiecommentaar komt een verplaatste tag binnen als
+  digest-update, en dat is precies waar die pin tegen beschermt.
+
+Een auto-merge gaat pas door als de required checks groen zijn, dus de poort staat er ook
+voor.
+
+### Een gepubliceerde image verifieren
+
+Elke image die op main gepusht wordt is keyless getekend (cosign, OIDC, geen sleutel in
+beheer) en draagt een SLSA-build-provenance-attestatie in de registry. Zet `IMAGE` op de
+image met de tag of de digest die je wilt narekenen:
+
+```bash
+IMAGE=ghcr.io/rijksictgilde/zad/operations-manager:latest
+```
+
+**De handtekening.** Hij moet van een publicerende workflow in deze repo komen, op main, en
+niet van een willekeurige andere tekenaar:
+
+```bash
+IDENTITEIT='^https://github\.com/RijksICTGilde/RIG-Cluster/\.github/workflows/docker(-images)?\.yml@refs/heads/main$'
+
+cosign verify "$IMAGE" \
+  --certificate-identity-regexp "$IDENTITEIT" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+Die regexp noemt de twee workflows die publiceren en ankert op `refs/heads/main`. Alleen het
+repo-voorvoegsel zou te ruim zijn: dan accepteert de toets elke workflow en elke ref in deze
+repo, dus ook een `refs/pull/N/merge`. De workflows zelf houden dat tegen (tekenen zit in een
+job die alleen op main draait), en deze regexp is de tweede helft van dezelfde afspraak, voor
+als iemand die rechten ooit verplaatst.
+
+**De provenance.** Welke workflow, welke commit en welke runner de image gebouwd hebben, met
+dezelfde begrenzing:
+
+```bash
+gh attestation verify "oci://$IMAGE" --owner RijksICTGilde --cert-identity-regex "$IDENTITEIT"
+```
+
+**De SBOM.** Buildx hangt hem als in-toto-attestatie aan de image-index, dus hij komt uit
+`imagetools inspect` en niet uit `cosign download sbom`, dat alleen het oudere
+cosign-formaat leest:
+
+```bash
+docker buildx imagetools inspect "$IMAGE" --format '{{ json .SBOM }}' | jq '.SPDX.packages | length'
+```
+
+Een getal groter dan nul betekent dat de SBOM er staat en gevuld is.
+
+### Wat met de hand bij de git-host staat
+
+Deze drie zijn instellingen en geen code, dus ze staan niet in deze repo en moeten gezet zijn
+om het bovenstaande te laten werken:
+
+- **branch protection op main**, met de buildpoort als required check. Zonder die eis kan
+  een auto-merge langs een rode poort.
+- **auto-merge aan** voor de repo, anders blijft laag B op een open PR wachten.
+- **geen force-push op main**, zodat de commit waar een attestatie naar wijst blijft bestaan.
+
 ## Statische analyse op de OPI-code
 
 **Waar**: `operations-manager/python/pyproject.toml`, sectie `[tool.ruff.lint]`.
@@ -292,7 +381,7 @@ bijgewerkt, en de handstap bij het inrichten.
 Een update wacht 7 dagen voor hij een PR wordt (`minimumReleaseAge`), zodat een
 gecompromitteerde of ingetrokken release de kans krijgt om op te vallen. Alleen het
 bouwgereedschap (GitHub Actions en `.tool-versions`) mergt zichzelf, en alleen op patch en
-minor. De twee patchlagen staan in `SECURITY.md`.
+minor. De twee patchlagen staan onder [Patchen in twee lagen](#patchen-in-twee-lagen).
 
 ## Setup
 
@@ -303,7 +392,7 @@ minor. De twee patchlagen staan in `SECURITY.md`.
 - [ ] Verify GHCR packages write permission for GitHub Actions (`Settings > Actions > General > Workflow permissions`)
 - [ ] Loop de eerste ronde Renovate-PR's na
 - [ ] Zet branch protection op main met de buildpoort als required check, zet auto-merge
-      aan en force-push uit (zie `SECURITY.md`); zonder die drie kan laag B van de
+      aan en force-push uit (zie hierboven); zonder die drie kan laag B van de
       patchstrategie langs een rode poort mergen
 - [ ] Draai de eerste run met `egress-policy: block` na en vul `HARDEN_ENDPOINTS` aan met
       wat de harden-runner-annotatie als geblokkeerd meldt

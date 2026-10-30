@@ -62,7 +62,7 @@ te plannen.
 
 Auto-merge geldt sinds RC-369 alleen voor het bouwgereedschap: patch en minor op de GitHub
 Actions en op `.tool-versions`, en pas nadat de required checks groen zijn. Dat is laag B van
-de patchstrategie in `SECURITY.md`. Een digest-update is een verplaatste tag en gaat niet
+de patchstrategie in `features/security-scanning-pipeline.md`. Een digest-update is een verplaatste tag en gaat niet
 mee. Al het andere, en elke major, blijft een merge die een mens doet.
 
 ## Een versie in een Dockerfile-ARG

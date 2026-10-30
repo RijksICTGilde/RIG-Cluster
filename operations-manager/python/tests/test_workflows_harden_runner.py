@@ -2,7 +2,7 @@
 
 Zonder die eerste stap kan een gecompromitteerde action of buildstap ongemerkt naar buiten
 praten; de SHA-pins van de actions houden alleen tegen dat de inhoud verandert, niet wat een
-stap doet zodra hij draait. Zie SECURITY.md.
+stap doet zodra hij draait. Zie features/security-scanning-pipeline.md.
 """
 
 from pathlib import Path
