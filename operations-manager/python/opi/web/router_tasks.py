@@ -104,6 +104,9 @@ def _normalize_task(task: dict) -> dict:
         "deployment": task.get("deployment_name"),
         "status": _STATUS_LABELS.get(status, status),
         "active": status in _TASK_ACTIVE,
+        # RC-282 keeps a finished task for 90 days but clears its details after an hour;
+        # until then the progress page still has something to show.
+        "has_details": not task.get("details_purged_at"),
         "step": stap_label(task.get("current_step")),
         "progress": task.get("progress_percent"),
         "door": task.get("created_by"),
