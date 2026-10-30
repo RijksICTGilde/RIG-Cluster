@@ -263,12 +263,12 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% endmacro %}
 
 {#- The status cell of a task row. A running task gets a spinning nldd-progress-circle
-    instead of a static icon. The progress fragment replaces itself every 2s, which would
-    restart the animation; hx-preserve with a stable id keeps the same element across those
-    swaps, so it keeps turning. -#}
-{% macro progress_status_cell(status, spin_id) %}
+    instead of a static icon. No hx-preserve to keep it turning across the 2s polls: a
+    circle that htmx moves loses its drawing (nldd-progress-circle does not restart its
+    arc after a disconnect), and its spot stayed empty. A fresh one per poll stays visible. -#}
+{% macro progress_status_cell(status) %}
 {%- if status == "running" -%}
-<nldd-icon-cell size="20"><nldd-progress-circle id="{{ spin_id }}" hx-preserve indeterminate size="20" value-display="none" accessible-label="Bezig"></nldd-progress-circle></nldd-icon-cell>
+<nldd-icon-cell size="20"><nldd-progress-circle indeterminate size="20" value-display="none" accessible-label="Bezig"></nldd-progress-circle></nldd-icon-cell>
 {%- else -%}
 <c-icon-cell size="20" icon="{{ task_status_icon_name(status) | trim }}"/>
 {%- endif -%}
@@ -278,16 +278,15 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% if tasks %}
 <c-list appearance="simple" accessible-label="Voortgang per taak">
     {% for task in tasks %}
-    {% set task_index = loop.index %}
     <c-list-item size="sm">
-        {{ progress_status_cell(task.status, "progress-spin-" ~ task_index) }}
+        {{ progress_status_cell(task.status) }}
         <c-spacer-cell size="8"/>
         <c-text-cell size="sm" supporting-text="{{ progress_step_detail(task, show_errors) | trim }}">{{ task.name }}</c-text-cell>
     </c-list-item>
     {% for subtask in task.subtasks or [] %}
     <c-list-item size="sm">
         <c-spacer-cell size="24"/>
-        {{ progress_status_cell(subtask.status, "progress-spin-" ~ task_index ~ "-" ~ loop.index) }}
+        {{ progress_status_cell(subtask.status) }}
         <c-spacer-cell size="8"/>
         <c-text-cell size="sm" supporting-text="{{ progress_step_detail(subtask, show_errors) | trim }}">{{ subtask.name }}</c-text-cell>
     </c-list-item>
