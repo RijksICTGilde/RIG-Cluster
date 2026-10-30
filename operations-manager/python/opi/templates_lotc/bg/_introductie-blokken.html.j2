@@ -126,17 +126,26 @@
   vertaald heeft maakt niet uit: to_nldd_icon laat een naam die hij niet kent ongemoeid,
   dus het filter kan nooit kwaad, en de poort die dat bewaakt eist het hier terecht.
 #}
+{# Rechtstreeks NLDD en niet c-catalog-card: die kent geen kleur voor het icoon, en de
+   kleur van een service hoort erbij, net als op /services. Een kleurnaam die nldd-icon niet
+   kent (grijs-600) valt terug op de tekstkleur, ook daar. #}
 {% macro dienstenraster(diensten) %}
-<c-columns columns="1" lg="2" gap="md">
+<nldd-collection layout="grid" item-width="320px" max-items="{{ diensten | length }}">
     {% for dienst in diensten %}
-        <c-catalog-card
-            icon="{{ dienst.icon | nldd_icon }}"
-            title="{{ dienst.label }}"
-            subtitle="{{ dienst.name }}">
-            <c-paragraph size="sm">{{ dienst.summary }}</c-paragraph>
-        </c-catalog-card>
+        <nldd-card>
+            <nldd-container slot="header" layout="row" gap="12" vertical-alignment="center" padding="16" padding-bottom="0">
+                <nldd-icon icon="{{ dienst.icon | nldd_icon }}" color="{{ dienst.color }}" size="32"></nldd-icon>
+                <nldd-title size="5">
+                    <h3>{{ dienst.label }}</h3>
+                    <span slot="supporting-text">{{ dienst.name }}</span>
+                </nldd-title>
+            </nldd-container>
+            <nldd-container padding="16">
+                <nldd-rich-text><p>{{ dienst.summary }}</p></nldd-rich-text>
+            </nldd-container>
+        </nldd-card>
     {% endfor %}
-</c-columns>
+</nldd-collection>
 {% endmacro %}
 
 
