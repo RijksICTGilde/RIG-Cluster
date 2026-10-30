@@ -42,10 +42,11 @@
                 {% for item in items %}
                     <c-table-row>
                         {# De cel Soort is de ingang naar /projects/progress/<id>. item.task_id
-                           voor achtergrondtaken (runs hebben geen id), item.active omdat de
-                           werkgegevens van afgeronde taken na een uur leeggemaakt worden (RC-282). #}
+                           voor achtergrondtaken (runs hebben geen id). Een link zolang de taak
+                           loopt of zijn details nog heeft: RC-282 maakt die een uur na afloop
+                           leeg, en daarna zou de link naar een lege pagina wijzen. #}
                         <c-td>
-                            {% if item.task_id and item.active %}
+                            {% if item.task_id and (item.active or item.has_details) %}
                                 <c-link href="/projects/progress/{{ item.task_id }}">{{ item.soort }}</c-link>
                             {% else %}
                                 {{ item.soort }}

@@ -58,6 +58,22 @@ class TestDeTakenlijst:
         assert "Image bijwerken" in html
         assert "iemand@rijksoverheid.nl" in html
 
+    def test_een_opgeruimde_taak_is_geen_link(self) -> None:
+        html = templates_lotc.env.get_template("bg/_tasks.html.j2").render(
+            request=None, project_name="va-48w", items=[_normalize_task(_opgeruimde_taak())]
+        )
+
+        assert "/projects/progress/abc-123" not in html
+
+    def test_een_afgeronde_taak_met_details_is_een_link(self) -> None:
+        """Juist na een mislukking wil je erin, en in het eerste uur kan dat nog."""
+        taak = {**_opgeruimde_taak(), "details_purged_at": None, "subtasks": [{"name": "stap"}]}
+        html = templates_lotc.env.get_template("bg/_tasks.html.j2").render(
+            request=None, project_name="va-48w", items=[_normalize_task(taak)]
+        )
+
+        assert "/projects/progress/abc-123" in html
+
 
 class TestDeVoortgangspagina:
     def test_de_context_meldt_dat_de_details_weg_zijn(self) -> None:
