@@ -20,6 +20,7 @@ from opi.services.schema_migration import (
     relocate_registries_to_service,
     remove_domain_mode,
     remove_mail_accounts,
+    restore_run_reference,
     roles_as_a_list,
 )
 
@@ -1820,6 +1821,34 @@ class TestComponentDescriptionMigration:
         data = {
             "name": "p",
             "schema-version": "2.14",
+            "users": [{"email": "a@b.nl", "roles": ["admin"]}],
+            "components": [{"name": "frontend", "type": "deployment"}],
+        }
+        before_without_stamp = {k: v for k, v in data.items() if k != "schema-version"}
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp
+
+
+class TestRestoreRunReferenceMigration:
+    """v2.15 -> v2.16: clone-from.run was added, so there is nothing to migrate.
+
+    Nor could there be: a file still carrying the old ``backup_items`` is rejected by the
+    schema gate, which runs before this chain (RC-404).
+    """
+
+    def test_is_a_no_op(self) -> None:
+        data = {"name": "p", "deployments": [{"name": "backup", "clone-from": {"type": "backup"}}]}
+        assert restore_run_reference(data) is False
+        assert data == {"name": "p", "deployments": [{"name": "backup", "clone-from": {"type": "backup"}}]}
+
+    def test_a_2_15_file_reaches_the_latest_version_unchanged(self) -> None:
+        data = {
+            "name": "p",
+            "schema-version": "2.15",
             "users": [{"email": "a@b.nl", "roles": ["admin"]}],
             "components": [{"name": "frontend", "type": "deployment"}],
         }

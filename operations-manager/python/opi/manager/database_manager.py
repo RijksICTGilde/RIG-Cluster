@@ -20,6 +20,7 @@ from opi.connectors.postgres import (
 )
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
+from opi.manager.backup.runs import clone_backup_items
 from opi.manager.clone_validation import (
     composite_name_collision,
     other_project_deployments,
@@ -805,7 +806,9 @@ class DatabaseManager:
                 clone_source_ref = clone_from.get("reference")
             elif clone_type == CloneFromType.BACKUP.value:
                 # Backup restore: restore database from Kopia backup
-                backup_items = clone_from.get("backup_items", [])
+                if project_data is None:
+                    raise ValueError(f"project_data is required for backup clone: {deployment_name}")
+                backup_items = await clone_backup_items(project_data, project_name, deployment, clone_from)
                 db_item = next(
                     (item for item in backup_items if item.get("resource_type") == "database"),
                     None,

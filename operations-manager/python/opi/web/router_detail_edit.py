@@ -1845,7 +1845,7 @@ async def _gather_backup_runs_async(
 ) -> list[dict[str, Any]]:
     """Gather backup runs grouped by backup_run_id for the restore wizard (async)."""
     from opi.core.cluster_config import get_prefixed_namespace
-    from opi.manager.backup import BackupManager
+    from opi.manager.backup import BackupManager, group_snapshots_into_runs
 
     backup_runs_map: dict[str, dict[str, Any]] = {}
     try:
@@ -1863,34 +1863,7 @@ async def _gather_backup_runs_async(
             k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
             try:
                 snapshots = await backup_manager.list_snapshots(dep_cluster, k8s_ns, project_name=project_name)
-                dep_snapshots = [s for s in snapshots if s.deployment_name == dep_name]
-
-                for s in dep_snapshots:
-                    run_id = s.backup_run_id or s.snapshot_id
-                    if run_id not in backup_runs_map:
-                        backup_runs_map[run_id] = {
-                            "backup_run_id": run_id,
-                            "timestamp": s.timestamp,
-                            "deployment_name": dep_name,
-                            "resource_count": 0,
-                            "resource_types": [],
-                            "items": [],
-                        }
-                    run = backup_runs_map[run_id]
-                    run["resource_count"] += 1
-                    rt = s.resource_type or "pvc"
-                    if rt not in run["resource_types"]:
-                        run["resource_types"].append(rt)
-                    run["items"].append(
-                        {
-                            "snapshot_id": s.snapshot_id,
-                            "resource_type": rt,
-                            "component_name": s.component_name,
-                            "storage_name": s.storage_name,
-                            "reference_name": s.storage_name or s.pvc_name,
-                            "generation": s.generation,
-                        }
-                    )
+                backup_runs_map.update(group_snapshots_into_runs(snapshots, dep_name))
             except Exception as e:
                 logger.warning("Failed to fetch backups for deployment %s: %s", dep_name, e)
 

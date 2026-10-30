@@ -65,7 +65,7 @@ Daarom:
 welke dat is:
 
 ```json
-"x-zad-schema-version": "2.14"
+"x-zad-schema-version": "2.16"
 ```
 
 Een oudere versie wordt samengesteld uit dat schema plus een keten van patches. Elke patch is
@@ -73,7 +73,9 @@ een [RFC 7386 JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386) die van 
 de eerstvolgende versie dat van die versie maakt:
 
 ```
-project_v2.json                 (2.14)
+project_v2.json                 (2.16)
+  + project_legacy/v2.15.json -> 2.15  (`clone-from.run`: 2.16 voegt het veld toe voor backup-restore)
+  + project_legacy/v2.14.json -> 2.14  (component-`description`: 2.15 voegde het veld toe)
   + project_legacy/v2.13.json -> 2.13  (`accounts` in send-email: 2.14 haalt het blok weg)
   + project_legacy/v2.12.json -> 2.12  (`users[].role` in plaats van `users[].roles`: 2.13 maakte het een lijst)
   + project_legacy/v2.11.json -> 2.11  (`api-key` op root: 2.12 verhuisde het naar `users[...].service-account`)

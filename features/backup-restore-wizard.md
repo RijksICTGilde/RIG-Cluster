@@ -92,14 +92,17 @@ PVC naming for the new deployment uses generation 0 (no version suffix), while t
 
 ### Clone-from Type "backup"
 
-When restoring to a new deployment, the `clone-from` field is set to `type: "backup"`. This signals to infrastructure managers (`database_manager`, `minio_manager`, `pvc_manager`) that they should create empty resources rather than attempting to live-clone data from another deployment. The restore process then fills these resources with backup data.
+When restoring to a new deployment, the `clone-from` field is set to `type: "backup"`. This signals to infrastructure managers (`database_manager`, `minio_manager`, `seaweedfs_manager`, `pvc_manager`) that they should create empty resources rather than attempting to live-clone data from another deployment. The restore process then fills these resources with backup data.
 
 ```yaml
 clone-from:
   type: backup
-  reference: source-deployment-name
+  reference: productie          # the deployment the backup was taken from
+  run: '20261030084847'         # the backup_run_id to restore
   mode: once
 ```
+
+`run` names the backup run, and `run` only: which snapshots that run holds is runtime state at Kopia, not project data. Each manager looks the run up itself through `clone_backup_items` (`opi/manager/backup/runs.py`) and picks the item for its own resource type. A run that no longer exists is an error naming the run and the source deployment, not an empty restore that reports success.
 
 ## Scope
 

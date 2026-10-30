@@ -245,6 +245,63 @@ class TestMigrationsCanBeFinished:
         data = _project(components=[{"name": "frontend", "type": "deployment", "description": "x" * 500}])
         validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
 
+    def test_clone_from_run_rejected_at_2_15_accepted_at_2_16(self) -> None:
+        """A field ADDED, like description above: 2.15 does not know it and clone-from is closed."""
+        data = _project(
+            deployments=[
+                {
+                    "name": "backup",
+                    "cluster": "odcn-production",
+                    "namespace": "voorbeeld",
+                    "clone-from": {
+                        "type": "backup",
+                        "reference": "productie",
+                        "mode": "once",
+                        "run": "20261030084847",
+                    },
+                }
+            ]
+        )
+        validate_project_schema(data, schema_version=parse_schema_version("2.16"))
+        with pytest.raises(ProjectSchemaError, match="run"):
+            validate_project_schema(data, schema_version=parse_schema_version("2.15"))
+
+    def test_clone_from_backup_items_stays_rejected(self) -> None:
+        """The shape the restore used to write. No version ever accepted it (RC-404)."""
+        data = _project(
+            deployments=[
+                {
+                    "name": "backup",
+                    "cluster": "odcn-production",
+                    "namespace": "voorbeeld",
+                    "clone-from": {
+                        "type": "backup",
+                        "reference": "productie",
+                        "mode": "once",
+                        "backup_items": [{"snapshot_id": "41bbdb", "resource_type": "database"}],
+                    },
+                }
+            ]
+        )
+        for versie in SCHEMA_VERSIONS:
+            with pytest.raises(ProjectSchemaError, match="backup_items"):
+                validate_project_schema(data, schema_version=versie)
+
+    def test_clone_from_run_only_makes_sense_for_a_backup(self) -> None:
+        """``run`` names a backup run, so any other clone type refuses it."""
+        data = _project(
+            deployments=[
+                {
+                    "name": "acceptatie",
+                    "cluster": "odcn-production",
+                    "namespace": "voorbeeld",
+                    "clone-from": {"type": "deployment", "reference": "productie", "run": "20261030084847"},
+                }
+            ]
+        )
+        with pytest.raises(ProjectSchemaError, match="run"):
+            validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
+
     def test_the_newest_schema_is_the_newest_shape_only(self) -> None:
         # The regression this locks: someone re-adds a legacy form to the newest
         # schema "so the gate stops rejecting file X". That is what made the schema
