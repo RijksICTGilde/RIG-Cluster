@@ -262,6 +262,12 @@ class TestKlonen:
         monkeypatch.setattr("opi.manager.seaweedfs_manager.create_minio_connector", lambda: mc)
         return mc
 
+    def _backup_items(self, monkeypatch: pytest.MonkeyPatch, items: list[dict[str, Any]]) -> AsyncMock:
+        """De onderdelen van de backup-run komen van Kopia, dus hier van een mock."""
+        opzoeken = AsyncMock(return_value=items)
+        monkeypatch.setattr("opi.manager.seaweedfs_manager.clone_backup_items", opzoeken)
+        return opzoeken
+
     async def test_kloon_van_een_andere_deployment_kopieert_de_bucket(self, monkeypatch: pytest.MonkeyPatch) -> None:
         connector = _connector(monkeypatch)
         connector.list_buckets.return_value = ["proj-bron"]
@@ -375,7 +381,8 @@ class TestKlonen:
     async def test_kloon_uit_backup_zonder_bucket_item_doet_niets(self, monkeypatch: pytest.MonkeyPatch) -> None:
         connector = _connector(monkeypatch)
         self._mc(monkeypatch)
-        project, doel = _project_met_kloon({"type": "backup", "mode": "once", "backup_items": []})
+        self._backup_items(monkeypatch, [])
+        project, doel = _project_met_kloon({"type": "backup", "reference": "bron", "mode": "once", "run": "run-1"})
 
         await SeaweedfsManager(NepProjectManager()).create_resources_for_deployment(project, doel)
 
@@ -388,11 +395,10 @@ class TestKlonen:
         restore_manager = AsyncMock()
         restore_manager.restore_bucket.return_value = type("R", (), {"success": True, "error": None})()
         monkeypatch.setattr("opi.manager.backup.bucket_backup.create_bucket_backup_manager", lambda: restore_manager)
-        clone_from = {
-            "type": "backup",
-            "mode": "once",
-            "backup_items": [{"resource_type": "bucket", "reference_name": "ref-1", "snapshot_id": "snap-1"}],
-        }
+        opzoeken = self._backup_items(
+            monkeypatch, [{"resource_type": "bucket", "reference_name": "ref-1", "snapshot_id": "snap-1"}]
+        )
+        clone_from = {"type": "backup", "reference": "bron", "mode": "once", "run": "run-1"}
         project, doel = _project_met_kloon(clone_from)
         project_manager = NepProjectManager()
 
@@ -405,18 +411,15 @@ class TestKlonen:
         assert kwargs["target_bucket_name"] == "proj-dep"
         assert kwargs["target_access_key"] == "admin"
         assert project_manager.klonen_gemeld == [("dep", "seaweedfs-storage")]
+        opzoeken.assert_awaited_once_with(project, "proj", doel, clone_from)
 
     async def test_kloon_uit_backup_geeft_de_restorefout_door(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _connector(monkeypatch)
         restore_manager = AsyncMock()
         restore_manager.restore_bucket.return_value = type("R", (), {"success": False, "error": "kapot"})()
         monkeypatch.setattr("opi.manager.backup.bucket_backup.create_bucket_backup_manager", lambda: restore_manager)
-        clone_from = {
-            "type": "backup",
-            "mode": "once",
-            "backup_items": [{"resource_type": "bucket", "reference_name": "ref-1"}],
-        }
-        project, doel = _project_met_kloon(clone_from)
+        self._backup_items(monkeypatch, [{"resource_type": "bucket", "reference_name": "ref-1"}])
+        project, doel = _project_met_kloon({"type": "backup", "reference": "bron", "mode": "once", "run": "run-1"})
 
         with pytest.raises(RuntimeError, match="kapot"):
             await SeaweedfsManager(NepProjectManager()).create_resources_for_deployment(project, doel)

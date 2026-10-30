@@ -93,13 +93,13 @@ async def _create_deployment_from_source(
     target_deployment: str,
     source_deployment: str,
     deployment_config: dict[str, Any] | None = None,
-    backup_items: list[dict[str, Any]] | None = None,
+    backup_run_id: str = "",
 ) -> None:
     """Create a new deployment by copying structure from a source deployment.
 
     Copies the deployment configuration (cluster, namespace, services, etc.)
-    and sets clone-from type to "backup" so managers restore data from the
-    backup during infrastructure provisioning.
+    and sets clone-from type to "backup" with the backup run to restore, so managers
+    look that run up and restore its data during infrastructure provisioning.
 
     When deployment_config is provided (from the wizard editables), the user's
     choices for domain fields (subdomain, base-domain, domain-format) and
@@ -121,7 +121,7 @@ async def _create_deployment_from_source(
             target_deployment,
             source_deployment,
             deployment_config,
-            backup_items,
+            backup_run_id,
         )
     finally:
         await project_manager.close()
@@ -133,7 +133,7 @@ async def _build_and_save_restore_deployment(
     target_deployment: str,
     source_deployment: str,
     deployment_config: dict[str, Any] | None,
-    backup_items: list[dict[str, Any]] | None,
+    backup_run_id: str,
 ) -> None:
     """Build the restore-target deployment and persist it via the validated save path.
 
@@ -157,12 +157,13 @@ async def _build_and_save_restore_deployment(
     new_deployment: dict[str, Any] = copy.deepcopy(deployment_config) if deployment_config else {}
     new_deployment["name"] = target_deployment
 
-    # Set clone-from for backup restore
+    # Set clone-from for backup restore. Only the run goes in the file: the managers
+    # look its snapshots up themselves, so no runtime Kopia data ends up in the project.
     new_deployment["clone-from"] = {
         "type": CloneFromType.BACKUP.value,
         "reference": source_deployment,
         "mode": "once",
-        "backup_items": backup_items or [],
+        "run": backup_run_id,
     }
 
     # Infer system-managed fields from source deployment or project
@@ -197,7 +198,6 @@ async def _build_and_save_restore_deployment(
     await project_manager.save_and_commit_project(
         project_data,
         f"Add deployment '{target_deployment}' to project '{project_name}' (restore from '{source_deployment}')",
-        enforce_validation=False,
     )
     logger.info(
         "Created deployment '%s' in project '%s' (cloned from '%s' for backup restore)",
@@ -495,6 +495,9 @@ async def _restore_single_resource(
                 elif resource_type == "bucket":
                     project_file_handler.set_bucket_generation(project_data, deployment_name, new_generation)
 
+                # Validation off on purpose: the data is already restored into the new
+                # generation, so refusing to record it would leave the project file
+                # pointing at the old resource with no way back.
                 await project_manager.save_and_commit_project(
                     project_data,
                     f"Restore {resource_type} for {project_name}/{deployment_name} (gen {new_generation})",

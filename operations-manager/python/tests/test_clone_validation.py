@@ -15,9 +15,10 @@ def _project(deployment: dict, **extra) -> dict:
     return {"name": "proj", "deployments": [deployment], **extra}
 
 
-def _names(result: dict) -> dict[str, str]:
-    """Map check name -> status, for readable assertions."""
-    return {check["name"]: check["status"] for check in result["validation"]["checks"]}
+def _names(result: dict, *, message: bool = False) -> dict[str, str]:
+    """Map check name -> status (or -> message), for readable assertions."""
+    key = "message" if message else "status"
+    return {check["name"]: check[key] for check in result["validation"]["checks"]}
 
 
 class TestNoCloneConfiguration:
@@ -126,40 +127,43 @@ class TestRemoteSource:
 
 
 class TestBackupSource:
-    def test_complete_backup_items_pass(self):
-        project = _project(
-            {
-                "name": "productie",
-                "clone-from": {
-                    "type": "backup",
-                    "reference": "acceptatie",
-                    "backup_items": [{"resource_type": "database", "snapshot_id": "41bbdb"}],
-                },
-            }
-        )
+    @staticmethod
+    def _project_with_backup(clone_from: dict) -> dict:
+        return {
+            "name": "proj",
+            "deployments": [{"name": "productie", "clone-from": clone_from}, {"name": "acceptatie"}],
+        }
+
+    def test_a_run_and_an_existing_source_pass(self):
+        project = self._project_with_backup({"type": "backup", "reference": "acceptatie", "run": "20261030084847"})
         result = validate_clone_readiness(project, "productie")
         assert result["validation"]["passed"] is True
-        assert _names(result)["backup_items"] == "success"
+        assert _names(result)["backup_run"] == "success"
 
-    def test_backup_without_items_fails(self):
-        project = _project({"name": "productie", "clone-from": {"type": "backup", "reference": "acceptatie"}})
+    def test_backup_without_a_run_fails(self):
+        project = self._project_with_backup({"type": "backup", "reference": "acceptatie"})
         result = validate_clone_readiness(project, "productie")
         assert result["validation"]["passed"] is False
+        assert _names(result)["backup_run"] == "failed"
 
-    def test_backup_item_without_snapshot_fails(self):
-        project = _project(
+    def test_backup_items_are_no_longer_a_run(self):
+        """The old shape the schema never accepted: items in the file instead of a run."""
+        project = self._project_with_backup(
             {
-                "name": "productie",
-                "clone-from": {
-                    "type": "backup",
-                    "reference": "acceptatie",
-                    "backup_items": [{"resource_type": "database"}],
-                },
+                "type": "backup",
+                "reference": "acceptatie",
+                "backup_items": [{"resource_type": "database", "snapshot_id": "41bbdb"}],
             }
         )
         result = validate_clone_readiness(project, "productie")
         assert result["validation"]["passed"] is False
-        assert _names(result)["backup_items"] == "failed"
+        assert _names(result)["backup_run"] == "failed"
+
+    def test_a_run_from_an_unknown_deployment_fails(self):
+        project = self._project_with_backup({"type": "backup", "reference": "weg", "run": "20261030084847"})
+        result = validate_clone_readiness(project, "productie")
+        assert result["validation"]["passed"] is False
+        assert "weg" in _names(result, message=True)["backup_run"]
 
 
 class TestResolveCloneSourceDeployment:

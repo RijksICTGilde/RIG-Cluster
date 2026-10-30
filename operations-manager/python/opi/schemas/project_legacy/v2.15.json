@@ -1,0 +1,10 @@
+{
+  "$comment": "v2.15 -> 2.16 (RC-404) voegde clone-from.run toe: de backup_run_id van de run die teruggezet moet worden. Een 2.15-bestand kent dat veld niet, en omdat clone-from een gesloten object is wordt het daar geweigerd. De if/else die run buiten type backup verbiedt kan blijven staan: zonder de property is run daar al nergens toegestaan.",
+  "$defs": {
+    "clone-from": {
+      "properties": {
+        "run": null
+      }
+    }
+  }
+}

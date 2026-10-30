@@ -47,9 +47,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Kinds of resource a backup clone can carry, as recorded in ``backup_items``.
-_KNOWN_BACKUP_RESOURCE_TYPES = ("database", "bucket", "pvc")
-
 #: Naming functions that fuse project and deployment: ``('amt', 'odc-prd-staging')`` and
 #: ``('amt-odc-prd', 'staging')`` compose the same names. See features/samengestelde-naambotsing.md.
 _COMPOSITE_NAME_BUILDERS = (
@@ -188,30 +185,24 @@ def _validate_remote_source(project_data: dict[str, Any], reference: str) -> lis
     return checks
 
 
-def _validate_backup_source(clone_from: dict[str, Any]) -> list[dict[str, str]]:
-    """The source is a backup: the items to restore are named in the clone-from itself."""
-    items = clone_from.get("backup_items")
-    if not isinstance(items, list) or not items:
-        return [_check("backup_items", False, "clone-from type 'backup' without backup_items")]
+def _validate_backup_source(
+    project_data: dict[str, Any], clone_from: dict[str, Any], deployment_name: str
+) -> list[dict[str, str]]:
+    """The source is a backup: the clone-from names the run, and the deployment it was taken from.
 
-    incomplete = [
-        item
-        for item in items
-        if not isinstance(item, dict)
-        or item.get("resource_type") not in _KNOWN_BACKUP_RESOURCE_TYPES
-        or not item.get("snapshot_id")
-    ]
-    if incomplete:
-        return [
-            _check(
-                "backup_items",
-                False,
-                f"{len(incomplete)} of {len(items)} backup item(s) miss a known resource_type or a snapshot_id",
-            )
-        ]
+    Which snapshots that run holds is runtime state at Kopia, not project data, so this
+    dry run checks the reference only; ``backup_run_items`` reports a run that is gone.
+    """
+    run = clone_from.get("run")
+    if not isinstance(run, str) or not run:
+        return [_check("backup_run", False, "clone-from type 'backup' without a run")]
 
-    kinds = ", ".join(sorted({str(item["resource_type"]) for item in items}))
-    return [_check("backup_items", True, f"{len(items)} backup item(s) to restore: {kinds}")]
+    try:
+        resolve_clone_source_deployment(project_data, str(clone_from.get("reference") or ""), deployment_name)
+    except ValueError as error:
+        return [_check("backup_run", False, f"backup run '{run}': {error}")]
+
+    return [_check("backup_run", True, f"Backup run '{run}' of deployment '{clone_from['reference']}' to restore")]
 
 
 def validate_clone_readiness(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
@@ -272,7 +263,7 @@ def validate_clone_readiness(project_data: dict[str, Any], deployment_name: str)
     elif clone_type == CloneFromType.REMOTE_SOURCE.value:
         checks.extend(_validate_remote_source(project_data, reference))
     elif clone_type == CloneFromType.BACKUP.value:
-        checks.extend(_validate_backup_source(clone_from))
+        checks.extend(_validate_backup_source(project_data, clone_from, deployment_name))
     else:
         known = ", ".join(sorted(item.value for item in CloneFromType))
         checks.append(_check("clone_type", False, f"Unknown clone-from type '{clone_type}'. Known types: {known}"))

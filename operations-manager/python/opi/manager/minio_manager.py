@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from opi.connectors.minio_mc import MinioConnector, MinioExecutionError, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
+from opi.manager.backup.runs import clone_backup_items
 from opi.manager.clone_validation import (
     composite_name_collision,
     other_project_deployments,
@@ -229,6 +230,10 @@ class MinioManager:
         # Use runtime override if True, otherwise fall back to deployment config
         force_clone = force_clone_override or deployment.get("force-clone", False)
 
+        # A completed restore (mode: once with status.completed) must not re-restore.
+        # The guard is tracked here so restore skips even if the type check below passes.
+        restore_from_backup = False
+
         if clone_from:
             # clone-from must be a dict with type/reference/mode keys
             if not isinstance(clone_from, dict):
@@ -265,6 +270,7 @@ class MinioManager:
                     return
                 elif clone_type == CloneFromType.BACKUP.value:
                     # Fall through to normal resource creation, then restore data
+                    restore_from_backup = True
                     logger.info(
                         f"Clone-from type 'backup' for deployment '{deployment_name}': "
                         "creating bucket, then restoring data from backup"
@@ -513,8 +519,8 @@ class MinioManager:
             logger.info(f"MinIO resources ready for {deployment_name} (stored in secrets map)")
 
             # Restore bucket data from backup if this is a backup clone
-            if clone_from and isinstance(clone_from, dict) and clone_from.get("type") == CloneFromType.BACKUP.value:
-                backup_items = clone_from.get("backup_items", [])
+            if restore_from_backup and isinstance(clone_from, dict):
+                backup_items = await clone_backup_items(project_data, project_name, deployment, clone_from)
                 bucket_item = next(
                     (item for item in backup_items if item.get("resource_type") == "bucket"),
                     None,
