@@ -458,6 +458,14 @@ class TestDeKaartEnDeUitleg:
         assert "Vereist goedkeuring" not in render_service_help("redis/help.md")
         assert "Vereist goedkeuring" in render_service_help("send_email/help.md")
 
+    def test_publiceren_op_het_web_vraagt_bij_aanzetten_niets(self) -> None:
+        """Alleen een eigen domein of een bewaakt subdomein is een aanvraag, per deployment."""
+        from opi.services.help_text import render_service_help
+
+        assert SERVICES[ServiceType.PUBLISH_ON_WEB].enabling_needs_approval() is False
+        assert "requires_approval" not in self._card(ServiceType.PUBLISH_ON_WEB)
+        assert "Vereist goedkeuring" not in render_service_help("publish_on_web/help.md")
+
 
 class TestDeImplicieteAanmelding:
     """Plan stap 3: redis blijft impliciet in de smalle stand."""

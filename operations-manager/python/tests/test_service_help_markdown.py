@@ -412,13 +412,12 @@ def test_a_guide_renders_as_a_help_page_with_the_service_icon(service: ServiceTy
 
 
 def test_the_guide_carries_no_approval_banner() -> None:
-    """publish-on-web declares approval_specs, so its POPUP gets the banner.
+    """The banner is about turning a service on, and turning publish-on-web on is no request.
 
-    The guide explains per scenario what is a request and what is not (a subdomain on a
-    domain of your own needs none), and the blanket banner above it would claim more than
-    is true.
+    Only a custom domain or a guarded subdomain is, per deployment; the popup and the guide
+    say when, and the blanket banner would claim more than is true.
     """
-    assert "Vereist goedkeuring" in render_service_help("publish_on_web/help.md")
+    assert "Vereist goedkeuring" not in render_service_help("publish_on_web/help.md")
     assert "Vereist goedkeuring" not in render_service_help("publish_on_web/guide.md")
 
 
