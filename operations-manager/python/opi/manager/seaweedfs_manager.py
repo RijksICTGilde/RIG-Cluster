@@ -24,6 +24,7 @@ from opi.connectors.seaweedfs_shell import (
 )
 from opi.core.cluster_config import get_prefixed_namespace, get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
+from opi.manager.backup.runs import clone_backup_items
 from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.services import ServiceType
 from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
@@ -283,12 +284,10 @@ class SeaweedfsManager:
         from opi.manager.backup.bucket_backup import create_bucket_backup_manager
 
         deployment_name = deployment["name"]
+        project_name = await self.project_manager.get_name()
+        items = await clone_backup_items(project_data, project_name, deployment, clone_from)
         item = next(
-            (
-                item
-                for item in clone_from.get("backup_items", [])
-                if isinstance(item, dict) and item.get("resource_type") == "bucket"
-            ),
+            (item for item in items if isinstance(item, dict) and item.get("resource_type") == "bucket"),
             None,
         )
         if item is None:
@@ -296,7 +295,6 @@ class SeaweedfsManager:
             return
 
         cluster = deployment["cluster"]
-        project_name = await self.project_manager.get_name()
         namespace = get_prefixed_namespace(cluster, deployment.get("namespace", project_name))
         resultaat = await create_bucket_backup_manager().restore_bucket(
             cluster=cluster,

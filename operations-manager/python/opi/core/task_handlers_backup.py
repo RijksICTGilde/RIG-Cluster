@@ -239,6 +239,7 @@ async def handle_restore(
     project_name = payload["project_name"]
     backup_run_id = payload["backup_run_id"]
     target_deployment = payload["target_deployment"]
+    # De onderdelen uit de payload zijn die van deze run, al opgehaald door de wizard.
     backup_items = payload.get("backup_items", [])
     create_new_deployment = payload.get("create_new_deployment", False)
     source_deployment = payload.get("source_deployment", "")
@@ -246,6 +247,18 @@ async def handle_restore(
 
     try:
         if create_new_deployment:
+            # Een lege run of bron komt door het schema (beide zijn gewone strings) en laat
+            # daarna elke verwerking op clone-from stuklopen, dus hij wordt hier geweigerd.
+            if not backup_run_id or not source_deployment:
+                msg = (
+                    f"Backup-run '{backup_run_id}' is niet gevonden bij project '{project_name}', "
+                    "dus er valt niets terug te zetten"
+                )
+                lookup_task = progress.add_task("Backup-run opzoeken")
+                progress.fail_task(lookup_task, msg)
+                progress.fail_project(msg)
+                return {"success": False, "error": msg}
+
             pvc_items = [item for item in backup_items if item.get("resource_type") == "pvc"]
 
             # Step 1: Create new deployment
@@ -256,7 +269,7 @@ async def handle_restore(
                     target_deployment,
                     source_deployment,
                     deployment_config=deployment_config,
-                    backup_items=backup_items,
+                    backup_run_id=backup_run_id,
                 )
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(create_task, str(e))
@@ -284,7 +297,7 @@ async def handle_restore(
 
             # Step 3: Provision infrastructure and restore data
             # Database and minio data is restored by their respective managers
-            # during provisioning (clone-from type "backup" with backup_items).
+            # during provisioning (clone-from type "backup", which names the run).
             # PVC data was pre-restored in step 2.
             infra_task = progress.add_task("Infrastructuur aanmaken en data herstellen")
             try:

@@ -40,11 +40,13 @@ een pure functie daarover (`opi/manager/clone_validation.py`): geen git, geen cl
 | `clone_pending` | `mode: once` die al gedraaid heeft | nooit - dit is een melding, geen fout (een nieuwe kloon vraagt om force-clone) |
 | `source_deployment_exists` | `type: deployment` | de bron staat niet in het project, of is de deployment zelf |
 | `remote_source_exists` / `chisel_configuration` / `services_configuration` | `type: remote-source` | de remote-source ontbreekt, heeft geen chisel `server-url`, of configureert geen diensten |
-| `backup_items` | `type: backup` | er zijn geen items, of een item mist `resource_type` of `snapshot_id` |
+| `backup_run` | `type: backup` | er is geen `run`, of de `reference` is geen deployment van dit project |
 | `clone_type` | onbekend type | het type is geen `deployment`/`remote-source`/`backup` |
 
 Bereikbaarheid van een externe bron wordt bewust **niet** getoetst: dat vraagt een tunnel en
-credentials, en dan is het geen droge controle meer.
+credentials, en dan is het geen droge controle meer. Om dezelfde reden toetst `backup_run`
+alleen de verwijzing: welke snapshots een run draagt is runtime-staat bij Kopia. Een run die
+niet meer bestaat komt pas boven bij het terugzetten, uit `backup_run_items`.
 
 ## Dezelfde toets in het provisioningpad
 
@@ -62,6 +64,7 @@ bronnaam samenstellen:
 | database | `database_manager._ensure_database_state` |
 | buckets | `minio_manager.clone_minio_from_deployment` |
 | volumes | `pvc_manager` |
+| back-up | `backup.runs.clone_backup_items`, voor elk van de drie |
 
 De schrijfkant gebruikt dezelfde functie: `upsert_deployment` zet een `clone-from` met
 `force_clone` alleen neer als de reference een deployment van dit project is, en weigert
