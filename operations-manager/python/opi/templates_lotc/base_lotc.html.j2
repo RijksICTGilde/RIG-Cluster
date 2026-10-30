@@ -73,33 +73,29 @@
    verzamelt voor web-componenten die hun waarde via ElementInternals leveren (elk
    aanvinkvakje van het thema). Naast htmx en niet naast json-enc, want het geldt voor elk
    htmx-verzoek uit een formulier, ongeacht de codering. Zie features/aanvinkvakje.md. #}
-{% set lotc_head %}<script nonce="{{ csp_nonce }}" src="{{ static_url('js/htmx.min.js') }}"></script><script nonce="{{ csp_nonce }}" src="{{ static_url('js/form-associated.js') }}"></script><script nonce="{{ csp_nonce }}" src="{{ static_url('js/htmx-formgedrag.js') }}"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{{ scheme_script }}{% block head_extra %}{% endblock %}{% endset %}
+{% set lotc_head %}<script nonce="{{ csp_nonce }}" src="{{ static_url('js/htmx.min.js') }}"></script><script nonce="{{ csp_nonce }}" src="{{ static_url('js/form-associated.js') }}"></script><script nonce="{{ csp_nonce }}" src="{{ static_url('js/htmx-formgedrag.js') }}"></script><script nonce="{{ csp_nonce }}" src="{{ static_url('js/zijbalk-terug.js') }}"></script><link rel="stylesheet" href="{{ static_url('css/lotc-app.css') }}">{{ scheme_script }}{% block head_extra %}{% endblock %}{% endset %}
 
 <c-page title="{{ page_title_value }}" lang="nl" head="{{ lotc_head }}">
 
-{# DE PAGINA-INDELING, zoals het LOTC-project hem heeft aangereikt en geverifieerd.
+{# DE PAGINA-INDELING is de app-shell van NLDD, dezelfde opbouw als de Fundament-console:
+   een balk bovenaan (onze kopbalk met logo) en daaronder een navigation split view met de
+   zijbalk links en de pagina rechts. Geen LOTC-componenten in de schil: de zijbalk was
+   <c-sidenav>, een nabouw, en die gaf een afwijkende weergave.
 
-   Hier stond <c-app-shell>, en dat gaf geen bovengrens aan de inhoud: <main> had
-   `max-width: none` en groeide lineair mee, 1008px bij een viewport van 1280 maar 2288px
-   bij 2560. Tekstregels van 2288 pixels leest niemand.
+   Het scrollen regelt NLDD zelf. Zolang zijbalk en pagina naast elkaar staan scrolt elk
+   paneel apart (nested); valt het terug naar een kolom, dan scrolt het venster (root).
+   static/js/htmx-formgedrag.js houdt daar rekening mee.
 
-   De bovengrens komt uit `width="1920px"` op de DRIE regio's (kopbalk, sidebar-section,
-   voettekst): dat zet --_max-width, waardoor de achtergrond tot de rand doorloopt en de
-   inhoud afkapt. Het getal is een keuze en staat hier een keer per regio.
-
-   Wat wij zelf uitprobeerden en wat NIET werkte, zodat niemand het opnieuw doet:
-   <c-container max-width> en <c-simple-section> houden allebei `max-width: none`, en
-   <nldd-page> als kale wikkel OM <c-app-shell> heen deed niets aan de breedte terwijl hij
-   wel het venster-scrollen brak. De sleutel is de vlakverdeling hieronder, niet een wikkel.
-
-   nldd-top-navigation-bar, nldd-page-footer en nldd-menu-bar zijn nog rauwe tags: die zijn
-   nog niet als c-* gemapt. Dat werkt sinds de slot-fix in LOTC 7ee5efa. #}
-<nldd-page background="inherit">
+   De breedte van de inhoud begrenst nldd-simple-section; de width="1920px" op de regio's
+   van de vorige schil is daarmee vervallen. #}
+<nldd-shell>
+<nldd-bar-split-view>
+<nldd-split-view-pane slot="header" background="base">
 
     {# logo-title is de tweede regel naast het logo; die droegen wij eerder als subtitle=
        op <c-header> en waren we kwijt. Wies zet hem hier, en zonder valt de kopbalk uit
        elkaar omdat er maar een van de twee regels is. #}
-    <nldd-top-navigation-bar slot="header" width="1920px"
+    <nldd-top-navigation-bar
         logo-title="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
         {# website-title is de KORTE naam van de site, als link linksboven; Wies zet daar
            "Wies". De volledige zin stond hier eerst en las als een lap tekst in een link.
@@ -155,40 +151,46 @@
 
         </nldd-menu-bar>
     </nldd-top-navigation-bar>
+</nldd-split-view-pane>
 
-    <c-sidebar-section width="1920px" sidebar-label="Navigatie" sticky-top>
-        {# De navigatie ZONDER <nldd-container> eromheen: die gaf hem een eigen vlak met
-           achtergrond en ronde hoeken, en dat is niet wat wij willen. We gebruiken de
-           vlakverdeling van NLDD met ons eigen menu erin, dus <c-sidenav> hangt
-           rechtstreeks in het slot. #}
+<nldd-split-view-pane slot="main">
+<nldd-navigation-split-view sidebar-accessible-label="Navigatie">
 
-            {# <c-sidenav-group> is een BROER van de items die eronder horen, geen
-               ouder die ze omvat. De groepering zit dus in de volgorde, en daarom
-               levert navigation_lotc de zijkolom al als (kopje, items)-paren in
-               weergavevolgorde. #}
-            {# De zijkolom staat in een blok, zodat een pagina hem kan VERVANGEN in plaats
-               van er iets onder te hangen. Dat is nodig zodra je een project selecteert:
-               dan wil je geen tweede niveau onder "Projecten" maar een heel andere set
-               (Overzicht, Componenten, Deployments). Een tweede niveau kan hier ook niet:
-               c-sidenav-group is een KOPJE en geen uitklapbare ouder - het is een broer
-               van de items eronder. #}
-            {% block sidenav %}
-            <c-sidenav slot="sidebar">
-                {% for label, items in navigation.sidebar %}
-                    {% if label %}
-                        <c-sidenav-group label="{{ label }}" />
-                    {% endif %}
-                    {% for item in items %}
-                        <c-sidenav-item
-                            label="{{ item.label }}"
-                            href="{{ item.link }}"
-                            icon="{{ item.icon | default('', true) | nldd_icon }}"
-                            :active="item.active" />
+    <nldd-split-view-pane slot="sidebar" background="base" has-content>
+        <nldd-page>
+            <nldd-simple-section>
+                {# Een blok, zodat een pagina de zijbalk kan VERVANGEN: binnen een project
+                   hoort er een andere set items, geen tweede niveau onder "Projecten".
+                   Per groep een eigen lijst, met het kopje erboven. #}
+                {% block sidenav %}
+                    {% for label, items in navigation.sidebar %}
+                        {% if label %}
+                            {% if not loop.first %}<nldd-spacer size="16"></nldd-spacer>{% endif %}
+                            <nldd-title size="6"><h2>{{ label }}</h2></nldd-title>
+                            <nldd-spacer size="4"></nldd-spacer>
+                        {% endif %}
+                        <nldd-list type="navigation" dividers="on-touch" aria-label="{{ label or 'Navigatie' }}">
+                            {% for item in items %}
+                                <nldd-list-item href="{{ item.link }}"{% if item.active %} current{% endif %}>
+                                    {% if item.icon %}
+                                        <nldd-icon-cell icon="{{ item.icon | nldd_icon }}" size="20"></nldd-icon-cell>
+                                        <nldd-spacer-cell size="8"></nldd-spacer-cell>
+                                    {% endif %}
+                                    <nldd-text-cell text="{{ item.label }}"></nldd-text-cell>
+                                </nldd-list-item>
+                            {% endfor %}
+                        </nldd-list>
                     {% endfor %}
-                {% endfor %}
-            </c-sidenav>
-            {% endblock %}
+                {% endblock %}
+            </nldd-simple-section>
+        </nldd-page>
+    </nldd-split-view-pane>
 
+    <nldd-split-view-pane slot="main" has-content>
+    <nldd-page id="hoofdpagina">
+    {# Alleen zichtbaar als zijbalk en pagina in een kolom staan; zie js/zijbalk-terug.js. #}
+    <nldd-top-title-bar slot="header" back-text="Menu"></nldd-top-title-bar>
+    <nldd-simple-section>
         {# tabindex zodat de skip-link hier kan landen. #}
         <div id="hoofdinhoud" tabindex="-1">
         <c-stack gap="lg">
@@ -200,9 +202,9 @@
             {% endblock %}
         </c-stack>
         </div>
-    </c-sidebar-section>
+    </nldd-simple-section>
 
-    <nldd-page-footer slot="footer" width="1920px">
+    <nldd-page-footer slot="footer">
         <nldd-container>
 
             {# De voettekst stond er niet, en daarmee waren "Over het platform", de
@@ -271,8 +273,13 @@
                     {% endif %}
             </nldd-container>
     </nldd-page-footer>
+    </nldd-page>
+    </nldd-split-view-pane>
 
-</nldd-page>
+</nldd-navigation-split-view>
+</nldd-split-view-pane>
+</nldd-bar-split-view>
+</nldd-shell>
 
     {% block additional_styles %}{% endblock %}
     {% block additional_scripts %}{% endblock %}
