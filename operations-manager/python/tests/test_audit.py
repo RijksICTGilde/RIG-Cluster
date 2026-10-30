@@ -2,7 +2,8 @@
 
 Getoetst worden de vorm van één rij, de weigering, de invariant dat ``subject`` en
 ``summary`` geen e-mailadres dragen, dat een kapotte sessie ``record_action`` niet laat
-gooien, en de afbakening van ``list_actions``.
+gooien, en de afbakening van ``list_actions``: het eigen project, het zoeken, de periode
+en het bladeren met een cursor.
 """
 
 from __future__ import annotations
@@ -10,8 +11,9 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import Any
 
+import pytest
 from opi.core.actor import Actor, ActorKind, user_actor
 from opi.core.db import session_scope
 from opi.core.metrics import OPICollector
@@ -21,9 +23,6 @@ from opi.services import (
 )
 from opi.services.persistence.notification_events import NotificationEvent
 from sqlalchemy import select
-
-if TYPE_CHECKING:
-    import pytest
 
 
 async def _rows() -> list[NotificationEvent]:
@@ -144,34 +143,6 @@ async def test_list_actions_geeft_alleen_het_eigen_project_nieuwste_eerst(orm_db
     assert {rij.project for rij in rijen} == {"demo"}
 
 
-async def test_list_actions_pagineert_op_time(orm_db: None) -> None:
-    nu = datetime.now(UTC)
-    async with session_scope() as db:
-        for index in range(3):
-            db.add(
-                NotificationEvent(
-                    source=audit.event_source(),
-                    type=audit.TYPE_PERFORMED,
-                    subject="demo",
-                    time=nu - timedelta(minutes=index),
-                    category=audit.CATEGORY,
-                    severity=audit.SEVERITY_ALLOWED,
-                    cluster="local",
-                    project="demo",
-                    actor_kind=ActorKind.USER.value,
-                    summary=f"demo: actie {index}",
-                    dedup_key=f"audit:actie{index}:demo:allowed",
-                    data={"action": f"actie{index}"},
-                )
-            )
-
-    eerste = await audit.list_actions("demo", limit=1)
-    assert [rij.data["action"] for rij in eerste] == ["actie0"]
-
-    volgende = await audit.list_actions("demo", limit=5, before=eerste[0].time)
-    assert [rij.data["action"] for rij in volgende] == ["actie1", "actie2"]
-
-
 async def test_een_actor_zonder_identiteit_laat_de_kolom_leeg(orm_db: None) -> None:
     await _record(actor=Actor(ActorKind.SCHEDULER), origin=None)
 
@@ -219,3 +190,149 @@ def test_write_failures_metriek_telt_mee_in_de_collector(monkeypatch: pytest.Mon
     families = {familie.name: familie for familie in OPICollector().collect()}
     (sample,) = families["opi_audit_write_failures"].samples
     assert sample.value == 3
+
+
+# --- zoeken, periode en bladeren (RC-405) -----------------------------------
+#
+# English per RC-405: new names, test names and comments are English, also in this
+# otherwise Dutch module.
+
+
+async def _insert(**overrides: Any) -> NotificationEvent:
+    """One row straight into the table, so a test can pick the field it searches on."""
+    fields: dict[str, Any] = {
+        "source": audit.event_source(),
+        "type": audit.TYPE_PERFORMED,
+        "subject": "demo",
+        "time": datetime.now(UTC),
+        "category": audit.CATEGORY,
+        "severity": audit.SEVERITY_ALLOWED,
+        "cluster": "local",
+        "project": "demo",
+        "actor": "ops@rijksoverheid.nl",
+        "actor_kind": ActorKind.USER.value,
+        "origin": "10.0.0.7",
+        "summary": "demo: project.refresh door ops",
+        "dedup_key": "audit:project.refresh:demo:allowed",
+        "data": {"action": "project.refresh", "allowed": True},
+    }
+    fields.update(overrides)
+    event = NotificationEvent(**fields)
+    async with session_scope() as db:
+        db.add(event)
+    return event
+
+
+@pytest.mark.parametrize(
+    ("row", "term"),
+    [
+        ({"actor": "jansen@rijksoverheid.nl"}, "jansen"),
+        ({"actor_kind": "service-account"}, "service-account"),
+        ({"summary": "demo/live: deployment.delete door ops"}, "deployment.delete"),
+        ({"deployment": "kantoortuin"}, "kantoortuin"),
+        ({"data": {"action": "component.write"}}, "component.write"),
+        ({"data": {"resource_path": "project/demo/component/web"}}, "component/web"),
+        ({"data": {"cause": "step-up-required"}}, "step-up"),
+        ({"data": {"grant": "ops@production"}}, "ops@production"),
+        ({"data": {"commit_shas": ["9f1c2b3a"]}}, "9f1c2b3a"),
+        ({"data": {"fields": {"image": "ghcr.io/x/y:1"}}}, "ghcr.io/x/y"),
+    ],
+)
+async def test_search_finds_a_row_on_every_shown_field(orm_db: None, row: dict[str, Any], term: str) -> None:
+    await _insert(**row)
+    await _insert(actor="niemand@rijksoverheid.nl", summary="demo: niets", data={"action": "project.read"})
+
+    found = await audit.list_actions("demo", query=term)
+    assert len(found) == 1
+
+
+async def test_search_is_case_insensitive(orm_db: None) -> None:
+    await _insert(actor="Jansen@Rijksoverheid.nl")
+
+    assert len(await audit.list_actions("demo", query="JANSEN")) == 1
+    assert len(await audit.list_actions("demo", query="jansen")) == 1
+
+
+async def test_wildcards_in_the_term_are_literal_characters(orm_db: None) -> None:
+    """``a_b`` must not match ``axb``, and ``%`` must not match everything."""
+    await _insert(summary="demo: axb")
+
+    assert await audit.list_actions("demo", query="a_b") == []
+    assert await audit.list_actions("demo", query="%") == []
+    assert len(await audit.list_actions("demo", query="axb")) == 1
+
+
+async def test_search_does_not_reach_the_origin_column(orm_db: None) -> None:
+    """``origin`` is a personal detail: a reader must not be able to probe an IP with it."""
+    await _insert(origin="10.11.12.13")
+
+    assert await audit.list_actions("demo", query="10.11.12.13") == []
+
+
+@pytest.mark.parametrize("term", ["allowed", "action", "status_code"])
+async def test_a_json_key_does_not_match_every_row(orm_db: None, term: str) -> None:
+    """Guards that ``data`` is searched per key and never as ``data::text``."""
+    await _insert(data={"action": "project.refresh", "allowed": True, "status_code": 200})
+
+    assert await audit.list_actions("demo", query=term) == []
+
+
+async def test_search_stays_inside_the_project(orm_db: None) -> None:
+    await _insert(project="ander", subject="ander", actor="jansen@rijksoverheid.nl")
+
+    assert await audit.list_actions("demo", query="jansen") == []
+    assert len(await audit.list_actions("ander", query="jansen")) == 1
+
+
+async def test_the_period_is_closed_on_since_and_open_on_until(orm_db: None) -> None:
+    since = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+    until = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+    for moment, name in (
+        (since - timedelta(seconds=1), "ervoor"),
+        (since, "op-since"),
+        (until - timedelta(seconds=1), "ervoor-until"),
+        (until, "op-until"),
+    ):
+        await _insert(time=moment, data={"action": name})
+
+    found = await audit.list_actions("demo", since=since, until=until)
+    assert [row.data["action"] for row in found] == ["ervoor-until", "op-since"]
+
+
+async def test_paging_on_time_and_id_passes_every_row_exactly_once(orm_db: None) -> None:
+    """Three rows share a timestamp, so a cursor on ``time`` alone would drop one."""
+    moment = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
+    await _insert(time=moment + timedelta(minutes=2), data={"action": "los0"})
+    await _insert(time=moment + timedelta(minutes=1), data={"action": "los1"})
+    for index in range(3):
+        await _insert(time=moment, data={"action": f"gelijk{index}"})
+
+    def _cursor(row: NotificationEvent) -> audit.AuditCursor:
+        return audit.AuditCursor(time=row.time, id=row.id)
+
+    pages: list[list[str]] = []
+    cursor: audit.AuditCursor | None = None
+    rows: list[NotificationEvent] = []
+    while True:
+        page = await audit.list_actions("demo", limit=2, before=cursor)
+        if not page:
+            break
+        pages.append([row.data["action"] for row in page])
+        rows.append(page[0])
+        cursor = _cursor(page[-1])
+
+    passed = [action for page in pages for action in page]
+    assert len(passed) == len(set(passed)) == 5
+    assert passed[:2] == ["los0", "los1"]
+    assert sorted(passed[2:]) == ["gelijk0", "gelijk1", "gelijk2"]
+
+    # Back up again: every page comes back in the same order, without a gap.
+    for index in range(len(pages) - 1, 0, -1):
+        terug = await audit.list_actions("demo", limit=2, after=_cursor(rows[index]))
+        assert [row.data["action"] for row in terug] == pages[index - 1]
+
+
+async def test_before_and_after_together_is_a_programming_error(orm_db: None) -> None:
+    cursor = audit.AuditCursor(time=datetime.now(UTC), id=uuid.uuid4())
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        await audit.list_actions("demo", before=cursor, after=cursor)

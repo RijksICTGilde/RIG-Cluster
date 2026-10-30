@@ -13,13 +13,18 @@ de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode, urlparse
+from zoneinfo import ZoneInfo
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.config import settings
 from opi.core.step_up import step_up_until
-from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
+from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, AuditCursor, list_actions
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -802,6 +807,118 @@ def audit_limit(request: Request) -> int:
     return max(1, min(aantal, LIST_MAX_LIMIT))
 
 
+#: De zone waarin de audit rekent en toont. Een eigen constante per module, zoals de
+#: schedulers het al doen: er is geen gedeelde zoneconstante in deze codebase.
+AUDIT_TZ = ZoneInfo("Europe/Amsterdam")
+
+#: Hoeveel tekens van de zoekterm de database ziet. Een langere term vindt niets dat een
+#: kortere niet ook vindt, en hoort niet in een ILIKE-patroon of in de adresbalk.
+AUDIT_QUERY_MAX = 200
+
+
+@dataclass(frozen=True, slots=True)
+class AuditFilters:
+    """Wat ``?q=``, ``?from=``, ``?until=``, ``?before=``, ``?after=`` en ``?limit=`` zeggen.
+
+    De ``_text``-velden zijn de waarden zoals ze terug de pagina in gaan: het zoekveld,
+    de datumvelden en elke bladerlink dragen ze ongewijzigd verder. Een onleesbare waarde
+    staat er niet in, zoals :func:`audit_limit` ook geen fout geeft maar terugvalt.
+    """
+
+    query: str = ""
+    since: datetime | None = None
+    until: datetime | None = None
+    before: AuditCursor | None = None
+    after: AuditCursor | None = None
+    since_text: str = ""
+    until_text: str = ""
+    limit_text: str = ""
+
+    @property
+    def actief(self) -> bool:
+        """Of er iets gefilterd wordt; bladeren is geen filter."""
+        return bool(self.query or self.since or self.until)
+
+
+def _audit_dagbegin(waarde: str, *, volgende_dag: bool = False) -> tuple[datetime, str] | None:
+    """``yyyy-mm-dd`` als het begin van die dag (of de dag erna) in Europe/Amsterdam."""
+    try:
+        dag = date.fromisoformat(waarde)
+        grens = dag + timedelta(days=1) if volgende_dag else dag
+    except ValueError, OverflowError:
+        # OverflowError: ``9999-12-31`` leest wel, maar de dag erna bestaat niet.
+        return None
+    return datetime.combine(grens, time.min, tzinfo=AUDIT_TZ), dag.isoformat()
+
+
+def _audit_cursor(waarde: str) -> AuditCursor | None:
+    """``<iso-tijd>_<uuid>`` terug naar een cursor; onleesbaar is geen cursor."""
+    tijd, _, sleutel = waarde.rpartition("_")
+    if not tijd:
+        return None
+    try:
+        moment = datetime.fromisoformat(tijd)
+        rij = uuid.UUID(sleutel)
+    except ValueError:
+        return None
+    # Een naïef tijdstip komt niet van ons: de cursor wordt uit een timestamptz gemaakt.
+    return None if moment.tzinfo is None else AuditCursor(time=moment, id=rij)
+
+
+def audit_filters(request: Request) -> AuditFilters:
+    """De auditfilters uit de querystring, zonder ooit een fout te geven.
+
+    Een onleesbare datum of cursor VALT WEG in plaats van een 400 of een 500 op te
+    leveren, dezelfde keuze als bij :func:`audit_limit`: dit is een pagina en geen
+    contract, en een filter dat niet werkt hoort er dan ook niet te staan.
+
+    ``from`` na ``until`` wordt niet omgedraaid: dat levert in de query een leeg antwoord,
+    en dat is precies wat de vraag zegt.
+
+    ``before`` en ``after`` samen is voor :func:`~opi.services.audit.list_actions` een
+    programmeerfout. Een querystring kan beide dragen, dus ``before`` gaat hier voor en
+    ``after`` valt weg: Ouder is de richting waarin je door een geschiedenis leest.
+    """
+    parameters = request.query_params
+    van = _audit_dagbegin(parameters.get("from") or "")
+    tot = _audit_dagbegin(parameters.get("until") or "", volgende_dag=True)
+    before = _audit_cursor(parameters.get("before") or "")
+    after = None if before else _audit_cursor(parameters.get("after") or "")
+    return AuditFilters(
+        query=(parameters.get("q") or "").strip()[:AUDIT_QUERY_MAX],
+        since=van[0] if van else None,
+        until=tot[0] if tot else None,
+        before=before,
+        after=after,
+        since_text=van[1] if van else "",
+        until_text=tot[1] if tot else "",
+        limit_text=parameters.get("limit") or "",
+    )
+
+
+def audit_cursor_text(rij: Any) -> str:
+    """De cursor van een rij, zoals hij in een bladerlink staat."""
+    return f"{rij.time.isoformat()}_{rij.id}"
+
+
+def audit_url(basis: str, filters: AuditFilters, *, before: str = "", after: str = "") -> str:
+    """Het auditblad met de actieve filters, en hoogstens één cursor.
+
+    Bladeren houdt de zoekterm, de periode en ``limit`` vast; een nieuwe zoekopdracht of
+    periode komt uit het formulier en draagt dus geen cursor meer.
+    """
+    waarden = [
+        ("q", filters.query),
+        ("from", filters.since_text),
+        ("until", filters.until_text),
+        ("limit", filters.limit_text),
+        ("before", before),
+        ("after", after),
+    ]
+    querystring = urlencode([(naam, waarde) for naam, waarde in waarden if waarde])
+    return f"{basis}?{querystring}" if querystring else basis
+
+
 def build_lotc_audit(rijen: list[Any]) -> list[dict[str, Any]]:
     """De auditrijen van een project in de vorm die het tabblad leest.
 
@@ -813,7 +930,9 @@ def build_lotc_audit(rijen: list[Any]) -> list[dict[str, Any]]:
         gegevens = rij.data or {}
         getoond.append(
             {
-                "time": rij.time,
+                # In Nederlandse tijd, want de periodefilter rekent in die zone: een
+                # handeling om 00:30 hier stond als UTC op de dag ervoor in de tabel.
+                "time": rij.time.astimezone(AUDIT_TZ) if rij.time.tzinfo else rij.time,
                 "actor": rij.actor or "",
                 "actor_kind": rij.actor_kind,
                 "action": gegevens.get("action", ""),
@@ -827,6 +946,64 @@ def build_lotc_audit(rijen: list[Any]) -> list[dict[str, Any]]:
             }
         )
     return getoond
+
+
+async def audit_pagina(request: Request, project_name: str) -> dict[str, Any]:
+    """De auditrijen van dit project plus het zoekveld, de periode en de bladerlinks.
+
+    ``project_name`` komt uit het PAD, dezelfde naam waarover de routepoort besliste:
+    ``list_actions`` controleert zelf niets, dus een naam uit de querystring zou de poort
+    en de lezing over twee verschillende projecten laten gaan.
+    """
+    filters = audit_filters(request)
+    grens = audit_limit(request)
+    basis = project_tab_url(project_name, "audit")
+    context: dict[str, Any] = {
+        "audit_rijen": [],
+        "audit_fout": False,
+        "audit_url": basis,
+        "audit_query": filters.query,
+        "audit_van": filters.since_text,
+        "audit_tot": filters.until_text,
+        "audit_limit_text": filters.limit_text,
+        "audit_filter_actief": filters.actief,
+        "audit_wis_url": audit_url(basis, AuditFilters(limit_text=filters.limit_text)),
+        "audit_ouder_url": "",
+        "audit_nieuwer_url": "",
+    }
+    try:
+        # Eén rij meer dan de pagina toont: die verklapt of er nog een pagina is.
+        gelezen = await list_actions(
+            project_name,
+            limit=grens + 1,
+            query=filters.query or None,
+            since=filters.since,
+            until=filters.until,
+            before=filters.before,
+            after=filters.after,
+        )
+    except SQLAlchemyError, OSError:
+        # Zelfde keuze als bij de uitrolmelding op de projectpagina: een database die niet
+        # antwoordt mag de pagina niet meenemen. Wel met een melding op het tabblad, want
+        # "geen rijen" zou hier een onwaar antwoord zijn.
+        logger.exception("De audit van project %s kon niet worden gelezen", project_name)
+        context["audit_fout"] = True
+        return context
+
+    extra = len(gelezen) > grens
+    # Oplopend gelezen bij ``after``, dus de extra rij is daar de NIEUWERE. Die valt weg,
+    # anders ligt er een gat tussen deze pagina en de pagina die je verliet.
+    gelezen = gelezen[-grens:] if filters.after is not None else gelezen[:grens]
+    context["audit_rijen"] = build_lotc_audit(gelezen)
+    if gelezen:
+        # Ouder bestaat als er nog oudere rijen zijn; na een stap naar nieuwer is dat de
+        # pagina waar je vandaan komt. Nieuwer staat er zodra je niet op de nieuwste
+        # pagina begon, ook als die stap niets meer oplevert.
+        if extra or filters.after is not None:
+            context["audit_ouder_url"] = audit_url(basis, filters, before=audit_cursor_text(gelezen[-1]))
+        if filters.before is not None or filters.after is not None:
+            context["audit_nieuwer_url"] = audit_url(basis, filters, after=audit_cursor_text(gelezen[0]))
+    return context
 
 
 #: Het koekje waarin de weergavekeuze (licht/donker) bewaard blijft.

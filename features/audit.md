@@ -149,7 +149,34 @@ Het project komt uit het PAD, dezelfde naam waarover `decide()` besliste; `list_
 controleert zelf niets, dus een naam uit de querystring of de body zou de poort en de
 lezing over twee verschillende projecten laten gaan. `?limit=` bepaalt het aantal rijen,
 met een standaard van 50 en een plafond van 200 (een grotere waarde geeft 200 rijen en
-geen fout). Bladeren gaat met een `before`-tijdstip, niet met een offset.
+geen fout).
+
+Boven de tabel staan een zoekveld en een periode, en eronder **Nieuwer** en **Ouder**.
+Een onleesbare waarde (geen datum, een kapotte cursor) laat dat filter weg in plaats van
+een fout te geven, net als `?limit=`: dit is een pagina en geen contract.
+
+**Zoeken** (`?q=`) is hoofdletterongevoelig en zoekt op een deel van de waarde, in deze
+velden: `actor`, `actor_kind`, `summary` (daar staan het subject, de action, de rol en de
+reden in), `deployment`, en uit `data` de sleutels `action`, `resource_path`, `cause`,
+`grant`, `commit_shas` en `fields`. `%` en `_` in de zoekterm zijn gewone tekens.
+
+Wat NIET doorzocht wordt: `data` als geheel (`data::text` draagt ook de sleutelnamen, dus
+zoeken op "action" of "allowed" zou elke rij teruggeven) en `origin`. Die laatste is een
+persoonsgegeven: kon je erop zoeken, dan kon een projectbeheerder met een zoekopdracht
+nagaan welk IP-adres bij een handeling hoorde. Na 90 dagen is `actor` leeg, dus zoeken op
+een persoon vindt alleen de laatste 90 dagen.
+
+**De periode** (`?from=` en `?until=`, allebei `yyyy-mm-dd`) rekent in Europe/Amsterdam,
+net als de bewaarlus, en `until` is inclusief: "tot en met 30 oktober" loopt tot het begin
+van 31 oktober. Daarom staat de tijd in de tabel ook in Nederlandse tijd en niet in UTC;
+anders stond een handeling van 00:30 op de dag ervoor en viel hij buiten de periode die je
+koos. Ligt `from` na `until`, dan is de uitkomst leeg; de datums worden niet omgedraaid.
+
+**Bladeren** gaat met een cursor op het paar `(time, id)` (`?before=` en `?after=`, als
+`<iso-tijd>_<uuid>`), niet met een offset en niet op `time` alleen. Een offset laat de
+database alle overgeslagen rijen alsnog sorteren, en een cursor op alleen `time` laat een
+rij wegvallen zodra de paginagrens tussen twee rijen met hetzelfde tijdstip valt. Bladeren
+houdt de zoekterm, de periode en `limit` vast.
 
 `origin` staat niet op de pagina: die kolom is voor platformbeheerders, en die lezen hem
 in de database.
@@ -177,7 +204,15 @@ await record_action(
 )
 
 rijen = await list_actions("demo", limit=50)              # nieuwste eerst
-ouder = await list_actions("demo", limit=50, before=rijen[-1].time)
+gezocht = await list_actions(                            # zoeken en een periode
+    "demo",
+    query="jansen",
+    since=datetime(2026, 7, 1, tzinfo=ZoneInfo("Europe/Amsterdam")),
+    until=datetime(2026, 7, 4, tzinfo=ZoneInfo("Europe/Amsterdam")),
+)
+cursor = AuditCursor(time=rijen[-1].time, id=rijen[-1].id)
+ouder = await list_actions("demo", limit=50, before=cursor)
+nieuwer = await list_actions("demo", limit=50, after=cursor)   # geeft ook nieuwste eerst
 ```
 
 `record_action` gooit nooit naar zijn aanroeper: een kapotte audit mag geen uitrol

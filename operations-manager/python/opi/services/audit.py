@@ -13,10 +13,11 @@ na 90 dagen gaan ``actor`` en ``origin`` op NULL, na een jaar gaat de rij weg.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import Text, cast, delete, literal, or_, select, tuple_, update
 
 from opi.core.config import settings
 from opi.core.db import session_scope
@@ -25,6 +26,8 @@ from opi.services.persistence.notification_events import NotificationEvent
 
 if TYPE_CHECKING:
     import uuid
+
+    from sqlalchemy.sql.elements import ColumnElement
 
     from opi.core.actor import Actor
 
@@ -170,23 +173,86 @@ async def record_action(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AuditCursor:
+    """A position in the trail: the ``(time, id)`` pair of one row."""
+
+    time: datetime
+    id: uuid.UUID
+
+
+def _search_filter(term: str) -> ColumnElement[bool]:
+    """Case-insensitive match of ``term`` against the fields the audit tab shows.
+
+    ``data`` is matched per key and never as a whole: ``data::text`` carries the keys
+    themselves, so searching for "action" or "allowed" would return every row. ``origin``
+    is left out on purpose: it is a personal detail, for platform admins in the database.
+    """
+    pattern = "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    data = NotificationEvent.data
+    haystack = (
+        NotificationEvent.actor,
+        NotificationEvent.actor_kind,
+        NotificationEvent.summary,
+        NotificationEvent.deployment,
+        data["action"].astext,
+        data["resource_path"].astext,
+        data["cause"].astext,
+        data["grant"].astext,
+        cast(data["commit_shas"], Text),
+        cast(data["fields"], Text),
+    )
+    return or_(*(column.ilike(pattern, escape="\\") for column in haystack))
+
+
 async def list_actions(
     project: str,
     *,
     limit: int = LIST_DEFAULT_LIMIT,
-    before: datetime | None = None,
+    query: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    before: AuditCursor | None = None,
+    after: AuditCursor | None = None,
 ) -> list[NotificationEvent]:
-    """Het audittrail van één project, nieuwste eerst. ``before`` pagineert op ``time``."""
-    query = (
-        select(NotificationEvent)
-        .where(NotificationEvent.project == project, NotificationEvent.type.in_(ACTION_TYPES))
-        .order_by(NotificationEvent.time.desc(), NotificationEvent.id.desc())
-        .limit(limit)
+    """The trail of one project, newest first.
+
+    ``query`` searches the shown fields, ``since`` (inclusive) and ``until`` (exclusive)
+    bound the period, and ``before``/``after`` page on the ``(time, id)`` pair: a plain
+    ``time`` cursor drops a row whenever the page boundary falls between two rows that
+    share a timestamp. ``after`` walks back towards the newest rows and is reversed before
+    it is returned, so the result is always newest first.
+    """
+    if before is not None and after is not None:
+        raise ValueError("before and after are mutually exclusive")
+
+    def _at(cursor: AuditCursor) -> Any:
+        """De cursor als rijwaarde, met de kolomtypen erbij zodat de bind klopt."""
+        return tuple_(literal(cursor.time, NotificationEvent.time.type), literal(cursor.id, NotificationEvent.id.type))
+
+    row = tuple_(NotificationEvent.time, NotificationEvent.id)
+    statement = select(NotificationEvent).where(
+        NotificationEvent.project == project, NotificationEvent.type.in_(ACTION_TYPES)
     )
+    if query:
+        statement = statement.where(_search_filter(query))
+    if since is not None:
+        statement = statement.where(NotificationEvent.time >= since)
+    if until is not None:
+        statement = statement.where(NotificationEvent.time < until)
     if before is not None:
-        query = query.where(NotificationEvent.time < before)
+        statement = statement.where(row < _at(before))
+    if after is not None:
+        statement = statement.where(row > _at(after))
+
+    if after is not None:
+        statement = statement.order_by(NotificationEvent.time.asc(), NotificationEvent.id.asc())
+    else:
+        statement = statement.order_by(NotificationEvent.time.desc(), NotificationEvent.id.desc())
+
     async with session_scope() as session:
-        return list((await session.execute(query)).scalars())
+        found = list((await session.execute(statement.limit(limit))).scalars())
+    return list(reversed(found)) if after is not None else found
 
 
 async def run_retention(now: datetime | None = None) -> dict[str, int]:

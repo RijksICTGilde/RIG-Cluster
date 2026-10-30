@@ -9,20 +9,38 @@ toont ``origin`` niet: die kolom is voor platformbeheerders, in de database.
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
+from urllib.parse import unquote
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
+from opi.core.db import session_scope
 from opi.core.leden import LidSoort
+from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
 from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
+from opi.services.persistence.notification_events import NotificationEvent
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import enforce_route_action, may
-from opi.web.lotc_switch import PROJECT_TABS, audit_limit, build_lotc_audit, project_tab_url, tab_from_path
+from opi.web.lotc_switch import (
+    AUDIT_QUERY_MAX,
+    PROJECT_TABS,
+    AuditFilters,
+    audit_cursor_text,
+    audit_filters,
+    audit_limit,
+    audit_pagina,
+    audit_url,
+    build_lotc_audit,
+    project_tab_url,
+    tab_from_path,
+)
 from opi.web.router import project_audit
 
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -235,7 +253,7 @@ def test_de_auditrijen_worden_alleen_op_het_tabblad_audit_opgehaald() -> None:
     from opi.web import router
 
     bron = inspect.getsource(router.render_project_page)
-    aanroep = bron.index("build_lotc_audit(")
+    aanroep = bron.index("audit_pagina(")
     voorwaarde = bron.rindex('tab_from_path(request.url.path) == "audit"', 0, aanroep)
     assert voorwaarde > 0, "de audittrail wordt niet achter het tabblad gehouden"
 
@@ -260,3 +278,193 @@ def test_het_sjabloon_noemt_de_oorsprong_niet() -> None:
     stuk = re.sub(r"\{#.*?#\}", "", bron[start : volgende if volgende != -1 else len(bron)], flags=re.DOTALL)
     assert "rij.action" in stuk
     assert "origin" not in stuk
+
+
+# --- zoeken, periode en bladeren (RC-405) -----------------------------------
+#
+# English per RC-405: new names, test names and comments are English, also in this
+# otherwise Dutch module.
+
+
+def _filters(**query: str) -> AuditFilters:
+    return audit_filters(_request(BEHEERDER, "demo", query))
+
+
+def test_a_readable_period_becomes_two_dutch_day_boundaries() -> None:
+    filters = _filters(**{"from": "2026-07-01", "until": "2026-07-03"})
+
+    assert filters.since is not None
+    assert filters.since.isoformat() == "2026-07-01T00:00:00+02:00"
+    # Exclusive, and the day after: "tot en met 3 juli" has to include 3 juli 23:59.
+    assert filters.until is not None
+    assert filters.until.isoformat() == "2026-07-04T00:00:00+02:00"
+    assert (filters.since_text, filters.until_text) == ("2026-07-01", "2026-07-03")
+
+
+def test_an_unreadable_date_drops_that_filter_without_an_error() -> None:
+    filters = _filters(**{"from": "gisteren", "until": "2026-13-45"})
+
+    assert (filters.since, filters.until) == (None, None)
+    assert (filters.since_text, filters.until_text) == ("", "")
+
+
+def test_a_date_whose_next_day_does_not_exist_drops_that_filter() -> None:
+    # ``9999-12-31`` leest wel als datum, maar de dag erna loopt buiten date.max.
+    filters = _filters(until="9999-12-31")
+
+    assert (filters.until, filters.until_text) == (None, "")
+    assert _filters(**{"from": "9999-12-31"}).since is not None
+
+
+@pytest.mark.parametrize(
+    ("dag", "binnen", "buiten"),
+    [
+        # Zomertijd, wintertijd, en de twee dagen waarop de klok verspringt.
+        ("2026-07-01", "2026-07-01T23:59:00+02:00", "2026-07-02T00:00:00+02:00"),
+        ("2026-01-15", "2026-01-15T23:59:00+01:00", "2026-01-16T00:00:00+01:00"),
+        ("2026-03-29", "2026-03-29T23:59:00+02:00", "2026-03-30T00:00:00+02:00"),
+        ("2026-10-25", "2026-10-25T23:59:00+01:00", "2026-10-26T00:00:00+01:00"),
+    ],
+)
+def test_until_takes_the_whole_dutch_day(dag: str, binnen: str, buiten: str) -> None:
+    grens = _filters(until=dag).until
+
+    assert grens is not None
+    assert datetime.fromisoformat(binnen) < grens
+    assert datetime.fromisoformat(buiten) >= grens
+
+
+def test_a_cursor_round_trips_and_a_broken_one_is_ignored() -> None:
+    rij = SimpleNamespace(time=datetime(2026, 10, 28, 12, 30, tzinfo=UTC), id=uuid.UUID(int=7))
+    tekst = audit_cursor_text(rij)
+
+    heen = _filters(before=tekst).before
+    assert heen is not None
+    assert (heen.time, heen.id) == (rij.time, rij.id)
+
+    for rommel in ("", "rommel", "2026-10-28T12:30:00+00:00_geen-uuid", "geen-tijd_" + str(rij.id)):
+        assert _filters(before=rommel).before is None
+    # Een naief tijdstip komt niet van ons en gaat niet tegen een timestamptz aan.
+    assert _filters(before=f"2026-10-28T12:30:00_{rij.id}").before is None
+
+
+def test_two_cursors_at_once_keep_only_before() -> None:
+    # list_actions behandelt beide samen als programmeerfout, dus de querystring mag die
+    # combinatie niet doorlaten.
+    rij = SimpleNamespace(time=datetime(2026, 10, 28, 12, 30, tzinfo=UTC), id=uuid.UUID(int=7))
+    tekst = audit_cursor_text(rij)
+
+    filters = _filters(before=tekst, after=tekst)
+
+    assert filters.before is not None
+    assert filters.after is None
+
+
+def test_a_very_long_search_term_is_cut_off() -> None:
+    filters = _filters(q=" " + "a" * 400 + " ")
+
+    assert filters.query == "a" * AUDIT_QUERY_MAX
+
+
+def test_paging_carries_the_filters_and_at_most_one_cursor() -> None:
+    filters = _filters(q="jansen", limit="10", **{"from": "2026-07-01"})
+    url = audit_url("/projects/demo/audit", filters, before="2026-07-01T00%3A00_x")
+
+    assert url.startswith("/projects/demo/audit?")
+    assert "q=jansen" in url
+    assert "from=2026-07-01" in url
+    assert "limit=10" in url
+    assert "before=" in url
+    assert "after=" not in url
+    assert "until=" not in url
+
+
+def test_the_time_in_the_table_is_dutch_time() -> None:
+    """Een handeling om 00:30 Nederlandse tijd stond als UTC op de dag ervoor."""
+    moment = datetime(2026, 7, 1, 0, 30, tzinfo=ZoneInfo("Europe/Amsterdam"))
+    rij_uit_de_database = SimpleNamespace(
+        time=moment.astimezone(UTC),
+        actor=BEHEERDER,
+        actor_kind="user",
+        subject="demo",
+        data={"action": "project.refresh", "allowed": True},
+    )
+    [rij] = build_lotc_audit([rij_uit_de_database])
+
+    assert rij["time"].strftime("%d-%m-%Y %H:%M") == "01-07-2026 00:30"
+
+
+# --- wat het tabblad oplevert, tegen een echte database ---------------------
+#
+# Via audit_pagina en niet door render_project_page aan te roepen: een render van die
+# pagina vraagt het halve projectmodel mee, zoals tests/test_argo_connect_retry.py en
+# tests/test_lotc_backups_tabblad.py voor dezelfde functie al vaststellen.
+
+
+async def _schrijf(**overrides: Any) -> None:
+    velden: dict[str, Any] = {
+        "source": audit.event_source(),
+        "type": audit.TYPE_PERFORMED,
+        "subject": "demo",
+        "time": datetime.now(UTC),
+        "category": audit.CATEGORY,
+        "severity": audit.SEVERITY_ALLOWED,
+        "cluster": "local",
+        "project": "demo",
+        "actor": "ops@rijksoverheid.nl",
+        "actor_kind": "user",
+        "summary": "demo: project.refresh door ops",
+        "dedup_key": "audit:project.refresh:demo:allowed",
+        "data": {"action": "project.refresh", "allowed": True},
+    }
+    velden.update(overrides)
+    async with session_scope() as db:
+        db.add(NotificationEvent(**velden))
+
+
+async def test_the_tab_shows_only_the_rows_the_query_asks_for(orm_db: None) -> None:
+    binnen = datetime(2026, 7, 2, 10, 0, tzinfo=UTC)
+    await _schrijf(time=binnen, actor="jansen@rijksoverheid.nl", data={"action": "component.write"})
+    await _schrijf(time=binnen, actor="pietersen@rijksoverheid.nl", data={"action": "component.write"})
+    await _schrijf(time=datetime(2026, 6, 1, 10, 0, tzinfo=UTC), actor="jansen@rijksoverheid.nl")
+
+    context = await audit_pagina(
+        _request(BEHEERDER, "demo", {"q": "jansen", "from": "2026-07-01", "until": "2026-07-03"}), "demo"
+    )
+
+    assert [rij["actor"] for rij in context["audit_rijen"]] == ["jansen@rijksoverheid.nl"]
+    assert context["audit_filter_actief"] is True
+    assert context["audit_query"] == "jansen"
+
+
+async def test_the_older_link_carries_the_filters_and_a_cursor(orm_db: None) -> None:
+    for minuut in range(3):
+        await _schrijf(time=datetime(2026, 7, 2, 10, minuut, tzinfo=UTC), data={"action": f"actie{minuut}"})
+
+    eerste = await audit_pagina(_request(BEHEERDER, "demo", {"q": "actie", "limit": "2"}), "demo")
+
+    assert [rij["action"] for rij in eerste["audit_rijen"]] == ["actie2", "actie1"]
+    assert "q=actie" in eerste["audit_ouder_url"]
+    assert "limit=2" in eerste["audit_ouder_url"]
+    assert "before=" in eerste["audit_ouder_url"]
+    # Op de nieuwste pagina is er niets nieuwer.
+    assert eerste["audit_nieuwer_url"] == ""
+
+    cursor = eerste["audit_ouder_url"].split("before=")[1]
+    tweede = await audit_pagina(
+        _request(BEHEERDER, "demo", {"q": "actie", "limit": "2", "before": unquote(cursor)}), "demo"
+    )
+
+    assert [rij["action"] for rij in tweede["audit_rijen"]] == ["actie0"]
+    assert tweede["audit_ouder_url"] == ""
+    assert "after=" in tweede["audit_nieuwer_url"]
+
+
+async def test_an_empty_outcome_offers_a_way_back(orm_db: None) -> None:
+    await _schrijf()
+
+    context = await audit_pagina(_request(BEHEERDER, "demo", {"q": "bestaat-niet"}), "demo")
+
+    assert context["audit_rijen"] == []
+    assert context["audit_filter_actief"] is True
+    assert context["audit_wis_url"] == "/projects/demo/audit"
