@@ -55,6 +55,9 @@ def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock
 # working-tree path (git config) and the plumbing path (commit-tree env) cannot drift.
 GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
 GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
+# Set explicitly on both paths: a global gpg.format=ssh would otherwise read the gpg
+# fingerprint as an ssh key.
+GIT_SIGNING_FORMAT = "openpgp"
 
 COMMIT_ACTOR_TRAILER = "Actor"
 """Git-trailer voor wie de commit startte. Auteur/committer blijft OPI; trailer zodat git
@@ -414,7 +417,11 @@ class GitConnector:
         if signing:
             # commit.gpgsign dekt ook de commits die een rebase na een push-conflict
             # opnieuw maakt. commit-tree leest het niet, die krijgt -S in build_commit.
-            for config_key, config_value in (("user.signingkey", signing.fingerprint), ("commit.gpgsign", "true")):
+            for config_key, config_value in (
+                ("gpg.format", GIT_SIGNING_FORMAT),
+                ("user.signingkey", signing.fingerprint),
+                ("commit.gpgsign", "true"),
+            ):
                 stdout, stderr, code = await self._run_git_command(
                     ["config", config_key, config_value], cwd=self.__working_dir
                 )
@@ -1964,7 +1971,7 @@ class GitConnector:
             commit_args = ["commit-tree", tree]
             signing = get_git_signing_identity()
             if signing:
-                commit_args.append(f"-S{signing.fingerprint}")
+                commit_args = ["-c", f"gpg.format={GIT_SIGNING_FORMAT}", *commit_args, f"-S{signing.fingerprint}"]
             if parent:
                 commit_args += ["-p", parent]
             commit_args += ["-m", _with_actor_trailer(message, actor)]
