@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers.tabs import click_tab
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -187,15 +188,13 @@ def test_de_keuze_blijft_staan_bij_het_wisselen_van_tabblad(app_server: str, aut
     auth_page.goto(f"{app_server}{LOTC_URL}/tweede")
     auth_page.wait_for_load_state("networkidle")
 
-    auth_page.locator(
-        f'nldd-tab-bar a[href$="/{PROJECT}/metrics/tweede"], a[href$="/{PROJECT}/metrics/tweede"]'
-    ).first.click()
+    click_tab(auth_page, f"/{PROJECT}/metrics/tweede")
     auth_page.wait_for_load_state("networkidle")
     assert auth_page.url.endswith(f"/projects/{PROJECT}/metrics/tweede")
     assert auth_page.locator("#metrics-content-tweede").count() == 1
     assert auth_page.locator("#metrics-content-default").count() == 0
 
-    auth_page.locator(f'a[href$="/{PROJECT}/deployments/tweede"]').first.click()
+    click_tab(auth_page, f"/{PROJECT}/deployments/tweede")
     auth_page.wait_for_load_state("networkidle")
     assert auth_page.url.endswith(f"{LOTC_URL}/tweede")
 

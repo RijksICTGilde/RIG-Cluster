@@ -59,3 +59,19 @@ def open_tab(page: Page, tab: str) -> None:
     projectnaam = segmenten[1] if len(segmenten) > 1 else ""
     page.goto(f"{stukken.scheme}://{stukken.netloc}{project_tab_url(projectnaam, tab)}")
     page.locator(f"#tab-{tab}").wait_for(state="visible", timeout=TABBLAD_TIMEOUT_MS)
+
+
+def click_tab(page: Page, href_suffix: str) -> None:
+    """Klik in de tabbalk op het tabblad waarvan de href op ``href_suffix`` eindigt.
+
+    Past de balk niet in de breedte, dan zet ``nldd-tab-bar`` de laatste tabbladen in een
+    overloopmenu ("Meer tabs") en is het tabblad zelf onzichtbaar. Dan gaat de klik, net als
+    bij een gebruiker, via dat menu. Hoeveel er overloopt hangt af van de vensterbreedte en
+    van de iconen per tab (1eeb630b8), en dat hoort een test over wisselen niet te breken.
+    """
+    tab = page.locator(f'nldd-tab-bar-item[href$="{href_suffix}"]').first
+    if tab.is_visible():
+        tab.click()
+        return
+    page.locator("nldd-tab-bar nldd-icon-button[text='Meer tabs']").click()
+    page.locator(f'nldd-tab-bar nldd-menu-item[href$="{href_suffix}"]').click()

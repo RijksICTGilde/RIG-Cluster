@@ -52,7 +52,7 @@ def _tabbladen(page: Page) -> list[str]:
     """De labels in de tabbalk. Ze staan in het attribuut ``text`` van
     ``<nldd-tab-bar-item>`` en niet in de tekstinhoud: het label wordt in de shadow DOM
     getekend, dus ``inner_text`` levert lege strings op."""
-    tabs = page.locator("[data-lotc-component='tab']")
+    tabs = page.locator("nldd-tab-bar-item")
     return [tabs.nth(i).get_attribute("text") or "" for i in range(tabs.count())]
 
 
