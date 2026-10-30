@@ -210,9 +210,6 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% macro task_status_icon_name(status) %}
 {%- if status == "completed" -%}{{ 'vinkje' | nldd_icon }}
 {%- elif status == "failed" -%}{{ 'kruis' | nldd_icon }}
-{#- Not a chevron for a running task: it read as an accordion you could open. Not a
-    spinner either: the progress fragment re-renders every 2s, which restarts it. -#}
-{%- elif status == "running" -%}arrow-2-counter-clockwise
 {%- else -%}{{ 'klok' | nldd_icon }}
 {%- endif -%}
 {% endmacro %}
@@ -265,19 +262,32 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {{- parts | join(' - ') -}}
 {% endmacro %}
 
+{#- The status cell of a task row. A running task gets a spinning nldd-progress-circle
+    instead of a static icon. The progress fragment replaces itself every 2s, which would
+    restart the animation; hx-preserve with a stable id keeps the same element across those
+    swaps, so it keeps turning. -#}
+{% macro progress_status_cell(status, spin_id) %}
+{%- if status == "running" -%}
+<nldd-icon-cell size="20"><nldd-progress-circle id="{{ spin_id }}" hx-preserve indeterminate size="20" value-display="none" accessible-label="Bezig"></nldd-progress-circle></nldd-icon-cell>
+{%- else -%}
+<c-icon-cell size="20" icon="{{ task_status_icon_name(status) | trim }}"/>
+{%- endif -%}
+{% endmacro %}
+
 {% macro progress_task_list(tasks, show_errors=True) %}
 {% if tasks %}
 <c-list appearance="simple" accessible-label="Voortgang per taak">
     {% for task in tasks %}
+    {% set task_index = loop.index %}
     <c-list-item size="sm">
-        <c-icon-cell size="20" icon="{{ task_status_icon_name(task.status) | trim }}"/>
+        {{ progress_status_cell(task.status, "progress-spin-" ~ task_index) }}
         <c-spacer-cell size="8"/>
         <c-text-cell size="sm" supporting-text="{{ progress_step_detail(task, show_errors) | trim }}">{{ task.name }}</c-text-cell>
     </c-list-item>
     {% for subtask in task.subtasks or [] %}
     <c-list-item size="sm">
         <c-spacer-cell size="24"/>
-        <c-icon-cell size="20" icon="{{ task_status_icon_name(subtask.status) | trim }}"/>
+        {{ progress_status_cell(subtask.status, "progress-spin-" ~ task_index ~ "-" ~ loop.index) }}
         <c-spacer-cell size="8"/>
         <c-text-cell size="sm" supporting-text="{{ progress_step_detail(subtask, show_errors) | trim }}">{{ subtask.name }}</c-text-cell>
     </c-list-item>
