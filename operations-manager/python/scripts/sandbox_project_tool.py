@@ -47,7 +47,13 @@ PYTHON_ROOT = Path(__file__).resolve().parents[1]
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from tests.e2e.helpers.sandbox_api import STEP_UP_SESSION_KEY, geef_projecttoken, make_session_cookie  # noqa: E402
+from tests.e2e.helpers.sandbox_api import (  # noqa: E402
+    STEP_UP_SESSION_KEY,
+    geef_projecttoken,
+    make_session_cookie,
+    start_verwijdering,
+    wacht_tot_de_taak_klaar_is,
+)
 
 BASE = os.environ.get("ZAD_BASE_URL", "https://zad.sandbox.rijksapp.dev").rstrip("/")
 # Dezelfde variabele die de e2e-suite leest, zodat `eval "$(sandbox-gegevens --env)"`
@@ -108,11 +114,16 @@ def get_api_key(project: str) -> str:
 
 
 def delete_project(project: str) -> None:
-    key = get_api_key(project)
-    status, text = _request(
-        f"/api/projects/{project}", method="DELETE", api_key=key, body={"confirmDeletion": True, "force": True}
-    )
-    print(f"DELETE {project} -> {status} {text[:200]}")
+    """Delete through the portal as the admin: the project's own token may not (RC-392)."""
+    if not SECRET:
+        raise SystemExit('geen SECRET_KEY: zet ZAD_SECRET_KEY, of doe eval "$(sandbox-gegevens --env)"')
+    user = {"sub": "sandbox-tool", "email": USER_EMAIL, "name": "Sandbox Tool"}
+    try:
+        poll_path = start_verwijdering(BASE, project, secret_key=SECRET, gebruiker=user, verify_ssl=False)
+    except RuntimeError as refused:
+        raise SystemExit(str(refused)) from refused
+    outcome = wacht_tot_de_taak_klaar_is(BASE, poll_path, secret_key=SECRET, gebruiker=user, verify_ssl=False)
+    print(f"DELETE {project} -> {outcome}")
 
 
 def set_config(project: str, service: str, target: str, config_json: str) -> None:
