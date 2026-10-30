@@ -120,6 +120,8 @@
   }
 
   async function onnodeclick({ node, event }) {
+    // A web address opens its own tab; the map itself does nothing.
+    if (event?.target?.closest?.('a[href]')) return;
     const item = meta.get(node.id);
     if (!item) return;
     selectedId = node.id;
