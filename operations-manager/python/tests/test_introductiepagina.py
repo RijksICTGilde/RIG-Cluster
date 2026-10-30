@@ -16,11 +16,13 @@ hem opent.
 
 from typing import TYPE_CHECKING
 
+from opi.core.config import settings
 from opi.services.registry import SERVICE_DEFINITIONS
-from opi.services.services_enums import ServiceKind
+from opi.services.services_enums import ServiceKind, ServiceType
 from opi.web.lotc_switch import build_lotc_introductie
 
 if TYPE_CHECKING:
+    import pytest
     from fastapi.testclient import TestClient
 
 
@@ -52,13 +54,23 @@ def test_root_stuurt_een_anonieme_bezoeker_naar_de_introductie(test_client: Test
     assert response.headers["location"] == "/introductie"
 
 
-
 def test_about_verwijst_permanent_door_naar_de_introductie(test_client: TestClient) -> None:
     """Over ZAD is in de introductie opgegaan; een oude link moet daar uitkomen."""
     response = test_client.get("/about", follow_redirects=False)
 
     assert response.status_code == 301
     assert response.headers["location"] == "/introductie"
+
+
+def test_een_vervangen_dienst_staat_er_niet_op(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MinIO is vervangen door SeaweedFS waar die er is; dan is het geen keuze meer."""
+    monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    namen = [d["name"] for d in build_lotc_introductie(None)["diensten_zelf"]]
+
+    assert ServiceType.MINIO_STORAGE.value not in namen
+    assert ServiceType.SEAWEEDFS_STORAGE.value in namen
+
 
 def _catalogus() -> tuple[list[str], list[str]]:
     """De labels die de catalogus levert, gesplitst zoals de pagina ze toont."""
