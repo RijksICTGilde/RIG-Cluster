@@ -4,6 +4,7 @@
   alleen het element en geeft het een hoogte.
 #}
 {% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
 
 {% block head_extra %}
     <link rel="stylesheet" href="{{ static_url('css/zad-map.css') }}">
@@ -13,12 +14,7 @@
 {% block page_title %}Platform{% endblock %}
 
 {% block content %}
-    <c-stack gap="sm">
-        <c-heading type="h1" size="3" label="Platform" />
-        <c-paragraph>
-            De onderdelen op dit cluster ({{ cluster }}) waar ZAD interactie mee heeft. Klik op een element voor meer informatie.
-        </c-paragraph>
-    </c-stack>
+    {{ page_head("Platform", "De onderdelen op dit cluster (" ~ cluster ~ ") waar ZAD interactie mee heeft. Klik op een element voor meer informatie.") }}
 
     <div class="zad-map-frame">
         <zad-map src="/platform.json"></zad-map>

@@ -65,7 +65,8 @@ class TestMetricsScrapeToken:
 
         assert response.status_code == 200
         assert "# HELP" in response.text
-        assert "process_" in response.text
+        # python_info and not process_*: the process collector reads /proc, so it is empty on macOS.
+        assert "python_info" in response.text
 
     def test_metrics_explorer_blijft_naar_login_sturen(self, test_client: TestClient, scrape_token: str) -> None:
         """De pagina ernaast verandert niet: zonder sessie nog steeds een redirect naar login."""

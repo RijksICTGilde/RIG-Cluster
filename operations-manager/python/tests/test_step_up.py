@@ -142,7 +142,8 @@ def test_component_door_niemand_gebruikt() -> None:
     [
         (Omgeving.PRODUCTIE, Omgeving.ACCEPTATIE, True),
         (Omgeving.ACCEPTATIE, Omgeving.PRODUCTIE, True),
-        (Omgeving.ACCEPTATIE, Omgeving.TEST, True),
+        # Between the other stages is writing a deployment, not setting the marking (ffa2bd448).
+        (Omgeving.ACCEPTATIE, Omgeving.TEST, False),
         (Omgeving.PRODUCTIE, Omgeving.PRODUCTIE, False),
     ],
 )
