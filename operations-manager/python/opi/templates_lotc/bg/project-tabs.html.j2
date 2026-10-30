@@ -1074,8 +1074,9 @@
 
        De oorsprong (het client-IP) staat NIET in de tabel: die kolom is volgens het
        gebeurtenissenontwerp voor platformbeheerders, en die lezen hem in de database. #}
+    {# No panel around it: the tab is the page, a card only adds a frame and a second title. #}
     <c-stack gap="lg">
-        {% call panel("Audit", "clipboard-bullet-list", info_text="Elke schrijfactie en elke weigering op dit project. Een wijziging in het projectbestand draagt de commit waarin ze landde. Zoeken op een persoon vindt de laatste 90 dagen: daarna is die kolom leeg (bewaartermijn).") %}
+            <c-paragraph>Elke schrijfactie en elke weigering op dit project. Een wijziging in het projectbestand draagt de commit waarin ze landde. Zoeken op een persoon vindt de laatste 90 dagen: daarna is die kolom leeg (bewaartermijn).</c-paragraph>
             {# EEN gebied: het zoekveld, de periode, de rijen en de bladerknoppen samen.
                Zelfde keuze als op de projectenlijst (bg/projects.html.j2): de werkbalk
                buiten de swap houden laat je zoekterm terugspringen, want het veld blijft
@@ -1179,15 +1180,14 @@
             {% if audit_nieuwer_url or audit_ouder_url %}
                 <c-cluster gap="md">
                     {% if audit_nieuwer_url %}
-                        <c-link href="{{ audit_nieuwer_url }}" label="Nieuwer" />
+                        <c-button type="secondary" label="Nieuwer" icon="chevron-left" show-icon="before" href="{{ audit_nieuwer_url }}" />
                     {% endif %}
                     {% if audit_ouder_url %}
-                        <c-link href="{{ audit_ouder_url }}" label="Ouder" />
+                        <c-button type="secondary" label="Ouder" icon="chevron-right" show-icon="after" href="{{ audit_ouder_url }}" />
                     {% endif %}
                 </c-cluster>
             {% endif %}
             </c-stack>
-        {% endcall %}
     </c-stack>
     {% endif %}
 
