@@ -30,13 +30,9 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import sys
-import time
-from urllib.parse import urlparse
 
 import httpx
-from opi.utils.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
 from tests.e2e.conftest import (
     E2E_BASE_URL,
     E2E_SECRET_KEY,
@@ -62,44 +58,15 @@ def start_verwijdering(
     verify_ssl: bool = False,
     timeout: float = 60.0,
 ) -> str:
-    """Dien de verwijdering van ``naam`` in over de webroute, als de e2e-sandboxgebruiker.
-
-    De route maakt er een taak van en antwoordt met het voortgangsfragment, dus een 200
-    zegt dat de verwijdering is AANGENOMEN en niet dat ze klaar is. Geeft het pad terug
-    waarop dat fragment zichzelf ververst, zodat de aanroeper de TAAK kan volgen in plaats
-    van de klok; leeg als het antwoord er geen draagt.
-
-    Gooit een ``RuntimeError`` als de route het verzoek niet aanneemt, met wat de server
-    terugzei: de drie eisen hierboven falen allemaal als een 403 met een eigen melding.
-    """
-    basis = base_url.rstrip("/")
-    host = urlparse(basis).hostname or ""
-    sessie = sandbox_api.make_session_cookie({"user": gebruiker or SANDBOX_TEST_USER}, secret=secret_key)
-    with httpx.Client(verify=verify_ssl, timeout=timeout, follow_redirects=False) as client:
-        client.cookies.set("session", sessie, domain=host)
-        # Een GET zet de csrf_token-cookie (de middleware munt hem als hij ontbreekt) en
-        # laat meteen zien of de sessiecookie wordt aanvaard: zonder geldige sessie komt
-        # hier een omleiding naar de login en geen 200.
-        antwoord = client.get(f"{basis}/projects")
-        if antwoord.status_code != 200:
-            raise RuntimeError(
-                f"de sessie wordt niet aanvaard op {basis}: GET /projects gaf HTTP "
-                f"{antwoord.status_code}. Klopt E2E_SECRET_KEY met de SECRET_KEY van het cluster?"
-            )
-        csrf = client.cookies.get(CSRF_COOKIE_NAME)
-        if not csrf:
-            raise RuntimeError(f"geen {CSRF_COOKIE_NAME}-cookie na GET /projects op {basis}")
-
-        antwoord = client.post(
-            f"{basis}/projects/delete/{naam}",
-            headers={CSRF_HEADER_NAME: csrf, "Origin": basis},
-        )
-    if antwoord.status_code != 200:
-        raise RuntimeError(
-            f"het verwijderen van '{naam}' werd niet aangenomen (HTTP {antwoord.status_code}): {antwoord.text[:300]}"
-        )
-    treffer = re.search(r'hx-get="([^"]+)"', antwoord.text)
-    return treffer.group(1) if treffer else ""
+    """:func:`sandbox_api.start_verwijdering` met de sleutel en gebruiker van de e2e-omgeving."""
+    return sandbox_api.start_verwijdering(
+        base_url,
+        naam,
+        secret_key=secret_key,
+        gebruiker=gebruiker or SANDBOX_TEST_USER,
+        verify_ssl=verify_ssl,
+        timeout=timeout,
+    )
 
 
 def wacht_tot_de_taak_klaar_is(
@@ -112,36 +79,16 @@ def wacht_tot_de_taak_klaar_is(
     timeout: float = 600.0,
     interval: float = 3.0,
 ) -> str:
-    """Volg het voortgangsfragment tot de taak klaar is en geef zijn laatste tekst terug.
-
-    Het fragment ververst zichzelf alleen zolang de taak loopt (``hx-get`` staat er bij
-    status "completed" en "failed" niet meer in), dus het ONTBREKEN van die poll is de
-    eindtoestand. Zo komt een weigering van OPI eruit als zijn eigen melding, en niet als
-    een wachttijd die afliep: zonder dit duurde een mislukte verwijdering 600 seconden om
-    "staat er nog" te zeggen, terwijl OPI na 18 seconden al had opgeschreven waarom.
-    """
-    basis = base_url.rstrip("/")
-    host = urlparse(basis).hostname or ""
-    sessie = sandbox_api.make_session_cookie({"user": gebruiker or SANDBOX_TEST_USER}, secret=secret_key)
-    einde = time.monotonic() + timeout
-    tekst = ""
-    with httpx.Client(verify=verify_ssl, timeout=60.0, follow_redirects=False) as client:
-        client.cookies.set("session", sessie, domain=host)
-        while time.monotonic() < einde:
-            antwoord = client.get(f"{basis}{poll_pad}")
-            if antwoord.status_code != 200:
-                return f"de voortgang is niet te lezen (HTTP {antwoord.status_code})"
-            tekst = antwoord.text
-            if "hx-get" not in tekst:
-                return _leesbaar(tekst)
-            time.sleep(interval)
-    return f"de taak was na {timeout:.0f}s nog niet klaar: {_leesbaar(tekst)}"
-
-
-def _leesbaar(html: str) -> str:
-    """De tekst uit een fragment, zonder tags en zonder lege regels."""
-    zonder_tags = re.sub(r"<[^>]+>", " ", html)
-    return " ".join(zonder_tags.split())[:400]
+    """:func:`sandbox_api.wacht_tot_de_taak_klaar_is` met de sleutel en gebruiker van de e2e-omgeving."""
+    return sandbox_api.wacht_tot_de_taak_klaar_is(
+        base_url,
+        poll_pad,
+        secret_key=secret_key,
+        gebruiker=gebruiker or SANDBOX_TEST_USER,
+        verify_ssl=verify_ssl,
+        timeout=timeout,
+        interval=interval,
+    )
 
 
 def verwijder_weesproject(
