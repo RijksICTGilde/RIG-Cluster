@@ -414,7 +414,8 @@ async def test_een_submap_in_de_repo_komt_in_de_werkmap_terug() -> None:
     """De manifesten van een deployment kunnen in een submap van de repo staan (zoals
     het sandboxproject ``e2e76-7x2``): zonder die submap mist ``rendered_kinds`` elk
     kind dat erin staat, en dan zegt de veegactie 'compleet' over een lege meting."""
-    assert await _werkmap("infra") == os.path.join("/tmp/deploy-repo", "infra")
+    # safe_join resolves symlinks; on macOS /tmp is one (to /private/tmp).
+    assert await _werkmap("infra") == os.path.join(os.path.realpath("/tmp/deploy-repo"), "infra")
 
 
 async def test_een_lege_repo_path_laat_de_werkmap_ongewijzigd() -> None:

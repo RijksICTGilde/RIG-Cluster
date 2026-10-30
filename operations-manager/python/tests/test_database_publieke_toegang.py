@@ -18,13 +18,18 @@ import pytest
 import yaml
 from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, PostgresValidationError
 from opi.core.config import Settings
-from opi.core.platform_database_access import PLATFORM_DATABASE_ROLES, restrict_platform_databases
+from opi.core.platform_database_access import (
+    PLATFORM_BACKUP_ROLE,
+    PLATFORM_DATABASE_ROLES,
+    restrict_platform_databases,
+)
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.db_console_manager import DbConsoleError, DbConsoleManager, DbConsoleTool
 
 #: ``operations-manager/python/tests/`` -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DATABASES_YAML = _REPO_ROOT / "infrastructure/bootstrap/infrastructure/postgresql/database/base/databases.yaml"
+_CLUSTER_YAML = _REPO_ROOT / "infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml"
 
 _REVOKE = 'REVOKE CONNECT, TEMPORARY ON DATABASE "proj_test" FROM PUBLIC'
 
@@ -326,11 +331,11 @@ async def test_elke_platformdatabase_wordt_afgesloten_met_zijn_eigen_rol() -> No
         await restrict_platform_databases()
 
     assert afsluitingen == [
-        ("keycloak", ["keycloak"]),
-        ("forgejo", ["forgejo"]),
-        ("mailrelay", ["mailrelay"]),
+        ("keycloak", ["keycloak", "platform_backup"]),
+        ("forgejo", ["forgejo", "platform_backup"]),
+        ("mailrelay", ["mailrelay", "platform_backup"]),
         # De database van OPI zelf: eigenaar is de superuser, die heeft geen GRANT nodig.
-        ("operations_manager", []),
+        ("operations_manager", ["platform_backup"]),
     ]
     connector.close.assert_awaited_once()
 
@@ -376,6 +381,14 @@ def test_de_lijst_spiegelt_databases_yaml() -> None:
     }
 
     assert uit_yaml == PLATFORM_DATABASE_ROLES
+
+
+def test_the_backup_role_exists_as_a_managed_role() -> None:
+    """The GRANT goes to a role CNPG actually creates, not to a name that drifted."""
+    cluster = yaml.safe_load(_CLUSTER_YAML.read_text(encoding="utf-8"))
+    roles = {role["name"] for role in cluster["spec"]["managed"]["roles"]}
+
+    assert PLATFORM_BACKUP_ROLE in roles
 
 
 def test_de_standaard_is_dry_run() -> None:

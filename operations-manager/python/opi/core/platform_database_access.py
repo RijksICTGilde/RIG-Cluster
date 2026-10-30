@@ -31,6 +31,11 @@ PLATFORM_DATABASE_ROLES: dict[str, tuple[str, ...]] = {
     "mailrelay": ("mailrelay",),
 }
 
+#: Read role of the nightly platform backup (managed role in ``cluster.yaml``).
+#: ``pg_read_all_data`` does not grant CONNECT, so without this GRANT the backup dumps
+#: nothing once the restriction is ``on``.
+PLATFORM_BACKUP_ROLE = "platform_backup"
+
 
 async def restrict_platform_databases() -> None:
     """Sluit elke platformdatabase af voor ``PUBLIC``.
@@ -48,7 +53,7 @@ async def restrict_platform_databases() -> None:
     try:
         for database, roles in databases.items():
             try:
-                result = await connector.restrict_database_to_roles(database, list(roles))
+                result = await connector.restrict_database_to_roles(database, [*roles, PLATFORM_BACKUP_ROLE])
                 logger.info(f"Platformdatabase {database} afsluiten voor PUBLIC: {result['status']}")
             except PostgresExecutionError:
                 logger.exception(f"Platformdatabase {database} afsluiten voor PUBLIC is niet gelukt")

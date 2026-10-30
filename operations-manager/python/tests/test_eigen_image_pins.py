@@ -278,7 +278,6 @@ class TestDeSedRaaktElkeVerwijzing:
         voor = [r.strip() for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r and ":" in r]
 
         expressie = _sedexpressie("rig-cmp-argo-kustomize-sops", PROEFTAG, PROEFDIGEST)
-        # -i.bak zoals de taak zelf: kale -i is GNU-syntax, macOS-sed leest -E dan als suffix.
         subprocess.run(["sed", "-i.bak", "-E", expressie, str(kopie)], check=True)
 
         na = [r.strip() for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r]

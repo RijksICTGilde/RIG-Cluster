@@ -10,18 +10,16 @@ push-conflict opnieuw maakt.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from opi.connectors.git import GitConnector
 from opi.core.config import settings
 from opi.utils import git_signing
 from opi.utils.git_signing import GitSigningKeyError, load_git_signing_identity
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _GIT_ENV = {
     **os.environ,
@@ -74,14 +72,18 @@ def _generate_key(tmp_path: Path) -> Path:
 @pytest.fixture
 def signing_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     """Een geladen signing identity, en na de test weer geen."""
-    key_file = _generate_key(tmp_path)
+    # Short root under /tmp: gpg-agent puts its socket in GNUPGHOME, and a socket path
+    # is limited to ~104 bytes; macOS pytest tmp_path (/private/var/folders/...) is longer.
+    gpg_root = Path(tempfile.mkdtemp(prefix="opi-gpg-", dir="/tmp"))
+    key_file = _generate_key(gpg_root)
     monkeypatch.setattr(settings, "GIT_SIGNING_KEY_FILE", str(key_file))
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", str(gpg_root))
     identity = load_git_signing_identity()
     assert identity is not None
     yield identity.fingerprint
     monkeypatch.setattr(settings, "GIT_SIGNING_KEY_FILE", None)
     load_git_signing_identity()
+    shutil.rmtree(gpg_root, ignore_errors=True)
 
 
 def _verify(repo: Path, ref: str = "HEAD") -> str:
