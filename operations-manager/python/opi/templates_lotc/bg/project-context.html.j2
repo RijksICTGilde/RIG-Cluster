@@ -18,10 +18,8 @@
     - het is een grotere ingreep: elke projectpagina moet weten dat hij in deze context
       staat.
 
-  Technisch leunt dit op het sidenav-blok in base_lotc.html.j2. Dat blok bestaat precies
-  hiervoor: een tweede niveau ONDER "Projecten" kan namelijk niet - c-sidenav-group is een
-  kopje en geen uitklapbare ouder, het is een broer van de items eronder. Vervangen kan
-  wel.
+  Technisch leunt dit op het sidenav-blok in base_lotc.html.j2: dat blok bestaat precies
+  om de zijbalk te vervangen in plaats van er een tweede niveau onder te hangen.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -29,26 +27,32 @@
 {% block page_title %}{{ project.display_name }} - projectcontext{% endblock %}
 
 {% block sidenav %}
-    <c-sidenav>
-        {# De weg terug staat bovenaan en niet onderaan: wie de hoofdnavigatie kwijt is,
-           zoekt hem daar.
+    {# De weg terug staat bovenaan en niet onderaan: wie de hoofdnavigatie kwijt is,
+       zoekt hem daar.
 
-           Zonder icoon, met opzet: NLDD heeft geen chevron naar links, en een pijl die de
-           verkeerde kant op wijst is misleidender dan geen pijl. Het icoon "terug" staat
-           op de lijst die bij het LOTC-project ligt. #}
-        <c-sidenav-item label="Alle projecten" href="/lotc/bg/projects" />
-        <c-sidenav-group label="{{ project.display_name }}" />
-        <c-sidenav-item icon="house" label="Overzicht" href="#" :active="true" />
-        <c-sidenav-item icon="chart-x-y-axis-line" label="Statistieken" href="#" />
-        <c-sidenav-item icon="rectangle-stack" label="Componenten" href="#" />
-        <c-sidenav-item icon="cylinder-split" label="Services" href="#" />
-        <c-sidenav-item icon="arrow-up-arrow-down" label="Deployments" href="#" />
-        <c-sidenav-group label="Beheer" />
-        <c-sidenav-item icon="person-2" label="Team" href="#" />
-        <c-sidenav-item icon="lock-closed" label="Sleutels" href="#" />
-        <c-sidenav-item icon="chevron-left-forward-slash-chevron-right" label="Repositories" href="#" />
-        <c-sidenav-item icon="gear" label="Instellingen" href="#" />
-    </c-sidenav>
+       Zonder icoon, met opzet: NLDD heeft geen chevron naar links, en een pijl die de
+       verkeerde kant op wijst is misleidender dan geen pijl. Het icoon "terug" staat
+       op de lijst die bij het LOTC-project ligt. #}
+    <nldd-list type="navigation" dividers="on-touch" aria-label="Terug">
+        <nldd-list-item href="/lotc/bg/projects"><nldd-text-cell text="Alle projecten"></nldd-text-cell></nldd-list-item>
+    </nldd-list>
+    {% for groep, items in [
+        (project.display_name, [("house", "Overzicht", True), ("chart-x-y-axis-line", "Statistieken", False), ("rectangle-stack", "Componenten", False), ("cylinder-split", "Services", False), ("arrow-up-arrow-down", "Deployments", False)]),
+        ("Beheer", [("person-2", "Team", False), ("lock-closed", "Sleutels", False), ("chevron-left-forward-slash-chevron-right", "Repositories", False), ("gear", "Instellingen", False)]),
+    ] %}
+        <nldd-spacer size="16"></nldd-spacer>
+        <nldd-title size="6"><h2>{{ groep }}</h2></nldd-title>
+        <nldd-spacer size="4"></nldd-spacer>
+        <nldd-list type="navigation" dividers="on-touch" aria-label="{{ groep }}">
+            {% for icon, label, actief in items %}
+                <nldd-list-item href="#"{% if actief %} current{% endif %}>
+                    <nldd-icon-cell icon="{{ icon | nldd_icon }}" size="20"></nldd-icon-cell>
+                    <nldd-spacer-cell size="8"></nldd-spacer-cell>
+                    <nldd-text-cell text="{{ label }}"></nldd-text-cell>
+                </nldd-list-item>
+            {% endfor %}
+        </nldd-list>
+    {% endfor %}
 {% endblock %}
 
 {% block content %}
