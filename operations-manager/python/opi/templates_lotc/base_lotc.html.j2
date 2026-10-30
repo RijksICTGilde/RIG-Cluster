@@ -191,8 +191,10 @@
     {# Alleen zichtbaar als zijbalk en pagina in een kolom staan; zie js/zijbalk-terug.js. #}
     <nldd-top-title-bar slot="header" back-text="Menu"></nldd-top-title-bar>
     <nldd-simple-section>
-        {# tabindex zodat de skip-link hier kan landen. #}
-        <div id="hoofdinhoud" tabindex="-1">
+        {# <main> en geen <div>: sinds de app-shell (fbc5a2489) was er geen hoofdlandmark
+           meer, en een schermlezer kon niet naar de inhoud springen. tabindex zodat de
+           focus hier kan landen. #}
+        <main id="hoofdinhoud" tabindex="-1">
         <c-stack gap="lg">
             {% block content %}
                 <c-stack gap="xs">
@@ -201,7 +203,7 @@
                 </c-stack>
             {% endblock %}
         </c-stack>
-        </div>
+        </main>
     </nldd-simple-section>
 
     {# Alleen de legal bar van nldd-page-footer: de hoofdrij (link-kolommen) zou herhalen wat
