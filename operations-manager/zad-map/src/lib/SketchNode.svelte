@@ -6,6 +6,9 @@
 
   let { data, selected } = $props();
 
+  // Only https becomes a link: the contract promises it, and it keeps javascript: URLs out of an href.
+  const isWebAddress = (href) => typeof href === 'string' && href.startsWith('https://');
+
   // Vorm uit het contract naar een schetsvorm, met de arcering die bij die vorm past.
   const SHAPES = {
     card: { shape: 'rect', style: { hachureGap: 9 } },
@@ -88,12 +91,20 @@
               <span>{row.text}</span>
             </div>
           {:else}
-            <div class="row" class:web={!!row.href}>
+            <svelte:element
+              this={isWebAddress(row.href) ? 'a' : 'div'}
+              class="row"
+              class:web={isWebAddress(row.href)}
+              class:nodrag={isWebAddress(row.href)}
+              href={isWebAddress(row.href) ? row.href : undefined}
+              target={isWebAddress(row.href) ? '_blank' : undefined}
+              rel={isWebAddress(row.href) ? 'noopener noreferrer' : undefined}
+            >
               {#if ICONS[row.icon]}
                 <svg viewBox="0 0 16 16"><path d={ICONS[row.icon]} /></svg>
               {/if}
               <span>{row.text}</span>
-            </div>
+            </svelte:element>
           {/if}
         {/each}
       </div>
@@ -140,7 +151,8 @@
   .rows { margin-top: 6px; display: grid; gap: 3px; }
   .row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; height: 17px; }
   .row svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
-  .row.web { color: var(--lintblauw); font-weight: 600; }
+  .row.web { color: var(--lintblauw); font-weight: 600; text-decoration: none; cursor: pointer; }
+  .row.web:hover span { text-decoration: underline; }
   .unit { width: 24px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
   .track { position: relative; flex: none; width: 76px; height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .track span { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
