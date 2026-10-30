@@ -149,7 +149,11 @@ def test_balken_kent_elk_sjabloon_dat_een_stand_berekent() -> None:
     die eraf moet is even goed een melding waard: dan rendert de toets een sjabloon dat
     zijn stand inmiddels letterlijk zet, en staat de meting op de verkeerde plek.
     """
-    gemeten = sjablonen_met_berekende_waarde("c-step-bar-item", "status")
+    # Plain nldd markup is not checked by LOTC at all, so a computed status there needs the
+    # same render-time check as one on the c- component.
+    gemeten = sjablonen_met_berekende_waarde("c-step-bar-item", "status") | sjablonen_met_berekende_waarde(
+        "nldd-step-bar-item", "status"
+    )
 
     assert gemeten == set(BALKEN), (
         f"BALKEN en de sjablonen lopen uiteen. Niet gedekt: {sorted(gemeten - set(BALKEN))}; "
