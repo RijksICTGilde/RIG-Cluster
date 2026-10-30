@@ -1,8 +1,7 @@
 """De OTAP-markering van een deployment in het portaal (RC-330, planonderdeel 4).
 
 Gemeten door de browser en de echte routes: het keuzeveld op de deploymentmodal, en dat de
-projectinstellingen er GEEN keuzeveld voor hebben. De markering hoort bij een deployment,
-en op de projectpagina staat alleen de afgeleide hoogste markering.
+projectinstellingen er GEEN keuzeveld voor hebben. De markering hoort bij een deployment.
 
 Het SCHRIJVEN van de deploymentmarkering is hier niet te meten: die opslag doet
 ``process_project`` en zonder takenservice antwoordt die route met een 503. De schrijfweg
@@ -40,15 +39,13 @@ def test_de_deploymentmodal_biedt_de_standaard_als_eerste_keuze(app_server: str,
 
 
 def test_de_projectinstellingen_kennen_de_markering_niet(app_server: str, auth_page: Page) -> None:
-    """Op projectniveau is de markering afgeleid, dus niet te bewerken."""
+    """Op projectniveau is de markering afgeleid, dus niet te bewerken.
+
+    De afgeleide tag naast de projectnaam is sinds b6ff9b808 bewust weg; de markering staat
+    op het paneel van elke deployment.
+    """
     modal = EditModalHelper(auth_page, app_server, PROJECT_NAME)
     modal.open_detail_page()
-
-    # Op het attribuut: een nldd-tag zet zijn label in ``text`` en tekent het in een
-    # shadow root, dus tekst zoeken in de pagina wordt vacuut groen.
-    assert auth_page.locator("nldd-tag[text='Ontwikkeling']").count() > 0, (
-        "de projectpagina toont de afgeleide hoogste markering niet"
-    )
 
     modal.open_edit_modal("modal-edit-identity", "Projectgegevens bewerken")
     assert auth_page.locator("[name='environment']").count() == 0
