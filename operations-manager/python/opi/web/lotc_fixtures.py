@@ -86,6 +86,9 @@ def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
         # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
         # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
         "can": lambda *_a, **_k: True,
+        # De voorbeeldbeheerder is platformbeheerder, zodat het blok Configuratie & Secrets
+        # ook in de galerij staat.
+        "is_platform_admin": True,
         "services": services_with_info,
         "clusters": project_data.get("clusters", []),
         "components": project_data.get("components", []),
