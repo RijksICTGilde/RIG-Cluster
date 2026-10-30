@@ -10,12 +10,13 @@ bestaand token is dus niet op te halen: de weg is er een UITGEVEN, en dat doet
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
+import os
 import re
 import secrets
 import time
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -40,6 +41,10 @@ CSRF_HEADER_NAME = "x-csrf-token"
 #: token uitgeven vraagt een verse (RC-387), en wie zijn eigen sessie ondertekent zet hem
 #: er dus bij: zonder stempel antwoordt het portaal met een 403 in plaats van een token.
 STEP_UP_SESSION_KEY = "step_up_at"
+
+#: The human admin the e2e suite creates its projects as (``SANDBOX_TEST_USER`` in the
+#: e2e conftest, which this module cannot import without the OPI config).
+SANDBOX_ADMIN_EMAIL = os.environ.get("ZAD_USER_EMAIL", "admin@sandbox.rijksapp.dev")
 
 #: Hoe een uitgegeven token eruitziet: het voorvoegsel plus de willekeurige waarde.
 _TOKEN_VORM = re.compile(r'value="(zad_[A-Za-z0-9_-]+)"')
@@ -318,6 +323,113 @@ def delete_component(
         return 202, _wait_for_task(client, base, task_id, headers, timeout=timeout)
 
 
+def _admin_session(gebruiker: dict, secret_key: str) -> str:
+    """A signed session for ``gebruiker`` with a fresh step-up.
+
+    Deleting a project asks for one (RC-332); without the stamp the portal answers with
+    the OTP dialog instead of starting the task.
+    """
+    return make_session_cookie(
+        {"user": gebruiker, STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()}, secret=secret_key
+    )
+
+
+def start_verwijdering(
+    base_url: str,
+    naam: str,
+    *,
+    secret_key: str,
+    gebruiker: dict,
+    verify_ssl: bool = False,
+    timeout: float = 60.0,
+) -> str:
+    """Dien de verwijdering van ``naam`` in over de webroute, als de e2e-sandboxgebruiker.
+
+    De route maakt er een taak van en antwoordt met het voortgangsfragment, dus een 200
+    zegt dat de verwijdering is AANGENOMEN en niet dat ze klaar is. Geeft het pad terug
+    waarop dat fragment zichzelf ververst, zodat de aanroeper de TAAK kan volgen in plaats
+    van de klok; leeg als het antwoord er geen draagt.
+
+    Gooit een ``RuntimeError`` als de route het verzoek niet aanneemt, met wat de server
+    terugzei: de drie eisen hierboven falen allemaal als een 403 met een eigen melding.
+    """
+    basis = base_url.rstrip("/")
+    host = urlparse(basis).hostname or ""
+    sessie = _admin_session(gebruiker, secret_key)
+    with httpx.Client(verify=verify_ssl, timeout=timeout, follow_redirects=False) as client:
+        client.cookies.set("session", sessie, domain=host)
+        # Een GET zet de csrf_token-cookie (de middleware munt hem als hij ontbreekt) en
+        # laat meteen zien of de sessiecookie wordt aanvaard: zonder geldige sessie komt
+        # hier een omleiding naar de login en geen 200.
+        antwoord = client.get(f"{basis}/projects")
+        if antwoord.status_code != 200:
+            raise RuntimeError(
+                f"de sessie wordt niet aanvaard op {basis}: GET /projects gaf HTTP "
+                f"{antwoord.status_code}. Klopt E2E_SECRET_KEY met de SECRET_KEY van het cluster?"
+            )
+        csrf = client.cookies.get(CSRF_COOKIE_NAME)
+        if not csrf:
+            raise RuntimeError(f"geen {CSRF_COOKIE_NAME}-cookie na GET /projects op {basis}")
+
+        antwoord = client.post(
+            f"{basis}/projects/delete/{naam}",
+            headers={CSRF_HEADER_NAME: csrf, "Origin": basis},
+        )
+    # The step-up dialog answers 200 too; it is a refusal, not an accepted deletion.
+    if antwoord.status_code != 200 or "data-step-up" in antwoord.text:
+        raise RuntimeError(
+            f"het verwijderen van '{naam}' werd niet aangenomen (HTTP {antwoord.status_code}): {_leesbaar(antwoord.text)}"
+        )
+    treffer = re.search(r'hx-get="([^"]+)"', antwoord.text)
+    return treffer.group(1) if treffer else ""
+
+
+def wacht_tot_de_taak_klaar_is(
+    base_url: str,
+    poll_pad: str,
+    *,
+    secret_key: str,
+    gebruiker: dict,
+    verify_ssl: bool = False,
+    timeout: float = 600.0,
+    interval: float = 3.0,
+) -> str:
+    """Volg het voortgangsfragment tot de taak klaar is en geef zijn laatste tekst terug.
+
+    Het fragment ververst zichzelf alleen zolang de taak loopt (``hx-get`` staat er bij
+    status "completed" en "failed" niet meer in), dus het ONTBREKEN van die poll is de
+    eindtoestand. Zo komt een weigering van OPI eruit als zijn eigen melding, en niet als
+    een wachttijd die afliep: zonder dit duurde een mislukte verwijdering 600 seconden om
+    "staat er nog" te zeggen, terwijl OPI na 18 seconden al had opgeschreven waarom.
+    """
+    basis = base_url.rstrip("/")
+    host = urlparse(basis).hostname or ""
+    sessie = _admin_session(gebruiker, secret_key)
+    einde = time.monotonic() + timeout
+    tekst = ""
+    with httpx.Client(verify=verify_ssl, timeout=60.0, follow_redirects=False) as client:
+        client.cookies.set("session", sessie, domain=host)
+        while time.monotonic() < einde:
+            antwoord = client.get(f"{basis}{poll_pad}")
+            # The fragment lives under the project, so a project that is gone answers 404:
+            # that is the deletion finishing, not a failure to read it.
+            if antwoord.status_code == 404 and tekst:
+                return "klaar: het project bestaat niet meer"
+            if antwoord.status_code != 200:
+                return f"de voortgang is niet te lezen (HTTP {antwoord.status_code})"
+            tekst = antwoord.text
+            if "hx-get" not in tekst:
+                return _leesbaar(tekst)
+            time.sleep(interval)
+    return f"de taak was na {timeout:.0f}s nog niet klaar: {_leesbaar(tekst)}"
+
+
+def _leesbaar(html: str) -> str:
+    """De tekst uit een fragment, zonder tags en zonder lege regels."""
+    zonder_tags = re.sub(r"<[^>]+>", " ", html)
+    return " ".join(zonder_tags.split())[:400]
+
+
 def delete_project_via_api(
     base_url: str,
     project_name: str,
@@ -327,57 +439,39 @@ def delete_project_via_api(
     verify_ssl: bool = True,
     timeout: float = 180.0,
 ) -> None:
-    """Safety-net deletion via the v1 API (DELETE /api/projects/{name}).
+    """Safety-net deletion of a test project, through the portal as the sandbox admin.
 
-    Best-effort: swallows connection errors so it never breaks fixture teardown.
-    Waits for the async delete task to finish when a task id is returned.
+    Not through ``DELETE /api/projects/{name}`` with the project's token any more: since
+    RC-392 the roles of ``project-api`` do not open ``project.delete``, so every teardown
+    got a 403 and left its project on the sandbox. ``api_key`` and ``force`` are kept so
+    the callers stay as they are; the portal deletes the way a person would.
 
-    Wat het NIET meer doet is zwijgen: een opruiming die niet lukte wordt gelogd.
-    Na een groene run bleef er een testproject op de sandbox staan zonder dat
-    ergens te zien was dat de teardown was mislukt, en zulke projecten stapelen
-    zich over runs op.
+    Best-effort: a refusal or a task that does not finish is logged, never raised, so it
+    never breaks fixture teardown. The cluster is only force-cleaned when OPI accepted
+    the deletion: tearing a project out from under OPI without that leaves it gone from
+    the cluster and still present in ZAD, a half-state the next run inherits.
     """
-    base = base_url.rstrip("/")
-    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
-    body = {"confirmDeletion": True, "force": force}
-    accepted = False
-    with contextlib.suppress(httpx.HTTPError), httpx.Client(verify=verify_ssl, timeout=30.0) as client:
-        response = client.request(
-            "DELETE",
-            f"{base}/api/projects/{project_name}",
-            json=body,
-            headers=headers,
+    del api_key, force
+    secret_key = os.environ.get("E2E_SECRET_KEY") or os.environ.get("ZAD_SECRET_KEY", "")
+    admin = {"sub": "sandbox-e2e-user", "email": SANDBOX_ADMIN_EMAIL, "name": "Sandbox E2E User"}
+    try:
+        poll_path = start_verwijdering(
+            base_url, project_name, secret_key=secret_key, gebruiker=admin, verify_ssl=verify_ssl
         )
-        accepted = response.is_success
-        if response.status_code == 202:
-            location = response.headers.get("Location")
-            task_id = location.rsplit("/", 1)[-1] if location else None
-            if task_id:
-                try:
-                    _wait_for_task(client, base, task_id, headers, timeout=timeout)
-                except AssertionError as fout:
-                    logger.warning("Delete task %s for '%s' did not succeed: %s", task_id, project_name, fout)
-        elif not accepted:
-            logger.warning(
-                "Delete of '%s' was refused with HTTP %d; als het project nog bestaat blijft het "
-                "op de sandbox staan (401 betekent meestal dat de test het zelf al opruimde)",
-                project_name,
-                response.status_code,
-            )
+    except (RuntimeError, httpx.HTTPError) as refused:
+        logger.warning("Delete of '%s' was not accepted; it stays on the sandbox: %s", project_name, refused)
+        return
+    if poll_path:
+        outcome = wacht_tot_de_taak_klaar_is(
+            base_url, poll_path, secret_key=secret_key, gebruiker=admin, verify_ssl=verify_ssl, timeout=timeout
+        )
+        logger.info("Delete of '%s': %s", project_name, outcome)
 
     # Belt-and-suspenders: the project delete only drops the namespace once the
     # ArgoCD app deletion is confirmed, which frequently times out on a busy
     # sandbox and leaves an empty namespace + dangling app that pile up across
     # runs. Reclaim them directly so test projects never accumulate.
-    #
-    # ONLY when OPI actually accepted the delete. A 401/403/404 means we never had
-    # the authority to remove this project (an empty api_key after a failed setup
-    # fixture is the usual cause), and tearing the ArgoCD app and namespace out
-    # from under it then leaves the WORST state there is: gone from the cluster,
-    # still present in ZAD and in the projects repo. That half-state is not
-    # self-healing and the next run inherits it.
-    if accepted:
-        cluster.force_cleanup_project(project_name)
+    cluster.force_cleanup_project(project_name)
 
 
 def _wait_for_task(
