@@ -518,16 +518,16 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
     )
 
 
-def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_page: Page) -> None:
-    """Vier bestemmingen plus een kop, op elke pagina.
+def test_de_voettekst_heeft_zijn_versieregel_en_een_werkende_link(app_server: str, auth_page: Page) -> None:
+    """De legal bar van nldd-page-footer: de versie links, Beveiliging rechts, op elke pagina.
 
-    De voettekst stond hier als <c-menu>, en dat rendert altijd een <nldd-menu-bar>: een
-    horizontale navigatiebalk met een overloopknop, waar de kop "Platform" niet in kan.
+    De kop "Platform" met Introductie, Over het platform en API Referentie is bewust weg
+    (48e4529df, 844edadcd, 69c54f242): die herhaalde de zijbalk. Introductie staat sindsdien
+    bovenaan de groep Platform in de zijbalk, en dat blijft voor wie ingelogd is de weg
+    ernaartoe, want "/" gaat dan naar het dashboard.
 
-    Er wordt echt geklikt, en niet omdat de links het niet deden - een menu-BAR-item
-    navigeert gewoon - maar omdat dat de enige toets is die ook standhoudt als iemand
-    hier ooit weer een uitklapmenu van maakt. Daar navigeert een item namelijk NIET op
-    zijn href.
+    Er wordt echt geklikt: een item dat er staat maar niet navigeert, ziet er in de HTML
+    precies zo uit.
     """
     auth_page.goto(f"{app_server}/projects")
     auth_page.wait_for_load_state("networkidle")
@@ -535,23 +535,21 @@ def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_
     voet = auth_page.locator("nldd-page-footer")
     assert voet.count() == 1, "er staat geen voettekst op de pagina"
 
-    # Via locators en niet via inner_text(): de tekst van deze links staat in de
-    # schaduwboom van het component, en inner_text() ziet daar niets van. Playwright's
-    # tekstselectors kijken er wel doorheen - precies het verschil dat elders in dit
-    # project al twee keer een meting waardeloos maakte.
-    assert voet.get_by_text("Platform", exact=True).count() >= 1, "de kop 'Platform' boven de links ontbreekt"
-    for bestemming in ("Introductie", "Over het platform", "API Referentie"):
-        assert voet.get_by_text(bestemming, exact=True).count() >= 1, (
-            f"de link '{bestemming}' staat niet in de voettekst"
-        )
-    assert voet.get_by_text("ZAD ").count() >= 1, "de versievermelding staat niet in de voettekst"
+    # Op het attribuut: het item tekent zijn ``text`` in een shadow root.
+    assert voet.locator("nldd-page-footer-legal-bar-item[slot='start'][text^='Versie: ']").count() == 1, (
+        "de versievermelding staat niet in de voettekst"
+    )
+    beveiliging = voet.locator("nldd-page-footer-legal-bar-item[text='Beveiliging']")
+    assert beveiliging.count() == 1, "de link 'Beveiliging' staat niet in de voettekst"
 
-    # En hij werkt: de eerste link brengt je naar /introductie. Die staat sinds de
-    # introductiepagina bovenaan, en juist voor wie ingelogd is is dit de enige weg
-    # ernaartoe - "/" gaat dan naar het dashboard.
-    auth_page.locator("nldd-page-footer a").first.click()
+    zijbalk = auth_page.locator("nldd-split-view-pane[slot='sidebar']")
+    assert zijbalk.locator("nldd-list-item[href='/introductie']").count() == 1, (
+        "de introductie is voor wie ingelogd is niet meer te bereiken vanuit de zijbalk"
+    )
+
+    beveiliging.click()
     auth_page.wait_for_load_state("networkidle")
-    assert auth_page.url.endswith("/introductie"), f"de eerste footerlink navigeert niet: {auth_page.url}"
+    assert auth_page.url.endswith("/security"), f"de footerlink navigeert niet: {auth_page.url}"
 
 
 def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: str, auth_page: Page) -> None:
