@@ -15,6 +15,7 @@ het bijbehorende `*.LICENSE.txt` mee als het bestand ernaar verwijst.
 | `swagger-ui/swagger-ui-bundle.js` | swagger-ui-dist | 5.33.3 | Apache-2.0 | `https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.3/swagger-ui-bundle.js` |
 | `swagger-ui/swagger-ui.css` | swagger-ui-dist | 5.33.3 | Apache-2.0 | `https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.3/swagger-ui.css` |
 | `redoc/redoc.standalone.js` | redoc | 2.5.4 | MIT | `https://cdn.jsdelivr.net/npm/redoc@2.5.4/bundles/redoc.standalone.js` |
+| `js/zad-map.js` | zelf gebouwd uit `operations-manager/zad-map` | svelte 5.57, @xyflow/svelte 1.7, elkjs 0.12, roughjs 4.6 | MIT | `task zad-map:build` |
 
 De versies zijn de versies die de verwijzingen hiervoor oplosten: `npm/chart.js` en
 `npm/chartjs-plugin-annotation` zonder pin, `mermaid@10`, en de defaults van FastAPI

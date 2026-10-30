@@ -77,6 +77,12 @@
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-bundle.js') }}"></script>
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-kv.js') }}"></script>
     <script nonce="{{ csp_nonce }}" src="{{ static_url('js/kv_editor_hook.js') }}"></script>
+    {# Het kaartelement, alleen op het tabblad dat het tekent: het is de grootste bundel
+       die deze pagina kent, en de andere tabbladen doen er niets mee. #}
+    {% if active_tab == 'kaart' %}
+        <link rel="stylesheet" href="{{ static_url('css/zad-map.css') }}">
+        <script nonce="{{ csp_nonce }}" src="{{ static_url('js/zad-map.js') }}"></script>
+    {% endif %}
 {% endblock %}
 
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
@@ -1051,6 +1057,13 @@
         <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load" hx-swap="innerHTML">
             <c-paragraph>Taken worden opgehaald...</c-paragraph>
         </div>
+
+    {% elif active_tab == 'kaart' %}
+    {# De kaart van dit project. De pagina draagt alleen het element; de plaat komt van
+       /projects/<naam>/kaart.json, achter dezelfde poort als dit tabblad. #}
+    <div class="zad-map-frame">
+        <zad-map src="/projects/{{ project.name }}/kaart.json"></zad-map>
+    </div>
 
     {% elif active_tab == 'audit' %}
     {# Wie deed wat op dit project, en of het mocht. Alleen voor audit.read, dus staat dit

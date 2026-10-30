@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
@@ -44,6 +44,8 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
+from opi.services.zad_map import platform_graph, project_graph
+from opi.services.zad_map.platform import current_cluster_folder
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -1354,10 +1356,27 @@ async def dashboard(request: Request):
 @web_router.get("/projects/{project_name}/metrics", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/backups", response_class=HTMLResponse)
 @web_router.get("/projects/{project_name}/taken", response_class=HTMLResponse)
+@web_router.get("/projects/{project_name}/kaart", response_class=HTMLResponse)
 @requires_sso
 async def project_details(request: Request, project_name: str):
     """De projectpagina zonder deployment in het pad; zie :func:`render_project_page`."""
     return await render_project_page(request, project_name, "")
+
+
+@web_router.get("/projects/{project_name}/kaart.json")
+@action(Action.PROJECT_READ)
+@requires_sso
+async def project_map_json(request: Request, project_name: str) -> JSONResponse:
+    """De graaf achter het tabblad Kaart.
+
+    Een eigen route met een eigen action, zoals het metingenfragment: het tabblad laadt
+    zijn plaat zelf. Leest alleen ``ProjectSummary.data``, nooit de ontsleutelde vorm.
+    """
+    try:
+        graph = project_graph(project_name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found") from None
+    return JSONResponse(graph.as_json())
 
 
 @web_router.get("/projects/{project_name}/audit", response_class=HTMLResponse)
@@ -1534,10 +1553,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         project_private_key = await unwrap_project_key(project_data["config"]["age-private-key"])
 
+        # Kaart laadt via eigen route: geen geheimen in de context, geen Prometheus, ArgoCD of Kopia.
+        map_tab = tab_from_path(request.url.path) == "kaart"
+
         # Geheimen gaan alleen naar de context voor wie ze mag lezen (BIO2 5.15, 8.03).
         # Uit het register en niet uit een rolnaam: wat de matrixpagina onder
         # ``project-key.read`` toont is dan ook wat deze pagina doet.
-        mag_geheimen_zien = may(request, action=Action.PROJECT_KEY_READ, project_name=project_name)
+        mag_geheimen_zien = not map_tab and may(request, action=Action.PROJECT_KEY_READ, project_name=project_name)
 
         # De projectsleutel is er alleen nog in een bestand waarvan de migratie naar
         # schemaversie 2.12 hem niet open kreeg. Zonder deze ``if`` gaf elke projectpagina
@@ -1694,25 +1716,27 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         # Check Prometheus availability (metrics are lazy-loaded via HTMX)
         prometheus_available = False
-        try:
-            from opi.connectors.prometheus import get_metrics_connector
+        if not map_tab:
+            try:
+                from opi.connectors.prometheus import get_metrics_connector
 
-            prom = await get_metrics_connector()
-            prometheus_available = prom.is_connected
-        except Exception as e:
-            logger.debug(f"Prometheus not available: {e}")
+                prom = await get_metrics_connector()
+                prometheus_available = prom.is_connected
+            except Exception as e:
+                logger.debug(f"Prometheus not available: {e}")
 
         # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
         # does not block the page render; only the cheap availability check stays here.
         # Fail fast: op het standaardbudget wacht deze toets 30 seconden met de pagina
         # erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
         argocd_available = False
-        try:
-            from opi.connectors.argo import create_argo_connector
+        if not map_tab:
+            try:
+                from opi.connectors.argo import create_argo_connector
 
-            argocd_available = await create_argo_connector(connect_retry_seconds=0).ensure_authenticated()
-        except Exception as argo_error:
-            logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
+                argocd_available = await create_argo_connector(connect_retry_seconds=0).ensure_authenticated()
+            except Exception as argo_error:
+                logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
         # Backup snapshots are NOT fetched here: listing them opens a Kopia repository
         # over S3, which measured 2.1s to connect plus 0.4s to list on this page --
@@ -1733,12 +1757,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             if notices:
                 approval_notices[deployment.get("name", "")] = notices
 
-        try:
-            BackupManager()
-            backups_available = True
-        except Exception as backup_init_error:
-            logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
-            backups_available = False
+        backups_available = False
+        if not map_tab:
+            try:
+                BackupManager()
+                backups_available = True
+            except Exception as backup_init_error:
+                logger.warning(f"Failed to initialize backup manager: {backup_init_error}")
 
         # Generate ingress URLs for components with publish-on-web service
         from opi.handlers.project_file_handler import ProjectFileHandler
@@ -2707,6 +2732,36 @@ def _projects_for_user(user: dict) -> list[dict]:
 
     user_projects.sort(key=lambda p: p["display_name"] or p["name"])
     return user_projects
+
+
+@web_router.get("/platform", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
+@requires_sso
+async def platform_map(request: Request) -> Response:
+    """De kaart van het platform: de Operations Manager en de systemen eromheen.
+
+    Voor iedereen die ingelogd is en toegang heeft tot ZAD, niet publiek: de echte poort
+    is de middleware (``is_email_allowed``), zoals bij /projects.
+    """
+    user = get_current_user(request)
+    return render(
+        request,
+        template="bg/platform.html.j2",
+        context={
+            "request": request,
+            "menu_items": get_menu_items(user),
+            "navigation": get_navigation(user, current_path="/platform"),
+            "cluster": current_cluster_folder(),
+        },
+    )
+
+
+@web_router.get("/platform.json")
+@action(Action.PORTAL_READ)
+@requires_sso
+async def platform_map_json(request: Request) -> JSONResponse:
+    """De graaf achter /platform, uit het ingecheckte platform.json."""
+    return JSONResponse(platform_graph().as_json())
 
 
 @web_router.get("/projects", response_class=HTMLResponse)

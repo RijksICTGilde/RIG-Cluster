@@ -39,6 +39,7 @@ PAGINAS = [
     "/admin/approvals",
     "/admin/usage",
     "/forms/wizard/start",
+    "/platform",
     *(project_tab_url(PROJECT, tab) for tab in PROJECT_TABS),
 ]
 
@@ -63,6 +64,9 @@ BASELINE: dict[str, tuple[int, int]] = {
     "/admin/approvals": (3, 13),
     "/admin/usage": (3, 11),
     "/forms/wizard/start": (3, 11),
+    # De platformkaart en het tabblad Kaart (RC-403): het element draait in een shadow DOM
+    # en brengt geen inline handler mee, dus ze zitten op de gedeelde schil.
+    "/platform": (3, 11),
     "/projects/test-project-detail/details": (3, 29),
     "/projects/test-project-detail/team": (3, 27),
     "/projects/test-project-detail/componenten": (3, 33),
@@ -73,6 +77,7 @@ BASELINE: dict[str, tuple[int, int]] = {
     "/projects/test-project-detail/backups": (3, 29),
     "/projects/test-project-detail/taken": (3, 26),
     "/projects/test-project-detail/audit": (3, 26),
+    "/projects/test-project-detail/kaart": (3, 26),
 }
 
 #: Inline event-handlers in de DOM. Die staan NIET in de schendingen hierboven: een

@@ -41,6 +41,20 @@ services:
   # postgresql-database en niet postgresql: dat laatste is geen ServiceType, en de
   # detailpagina viel er met een 500 op om (ValueError uit de enum).
   - postgresql-database
+  # Een uitgaande koppeling naar het ANDERE testproject. Hij staat hier zodat de kaart
+  # van test-project-detail een INKOMENDE koppeling te tekenen heeft: die komt alleen uit
+  # het bestand van de zender, en zonder tweede project is er niets te meten.
+  - name: cross-domain-access
+    config:
+      outbound:
+        - name: naar-detail
+          from:
+            component: backend
+          to:
+            project: test-project-detail
+            deployment: default
+            component: web-app
+            port: 8080
 
 components:
   - name: backend

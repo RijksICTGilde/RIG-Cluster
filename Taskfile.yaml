@@ -2407,6 +2407,17 @@ tasks:
       - docker compose -f docker-compose.dev.yaml exec postgres psql -U opi -d opi
     silent: false
 
+  zad-map:build:
+    desc: "Bouw het kaartelement naar static/js/zad-map.js (met de hand, zoals codemirror-bundle.js)"
+    summary: |
+      Het resultaat staat in de repo: er is geen bouwstap in CI of in de Docker-build, en
+      de CSP van OPI laat geen externe host toe. Na het bouwen hoort het gewijzigde
+      static/js/zad-map.js mee in de commit.
+    dir: operations-manager/zad-map
+    cmds:
+      - npm install
+      - npm run build
+
   # ========================================
   # Testing Tasks
   # ========================================
