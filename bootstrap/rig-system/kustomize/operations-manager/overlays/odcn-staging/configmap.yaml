@@ -82,7 +82,8 @@ data:
     # ALLOWED_EMAILS en ADMIN_EMAILS (persoonsgegevens) staan in de private repo
     # zad-staging-secrets, in operations-manager/operations-manager-env-secrets.yaml;
     # dat secret komt mee via envFrom in de base-Deployment.
-    ENABLE_TRACEMALLOC=false    ARGOCD_MANAGER=rig-staging-operations
+    ENABLE_TRACEMALLOC=false
+    ARGOCD_MANAGER=rig-staging-operations
 
     # Mimir van ODCN, net als productie: de eigen Prometheus in de tenant ziet geen
     # cAdvisor of kube-state-metrics. De rig-staging-namespaces staan in mimir-staging, niet

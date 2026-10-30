@@ -44,7 +44,7 @@ De Taskfile kiest dit pad met `SECRETS_DIR` in `.env-taskfile-odcn-staging`. Zon
 
 ### Wat er moet zijn voordat je begint
 
-Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) promoveren we zelf met het label `owner.projectcapsule.dev/promote: "true"`. ODC-Noord biedt dat als self-service voor een serviceaccount binnen één tenant; alleen eigenaarschap over al je tenants tegelijk gaat via een TopDesk-aanvraag. De labels staan in de staging-overlays. Gemeten op 19 oktober 2026: de gepromoveerde `namespace-manager` komt in `status.owners` met `capsule-namespace-provisioner`, `capsule-namespace-deleter` en `admin`, en mag `rig-staging-*` aanmaken maar geen `rig-prd-*`. Alleen een eigenaar mag het label zetten, dus de bootstrap past het met jouw account toe.
+Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) moeten via ODC-Noord TenantOwner worden, zoals in productie. Het aanvraagbestand is `docs/odcn-aanvraag-staging-tenantowners.yaml`. Promotie met het label `owner.projectcapsule.dev/promote` (staat in de overlays) maakt ze wel eigenaar binnen de tenant, maar geen Capsule-gebruiker: via capsule-proxy krijgen ze Forbidden op clusterbrede lijsten (gemeten 19 oktober 2026). Dat breekt external-dns (ingresses), de OPI (namespaces) en de discovery van Prometheus. ArgoCD zelf werkt wel met alleen promotie.
 
 Zelf:
 
@@ -74,7 +74,7 @@ Zonder vragen: zet `STAGING_CONFIRM=staging`, `STAGING_ARGOCD_TOKEN`, `STAGING_O
 
 Wat hij bewust niet doet: het OPI-image bouwen (`task publish-operations-manager`, dan `task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>`), de ArgoCD-operator installeren (die is op ODCN van het platform; `prepare-argocd-operator` weigert daar), en de client `zad-staging` in de prod-Keycloak aanmaken (dat doe je vooraf met de hand).
 
-DNS doet external-dns, net als op productie: hij maakt de records aan zodra er een ingress is, met het TransIP-account van productie maar alleen voor `staging.rijksapp.dev` en met owner-id `zad-staging`. De OPI krijgt op staging geen TransIP: zijn CAA- en no-mail-records in `rijks.app`, `rijksapp.nl` en `rijksapp.dev` beheert productie al, en een tweede schrijver daarop hoort niet in de pentestomgeving.
+DNS doet external-dns, net als op productie: hij maakt de records aan zodra er een ingress is, met het TransIP-account van productie maar alleen voor `staging.rijksapp.dev` en met owner-id `zad-staging`. De OPI krijgt hetzelfde TransIP-account, net als productie: zijn reconcilers schrijven dezelfde CAA- en no-mail-records als productie, en zo kun je met `task dns:set` en `task dns:delete` records zetten vanuit de OPI-pod. De sleutel werkt alleen vanaf de IP's van de cluster, dus vanaf je laptop krijg je 401. Tot de fix van Capsule er is (zie het logboek) staat er een wildcard `*.staging.rijksapp.dev`; die gaat weg zodra external-dns zijn eigen records maakt.
 
 Ruim na afloop de `secrets-overview-*.yaml` in de root van RIG-Cluster op: daar staan de gegenereerde wachtwoorden in platte tekst. Ze staan bewust daar (gitignored) en niet in de secrets-repo. Het env-bestand `operations-manager/python/.env.odcn-staging.secrets` (gitignored, alleen voor jou leesbaar) bevat de PAT's en is de bron voor het env-secret.
 
