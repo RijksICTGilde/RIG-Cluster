@@ -16,6 +16,7 @@ Usage:
 
 import logging
 import os
+import secrets
 from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from opi.services.otp_herlogin_service import Herlogin
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
 from tests.inmemory_session_store import InMemorySessionStore
@@ -295,6 +297,27 @@ class InMemoryHerloginService:
 
     def __init__(self) -> None:
         self.vers: set[str] = set()
+        self._lopend: dict[str, tuple[str, float, Herlogin]] = {}
+
+    async def begin(self, email: str, login_at: float) -> Herlogin:
+        herlogin = Herlogin(
+            state=secrets.token_urlsafe(32),
+            nonce=secrets.token_urlsafe(24),
+            code_verifier=secrets.token_urlsafe(48),
+        )
+        self._lopend[herlogin.state] = (email, login_at, herlogin)
+        return herlogin
+
+    async def take(self, state: str, email: str, login_at: float) -> Herlogin | None:
+        lopend = self._lopend.get(state)
+        if lopend is None or lopend[:2] != (email, login_at):
+            return None
+        return lopend[2]
+
+    async def mark_verified(self, state: str) -> None:
+        lopend = self._lopend.pop(state, None)
+        if lopend is not None:
+            self.vers.add(lopend[0])
 
     async def is_fresh(self, email: str, login_at: float | None) -> bool:
         return email in self.vers
