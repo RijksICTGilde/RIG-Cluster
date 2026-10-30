@@ -7,7 +7,7 @@
   display: block;
   height: 100%;
   color-scheme: light;
-  --paper: var(--semantics-surfaces-tinted-background-color, #f3f5f6);
+  --paper: var(--semantics-surfaces-base-background-color, #ffffff);
   --paper-2: var(--primitives-color-neutral-50, #ecedee);
   --card: var(--semantics-surfaces-base-background-color, #ffffff);
   --ink: var(--semantics-content-color, #1b2430);
