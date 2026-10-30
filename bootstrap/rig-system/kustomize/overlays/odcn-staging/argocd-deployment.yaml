@@ -72,6 +72,69 @@ spec:
       enabled: false
     route:
       enabled: false
+  # De standaarduitsluitingen van de operator (overgenomen uit argocd-cm, want dit veld
+  # vervangt ze) plus Calico. De application-controller van staging mag de Calico-
+  # policies niet lijsten ("operation on Calico tiered policy is forbidden", gemeten
+  # 19 oktober 2026); die van productie wel, vermoedelijk met een clusterbreed recht van
+  # ODC-Noord. ArgoCD beheert geen Calico-objecten: OPI maakt networking.k8s.io-netpols.
+  resourceExclusions: |
+    - apiGroups:
+      - ""
+      - discovery.k8s.io
+      kinds:
+      - Endpoints
+      - EndpointSlice
+    - apiGroups:
+      - apiregistration.k8s.io
+      kinds:
+      - APIService
+    - apiGroups:
+      - coordination.k8s.io
+      kinds:
+      - Lease
+    - apiGroups:
+      - authentication.k8s.io
+      - authorization.k8s.io
+      kinds:
+      - SelfSubjectReview
+      - TokenReview
+      - LocalSubjectAccessReview
+      - SelfSubjectAccessReview
+      - SelfSubjectRulesReview
+      - SubjectAccessReview
+    - apiGroups:
+      - certificates.k8s.io
+      kinds:
+      - CertificateSigningRequest
+    - apiGroups:
+      - cert-manager.io
+      kinds:
+      - CertificateRequest
+    - apiGroups:
+      - cilium.io
+      kinds:
+      - CiliumIdentity
+      - CiliumEndpoint
+      - CiliumEndpointSlice
+    - apiGroups:
+      - kyverno.io
+      - reports.kyverno.io
+      - wgpolicyk8s.io
+      kinds:
+      - PolicyReport
+      - ClusterPolicyReport
+      - EphemeralReport
+      - ClusterEphemeralReport
+      - AdmissionReport
+      - ClusterAdmissionReport
+      - BackgroundScanReport
+      - ClusterBackgroundScanReport
+      - UpdateRequest
+    - apiGroups:
+      - projectcalico.org
+      - crd.projectcalico.org
+      kinds:
+      - "*"
   resourceTrackingMethod: annotation
   monitoring:
     enabled: false

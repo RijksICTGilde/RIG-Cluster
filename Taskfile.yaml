@@ -646,6 +646,7 @@ tasks:
         # gaat er net als daar pas na het aanmaken op (Kyverno); op productie staat het al.
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           kubectl label namespace {{.RIG_NAMESPACE}} argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
+          task wait-namespace-rights NAMESPACE={{.RIG_NAMESPACE}}
           if kubectl get secret sops-age-key -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
             echo "secret sops-age-key staat al in {{.RIG_NAMESPACE}}, ongemoeid gelaten"
           else
@@ -735,7 +736,14 @@ tasks:
         fi
 
         # Build (SOPS-decrypted) and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        MANIFEST="$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone)"
+        # Eerst de namespace en dan de rest: in een tenant komen de rechten erin pas een
+        # paar seconden na het aanmaken (zie wait-namespace-rights).
+        echo "$MANIFEST" | yq 'select(.kind == "Namespace")' | kubectl apply $KUBECTL_FLAGS -f -
+        if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          task wait-namespace-rights NAMESPACE="$(echo "$MANIFEST" | yq 'select(.kind == "Namespace") | .metadata.name')"
+        fi
+        echo "$MANIFEST" | kubectl apply $KUBECTL_FLAGS -f -
 
         # Met SECRETS_DIR staat het root-secret in de secrets-repo (task
         # generate-backup-destination-secret), na de overlay omdat die de namespace aanmaakt.
@@ -745,6 +753,78 @@ tasks:
 
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
+
+  dns:set:
+    desc: "Zet een DNS-record bij TransIP vanuit de OPI-pod van het geselecteerde cluster (achter de IP-whitelist, zonder sleutels op je laptop)"
+    silent: true
+    requires:
+      vars: [ZONE, NAME, TYPE, CONTENT]
+    cmds:
+      - |
+        # De scripts zitten niet in de image (.dockerignore), dus ze gaan naar /tmp in de
+        # pod, zoals in docs/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
+        # uit de omgeving van die pod.
+        POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
+        kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_set_dns.py "$POD:/tmp/transip_set_dns.py"
+        kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_set_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" --content "{{.CONTENT}}" --expire {{default "60" .EXPIRE}} {{.CLI_ARGS}}
+
+  dns:delete:
+    desc: "Verwijder een DNS-record bij TransIP vanuit de OPI-pod van het geselecteerde cluster (eerst met -- --dry-run kijken)"
+    silent: true
+    requires:
+      vars: [ZONE, NAME, TYPE]
+    cmds:
+      - |
+        POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
+        kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_delete_dns.py "$POD:/tmp/transip_delete_dns.py"
+        kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_delete_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" {{.CLI_ARGS}}
+
+  secrets-overview:
+    desc: "Schrijf de geheimen van het geselecteerde cluster leesbaar naar secrets-overview-<cluster>.yaml (gitignored); ruim het daarna op"
+    silent: true
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      OUT: '{{default (printf "secrets-overview-%s.yaml" .CLUSTER_TYPE) .OUT}}'
+    preconditions:
+      - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
+    cmds:
+      - |
+        # Uit de versleutelde bestanden zelf, dus ook als het overzicht van de generatie al
+        # weg is. Met SECRETS_DIR uit de secrets-repo, anders uit de overlays.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          FILES="$(find "{{.SECRETS_DIR}}" -path '*/.git' -prune -o \( -name '*.sops.yaml' -o -name 'operations-manager-env-secrets.yaml' \) -print | sort)"
+        else
+          FILES="$(ls infrastructure/bootstrap/infrastructure/secrets/config/overlays/{{.INFRASTRUCTURE_CLUSTER_FOLDER}}/*.sops.yaml bootstrap/rig-system/kustomize/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}/*.sops.yaml 2>/dev/null)"
+        fi
+        : > "{{.OUT}}" && chmod 600 "{{.OUT}}"
+        echo "# Geheimen van {{.CLUSTER_TYPE}}, $(date). Platte tekst: weggooien na gebruik." >> "{{.OUT}}"
+        export SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})"
+        for f in $FILES; do
+          echo "" >> "{{.OUT}}"
+          echo "# === $f ===" >> "{{.OUT}}"
+          sops --decrypt "$f" | yq '{"name": .metadata.name, "namespace": .metadata.namespace, "values": ((.stringData // {}) * ((.data // {}) | map_values(@base64d)))}' >> "{{.OUT}}"
+        done
+        echo "✅ {{.OUT}} geschreven ($(echo "$FILES" | wc -l | tr -d ' ') bestanden). Gooi het weg zodra je het niet meer nodig hebt."
+
+  wait-namespace-rights:
+    desc: "Wacht tot je in een (nieuwe) namespace secrets mag aanmaken, maximaal 60 s"
+    silent: true
+    requires:
+      vars: [NAMESPACE]
+    cmds:
+      - |
+        # Capsule zet de rolebindings van de tenant-eigenaren een paar seconden NA het
+        # aanmaken van een namespace (gemeten 19 oktober 2026: 2 s). Wie meteen iets in
+        # die namespace zet, krijgt Forbidden.
+        for i in $(seq 1 30); do
+          [ "$(kubectl auth can-i create secrets -n {{.NAMESPACE}} 2>/dev/null)" = "yes" ] && exit 0
+          sleep 2
+        done
+        echo "❌ na 60 s nog geen rechten in {{.NAMESPACE}}"
+        exit 1
 
   log-watch:
     desc: "One OPI prod-log triage cycle: Loki scan -> ignore-list -> Claude triage -> ntfy. Config in scripts/log_watch/config.py."
@@ -1179,7 +1259,7 @@ tasks:
     silent: true
 
   publish-operations-manager:
-    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest)"
+    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest), and pin OVERLAY (default odcn-production)"
     deps: [requirements-check, generate-env-secrets-for-operations-manager]
     vars:
       IMAGE_VERSION:
@@ -1225,9 +1305,12 @@ tasks:
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
           SKIP_VALIDATION: "true"
+      # Pint alleen de overlay die je noemt: een image bouwen voor staging mag de pin van
+      # productie niet meeschuiven.
       - task: pin-operations-manager-image
         vars:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          OVERLAY: '{{.OVERLAY | default "odcn-production"}}'
 
   _pin-image-digest:
     internal: true
@@ -1718,8 +1801,12 @@ tasks:
         # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
         # dat roteert Keycloak, MinIO en PostgreSQL mee.
 
-        # Initialize overview file (overwrite if it exists from a previous incomplete run)
-        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        # Het overzicht gaat eerst naar een tijdelijk bestand en komt alleen in het echte
+        # overzicht als er een nieuw geheim is, en dan erachteraan. Vroeger begon elke run
+        # het overzicht leeg, dus een run zonder nieuwe geheimen wiste de wachtwoorden van
+        # de eerste.
+        OVERVIEW_TARGET="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        OVERVIEW_FILE="$(mktemp)"
 
         echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
         echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
@@ -1894,9 +1981,16 @@ tasks:
           echo "  ✅ Created kustomization.yaml"
         fi
 
+        if grep -q '^# === ' "$OVERVIEW_FILE"; then
+          cat "$OVERVIEW_FILE" >> "$OVERVIEW_TARGET"
+          chmod 600 "$OVERVIEW_TARGET"
+        fi
+        rm -f "$OVERVIEW_FILE"
+        OVERVIEW_FILE="$OVERVIEW_TARGET"
+
         echo ""
         echo "✅ {{.MODE | title}} secrets generated successfully!"
-        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
+        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore; alleen nieuwe geheimen komen erbij)"
         echo "🗂️  Encrypted secrets: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/"
         if [ "{{.MODE}}" = "infrastructure" ]; then
           echo "📝 Configuration files: kustomization.yaml, decrypt-sops.yaml"
@@ -4558,9 +4652,12 @@ tasks:
       - |
         cd "{{.SECRETS_DIR}}"
         if [ -z "$(git status --porcelain)" ]; then echo "secrets-repo: niets nieuws"; exit 0; fi
+        echo ""
+        echo "Secrets-repo: $(pwd)"
+        echo "Remote:       $(git remote get-url origin)"
         git status --short
         if [ "${STAGING_CONFIRM:-}" != "staging" ]; then
-          printf "Deze bestanden committen en naar GitHub pushen? [j/N] "
+          printf "Deze bestanden committen en naar $(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##') pushen? [j/N] "
           read -r ANTWOORD
           [ "$ANTWOORD" = "j" ] || { echo "Afgebroken: zonder push kan ArgoCD de geheimen niet lezen."; exit 1; }
         fi
@@ -4600,11 +4697,18 @@ tasks:
         EINDE=$(( $(date +%s) + {{.TIMEOUT}} ))
         while :; do
           STAAT="$(kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io -o custom-columns='NAAM:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' --no-headers 2>/dev/null)"
+          # user-applications vindt zijn map pas als de OPI het eerste project aanmaakt;
+          # tot dan is "app path does not exist" geen fout maar een lege omgeving.
+          if kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io user-applications -o jsonpath='{.status.conditions[*].message}' 2>/dev/null | grep -q 'app path does not exist'; then
+            STAAT="$(echo "$STAAT" | grep -v '^user-applications ')"
+            GEEN_PROJECTEN=1
+          fi
           if [ -n "$STAAT" ] && ! echo "$STAAT" | grep -vq 'Synced *Healthy'; then break; fi
           if [ "$(date +%s)" -gt "$EINDE" ]; then echo "❌ na {{.TIMEOUT}}s nog niet klaar:"; echo "$STAAT"; exit 1; fi
           sleep 15
         done
         echo "$STAAT"
+        if [ -n "${GEEN_PROJECTEN:-}" ]; then echo "user-applications: nog geen projecten (de OPI maakt de map bij het eerste project)"; fi
         echo ""
         echo "Tenant-eigenaren van rig-staging:"
         kubectl get tenants.capsule.clastix.io rig-staging -o jsonpath='{range .status.owners[*]}{.kind}{"  "}{.name}{"\n"}{end}'
