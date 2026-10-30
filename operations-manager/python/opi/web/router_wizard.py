@@ -438,6 +438,11 @@ def flow_uit_pad(flow_id: str, **context: Any) -> FormFlow:
         raise HTTPException(status_code=404, detail=f"Onbekende wizard: {flow_id}") from fout
 
 
+def creator_as_member(email: str) -> dict[str, Any]:
+    """The signing-in user as the first member of a new project: admin, so someone can manage it."""
+    return {"email": email, "roles": ["admin"]}
+
+
 @wizard_router.get("/{flow_id}", response_class=HTMLResponse)
 @action(Action.WIZARD_USE)
 @requires_sso
@@ -477,7 +482,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         # three required fields whose select was empty, so the step could not be saved at all.
         state.base_data.update(build_cross_domain_context(user_email))
         if user_email:
-            state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
+            state.store_step_data("team", {"users": [creator_as_member(user_email)]})
 
         # Seed the components step with one default component.
         # The services checkbox is left unset (None) so the renderer
