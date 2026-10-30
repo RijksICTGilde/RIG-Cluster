@@ -28,6 +28,14 @@ build:
       - src: 'operations-manager/python/opi/version.json'
         dest: /app/opi
         strip: 'operations-manager/python/opi/'
+      # Service help texts and service templates live next to their Python, not under
+      # templates_lotc, and are read per request: syncing them is enough, no restart.
+      - src: 'operations-manager/python/opi/services/**/*.md'
+        dest: /app/opi/services
+        strip: 'operations-manager/python/opi/services/'
+      - src: 'operations-manager/python/opi/services/**/*.j2'
+        dest: /app/opi/services
+        strip: 'operations-manager/python/opi/services/'
       - src: 'operations-manager/python/opi/templates_lotc/**/*'
         dest: /app/opi/templates_lotc
         strip: 'operations-manager/python/opi/templates_lotc/'
