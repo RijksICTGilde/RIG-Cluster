@@ -54,7 +54,8 @@ CONTEXT: dict[str, Any] = {
 }
 
 #: De meting per lijstregel: staat de tekstcel rechts van de pictogramcel, op dezelfde
-#: hoogte, en levert het pictogram ook echt beeld op.
+#: hoogte, en levert het pictogram ook echt beeld op. Een lopende taak heeft sinds
+#: 15435b98c geen icoon maar een draaiende nldd-progress-circle in de cel.
 METING = """(fragment) => {
     const bak = document.createElement('div');
     bak.id = 'meetbak';
@@ -70,12 +71,15 @@ METING = """(fragment) => {
                 const p = pictogram.getBoundingClientRect();
                 const t = tekst.getBoundingClientRect();
                 const icoon = pictogram.shadowRoot && pictogram.shadowRoot.querySelector('nldd-icon');
+                const cirkel = pictogram.querySelector('nldd-progress-circle');
+                const getekend = cirkel || icoon;
                 uit.push({
                     tekst: tekst.textContent.trim(),
                     naastElkaar: t.left >= p.right - 1,
                     zelfdeHoogte: Math.abs(t.top - p.top) < 12,
                     tussenruimte: Math.round(t.left - p.right),
-                    pictogramRendert: !!(icoon && icoon.shadowRoot && icoon.shadowRoot.querySelector('svg')),
+                    pictogramRendert: !!(getekend && getekend.shadowRoot && getekend.shadowRoot.querySelector('svg')),
+                    draait: !!cirkel,
                     inspringing: Math.round(p.left - regel.getBoundingClientRect().left),
                 });
             }
@@ -102,6 +106,10 @@ def test_pictogram_staat_naast_de_taaknaam(app_server: str, auth_page: Page, sja
         assert regel["zelfdeHoogte"], f"{sjabloon}: pictogram en '{regel['tekst']}' liggen niet op een lijn"
         assert regel["tussenruimte"] > 0, f"{sjabloon}: '{regel['tekst']}' plakt tegen het pictogram"
         assert regel["pictogramRendert"], f"{sjabloon}: leeg pictogram bij '{regel['tekst']}'"
+
+    assert [regel["tekst"] for regel in regels if regel["draait"]] == ["YAML wegschrijven"], (
+        f"{sjabloon}: alleen de lopende taak hoort een draaiende cirkel te hebben"
+    )
 
     inspringend = [regel for regel in regels if regel["inspringing"] > 0]
     assert [regel["tekst"] for regel in inspringend] == ["YAML wegschrijven"], (
