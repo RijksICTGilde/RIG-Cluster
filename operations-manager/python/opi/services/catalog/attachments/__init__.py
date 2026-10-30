@@ -60,7 +60,7 @@ class AttachmentsService(Service):
         description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
         help_template="attachments/help.md",
         icon="paperclip",
-        color="grijs-600",
+        color="paars",
         variables=[],
     )
     # Component-level config is a list of couplings; the project-level entry holds the

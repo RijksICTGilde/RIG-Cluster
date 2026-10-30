@@ -39,7 +39,7 @@ class AliasesService(Service):
         ),
         help_template="aliases/help.md",
         icon="instellingen",
-        color="grijs-600",
+        color="donkergroen",
         variables=[],
         kind=ServiceKind.SYSTEM,
     )

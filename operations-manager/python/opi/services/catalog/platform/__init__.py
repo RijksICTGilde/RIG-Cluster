@@ -16,7 +16,7 @@ class PlatformService(Service):
         description="Automatisch beschikbare platform variabelen",
         help_template="platform/help.md",
         icon="info",
-        color="grijs-600",
+        color="lintblauw",
         secret_class="PlatformSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in PlatformVariables],
         # Always on, never chosen by a project -> a system service. kind=SYSTEM
