@@ -84,8 +84,14 @@ data:
     # dat secret komt mee via envFrom in de base-Deployment.
     ENABLE_TRACEMALLOC=false    ARGOCD_MANAGER=rig-staging-operations
 
-    # Geen GRAFANA_DATASOURCE_UID en geen REGISTRY_*: de Mimir-datasources tonen de
-    # metrics van productie, en de registry-organisatie rig/zad is die van productie.
-    # Zonder REGISTRY_URL staat de image-upload uit.
+    # Mimir van ODCN, net als productie: de eigen Prometheus in de tenant ziet geen
+    # cAdvisor of kube-state-metrics. De rig-staging-namespaces staan in mimir-staging, niet
+    # in mimir-prd (gemeten 30-10-2026). METRICS_BACKEND, GRAFANA_URL en een eigen
+    # GRAFANA_TOKEN staan in het env-secret in zad-staging-secrets.
+    GRAFANA_DATASOURCE_UID=mimir-staging
+    GRAFANA_BILLING_DATASOURCE_UID=mimir-billing
+
+    # Geen REGISTRY_*: de registry-organisatie rig/zad is die van productie. Zonder
+    # REGISTRY_URL staat de image-upload uit.
 
     SLEEP_MODE_WAKER_IMAGE=rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker:latest
