@@ -172,7 +172,7 @@ does not settle that.
 
 ### CloudNativePG PostgreSQL - 17.11 standard-bookworm (pinned via RC-353)
 
-- **Current**: `ghcr.io/cloudnative-pg/postgresql:17.11-202610190957-standard-bookworm@sha256:0d0e407c...` (pinned October 2026; stood on `17-standard-bookworm` before)
+- **Current**: `ghcr.io/cloudnative-pg/postgresql:17.11-202610260819-standard-bookworm@sha256:fef8075b...` (pinned October 2026; stood on `17-standard-bookworm` before)
 - **Latest**: PostgreSQL 18.x available
 - **Files**: `images/postgresql-with-dictionaries/Dockerfile`
 - **Impact**: none. The pinned tag was digest-identical to what `17-standard-bookworm` resolved to.
