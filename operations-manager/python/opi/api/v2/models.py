@@ -266,7 +266,7 @@ class ProjectListItem(BaseModel):
     roles: list[str] = Field(
         default_factory=list,
         description=(
-            "De rollen van de aanroeper op dit project. Wat elke rol opent staat op /admin/rollen. "
+            "De rollen van de aanroeper op dit project. Wat elke rol opent staat op /rollen. "
             "Een platformbeheerder krijgt ['admin', 'ops'] op elk project"
         ),
         examples=[["admin", "ops"]],

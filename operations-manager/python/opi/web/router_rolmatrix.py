@@ -1,10 +1,11 @@
-"""De rolmatrix (/admin/rollen): wie mag wat, uit het regelregister.
+"""De rolmatrix (/rollen): wie mag wat, uit het regelregister.
 
 De pagina rekent niets uit en houdt geen eigen lijst bij: hij toont wat
 :mod:`opi.core.authz.rules` declareert. Een regel die daar bijkomt staat hier meteen, en
 een rij die hier mist betekent dat de regel ontbreekt, niet dat de pagina achterloopt.
 
-Alleen voor een platformbeheerder: de matrix gaat over het hele platform.
+Voor iedereen die ingelogd is, zoals /platform: wie een rol krijgt of uitdeelt, moet kunnen
+lezen wat die rol opent. De matrix toont regels, geen gegevens van een project.
 """
 
 from __future__ import annotations
@@ -13,21 +14,22 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns, other_rules, sections
-from opi.web.lotc_switch import build_lotc_admin, render
+from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
+from opi.web.navigation_lotc import get_navigation
 
-rolmatrix_router = APIRouter(prefix="/admin/rollen", tags=["rolmatrix"])
+rolmatrix_router = APIRouter(prefix="/rollen", tags=["rolmatrix"])
 
 
 @rolmatrix_router.get("", response_class=HTMLResponse)
-@action(Action.PLATFORM_ROLES)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def rolmatrix(request: Request) -> Response:
     """De matrix, met een kolom per rol en een rij per regel en scope."""
-    user = require_platform_admin(request)
+    user = get_current_user(request)
 
     return render(
         request,
@@ -38,6 +40,6 @@ async def rolmatrix(request: Request) -> Response:
             "kolommen": columns(),
             "secties": sections(),
             "andere_regels": other_rules(),
-            **build_lotc_admin(user=user, current_path="/admin/rollen"),
+            "navigation": get_navigation(user, current_path="/rollen"),
         },
     )

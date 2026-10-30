@@ -206,7 +206,7 @@ DEFAULT_NL_TRANSLATIONS = {
     "user.email": "E-mailadres",
     "user.email.description": "Rijksoverheid e-mailadres",
     "user.roles": "Rollen",
-    "user.roles.description": "Wat dit lid in dit project mag. Zie /admin/rollen",
+    "user.roles.description": "Wat dit lid in dit project mag. Zie /rollen",
     # Service labels
     "service.web": "Publiceren op het web",
     "service.web.description": "Maak de applicatie toegankelijk via het publieke internet",

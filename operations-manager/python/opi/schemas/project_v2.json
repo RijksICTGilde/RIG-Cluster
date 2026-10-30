@@ -163,7 +163,7 @@
           }
         },
         "roles": {
-          "description": "De rollen van dit lid op dit project. Wat elke rol opent staat in opi/core/authz/rules.py en op /admin/rollen.",
+          "description": "De rollen van dit lid op dit project. Wat elke rol opent staat in opi/core/authz/rules.py en op /rollen.",
           "type": "array",
           "minItems": 1,
           "uniqueItems": true,
