@@ -23,7 +23,6 @@ from opi.core.project_environment import (
     environment_label,
     environment_markings,
     highest_environment,
-    highest_environment_label,
     is_production_downgrade,
     log_production_downgrades,
 )
@@ -101,7 +100,6 @@ class TestHoogsteMarkeringVanEenProject:
         )
 
         assert highest_environment(data) is Omgeving.PRODUCTIE
-        assert highest_environment_label(data) == "Productie"
 
     def test_een_deployment_zonder_markering_telt_als_ontwikkeling(self) -> None:
         data = _project(deployments=[{"name": "een"}, {"name": "twee", "environment": "test"}])

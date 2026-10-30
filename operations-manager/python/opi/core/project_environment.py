@@ -83,11 +83,6 @@ def highest_environment(project_data: dict[str, Any]) -> Omgeving:
     )
 
 
-def highest_environment_label(project_data: dict[str, Any]) -> str:
-    """De hoogste markering van een project als label."""
-    return ENVIRONMENT_LABELS[highest_environment(project_data)]
-
-
 def is_production_downgrade(before: Omgeving, after: Omgeving) -> bool:
     """Of deze overgang een markering ``productie`` verlaat.
 

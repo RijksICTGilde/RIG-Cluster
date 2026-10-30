@@ -106,9 +106,6 @@
     <c-stack gap="xs">
         <c-cluster gap="sm" align="center">
             <c-heading type="h1" size="3" label="{{ project.display_name }}" />
-            {# De hoogste OTAP-markering van de deployments, afgeleid en dus niet te
-               bewerken. De markering zelf staat op het paneel van een deployment. #}
-            <c-tag type="default" label="{{ highest_environment_label(project) }}" />
             {% if can('project.edit') %}
                 {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
                 <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"

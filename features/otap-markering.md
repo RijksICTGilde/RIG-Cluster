@@ -102,14 +102,14 @@ projectbeheerder mag het wijzigen.
 ## Tonen
 
 - Het paneel van een deployment zet de markering naast het cluster.
-- De projectpagina zet naast de titel de hoogste markering van de deployments. Die is
-  afgeleid en dus niet te bewerken: de dialoog Projectgegevens bewerken kent het veld niet.
 - De v2-API draagt op een deployment twee velden: `environment` (de markering zoals ze in
   het bestand staat, of `null`) en `effective_environment` (wat er geldt, alleen-lezen).
 
-De labels komen uit `environment_label` en `highest_environment_label`, geregistreerd als
-Jinja-globals, zodat de pagina en het paneel niet elk hun eigen regel over de standaard
-verzinnen.
+De projectpagina toont de hoogste markering niet meer naast de titel: als los woord zei
+die tag niet wat hij betekende, en de markering staat al op elk deployment-paneel.
+
+Het label komt uit `environment_label`, geregistreerd als Jinja-global, zodat het paneel
+geen eigen regel over de standaard verzint.
 
 ## Productie verlaten
 
