@@ -14,10 +14,12 @@ nldd-shell
       └ pane slot=main    → nldd-page#hoofdpagina
                               ├ nldd-top-title-bar (alleen "Menu" op een smal scherm)
                               ├ nldd-simple-section > #hoofdinhoud > {% block content %}
-                              └ nldd-page-footer
+                              └ voettekst: versie, Over het platform, Beveiliging
 ```
 
 De menustructuur komt ongewijzigd uit `opi/web/navigation_lotc.py`, met onze iconen via `to_nldd_icon`. De inhoud van pagina's (tabs, kaarten, formulieren) is niet veranderd.
+
+De voettekst is geen `nldd-page-footer`: die brede band hoort bij een contentsite en staat in een paneel van de app-shell los van de rest. Het is een smalle regel met alleen wat de zijbalk niet al heeft: de versie (met link naar de commit), Over het platform en Beveiliging.
 
 ## Gedrag
 

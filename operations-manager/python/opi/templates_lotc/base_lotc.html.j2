@@ -204,75 +204,30 @@
         </div>
     </nldd-simple-section>
 
-    <nldd-page-footer slot="footer">
-        <nldd-container>
-
-            {# De voettekst stond er niet, en daarmee waren "Over het platform", de
-               architectuurpagina, de API-referentie en de versievermelding op ELKE pagina
-               onbereikbaar - vier bestemmingen die de bestaande schil wel heeft. Dit is
-               dezelfde inhoud als in base.html.j2; de vorm volgt het thema. #}
-            {% set vi = version_info() %}
-            {% set version_label = 'ZAD ' + vi.version
-                + (' @ ' + vi.branch if vi.branch else '')
-                + (' *' if vi.dirty else '')
-                + (' (' + vi.build_date + ')' if vi.build_date else '') %}
-            {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
-            {# HET BLAUWE BLOKJE onderaan de voettekst is NIET van ons, en het is ook geen fout.
-               Het is `.page-footer::after` in de schaduwboom van nldd-page-footer: een
-               decoratief vlakje van 48 bij 24 in rgb(21, 66, 115). Het staat op elke pagina en
-               het is drie keer aangezien voor een kapot element - onvindbaar met elke
-               DOM-controle, want een pseudo-element komt in geen enkele querySelector voor.
-               Wie het weg wil, moet dat bij het thema aankaarten.
-
-               De voettekst heeft drie slots: breadcrumbs, de hoofdinhoud, en een legal-bar
-               onderaan. De links horen in de hoofdinhoud, de versievermelding erbij.
-
-               Hier stonden twee <c-menu>'s. Een c-menu rendert ALTIJD een <nldd-menu-bar>, en
-               dat is een horizontale navigatiebalk: hij meet zichzelf op en hangt er een
-               overloopknop ("Meer opties") aan als hij denkt dat de inhoud niet past. Voor
-               een rijtje voetteksmenu-items is dat het verkeerde gereedschap, en de kop
-               "Platform" die base.html.j2 wel heeft (als label van de primaryMenu) kan er
-               helemaal niet in.
-
-               LET OP, want dit is een val waar deze omzetting al twee keer in trapte: een
-               <nldd-menu-BAR-item> navigeert WEL gewoon op zijn href. Het is de
-               <nldd-menu-item> in een uitklapmenu die dat niet doet (zie bg/projects.html.j2).
-               Die twee lijken op elkaar en gedragen zich anders. #}
-            {# GEEN <c-footer> hier: die zit binnen <nldd-page-footer> en dan render je twee
-               voetteksten in elkaar - zichtbaar als het Rijkswapen dat onderaan twee keer
-               staat. De buitenste is de juiste, want die draagt slot="footer" en de
-               1920-grens. Wat hier stond is de INHOUD van onze voettekst; die blijft. #}
-                <c-stack gap="xs">
-                    <c-heading type="h2" size="6" label="Platform" />
-                    {# De introductie staat hier ook al is hij de landingspagina van ``/``:
-                       wie ingelogd is komt daar nooit meer langs (``/`` gaat dan naar het
-                       dashboard), en dan is de voettekst de enige weg terug. #}
-                    <c-link href="/introductie" label="Introductie" />
-                    <c-link href="/about" label="Over het platform" />
-                    {# /docs en niet /api: dat laatste stond hier en levert een 404. De
-                       bestaande voettekst (base.html.j2) wijst naar /docs, de door FastAPI
-                       geserveerde Swagger-pagina; bij het omzetten is dat /api geworden. Het
-                       staat in base_lotc, dus het was op ELKE pagina fout, en niets sloeg erop
-                       aan: een link controleert niemand tot iemand erop klikt. Sinds RC-65
-                       loopt tests/e2e/test_lotc_links.py elke interne link na. #}
-                    <c-link href="/docs" label="API Referentie" />
-                    <c-link href="/security" label="Beveiliging" />
-                </c-stack>
-
-                    {# De versievermelding staat BIJ de links en niet in de legal-bar-slot.
-                       Die slot leek de aangewezen plek, maar een
-                       <nldd-page-footer-legal-bar-item> toont zijn text= niet: wat er
-                       overbleef was een leeg donkerblauw blokje onder een scheidingslijn,
-                       op elke pagina. Dat blokje was er al voordat ik hieraan begon en het
-                       is precies dit. #}
-                    {% if commit_ref %}
-                        <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}"
-                                label="{{ version_label }}" />
-                    {% else %}
-                        <c-paragraph size="sm">{{ version_label }}</c-paragraph>
-                    {% endif %}
+    {# Geen nldd-page-footer: dat is de brede band van een contentsite en hoort niet in een
+       paneel van de app-shell. Hier staat alleen wat de zijbalk niet al heeft. #}
+    {% set vi = version_info() %}
+    {% set versie_details = [
+        vi.branch,
+        ('gebouwd ' ~ (vi.build_date | dutch_date(include_time=False))) if vi.build_date else '',
+        'met lokale wijzigingen' if vi.dirty else '',
+    ] | select | list %}
+    {% set versie_tekst = 'Versie: ' ~ vi.version ~ (' (' ~ versie_details | join(', ') ~ ')' if versie_details else '') %}
+    {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
+    <div slot="footer">
+        <nldd-divider></nldd-divider>
+        <nldd-simple-section padding-block="16">
+            <nldd-container layout="wrap" gap="24" vertical-alignment="center">
+                {% if commit_ref %}
+                    <nldd-link size="xs" href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}" text="{{ versie_tekst }}"></nldd-link>
+                {% else %}
+                    <span class="zad-versie">{{ versie_tekst }}</span>
+                {% endif %}
+                <nldd-link size="xs" href="/about" text="Over het platform"></nldd-link>
+                <nldd-link size="xs" href="/security" text="Beveiliging"></nldd-link>
             </nldd-container>
-    </nldd-page-footer>
+        </nldd-simple-section>
+    </div>
     </nldd-page>
     </nldd-split-view-pane>
 
