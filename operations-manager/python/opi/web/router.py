@@ -3178,8 +3178,12 @@ async def _require_task_of_project(request: Request, task_service: Any, project_
     return task
 
 
+# PORTAL_READ and not a project right: the project gate in front of the handler answers
+# 404 once the project is gone, and a project deletion ends exactly there, so its dialog
+# polled 404s forever. The handler checks access itself (_require_task_of_project: the
+# task is this project's, and the user started it or may see the project).
 @web_router.get("/projects/{project_name}/task-progress/{task_id}", response_class=HTMLResponse)
-@action(Action.TASK_READ)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def task_progress_fragment(request: Request, project_name: str, task_id: str) -> HTMLResponse:
     """Generic task progress fragment for HTMX polling.

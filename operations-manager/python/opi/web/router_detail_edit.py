@@ -1763,8 +1763,9 @@ async def _handle_backup_restore_submit(
     return HTMLResponse(content=rendered)
 
 
+# PORTAL_READ for the same reason as the task-progress route in opi/web/router.py.
 @detail_edit_router.get("/{project_name}/modal-wizard/progress/{task_id}", response_class=HTMLResponse)
-@action(Action.PROJECT_READ)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def modal_wizard_progress_html(request: Request, project_name: str, task_id: str) -> HTMLResponse:
     """Return server-rendered progress fragment for HTMX polling.
