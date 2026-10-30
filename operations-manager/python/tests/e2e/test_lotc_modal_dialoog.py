@@ -95,8 +95,15 @@ def test_de_velden_staan_erin_met_de_waarden_van_het_project(app_server: str, au
     tweede = auth_page.locator("#modal-wizard-form [name='users[1]/email']").first
     assert tweede.get_attribute("value") == "developer@example.com"
 
-    # De rol hoort er ook te staan; anders bewaart het opslaan straks een lege rol.
-    assert auth_page.locator("#modal-wizard-form [name='users[0]/role']").count() >= 1
+    # De rollen horen er ook te staan; anders bewaart het opslaan straks lege rollen. Sinds
+    # het rechtensysteem (e2bfbe798) heeft een lid een lijst rollen, een aanvinkvakje per rol.
+    assert _aangevinkte_rollen(auth_page, 0) == {"admin", "ops"}
+    assert _aangevinkte_rollen(auth_page, 1) == {"developer"}
+
+
+def _aangevinkte_rollen(page: Page, index: int) -> set[str]:
+    vakjes = page.locator(f"#modal-wizard-form [name='users[{index}]/roles[]']")
+    return set(vakjes.evaluate_all("els => els.filter(e => e.checked).map(e => e.getAttribute('value'))"))
 
 
 def _onderschep_posts(page: Page, opgevangen: list[str]) -> None:
