@@ -383,10 +383,17 @@ def record_decision(
     De vier losse attributen dragen de LAATSTE beslissing, want ``@requires_step_up``
     leest ze voor DEZE aanroep. De lijst draagt ze allemaal: een upsert met ``cloneFrom``
     weegt eerst het doel en daarna de bron, en de audit wil beide rijen.
+
+    Een beslissing die in dit verzoek al in de lijst staat, komt er niet nog een keer in:
+    de audit legt een handeling een keer vast. Dat laat de twee rijen van ``cloneFrom``
+    staan, want doel en bron zijn verschillende resources. Dit vangnet staat naast
+    ``tests/test_een_beslissing_per_handeling.py``, dat niet in helpers kan kijken, en
+    een helper is precies waar het misging (RC-406).
     """
     request.state.authz_action = action
     request.state.authz_resource = resource
     request.state.authz_decision = decision
     request.state.authz_step_up = step_up_fresh
     eerdere: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
-    request.state.authz_decisions = [*eerdere, RecordedDecision(action, resource, decision, step_up_fresh)]
+    genomen = RecordedDecision(action, resource, decision, step_up_fresh)
+    request.state.authz_decisions = eerdere if genomen in eerdere else [*eerdere, genomen]

@@ -67,12 +67,20 @@ tweede antwoord op dezelfde vraag geven, en dus een tweede rij;
 ANDERE action in de body blijft een eigen vraag met een eigen rij (de wizardstap draagt
 `wizard.use` en weegt daarnaast `project.edit` op een bestaand project).
 
-Het herrenderen van een formulier is geen handeling. De twee HTMX-routes die een
-keuzelijst in de back-up- en herstelmodal opnieuw tekenen, wegen hun schrijfaction met
-`may(...)` in plaats van `authorize(...)`: de gebruiker krijgt zonder dat recht geen
-formulier, maar de audit krijgt geen rij `backup.create` of `restore.run` over een
-back-up of een herstel dat niet gebeurde. De POST die ze echt start houdt zijn
-schrijfaction en zijn rij.
+Het herrenderen van een formulier is geen handeling, en navigeren door een modal-wizard
+ook niet. De twee HTMX-routes die een keuzelijst in de back-up- en herstelmodal opnieuw
+tekenen, en elke MODAL-wizardroute die een stap opent, laadt, verstuurt of overslaat,
+wegen de action van de stroom met `require_action(...)` in plaats van `authorize(...)`: de
+gebruiker krijgt zonder dat recht geen formulier, maar de audit krijgt geen rij
+`backup.create` of `restore.run` over een back-up of een herstel dat niet gebeurde. Een
+WEIGERING legt `require_action` wel vast, want een geweigerde poging hoort in de audit.
+
+De beslissing van een modal-wizard valt op één plek: `_modal_do_submit`
+(`opi/web/router_detail_edit.py`), waar de stroom echt iets doet. Dat is de enige weging
+van de flow-action met `authorize(...)`, en dus de enige rij. Als vangnet daarnaast
+ontdubbelt `record_decision` identieke beslissingen binnen één verzoek: dezelfde action
+op dezelfde resource met dezelfde uitkomst levert één rij. De twee rijen van `cloneFrom`
+blijven staan, want doel en bron zijn verschillende resources.
 
 De rij wordt na het versturen van het antwoord geschreven, als achtergrondtaak met een
 eigen databasesessie, dus de audit houdt geen antwoord op.

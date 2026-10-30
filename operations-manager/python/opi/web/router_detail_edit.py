@@ -232,9 +232,25 @@ def _is_backup_restore_flow(flow_id: str) -> bool:
     return flow_id in ("modal-backup", "modal-restore")
 
 
-def _require_flow_access(request: Request, project_name: str, flow_id: str) -> tuple[ProjectSummary, str]:
-    """De poort van een modal-wizard-stroom. Returns (project, user_email)."""
-    return authorize(request, action=FLOW_ACTIONS.get(flow_id, Action.PROJECT_EDIT), project_name=project_name)
+def _flow_action(flow_id: str) -> Action:
+    return FLOW_ACTIONS.get(flow_id, Action.PROJECT_EDIT)
+
+
+def _check_flow_access(request: Request, project_name: str, flow_id: str) -> None:
+    """The gate for NAVIGATING a flow: a 403 without an audit row.
+
+    Opening, loading, submitting or skipping a step is not a handling, so it gets no
+    row; a refusal is recorded by ``require_action`` (RC-406).
+    """
+    require_action(request, _flow_action(flow_id), project_name)
+
+
+def _authorize_flow(request: Request, project_name: str, flow_id: str) -> tuple[ProjectSummary, str]:
+    """The gate for the FINISHED flow, the only one that records the decision.
+
+    Returns (project, user_email).
+    """
+    return authorize(request, action=_flow_action(flow_id), project_name=project_name)
 
 
 def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
@@ -661,7 +677,9 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize modal wizard and return the first step HTML."""
-    project, user_email = _require_flow_access(request, project_name, flow_id)
+    _check_flow_access(request, project_name, flow_id)
+    project = authorized_project(request)
+    user_email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     project_data = project.data or {}
 
@@ -876,7 +894,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
     reject_misfired_form_get(request)
-    _require_flow_access(request, project_name, flow_id)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -902,7 +920,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate step data and advance to next step, or complete the flow."""
-    _require_flow_access(request, project_name, flow_id)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1191,7 +1209,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 @requires_sso
 async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """'Later configureren' - save accumulated data and trigger deployment."""
-    _require_flow_access(request, project_name, flow_id)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = await _get_wizard_token_with_body(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1207,7 +1225,7 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Confirm after review - execute the final submit."""
-    _require_flow_access(request, project_name, flow_id)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = await _get_wizard_token_with_body(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1403,8 +1421,9 @@ async def _modal_do_submit(
 ) -> HTMLResponse:
     """Execute the final modal wizard submission."""
 
-    # TOCTOU recheck on the mutating request, met de poort van deze stroom.
-    _require_flow_access(request, project_name, flow_id)
+    # TOCTOU recheck on the mutating request, with the gate for this flow. This is the only
+    # weighing of the flow action that records an audit row.
+    _authorize_flow(request, project_name, flow_id)
 
     state = load_modal_state_for(request, wizard_token, project_name)
     if not state:
@@ -1674,7 +1693,8 @@ async def _handle_backup_restore_submit(
 
     else:  # trigger_restore
         # Guard tegen een tussenstap die de poort mist: terugzetten is geen back-up.
-        authorize(request, action=Action.RESTORE_RUN, project_name=project_name)
+        # Without a row, like backup: ``_modal_do_submit`` already recorded the decision.
+        require_action(request, Action.RESTORE_RUN, project_name)
 
         from opi.services import RestoreMode
 
