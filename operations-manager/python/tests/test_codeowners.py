@@ -36,12 +36,11 @@ GEVOELIGE_BESTANDEN = [
 SECURITY_KOPPEN = [
     "## Een kwetsbaarheid melden",
     "## Wat je van ons mag verwachten",
-    "## Hoe we beveiliging geregeld hebben",
     "## Versies",
 ]
 
 PVR_LINK = "https://github.com/RijksICTGilde/RIG-Cluster/security/advisories/new"
-EMAIL = re.compile(r"@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+MELD_MAIL = "mailto:robbert.uittenbroek@rijksoverheid.nl"
 
 
 def _regels() -> list[tuple[str, list[str]]]:
@@ -111,11 +110,7 @@ def test_security_md_heeft_de_koppen_en_de_meldweg() -> None:
     for kop in SECURITY_KOPPEN:
         assert kop in tekst, f"kop {kop!r} ontbreekt"
     assert PVR_LINK in tekst
-
-
-def test_security_md_noemt_geen_e_mailadres() -> None:
-    treffer = EMAIL.search(SECURITY.read_text())
-    assert treffer is None, f"e-mailadres in SECURITY.md: {treffer.group(0) if treffer else ''}"
+    assert MELD_MAIL in tekst
 
 
 @pytest.mark.parametrize(
@@ -134,10 +129,6 @@ def _bewijsbestanden() -> list[str]:
             continue
         paden.append(doel)
     return sorted(set(paden))
-
-
-def test_security_md_linkt_naar_bestaande_bestanden() -> None:
-    assert _bewijsbestanden(), "SECURITY.md linkt naar geen enkel bestand in de repo"
 
 
 @pytest.mark.parametrize("pad", _bewijsbestanden())

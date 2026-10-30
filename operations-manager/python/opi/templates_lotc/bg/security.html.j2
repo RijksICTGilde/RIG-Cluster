@@ -1,14 +1,12 @@
 {#
   Het beveiligingsbeleid: SECURITY.md uit de root van de repo, als HTML
   (opi/web/security_policy.py). De kop staat in het bestand zelf, dus geen page_head.
+  Geen kaart: dit is leestekst, geen paneel met gegevens.
 #}
 {% extends "base_lotc.html.j2" %}
-{% from "bg/_patterns.html.j2" import panel %}
 
 {% block page_title %}Beveiligingsbeleid - Self Service Portal{% endblock %}
 
 {% block content %}
-    {% call panel("") %}
-        <c-rich-text>{{ security_policy_html | safe }}</c-rich-text>
-    {% endcall %}
+    <c-rich-text>{{ security_policy_html | safe }}</c-rich-text>
 {% endblock %}

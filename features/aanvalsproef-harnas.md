@@ -26,7 +26,7 @@ De twee schotten op het cluster staan apart: `features/kyverno-admission-audit.m
 
 Elke job hier begint, net als elke andere job in deze repo, met
 `step-security/harden-runner` op `egress-policy: block` en de allowlist uit
-`env.HARDEN_ENDPOINTS` van die workflow (RC-369, zie SECURITY.md). `aanvalsproef.yml` heeft
+`env.HARDEN_ENDPOINTS` van die workflow (RC-369, zie features/security-scanning-pipeline.md). `aanvalsproef.yml` heeft
 een eigen lijst, omdat deze jobs dingen ophalen die de andere workflows niet nodig hebben:
 de nuclei-templates, de kind-binary met zijn node-image, de Kyverno-images uit `install.yaml`
 en het Falco-image. Boven die lijst staat per endpoint waarom hij erbij hoort.

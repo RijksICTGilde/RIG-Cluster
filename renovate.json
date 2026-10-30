@@ -213,7 +213,7 @@
       "dependencyDashboardApproval": true
     },
     {
-      "description": "Laag B van de patchstrategie (SECURITY.md): het bouwgereedschap gaat zonder mens mee, maar alleen patch en minor en alleen nadat de poort groen is. Een digest-update is een verplaatste tag, precies waar de SHA-pin tegen beschermt, en blijft dus een merge die iemand doet. De manifesten en de app-afhankelijkheden ook",
+      "description": "Laag B van de patchstrategie (features/security-scanning-pipeline.md): het bouwgereedschap gaat zonder mens mee, maar alleen patch en minor en alleen nadat de poort groen is. Een digest-update is een verplaatste tag, precies waar de SHA-pin tegen beschermt, en blijft dus een merge die iemand doet. De manifesten en de app-afhankelijkheden ook",
       "matchUpdateTypes": ["patch", "minor"],
       "matchManagers": ["github-actions"],
       "automerge": true,
