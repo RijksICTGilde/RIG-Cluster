@@ -40,6 +40,7 @@ import copy
 import glob
 import os
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -146,7 +147,11 @@ async def replay_project_data(raw: dict[str, Any], name: str) -> ReplayOutcome:
         return outcome
 
     try:
-        await validate_project_structure(migrated)
+        # As the first save after an upgrade (ProjectStore.mutate): previous is the loaded,
+        # migrated file. Without it every service counts as newly chosen, and a service
+        # that was since replaced on its cluster (minio-storage) is refused to a project
+        # that already runs it.
+        await validate_project_structure(migrated, previous=deepcopy(migrated))
     except ProjectIntegrityError as exc:
         outcome.stage = "structure"
         outcome.error = str(exc)

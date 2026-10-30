@@ -59,13 +59,14 @@ _PAGE = """<!doctype html>
 </html>
 """
 
-#: De 404-pagina.
-NOT_FOUND_PAGE = _PAGE.format(
-    titel="Pagina niet gevonden",
-    kop="Deze pagina bestaat niet",
-    tekst="De link klopt niet meer, of de pagina is verplaatst.",
-    kenmerkregel="",
-)
+#: Heading and fallback text per 4xx, for when the raiser said nothing of its own.
+_CLIENT_ERRORS: dict[int, tuple[str, str]] = {
+    401: ("Je bent niet ingelogd", "Log opnieuw in en probeer het nog eens."),
+    403: ("Geen toegang", "Je hebt geen rechten voor deze pagina."),
+    404: ("Deze pagina bestaat niet", "De link klopt niet meer, of de pagina is verplaatst."),
+}
+_CLIENT_ERROR_DEFAULT = ("Dit verzoek kan niet worden uitgevoerd", "Controleer de link of ga terug naar het dashboard.")
+_ACCESS_HINT = "Hoor je wel toegang te hebben, vraag het dan aan een beheerder."
 
 
 def statusomschrijving(status_code: int) -> str:
@@ -114,6 +115,20 @@ def server_error_page(tekst: str, kenmerk: str) -> str:
         tekst=html.escape(tekst),
         kenmerkregel=kenmerkregel,
     )
+
+
+def client_error_page(status_code: int, detail: object) -> str:
+    """The 4xx page: what was refused, in the raiser's own words when it gave any.
+
+    A 4xx detail is written for the caller (the API returns it verbatim), so it is safe
+    to show; FastAPI's bare phrase ("Not Found") is not, it tells a reader nothing.
+    """
+    heading, fallback = _CLIENT_ERRORS.get(status_code, _CLIENT_ERROR_DEFAULT)
+    own_words = isinstance(detail, str) and detail.strip() and detail != statusomschrijving(status_code)
+    text = str(detail) if own_words else fallback
+    if status_code == 403:
+        text = f"{text} {_ACCESS_HINT}"
+    return _PAGE.format(titel=heading, kop=heading, tekst=html.escape(text), kenmerkregel="")
 
 
 def met_kenmerk(tekst: str, kenmerk: str) -> str:

@@ -48,8 +48,9 @@ def _kopie(tmp_path: Path, met_remote: bool) -> Path:
     shutil.copy(BRON_TAG, repo / "scripts" / BRON_TAG.name)
     shutil.copy(CALVER_TAG, repo / "scripts" / CALVER_TAG.name)
     shutil.copy(TASKFILE, repo / TASKFILE.name)
-    # Met asdf weet de task-shim zonder .tool-versions niet welke versie hij moet draaien.
-    shutil.copy(REPO_ROOT / ".tool-versions", repo / ".tool-versions")
+    # An asdf shim for task refuses to run in a directory without a pinned version.
+    if (REPO_ROOT / ".tool-versions").exists():
+        shutil.copy(REPO_ROOT / ".tool-versions", repo / ".tool-versions")
     (repo / "operations-manager").mkdir()
     (repo / "operations-manager/bron.txt").write_text("bron\n")
     (repo / PRODUCTIE_PATCH.parent).mkdir(parents=True)
@@ -85,22 +86,25 @@ def _draai_guard(tag: str, repo: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+#: What the fake ``docker buildx imagetools inspect`` reports for every tag.
+FAKE_DIGEST = "sha256:" + "a" * 64
+
+
 def _draai_pin(repo: Path, tag: str) -> subprocess.CompletedProcess[str]:
-    # De pin vraagt de digest op in de registry, en de tags van deze toets staan daar niet.
-    # Een nep-docker geeft een vaste digest, zodat de toets meet wat hij hoort te meten: de
-    # weigering van een tag, niet de verbinding met ghcr.io.
-    bin_dir = repo.parent / "bin"
-    bin_dir.mkdir(exist_ok=True)
-    nep_docker = bin_dir / "docker"
-    nep_docker.write_text("#!/bin/sh\necho 'Digest: sha256:" + "a" * 64 + "'\n")
-    nep_docker.chmod(0o755)
+    # The pin asks the registry for the digest of the tag (_pin-image-digest); a fake
+    # docker answers instead, since the test tag was never pushed.
+    fake_bin = repo.parent / "fake-bin"
+    fake_bin.mkdir(exist_ok=True)
+    docker = fake_bin / "docker"
+    docker.write_text(f"#!/bin/sh\necho 'Digest: {FAKE_DIGEST}'\n")
+    docker.chmod(0o755)
     return subprocess.run(
         ["task", PIN, f"IMAGE_TAG={tag}"],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=120,
-        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        env={**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}"},
     )
 
 
