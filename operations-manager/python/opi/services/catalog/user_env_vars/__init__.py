@@ -44,7 +44,7 @@ class UserEnvVarsService(Service):
         ),
         help_template="user_env_vars/help.md",
         icon="instellingen",
-        color="grijs-600",
+        color="donkergeel",
         variables=[],
         # Always present, never in the project file's services list -> a system
         # service (kind=SYSTEM also keeps it out of the picker).
