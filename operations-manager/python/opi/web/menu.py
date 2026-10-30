@@ -40,13 +40,12 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Mijn projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services overzicht", "link": "/services", "icon": "server"},
-        # De kaart van het platform: wat er draait en waar ZAD mee praat. Naast het
-        # servicesoverzicht, want het beantwoordt dezelfde soort vraag een laag dieper.
-        {"label": "Platform", "link": "/platform", "icon": "wolk"},
-        # Ook in het hoofdmenu en niet alleen in de voettekst: wie ingelogd is komt
-        # nooit meer langs "/" (dat gaat dan naar het dashboard), en dan was de
-        # voettekst de enige weg naar de uitleg over het platform.
+        # In het hoofdmenu: wie ingelogd is komt nooit meer langs "/" (dat gaat dan naar
+        # het dashboard), en dit is de weg naar de uitleg over het platform. Bovenaan de
+        # groep, want het is waar een nieuwkomer begint.
         {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
+        # De kaart van het platform: wat er draait en waar ZAD mee praat.
+        {"label": "Platform", "link": "/platform", "icon": "wolk"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},

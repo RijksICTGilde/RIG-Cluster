@@ -29,9 +29,11 @@
     margin-bottom: 0;
 }
 
-nldd-page-footer {
-    display: block;
-    margin-top: 3rem;
+/* De versie in de voettekst als er geen commit is om naar te linken: even klein als de
+ * links ernaast (nldd-link size="xs"), maar in de secundaire tekstkleur. */
+.zad-versie {
+    font: var(--primitives-font-body-xs-regular-flat);
+    color: var(--semantics-content-secondary-color);
 }
 
 /*
