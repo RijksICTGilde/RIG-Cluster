@@ -18,6 +18,7 @@ from typing import Any
 # arguments. The submodule path resolves to the class itself.
 from prometheus_api_client.prometheus_connect import PrometheusConnect
 
+from opi.connectors.grafana_prometheus import _parse_query_time
 from opi.core.config import settings
 from opi.utils.naming import generate_unique_name
 
@@ -360,9 +361,14 @@ class PrometheusConnector:
             logger.error(f"Failed to discover metric names for {match_selector}: {e}")
             raise PrometheusQueryError(f"Failed to discover metric names: {e}") from e
 
-    def query_range(self, query: str, start_time: str, end_time: str, step: str) -> list[dict[str, Any]]:
+    async def query_range(
+        self, query: str, start_time: str | int | float, end_time: str | int | float, step: str
+    ) -> list[dict[str, Any]]:
         """
         Execute a range query to get time-series data.
+
+        Async and in a thread for the same reason as custom_query. prometheus_api_client
+        wants datetime bounds; a string here failed every range query on the sandbox.
 
         Args:
             query: The PromQL query to execute.
@@ -378,10 +384,11 @@ class PrometheusConnector:
         logger.debug(f"Executing range query: {query} from {start_time} to {end_time} step {step}")
 
         try:
-            result: list[dict[str, Any]] = self.prom.custom_query_range(
+            result: list[dict[str, Any]] = await asyncio.to_thread(
+                self.prom.custom_query_range,
                 query=query,
-                start_time=start_time,
-                end_time=end_time,
+                start_time=_parse_query_time(start_time),
+                end_time=_parse_query_time(end_time),
                 step=step,
             )
             return result
