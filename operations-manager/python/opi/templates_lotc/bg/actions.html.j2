@@ -34,11 +34,11 @@
             weer verdwijnt zodra de pull request sluit.
         </c-paragraph>
 
-        <c-detail-list>
-            <c-detail-item label="deploy" value="Zet een container image op ZAD; ook meerdere componenten in een keer" />
-            <c-detail-item label="cleanup" value="Verwijdert een deployment, en desgewenst de GitHub-omgeving en de container-image erbij" />
-            <c-detail-item label="scheduled-cleanup" value="Ruimt periodiek de PR-omgevingen op die zijn blijven staan" />
-        </c-detail-list>
+        <nldd-rich-text><dl>
+            <dt>deploy</dt><dd>Zet een container image op ZAD; ook meerdere componenten in een keer</dd>
+            <dt>cleanup</dt><dd>Verwijdert een deployment, en desgewenst de GitHub-omgeving en de container-image erbij</dd>
+            <dt>scheduled-cleanup</dt><dd>Ruimt periodiek de PR-omgevingen op die zijn blijven staan</dd>
+        </dl></nldd-rich-text>
     {% endcall %}
 
     {% call panel("Uitrollen", "arrow-up-arrow-down") %}
@@ -58,9 +58,8 @@
 
         <c-heading type="h3" size="6" label="Meerdere componenten in een keer" />
         <c-paragraph size="sm">
-            Werk je meer dan een image bij, gebruik dan <c-code>components</c-code> in plaats
-            van <c-code>component</c-code> en <c-code>image</c-code>. Dat wordt een uitrol,
-            niet een per component, en de deployment is dus in een keer op zijn nieuwe stand.
+            Werk je meer dan een image bij, gebruik dan <i>components</i> in plaats
+            van <i>component</i> en <i>image</i>. Dan kan het als 1 actie.
         </c-paragraph>
         <c-code-viewer language="yaml">- name: Deploy to ZAD
   uses: RijksICTGilde/zad-actions/deploy@v4
@@ -73,10 +72,6 @@
         {"name": "web", "image": "ghcr.io/org/web:latest"},
         {"name": "api", "image": "ghcr.io/org/api:latest"}
       ]</c-code-viewer>
-        <c-paragraph size="sm">
-            Zet je <c-code>components</c-code>, dan worden <c-code>component</c-code> en
-            <c-code>image</c-code> genegeerd; je hoeft ze dus niet allebei op te geven.
-        </c-paragraph>
     {% endcall %}
 
     {% call panel("Opruimen", "trash") %}
