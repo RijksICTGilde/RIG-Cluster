@@ -45,7 +45,7 @@ from opi.core.database_pools import close_database_pools
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.errors import (
     GENERIEKE_FOUTTEKST,
-    NOT_FOUND_PAGE,
+    client_error_page,
     kenmerk_van,
     met_kenmerk,
     server_error_page,
@@ -765,13 +765,16 @@ def create_app() -> FastAPI:
         Een 5xx viel daar tot nu toe doorheen naar de standaard-JSON van FastAPI, en dat
         is precies wat er tijdens de databasestoring op het scherm stond. Hij loopt nu
         langs dezelfde keuze, met een envelop in plaats van een los ``detail``-veld.
-        Elke andere 4xx blijft onveranderd: daar leest een client op wat er staat.
+        Every 4xx gets a page for a browser too (a 403 on a project link was raw JSON);
+        an API client keeps the ``detail`` body it parses today.
         """
         if exc.status_code >= 500:
             return _fout_antwoord(request, exc.status_code, exc.detail, exc.headers)
-        if exc.status_code != 404 or not _wil_een_pagina(request):
+        if not _wil_een_pagina(request):
             return await http_exception_handler(request, exc)
-        return HTMLResponse(NOT_FOUND_PAGE, status_code=404)
+        return HTMLResponse(
+            client_error_page(exc.status_code, exc.detail), status_code=exc.status_code, headers=exc.headers
+        )
 
     from opi.middleware.security_headers import SecurityHeadersMiddleware
 
