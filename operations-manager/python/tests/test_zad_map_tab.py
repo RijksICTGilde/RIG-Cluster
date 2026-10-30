@@ -63,7 +63,7 @@ async def _gate(email: str, project_name: str, path: str, endpoint: Any, existin
 
 
 def test_map_is_a_tab_with_its_own_path() -> None:
-    assert PROJECT_TABS["kaart"] == {"label": "Kaart", "path": "kaart"}
+    assert PROJECT_TABS["kaart"] == {"label": "Kaart", "path": "kaart", "icon": "centralized-network"}
     assert project_tab_url("demo", "kaart") == "/projects/demo/kaart"
     assert tab_from_path("/projects/demo/kaart") == "kaart"
 

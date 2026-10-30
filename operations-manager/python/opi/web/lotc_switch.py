@@ -621,24 +621,24 @@ def build_deployment_status_column(
 #: zelfstandige naamwoorden, en bijlagen sluit je nergens op aan). Zie
 #: features/services-info-tabblad.md voor de afweging.
 PROJECT_TABS = {
-    "project": {"label": "Overzicht", "path": "details"},
-    "team": {"label": "Team", "path": "team"},
-    "componenten": {"label": "Componenten", "path": "componenten"},
-    "services": {"label": "Services", "path": "services"},
+    "project": {"label": "Overzicht", "path": "details", "icon": "house"},
+    "team": {"label": "Team", "path": "team", "icon": "person-2"},
+    "componenten": {"label": "Componenten", "path": "componenten", "icon": "blocks-9"},
+    "services": {"label": "Services", "path": "services", "icon": "puzzle-piece"},
     # "Services info" en niet "Toegang": dit tabblad draagt de blokken die DIENSTEN zelf
     # leveren via detail_page_sections, en dat is de haak en niet het onderwerp. "Toegang"
     # beschreef wat de eerste drie diensten toevallig tonen (een adres, een wachtwoord,
     # een code), en dat gaat scheef zodra een dienst iets anders levert.
-    "services-info": {"label": "Services info", "path": "services-info"},
-    "deployments": {"label": "Deployments", "path": "deployments"},
-    "metrics": {"label": "Metrics", "path": "metrics"},
-    "backups": {"label": "Backups", "path": "backups"},
-    "taken": {"label": "Taken", "path": "taken"},
+    "services-info": {"label": "Services info", "path": "services-info", "icon": "info-circle"},
+    "deployments": {"label": "Deployments", "path": "deployments", "icon": "globe-rack-server"},
+    "metrics": {"label": "Metrics", "path": "metrics", "icon": "chart-x-y-axis-line"},
+    "backups": {"label": "Backups", "path": "backups", "icon": "backup-in-cloud"},
+    "taken": {"label": "Taken", "path": "taken", "icon": "check-list"},
     # De kaart van dit project: componenten, services, deployments en koppelingen. Het
     # tabblad draagt alleen het element; de plaat komt van /projects/<naam>/kaart.json.
-    "kaart": {"label": "Kaart", "path": "kaart"},
+    "kaart": {"label": "Kaart", "path": "kaart", "icon": "centralized-network"},
     # Achter Action.AUDIT_READ, dus niet voor elk lid in de balk; de route bepaalt dat.
-    "audit": {"label": "Audit", "path": "audit"},
+    "audit": {"label": "Audit", "path": "audit", "icon": "clock-arrow-counter-clockwise"},
 }
 
 #: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.

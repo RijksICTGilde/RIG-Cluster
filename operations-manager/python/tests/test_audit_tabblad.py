@@ -92,7 +92,7 @@ async def _poort(email: str, project_name: str, bestaand: str = "demo", query: d
 
 
 def test_audit_is_een_tabblad_met_een_eigen_pad() -> None:
-    assert PROJECT_TABS["audit"] == {"label": "Audit", "path": "audit"}
+    assert PROJECT_TABS["audit"] == {"label": "Audit", "path": "audit", "icon": "clock-arrow-counter-clockwise"}
     assert project_tab_url("demo", "audit") == "/projects/demo/audit"
     assert tab_from_path("/projects/demo/audit") == "audit"
 
