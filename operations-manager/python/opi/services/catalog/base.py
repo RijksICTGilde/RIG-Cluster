@@ -1384,14 +1384,18 @@ class Service(ABC):
         surface stays in lock-step with the schema."""
         return []
 
-    def config_model_field_names(self) -> list[str]:
-        """The field names of this service's ``config_model`` (alias-aware), or [].
+    def config_model_field_names(self, layer: ConfigLayer | None = None) -> list[str]:
+        """The field names of this service's config model at ``layer`` (alias-aware), or [].
 
         The single source for "which config keys does this service have" - reused by
-        ``config_api_fields`` so the API surface is not a second hand-maintained copy."""
-        if self.config_model is None:
+        ``config_api_fields`` so the API surface is not a second hand-maintained copy.
+        ``layer`` is for a service whose layers carry different shapes (send-email, whose
+        deployment layer overrides three of the project's fields); without it the answer is
+        about ``config_model``."""
+        model = self.config_model if layer is None else self.config_model_for(layer)
+        if model is None:
             return []
-        return [field.alias or name for name, field in self.config_model.model_fields.items()]
+        return [field.alias or name for name, field in model.model_fields.items()]
 
     def platform_managed_fields(self, layer: ConfigLayer) -> frozenset[str]:
         """The config keys at ``layer`` that OPI writes and the API may never touch.

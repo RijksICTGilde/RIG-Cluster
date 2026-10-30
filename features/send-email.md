@@ -56,9 +56,9 @@ gebeurt er sowieso niets.
 
 **Een ingetrokken goedkeuring ruimt op.** Wordt de status van goedgekeurd afgehaald, dan
 loopt de volgende verwerking van het project hetzelfde opruimpad als een projectverwijdering
-(`MailManager._delete_account`, de enige verwijdering die er is): het account gaat van de
-relay af en de vermelding uit het projectbestand. Zonder dat blijft er een weesaccount staan
-waar niets meer naar wijst.
+(`MailManager._delete_account`, de enige verwijdering die er is): de accounts van ALLE
+deployments van het project gaan van de relay af, met hun afzendersleutels en hun limiter.
+Zonder dat blijft er een weesaccount staan waar niets meer naar wijst.
 
 **De wachtstand is zichtbaar.** De dienst levert per deployment een notice
 (`notices_for`), zodat de stand op de projectpagina staat en via dezelfde weg in de API
@@ -73,9 +73,9 @@ Een component dat de dienst aanvinkt krijgt vijf variabelen uit de projectsecret
 |---|---|
 | `SMTP_HOST` | de relay binnen het cluster |
 | `SMTP_PORT` | 587 (submission) |
-| `SMTP_USERNAME` | het account van dit project |
-| `SMTP_PASSWORD` | het wachtwoord van dat account |
-| `SMTP_FROM` | het afzenderadres waaronder de post werkelijk vertrekt: je goedgekeurde eigen adres, of anders `noreply-rijksapp+<project>@rijksoverheid.nl` |
+| `SMTP_USERNAME` | het account van DEZE deployment (`project-<project>-<deployment>-<hash>`) |
+| `SMTP_PASSWORD` | het wachtwoord van dat account, dat alleen in het secret van deze deployment staat |
+| `SMTP_FROM` | het afzenderadres waaronder de post werkelijk vertrekt: je goedgekeurde eigen adres, of anders `noreply-rijksapp+<project>-<deployment>-<hash>@rijksoverheid.nl` |
 
 Elke variabele heeft ook een `APP_`-alias, net als bij de andere diensten.
 
@@ -87,14 +87,17 @@ Op projectniveau, in de wizard of via de API:
 |---|---|
 | `from-name` | de naam die de ontvanger boven het bericht ziet |
 | `from-address` | het e-mailadres van de afzender, na goedkeuring. Laat je het leeg, dan stelt het platform er een samen uit de naam van je project |
-| `messages-per-day` | het dagbudget van dit project, dat de relay per account afdwingt. Tot en met 1000 kies je zelf; hoger is een aanvraag. Zie "Het dagbudget" hieronder |
+| `messages-per-day` | het dagbudget, dat de relay per account afdwingt. Tot en met 1000 kies je zelf; hoger is een aanvraag. Zie "Het dagbudget" hieronder |
+
+Dezelfde drie velden staan ook per deployment, en daar overschrijven ze de projectwaarde.
+Zie "Per deployment, of van het project" hieronder.
 
 Laat je `from-address` leeg, dan stelt het platform het adres samen uit de naam van je
-project:
+account:
 
 ```
-From:           <from-name> <noreply-rijksapp+<project>@rijksoverheid.nl>
-Return-Path:    noreply-rijksapp+<project>@rijksoverheid.nl
+From:           <from-name> <noreply-rijksapp+<project>-<deployment>-<hash>@rijksoverheid.nl>
+Return-Path:    noreply-rijksapp+<project>-<deployment>-<hash>@rijksoverheid.nl
 X-ZAD-Project:  <project>
 ```
 
@@ -107,7 +110,7 @@ ondertussen vertrekt. Na goedkeuring ziet een bericht er zo uit:
 
 ```
 From:           <from-name> <noreply@rijksoverheid.nl>
-Return-Path:    noreply-rijksapp+<project>@rijksoverheid.nl
+Return-Path:    noreply-rijksapp+<project>-<deployment>-<hash>@rijksoverheid.nl
 X-ZAD-Project:  <project>
 ```
 
@@ -118,11 +121,14 @@ Drie dingen die daarbij horen:
   adres. Maak je het veld leeg, dan trek je de aanvraag in.
 - **De envelope blijft het samengestelde adres**, en dat is geen vergissing. DMARC
   vergelijkt de DOMEINEN van envelope en `From:`, en die blijven gelijk; het plusdeel in de
-  envelope houdt ondertussen een bounce herleidbaar tot je project.
+  envelope houdt ondertussen een bounce herleidbaar tot je deployment.
 - **`X-ZAD-Project` noemt je project.** De relay zet die kopregel uit de LOGIN van het
   account, niet uit het bericht, en gooit een meegestuurde kopregel met die naam eerst weg.
   Zonder die kopregel zegt een bericht met een gedeeld adres niet meer van wie het komt.
-  Post van het platform zelf heeft hem niet.
+  Welk project bij een account hoort staat sinds RC-401 op de relay onder `zad.project.`:
+  uit de accountnaam valt het niet meer af te leiden, want die draagt de deployment en een
+  hash. OPI schrijft die sleutel bij elke verwerking, en een account zonder sleutel krijgt
+  de kopregel niet. Post van het platform zelf heeft hem dus ook niet.
 
 Het domein ligt vast op `rijksoverheid.nl`: alleen het deel voor de `@` is te kiezen
 (hoogstens 64 tekens uit kleine letters, cijfers en `. _ + -`). Waarom het domein niet,
@@ -163,8 +169,8 @@ willekeur — de naam gaat rechtstreeks een mailheader in, en een naam die op ee
 of een punt mag wel; de relay zet aanhalingstekens om de naam heen, zodat die de `From:`
 niet in tweeën knipt.
 
-Laat je `from-name` weg, dan verstuurt je project met een kaal projectadres en zonder naam.
-Dat is een geldige uitkomst, geen storing.
+Laat je `from-name` weg, en het project ook, dan verstuurt je deployment met het kale
+afgeleide adres en zonder naam. Dat is een geldige uitkomst, geen storing.
 
 ### Voorbeeld
 
@@ -175,27 +181,48 @@ services:
   - name: send-email
     config:
       from-name: Algoritmeregister   # de ontvanger ziet
-                                     # Algoritmeregister <noreply-rijksapp+algor-odc@rijksoverheid.nl>
+                                     # Algoritmeregister <noreply-rijksapp+algor-odc-test-<hash>@rijksoverheid.nl>
       # from-address: noreply@rijksoverheid.nl   # pas na goedkeuring, zie hierboven
       messages-per-day: 750
-      # accounts: door het platform geschreven, zie hieronder
+
+deployments:
+  - name: test
+    services:
+      - name: send-email
+        config:
+          messages-per-day: 100   # eigen budget, onder de standaard, dus geen aanvraag
+  - name: prod
+    services:
+      - name: send-email
+        config:
+          from-name: Algoritmeregister
+          # messages-per-day: 100000   # boven 1000, dus een aanvraag voor DEZE deployment
 ```
 
 ## Wat het platform beheert
 
-`approval`, `from-address-approval` en `accounts` zijn platformdata: een beheerder beslist,
-en OPI maakt het account aan op de relay en schrijft neer wat het gemaakt heeft (per
-cluster: gebruikersnaam, AGE-versleuteld wachtwoord, afzenderadres en bounce-adres). Alle
-drie dragen `platform_managed_fields`, dus de API kan ze niet wissen en niet overschrijven,
-en een PUT die ze weglaat verliest ze niet. Bij de twee goedkeuringsblokken is dat niet
-alleen netjes maar de kern: een project dat zijn eigen status op `approved` kan zetten heeft
-geen goedkeuring. `from-address-approval` draagt naast `status` en `history` ook de `value`
-waar het oordeel over ging, en dat is wat een goedkeuring aan een adres bindt in plaats van
-aan het project.
+`approval`, `from-address-approval` en `messages-per-day-approval` zijn platformdata: een
+beheerder beslist, en OPI maakt het account aan op de relay. Alle drie dragen
+`platform_managed_fields`, dus de API kan ze niet wissen en niet overschrijven, en een PUT
+die ze weglaat verliest ze niet. Bij de goedkeuringsblokken is dat niet alleen netjes maar
+de kern: een project dat zijn eigen status op `approved` kan zetten heeft geen goedkeuring.
+Zo'n blok draagt naast `status` en `history` ook de `value` waar het oordeel over ging, en
+dat is wat een goedkeuring aan een WAARDE bindt in plaats van aan het project.
 
-Het wachtwoord wordt één keer gegenereerd en meteen weggeschreven, om dezelfde reden als bij
-het Keycloak-realm: het bestaat nergens anders, en een latere fout in dezelfde run zou een
-account op de relay achterlaten waar geen projectbestand het wachtwoord van heeft.
+Het projectbestand bevat GEEN accountgegevens. Tot schemaversie 2.13 stond er een blok
+`accounts` met per cluster een gebruikersnaam en een AGE-versleuteld wachtwoord; de migratie
+naar 2.14 haalt dat weg. Het wachtwoord staat nu in het Kubernetes-secret
+`{deployment}-send-email`, zoals bij de database, MinIO en de andere diensten:
+accountgegevens horen niet in een projectbestand.
+
+Dat secret is ook waar een volgende verwerking het wachtwoord LEEST, en dat is wat een
+tweede run een no-op maakt in plaats van een rotatie onder draaiende pods. Een nieuw
+wachtwoord wordt alleen gegenereerd als het secret aantoonbaar niet bestaat; is het niet te
+LEZEN, dan stopt de verwerking met een fout en roteert niets. Die twee gevallen uit elkaar
+houden kost één extra aanroep (`secret_exists`, die True, False of None geeft) en is de
+reden dat één onleesbaar moment geen applicatie uit haar eigen mailaccount zet. Bijkomend
+voordeel: het opgeslagen wachtwoord wordt elke verwerking opnieuw op de relay gezet, dus een
+relay die zijn database kwijt is herstelt zichzelf.
 
 ## Het dagbudget
 
@@ -230,17 +257,50 @@ het een keer is verwerkt; wat er dan nog begrenst is het vangnet
 Dus: laat na het uitrollen van `config.toml` elk project met `send-email` opnieuw verwerken,
 voordat je de uitrol als klaar beschouwt. Pas dan heeft elk account zijn eigen limiter.
 
-## Het account hangt aan het project
+## Het account hangt aan de deployment
 
-Eén account per project, niet per deployment. Daar hangen ook het dagbudget en het
-bounce-adres aan, en een account per deployment zou één project meerdere budgetten geven en
-een klacht herleidbaar maken naar een deployment die niemand buiten het platform kent.
+Eén account per deployment, zoals een deployment ook zijn eigen databasegebruiker heeft.
+Daar hangen het dagbudget, het wachtwoord en het bounce-adres aan. Een testdeployment
+verstuurt 100 berichten per dag zonder goedkeuring, en productie na goedkeuring 100.000.
+Tot RC-401 was het één account per project, met één budget voor alle deployments samen.
 
-Gevolg voor het opruimen: de dienst uit één deployment halen verwijdert het account niet
-zolang een andere deployment van hetzelfde project hem nog gebruikt. Pas de laatste laat het
-account opheffen.
+Het totaal per project is daarmee het aantal deployments maal hun budget. Dat is een bewuste
+keuze: er is geen plafond per project bovenop de budgetten per deployment.
 
-### En het heet `project-<project>`, niet `<project>`
+Gevolg voor het opruimen: de dienst uit één deployment halen, of die deployment verwijderen,
+ruimt dat ene account op (met zijn afzendersleutels en zijn limiter) en laat de andere
+deployments ongemoeid.
+
+### Per deployment, of van het project
+
+`from-name`, `from-address` en `messages-per-day` staan op projectniveau en gelden voor elke
+deployment. Een deployment kan ze alle drie overschrijven; laat ze leeg en de deployment
+ERFT, wat de normale situatie is.
+
+Een override is een eigen aanvraag van die deployment:
+
+| Veld | Overschrijven | Aanvraag? |
+|---|---|---|
+| `from-name` | ja | nee, een naam vraagt niemand iets |
+| `from-address` | ja | altijd, net als op projectniveau |
+| `messages-per-day` | ja | boven 1000 (de platformstandaard), ook als het project meer mag |
+
+Dat laatste verrast: vraagt een deployment 5.000 terwijl het project een goedgekeurde 20.000
+heeft, dan is dat tóch een aanvraag. De grens is de standaard en niet de projectwaarde, en
+dat is met opzet: zo staat de goedkeuring van een deployment op zichzelf. Verlaagt het
+project later zijn eigen getal, dan blijft de goedgekeurde override van die deployment
+staan, terwijl een deployment die erft wel meegaat naar beneden.
+
+Zolang een override niet is goedgekeurd, geldt voor die deployment de laatst goedgekeurde
+override, en zonder die de geërfde waarde. Een openstaande aanvraag verlaagt dus nooit wat
+er al gold, dezelfde regel als op projectniveau.
+
+De stand van zo'n aanvraag staat bij die deployment op de projectpagina, via dezelfde
+`notices_for` als de projectaanvraag, en de aanvraag zelf in de beheerpagina onder
+`<project>/<deployment>`. Twee deployments die hetzelfde adres aanvragen zijn daar dus twee
+aparte items: de goedkeuring van het ene keurt het andere niet goed.
+
+### Het account heet `project-<project>-<deployment>-<hash>`
 
 De relay heeft één platte naamruimte voor accounts: het account van ZAD zelf
 (`MAIL_PLATFORM_ACCOUNT`, standaard `zad-platform`) staat ernaast. Zonder voorvoegsel is
@@ -248,9 +308,40 @@ De relay heeft één platte naamruimte voor accounts: het account van ZAD zelf
 wachtwoord en het afzenderadres van ZAD overnemen (een bestaand account wordt bijgewerkt,
 niet geweigerd) en zonder goedkeuring het platformaccount laten verwijderen. Het
 voorvoegsel maakt de twee verzamelingen disjunct, en de projectweg (`ensure_account`,
-`_delete_account`) weigert de platformnaam daarnaast nog expliciet — ook als die naam uit
-het projectbestand komt, en ook als iemand `MAIL_PLATFORM_ACCOUNT` juist ín de
-projectnaamruimte zet.
+`_delete_account`) weigert de platformnaam daarnaast nog expliciet — ook als iemand
+`MAIL_PLATFORM_ACCOUNT` juist ín de projectnaamruimte zet.
+
+De hash erachter is zes hextekens van een sha256 over `<project>/<deployment>`, en die is
+geen versiering. Namen bevatten streepjes, dus project `a-b` met deployment `c` en project
+`a` met deployment `b-c` zouden hetzelfde label opleveren. Het leesbare deel wordt bovendien
+AFGEKAPT zodat het hele label binnen de 47 tekens blijft die na `noreply-rijksapp+` in een
+lokaal deel passen, en zonder hash zouden twee lange namen daar samenvallen. De hash houdt
+een nieuw deploymentaccount ook buiten de oude `project-<project>`-namen, en dat is wat de
+overgang veilig maakt.
+
+### De overgang van één account per project
+
+Een bestaand project houdt zijn oude account `project-<project>` tot het niet meer gebruikt
+wordt. De migratie naar 2.14 gooit alleen het blok in het projectbestand weg; bij de
+volgende verwerking krijgt elke deployment een eigen account met een nieuw wachtwoord in
+haar eigen secret, en de pods pakken dat op zodra ArgoCD hun secret heeft gesynchroniseerd
+en ze herstart zijn.
+
+Het oude account wordt pas verwijderd als geen enkel LIVE secret
+(`{deployment}-send-email`) die gebruikersnaam nog noemt, en een secret dat niet te lezen is
+laat het staan. Zo valt er geen gat tussen het wegschrijven in git en de sync door ArgoCD.
+Het oude wachtwoord is daarvoor niet nodig: het account blijft werken met wat de pods nog in
+hun oude secret hebben.
+
+Geen deployment neemt het oude account over. Dat is een besluit van de product owner, en het
+is ook de enige variant die te volgen is: één account overdragen aan één van de deployments
+zou de andere stilletjes zonder post laten.
+
+Laat een verwerking het oude account om welke reden ook staan, dan pikt de opruimveger het
+op: `service_orphan_sweep` inventariseert nu ook de mailaccounts van de relay en meldt een
+account zonder live deployment als `orphan_candidate`. De platformaccounts vallen daarbuiten
+(`system`), en een inventarisatie die niet gelezen kan worden wordt als FOUT gemeld en niet
+als lege lijst: leeg zou elk account een wees laten lijken.
 
 ## Het netwerkbeleid komt uit de dienst
 

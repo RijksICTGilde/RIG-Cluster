@@ -1090,3 +1090,113 @@ class TestSeaweedfsUitgesteldOpruimen:
 
         mock_pm._seaweedfs_manager.handle_service_removal.assert_awaited_once()
         mock_pm._seaweedfs_manager.delete_resources_for_deployment.assert_not_awaited()
+
+
+class TestSendEmailOpruimenBijVerwijderen:
+    """RC-401: het mailaccount van een deployment is van DIE deployment, dus het gaat mee
+    als de deployment verdwijnt (toets 14) en ook als alleen de dienst van de deployment
+    afgaat, zonder dat de hele deployment weg is.
+    """
+
+    @staticmethod
+    def _deployment_met_mail() -> dict:
+        deployment = _make_deployment()
+        deployment["services"] = ["send-email"]
+        return deployment
+
+    @pytest.mark.asyncio
+    async def test_delete_deployment_ruimt_het_mailaccount_op(self) -> None:
+        mock_pm = _make_project_manager_mock()
+        deployment = self._deployment_met_mail()
+        project_data = _make_project_data(services=["send-email"], deployments=[deployment])
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+        mock_pm._project_file_handler.deployment_uses_service = MagicMock(
+            side_effect=lambda _yaml, _naam, soorten: "send-email" in soorten
+        )
+        mock_pm._mail_manager = AsyncMock()
+        mock_pm._mail_manager.delete_resources_for_deployment = AsyncMock(
+            return_value={
+                "operations": [{"type": "mail_account_deleted", "account": "project-test-project-pr-42-abcdef"}],
+                "errors": [],
+            }
+        )
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        mock_project = MagicMock()
+        mock_project.filename = "test-project.yaml"
+        mock_project_service = MagicMock()
+        mock_project_service.get = MagicMock(return_value=mock_project)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_service),
+            patch("os.path.exists", return_value=False),
+        ):
+            result = await DeleteProjectManager(mock_pm).delete_deployment("test-project", "pr-42")
+
+        mock_pm._mail_manager.delete_resources_for_deployment.assert_awaited_once_with(project_data, deployment)
+        op_types = {op["type"] for op in result["operations"]}
+        assert "mail_account_deleted" in op_types, "de mailoperatie moet in de verzamelde uitkomst terechtkomen"
+
+    @pytest.mark.asyncio
+    async def test_dienst_van_de_deployment_afhalen_ruimt_het_account_ook_op(self) -> None:
+        """Niet de hele deployment weg, alleen de dienst: ``handle_service_removal``."""
+        mock_pm = _make_project_manager_mock()
+        deployment = self._deployment_met_mail()
+        previous_yaml = _make_project_data(services=["send-email"], deployments=[deployment])
+        marked = AsyncMock()
+        mock_pm._project_file_handler.deployment_uses_service = MagicMock(
+            side_effect=lambda _yaml, _naam, soorten: "send-email" in soorten
+        )
+        mock_pm._mail_manager = AsyncMock()
+        mock_pm._mail_manager.handle_service_removal = AsyncMock(return_value={"operations": [], "errors": []})
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(mock_pm).delete_deployment_from_yaml_change(
+                "test-project",
+                deployment,
+                _make_project_data(deployments=[]),
+                marked_for_deletion_service=marked,
+                previous_yaml=previous_yaml,
+            )
+
+        mock_pm._mail_manager.handle_service_removal.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_zonder_send_email_wordt_de_mailmanager_niet_aangeroepen(self) -> None:
+        """De tegenproef: een deployment zonder de dienst roept de mailmanager niet aan."""
+        mock_pm = _make_project_manager_mock()
+        deployment = _make_deployment()
+        project_data = _make_project_data(deployments=[deployment])
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+        mock_pm._mail_manager = AsyncMock()
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        mock_project = MagicMock()
+        mock_project.filename = "test-project.yaml"
+        mock_project_service = MagicMock()
+        mock_project_service.get = MagicMock(return_value=mock_project)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=mock_project_service),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(mock_pm).delete_deployment("test-project", "pr-42")
+
+        mock_pm._mail_manager.delete_resources_for_deployment.assert_not_awaited()

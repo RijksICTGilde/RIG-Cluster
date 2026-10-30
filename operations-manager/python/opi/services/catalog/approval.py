@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from opi.services.services import service_entry_config, service_entry_name
+from opi.services.services import deployment_index, service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -159,17 +159,27 @@ class _ApprovalState:
     aanmaken en aanvullen maar op een plek staan.
     """
 
-    def __init__(self, service: str, config_key: str) -> None:
+    def __init__(
+        self,
+        service: str,
+        config_key: str,
+        holder: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
         self.service = service
         self.config_key = config_key
+        #: Waar de dienstenlijst staat die het BLOK draagt. Standaard het project zelf; een
+        #: goedkeuring op de deploymentlaag geeft hier de deployment, zodat lezen en
+        #: schrijven in diens eigen ``services`` landt. De SELECTIE van de dienst blijft een
+        #: vraag aan het project: een deployment kiest de dienst niet.
+        self._holder = holder or (lambda project_data: project_data)
 
     def selected(self, project_data: dict[str, Any]) -> bool:
         """Of het project de dienst uberhaupt in zijn dienstenlijst heeft staan."""
         return self.service in [service_entry_name(entry) for entry in project_data.get("services", []) or []]
 
     def entry(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """De service-entry van deze dienst, als hij als dict in het project staat."""
-        for entry in project_data.get("services", []) or []:
+        """De service-entry van deze dienst, als hij als dict bij de houder staat."""
+        for entry in self._holder(project_data).get("services", []) or []:
             if service_entry_name(entry) == self.service and isinstance(entry, dict):
                 return entry
         return None
@@ -208,7 +218,7 @@ class _ApprovalState:
         verdween. Promoveren naar de recordvorm is wat ``set_service_config`` ook doet: de
         selectie is een set op naam, de vorm van de entry is bijzaak.
         """
-        services = project_data.get("services")
+        services = self._holder(project_data).get("services")
         if not isinstance(services, list):
             return None
         for index, entry in enumerate(services):
@@ -217,6 +227,22 @@ class _ApprovalState:
                 services[index] = record
                 return record
         return None
+
+    @staticmethod
+    def _config_holder(entry: dict[str, Any], service: str) -> dict[str, Any]:
+        """Het dict waar de CONFIG van deze dienst in hangt.
+
+        Voor de recordvorm (``{"name": "send-email", "config": ...}``) is dat de entry
+        zelf; voor de legacy enkelsleutelvorm (``{"send-email": {"config": ...}}``) is dat
+        de binnenste dict. Zonder dat onderscheid zet de schrijver het goedkeuringsblok
+        NAAST de dienst in plaats van erin: de lezer vindt het dan niet, en de entry wordt
+        een tweesleuteldict waar ``service_entry_name`` juist voor waarschuwt. Gemeten op de
+        deploymentlaag, waar het formulier een entry in de legacy vorm aanmaakt.
+        """
+        inner = entry.get(service)
+        if service in entry and isinstance(inner, dict) and "name" not in entry and "reference" not in entry:
+            return inner
+        return entry
 
     def write(
         self,
@@ -230,7 +256,7 @@ class _ApprovalState:
             entry = self._promote_bare_entry(project_data)
         if entry is None:
             return
-        config = entry.setdefault("config", {})
+        config = self._config_holder(entry, self.service).setdefault("config", {})
         if not isinstance(config, dict):
             return
         block = config.setdefault(self.config_key, {})
@@ -418,6 +444,100 @@ VALUE_APPROVAL_SUFFIX = "-approval"
 LAST_APPROVED_KEY = "approved-value"
 
 
+def _status_of_value(state: _ApprovalState, data: dict[str, Any], value: Any) -> ApprovalStatus:
+    """DE CHECK op een waarde: een oordeel geldt alleen voor de waarde waarover het ging."""
+    block = state.read(data)
+    if block is None:
+        return ApprovalStatus.NONE
+    if "value" in block and block.get("value") == value:
+        return state.status(data)
+    if LAST_APPROVED_KEY in block and block.get(LAST_APPROVED_KEY) == value:
+        return ApprovalStatus.APPROVED
+    return ApprovalStatus.NONE
+
+
+def _record_value(
+    state: _ApprovalState,
+    data: dict[str, Any],
+    value: Any,
+    item: ApprovalItem,
+    history_entry: dict[str, Any],
+) -> None:
+    """DE RECORD op een waarde: het oordeel landt bij de waarde waarover het ging.
+
+    Een oordeel over een andere waarde dan er nu gevraagd wordt, schrijft niets: het
+    project kan het veld wijzigen tussen het renderen van de lijst en het insturen.
+    """
+    if value is None or item.get("domain", "") != str(value):
+        return
+    status = item.get("status", "skip")
+    fields: dict[str, Any] = {"status": status, "value": value}
+    if status == ApprovalStatus.APPROVED.value:
+        fields[LAST_APPROVED_KEY] = value
+    state.write(data, fields, history_entry)
+    if status == ApprovalStatus.DENIED.value and (state.read(data) or {}).get(LAST_APPROVED_KEY) == value:
+        # Afwijzen van precies de staande goedkeuring neemt die terug. Zonder dit is een
+        # goedgekeurde waarde niet in te trekken. Een afwijzing van een ANDERE gevraagde
+        # waarde raakt de staande goedkeuring niet.
+        (state.read(data) or {}).pop(LAST_APPROVED_KEY, None)
+
+
+def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: Any) -> None:
+    """DE AANVRAAG op een waarde: de waarde zetten IS de aanvraag."""
+    if value is None:
+        # Een besluit geldt alleen voor de stand waarvoor het is gegeven. Blijft het blok
+        # staan als het veld terug naar de onschuldige stand gaat, dan geldt die
+        # goedkeuring later opnieuw zonder besluit.
+        state.clear(data)
+        return
+    block = state.read(data)
+    last = (block or {}).get(LAST_APPROVED_KEY)
+    if block is not None:
+        if "value" in block and block.get("value") == value:
+            return
+        if "value" not in block and last == value:
+            return
+    # Een nieuwe waarde begint met een lege geschiedenis: de vorige oordelen gingen over een
+    # andere waarde. De laatst goedgekeurde waarde gaat WEL mee: die geldt zolang deze
+    # aanvraag openstaat.
+    state.clear(data)
+    if last is not None and last == value:
+        state.write(data, {LAST_APPROVED_KEY: last})
+        return
+    fields: dict[str, Any] = {"status": ApprovalStatus.REQUESTED.value, "value": value}
+    if last is not None:
+        fields[LAST_APPROVED_KEY] = last
+    state.write(data, fields)
+
+
+def _value_item(
+    *,
+    field: str,
+    block: dict[str, Any],
+    value: Any,
+    subject: str,
+    name: str,
+    extra: dict[str, Any] | None = None,
+) -> ApprovalItem:
+    """Het item voor de beheerpagina, met de GEVRAAGDE WAARDE als deel van zijn identiteit.
+
+    De bewaking op goedkeuringsbesluiten (``validate_approval_decisions``) paart items op
+    (dienst, type, domain, name), dus zo is een andere waarde een ander item en kan een
+    goedkeuring niet meeliften op een waarde die intussen veranderde. ``name`` draagt het
+    project, en op de deploymentlaag ook de deployment.
+    """
+    return {
+        "type": field,
+        "subject": subject,
+        "domain": str(value),
+        "name": name,
+        "current_status": block.get("status", ""),
+        "status": "skip",
+        "history": block.get("history", []),
+        **(extra or {}),
+    }
+
+
 @dataclass(frozen=True)
 class ConfigValueApproval:
     """De complete vorm van "deze WAARDE mag pas gelden als iemand hem goedkeurt".
@@ -516,15 +636,7 @@ def config_value_approval(
         return (state.read(project_data) or {}).get(LAST_APPROVED_KEY)
 
     def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
-        """De CHECK. Een oordeel geldt alleen voor de waarde waarover het ging."""
-        block = state.read(project_data)
-        if block is None:
-            return ApprovalStatus.NONE
-        if "value" in block and block.get("value") == value:
-            return state.status(project_data)
-        if LAST_APPROVED_KEY in block and block.get(LAST_APPROVED_KEY) == value:
-            return ApprovalStatus.APPROVED
-        return ApprovalStatus.NONE
+        return _status_of_value(state, project_data, value)
 
     def _is_approved(project_data: dict[str, Any]) -> bool:
         """DE POORT: staat het veld in een stand die een besluit vraagt, en is dat er?"""
@@ -545,40 +657,18 @@ def config_value_approval(
         if block is None or "value" not in block or value is None:
             return []
         return [
-            {
-                "type": field,
-                "subject": subject(project_data, str(value)) if subject else _activity(value),
-                # De gevraagde waarde als identiteit van het item. De bewaking op
-                # goedkeuringsbesluiten (``validate_approval_decisions``) paart items op
-                # onder meer dit veld, dus zo is een andere waarde een ander item en kan
-                # een goedkeuring niet meeliften op een waarde die intussen veranderde.
-                "domain": str(value),
-                "name": project_data.get("name", ""),
-                "current_status": block.get("status", ""),
-                "status": "skip",
-                "history": block.get("history", []),
-            }
+            _value_item(
+                field=field,
+                block=block,
+                value=value,
+                subject=subject(project_data, str(value)) if subject else _activity(value),
+                name=project_data.get("name", ""),
+            )
         ]
 
     def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
-        """De RECORD. Het oordeel landt bij de waarde waarover het ging.
-
-        Een oordeel over een andere waarde dan er nu gevraagd wordt, schrijft niets: het
-        project kan het veld wijzigen tussen het renderen van de lijst en het insturen.
-        """
-        value = _requested(project_data)
-        if value is None or item.get("domain", "") != str(value):
-            return
-        status = item.get("status", "skip")
-        fields: dict[str, Any] = {"status": status, "value": value}
-        if status == ApprovalStatus.APPROVED.value:
-            fields[LAST_APPROVED_KEY] = value
-        state.write(project_data, fields, history_entry)
-        if status == ApprovalStatus.DENIED.value and _last_approved(project_data) == value:
-            # Afwijzen van precies de staande goedkeuring neemt die terug. Zonder dit is
-            # een goedgekeurde waarde niet in te trekken. Een afwijzing van een ANDERE
-            # gevraagde waarde raakt de staande goedkeuring niet.
-            (state.read(project_data) or {}).pop(LAST_APPROVED_KEY, None)
+        """De RECORD. Het oordeel landt bij de waarde waarover het ging."""
+        _record_value(state, project_data, _requested(project_data), item, history_entry)
 
     def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
         """De NOTICE. Wat de eigenaar te horen krijgt zolang de waarde niet geldt."""
@@ -602,31 +692,7 @@ def config_value_approval(
         """De waarde zetten IS de aanvraag. Een andere waarde is een nieuwe aanvraag."""
         if not state.selected(project_data):
             return
-        value = _requested(project_data)
-        if value is None:
-            # Een besluit geldt alleen voor de stand waarvoor het is gegeven. Blijft het
-            # blok staan als het veld terug naar de onschuldige stand gaat, dan geldt die
-            # goedkeuring later opnieuw zonder besluit.
-            state.clear(project_data)
-            return
-        block = state.read(project_data)
-        last = _last_approved(project_data)
-        if block is not None:
-            if "value" in block and block.get("value") == value:
-                return
-            if "value" not in block and last == value:
-                return
-        # Een nieuwe waarde begint met een lege geschiedenis: de vorige oordelen gingen over
-        # een andere waarde. De laatst goedgekeurde waarde gaat WEL mee: die geldt zolang
-        # deze aanvraag openstaat.
-        state.clear(project_data)
-        if last is not None and last == value:
-            state.write(project_data, {LAST_APPROVED_KEY: last})
-            return
-        fields: dict[str, Any] = {"status": ApprovalStatus.REQUESTED.value, "value": value}
-        if last is not None:
-            fields[LAST_APPROVED_KEY] = last
-        state.write(project_data, fields)
+        _ensure_value_requested(state, project_data, _requested(project_data))
 
     return ConfigValueApproval(
         spec=ApprovalSpec(
@@ -642,6 +708,234 @@ def config_value_approval(
                 if required_when is not None
                 else None
             ),
+        ),
+        is_approved=_is_approved,
+        approved_value=_approved_value,
+        last_approved_value=_last_approved_value,
+        ensure_requested=_ensure_requested,
+    )
+
+
+#: Voorvoegsel van de spec-sleutel van een goedkeuring op de DEPLOYMENTlaag.
+#:
+#: Een eigen sleutel en niet die van het veld, want ``Service.approval_specs`` ontdubbelt
+#: op sleutel: met dezelfde sleutel als de projectaanvraag zou de deploymentaanvraag
+#: nergens meer in de beheerpagina opduiken.
+DEPLOYMENT_APPROVAL_KEY_PREFIX = "deployment-"
+
+#: Scheidingsteken tussen project en deployment in de identiteit van zo'n item.
+#:
+#: Een ``/`` komt in geen projectnaam en in geen deploymentnaam voor, dus een item van een
+#: deployment valt nooit samen met het projectitem of met dat van een andere deployment.
+#: Die identiteit is wat ``validate_approval_decisions`` paart, en wat de reseed in de
+#: beheerpagina overhoudt.
+DEPLOYMENT_ITEM_SEPARATOR = "/"
+
+
+def deployment_item_name(project_name: str, deployment_name: str) -> str:
+    """De identiteit van een deploymentitem in de beheerpagina: ``<project>/<deployment>``."""
+    return f"{project_name}{DEPLOYMENT_ITEM_SEPARATOR}{deployment_name}"
+
+
+@dataclass(frozen=True)
+class DeploymentValueApproval:
+    """Hetzelfde als :class:`ConfigValueApproval`, maar per DEPLOYMENT.
+
+    Een eigen vorm en geen ``layer``-vlag op dezelfde dataclass, omdat de aanroepers een
+    andere vraag stellen: niet "mag dit project dit", maar "mag DEZE deployment dit". Dat
+    is een extra argument op elke poort, en een dataclass die beide signaturen moet dragen
+    typeert geen van beide. De REGELS zijn gedeeld: beide fabrieken gebruiken
+    ``_status_of_value``, ``_record_value`` en ``_ensure_value_requested``, dus een oordeel
+    over een waarde werkt op beide lagen hetzelfde.
+
+    Attributes:
+        spec: de :class:`ApprovalSpec` voor ``config_approvals(ConfigLayer.DEPLOYMENT)``.
+        is_approved: DE POORT: vraagt deze deployment een besluit, en is dat er?
+        approved_value: de gevraagde waarde van deze deployment als die is goedgekeurd.
+        last_approved_value: de laatste waarde waarover een beheerder voor deze deployment
+            "ja" zei, ook als zij daarna iets anders vroeg.
+        ensure_requested: legt de aanvraag van elke deployment vast. Toestandsvormig.
+    """
+
+    spec: ApprovalSpec
+    is_approved: Callable[[dict[str, Any], str], bool]
+    approved_value: Callable[[dict[str, Any], str], str]
+    last_approved_value: Callable[[dict[str, Any], str], str]
+    ensure_requested: Callable[[dict[str, Any]], None]
+
+
+def deployment_value_approval(
+    service_type: ServiceType,
+    *,
+    field: str,
+    label: str,
+    activity: str | Callable[[Any], str],
+    consequence: str | Callable[[dict[str, Any], dict[str, Any]], str],
+    requested_value: Callable[[dict[str, Any], str], str],
+    subject: Callable[[dict[str, Any], str, str], str] | None = None,
+    approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
+) -> DeploymentValueApproval:
+    """De goedkeuring op een configwaarde die EEN DEPLOYMENT overschrijft (RC-401).
+
+    De tegenhanger van :func:`config_value_approval` op de deploymentlaag. Een project zet
+    een waarde voor al zijn deployments; een deployment die daarvan afwijkt, vraagt een
+    eigen besluit, en dat besluit is van die deployment alleen. Daardoor blijft een
+    goedgekeurde afwijking staan als de projectwaarde later omlaag gaat, terwijl een
+    deployment die ERFT wel meegaat.
+
+    De toestand staat op ``deployments[*].services[<dienst>].config/<veld>-approval``, in
+    dezelfde blokvorm als op het project: ``status``, de gevraagde ``value``, de laatst
+    goedgekeurde ``approved-value`` en ``history``.
+
+    Args:
+        service_type: de dienst waar het veld bij hoort.
+        field: de sleutel in de deploymentconfig van de dienst waar het besluit over gaat.
+        label: het opschrift van de aanvraag in de beheerpagina.
+        activity: waar het besluit over gaat, als onderwerp van een zin.
+        consequence: wat er zolang gebeurt, in de woorden van de dienst.
+        requested_value: de gevraagde waarde van EEN deployment als tekst, leeg voor geen
+            aanvraag. De dienst bepaalt wat "niets gevraagd" is: een leeg veld, of een
+            waarde die het project al mocht.
+        subject: hoe de aanvraag heet in de beheerpagina, gegeven project, deployment en
+            waarde; standaard ``activity`` met de deployment erbij.
+        approver: wie mag beslissen.
+    """
+    state_key = f"{field}{VALUE_APPROVAL_SUFFIX}"
+    service = service_type.value
+    selection = _ApprovalState(service, state_key)
+
+    def _deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
+        """De deployment met deze naam, of een leeg blok als het project hem niet kent."""
+        index = deployment_index(project_data, deployment_name)
+        if index is None:
+            return {}
+        deployment = project_data["deployments"][index]
+        return deployment if isinstance(deployment, dict) else {}
+
+    def _state(deployment_name: str) -> _ApprovalState:
+        return _ApprovalState(service, state_key, holder=lambda pd: _deployment(pd, deployment_name))
+
+    def _deployment_names(project_data: dict[str, Any]) -> list[str]:
+        return [
+            deployment["name"]
+            for deployment in project_data.get("deployments") or []
+            if isinstance(deployment, dict) and deployment.get("name")
+        ]
+
+    def _requested(project_data: dict[str, Any], deployment_name: str) -> Any:
+        """De waarde waarover een besluit nodig is, of None als er niets gevraagd is."""
+        return requested_value(project_data, deployment_name) or None
+
+    def _activity(value: Any) -> str:
+        return activity(value) if callable(activity) else activity
+
+    def _subject(project_data: dict[str, Any], deployment_name: str, value: Any) -> str:
+        if subject is not None:
+            return subject(project_data, deployment_name, str(value))
+        return f"{_activity(value)} voor deployment {deployment_name}"
+
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+        """De CHECK, met de deployment in ``value``: generieke code kent de laag niet.
+
+        ``value`` is hier het paar (deployment, waarde). De generieke laag behandelt het
+        als een ondoorzichtige waarde, precies zoals het domein/subdomein-paar van
+        publish-on-web.
+        """
+        deployment_name, waarde = value
+        return _status_of_value(_state(deployment_name), project_data, waarde)
+
+    def _is_approved(project_data: dict[str, Any], deployment_name: str) -> bool:
+        """DE POORT: vraagt deze deployment een besluit, en is dat er?"""
+        value = _requested(project_data, deployment_name)
+        return value is not None and _status_of(project_data, (deployment_name, value)) is ApprovalStatus.APPROVED
+
+    def _approved_value(project_data: dict[str, Any], deployment_name: str) -> str:
+        if not _is_approved(project_data, deployment_name):
+            return ""
+        return str(_requested(project_data, deployment_name))
+
+    def _last_approved_value(project_data: dict[str, Any], deployment_name: str) -> str:
+        last = (_state(deployment_name).read(project_data) or {}).get(LAST_APPROVED_KEY)
+        return "" if last is None else str(last)
+
+    def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+        """De LIJST. Een item per deployment met een open of beoordeelde aanvraag."""
+        items: list[ApprovalItem] = []
+        project_name = project_data.get("name", "")
+        for deployment_name in _deployment_names(project_data):
+            block = _state(deployment_name).read(project_data)
+            value = _requested(project_data, deployment_name)
+            if block is None or "value" not in block or value is None:
+                continue
+            items.append(
+                _value_item(
+                    field=f"{DEPLOYMENT_APPROVAL_KEY_PREFIX}{field}",
+                    block=block,
+                    value=value,
+                    subject=_subject(project_data, deployment_name, value),
+                    name=deployment_item_name(project_name, deployment_name),
+                    extra={"deployment": deployment_name},
+                )
+            )
+        return items
+
+    def _deployment_of(item: ApprovalItem) -> str:
+        """Welke deployment dit item is, uit de identiteit die de reseed overleeft."""
+        return str(item.get("name", "")).partition(DEPLOYMENT_ITEM_SEPARATOR)[2]
+
+    def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+        """De RECORD. Het oordeel landt bij de deployment en de waarde waarover het ging."""
+        deployment_name = _deployment_of(item)
+        if not deployment_name:
+            return
+        _record_value(
+            _state(deployment_name),
+            project_data,
+            _requested(project_data, deployment_name),
+            item,
+            history_entry,
+        )
+
+    def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
+        """De NOTICE. Wat de eigenaar van DEZE deployment te horen krijgt."""
+        deployment_name = deployment.get("name") or ""
+        value = _requested(project_data, deployment_name) if deployment_name else None
+        if not selection.selected(project_data) or value is None:
+            return []
+        status = _status_of(project_data, (deployment_name, value))
+        if status is ApprovalStatus.APPROVED:
+            return []
+        consequence_text = consequence(project_data, deployment) if callable(consequence) else consequence
+        return [
+            _notice(
+                _state(deployment_name),
+                project_data,
+                subject=_subject(project_data, deployment_name, value),
+                status=status,
+                text=_notice_text(_activity(value), consequence_text, status),
+            )
+        ]
+
+    def _ensure_requested(project_data: dict[str, Any]) -> None:
+        """De waarde zetten IS de aanvraag, per deployment."""
+        if not selection.selected(project_data):
+            return
+        for deployment_name in _deployment_names(project_data):
+            _ensure_value_requested(
+                _state(deployment_name),
+                project_data,
+                _requested(project_data, deployment_name),
+            )
+
+    return DeploymentValueApproval(
+        spec=ApprovalSpec(
+            key=f"{DEPLOYMENT_APPROVAL_KEY_PREFIX}{field}",
+            label=label,
+            approver=approver,
+            status_of=_status_of,
+            list_items=_items,
+            record=_record,
+            notices_for=_notices,
         ),
         is_approved=_is_approved,
         approved_value=_approved_value,

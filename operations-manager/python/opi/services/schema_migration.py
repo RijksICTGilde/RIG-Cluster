@@ -52,6 +52,7 @@ SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
         "2.11",
         "2.12",
         "2.13",
+        "2.14",
     )
 )
 
@@ -62,6 +63,11 @@ LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 LATEST_SCHEMA_VERSION_VALUE = version_key(LATEST_SCHEMA_VERSION)
 
 _V1, _V2 = SCHEMA_VERSIONS[0], SCHEMA_VERSIONS[1]
+
+#: De dienst waar de 2.14-stap het accountblok uit haalt. Als constante, zodat de stap niet
+#: het dienstpakket hoeft te importeren: een migratiestap hoort niets van de catalogus nodig
+#: te hebben om een sleutel weg te halen.
+SEND_EMAIL_SERVICE = "send-email"
 
 #: Waar het goedkeuringsblok van de Redis-opt-out staat, zoals ``config_value_approval``
 #: het schrijft.
@@ -1525,6 +1531,37 @@ def roles_as_a_list(project_data: dict[str, Any]) -> bool:
     return gewijzigd
 
 
+def remove_mail_accounts(project_data: dict[str, Any]) -> bool:
+    """Take the SMTP account block out of send-email (v2.13 -> v2.14, RC-401).
+
+    ``services[send-email].config.accounts`` held one account per cluster, with the
+    password AGE-encrypted in the project file. Since RC-401 there is an account per
+    DEPLOYMENT and its password lives in that deployment's Kubernetes secret, like every
+    other service credential, so the block has nothing left to say and account credentials
+    never belonged in a project file in the first place.
+
+    The old password is thrown away and not carried anywhere: no deployment takes the old
+    account over. Each one gets its own account with its own password on the next
+    processing, and the old account keeps working on what the pods still hold until OPI
+    removes it (``MailManager._remove_legacy_project_account``).
+
+    Idempotent: a project without the key is left untouched.
+    """
+    changed = False
+    for entry in project_data.get("services") or []:
+        if service_entry_name(entry) != SEND_EMAIL_SERVICE:
+            continue
+        config = service_entry_config(entry)
+        if isinstance(config, dict) and config.pop("accounts", None) is not None:
+            changed = True
+    if changed:
+        logger.info(
+            f"Removed the send-email account block from project '{project_data.get('name', 'unknown')}': "
+            "every deployment now gets its own account with its password in its own secret"
+        )
+    return changed
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1543,6 +1580,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.11"), introduce_environment),
     (parse_schema_version("2.12"), relocate_api_key_to_service_account),
     (parse_schema_version("2.13"), roles_as_a_list),
+    (parse_schema_version("2.14"), remove_mail_accounts),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

@@ -530,6 +530,24 @@ def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
     )
 
 
+def build_send_email_deployment_flow(deployment_index: int, inherited: dict[str, str] | None = None) -> FormFlow:
+    """De afzender en het dagbudget van een deployment (RC-401).
+
+    ``inherited`` zijn de waarden van het PROJECT, die een leeg veld hier gebruikt. Ze gaan
+    als placeholder het veld in, zodat wie dit formulier opent ziet wat er nu geldt in
+    plaats van een leeg vak.
+    """
+    section = get_service(ServiceType.SEND_EMAIL).deployment_form_section(deployment_index, inherited=inherited)
+    return FormFlow(
+        flow_id=f"modal-edit-send-email-deployment-{deployment_index}",
+        title="E-mail per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
 def build_minio_deployment_flow(deployment_index: int) -> FormFlow:
     """De grens op oude versies van de bucket van een deployment (RC-380)."""
     return _build_noncurrent_deployment_flow(
@@ -610,6 +628,24 @@ def _component_count_context(base_data: dict[str, Any]) -> dict[str, Any]:
     return {"component_count": len(base_data.get("components", []))}
 
 
+def _send_email_inherited_context(base_data: dict[str, Any]) -> dict[str, Any]:
+    """Wat een leeg veld in de send-email-stap van een deployment betekent.
+
+    De EFFECTIEVE waarden van het project, want dat is wat een deployment die niets invult
+    werkelijk krijgt: het goedgekeurde adres (leeg = de relay leidt het af) en het budget
+    dat de poort doorlaat, niet het gevraagde.
+    """
+    from opi.services.catalog.send_email import approved_from_address, effective_messages_per_day, project_from_name
+
+    return {
+        "inherited_send_email": {
+            "from-name": project_from_name(base_data),
+            "from-address": approved_from_address(base_data),
+            "messages-per-day": str(effective_messages_per_day(base_data)),
+        }
+    }
+
+
 def _is_new_context(base_data: dict[str, Any]) -> dict[str, Any]:
     return {"is_new": True} if base_data.get("is_new") else {}
 
@@ -654,6 +690,12 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         prefix="modal-edit-postgresql-deployment-",
         list_key="deployments",
         build=lambda index, _ctx: build_postgresql_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-send-email-deployment-",
+        list_key="deployments",
+        build=lambda index, ctx: build_send_email_deployment_flow(index, ctx.get("inherited_send_email")),
+        context_from_base=_send_email_inherited_context,
     ),
     IndexedFlow(
         prefix="modal-edit-minio-deployment-",

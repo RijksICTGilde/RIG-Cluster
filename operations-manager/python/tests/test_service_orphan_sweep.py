@@ -6,12 +6,14 @@ The sweep must never offer anything actively used for deletion:
 """
 
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.jobs.service_orphan_sweep import (
     CONFIRMABLE,
     _classify_database,
+    _classify_mail_account,
     _classify_project_realm_client,
     _live_deployments,
     sweep,
@@ -79,6 +81,114 @@ class TestClassifyProjectRealmClient:
     def test_foreign_client_is_unknown(self) -> None:
         classification, _ = _classify_project_realm_client("custom-integration", "regel-k4c", ["regelrecht"])
         assert classification == "unknown"
+
+
+class TestClassifyMailAccount:
+    """RC-401: een account hoort nu bij een DEPLOYMENT, dus de verwachte naam is er een
+    per live deployment. Het pre-RC-401 projectaccount is pas een wees als geen enkele
+    deployment het meer gebruikt (dat bewaakt ``MailManager._remove_legacy_project_account``
+    zelf al; de sweep is het vangnet daaronder)."""
+
+    PROJECTS: ClassVar[dict[str, list[str]]] = {"myproject": ["prod", "acceptatie"]}
+
+    def test_platform_account_is_system(self) -> None:
+        from opi.core.config import settings
+
+        classification, _ = _classify_mail_account(settings.MAIL_PLATFORM_ACCOUNT, self.PROJECTS)
+        assert classification == "system"
+
+    def test_keycloak_account_is_system(self) -> None:
+        from opi.core.config import settings
+
+        classification, _ = _classify_mail_account(settings.MAIL_KEYCLOAK_ACCOUNT, self.PROJECTS)
+        assert classification == "system"
+
+    def test_live_deployment_account_is_expected(self) -> None:
+        from opi.utils.naming import generate_deployment_mail_account_name
+
+        naam = generate_deployment_mail_account_name("myproject", "prod")
+        classification, _ = _classify_mail_account(naam, self.PROJECTS)
+        assert classification == "expected"
+
+    def test_the_pre_rc401_project_account_is_an_orphan_candidate(self) -> None:
+        from opi.utils.naming import generate_mail_account_name
+
+        naam = generate_mail_account_name("myproject")
+        classification, reason = _classify_mail_account(naam, self.PROJECTS)
+        assert classification == CONFIRMABLE
+        assert "myproject" in reason
+
+    def test_a_dead_deployment_account_is_an_orphan_candidate(self) -> None:
+        from opi.utils.naming import generate_deployment_mail_account_name
+
+        naam = generate_deployment_mail_account_name("myproject", "oude-deployment")
+        classification, _ = _classify_mail_account(naam, self.PROJECTS)
+        assert classification == CONFIRMABLE
+
+    def test_an_account_without_the_project_prefix_is_unknown(self) -> None:
+        classification, _ = _classify_mail_account("door-een-beheerder-gemaakt", self.PROJECTS)
+        assert classification == "unknown"
+
+
+class TestMailAccountInventory:
+    """De sweep-kant: het principal-bestand van de relay in het rapport, en een
+    onvolledige inventaris als FOUT gemeld en niet als een lege lijst."""
+
+    @pytest.mark.asyncio
+    async def test_accounts_land_in_het_rapport_met_hun_classificatie(self) -> None:
+        from opi.utils.naming import generate_deployment_mail_account_name, generate_mail_account_name
+
+        connector = AsyncMock()
+        connector.list_principals = AsyncMock(
+            return_value=[
+                "zad-platform",
+                generate_deployment_mail_account_name("myproject", "prod"),
+                generate_mail_account_name("myproject"),
+            ]
+        )
+
+        with patch("opi.jobs.service_orphan_sweep.create_mail_connector", AsyncMock(return_value=connector)):
+            report = await sweep(
+                [{"name": "myproject", "deployments": [{"name": "prod", "cluster": "odcn-production"}]}],
+                cluster="odcn-production",
+            )
+
+        classificaties = {entry["name"]: entry["classification"] for entry in report["mail_accounts"]}
+        assert classificaties["zad-platform"] == "system"
+        assert classificaties[generate_deployment_mail_account_name("myproject", "prod")] == "expected"
+        assert classificaties[generate_mail_account_name("myproject")] == CONFIRMABLE
+        assert report["summary"]["expected"] >= 1
+        assert report["summary"][CONFIRMABLE] >= 1
+
+    @pytest.mark.asyncio
+    async def test_een_onleesbare_inventaris_is_een_fout_en_geen_lege_lijst(self) -> None:
+        """Zonder dit onderscheid lijkt elk bestaand account een wees: de inventaris MOET
+        bij een fout stoppen in plaats van terugvallen op een lege lijst."""
+        from opi.connectors.mail import MailRelayError
+
+        connector = AsyncMock()
+        connector.list_principals = AsyncMock(side_effect=MailRelayError("relay antwoordt niet"))
+
+        with patch("opi.jobs.service_orphan_sweep.create_mail_connector", AsyncMock(return_value=connector)):
+            report = await sweep([{"name": "myproject", "deployments": [{"name": "prod"}]}], cluster="odcn-production")
+
+        assert report["mail_accounts"] == []
+        assert any("mail inventory failed" in fout for fout in report["errors"])
+
+    @pytest.mark.asyncio
+    async def test_geen_relay_op_dit_cluster_is_geen_fout(self) -> None:
+        """Een cluster zonder mailrelay heeft gewoon geen mailaccounts, en dat is geen
+        probleem om in ``errors`` te melden."""
+        from opi.connectors.mail import MailRelayNotConfiguredError
+
+        with patch(
+            "opi.jobs.service_orphan_sweep.create_mail_connector",
+            AsyncMock(side_effect=MailRelayNotConfiguredError("geen relay")),
+        ):
+            report = await sweep([{"name": "myproject", "deployments": [{"name": "prod"}]}], cluster="odcn-production")
+
+        assert report["mail_accounts"] == []
+        assert report["errors"] == [] or all("mail" not in fout for fout in report["errors"])
 
 
 class TestLiveDeployments:

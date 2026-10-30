@@ -186,6 +186,13 @@ set "naam" "";
 # post van de portal, en sinds RC-399 ook een project met een goedgekeurd eigen adres.
 global "afzender";
 set "afzender" "";
+# En het PROJECT waarvoor dit account verstuurt, voor de X-ZAD-Project-kopregel hieronder.
+# Sinds RC-401 hoort een account bij een DEPLOYMENT en draagt zijn naam een hash, dus het
+# project valt er niet meer uit af te leiden; het staat onder zad.project. in de relay en
+# komt hier via hetzelfde gegenereerde script binnen. Leeg bij een platformaccount, dat
+# namens niemand verstuurt.
+global "project";
+set "project" "";
 include :optional :personal "zad-afzenders";
 
 # Het adres uit de accountnaam. LET OP de vorm: een `let` BINNEN een if-blok overleeft
@@ -251,11 +258,13 @@ if eval "naam == ''" {
 #    alleen bij de ontvanger terug als de laatste mailserver er een Return-Path: van
 #    maakt. De deleteheader is de kern en staat BUITEN de if: zonder die regel zet een
 #    applicatie zelf een X-ZAD-Project en voert ze de naam van een ander project.
-#    De `let` staat er ook buiten, om dezelfde reden als bij `projectadres` hierboven.
-#    Platformaccounts krijgen de kopregel niet: die versturen niet namens een project.
-let "project" "strip_prefix(account, 'project-')";
+#    De naam komt uit het INGELADEN script en wordt niet meer uit de accountnaam geknipt:
+#    sinds RC-401 heeft elke deployment haar eigen account en draagt die naam een hash, dus
+#    er is niets meer af te leiden. OPI schrijft het project per account onder zad.project.
+#    Platformaccounts krijgen de kopregel niet: die hebben geen sleutel en versturen niet
+#    namens een project.
 deleteheader "X-ZAD-Project";
-if eval "starts_with(account, 'project-')" {
+if eval "project != ''" {
     addheader :last "X-ZAD-Project" "${project}";
 }
 
