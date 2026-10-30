@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.htmx import scroll_backupblok_in_beeld
+from tests.e2e.helpers.tabs import click_tab
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Request, Route
@@ -136,13 +137,10 @@ def test_elke_deployment_haalt_zijn_eigen_lijst_op(app_server: str, auth_page: P
 
 def test_de_keuze_blijft_staan_bij_het_wisselen_van_tabblad(app_server: str, auth_page: Page) -> None:
     """Van Deployments naar Backups: dezelfde deployment, want de tabbalk draagt de naam."""
-    # 1440 breed: bij 1280 valt Backups sinds NLDD 0.13 in het overloopmenu van de tabbalk, en dan
-    # is het tabblad zelf niet zichtbaar. Dit toetst het wisselen en niet de overloop.
-    auth_page.set_viewport_size({"width": 1440, "height": 900})
     auth_page.goto(f"{app_server}{DEPLOYMENTS_URL}/tweede")
     auth_page.wait_for_load_state("networkidle")
 
-    auth_page.locator(f'nldd-tab-bar-item[href$="/{PROJECT}/backups/tweede"]').first.click()
+    click_tab(auth_page, f"/{PROJECT}/backups/tweede")
     auth_page.wait_for_load_state("networkidle")
 
     assert auth_page.url.endswith(f"{BACKUPS_URL}/tweede")
