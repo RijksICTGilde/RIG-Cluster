@@ -29,14 +29,17 @@
         {% set is_completed = section_id in steps.completed %}
         {% set status = 'current' if is_current else ('past' if loop.index0 < current_position else 'future') %}
         {% if is_completed and not is_current %}
-            {# A completed step stays a real link, so it works without JavaScript; htmx
-               intercepts it and posts the current step first, so what you just typed is
-               not lost by jumping. The JSON values are plain strings, so autoescape
-               escapes their quotes inside the attribute. #}
+            {# A completed step is a BUTTON, not a link. With `href` the item renders an
+               <a> in its shadow DOM, and htmx on the host does not cancel that click, so
+               the browser followed the link with a plain GET: in the modal that lacks the
+               wizard token and answered with a JSON 400 ("Wizard sessie verlopen").
+               htmx posts the current step first, so what you just typed is not lost by
+               jumping. The JSON values are plain strings, so autoescape escapes their
+               quotes inside the attribute. #}
             <nldd-step-bar-item
                 text="{{ steps.titles[section_id] }}"
                 status="{{ status }}"
-                href="{{ base_url }}{{ section_id }}{{ query_params }}"
+                button
                 hx-post="{{ base_url }}{{ steps.current }}{{ query_params }}"
                 hx-target="{{ target }}"
                 hx-swap="innerHTML"

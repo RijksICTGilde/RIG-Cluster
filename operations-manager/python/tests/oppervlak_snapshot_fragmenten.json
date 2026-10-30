@@ -87,10 +87,7 @@
     ]
   },
   "stap-laatste": {
-    "bestemmingen": [
-      "/projects/een-project/modal-wizard/f/step/een",
-      "/projects/een-project/modal-wizard/f/step/twee"
-    ],
+    "bestemmingen": [],
     "functies": [
       "openServiceHelp"
     ],
@@ -111,9 +108,7 @@
     ]
   },
   "stap-midden": {
-    "bestemmingen": [
-      "/projects/een-project/modal-wizard/f/step/een"
-    ],
+    "bestemmingen": [],
     "functies": [
       "openServiceHelp"
     ],

@@ -327,7 +327,6 @@ def page_data(slug: str) -> dict[str, Any]:
         return {
             "flow_title": "Nieuw project",
             "flow_description": "Vul de gegevens in. Je kunt tussentijds terug zonder iets kwijt te raken.",
-            "current_step": 2,
             "steps": [
                 # "past", niet "complete": de enum van step-bar-item is
                 # past/current/future. "complete" rendert zonder klacht (ook onder
