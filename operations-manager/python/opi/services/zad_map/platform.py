@@ -16,6 +16,7 @@ from typing import Any
 
 from opi.core.config import settings
 from opi.services.zad_map.contract import Color, Column, Edge, Graph, Group, Info, InfoItem, InfoSection, Node
+from opi.web.security_policy import REPO_BLOB_URL
 
 PLATFORM_JSON = Path(__file__).resolve().parent / "platform.json"
 
@@ -89,11 +90,12 @@ def _system_node(system: dict[str, Any], cluster: str, group: str) -> Node:
             )
         )
     if system["docs"]:
-        # Alleen tekst, geen links: features/ zit niet in het image.
+        # features/ is not in the image, so the link goes to the file on GitHub main; the
+        # panel opens an href in a new tab.
         sections.append(
             InfoSection(
                 heading="Meer lezen",
-                items=[InfoItem(text=f"{doc['title']} ({doc['file']})") for doc in system["docs"]],
+                items=[InfoItem(text=doc["title"], href=REPO_BLOB_URL + doc["file"]) for doc in system["docs"]],
             )
         )
     return Node(
