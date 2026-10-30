@@ -31,9 +31,9 @@ PLATFORM_DATABASE_ROLES: dict[str, tuple[str, ...]] = {
     "mailrelay": ("mailrelay",),
 }
 
-#: De leesrol van de nachtelijke platformback-up (managed role in ``cluster.yaml``).
-#: ``pg_read_all_data`` geeft geen CONNECT, dus zonder deze GRANT dumpt hij niets zodra de
-#: afsluiting op ``on`` staat.
+#: Read role of the nightly platform backup (managed role in ``cluster.yaml``).
+#: ``pg_read_all_data`` does not grant CONNECT, so without this GRANT the backup dumps
+#: nothing once the restriction is ``on``.
 PLATFORM_BACKUP_ROLE = "platform_backup"
 
 
