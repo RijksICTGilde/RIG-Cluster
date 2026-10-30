@@ -64,7 +64,7 @@ portaal, dus een token opent nooit meer dan zijn eigenaar op het scherm kan.
 | `ops-ci` | voor een pijplijn: image vervangen op elke deployment |
 | iets anders | niets |
 
-De volledige tabel staat op `/admin/rollen` en wordt uit de regels in de code gelezen;
+De volledige tabel staat op `/rollen` en wordt uit de regels in de code gelezen;
 `features/rollen-en-rechten.md` beschrijft hoe je er een regel aan toevoegt. Scopes per
 token bestaan niet, zodat er geen tweede plek is waar rechten staan en die uit de pas kan
 lopen.

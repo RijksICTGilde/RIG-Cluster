@@ -2,7 +2,7 @@
 
 Eén plek zegt wie wat mag in ZAD, en die plek beslist voor de API en voor het portaal:
 het regelregister in `operations-manager/python/opi/core/authz/rules.py`. De rolmatrix op
-`/admin/rollen` is datzelfde register, als tabel. Wat daar staat is wat er wordt
+`/rollen` is datzelfde register, als tabel. Wat daar staat is wat er wordt
 afgedwongen; er is geen tweede lijst. Een cel die `v` toont kan in de praktijk nog dicht
 zijn omdat de aanroep zijn doelwit niet noemt, nooit open: zie "Waartegen een scope weegt".
 
@@ -31,11 +31,11 @@ Een platformbeheerder krijgt op elk project `[admin, ops]`, zonder lid te zijn.
 
 ## De matrix
 
-`/admin/rollen`, voor platformbeheerders. Hij wordt uit het register gelezen, dus hij
-staat hier niet nog een keer: elke regel krijgt een rij per scope die hij noemt, met een
-kolom per rol. `v` mag, `v s` mag met een verse code uit je 2-factor, leeg mag niet.
-Een service account kan geen 2-factor geven, dus alles met `s` is voor een pijplijn
-dicht.
+`/rollen`, voor iedereen die ingelogd is, in het menu onder Platform. Hij wordt uit
+het register gelezen, dus hij staat hier niet nog een keer: elke regel krijgt een
+rij per scope die hij noemt, met een kolom per rol. `v` mag, `v s` mag met een verse
+code uit je 2-factor, leeg mag niet. Een service account kan geen 2-factor geven,
+dus alles met `s` is voor een pijplijn dicht.
 
 ## Hoe je een regel toevoegt
 

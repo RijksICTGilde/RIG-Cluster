@@ -1,7 +1,7 @@
 """Het regelregister: wat elke action opent, en voor wie.
 
 Dit bestand lees je van boven naar beneden als de rechtenmatrix; de pagina op
-``/admin/rollen`` toont precies wat hier staat. Een action zonder regel hier laat de
+``/rollen`` toont precies wat hier staat. Een action zonder regel hier laat de
 applicatie bij het opstarten falen, dus een nieuwe route kan niet stil onbeschermd zijn.
 
 De rollen en scopes staan in :mod:`opi.core.authz.engine`.
@@ -293,7 +293,6 @@ for _actie, _label in (
     (Action.PLATFORM_APPROVALS, "Aanvragen beoordelen"),
     (Action.PLATFORM_USAGE, "Gebruik en kosten"),
     (Action.PLATFORM_SERVICES, "De toestand van de gedeelde services"),
-    (Action.PLATFORM_ROLES, "De rolmatrix"),
     (Action.PLATFORM_METRICS, "De metrics-explorer"),
     (Action.PLATFORM_FEDERATION, "Federatie met andere clusters"),
     (Action.PLATFORM_BACKUP, "De back-uptoestand van het platform"),

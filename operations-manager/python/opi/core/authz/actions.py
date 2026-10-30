@@ -105,7 +105,6 @@ class Action(StrEnum):
     PLATFORM_APPROVALS = "platform.approvals"
     PLATFORM_USAGE = "platform.usage"
     PLATFORM_SERVICES = "platform.services"
-    PLATFORM_ROLES = "platform.roles"
     PLATFORM_METRICS = "platform.metrics"
     PLATFORM_FEDERATION = "platform.federation"
     PLATFORM_BACKUP = "platform.backup"

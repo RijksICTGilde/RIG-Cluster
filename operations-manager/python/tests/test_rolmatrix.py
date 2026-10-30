@@ -7,7 +7,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.authz.engine import (
     ANY,
@@ -113,15 +112,18 @@ def _gebruikersdienst(admins: set[str]) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_een_niet_beheerder_komt_niet_op_de_matrixpagina() -> None:
-    """De matrix gaat over het hele platform, dus de URL is de grens, niet het menu."""
+async def test_een_ingelogde_niet_beheerder_ziet_de_matrix() -> None:
+    """Wie een rol krijgt of uitdeelt moet kunnen lezen wat hij opent, niet alleen de beheerder."""
     with (
         patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())),
-        pytest.raises(HTTPException) as fout,
+        patch("opi.web.router_rolmatrix.render", return_value="gerenderd") as render,
+        patch("opi.web.router_rolmatrix.get_menu_items", return_value=[]),
+        patch("opi.web.router_rolmatrix.get_navigation", return_value={}),
     ):
-        await rolmatrix(_verzoek("ontwikkelaar@rijksoverheid.nl"))
+        antwoord = await rolmatrix(_verzoek("ontwikkelaar@rijksoverheid.nl"))
 
-    assert fout.value.status_code == 403
+    assert antwoord == "gerenderd"
+    assert render.call_args.kwargs["context"]["secties"]
 
 
 @pytest.mark.asyncio
@@ -134,7 +136,7 @@ async def test_de_pagina_krijgt_de_kolommen_en_de_secties() -> None:
         ),
         patch("opi.web.router_rolmatrix.render", return_value="gerenderd") as render,
         patch("opi.web.router_rolmatrix.get_menu_items", return_value=[]),
-        patch("opi.web.router_rolmatrix.build_lotc_admin", return_value={}),
+        patch("opi.web.router_rolmatrix.get_navigation", return_value={}),
     ):
         antwoord = await rolmatrix(_verzoek("beheerder@rijksoverheid.nl"))
 

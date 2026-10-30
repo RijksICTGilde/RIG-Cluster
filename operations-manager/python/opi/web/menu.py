@@ -46,6 +46,8 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
         # De kaart van het platform: wat er draait en waar ZAD mee praat.
         {"label": "Platform", "link": "/platform", "icon": "wolk"},
+        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
+        {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
@@ -70,7 +72,6 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # dienst declareert, en dat is er sinds send-email meer dan een.
         menu_items.append({"label": "Aanvragen", "link": "/admin/approvals", "icon": "vinkje"})
         menu_items.append({"label": "Services status", "link": "/admin/diensten", "icon": "weegschaal"})
-        menu_items.append({"label": "Rollen en rechten", "link": "/admin/rollen", "icon": "user"})
 
     # Add user-specific menu items
     if user:

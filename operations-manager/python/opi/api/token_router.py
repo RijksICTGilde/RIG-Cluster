@@ -56,7 +56,7 @@ class ServiceAccountAanvraag(BaseModel):
     naam: str = Field(description="DNS-label; hieronder staat het account in het logboek en in de git-trailer")
     roles: list[str] = Field(
         default_factory=lambda: list(STANDAARD_ROLLEN),
-        description="Dezelfde rollen als een mens. Wat elke rol opent staat op /admin/rollen",
+        description="Dezelfde rollen als een mens. Wat elke rol opent staat op /rollen",
         examples=[["developer-ci"]],
     )
 
