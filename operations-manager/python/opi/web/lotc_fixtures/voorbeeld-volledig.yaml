@@ -81,6 +81,7 @@ repositories:
 
 components:
   - name: backend
+    description: API voor de zoekfunctie, leest uit de gedeelde database
     type: single
     ports:
       inbound: [8000]

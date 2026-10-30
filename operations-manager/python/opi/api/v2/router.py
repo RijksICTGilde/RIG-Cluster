@@ -1917,6 +1917,7 @@ async def add_component_v2(
         payload={
             "project_name": project_name,
             "name": component_data.name,
+            "description": component_data.description,
             "type": component_data.type,
             "image": component_data.image,
             "deployment_names": component_data.deployment_names,
@@ -1983,6 +1984,7 @@ async def update_component_v2(
         payload={
             "project_name": project_name,
             "name": component_name,
+            "description": component_data.description,
             "image": component_data.image,
             "port": component_data.port,
             "ports": component_data.ports,

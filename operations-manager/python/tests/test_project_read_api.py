@@ -104,6 +104,7 @@ SAMPLE_PROJECT_DATA: dict[str, Any] = {
     "components": [
         {
             "name": "backend",
+            "description": "API voor de zoekfunctie, leest uit de gedeelde database",
             "type": "single",
             "ports": {"inbound": [8000], "outbound": [443]},
             "path": [{"match": "/api"}],
@@ -347,10 +348,16 @@ class TestProjectComponents:
         components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
         backend = next(c for c in components if c["name"] == "backend")
         assert backend["type"] == "single"
+        assert backend["description"] == "API voor de zoekfunctie, leest uit de gedeelde database"
         assert backend["ports"] == {"inbound": [8000], "outbound": [443]}
         assert backend["path"] == [{"match": "/api"}]
         assert backend["resources"] == {"cpu": "1", "limits": {"memory": "649Mi"}}
         assert backend["services"] == ["publish-on-web", "keycloak", "attachments"]
+
+    def test_a_component_without_a_description_reports_null(self, client: TestClient) -> None:
+        components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
+        frontend = next(c for c in components if c["name"] == "frontend")
+        assert frontend["description"] is None
 
     def test_env_vars_come_back_as_names_only(self, client: TestClient) -> None:
         components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]

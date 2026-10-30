@@ -53,6 +53,7 @@ SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
         "2.12",
         "2.13",
         "2.14",
+        "2.15",
     )
 )
 
@@ -1562,6 +1563,14 @@ def remove_mail_accounts(project_data: dict[str, Any]) -> bool:
     return changed
 
 
+def component_description(project_data: dict[str, Any]) -> bool:
+    """Added components[].description (v2.14 -> v2.15).
+
+    Optional field, so nothing to migrate. This step registers the new version in the chain.
+    """
+    return False
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1581,6 +1590,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.12"), relocate_api_key_to_service_account),
     (parse_schema_version("2.13"), roles_as_a_list),
     (parse_schema_version("2.14"), remove_mail_accounts),
+    (parse_schema_version("2.15"), component_description),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

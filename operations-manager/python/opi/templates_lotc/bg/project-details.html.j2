@@ -42,6 +42,9 @@
                         title="{{ component.name }}"
                         count="{{ component.type }}"
                         sub="poorten: {{ component.ports.inbound | join(', ') if component.ports else 'geen' }}">
+                        {% if component.description %}
+                            <c-paragraph size="sm">{{ component.description }}</c-paragraph>
+                        {% endif %}
                         {% for service in component.services or [] %}
                             <c-chip>{{ service }}</c-chip>
                         {% endfor %}

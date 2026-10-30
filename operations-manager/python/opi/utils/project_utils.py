@@ -176,6 +176,7 @@ async def build_component_config(
     public_key: str | None = None,
     default_port: int | None = None,
     ports: list[int] | None = None,
+    description: str | None = None,
 ) -> dict[str, Any]:
     """
     Build a complete component config dict.
@@ -199,6 +200,7 @@ async def build_component_config(
         public_key: AGE public key for encrypting env vars
         default_port: Default port if none specified (e.g., 8080 for project creation)
         ports: Inbound ports as a list (takes precedence over the single-port `port`)
+        description: Free text saying what the component does. Left out when empty.
 
     Returns:
         Component configuration dictionary
@@ -218,6 +220,7 @@ async def build_component_config(
 
     component_config: dict[str, Any] = {
         "name": name,
+        **({"description": description} if description else {}),
         "type": component_type,
         "ports": {"inbound": inbound_ports, "outbound": [80, 443]},
         # Schema expects an array of component-path objects (see project_v2.json

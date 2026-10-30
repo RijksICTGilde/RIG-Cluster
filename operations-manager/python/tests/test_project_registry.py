@@ -75,11 +75,8 @@ class TestSequenceEditables:
         # (scheme, port, liveness-path, readiness-path), +1 for the optional start command,
         # +1 for the authorization-wall signpost (a read-only pointer to the project-level
         # setting, shown only when that service is on this component), +1 for the
-        # image-registries reference (welke eigen registry hoort bij de image van dit
-        # component, RC-177). Sinds RC-388 telt user-env-vars niet meer mee: dat veld is
-        # uit de generieke stroom en leeft alleen nog op de aanmaakwizard en achter de
-        # step-up.
-        assert len(COMPONENTS_SEQUENCE.children) == 25
+        # image-registries reference (which registry to use), +1 for the description field.
+        assert len(COMPONENTS_SEQUENCE.children) == 26
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):

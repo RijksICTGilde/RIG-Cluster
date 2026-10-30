@@ -11,6 +11,7 @@ from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,
+    component_description,
     detect_schema_version,
     migrate_to_latest,
     normalize_domains_location,
@@ -1805,3 +1806,27 @@ class TestRemoveMailAccounts:
         assert was_migrated is True
         assert "accounts" not in result["services"][0]["config"]
         validate_project_schema(result)
+
+
+class TestComponentDescriptionMigration:
+    """v2.14 -> v2.15: a new optional field, nothing to migrate for an existing file."""
+
+    def test_is_a_no_op(self) -> None:
+        data = {"name": "p", "components": [{"name": "frontend", "type": "deployment"}]}
+        assert component_description(data) is False
+        assert data == {"name": "p", "components": [{"name": "frontend", "type": "deployment"}]}
+
+    def test_a_2_14_file_reaches_the_latest_version_unchanged(self) -> None:
+        data = {
+            "name": "p",
+            "schema-version": "2.14",
+            "users": [{"email": "a@b.nl", "roles": ["admin"]}],
+            "components": [{"name": "frontend", "type": "deployment"}],
+        }
+        before_without_stamp = {k: v for k, v in data.items() if k != "schema-version"}
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp

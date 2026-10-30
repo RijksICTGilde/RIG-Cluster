@@ -185,6 +185,36 @@ class TestV2ComponentPorts:
         assert call_kwargs["payload"]["add_services"] == ["redis"]
         assert call_kwargs["payload"]["remove_services"] == ["attachments"]
 
+    def test_add_forwards_description_in_payload(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="add_component")
+
+        v2_client.post(
+            "/api/v2/projects/test-project/components",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "name": "mgr",
+                "image": "example.com/mgr:v1",
+                "description": "Wat dit component doet",
+                "deployment_names": ["main"],
+            },
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["description"] == "Wat dit component doet"
+
+    def test_patch_forwards_description(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        response = v2_client.patch(
+            "/api/v2/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"description": "Nieuwe omschrijving"},
+        )
+
+        _assert_accepted(response, "update_component")
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["description"] == "Nieuwe omschrijving"
+
     def test_patch_rejects_services_with_add_services(
         self, v2_client: TestClient, mock_task_service: AsyncMock
     ) -> None:

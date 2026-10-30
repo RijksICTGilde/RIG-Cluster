@@ -1,0 +1,10 @@
+{
+  "$comment": "v2.14 -> 2.15 voegde components[].description toe: een vrije tekst van maximaal 500 tekens die zegt wat het component doet. Een 2.14-bestand kent dat veld niet, en omdat een component een gesloten object is wordt het daar geweigerd.",
+  "$defs": {
+    "component": {
+      "properties": {
+        "description": null
+      }
+    }
+  }
+}

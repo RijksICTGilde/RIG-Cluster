@@ -167,6 +167,7 @@ COMPONENTS_SECTION = FormSection(
                     legend="Identificatie",
                     children=[
                         "name",
+                        "description",
                         "image",
                         *_service_component_layouts(COMPONENT_IMAGE_SLOT),
                         # Het startcommando hoort bij het image: het vervangt de entrypoint

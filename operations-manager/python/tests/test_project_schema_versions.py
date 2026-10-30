@@ -21,6 +21,7 @@ These tests hold the new arrangement in place:
 import json
 import logging
 import re
+from typing import cast
 
 import pytest
 from opi.core.git_monitor import file_change_handler
@@ -66,7 +67,7 @@ def _lid(versie: object) -> dict:
 
 def _project(**extra: object) -> dict:
     """Minimal project that validates at every version."""
-    versie = extra.get("schema-version", LATEST_SCHEMA_VERSION_VALUE)
+    versie = cast("SchemaVersion | int | float | str", extra.get("schema-version", LATEST_SCHEMA_VERSION_VALUE))
     base: dict = {
         "name": "voorbeeld",
         "schema-version": LATEST_SCHEMA_VERSION_VALUE,
@@ -110,8 +111,11 @@ class TestSchemaSetCompleteness:
             check_schema_versions((*SCHEMA_VERSIONS, next_version))
 
     def test_a_gap_in_the_chain_fails_loudly(self) -> None:
-        with pytest.raises(ProjectSchemaError, match=r"2\.15"):
-            check_schema_versions((*SCHEMA_VERSIONS[:-1], parse_schema_version("2.15"), SCHEMA_VERSIONS[-1]))
+        # A version in the middle of the chain without a patch.
+        latest = SCHEMA_VERSIONS[-1]
+        zonder_patch = SchemaVersion(latest.major, latest.minor + 2)
+        with pytest.raises(ProjectSchemaError, match=re.escape(version_key(zonder_patch))):
+            check_schema_versions((*SCHEMA_VERSIONS[:-1], zonder_patch, latest))
 
     def test_a_schema_without_a_migration_fails_loudly(self) -> None:
         chain = tuple(v for v in SCHEMA_VERSIONS if v != parse_schema_version("2.4"))
@@ -218,6 +222,28 @@ class TestMigrationsCanBeFinished:
         validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="publish-on-web"):
             validate_project_schema(data, schema_version=parse_schema_version("2"))
+
+    def test_component_description_rejected_at_2_14_accepted_at_2_15(self) -> None:
+        """The reverse of the rest of this class: a FIELD ADDED, not removed.
+
+        2.14 does not know `description` and the component is a closed object, so an
+        old file carrying it is rejected rather than silently accepted.
+        """
+        new_form = _project(components=[{"name": "frontend", "type": "deployment", "description": "Wat het doet"}])
+        validate_project_schema(new_form, schema_version=parse_schema_version("2.15"))
+
+        old_form = _project(components=[{"name": "frontend", "type": "deployment", "description": "Wat het doet"}])
+        with pytest.raises(ProjectSchemaError, match="description"):
+            validate_project_schema(old_form, schema_version=parse_schema_version("2.14"))
+
+    def test_component_description_over_500_chars_is_rejected(self) -> None:
+        data = _project(components=[{"name": "frontend", "type": "deployment", "description": "x" * 501}])
+        with pytest.raises(ProjectSchemaError, match="description"):
+            validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
+
+    def test_component_description_at_exactly_500_chars_is_accepted(self) -> None:
+        data = _project(components=[{"name": "frontend", "type": "deployment", "description": "x" * 500}])
+        validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
 
     def test_the_newest_schema_is_the_newest_shape_only(self) -> None:
         # The regression this locks: someone re-adds a legacy form to the newest

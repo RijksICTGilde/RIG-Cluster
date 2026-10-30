@@ -184,14 +184,14 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 13 children: storage/attachment sequences hidden (no storage services),
+        # 14 children: storage/attachment sequences hidden (no storage services),
         # path (with nested match/rewrite) always visible, the publish-on-web TLS field
         # (component enables publish-on-web), and the optional start command. The registry
         # picker is not among them: this project has no registries, so there is nothing to
         # pick and the component form stays exactly as it was (RC-187) -- which is the
-        # state of 47 of the 49 projects. user-env-vars telt sinds RC-388 niet meer mee:
-        # dat veld is uit de generieke stroom (step-up-venster).
-        assert len(first_item.children) == 13
+        # state of 47 of the 49 projects. user-env-vars excluded since RC-388 (step-up
+        # section), and description field added.
+        assert len(first_item.children) == 14
 
     def test_components_item_gains_the_registry_picker_with_a_registry(self):
         """De tegenproef: een project MET een registry krijgt het veld er wel bij."""
@@ -208,7 +208,7 @@ class TestSequenceRendering:
             ],
         }
         fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
-        assert len(fields["components"].children[0].children) == 14
+        assert len(fields["components"].children[0].children) == 15
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -231,11 +231,11 @@ class TestSequenceRendering:
         )
         comp_field = fields["components"]
         first_item = comp_field.children[0]
-        # 14 children: storage sequence visible (persistent-storage enabled),
+        # 15 children: storage sequence visible (persistent-storage enabled),
         # path (with nested match/rewrite) always visible, the publish-on-web TLS field
-        # (component enables publish-on-web), and the optional start command.
-        # user-env-vars is hier sinds RC-388 uit (step-up-venster).
-        assert len(first_item.children) == 14
+        # (component enables publish-on-web), and the optional start command. user-env-vars
+        # excluded since RC-388 (step-up section), and description field added.
+        assert len(first_item.children) == 15
 
 
 class TestNestedSequenceRendering:

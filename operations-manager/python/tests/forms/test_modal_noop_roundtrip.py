@@ -91,6 +91,7 @@ def _project() -> dict[str, Any]:
         "components": [
             {
                 "name": "web",
+                "description": "De publieke webinterface, bedient de zoekpagina",
                 "path": [{"match": "/"}],
                 "ports": {"inbound": [8080]},
                 "image": "ghcr.io/x/web:latest",

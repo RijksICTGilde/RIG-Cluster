@@ -8201,6 +8201,7 @@ class ProjectManager:
         image: str | None,
         deployment_names: list[str],
         component_type: str = "single",
+        description: str | None = None,
         port: int | None = None,
         ports: list[int] | None = None,
         path: str = "/",
@@ -8220,6 +8221,7 @@ class ProjectManager:
             image: Container image URL
             deployment_names: Deployments to add this component to (must already exist)
             component_type: Component type (e.g. "single", "frontend", "backend")
+            description: Free text saying what the component does (None leaves it out)
             port: Inbound port (None for background workers that don't serve HTTP)
             path: Ingress path (only relevant if publish-on-web is in services)
             rewrite: Path the ingress rewrites `path` to before the request reaches the
@@ -8307,6 +8309,7 @@ class ProjectManager:
             try:
                 component_config = await build_component_config(
                     name=name,
+                    description=description,
                     component_type=component_type,
                     port=port,
                     ports=ports,
@@ -8438,6 +8441,7 @@ class ProjectManager:
     async def update_component(
         self,
         name: str,
+        description: str | None = None,
         image: str | None = None,
         port: int | None = None,
         ports: list[int] | None = None,
@@ -8470,6 +8474,13 @@ class ProjectManager:
                 }
 
             warnings: list[str] = []
+
+            # Empty string removes the field; None leaves the current value unchanged.
+            if description is not None:
+                if description:
+                    component["description"] = description
+                else:
+                    component.pop("description", None)
 
             if image is not None:
                 normalized_image, was_normalized = normalize_container_image(image)

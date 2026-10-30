@@ -59,6 +59,7 @@ config:
 
 components:
   - name: web-app
+    description: "De publieke webinterface, bedient de zoekpagina en praat met de worker"
     publish-on-web: true
     type: deployment
     ports:
