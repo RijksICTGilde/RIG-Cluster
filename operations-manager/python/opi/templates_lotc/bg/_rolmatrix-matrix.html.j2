@@ -4,23 +4,29 @@
 {% from "bg/_patterns.html.j2" import panel %}
 {% for naam, rijen in secties %}
     {% call panel(naam) %}
-        <c-table columns="2fr 1.2fr 0.8fr 1.2fr 0.7fr 0.8fr 1.1fr 0.8fr">
-            <c-table-head>
-                <c-th>Handeling</c-th>
-                <c-th>Waar</c-th>
+        <nldd-table columns="2fr 1.2fr 0.8fr 1.2fr 0.7fr 0.8fr 1.1fr 0.8fr" accessible-label="{{ naam }}">
+            <nldd-table-row slot="header">
+                <nldd-text-cell text="**Handeling**"></nldd-text-cell>
+                <nldd-text-cell text="**Waar**"></nldd-text-cell>
                 {% for kolom in kolommen %}
-                    <c-th>{{ kolom.label }}</c-th>
+                    <nldd-text-cell text="**{{ kolom.label }}**"></nldd-text-cell>
                 {% endfor %}
-            </c-table-head>
+            </nldd-table-row>
             {% for rij in rijen %}
-                <c-table-row>
-                    <c-td>{{ rij.label }}</c-td>
-                    <c-td>{{ rij.scope_label or "overal" }}</c-td>
+                <nldd-table-row>
+                    <nldd-text-cell text="{{ rij.label }}"></nldd-text-cell>
+                    <nldd-text-cell text="{{ rij.scope_label or "overal" }}"></nldd-text-cell>
                     {% for cel in rij.cells %}
-                        <c-td>{{ cel.mark }}</c-td>
+                        {% if cel.allowed %}
+                            <nldd-icon-cell>
+                                <nldd-icon icon="{{ "shield-check-mark" if cel.step_up else "check-mark" }}" color="success" role="img" aria-hidden="false" aria-label="{{ cel.mark }}"></nldd-icon>
+                            </nldd-icon-cell>
+                        {% else %}
+                            <nldd-cell></nldd-cell>
+                        {% endif %}
                     {% endfor %}
-                </c-table-row>
+                </nldd-table-row>
             {% endfor %}
-        </c-table>
+        </nldd-table>
     {% endcall %}
 {% endfor %}

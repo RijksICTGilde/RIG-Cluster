@@ -42,11 +42,11 @@ def test_een_regel_met_scopes_krijgt_een_rij_per_scope() -> None:
 
 
 def test_een_step_up_cel_is_gemarkeerd() -> None:
-    """Een grant met een step-up toont ``v s``, een zonder ``v``."""
+    """Een grant met een step-up leest als 2-factor, een zonder als gewoon mogen."""
     per_scope = {rij.scope_label: rij for rij in rows() if rij.action == "deployment.delete"}
     ops = COLUMNS.index(Role.OPS)
-    assert per_scope["productie"].cells[ops].mark == "v s"
-    assert per_scope["niet-productie"].cells[ops].mark == "v"
+    assert per_scope["productie"].cells[ops].mark == "mag, met 2-factor"
+    assert per_scope["niet-productie"].cells[ops].mark == "mag"
 
 
 def test_de_kolommen_dragen_het_label_en_de_bereikbaarheid() -> None:
@@ -87,8 +87,8 @@ def test_een_scope_buiten_scopes_faalt() -> None:
 def test_de_markering_van_een_cel() -> None:
     """De drie vormen die een cel kan hebben."""
     assert Cell(allowed=False).mark == ""
-    assert Cell(allowed=True).mark == "v"
-    assert Cell(allowed=True, step_up=True).mark == "v s"
+    assert Cell(allowed=True).mark == "mag"
+    assert Cell(allowed=True, step_up=True).mark == "mag, met 2-factor"
 
 
 def test_een_grant_leest_als_rol_en_scope() -> None:
