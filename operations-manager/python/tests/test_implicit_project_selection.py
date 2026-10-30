@@ -177,8 +177,8 @@ class TestTheHookItself:
             domains: list[str] = []
 
         class ApprovableService(Service):
-            service_type = ServiceType.PUBLISH_ON_WEB
-            definition = SERVICES[ServiceType.PUBLISH_ON_WEB].definition
+            service_type = ServiceType.SEND_EMAIL
+            definition = SERVICES[ServiceType.SEND_EMAIL].definition
             config_model = ProjectChoice
             allows_implicit_project_selection = True
 
@@ -186,7 +186,7 @@ class TestTheHookItself:
                 return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
             def config_approvals(self, layer: ConfigLayer) -> list[Any]:
-                return SERVICES[ServiceType.PUBLISH_ON_WEB].config_approvals(layer)
+                return SERVICES[ServiceType.SEND_EMAIL].config_approvals(layer)
 
         service = ApprovableService()
         assert service.approval_specs()  # guards the premise of the test
