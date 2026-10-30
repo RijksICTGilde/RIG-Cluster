@@ -50,7 +50,7 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/invite/{key}/success"): "slotpagina van de uitnodigingsflow",
     # Publieke pagina's. Vaste inhoud, zonder iets uit een project.
     ("GET", "/"): "de voorpagina, met de inlogknop",
-    ("GET", "/about"): "vaste inhoud",
+    ("GET", "/about"): "doorverwijzing naar /introductie",
     ("GET", "/introductie"): "vaste inhoud, bewust zonder sessie (tests/test_introductiepagina.py)",
     ("GET", "/eigen-domein"): "vaste uitleg over domeinnamen",
     ("GET", "/weergave"): "vaste uitleg over de weergave",

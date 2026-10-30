@@ -45,7 +45,7 @@
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel %}
 {% from "bg/_introductie-blokken.html.j2" import
-    kop, wat_het_is, de_puzzel, dienstenraster, op_de_achtergrond,
+    kop, wat_het_is, waarom, de_puzzel, dienstenraster, op_de_achtergrond,
     op_de_voorgrond, gereedschap, aan_de_slag %}
 
 {% block page_title %}Introductie - Zelfservice Applicatie Deployment{% endblock %}
@@ -55,6 +55,10 @@
 
     {% call panel("Wat ZAD is", "info") %}
         {{ wat_het_is(diensten_zelf | length, diensten_achtergrond | length) }}
+    {% endcall %}
+
+    {% call panel("Waarom dit platform?", "question-mark-circle") %}
+        {{ waarom() }}
     {% endcall %}
 
     {% call panel("De puzzel is al gelegd", "puzzle-piece") %}

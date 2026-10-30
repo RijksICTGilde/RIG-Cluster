@@ -9,8 +9,7 @@
   Als MACRO's en niet als losse templates die de pagina include't. Dat is geen smaak: een
   {% raw %}{% include %}{% endraw %} van een deeltemplate dat zelf componenten gebruikt breekt in deze omgeving
   zodra de schil <template slot=...> gebruikt, en dat doet base_lotc.html.j2 - zie de kop
-  van dat bestand, en de reden dat bg/about.html.j2 zijn vier deeltemplates juist heeft
-  samengevoegd. Een macro heeft dat probleem niet: bg/_service-card.html.j2 en
+  van dat bestand. Een macro heeft dat probleem niet: bg/_service-card.html.j2 en
   bg/_patterns.html.j2 werken zo al.
 #}
 {% from "bg/_patterns.html.j2" import page_head %}
@@ -82,6 +81,24 @@
   omdat de eigenaar hem zelf ook gebruikt: de architectuurpuzzel is al opgelost, de
   stukjes liggen op hun plek.
 #}
+{# Overgenomen van de vroegere pagina Over ZAD (/about), die nu hierheen doorverwijst. Het
+   blok over veiligheid is een verwijzing geworden: /security vertelt wat er echt geregeld
+   is, en een algemene geruststelling hier zou daar stil van gaan afwijken. #}
+{% macro waarom() %}
+<c-paragraph>
+    Als je een applicatie ontwikkelt weet je aan het begin soms nog niet precies wat je
+    nodig hebt. Een database? Opslag? Authenticatie? Dat groeit gaandeweg. Tegelijkertijd
+    wil je wel ergens draaien waar je je werk kunt laten zien. En liefst, nu graag. Niet aanvragen
+    en dan weken of maanden wachten.
+</c-paragraph>
+<c-paragraph>
+    Binnen de overheid is het niet altijd eenvoudig om een plek te vinden waar je een
+    applicatie kunt hosten. Dit platform biedt die plek, voor ontwikkeling en voor productie.
+</c-paragraph>
+<c-paragraph>
+    Op <c-link href="/security" label="de pagina Beveiliging" /> lees je hoe het platform beveiligd is.
+</c-paragraph>
+{% endmacro %}
 {% macro de_puzzel() %}
 <c-paragraph>
     De losse stukken zijn er meestal wel: ergens is een cluster, ergens een registry,
@@ -204,6 +221,5 @@
 </c-paragraph>
 <c-action-group align="start">
     <c-button type="primary" label="Inloggen" icon="chevron-right" show-icon="after" href="/auth/login" />
-    <c-button type="secondary" label="Over het platform" href="/about" />
 </c-action-group>
 {% endmacro %}

@@ -1,42 +1,7 @@
 {
-  "/about": {
-    "bestemmingen": [
-      "/",
-      "/about",
-      "/account",
-      "/actions",
-      "/admin/approvals",
-      "/admin/diensten",
-      "/admin/rollen",
-      "/admin/usage",
-      "/admin/users",
-      "/auth/logout",
-      "/cli",
-      "/dashboard",
-      "/docs",
-      "/eigen-domein",
-      "/forms/wizard/restart",
-      "/introductie",
-      "/metrics-explorer",
-      "/platform",
-      "/projects",
-      "/security",
-      "/services",
-      "/weergave?scheme=&terug=/about",
-      "/weergave?scheme=dark&terug=/about",
-      "/weergave?scheme=light&terug=/about"
-    ],
-    "functies": [],
-    "htmx": [],
-    "ids": [
-      "hoofdinhoud"
-    ],
-    "velden": []
-  },
   "/admin/approvals": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -84,14 +49,14 @@
       "bevestiging-dialoog",
       "bevestiging-doorgaan",
       "edit-section-inner",
-      "hoofdinhoud"
+      "hoofdinhoud",
+      "hoofdpagina"
     ],
     "velden": []
   },
   "/admin/usage": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -119,6 +84,7 @@
     "htmx": [],
     "ids": [
       "hoofdinhoud",
+      "hoofdpagina",
       "namespace",
       "price",
       "year"
@@ -132,7 +98,6 @@
   "/admin/users": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -167,7 +132,8 @@
       "bevestiging-annuleren",
       "bevestiging-dialoog",
       "bevestiging-doorgaan",
-      "hoofdinhoud"
+      "hoofdinhoud",
+      "hoofdpagina"
     ],
     "velden": [
       "csrf_token"
@@ -176,7 +142,6 @@
   "/dashboard": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -206,6 +171,7 @@
     ],
     "ids": [
       "hoofdinhoud",
+      "hoofdpagina",
       "kerncijfer-pods"
     ],
     "velden": []
@@ -213,7 +179,6 @@
   "/forms/wizard/start": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -241,14 +206,51 @@
     "functies": [],
     "htmx": [],
     "ids": [
-      "hoofdinhoud"
+      "hoofdinhoud",
+      "hoofdpagina"
+    ],
+    "velden": []
+  },
+  "/introductie": {
+    "bestemmingen": [
+      "/",
+      "/account",
+      "/actions",
+      "/admin/approvals",
+      "/admin/diensten",
+      "/admin/rollen",
+      "/admin/usage",
+      "/admin/users",
+      "/auth/login",
+      "/auth/logout",
+      "/cli",
+      "/dashboard",
+      "/docs",
+      "/eigen-domein",
+      "/forms/wizard/restart",
+      "/introductie",
+      "/metrics-explorer",
+      "/platform",
+      "/projects",
+      "/security",
+      "/services",
+      "/weergave?scheme=&terug=/introductie",
+      "/weergave?scheme=dark&terug=/introductie",
+      "/weergave?scheme=light&terug=/introductie",
+      "https://github.com/RijksICTGilde/zad-actions",
+      "https://github.com/RijksICTGilde/zad-cli"
+    ],
+    "functies": [],
+    "htmx": [],
+    "ids": [
+      "hoofdinhoud",
+      "hoofdpagina"
     ],
     "velden": []
   },
   "/metrics-explorer": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -281,6 +283,7 @@
       "error-text",
       "filter-container",
       "hoofdinhoud",
+      "hoofdpagina",
       "loading",
       "metric-count",
       "metric-filter",
@@ -299,7 +302,6 @@
   "/platform": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -326,14 +328,14 @@
     "functies": [],
     "htmx": [],
     "ids": [
-      "hoofdinhoud"
+      "hoofdinhoud",
+      "hoofdpagina"
     ],
     "velden": []
   },
   "/projects": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -375,6 +377,7 @@
     ],
     "ids": [
       "hoofdinhoud",
+      "hoofdpagina",
       "projects-lijst",
       "projects-zoekgebied",
       "projects-zoekveld"
@@ -408,7 +411,6 @@
   "/projects/test-project-detail/backups": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -478,6 +480,7 @@
       "filter-warn",
       "global-deployment-selector",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -506,7 +509,6 @@
   "/projects/test-project-detail/componenten": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -577,6 +579,7 @@
       "filter-info",
       "filter-warn",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -602,7 +605,6 @@
   "/projects/test-project-detail/deployments": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -676,6 +678,7 @@
       "filter-warn",
       "global-deployment-selector",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -703,7 +706,6 @@
   "/projects/test-project-detail/details": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -784,6 +786,7 @@
       "filter-info",
       "filter-warn",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -812,7 +815,6 @@
   "/projects/test-project-detail/kaart": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -877,6 +879,7 @@
       "filter-info",
       "filter-warn",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -902,7 +905,6 @@
   "/projects/test-project-detail/metrics": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -971,6 +973,7 @@
       "filter-warn",
       "global-deployment-selector",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -1140,6 +1143,7 @@
     "ids": [
       "components[0]/aliases",
       "components[0]/command",
+      "components[0]/description",
       "components[0]/image",
       "components[0]/name",
       "components[0]/path-container",
@@ -1166,6 +1170,7 @@
       "_wizard_token",
       "components[0]/aliases",
       "components[0]/command",
+      "components[0]/description",
       "components[0]/image",
       "components[0]/name",
       "components[0]/path[0]/match",
@@ -1191,6 +1196,7 @@
     "ids": [
       "components[1]/aliases",
       "components[1]/command",
+      "components[1]/description",
       "components[1]/image",
       "components[1]/name",
       "components[1]/path-container",
@@ -1216,6 +1222,7 @@
       "_wizard_token",
       "components[1]/aliases",
       "components[1]/command",
+      "components[1]/description",
       "components[1]/image",
       "components[1]/name",
       "components[1]/path[0]/match",
@@ -1651,7 +1658,6 @@
   "/projects/test-project-detail/services": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -1716,6 +1722,7 @@
       "filter-info",
       "filter-warn",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -1741,7 +1748,6 @@
   "/projects/test-project-detail/taken": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -1808,6 +1814,7 @@
       "filter-info",
       "filter-warn",
       "hoofdinhoud",
+      "hoofdpagina",
       "log-component-selector",
       "log-empty-state",
       "log-line-count",
@@ -1842,7 +1849,6 @@
   "/services": {
     "bestemmingen": [
       "/",
-      "/about",
       "/account",
       "/actions",
       "/admin/approvals",
@@ -1874,6 +1880,7 @@
     "htmx": [],
     "ids": [
       "hoofdinhoud",
+      "hoofdpagina",
       "service-help-backdrop",
       "service-help-content",
       "service-help-modal"

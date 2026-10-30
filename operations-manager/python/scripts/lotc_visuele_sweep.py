@@ -59,7 +59,7 @@ PAGINAS: list[tuple[str, str]] = [
     # beheerpagina's noemt. Die route bestaat niet: de zijkolom kent er drie
     # (navigation_lotc.py). Een verzonnen pad levert een 404 die als bevinding LIJKT.
     ("metrics-explorer", "/metrics-explorer"),
-    ("over", "/about"),
+    ("introductie", "/introductie"),
     ("account", "/account"),
     ("wizard-start", "/forms/wizard/start"),
 ]
