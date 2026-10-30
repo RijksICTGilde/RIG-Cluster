@@ -1,10 +1,15 @@
-"""Editable definitions for the send-email service (project-level).
+"""Editable definitions for the send-email service.
 
 Three fields: sender name, sender address (after approval), and daily budget (above the
 platform default also after approval). Leave the address empty and the platform derives one
-from the project name. Mail leaves over the
+from the account name. Mail leaves over the
 Rijksoverheid server carrying their domain; SPF alignment via DMARC is the only control
 that passes, so a self-chosen domain breaks it. See docs/ron-koppeling.md.
+
+The same three fields exist per deployment (RC-401), with the SAME validation: the form and
+the API judge an override exactly as they judge the project value, so a value that cannot
+go into a mail header is refused wherever it is written. An empty field means "inherit",
+which is why every one of them removes its key instead of writing a null.
 """
 
 from __future__ import annotations
@@ -56,4 +61,35 @@ SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE = Editable(
     validator=RangeValidator(min_value=1, max_value=MAX_MESSAGES_PER_DAY),
     remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
+)
+
+
+def _deployment_editable(field: str, project_editable: Editable) -> Editable:
+    """The same field, one layer down: same validator, same converter, same emptiness rule.
+
+    Derived from the project editable rather than written out a second time -- what a
+    display name, an address and a budget may be is one rule, and a second copy of it is a
+    second rule that agrees today.
+    """
+    return Editable(
+        yaml_path=config_path(ConfigLayer.DEPLOYMENT, ServiceType.SEND_EMAIL, "config", field),
+        validator=project_editable.validator,
+        converter=project_editable.converter,
+        # Leeg betekent "neem de waarde van het project", en dat is de normale situatie.
+        remove_when_none=True,
+        virtualize=SERVICE_VIRTUALIZE,
+    )
+
+
+SEND_EMAIL_DEPLOYMENT_FROM_NAME_EDITABLE = _deployment_editable("from-name", SEND_EMAIL_FROM_NAME_EDITABLE)
+SEND_EMAIL_DEPLOYMENT_FROM_ADDRESS_EDITABLE = _deployment_editable("from-address", SEND_EMAIL_FROM_ADDRESS_EDITABLE)
+SEND_EMAIL_DEPLOYMENT_MESSAGES_PER_DAY_EDITABLE = _deployment_editable(
+    "messages-per-day", SEND_EMAIL_MESSAGES_PER_DAY_EDITABLE
+)
+
+#: In formulierorde: wie schrijft, kiest eerst een naam, dan een adres, dan een budget.
+SEND_EMAIL_DEPLOYMENT_EDITABLES = (
+    SEND_EMAIL_DEPLOYMENT_FROM_NAME_EDITABLE,
+    SEND_EMAIL_DEPLOYMENT_FROM_ADDRESS_EDITABLE,
+    SEND_EMAIL_DEPLOYMENT_MESSAGES_PER_DAY_EDITABLE,
 )

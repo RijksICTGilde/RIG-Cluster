@@ -301,6 +301,14 @@ SLEUTELROUTES: dict[tuple[str, str], Action] = {
     ): Action.SERVICE_CONFIGURE,
     ("DELETE", "/api/v2/projects/{project_name}/services/redis/config/project"): Action.SERVICE_CONFIGURE,
     ("PUT", "/api/v2/projects/{project_name}/services/redis/config/project"): Action.SERVICE_CONFIGURE,
+    (
+        "DELETE",
+        "/api/v2/projects/{project_name}/services/send-email/config/deployment/{deployment_name}",
+    ): Action.SERVICE_CONFIGURE,
+    (
+        "PUT",
+        "/api/v2/projects/{project_name}/services/send-email/config/deployment/{deployment_name}",
+    ): Action.SERVICE_CONFIGURE,
     ("DELETE", "/api/v2/projects/{project_name}/services/send-email/config/project"): Action.SERVICE_CONFIGURE,
     ("PUT", "/api/v2/projects/{project_name}/services/send-email/config/project"): Action.SERVICE_CONFIGURE,
     (

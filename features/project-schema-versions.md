@@ -65,7 +65,7 @@ Daarom:
 welke dat is:
 
 ```json
-"x-zad-schema-version": "2.11"
+"x-zad-schema-version": "2.14"
 ```
 
 Een oudere versie wordt samengesteld uit dat schema plus een keten van patches. Elke patch is
@@ -73,18 +73,21 @@ een [RFC 7386 JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386) die van 
 de eerstvolgende versie dat van die versie maakt:
 
 ```
-project_v2.json                 (2.11)
-  + project_legacy/v2.9.json -> 2.9   (geen `environment` op een deployment: 2.11 voegde hem toe)
-  + project_legacy/v2.8.json -> 2.8   (registries op root)
-  + project_legacy/v2.7.json -> 2.7   (leeg: die migratie versmalde de vorm niet)
-  + project_legacy/v2.6.json -> 2.6   (webadresvelden op de deployment terug)
-  + project_legacy/v2.5.json -> 2.5   (root `invites:` terug)
-  + project_legacy/v2.4.json -> 2.4   (root `domains:` terug)
-  + project_legacy/v2.3.json -> 2.3   (leeg: die migratie versmalde de vorm niet)
-  + project_legacy/v2.2.json -> 2.2   (`config.keycloak` terug)
-  + project_legacy/v2.1.json -> 2.1   (`path` als string, `rewrite-path`, `paths`)
-  + project_legacy/v2.json   -> 2     (component-`root: true`)
-  + project_legacy/v1.json   -> 1     (`uses-services`, `storage`, v0 `publish-on-web`)
+project_v2.json                 (2.14)
+  + project_legacy/v2.13.json -> 2.13  (`accounts` in send-email: 2.14 haalt het blok weg)
+  + project_legacy/v2.12.json -> 2.12  (`users[].role` in plaats van `users[].roles`: 2.13 maakte het een lijst)
+  + project_legacy/v2.11.json -> 2.11  (`api-key` op root: 2.12 verhuisde het naar `users[...].service-account`)
+  + project_legacy/v2.9.json  -> 2.9   (geen `environment` op een deployment: 2.11 voegde hem toe)
+  + project_legacy/v2.8.json  -> 2.8   (registries op root)
+  + project_legacy/v2.7.json  -> 2.7   (leeg: die migratie versmalde de vorm niet)
+  + project_legacy/v2.6.json  -> 2.6   (webadresvelden op de deployment terug)
+  + project_legacy/v2.5.json  -> 2.5   (root `invites:` terug)
+  + project_legacy/v2.4.json  -> 2.4   (root `domains:` terug)
+  + project_legacy/v2.3.json  -> 2.3   (leeg: die migratie versmalde de vorm niet)
+  + project_legacy/v2.2.json  -> 2.2   (`config.keycloak` terug)
+  + project_legacy/v2.1.json  -> 2.1   (`path` als string, `rewrite-path`, `paths`)
+  + project_legacy/v2.json    -> 2     (component-`root: true`)
+  + project_legacy/v1.json    -> 1     (`uses-services`, `storage`, v0 `publish-on-web`)
 ```
 
 Een patch is daarmee de schemakant van precies één migratie. `null` als waarde verwijdert een

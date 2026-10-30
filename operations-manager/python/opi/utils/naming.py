@@ -5,6 +5,7 @@ This module provides standardized methods for generating unique names for Kubern
 including deployments, services, PVCs, and other manifest resources.
 """
 
+import hashlib
 import logging
 import posixpath
 import re
@@ -799,6 +800,53 @@ def mail_project_label(project_name: str) -> str:
     return _truncate_if_needed(_sanitize_for_lowercase(project_name), MAIL_PROJECT_LABEL_MAX_LENGTH)
 
 
+#: How many hex characters of the sha256 a deployment label ends in.
+#:
+#: The hash is not decoration. Project and deployment names both contain hyphens, so
+#: ``a-b``/``c`` and ``a``/``b-c`` compose the same readable label; the readable part is
+#: also TRUNCATED to fit the address, so two long names collapse onto each other. Six
+#: characters over a project's own deployments is plenty, and it is also what keeps a new
+#: deployment label out of the old ``project-<project>`` namespace, which is what makes the
+#: 2.14 transition safe.
+_MAIL_DEPLOYMENT_HASH_LENGTH = 6
+
+
+def mail_deployment_label(project_name: str, deployment_name: str) -> str:
+    """The label of ONE deployment in mail: the part that follows ``project-`` and ``+``.
+
+    ``<project>-<deployment>-<hash>``, shortened so the whole label stays within
+    ``MAIL_PROJECT_LABEL_MAX_LENGTH`` -- the account name and the sender address have to
+    agree character for character, because the relay derives the address from the name.
+    """
+    digest = hashlib.sha256(f"{project_name}/{deployment_name}".encode()).hexdigest()[:_MAIL_DEPLOYMENT_HASH_LENGTH]
+    readable = _sanitize_for_lowercase(f"{project_name}-{deployment_name}")
+    room = MAIL_PROJECT_LABEL_MAX_LENGTH - len(digest) - 1
+    return f"{_truncate_if_needed(readable, room).rstrip('-')}-{digest}"
+
+
+def generate_deployment_mail_account_name(project_name: str, deployment_name: str) -> str:
+    """The SMTP account name ONE deployment gets on the platform mail relay.
+
+    Format: ``project-{project}-{deployment}-{hash}``.
+
+    Per deployment and not per project (RC-401): the account is the unit the daily budget,
+    the password and the bounce address hang on, so a test deployment sends its hundred
+    messages without anyone approving anything and production its hundred thousand after
+    approval. The password lives in that deployment's Kubernetes secret, like its database
+    password.
+
+    The ``project-`` prefix stays, so the relay keeps deriving the sender address the same
+    way and the platform accounts stay out of reach (``MAIL_PROJECT_ACCOUNT_PREFIX``). Which
+    project an account belongs to is no longer readable from the label, so OPI writes it
+    into the relay's generated script (``zad.project.<account>``).
+
+    Example:
+        >>> generate_deployment_mail_account_name("algor", "prod")
+        'project-algor-prod-5e4f20'
+    """
+    return f"{MAIL_PROJECT_ACCOUNT_PREFIX}{mail_deployment_label(project_name, deployment_name)}"
+
+
 def generate_mail_sender_address(base_address: str, project_name: str) -> str:
     """
     Generate the address a project sends from: ``<local>+<project>@<domain>``.
@@ -828,6 +876,22 @@ def generate_mail_sender_address(base_address: str, project_name: str) -> str:
     """
     local_part, _, domain = base_address.partition("@")
     return f"{local_part}+{mail_project_label(project_name)}@{domain}"
+
+
+def generate_deployment_mail_sender_address(base_address: str, project_name: str, deployment_name: str) -> str:
+    """The address one deployment sends from: ``<local>+<project>-<deployment>-<hash>@<domain>``.
+
+    The deployment counterpart of ``generate_mail_sender_address``, and the same REPORT of
+    what the relay will do: it cuts ``project-`` off the authenticated account name and
+    puts the rest after the ``+``. So the plus part carries project AND deployment, which is
+    what makes a bounce traceable to the deployment that sent it.
+
+    Example:
+        >>> generate_deployment_mail_sender_address("noreply-rijksapp@rijksoverheid.nl", "algor", "prod")
+        'noreply-rijksapp+algor-prod-5e4f20@rijksoverheid.nl'
+    """
+    local_part, _, domain = base_address.partition("@")
+    return f"{local_part}+{mail_deployment_label(project_name, deployment_name)}@{domain}"
 
 
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:

@@ -21,8 +21,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ruamel.yaml.scalarstring import LiteralScalarString
-
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.mail import MailAccount, MailConnector, MailRelayNotConfiguredError, create_mail_connector
 from opi.core.cluster_config import (
@@ -30,19 +28,20 @@ from opi.core.cluster_config import (
     get_mail_relay_host,
     get_mail_relay_port,
     get_namespace,
+    get_prefixed_namespace,
 )
 from opi.core.config import settings
 from opi.services import ServiceType
-from opi.services.catalog.send_email import approved_from_address, effective_messages_per_day, is_approved
-from opi.services.project import Project
-from opi.utils.age import (
-    decrypt_password_smart,
-    encrypt_age_content,
-    get_decoded_project_private_key,
-    get_project_public_key,
+from opi.services.catalog.send_email import (
+    deployment_from_address,
+    deployment_from_name,
+    deployment_messages_per_day,
+    is_approved,
 )
 from opi.utils.naming import (
     MAIL_PROJECT_ACCOUNT_PREFIX,
+    generate_deployment_mail_account_name,
+    generate_deployment_mail_sender_address,
     generate_mail_account_name,
     generate_mail_sender_address,
 )
@@ -53,9 +52,6 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
-
-#: Config path of the send-email block on the project level.
-_CONFIG_BASE = f"services/{ServiceType.SEND_EMAIL.value}/config"
 
 
 class MailAccountNameError(ValueError):
@@ -124,6 +120,7 @@ class MailManager:
         messages_per_day: int,
         is_platform_account: bool = False,
         sender_address: str = "",
+        project_name: str = "",
     ) -> MailAccount:
         """Make the relay hold exactly this account. The ONE place an account is made.
 
@@ -156,6 +153,10 @@ class MailManager:
                 approved via ``approved_from_address``, the gate in
                 ``create_resources_for_deployment``, and why the connector checks the
                 value again before it reaches the relay).
+            project_name: The project this account sends for, for the relay's
+                ``X-ZAD-Project`` header. Empty for a platform account, which sends on
+                nobody's behalf and gets no header. Since RC-401 the account name no longer
+                says which project it is, so this is the only way the relay can know.
 
         Returns:
             The account as it now stands on the relay.
@@ -185,7 +186,7 @@ class MailManager:
         # The ADDRESS travels the same way and for the same reason, but only for an account
         # that has one. An empty address is not a missing value: it means the relay works
         # the address out from the account name, which is what every project does.
-        await connector.set_sender(username, from_name, sender_address)
+        await connector.set_sender(username, from_name, sender_address, project_name)
         await connector.set_rate_limit(username, messages_per_day)
 
         return MailAccount(
@@ -198,18 +199,23 @@ class MailManager:
     # --- caller 1: a project ----------------------------------------------------
 
     async def create_resources_for_deployment(self, project_data: dict[str, Any], deployment: dict[str, Any]) -> None:
-        """Ensure this project's SMTP account and hand its credentials to the deployment.
+        """Ensure this DEPLOYMENT's SMTP account and hand its credentials to it.
 
-        The account is per PROJECT (see ``generate_mail_account_name``), so several
-        deployments of the same project share one account, one budget and one bounce
-        address. The password is generated once and kept AGE-encrypted in the project
-        file, which is what makes a second run reuse the account instead of resetting a
-        password that running pods are still holding.
+        One account per deployment since RC-401 (see
+        ``generate_deployment_mail_account_name``), so each one has its own budget, its own
+        password and its own bounce address -- a test deployment sends its hundred messages
+        a day without anyone approving anything.
+
+        The password comes out of the deployment's own Secret, exactly as the database
+        password does, and is generated only when that Secret is CONFIRMED absent. That is
+        what makes a second run reuse the account instead of resetting a password running
+        pods are still holding, and it is also the repair: a relay that lost its database
+        gets the stored password set again on the next run.
 
         Nothing happens without approval (aanvulling 6). And an approval that is WITHDRAWN
         does not just stop creating: it takes the same cleanup path as a project deletion,
-        because otherwise the account keeps standing on the relay with nobody's name on it
-        and nothing left in the project file pointing at it.
+        because otherwise the accounts keep standing on the relay with nobody's name on
+        them.
         """
         deployment_name = deployment["name"]
         cluster = deployment.get("cluster") or settings.CLUSTER_MANAGER
@@ -218,37 +224,33 @@ class MailManager:
             logger.debug(f"Deployment {deployment_name} gebruikt send-email niet, overslaan")
             return
 
+        project_name = await self.project_manager.get_name()
+
         if not is_approved(project_data):
-            await self._revoke(project_data, cluster)
+            await self._revoke(project_data, project_name)
             return
 
-        project_name = await self.project_manager.get_name()
-        username = generate_mail_account_name(project_name)
-        view = Project(project_data)
-        config = view.get(_CONFIG_BASE) or {}
+        username = generate_deployment_mail_account_name(project_name, deployment_name)
 
-        # De afzender van dit project: het afgeleide adres draagt de PROJECTnaam (niet de
-        # accountnaam, die het voorvoegsel project- draagt en op een andere lengte wordt
-        # afgekapt), en de weergavenaam komt uit de projectconfiguratie. Leeg is een geldige
-        # uitkomst: dan vertrekt de post met een kaal projectadres en zonder naam.
-        derived_address = self._sender_address(cluster, project_name)
-        # DE POORT (RC-399). Alleen een adres dat een beheerder voor PRECIES DEZE WAARDE
-        # heeft goedgekeurd gaat naar de relay. In elk ander geval gaat een lege waarde mee,
-        # en die wist een adres dat er eerder stond: zo heeft intrekken geen eigen trigger
-        # nodig. De bounce blijft naar het afgeleide adres terugkomen, zodat hij
-        # herleidbaar blijft tot dit project.
-        sender_address = approved_from_address(project_data)
+        # De afzender van deze deployment: het afgeleide adres draagt project EN deployment
+        # (niet de accountnaam, die het voorvoegsel project- draagt), en de weergavenaam komt
+        # van de deployment of van het project. Leeg is een geldige uitkomst: dan vertrekt de
+        # post met het kale afgeleide adres en zonder naam.
+        derived_address = self._deployment_sender_address(cluster, project_name, deployment_name)
+        # DE POORT (RC-399/RC-401). Alleen een adres dat een beheerder voor PRECIES DEZE
+        # WAARDE heeft goedgekeurd gaat naar de relay, van deze deployment of van het
+        # project. In elk ander geval gaat een lege waarde mee, en die wist een adres dat er
+        # eerder stond: zo heeft intrekken geen eigen trigger nodig. De bounce blijft naar
+        # het afgeleide adres terugkomen, zodat hij herleidbaar blijft tot deze deployment.
+        sender_address = deployment_from_address(project_data, deployment_name)
         from_address = sender_address or derived_address
-        bounce_address = derived_address
-        from_name = str(config.get("from-name") or "").strip()
-        # Poort: naar relay gaat alleen tot standaard, of een goedgekeurde waarde; anders
-        # laatst goedgekeurde of standaard.
-        messages_per_day = effective_messages_per_day(project_data)
+        from_name = deployment_from_name(project_data, deployment_name)
+        # Poort: naar de relay gaat de EFFECTIEVE waarde van deze deployment, nooit de
+        # gevraagde.
+        messages_per_day = deployment_messages_per_day(project_data, deployment_name)
 
-        entry, password = await self._existing_account_entry(view, project_data, cluster)
-        if password is None:
-            password = generate_secure_password()
-            entry = None
+        stored = await self._read_deployment_secret(deployment_name, deployment)
+        password = (stored.password if stored else "") or generate_secure_password()
 
         connector = await create_mail_connector()
         account = await self.ensure_account(
@@ -256,18 +258,12 @@ class MailManager:
             username=username,
             password=password,
             from_address=from_address,
-            bounce_address=bounce_address,
+            bounce_address=derived_address,
             from_name=from_name,
             messages_per_day=messages_per_day,
             sender_address=sender_address,
+            project_name=project_name,
         )
-
-        # Also when the entry EXISTS but no longer says what the relay holds: a project that
-        # changes its local part gets a new sender address on the relay, and a project file
-        # that keeps showing the old one is a wrong answer to "who does this project send
-        # as". Only on a real difference, so a run that changes nothing makes no commit.
-        if entry is None or self._entry_is_stale(entry, account):
-            await self._store_account(view, project_data, project_name, cluster, account, password)
 
         self.project_manager._add_secret_to_create(
             deployment_name,
@@ -281,6 +277,85 @@ class MailManager:
             ),
         )
         logger.info(f"Mailaccount {username} klaar voor deployment {deployment_name}")
+
+        await self._remove_legacy_project_account(project_data, project_name)
+
+    @staticmethod
+    async def _read_secret_or_refuse(
+        kubectl: KubectlConnector, secret_name: str, namespace: str, whose: str
+    ) -> dict[str, str] | None:
+        """The stored Secret, or ``None`` when it is CONFIRMED absent.
+
+        Raises ``KubectlExecutionError`` when its existence cannot be determined. That is
+        not pedantry: ``get_secret`` answers ``None`` for a missing Secret AND for any
+        kubectl failure (no rights, API server away, timeout), and every caller turns a
+        ``None`` into a NEW password. So one unreadable moment would silently rotate an
+        account out of its own password -- the Secret overwritten, the relay reset, and
+        nothing in the way of it. Refusing here makes that moment a failure the next run
+        repairs by simply reading the Secret back.
+        """
+        stored = await kubectl.get_secret(secret_name, namespace)
+        if stored is not None:
+            return stored
+
+        if await kubectl.secret_exists(secret_name, namespace) is not False:
+            raise KubectlExecutionError(
+                f"Kan niet vaststellen of secret {secret_name} in {namespace} bestaat; "
+                f"geen nieuw wachtwoord gegenereerd om {whose} niet te resetten"
+            )
+        return None
+
+    async def _read_deployment_secret(self, deployment_name: str, deployment: dict[str, Any]) -> SendEmailSecret | None:
+        """The SMTP credentials this deployment already holds, or ``None`` if it has none."""
+        namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, deployment["namespace"])
+        stored = await self._read_secret_or_refuse(
+            self.project_manager._kubectl_connector,
+            SendEmailSecret.get_secret_name(deployment_name),
+            namespace,
+            f"het mailaccount van {deployment_name}",
+        )
+        return None if stored is None else SendEmailSecret.from_k8s_secret_data(stored)
+
+    async def _remove_legacy_project_account(self, project_data: dict[str, Any], project_name: str) -> None:
+        """Remove the one-per-project account of before RC-401, once nothing uses it.
+
+        The overgang without a gap in the mail: the old account keeps standing as long as a
+        LIVE Secret of one of this project's deployments still authenticates with it. Pods
+        pick up their new account when ArgoCD has synced their new Secret and restarted
+        them, which is one processing round later than the project file being written -- so
+        deleting on the strength of the project file alone would take the mail away in
+        between.
+
+        A Secret that cannot be READ leaves the account standing, for the same reason.
+
+        Asks the relay FIRST whether the account is even there, which is one call and the
+        answer in every run after the transition. Reading every deployment's Secret, let
+        alone a removal, for an account that was cleaned up months ago would be work this
+        path keeps doing forever.
+        """
+        legacy = generate_mail_account_name(project_name)
+        try:
+            connector = await create_mail_connector()
+        except MailRelayNotConfiguredError:
+            return
+        if await connector.get_principal(legacy) is None:
+            return
+        for deployment in project_data.get("deployments") or []:
+            if not isinstance(deployment, dict) or not deployment.get("name"):
+                continue
+            try:
+                stored = await self._read_deployment_secret(deployment["name"], deployment)
+            except (KubectlExecutionError, KeyError) as error:
+                logger.info(
+                    f"Oud projectmailaccount {legacy} blijft staan: de gegevens van deployment "
+                    f"{deployment.get('name')} zijn niet te lezen ({error})"
+                )
+                return
+            if stored is not None and stored.username == legacy:
+                logger.debug(f"Oud projectmailaccount {legacy} is nog in gebruik door {deployment['name']}")
+                return
+        if await self._delete_account(legacy):
+            logger.info(f"Oud projectmailaccount {legacy} opgeruimd: geen enkele deployment gebruikt het nog")
 
     # --- caller 2: ZAD itself ---------------------------------------------------
 
@@ -356,28 +431,15 @@ class MailManager:
         """The stored platform-account credentials from OPI's own namespace.
 
         ``None`` when the Secret is not there yet, which is the normal state of a cluster
-        that has never met a running relay.
-
-        Raises ``KubectlExecutionError`` when the Secret's existence cannot be determined.
-        That is not pedantry: ``get_secret`` answers ``None`` for a missing Secret AND for
-        any kubectl failure (no rights, API server away, timeout), and the caller turns a
-        ``None`` into a NEW password. So one unreadable moment would silently rotate ZAD out
-        of its own mail account -- the Secret overwritten, the relay reset, and nothing in
-        the way of it. Refusing here makes that moment a failed non-critical startup task
-        instead, which the next boot repairs by simply reading the Secret back.
+        that has never met a running relay. An unreadable Secret raises rather than
+        rotating ZAD out of its own account; see ``_read_secret_or_refuse``.
         """
-        namespace = get_namespace(settings.CLUSTER_MANAGER)
-        kubectl = KubectlConnector()
-        stored = await kubectl.get_secret(settings.MAIL_PLATFORM_SECRET_NAME, namespace)
-        if stored is not None:
-            return stored
-
-        if await kubectl.secret_exists(settings.MAIL_PLATFORM_SECRET_NAME, namespace) is not False:
-            raise KubectlExecutionError(
-                f"Kan niet vaststellen of secret {settings.MAIL_PLATFORM_SECRET_NAME} in {namespace} bestaat; "
-                "geen nieuw wachtwoord gegenereerd om het platform-mailaccount niet te resetten"
-            )
-        return None
+        return await MailManager._read_secret_or_refuse(
+            KubectlConnector(),
+            settings.MAIL_PLATFORM_SECRET_NAME,
+            get_namespace(settings.CLUSTER_MANAGER),
+            "het platform-mailaccount",
+        )
 
     @staticmethod
     async def _write_platform_secret(username: str, password: str, from_address: str) -> None:
@@ -493,9 +555,8 @@ class MailManager:
     ) -> dict[str, Any]:
         """Clean up when send-email is removed from a deployment.
 
-        The account is shared by the project's deployments, so it is only removed when NO
-        deployment uses the service any more. Deleting it on the first removal would take
-        the mail away from the deployments that still have the service switched on.
+        Since RC-401 the account is of the deployment, so there is nothing to weigh: its
+        account goes and the other deployments keep theirs.
         """
         result = await self.delete_resources_for_deployment(project_data, deployment_data)
         result["trigger"] = "service_removal"
@@ -504,7 +565,7 @@ class MailManager:
     async def delete_resources_for_deployment(
         self, project_data: dict[str, Any], deployment: dict[str, Any] | None
     ) -> dict[str, Any]:
-        """Remove this project's SMTP account when nothing uses it any more."""
+        """Remove THIS deployment's SMTP account, its sender keys and its limiter."""
         deployment_name = (deployment or {}).get("name", "")
         results: dict[str, Any] = {
             "service": ServiceType.SEND_EMAIL.value,
@@ -513,19 +574,14 @@ class MailManager:
             "success": True,
             "errors": [],
         }
-
-        if self._project_still_uses_send_email(project_data, exclude_deployment=deployment_name):
+        if not deployment_name:
             results["operations"].append(
-                {
-                    "type": "send_email_cleanup",
-                    "status": "skipped",
-                    "reason": "Een andere deployment van dit project gebruikt het account nog",
-                }
+                {"type": "send_email_cleanup", "status": "skipped", "reason": "geen deployment opgegeven"}
             )
             return results
 
         project_name = await self.project_manager.get_name()
-        username = generate_mail_account_name(project_name)
+        username = generate_deployment_mail_account_name(project_name, deployment_name)
         removed = await self._delete_account(username)
         if removed is None:
             # No relay on this cluster: nothing was ever created, so nothing leaks.
@@ -572,38 +628,31 @@ class MailManager:
         await connector.delete_rate_limit(username)
         return await connector.delete_principal(username)
 
-    async def _revoke(self, project_data: dict[str, Any], cluster: str) -> None:
+    async def _revoke(self, project_data: dict[str, Any], project_name: str) -> None:
         """An approval that is absent, pending, denied or withdrawn: leave nothing behind.
 
-        The status has no memory of what it was, so this runs on every unapproved process
-        and is a no-op when there is nothing recorded -- which is what makes "withdrawn"
-        need no separate trigger and no event to miss.
+        Every deployment of the project, because every one of them has its own account. The
+        status has no memory of what it was, so this runs on every unapproved process and is
+        replay-safe: an account that is already gone is a no-op. That is what makes
+        "withdrawn" need no separate trigger and no event to miss.
         """
-        view = Project(project_data)
-        accounts = view.get(f"{_CONFIG_BASE}/accounts") or []
-        entry = next((item for item in accounts if item.get("cluster") == cluster), None)
-        if entry is None:
-            return
-
-        project_name = await self.project_manager.get_name()
-        username = entry.get("username") or generate_mail_account_name(project_name)
-        await self._delete_account(username)
-
-        # The entry goes too: leaving it would show a project an account it does not have,
-        # and the next approval would reuse a password the relay no longer knows.
-        view.set(f"{_CONFIG_BASE}/accounts", [item for item in accounts if item.get("cluster") != cluster])
-        await self.project_manager.save_and_commit_project(
-            project_data,
-            f"Remove SMTP account for {project_name} ({cluster}): geen goedkeuring",
-            enforce_validation=False,
-        )
-        logger.info(f"Mailaccount {username} ingetrokken: het project heeft geen goedkeuring (meer)")
+        for deployment in project_data.get("deployments") or []:
+            if not isinstance(deployment, dict) or not deployment.get("name"):
+                continue
+            await self._delete_account(generate_deployment_mail_account_name(project_name, deployment["name"]))
+        await self._remove_legacy_project_account(project_data, project_name)
+        logger.info(f"Mailaccounts van {project_name} ingetrokken: het project heeft geen goedkeuring (meer)")
 
     # --- internals --------------------------------------------------------------
 
     @staticmethod
     def _sender_address(cluster: str, project_name: str | None) -> str:
         """The address this account's envelope carries, and its ``From:`` unless one is approved.
+
+        The PLATFORM path calls this (with ``None``); a project's deployment goes through
+        ``_deployment_sender_address``. The project branch is what the relay still derives
+        for the one-per-project account of before RC-401, which stands until it is cleaned
+        up, so the pairing it pins stays real for as long as that account does.
 
         One address for both, where those two used to differ by a plus part. The
         difference bought nothing -- SPF alignment looks at the DOMAIN, and that is the
@@ -613,7 +662,7 @@ class MailManager:
         one, so the bounce stays traceable. The relay's ``X-ZAD-Project`` header names the
         project either way.
 
-        The project goes in the plus part, which is what makes a bounce traceable without
+        The label goes in the plus part, which is what makes a bounce traceable without
         leaving the domain. Staying in ``rijksoverheid.nl`` is load-bearing: it publishes
         ``p=reject`` and we sign nothing with DKIM, so alignment between envelope and
         ``From:`` is the only thing that gets a message through DMARC.
@@ -628,90 +677,25 @@ class MailManager:
         authenticated account name, because Stalwart v0.11.8 turned out to have no way at
         all to look a value up per account while a message is being accepted (measured; see
         the identity rules in the relay's configmap). The two cannot disagree: both are
-        built from ``mail_project_label``, so the account name always carries exactly the
+        built from the same label function, so the account name always carries exactly the
         label the address puts after the ``+``.
 
         It is handed to the application as ``SMTP_FROM`` so a developer can see what the
-        recipient gets, and written into the project file so the file answers "who does this
-        project send as".
+        recipient gets.
         """
         base_address = get_mail_from_address(cluster)
         if project_name is None:
             return base_address
         return generate_mail_sender_address(base_address, project_name)
 
-    async def _existing_account_entry(
-        self, view: Project, project_data: dict[str, Any], cluster: str
-    ) -> tuple[dict[str, Any] | None, str | None]:
-        """The stored account for this cluster and its decrypted password, if any.
-
-        Met de PROJECTsleutel, niet de platformsleutel: ``_store_account`` versleutelt het
-        wachtwoord met de publieke sleutel van het project (net als het Keycloak-blok), dus
-        lezen met ``decrypt_password_smart_auto`` (de platformsleutel) strandt op "no
-        identity matched any of the recipients" - en dat pas bij de TWEEDE run, want de
-        eerste heeft nog niets te lezen. Gemeten 20 augustus 2026 op ai1-uit.
-        """
-        accounts = view.get(f"{_CONFIG_BASE}/accounts") or []
-        entry = next((item for item in accounts if item.get("cluster") == cluster), None)
-        if entry is None or not entry.get("password"):
-            return None, None
-        project_private_key = await get_decoded_project_private_key(project_data)
-        return entry, await decrypt_password_smart(entry["password"], project_private_key)
-
     @staticmethod
-    def _entry_is_stale(entry: dict[str, Any], account: MailAccount) -> bool:
-        """Whether the stored entry still describes the account the relay now holds.
+    def _deployment_sender_address(cluster: str, project_name: str, deployment_name: str) -> str:
+        """The same report for ONE deployment's account (RC-401).
 
-        Only the fields the relay is the authority on. The password is deliberately not
-        compared: it is the stored one BY construction (it is where the run got it from),
-        and comparing an AGE ciphertext to a plaintext would call every run stale.
+        The plus part now carries project AND deployment, so a bounce is traceable to the
+        deployment that sent it instead of to the project as a whole.
         """
-        return (
-            entry.get("username") != account.username
-            or entry.get("from-address") != account.from_address
-            or entry.get("bounce-address") != account.bounce_address
-        )
-
-    async def _store_account(
-        self,
-        view: Project,
-        project_data: dict[str, Any],
-        project_name: str,
-        cluster: str,
-        account: MailAccount,
-        password: str,
-    ) -> None:
-        """Write the account into the project file and push it immediately.
-
-        Immediately, and for the reason the Keycloak realm block is persisted immediately:
-        the generated password exists nowhere else. If a later step of the same run fails,
-        the account is on the relay with a password no project file holds, and every
-        re-run creates a second one.
-        """
-        public_key = get_project_public_key(project_data)
-        if not public_key:
-            raise ValueError(f"Geen project-sleutel gevonden voor {project_name}: mailaccount kan niet worden bewaard")
-
-        accounts = view.get(f"{_CONFIG_BASE}/accounts") or []
-        entry = {
-            "cluster": cluster,
-            "username": account.username,
-            "password": LiteralScalarString(await encrypt_age_content(password, public_key)),
-            "from-address": account.from_address,
-            "bounce-address": account.bounce_address,
-        }
-        index = next((i for i, item in enumerate(accounts) if item.get("cluster") == cluster), None)
-        if index is None:
-            accounts.append(entry)
-        else:
-            accounts[index] = entry
-        view.set(f"{_CONFIG_BASE}/accounts", accounts)
-
-        await self.project_manager.save_and_commit_project(
-            project_data,
-            f"Persist SMTP account for {project_name} ({cluster})",
-            enforce_validation=False,
-        )
+        return generate_deployment_mail_sender_address(get_mail_from_address(cluster), project_name, deployment_name)
 
     def _deployment_uses_send_email(self, project_data: dict[str, Any], deployment_name: str) -> bool:
         """Whether any component of this deployment ticked send-email."""
@@ -721,13 +705,3 @@ class MailManager:
             deployment_name,
             [ServiceType.SEND_EMAIL.value],
         )
-
-    def _project_still_uses_send_email(self, project_data: dict[str, Any], exclude_deployment: str) -> bool:
-        """Whether a deployment other than ``exclude_deployment`` still uses the service."""
-        for deployment in project_data.get("deployments", []) or []:
-            name = deployment.get("name")
-            if not name or name == exclude_deployment:
-                continue
-            if self._deployment_uses_send_email(project_data, name):
-                return True
-        return False

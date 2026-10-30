@@ -2411,6 +2411,20 @@ class DeleteProjectManager:
                 if seaweedfs_results.get("errors"):
                     deletion_results["errors"].extend(seaweedfs_results["errors"])
 
+            # Het mailaccount van deze deployment (RC-401). Het account is van de
+            # deployment, dus het gaat mee met de deployment; zonder deze stap bleef het op
+            # de relay staan en nam alleen het weghalen van de DIENST het mee.
+            if self.project_manager._project_file_handler.deployment_uses_service(
+                project_data, deployment_name, [ServiceType.SEND_EMAIL.value]
+            ):
+                mail_results = await self.project_manager._mail_manager.delete_resources_for_deployment(
+                    project_data, deployment
+                )
+                deletion_results["service_results"]["send_email"] = mail_results
+                deletion_results["operations"].extend(mail_results.get("operations", []))
+                if mail_results.get("errors"):
+                    deletion_results["errors"].extend(mail_results["errors"])
+
             self._end_step(stap_svc, self._new_errors(deletion_results, fouten_voor_svc))
 
             # Step 7: Delete deployment folders from git repositories
@@ -3005,6 +3019,11 @@ class DeleteProjectManager:
                 deployment_name,
                 [ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value],
             )
+            has_send_email = file_handler.deployment_uses_service(
+                previous_yaml,
+                deployment_name,
+                [ServiceType.SEND_EMAIL.value],
+            )
         else:
             # Legacy fallback: unreliable but kept for backward compatibility. Resolve
             # entries via the canonical helper (bare string / legacy / record) and match
@@ -3018,6 +3037,7 @@ class DeleteProjectManager:
             has_minio = ServiceType.MINIO_STORAGE.value in service_names
             has_seaweedfs = ServiceType.SEAWEEDFS_STORAGE.value in service_names
             has_redis = bool(service_names & {ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value})
+            has_send_email = ServiceType.SEND_EMAIL.value in service_names
 
         # 3. Delete Keycloak resources (ephemeral)
         # Uses service_check_yaml so the deployment's component references are found
@@ -3085,6 +3105,25 @@ class DeleteProjectManager:
             except Exception as e:
                 deletion_results["errors"].append(f"Error handling MinIO service removal: {e}")
                 logger.exception("Error handling MinIO service removal")
+
+        # 3c. Het mailaccount van deze deployment (RC-401): van de deployment, dus het gaat
+        # mee met de deployment. Vluchtig zoals Keycloak en Redis -- er is geen data om te
+        # bewaren, alleen een account met een wachtwoord dat nergens anders meer bestaat.
+        if has_send_email:
+            try:
+                mail_result = await self.project_manager._mail_manager.handle_service_removal(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    deployment_data=deployment_data,
+                    project_data=service_check_yaml,
+                )
+                deletion_results["service_results"]["send_email"] = mail_result
+                deletion_results["operations"].extend(mail_result.get("operations", []))
+                if mail_result.get("errors"):
+                    deletion_results["errors"].extend(mail_result["errors"])
+            except Exception as e:
+                deletion_results["errors"].append(f"Error deleting send-email resources: {e}")
+                logger.exception("Error deleting send-email resources for %s/%s", project_name, deployment_name)
 
         if has_seaweedfs:
             try:

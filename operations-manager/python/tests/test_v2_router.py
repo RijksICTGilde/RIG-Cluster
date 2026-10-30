@@ -346,13 +346,15 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             # reden als bij send-email: een project dat zijn eigen status mag zetten
             # keurt zichzelf goed.
             "redis": ["acl-key-prefix-approval"],
-            # RC-114: the SMTP account and its password are written by the mail manager,
-            # and the approval by the approver flow -- a project that could set its own
-            # status to approved would make the approval no approval at all. RC-399 added
-            # the second verdict: a project DOES choose its sender address now, but the
-            # verdict on that value is the platform's to write, not the applicant's.
+            # RC-114: the approval is written by the approver flow -- a project that could
+            # set its own status to approved would make the approval no approval at all.
+            # RC-399 added the second verdict: a project DOES choose its sender address now,
+            # but the verdict on that value is the platform's to write, not the applicant's.
             # RC-400 added a third, same shape: the verdict on a requested daily budget.
-            "send-email": ["accounts", "approval", "from-address-approval", "messages-per-day-approval"],
+            # RC-401 took ``accounts`` out: the account's password lives in the deployment's
+            # own Secret, so there is nothing of the account left in the project file. The
+            # two value verdicts also exist on the DEPLOYMENT layer, which overrides them.
+            "send-email": ["approval", "from-address-approval", "messages-per-day-approval"],
             "temp-storage": ["generation", "revisions"],
         }
 

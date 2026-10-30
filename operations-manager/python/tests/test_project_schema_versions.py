@@ -44,10 +44,22 @@ from opi.services.schema_migration import (
     SCHEMA_VERSIONS,
 )
 
+#: De versie waarin ``users[].role`` een lijst ``users[].roles`` werd.
+_ROLLEN_ALS_LIJST = parse_schema_version("2.13")
+
 
 def _lid(versie: object) -> dict:
-    """Het lid in de vorm die DEZE versie kent: ``role`` tot 2.12, ``roles`` vanaf 2.13."""
-    if versie in (LATEST_SCHEMA_VERSION_VALUE, version_key(LATEST_SCHEMA_VERSION)):
+    """Het lid in de vorm die DEZE versie kent: ``role`` tot 2.12, ``roles`` vanaf 2.13.
+
+    Op de versie en niet op "is dit de nieuwste": met die vergelijking viel elke versie na
+    2.13 terug op de oude vorm, en een nieuwe schemastap maakte de minimale projecttoets
+    rood op een rolmigratie waar hij niet over gaat.
+    """
+    try:
+        geparsed = parse_schema_version(versie)  # type: ignore[arg-type]
+    except ProjectSchemaError, TypeError, ValueError:
+        return {"email": "admin@rijksoverheid.nl", "role": "admin"}
+    if geparsed >= _ROLLEN_ALS_LIJST:
         return {"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}
     return {"email": "admin@rijksoverheid.nl", "role": "admin"}
 

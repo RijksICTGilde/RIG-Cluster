@@ -1,45 +1,5 @@
 {
   "$defs": {
-    "SendEmailAccount": {
-      "additionalProperties": true,
-      "description": "One SMTP account on the relay, as OPI created it (one per cluster).\n\nShaped like ``KeycloakRealm``: matched on ``cluster``, written by the platform, and\nthe only place this account's password lives. ``extra=\"allow\"`` so a field added later\ndoes not make existing project files unreadable.",
-      "properties": {
-        "bounce-address": {
-          "description": "Address bounces for this account return to; carries the project name so a bounce is traceable.",
-          "title": "Bounce-Address",
-          "type": "string"
-        },
-        "cluster": {
-          "description": "Cluster this account was created for. Written by the platform.",
-          "title": "Cluster",
-          "type": "string"
-        },
-        "from-address": {
-          "description": "Address the relay pins the envelope sender and the From: header to for this account.",
-          "title": "From-Address",
-          "type": "string"
-        },
-        "password": {
-          "description": "That account's password, AGE-encrypted or 'plain:'-prefixed.",
-          "title": "Password",
-          "type": "string"
-        },
-        "username": {
-          "description": "SASL username the application authenticates to the relay with.",
-          "title": "Username",
-          "type": "string"
-        }
-      },
-      "required": [
-        "cluster",
-        "username",
-        "password",
-        "from-address",
-        "bounce-address"
-      ],
-      "title": "SendEmailAccount",
-      "type": "object"
-    },
     "SendEmailApproval": {
       "additionalProperties": true,
       "description": "Whether an administrator has allowed this project to send mail (aanvulling 6).\n\nShaped like the domain/subdomain entries publish-on-web stores: a status plus the\nverdict history, so the file is the audit trail. Written only through the generic\napproval flow (``opi/services/approvals.py``).",
@@ -111,17 +71,8 @@
     }
   },
   "additionalProperties": false,
-  "description": "What a project may decide about its outgoing mail.",
+  "description": "What a project may decide about the outgoing mail of all its deployments.",
   "properties": {
-    "accounts": {
-      "description": "Per-cluster SMTP accounts on the relay. Written and managed by the platform: carried over on a write, so a caller neither has to send it nor can lose it by leaving it out.",
-      "items": {
-        "$ref": "#/$defs/SendEmailAccount"
-      },
-      "title": "Accounts",
-      "type": "array",
-      "x-platform-managed": true
-    },
     "approval": {
       "anyOf": [
         {
@@ -145,7 +96,7 @@
         }
       ],
       "default": null,
-      "description": "Sender address this project asks to send from, e.g. 'noreply@rijksoverheid.nl'. It only takes effect once a platform administrator has approved that exact value; until then the platform composes the address from the project name. Leave it out for the composed address. Het afzenderadres moet een adres in rijksoverheid.nl zijn, met voor de @ hoogstens 64 tekens uit kleine letters, cijfers en . _ + - (bijvoorbeeld noreply@rijksoverheid.nl). Een ander domein lijnt niet uit met de envelope en komt niet door DMARC.",
+      "description": "Sender address asked to send from, e.g. 'noreply@rijksoverheid.nl'. It only takes effect once a platform administrator has approved that exact value; until then the platform composes the address itself. Leave it out for the composed address. Het afzenderadres moet een adres in rijksoverheid.nl zijn, met voor de @ hoogstens 64 tekens uit kleine letters, cijfers en . _ + - (bijvoorbeeld noreply@rijksoverheid.nl). Een ander domein lijnt niet uit met de envelope en komt niet door DMARC.",
       "title": "From-Address"
     },
     "from-address-approval": {
@@ -158,7 +109,7 @@
         }
       ],
       "default": null,
-      "description": "Whether an administrator has allowed the requested sender address. Written by the platform: until it says approved for exactly the address in from-address, the relay keeps deriving the address from the project name.",
+      "description": "Whether an administrator has allowed the sender address this project requested. Written by the platform: until it says approved for exactly the address in from-address, the relay keeps deriving the address from the account name.",
       "x-platform-managed": true
     },
     "from-name": {
@@ -173,7 +124,7 @@
         }
       ],
       "default": null,
-      "description": "Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this in the From: header next to the project's address, so it may not contain control characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is at most 64 characters. Leave it out to send without a display name.",
+      "description": "Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this in the From: header next to the sender address, so it may not contain control characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is at most 64 characters. Leave it out to send without a display name.",
       "title": "From-Name"
     },
     "messages-per-day": {
@@ -188,7 +139,7 @@
         }
       ],
       "default": null,
-      "description": "Messages per day, enforced by the relay per account. Up to and including the platform default, the project chooses; above that is a REQUEST requiring approval. The 1000000 ceiling only catches typos.",
+      "description": "Messages per day, enforced by the relay per account. Up to and including the platform default this is a free choice; above that it is a REQUEST requiring approval. Leave it out for the platform default. The 1000000 ceiling only catches typos.",
       "title": "Messages-Per-Day"
     },
     "messages-per-day-approval": {
@@ -201,7 +152,7 @@
         }
       ],
       "default": null,
-      "description": "Whether an administrator approved the requested budget. Until approved for exactly the requested number, the relay enforces the last approved number or the default.",
+      "description": "Whether an administrator approved the budget this project requested. Until approved for exactly the requested number, the relay enforces the last approved number or the default.",
       "x-platform-managed": true
     }
   },

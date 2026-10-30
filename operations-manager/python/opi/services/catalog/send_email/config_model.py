@@ -1,14 +1,18 @@
-"""Typed config model for the ``send-email`` service.
+"""Typed config models for the ``send-email`` service.
 
-Everything sits on the PROJECT layer: one account per project, used by all components.
-Rules that make mail arrive (envelope, pinned domain, DKIM) are enforced on the relay,
-not configurable per project (``plans/mailrelay.md``).
+Two layers since RC-401. The PROJECT layer decides for every deployment: whether an
+administrator allowed the project to send at all, the display name, the sender address and
+the daily budget. A DEPLOYMENT may override the last three, because the account is per
+deployment and so is its budget. What a deployment leaves out, it inherits.
 
-``accounts``, ``approval``, ``from-address-approval`` and ``messages-per-day-approval``
-are platform-managed:
-``PLATFORM_MANAGED`` marked so the API can neither clear nor rewrite them. A project
-chooses two things that go straight to mail headers and therefore carry validation:
-``from-name`` and ``from-address`` (latter only takes effect after admin approval).
+Rules that make mail arrive (envelope, pinned domain, DKIM) are enforced on the relay and
+are not configurable (``plans/mailrelay.md``). The account's own credentials are not here
+either: the password lives in that deployment's Kubernetes secret, like its database
+password.
+
+The approval blocks are platform-managed (``PLATFORM_MANAGED``), so the API can neither
+clear nor rewrite them. The three fields a project or deployment chooses go straight into
+mail headers and therefore carry validation.
 """
 
 from __future__ import annotations
@@ -72,29 +76,6 @@ FROM_ADDRESS_MESSAGE = (
 )
 
 
-class SendEmailAccount(BaseModel):
-    """One SMTP account on the relay, as OPI created it (one per cluster).
-
-    Shaped like ``KeycloakRealm``: matched on ``cluster``, written by the platform, and
-    the only place this account's password lives. ``extra="allow"`` so a field added later
-    does not make existing project files unreadable.
-    """
-
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-
-    cluster: str = Field(description="Cluster this account was created for. Written by the platform.")
-    username: str = Field(description="SASL username the application authenticates to the relay with.")
-    password: str = Field(description="That account's password, AGE-encrypted or 'plain:'-prefixed.")
-    from_address: str = Field(
-        alias="from-address",
-        description="Address the relay pins the envelope sender and the From: header to for this account.",
-    )
-    bounce_address: str = Field(
-        alias="bounce-address",
-        description="Address bounces for this account return to; carries the project name so a bounce is traceable.",
-    )
-
-
 class SendEmailApproval(BaseModel):
     """Whether an administrator has allowed this project to send mail (aanvulling 6).
 
@@ -135,42 +116,63 @@ class SendEmailValueApproval(BaseModel):
     )
 
 
-class SendEmailConfig(BaseModel):
-    """What a project may decide about its outgoing mail."""
+#: De drie velden die een project kiest en een deployment mag overschrijven. Als fabrieken,
+#: zodat de twee lagen EEN definitie delen: de regels gaan over een mailheader, en twee
+#: beschrijvingen die uit elkaar lopen zijn twee regels.
+_FromName = Annotated[str, StringConstraints(max_length=MAX_FROM_NAME_LENGTH, pattern=FROM_NAME_PATTERN)]
+_FromAddress = Annotated[str, AfterValidator(_valid_sender_address)]
+_MessagesPerDay = Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)]
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    from_name: Annotated[str, StringConstraints(max_length=MAX_FROM_NAME_LENGTH, pattern=FROM_NAME_PATTERN)] | None = (
-        Field(
-            default=None,
-            alias="from-name",
-            description=(
-                "Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this "
-                "in the From: header next to the project's address, so it may not contain control "
-                "characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is "
-                f"at most {MAX_FROM_NAME_LENGTH} characters. Leave it out to send without a display name."
-            ),
-        )
+def _from_name_field(whose: str) -> Any:
+    return Field(
+        default=None,
+        alias="from-name",
+        description=(
+            f"Display name shown to the recipient, e.g. 'Algoritmeregister'. The relay puts this "
+            f"in the From: header next to the sender address, so it may not contain control "
+            f"characters, an @, angle brackets, quotes, a backslash or a dollar sign, and it is "
+            f"at most {MAX_FROM_NAME_LENGTH} characters. Leave it out {whose}."
+        ),
     )
-    from_address: Annotated[str, AfterValidator(_valid_sender_address)] | None = Field(
+
+
+def _from_address_field(whose: str) -> Any:
+    return Field(
         default=None,
         alias="from-address",
         description=(
-            "Sender address this project asks to send from, e.g. 'noreply@rijksoverheid.nl'. It only "
-            "takes effect once a platform administrator has approved that exact value; until then the "
-            "platform composes the address from the project name. Leave it out for the composed address. "
-            f"{FROM_ADDRESS_MESSAGE}"
+            f"Sender address asked to send from, e.g. 'noreply@rijksoverheid.nl'. It only takes "
+            f"effect once a platform administrator has approved that exact value; until then the "
+            f"platform composes the address itself. Leave it out {whose}. {FROM_ADDRESS_MESSAGE}"
         ),
     )
-    messages_per_day: Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)] | None = Field(
+
+
+def _messages_per_day_field(whose: str) -> Any:
+    return Field(
         default=None,
         alias="messages-per-day",
         description=(
-            "Messages per day, enforced by the relay per account. Up to and including the platform "
-            "default, the project chooses; above that is a REQUEST requiring approval. The "
-            f"{MAX_MESSAGES_PER_DAY} ceiling only catches typos."
+            f"Messages per day, enforced by the relay per account. Up to and including the platform "
+            f"default this is a free choice; above that it is a REQUEST requiring approval. Leave it "
+            f"out {whose}. The {MAX_MESSAGES_PER_DAY} ceiling only catches typos."
         ),
     )
+
+
+def _value_approval_field(alias: str, description: str) -> Any:
+    return Field(default=None, alias=alias, json_schema_extra={PLATFORM_MANAGED: True}, description=description)
+
+
+class SendEmailConfig(BaseModel):
+    """What a project may decide about the outgoing mail of all its deployments."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_name: _FromName | None = _from_name_field("to send without a display name")
+    from_address: _FromAddress | None = _from_address_field("for the composed address")
+    messages_per_day: _MessagesPerDay | None = _messages_per_day_field("for the platform default")
     approval: SendEmailApproval | None = Field(
         default=None,
         json_schema_extra={PLATFORM_MANAGED: True},
@@ -180,30 +182,43 @@ class SendEmailConfig(BaseModel):
             "credentials reach the deployment."
         ),
     )
-    from_address_approval: SendEmailValueApproval | None = Field(
-        default=None,
-        alias="from-address-approval",
-        json_schema_extra={PLATFORM_MANAGED: True},
-        description=(
-            "Whether an administrator has allowed the requested sender address. Written by the platform: "
-            "until it says approved for exactly the address in from-address, the relay keeps deriving the "
-            "address from the project name."
-        ),
+    from_address_approval: SendEmailValueApproval | None = _value_approval_field(
+        "from-address-approval",
+        "Whether an administrator has allowed the sender address this project requested. Written by the "
+        "platform: until it says approved for exactly the address in from-address, the relay keeps "
+        "deriving the address from the account name.",
     )
-    messages_per_day_approval: SendEmailValueApproval | None = Field(
-        default=None,
-        alias="messages-per-day-approval",
-        json_schema_extra={PLATFORM_MANAGED: True},
-        description=(
-            "Whether an administrator approved the requested budget. Until approved for exactly the "
-            "requested number, the relay enforces the last approved number or the default."
-        ),
+    messages_per_day_approval: SendEmailValueApproval | None = _value_approval_field(
+        "messages-per-day-approval",
+        "Whether an administrator approved the budget this project requested. Until approved for exactly "
+        "the requested number, the relay enforces the last approved number or the default.",
     )
-    accounts: list[SendEmailAccount] = Field(
-        default_factory=list,
-        json_schema_extra={PLATFORM_MANAGED: True},
-        description=(
-            "Per-cluster SMTP accounts on the relay. Written and managed by the platform: carried over on a "
-            "write, so a caller neither has to send it nor can lose it by leaving it out."
-        ),
+
+
+class SendEmailDeploymentConfig(BaseModel):
+    """What ONE deployment may decide about its own outgoing mail (RC-401).
+
+    The account is per deployment, so the budget and the sender are too. A field left out
+    is inherited from the project; a field that is filled in is this deployment's own, and
+    an address or a budget above the platform default is its own REQUEST. That separation
+    is deliberate: a deployment with an approved override keeps it when the project lowers
+    its own value, while a deployment that inherits follows the project down.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    from_name: _FromName | None = _from_name_field("to inherit the project's display name")
+    from_address: _FromAddress | None = _from_address_field("to inherit the project's address")
+    messages_per_day: _MessagesPerDay | None = _messages_per_day_field("to inherit the project's budget")
+    from_address_approval: SendEmailValueApproval | None = _value_approval_field(
+        "from-address-approval",
+        "Whether an administrator has allowed the sender address this deployment requested. Written by "
+        "the platform: until it says approved for exactly the address in from-address, this deployment "
+        "sends from the inherited address.",
+    )
+    messages_per_day_approval: SendEmailValueApproval | None = _value_approval_field(
+        "messages-per-day-approval",
+        "Whether an administrator approved the budget this deployment requested. Until approved for "
+        "exactly the requested number, the relay enforces the last approved override or the inherited "
+        "budget.",
     )

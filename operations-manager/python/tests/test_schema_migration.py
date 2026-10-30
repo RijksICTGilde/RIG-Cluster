@@ -18,6 +18,7 @@ from opi.services.schema_migration import (
     relocate_domain_settings_to_service,
     relocate_registries_to_service,
     remove_domain_mode,
+    remove_mail_accounts,
     roles_as_a_list,
 )
 
@@ -1729,3 +1730,78 @@ class TestRolesAsAList:
 
         assert data["users"][0]["roles"] == ["developer"]
         assert data["users"][1]["roles"] == ["admin", "ops"]
+
+
+class TestRemoveMailAccounts:
+    """v2.13 -> v2.14 (RC-401): ``services[send-email].config.accounts`` gaat weg.
+
+    Elke deployment krijgt sinds RC-401 een eigen account met het wachtwoord in haar eigen
+    Kubernetes-secret, dus het accountblok in het projectbestand heeft niets meer te zeggen.
+    """
+
+    def _project(self, config_extra: dict | None = None) -> dict:
+        return {
+            "schema-version": 2.13,
+            "name": "schrijvers",
+            "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
+            "clusters": ["odcn-production"],
+            "components": [{"name": "web", "type": "deployment", "ports": {"inbound": [8080]}}],
+            "services": [
+                {
+                    "name": "send-email",
+                    "config": {
+                        "from-name": "Schrijvers",
+                        "approval": {"status": "approved", "history": []},
+                        **(config_extra or {}),
+                    },
+                }
+            ],
+            "deployments": [],
+        }
+
+    def test_haalt_het_accountblok_weg(self) -> None:
+        data = self._project({"accounts": {"odcn-production": {"username": "project-schrijvers"}}})
+
+        gewijzigd = remove_mail_accounts(data)
+
+        assert gewijzigd is True
+        config = data["services"][0]["config"]
+        assert "accounts" not in config
+        assert config["from-name"] == "Schrijvers", "andere velden blijven ongemoeid"
+
+    def test_is_idempotent(self) -> None:
+        data = self._project({"accounts": {"odcn-production": {"username": "project-schrijvers"}}})
+
+        assert remove_mail_accounts(data) is True
+        assert remove_mail_accounts(data) is False
+        assert "accounts" not in data["services"][0]["config"]
+
+    def test_een_bestand_zonder_accounts_blijft_ongewijzigd(self) -> None:
+        data = self._project()
+
+        assert remove_mail_accounts(data) is False
+
+    def test_een_bestand_zonder_de_dienst_gebeurt_er_niets(self) -> None:
+        data = {"name": "zonder-mail", "services": []}
+
+        assert remove_mail_accounts(data) is False
+
+    def test_de_legacy_enkelsleutelvorm_wordt_ook_opgeruimd(self) -> None:
+        """De dienst kan ook als ``{"send-email": {...}}`` voorkomen, niet alleen als
+        ``{"name": "send-email", ...}``."""
+        data = self._project()
+        data["services"] = [{"send-email": {"config": {"accounts": {"odcn-production": {}}}}}]
+
+        gewijzigd = remove_mail_accounts(data)
+
+        assert gewijzigd is True
+        assert "accounts" not in data["services"][0]["send-email"]["config"]
+
+    def test_het_resultaat_valideert_tegen_het_schema(self) -> None:
+        data = self._project({"accounts": {"odcn-production": {"username": "project-schrijvers"}}})
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert "accounts" not in result["services"][0]["config"]
+        validate_project_schema(result)
