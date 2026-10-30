@@ -128,7 +128,7 @@
        `selected` and the icon slot from the newer NLDD docs do nothing in this version. #}
     <nldd-tab-bar navigation accessible-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
-            <nldd-tab-bar-item text="{{ tab.label }}" href="{{ tab.url }}" icon="{{ tab.icon }}"{% if key == active_tab %} current{% endif %}></nldd-tab-bar-item>
+            <nldd-tab-bar-item text="{{ tab.label }}" href="{{ tab.url }}" icon="{{ tab.icon | nldd_icon }}"{% if key == active_tab %} current{% endif %}></nldd-tab-bar-item>
         {% endfor %}
     </nldd-tab-bar>
 
