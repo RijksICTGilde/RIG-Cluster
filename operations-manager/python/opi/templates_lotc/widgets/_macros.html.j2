@@ -210,7 +210,9 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% macro task_status_icon_name(status) %}
 {%- if status == "completed" -%}{{ 'vinkje' | nldd_icon }}
 {%- elif status == "failed" -%}{{ 'kruis' | nldd_icon }}
-{%- elif status == "running" -%}{{ 'pijl-naar-rechts' | nldd_icon }}
+{#- Not a chevron for a running task: it read as an accordion you could open. Not a
+    spinner either: the progress fragment re-renders every 2s, which restarts it. -#}
+{%- elif status == "running" -%}arrow-2-counter-clockwise
 {%- else -%}{{ 'klok' | nldd_icon }}
 {%- endif -%}
 {% endmacro %}
