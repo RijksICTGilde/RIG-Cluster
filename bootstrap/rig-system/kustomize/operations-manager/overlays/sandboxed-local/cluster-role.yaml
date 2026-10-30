@@ -73,3 +73,9 @@ rules:
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
     verbs: [create, get, list, delete, patch]
+  # Lezen, niet schrijven: ArgoCD beheert het netwerkbeleid. De verwijderroute telt een
+  # namespace ermee leeg voordat hij hem weghaalt; zonder deze regel bleef die inventaris
+  # onvolledig ("1 of 4 types could not be listed"). Op productie geeft Capsule dit al.
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list]
