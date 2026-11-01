@@ -76,6 +76,9 @@ data:
     # telt OPI op het peer-adres, en dat is bij elk verzoek de router.
     TRUSTED_PROXY_HOPS=1
 
+    # INFO zoals in productie: de DEBUG-regels van OPI noemen per verzoek het e-mailadres
+    # van de gebruiker, en die stroom gaat naar Loki.
+    LOG_LEVEL=INFO
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 

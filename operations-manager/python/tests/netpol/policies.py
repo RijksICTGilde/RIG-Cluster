@@ -90,7 +90,11 @@ PLATFORM_POLICY_SOURCES: dict[str, str | None] = {
     "infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn-staging/network-policies/mail-relay-networkpolicy.yaml": None,
     "infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn-staging/network-policies/mail-sink-networkpolicy.yaml": None,
     "infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/odcn-staging/network-policies/minio-networkpolicy.yaml": None,
+    "infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/odcn-staging/network-policies/keycloak-networkpolicy.yaml": None,
+    "infrastructure/bootstrap/infrastructure/prometheus/controller/overlays/odcn-staging/network-policies/prometheus-networkpolicy.yaml": None,
+    "infrastructure/bootstrap/infrastructure/external-dns/controller/overlays/odcn-staging/network-policies/external-dns-networkpolicy.yaml": None,
     "bootstrap/rig-system/kustomize/overlays/odcn-staging/network-policies/argocd-network-policy.yaml": None,
+    "bootstrap/rig-system/kustomize/overlays/odcn-staging/network-policies/acme-solver-network-policy.yaml": None,
     "bootstrap/rig-system/kustomize/overlays/odcn-staging/network-policies/emergency-restore-allow-all.yaml": None,
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-staging/network-policy.yaml": None,
 }

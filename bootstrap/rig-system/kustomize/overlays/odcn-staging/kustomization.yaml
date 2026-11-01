@@ -15,6 +15,7 @@ resources:
 - argocd-deployment.yaml
 - argocd-pull-secrets.yaml
 - network-policies/argocd-network-policy.yaml
+- network-policies/acme-solver-network-policy.yaml
 - network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-staging
 # De AppProjects: default dicht, en een begrensd project voor het app-of-apps en een voor
