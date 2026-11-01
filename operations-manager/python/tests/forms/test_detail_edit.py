@@ -41,11 +41,12 @@ class TestEditSectionDefinitions:
     def test_identity_edit_section_id(self):
         assert IDENTITY_EDIT_SECTION.section_id == "identity-edit"
 
-    def test_identity_edit_has_display_name_and_description(self):
-        assert len(IDENTITY_EDIT_SECTION.editables) == 2
+    def test_identity_edit_has_display_name_description_and_source_code(self):
+        assert len(IDENTITY_EDIT_SECTION.editables) == 3
         paths = [e.editable.yaml_path for e in IDENTITY_EDIT_SECTION.editables]
         assert "display-name" in paths
         assert "description" in paths
+        assert "source-code" in paths
 
     def test_identity_edit_post_save_action(self):
         assert IDENTITY_EDIT_SECTION.post_save_action == "save_only"

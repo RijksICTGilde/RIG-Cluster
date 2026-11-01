@@ -15,6 +15,7 @@ from opi.forms.editables.enforcers import (
     ComponentServicesEnforcer,
     UniqueDeploymentNameEnforcer,
     UniqueReferencesEnforcer,
+    UniqueSourceCodeUrlEnforcer,
     extract_service_names,
 )
 from opi.forms.layout import COMPONENT_IMAGE_SLOT, Fieldset, LayoutElement, Sequence, TemplatePartial
@@ -41,7 +42,7 @@ from opi.forms.visualizers.fields.deployments import (
 from opi.forms.visualizers.fields.domains import (
     WIZARD_DEPLOYMENT_NAME,
 )
-from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
+from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME, SOURCE_CODE
 from opi.forms.visualizers.fields.services import (
     SERVICES,
 )
@@ -126,10 +127,12 @@ IDENTITY_SECTION = FormSection(
     title="Projectgegevens",
     icon="document-blanco",
     description="Basisinformatie over je project",
-    editables=[DISPLAY_NAME, DESCRIPTION, CLUSTERS],
+    enforcer=UniqueSourceCodeUrlEnforcer(),
+    editables=[DISPLAY_NAME, DESCRIPTION, SOURCE_CODE, CLUSTERS],
     layout=[
         "display-name",
         "description",
+        Sequence(field_name="source-code"),
         "clusters",
     ],
 )
@@ -476,9 +479,10 @@ IDENTITY_EDIT_SECTION = FormSection(
     section_id="identity-edit",
     title="Projectgegevens bewerken",
     icon="document-blanco",
-    description="Wijzig de weergavenaam en projectomschrijving",
-    editables=[DISPLAY_NAME, DESCRIPTION],
-    layout=["display-name", "description"],
+    description="Wijzig de weergavenaam, projectomschrijving en broncodelinks",
+    enforcer=UniqueSourceCodeUrlEnforcer(),
+    editables=[DISPLAY_NAME, DESCRIPTION, SOURCE_CODE],
+    layout=["display-name", "description", Sequence(field_name="source-code")],
     post_save_action="save_only",
 )
 

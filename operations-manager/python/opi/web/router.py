@@ -1687,6 +1687,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             "name": project_name,
             "display_name": project_data.get("display-name", project_name),
             "description": project_data.get("description", "Geen beschrijving beschikbaar"),
+            "source_code": project_data.get("source-code", []),
             # Alleen de MENSEN: het Team-blok en zijn bewerkmodaal nodigen mensen uit en
             # sturen ze mail. De service accounts staan in het blok Leden en tokens.
             "users": human_members(project),

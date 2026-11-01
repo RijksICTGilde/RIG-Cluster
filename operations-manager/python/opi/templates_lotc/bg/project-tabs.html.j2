@@ -115,6 +115,14 @@
         {% if project.description %}
             <c-paragraph>{{ project.description }}</c-paragraph>
         {% endif %}
+        {% if project.source_code %}
+            <c-rich-text><ul>
+                {% for link in project.source_code %}
+                    <li><c-link :href="link.url" target="_blank" :attrs="{'rel': 'noopener noreferrer'}"
+                                :label="link.name or link.url" /></li>
+                {% endfor %}
+            </ul></c-rich-text>
+        {% endif %}
     </c-stack>
 
     {% include "bg/_pending-rollout.html.j2" %}

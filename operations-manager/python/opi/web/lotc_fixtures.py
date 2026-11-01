@@ -81,6 +81,7 @@ def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
         "name": project_name,
         "display_name": project_data.get("display-name", project_name),
         "description": project_data.get("description", "Geen beschrijving beschikbaar"),
+        "source_code": project_data.get("source-code", []),
         "users": project_data.get("users", []),
         "user_roles": ["admin", "ops"],
         # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te

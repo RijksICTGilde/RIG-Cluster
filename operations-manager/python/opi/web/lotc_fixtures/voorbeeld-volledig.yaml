@@ -15,6 +15,11 @@ name: voorbeeld-volledig
 display-name: Voorbeeldproject (volledig)
 description: Een verzonnen project om alle schermonderdelen te kunnen bekijken.
 
+source-code:
+  - url: https://github.com/voorbeeld/voorbeeld-app
+    name: Applicatie
+  - url: https://github.com/voorbeeld/voorbeeld-infra
+
 users:
   - email: beheerder@voorbeeld.nl
     role: admin

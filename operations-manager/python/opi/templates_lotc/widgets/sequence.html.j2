@@ -26,7 +26,9 @@
        over de opgeslagen waarde heen. De haakjes achter de naam laat json-enc vallen, zodat
        de meerdere reeksen als lijst aankomen. Zie opi/forms/editables/rendered_sequences.py. #}
     <input type="hidden" name="{{ gerenderde_reeksen_veld }}[]" value="{{ field.path|e }}">
-    <span class="utrecht-form-label">{{ field.label|e }}</span>
+    {# Het label in een blok: label en hulptekst zijn allebei een span, dus zonder dit
+       stonden ze op EEN regel en was het label niet meer van de uitleg te onderscheiden. #}
+    <div><span class="utrecht-form-label">{{ field.label|e }}</span></div>
     {{ helper_text(field) }}
     {# De items in een c-stack, zodat de tussenruimte van het COMPONENT komt en niet uit
        een eigen CSS-regel. Hier stond een kale div, en die heeft geen gap: de kaarten van
