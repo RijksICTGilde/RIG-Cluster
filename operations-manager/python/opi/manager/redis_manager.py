@@ -20,6 +20,9 @@ from opi.utils.secrets import RedisSecret
 
 logger = logging.getLogger(__name__)
 
+#: Datacommando's op eigen sleutels; beheer- en dangerous-categorieen eruit, INFO + CLIENT SETNAME terug.
+ACL_COMMAND_RULES = ("+@all", "-@admin", "-@dangerous", "+info", "+client|setname")
+
 
 class RedisManager:
     """Manager for Redis cache operations and resources.
@@ -132,11 +135,8 @@ class RedisManager:
                     existing_redis_secret.password,
                     username=redis_username,
                 )
-                if existing_valid and not acl_needs_update:
-                    logger.info(f"Existing Redis credentials are valid for {project_name}/{deployment_name}")
-                    redis_secret = existing_redis_secret
-                elif existing_valid and acl_needs_update:
-                    # Credentials work but ACL permissions need updating, reuse password
+                if existing_valid:
+                    # SETUSER is idempotent; de regel wordt opnieuw gezet met hetzelfde wachtwoord.
                     await self._create_acl_user(
                         redis_host,
                         redis_port,
@@ -460,7 +460,8 @@ class RedisManager:
         """
         Create or update a Redis ACL user with key prefix restrictions.
 
-        Uses: ACL SETUSER <username> on ><password> resetpass ~<prefix>:* +@all
+        Uses: ACL SETUSER <username> on resetpass ><password> ~<prefix>:* &<prefix>:*
+        plus :data:`ACL_COMMAND_RULES`.
 
         When key_prefix is empty, the user gets access to all keys and channels
         (~* &*). This is needed for applications that don't support key prefixing.
@@ -489,7 +490,7 @@ class RedisManager:
                 # - ><password>: set the new password
                 # - ~<prefix>:* or ~*: restrict to keys matching prefix (or all keys)
                 # - &<prefix>:* or &*: restrict pub/sub channels to same prefix (or all channels)
-                # - +@all: allow all commands
+                # - ACL_COMMAND_RULES: data commands only, no administration
                 # The ':' delimiter is added here so the exported prefix token stays
                 # a bare identifier; the boundary still requires a "<prefix>:" segment.
                 if key_prefix:
@@ -510,7 +511,7 @@ class RedisManager:
                     f">{user_password}",
                     key_pattern,
                     channel_pattern,
-                    "+@all",
+                    *ACL_COMMAND_RULES,
                 )
                 if not response.startswith("+OK"):
                     raise RuntimeError(f"Redis ACL SETUSER failed for {username}: {response}")

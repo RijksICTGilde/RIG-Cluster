@@ -637,7 +637,7 @@ uitgerold via ArgoCD, met daarna een dag waarnemen op de bestaande signalen:
 | stap | workload | waar je op let |
 |---|---|---|
 | a | kube-state-metrics, external-dns | ArgoCD-health van production-infrastructure, en of de DNS-records van nieuwe Ingresses nog verschijnen |
-| b | Prometheus | de scrape-doelen op `/targets`, en de resource- en facturatiepagina's van OPI |
+| b | Prometheus (gedaan, RC-409) | de scrape-doelen op `/targets`, en de resource- en facturatiepagina's van OPI |
 | c | MinIO, Redis | de readiness van beide pods, en de OPI-logs op S3- en sessionfouten |
 | d | Keycloak | een echte login op keycloak.rijksapp.nl, en de OPI-logs op realmbeheer |
 | e | ArgoCD | de sync- en health-status van elke Application |

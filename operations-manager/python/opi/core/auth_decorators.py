@@ -142,6 +142,7 @@ def requires_step_up(
                 or argumenten.get("component_name")
                 or argumenten.get("mark_id")
                 or argumenten.get("naam")
+                or argumenten.get("user_id")
                 or project_name
             )
 

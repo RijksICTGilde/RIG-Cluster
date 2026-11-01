@@ -26,15 +26,21 @@ keeps validating (like ``KeycloakClientEntry``'s pass-through fields).
 
 from __future__ import annotations
 
+import re
 from typing import ClassVar, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from opi.services.catalog.invite.target_format import split_target
 
 #: The two authentication methods an invite can offer. A closed set, so it is typed as a
 #: Literal in the model (the guardrail) rather than relying on the form widget's options.
 AuthMethod = Literal["sso", "local"]
+
+#: De vorm van ``application-url``, ook voor het schemafragment. Alleen ``https://``, en
+#: hoofdlettergevoelig: een pattern in JSON Schema is dat ook.
+HTTPS_URL_PATTERN = r"^https://[^\s/]+"
 
 
 class I18nText(BaseModel):
@@ -93,6 +99,7 @@ class InviteEntry(BaseModel):
     application_url: str | None = Field(
         default=None,
         alias="application-url",
+        json_schema_extra={"pattern": HTTPS_URL_PATTERN},
         description=(
             "Where the user is sent after redeeming, as a fixed address. Use this for a destination "
             "OUTSIDE this project; for one of the project's own addresses use 'application-target', "
@@ -123,6 +130,21 @@ class InviteEntry(BaseModel):
     success_button: I18nText | None = Field(
         default=None, alias="success-button", description="Label of the button leading to the application."
     )
+
+    @field_validator("application_url")
+    @classmethod
+    def _the_url_is_https(cls, value: str | None) -> str | None:
+        """Require https:// with a hostname, or the field is empty."""
+        if not value:
+            return value
+        # Pattern-match ensures HTTPS before urlsplit normalizes it (https:// -> http://).
+        if not re.match(HTTPS_URL_PATTERN, value) or not urlsplit(value).hostname:
+            msg = (
+                "'application-url' is een volledig adres dat met 'https://' begint en een host noemt, "
+                "bijvoorbeeld https://docs.rijksapps.nl/; een ander schema of een relatief adres kan niet"
+            )
+            raise ValueError(msg)
+        return value
 
     @model_validator(mode="after")
     def _the_target_names_a_component_and_a_deployment(self) -> InviteEntry:

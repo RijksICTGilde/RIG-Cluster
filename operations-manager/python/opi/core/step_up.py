@@ -73,6 +73,11 @@ class StepUpAction(StrEnum):
     SERVICE_ACCOUNT_ADD = "service-account-add"
     SERVICE_ACCOUNT_REMOVE = "service-account-remove"
     ENV_VARS_MANAGE = "env-vars-manage"
+    USER_CREATE = "user-create"
+    USER_EDIT = "user-edit"
+    USER_SESSIONS_REVOKE = "user-sessions-revoke"
+    USER_DELETE = "user-delete"
+    USER_OTP_RESET = "user-otp-reset"
 
     @property
     def phrase(self) -> str:
@@ -102,6 +107,11 @@ _PHRASE = {
     StepUpAction.SERVICE_ACCOUNT_ADD: "een service account toe te voegen",
     StepUpAction.SERVICE_ACCOUNT_REMOVE: "dit service account te verwijderen",
     StepUpAction.ENV_VARS_MANAGE: "de omgevingsvariabelen van dit component te zien en te wijzigen",
+    StepUpAction.USER_CREATE: "een gebruiker aan het portaal toe te voegen",
+    StepUpAction.USER_EDIT: "deze gebruiker te wijzigen",
+    StepUpAction.USER_SESSIONS_REVOKE: "de sessies van deze gebruiker te beëindigen",
+    StepUpAction.USER_DELETE: "deze gebruiker te verwijderen",
+    StepUpAction.USER_OTP_RESET: "de 2-factor van deze gebruiker leeg te maken",
 }
 
 _REASON = {
@@ -128,6 +138,11 @@ _REASON = {
     StepUpAction.ENV_VARS_MANAGE: (
         "de omgevingsvariabelen van '{doelwit}' in project '{project}' kunnen geheimen bevatten"
     ),
+    StepUpAction.USER_CREATE: "een nieuwe gebruiker kan op het portaal inloggen",
+    StepUpAction.USER_EDIT: "het adres van een gebruiker bepaalt wie er met zijn account inlogt",
+    StepUpAction.USER_SESSIONS_REVOKE: "de gebruiker moet daarna opnieuw inloggen",
+    StepUpAction.USER_DELETE: "de gebruiker kan daarna niet meer op het portaal inloggen",
+    StepUpAction.USER_OTP_RESET: "wie de 2-factor van een ander leegmaakt zet zijn tweede slot open",
 }
 
 

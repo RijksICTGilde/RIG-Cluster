@@ -18,6 +18,10 @@ Er wordt een Redis-gebruiker met een eigen wachtwoord en een sleutelprefix aange
 
 Bouw je sleutels en kanalen als **prefix:naam**: je toegang is beperkt tot sleutels die met jouw prefix beginnen. Redis is een cache, geen bewaarplaats; ga ervan uit dat gegevens kunnen verdwijnen.
 
+## Welke commando's kun je gebruiken?
+
+Alle gewone datacommando's op je eigen sleutels. Beheercommando's zijn niet beschikbaar, want de Redis is gedeeld: `ACL`, `CONFIG`, `FLUSHALL`, `FLUSHDB`, `DEBUG`, `MONITOR` en `SHUTDOWN` werken niet. `KEYS` werkt ook niet; gebruik **SCAN**, dat is op een cache sowieso de veiligere weg. Hetzelfde geldt voor `SORT`, `RESTORE`, `MIGRATE` en `SWAPDB`. Heb je er een echt nodig, meld dat dan; het staat hier niet omdat het niet kan, maar omdat niemand het tot nu toe vroeg.
+
 ## Kan je applicatie geen prefix gebruiken?
 
 Je kunt de sleutelbeperking uitzetten, maar dat is een aanvraag: een platformbeheerder beslist erover, omdat je gebruiker dan bij elke sleutel in de gedeelde Redis kan. Tot die beslissing houdt je gebruiker het prefix, dus je applicatie blijft werken binnen haar eigen sleutels. Een eigen Redis per project is er nog niet, dus deze aanvraag is de enige weg.

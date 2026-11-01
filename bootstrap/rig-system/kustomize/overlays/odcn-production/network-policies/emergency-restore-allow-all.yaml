@@ -27,6 +27,7 @@ spec:
         values:
           - kube-state-metrics
           - external-dns
+          - prometheus
   policyTypes:
     - Ingress
     - Egress

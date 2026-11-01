@@ -612,12 +612,12 @@ flows:
   - van: prometheus
     naar: kube-state-metrics
     poort: 8081
-    verwacht: open
-    zonder_allow_all: dicht
+    verwacht: dicht
     waarom: >-
       de ingress-regel van kube-state-metrics laat 8081 binnen, maar de egress van
-      prometheus (configmap-patch.yaml van prometheus) kent geen scrape-job voor die poort, dus zonder de
-      allow-all stokt deze poort aan de uitgaande kant. Opzettelijk: niemand scrapet hem vandaag.
+      prometheus (configmap-patch.yaml van prometheus) kent geen scrape-job voor die poort.
+      Sinds RC-409 staat prometheus buiten de allow-all, dus die uitgaande kant stokt nu
+      echt. Opzettelijk: niemand scrapet hem vandaag.
 
   - van: prometheus
     naar: tenant-app
@@ -637,7 +637,7 @@ flows:
     verwacht: open
     waarom: KUBERNETES_SERVICE_HOST wijst naar de Capsule-Proxy kube-API
 
-  # -------------------------------------------------- de twee workloads buiten de allow-all
+  # ------------------------------------------------------ de workloads buiten de allow-all
   - van: kube-state-metrics
     naar: internet-v4
     poort: 443

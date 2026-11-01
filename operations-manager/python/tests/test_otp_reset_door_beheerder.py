@@ -7,12 +7,14 @@ Vervangen kan wel, op /account/otp, en dat vraagt een code van de bestaande fact
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.core.step_up import STEP_UP_SESSION_KEY
 from opi.web.router_user_admin import reset_user_otp
 
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -21,8 +23,17 @@ USER_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _verzoek(email: str | None) -> Any:
+    """Een verzoek MET verse step-up: die vraagt de route sinds RC-409, en deze toetsen
+    gaan over wie mag, niet over de tweede factor (``test_beheerroutes_portaal_step_up``)."""
     user = {"email": email} if email else None
-    return SimpleNamespace(state=SimpleNamespace(user=user), query_params={})
+    return SimpleNamespace(
+        state=SimpleNamespace(user=user),
+        query_params={},
+        session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
+        method="POST",
+        url=SimpleNamespace(path=f"/admin/users/{USER_ID}/otp-reset"),
+        headers={},
+    )
 
 
 def _gebruikersdienst(admins: set[str]) -> Any:

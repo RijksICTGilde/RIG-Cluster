@@ -62,7 +62,11 @@ kubernetes_sd_configs:
 
 ### RBAC
 
-The ODCN overlay includes a namespace-scoped Role and RoleBinding granting the `namespace-manager` service account read access to pods, services, and endpoints. This is the same service account used by the Prometheus deployment.
+The ODCN overlay includes a namespace-scoped Role and RoleBinding granting read access to pods, services, and endpoints. As of RC-409, the RoleBinding also names Prometheus' own service account, `prometheus` (defined in `base/serviceaccount.yaml`). Reason: `namespace-manager` is a Capsule TenantOwner with `admin` on every project namespace; Prometheus has no authentication of its own; so anyone reaching the pod reaches that token.
+
+Capsule Proxy scopes discovery by the calling service account's tenant owner, and only ODCN can create one. Until ODCN creates a TenantOwner for `prometheus`, the two ODCN overlays patch `serviceAccountName` back to `namespace-manager`, using the request in `docs/odcn-aanvraag-prometheus-tenantowner.yaml` (with `clusterRoles: [view]`, no `capsule-namespace-deleter`). Nothing changes until that request is approved; removing the patch afterwards is one line per overlay.
+
+In the sandbox, there is no Capsule, and Prometheus runs on its own service account with a ClusterRole that reads only nodes and pods. That one does NOT live in this overlay but in `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/prometheus-cluster-role.yaml`: the sandbox ArgoCD runs namespaced and refuses a cluster-scoped resource.
 
 ### What is NOT available through Capsule Proxy
 

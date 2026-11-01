@@ -33,6 +33,25 @@ van het platform is niet aan het project om op te ruimen. Zet het project daarna
 `acl-key-prefix: false`, dan geldt datzelfde oordeel weer, over precies de waarde waarvoor
 het is gegeven.
 
+## Welke commando's een projectuser mag
+
+De ACL-regel is `+@all -@admin -@dangerous +info +client|setname` (RC-409). Een
+sleutelpatroon beperkt WELKE sleutels een datacommando raakt en niet welke commando's er
+zijn, dus met alleen `+@all` kon een projectuser op de gedeelde instantie `ACL LIST` (de
+wachtwoordhashes van elk ander project), `ACL SETUSER`, `FLUSHALL`, `FLUSHDB`, `CONFIG`,
+`DEBUG`, `KEYS`, `MONITOR` en `SHUTDOWN`. Gemeten met `ACL CAT admin` en `ACL CAT
+dangerous` tegen Redis 7.4.11: die twee categorieen dekken dat samen.
+
+`INFO` en `CLIENT SETNAME` zitten in `@dangerous` en gaan expliciet terug, want veel
+clients sturen ze bij het verbinden. `PING` en `ECHO` staan in geen van beide categorieen
+en hoeven dus niet terug. Wat @dangerous nog meeneemt en niet terugkomt: `KEYS` (gebruik
+`SCAN`), `SORT`, `RESTORE`, `MIGRATE` en `SWAPDB`.
+
+De regel wordt bij ELKE verwerking van de deployment opnieuw gezet, met hetzelfde
+wachtwoord: `ACL SETUSER` is idempotent, en zo komt een user die onder een oudere regel is
+aangemaakt mee zonder dat iemand hem hoeft te vinden. Een vergelijking op de commandoset
+staat er daarom bewust niet.
+
 ## Er is geen weg zonder aanvraag
 
 Kan je applicatie haar sleutels niet voorvoegen, dan is de aanvraag de enige weg. Een eigen

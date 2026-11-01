@@ -2,9 +2,11 @@
 # `ron-infrastructure`): alleen de infrastructuur-repo in Forgejo als bron, en alleen
 # rig-system en rig-ron als bestemming.
 #
-# De lijst hieronder is gemeten op de render van main en wijkt op drie soorten af van de
-# odcn-production overlay: de sandbox heeft forgejo (StatefulSet) en de registry, ODCN
-# heeft external-dns (ServiceAccount, Role, RoleBinding) en een cert-manager Issuer.
+# De lijst hieronder is gemeten op de render van main en wijkt af van de odcn-production
+# overlay: de sandbox heeft forgejo (StatefulSet) en de registry, ODCN heeft external-dns
+# (Role, RoleBinding) en een cert-manager Issuer. ServiceAccount staat er sinds RC-409 ook
+# hier in, voor de SA van Prometheus; zonder die soort valt de hele sync met
+# "resource :ServiceAccount is not permitted in project zad-platform".
 # Beide lijsten volgen hun eigen cluster; een nieuwe soort laat de sync hierop vallen met
 # een duidelijke melding.
 apiVersion: argoproj.io/v1alpha1
@@ -31,6 +33,8 @@ spec:
       kind: Secret
     - group: ''
       kind: Service
+    - group: ''
+      kind: ServiceAccount
     - group: apps
       kind: Deployment
     - group: batch

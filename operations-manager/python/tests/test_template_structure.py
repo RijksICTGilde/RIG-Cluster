@@ -262,7 +262,7 @@ FORMULIEREN_MET_SERVERVALIDATIE = {
     "wizard/modal_wizard_step.html.j2": "modal-wizard-form",
     "widgets/form_start.html.j2": "{{ form_id|e }}",
     "admin/user-form.html.j2": "{{ form_action }}",
-    "bg/admin-user-form.html.j2": "{{ form_action }}",
+    "bg/_admin-user-form.html.j2": "{{ form_action }}",
     "invite-register.html.j2": "/invite/{{ invite_key }}/register",
     "bg/invite-register.html.j2": "/invite/{{ invite_key }}/register",
     "project-form-demo/_formulier.html.j2": "/projects/form-demo",
