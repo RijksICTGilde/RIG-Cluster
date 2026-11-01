@@ -875,16 +875,19 @@ def _kopie(tmp_path: Path) -> Path:
     return repo
 
 
-def _rendered_pod(wortel: Path, overlay: str) -> dict:
-    """De podspec die kustomize voor deze overlay oplevert, niet wat de manifesten zeggen."""
+def _rendered_deployment(wortel: Path, overlay: str) -> dict:
+    """De deployment die kustomize voor deze overlay oplevert, niet wat de manifesten zeggen."""
     proc = subprocess.run(
         ["kustomize", "build", str(wortel / KEYCLOAK.relative_to(REPO_ROOT) / "overlays" / overlay)],
         capture_output=True,
         text=True,
     )
     assert proc.returncode == 0, proc.stderr
-    deployment = next(d for d in yaml.safe_load_all(proc.stdout) if d and d["kind"] == "Deployment")
-    return deployment["spec"]["template"]["spec"]
+    return next(d for d in yaml.safe_load_all(proc.stdout) if d and d["kind"] == "Deployment")
+
+
+def _rendered_pod(wortel: Path, overlay: str) -> dict:
+    return _rendered_deployment(wortel, overlay)["spec"]["template"]["spec"]
 
 
 def _rendered_container(wortel: Path, overlay: str) -> dict:

@@ -5,6 +5,10 @@ metadata:
   namespace: rig-system
 spec:
   replicas: 1
+  # Recreate en niet RollingUpdate: een schemamigratie mag pas lopen als de oude pod uit is,
+  # anders migreert de nieuwe pod terwijl de oude nog op het oude schema schrijft.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: keycloak
@@ -86,10 +90,6 @@ spec:
               value: "keycloak.kind"
             - name: KC_HOSTNAME_STRICT
               value: "false"
-            - name: KC_HOSTNAME_PORT
-              value: "-1"
-            - name: KC_PROXY_ADDRESS_FORWARDING
-              value: "true"
             # sslmode=require versleutelt zonder het servercertificaat te toetsen. CNPG
             # tekent met zijn eigen interne CA, en die zit niet in de truststore van de
             # Keycloak-pod; verify-full vraagt dat certificaat erbij.
@@ -105,13 +105,7 @@ spec:
                 secretKeyRef:
                   name: keycloak-db-credentials
                   key: password
-            - name: ORGANIZATION
-              value: "RIG Cluster"
             - name: KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED
-              value: "true"
-            - name: KEYCLOAK_ADMIN_IMPORT_ENABLED
-              value: "true"
-            - name: KEYCLOAK_ADMIN_EXPORT_ENABLED
               value: "true"
             # DE MAILRELAY, ZOALS DE POD HEM KENT. Deze vijf zijn de HELE configuratie van
             # de eigen verzender: geen realm draagt nog een bestemming, dus er is nergens

@@ -14,10 +14,11 @@ See **[TESTING.md](./TESTING.md)** for complete testing guide.
 
 Quick test with Docker:
 ```bash
-task test-keycloak-custom-mapper-docker
+task test-keycloak-image
 ```
 
-Then check http://localhost:8080 → Create realm → Identity Providers → SAML → Mappers → Look for "Unrestricted XPath Attribute Importer"
+That task builds `images/keycloak-zad/`, starts it the way the deployment starts it, and
+checks every provider. See `features/keycloak-eigen-image.md`.
 
 ## Quick Start
 

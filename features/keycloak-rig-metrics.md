@@ -79,8 +79,16 @@ Op de sandbox is de namespace `rig-system`.
 | `rig_keycloak_realms_total` | gauge | - | Total realms (excluding master) |
 | `rig_keycloak_users_total` | gauge | realm | Total users per realm |
 | `rig_keycloak_users_by_idp_total` | gauge | realm, idp_type | Users per realm by IDP type |
+| `rig_keycloak_metrics_collection_error` | gauge | realm, part | 1 als die telling faalde, 0 als hij lukte |
 
 The `idp_type` label has values: `local`, `saml`, `oidc`
+
+De foutgauge bestaat omdat `users_by_idp` op een private API van `keycloak-model-jpa`
+telt. Tot RC-411 viel een mislukte telling terug op "alle gebruikers zijn local" en gaf
+het endpoint 200, en dan is een kapotte query niet te onderscheiden van een realm zonder
+federatie. `part` is `users_by_idp` (met de realm erbij) of `gauges` (de hele sectie, dan
+is de realm leeg). Een reeks die ontbreekt is nooit het enige signaal: bij succes staat de
+gauge op 0.
 
 ### Authentication Metrics (Counters)
 
