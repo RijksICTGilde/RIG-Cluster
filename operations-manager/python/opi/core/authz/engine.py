@@ -50,8 +50,8 @@ ROLE_DESCRIPTIONS: dict[Role, str] = {
     Role.DEVELOPER: "Bouwt aan alles wat niet op productie staat: deployments, componenten, services en env-vars.",
     Role.OPS: "Doet hetzelfde als een ontwikkelaar, ook op productie, en zet de OTAP-markering.",
     Role.ADMIN: "Beheert leden, rollen, tokens en service accounts, en kan het project verwijderen.",
-    Role.DEVELOPER_CI: "Voor een pijplijn: deployments die niet op productie staan, en het image daarvan.",
-    Role.OPS_CI: "Voor een pijplijn: het image vervangen op elke deployment, ook op productie.",
+    Role.DEVELOPER_CI: "Werkt vanuit een CI/CD pipeline deployments bij die niet op productie staan en mag nieuwe (niet productie) deployments aanmaken.",
+    Role.OPS_CI: "Vervangt vanuit een CI/CD pipeline enkel het image van elke deployment, ook op productie.",
 }
 
 
