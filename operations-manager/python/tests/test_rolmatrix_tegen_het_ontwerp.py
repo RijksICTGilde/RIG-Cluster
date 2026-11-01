@@ -149,7 +149,8 @@ def _gegenereerd() -> dict[tuple[str, str], tuple[str, ...]]:
     gevonden: dict[tuple[str, str], tuple[str, ...]] = {}
     for rij in rows():
         sleutel = (rij.action, scope_namen[rij.scope_label] if rij.scope_label else "")
-        gevonden[sleutel] = tuple(cel.mark for cel in rij.cells)
+        # The design writes v and v s; Cell.mark is screen-reader text, so read the flags.
+        gevonden[sleutel] = tuple(("v s" if cel.step_up else "v") if cel.allowed else "" for cel in rij.cells)
     return gevonden
 
 
