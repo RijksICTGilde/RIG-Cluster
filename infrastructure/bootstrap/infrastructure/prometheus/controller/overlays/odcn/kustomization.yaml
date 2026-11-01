@@ -38,6 +38,19 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 0
+  # Prometheus draait hier NOG op namespace-manager, anders dan in de basis: de
+  # kubernetes_sd_configs lopen via Capsule Proxy, en die scopet op de tenant-eigenaar
+  # van de aanroepende SA (features/capsule-proxy-prometheus-discovery.md).
+  # Alleen ODCN maakt een TenantOwner aan; het verzoek staat in
+  # docs/odcn-aanvraag-prometheus-tenantowner.yaml. Deze patch mag weg zodra die er is,
+  # en dan draait Prometheus ook hier op zijn eigen SA met alleen leesrechten.
+  - target:
+      kind: Deployment
+      name: prometheus
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/serviceAccountName
+        value: namespace-manager
   # Pods draaien op serviceaccount namespace-manager; de pull-secrets hangen alleen aan
   # default. Zonder dit blok faalt de pull na een herstart (rewrite naar de rcr-proxy
   # vraagt authenticatie).

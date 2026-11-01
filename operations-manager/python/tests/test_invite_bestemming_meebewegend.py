@@ -402,6 +402,16 @@ class TestDeSuccespagina:
 
         assert "https://ergens.anders.nl/" in html
 
+    def test_een_adres_dat_geen_https_is_toont_geen_knop(self, pagina: Any) -> None:
+        """RC-409: de href van deze knop staat op de ZAD-origin, en de CSP laat
+        ``'unsafe-inline'`` toe. Zo'n waarde komt sinds RC-409 niet meer door het model,
+        dus dit meet de tweede laag in ``resolve_invite_url`` voor een bestand dat ooit
+        buiten die validator om is geschreven."""
+        html = pagina(_met_invite(_project(), _basis_entry(**{"application-url": "javascript:alert(1)"})))
+
+        assert _knop_bestemming(html) is None
+        assert "javascript:alert(1)" not in html
+
     def test_zonder_bestemming_staat_er_geen_knop(self, pagina: Any) -> None:
         html = pagina(_met_invite(_project(), _basis_entry()))
 

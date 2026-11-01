@@ -11,13 +11,8 @@
     div.user-form-actions  -> c-action-group, de plek die het thema voor formulier-
                               knoppen heeft
 
-  De VELDEN zelf staan hier niet: die komen als HTML mee in form_html, gerenderd uit de
-  editables. Bij deze weergave gebeurt dat door de LOTCWidgetAdapter, zodat de velden uit
-  hetzelfde systeem komen als de rest van de pagina - zie _render_form_html() in
-  opi/web/router_user_admin.py.
-
-  Het CSRF-token blijft een gewone verborgen input. Er is geen componentvorm voor, en die
-  is er ook niet nodig: het is geen zichtbaar veld.
+  Het formulier zelf staat in bg/_admin-user-form.html.j2: de route rendert dat fragment
+  ook los, en het vervangt dan zichzelf, hier op de pagina of in de dialoog van de step-up.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -28,19 +23,8 @@
     {{ page_head(page_heading) }}
 
     {% call panel("") %}
-        {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
-           in tests/test_template_structure.py voor het waarom. #}
-        <form autocomplete="off" method="post" action="{{ form_action }}" novalidate>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-
-            <c-stack gap="lg">
-                {{ form_html | safe }}
-
-                <c-action-group align="start">
-                    <c-button type="primary" label="Opslaan" html-type="submit" />
-                    <c-button type="secondary" label="Annuleren" href="/admin/users" />
-                </c-action-group>
-            </c-stack>
-        </form>
+        {% include "bg/_admin-user-form.html.j2" %}
     {% endcall %}
+
+    {% include "bg/_step-up-venster.html.j2" %}
 {% endblock %}

@@ -4,3 +4,8 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
+  # De ClusterRole voor de SA prometheus staat NIET hier maar in de bootstrap-overlay
+  # (bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/
+  # prometheus-cluster-role.yaml): de sandbox-ArgoCD draait namespaced en weigert een
+  # cluster-scoped resource, waarmee de hele sandbox-infrastructure-app op
+  # ComparisonError gaat. Gemeten op 1 november 2026.

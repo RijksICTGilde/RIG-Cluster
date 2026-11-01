@@ -8,6 +8,7 @@ resources:
   - ../../base
   - cluster-binding.yaml
   - cluster-role.yaml
+  - prometheus-cluster-role.yaml
   - ingress.yaml
   - configmap.yaml
   - pvc.yaml

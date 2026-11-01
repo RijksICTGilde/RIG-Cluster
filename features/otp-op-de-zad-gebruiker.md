@@ -22,6 +22,7 @@ doet en dat hij het echt is (BIO2 8.05 en 8.32).
 | een component verwijderen | een deployment op `productie` dat component gebruikt |
 | de OTAP-markering wijzigen | de wijziging `productie` VERLAAT; `productie` zetten vraagt niets |
 | een wijzigende beheerroute | altijd (RC-377): platformbeheer raakt het hele cluster |
+| gebruikersbeheer in het portaal (`/admin/users/*`) | altijd (RC-409): dezelfde regel als de API-tegenhanger |
 | een token uitgeven, roteren of intrekken | altijd (RC-387) |
 | een rol wijzigen, een service account toevoegen of verwijderen | altijd (RC-387) |
 | de omgevingsvariabelen van een component bekijken of wijzigen | altijd (RC-388): ze kunnen geheimen bevatten |

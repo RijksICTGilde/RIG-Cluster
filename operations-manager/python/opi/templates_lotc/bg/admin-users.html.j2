@@ -14,10 +14,12 @@
   maar het verplaatsen is een besluit over de pagina en niet over de componenten, en dus
   niet iets om ongemerkt in een omzetting mee te nemen.
 
-  De drie handelingen blijven gewone formulieren met een redirect erachter, geen htmx. Wat
-  ze vragen voordat ze doen gaat door de dialoog uit bg/_bevestiging.html.j2: de vraag, de
-  uitleg en het label van de knop staan in data-attributen op het formulier, en de
-  POST-bestemming blijft het action van dat formulier.
+  De drie handelingen posten met htmx naast hun action: de step-up zet een dialoog in de
+  plaats van het formulier, en die komt alleen terug op een htmx-verzoek. De route
+  antwoordt dan met HX-Redirect, want een 303 zou htmx de hele pagina in die dialoog laten
+  hangen. Wat ze vragen voordat ze doen gaat door de dialoog uit bg/_bevestiging.html.j2:
+  de vraag, de uitleg en het label van de knop staan in data-attributen op het formulier,
+  en bevestiging.js kent de combinatie met hx-post.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -61,6 +63,8 @@
                                     href="/admin/users/{{ user.id }}/edit" />
                                 {# De naam gaat in een attribuutwaarde: autoescape beschermt tegen XSS. #}
                                 <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/revoke-sessions"
+                                      hx-post="/admin/users/{{ user.id }}/revoke-sessions"
+                                      hx-target="#edit-section-inner" hx-swap="innerHTML"
                                       data-bevestig="De sessies van {{ user.full_name }} beëindigen?"
                                       data-bevestig-uitleg="Daarna moet {{ user.full_name }} opnieuw inloggen."
                                       data-bevestig-knop="Sessies beëindigen">
@@ -74,6 +78,8 @@
                                         html-type="submit" />
                                 </form>
                                 <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
+                                      hx-post="/admin/users/{{ user.id }}/delete"
+                                      hx-target="#edit-section-inner" hx-swap="innerHTML"
                                       data-bevestig="{{ user.full_name }} verwijderen?"
                                       data-bevestig-uitleg="Daarna kan {{ user.full_name }} niet meer inloggen op het portaal."
                                       data-bevestig-knop="Gebruiker verwijderen">
@@ -90,6 +96,8 @@
                                    route weigert hem ook. #}
                                 {% if user.email | lower != eigen_email %}
                                     <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/otp-reset"
+                                          hx-post="/admin/users/{{ user.id }}/otp-reset"
+                                          hx-target="#edit-section-inner" hx-swap="innerHTML"
                                           data-bevestig="De 2-factor van {{ user.full_name }} leegmaken?"
                                           data-bevestig-uitleg="Daarna richt {{ user.full_name }} hem zelf opnieuw in."
                                           data-bevestig-knop="2-factor leegmaken">
@@ -118,4 +126,5 @@
     {% endif %}
 
     {% include "bg/_bevestiging.html.j2" %}
+    {% include "bg/_step-up-venster.html.j2" %}
 {% endblock %}

@@ -123,7 +123,7 @@ services:
 | `active[].restrict-domain` | Only e-mail addresses of this domain may redeem (with or without a leading `@`). |
 | `active[].contact-email` | Shown to the user as a contact, and on the role-not-assigned error page. |
 | `active[].application-target` | Where the success-page button points, as a `component:deployment[:/path]` choice within this project. |
-| `active[].application-url` | Where the success-page button points, as a fixed address. For a destination outside this project. |
+| `active[].application-url` | Where the success-page button points, as a fixed address (`https://` only). For a destination outside this project. |
 | `active[].auth-methods` | `sso` and/or `local`. Empty = both allowed (subject to the realm). `local` is refused when the realm links on email, see below. |
 | `active[].message` / `success-title` / `success-button` | `{nl, en}` texts for the invite pages. |
 
@@ -165,6 +165,12 @@ wrong is worse: the user only finds out after clicking it.
 ```yaml
 application-url: https://ergens.anders.example.nl/
 ```
+
+Only `https://`, lowercase, with a host: the value lands in the `href` of the success-page
+button on the ZAD origin, and the enforced CSP allows `'unsafe-inline'`, so a `javascript:`
+address there would be script on that origin (RC-409). `http://` is refused too: an invitation
+sends people to an application, and that sits behind TLS. A file that was written past the
+validator shows NO button.
 
 Nothing is derived, so nothing follows a change either. The portal's picker only offers this
 project's own addresses and therefore cannot write this field; set it through the API, the

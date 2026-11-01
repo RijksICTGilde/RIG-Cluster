@@ -62,6 +62,7 @@
           ],
           "default": null,
           "description": "Where the user is sent after redeeming, as a fixed address. Use this for a destination OUTSIDE this project; for one of the project's own addresses use 'application-target', which keeps following it when the subdomain or the domain format changes.",
+          "pattern": "^https://[^\\s/]+",
           "title": "Application-Url"
         },
         "auth-methods": {

@@ -83,6 +83,18 @@ om een code moet vragen en de aanroep te herhalen. `action` zegt welke handeling
 De twee leesroutes vragen alleen het token: een OTP erop zou een handeling verzinnen die er
 niet is.
 
+Sinds RC-409 geldt hetzelfde voor gebruikersbeheer in het PORTAAL (`/admin/users/*`): die
+vijf wijzigende routes droegen de step-up nog niet, en vragen nu een verse code zoals de
+API-tegenhangers. De leesroutes (de lijst en de twee formulieren) niet.
+
+In het portaal komt die vraag als dialoog, en dat stelt een eis aan de pagina. De
+weigering rendert de dialoog alleen op een HX-Request en werpt anders een 403, dus de vijf
+formulieren posten met `hx-post` naast hun `action` en de twee pagina's dragen
+`bg/_step-up-venster.html.j2`: de schil met `#edit-section-inner` waarin die dialoog
+landt. De routes antwoorden daarom met `HX-Redirect` in plaats van een 303, want htmx zou
+een omleiding volgen en de hele lijstpagina in de dialoog hangen. Keurt de validatie na de
+code een veld af, dan komt het formulier als fragment terug in diezelfde dialoog.
+
 ## Ook op dit token: de back-upstand en de federatie (RC-386)
 
 `MASTER_API_KEY` bestond hiernaast als tweede gedeelde sleutel. Die is weg, en zijn
