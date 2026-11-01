@@ -206,23 +206,6 @@
         </main>
     </nldd-simple-section>
 
-    {# Alleen de legal bar van nldd-page-footer: de hoofdrij (link-kolommen) zou herhalen wat
-       de zijbalk al heeft. De items moeten in slot start of end, anders tonen ze niets.
-       Het blauwe blokje onderaan is `.page-footer::after` van NLDD zelf, geen fout van ons. #}
-    {% set vi = version_info() %}
-    {% set versie_details = [
-        vi.branch,
-        ('gebouwd ' ~ (vi.build_date | dutch_date(include_time=False))) if vi.build_date else '',
-        'met lokale wijzigingen' if vi.dirty else '',
-    ] | select | list %}
-    {% set versie_tekst = 'Versie: ' ~ vi.version ~ (' (' ~ versie_details | join(', ') ~ ')' if versie_details else '') %}
-    {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
-    <nldd-page-footer slot="footer">
-        <nldd-page-footer-legal-bar slot="legal-bar">
-            <nldd-page-footer-legal-bar-item slot="start" text="{{ versie_tekst }}"{% if commit_ref %} href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}"{% endif %}></nldd-page-footer-legal-bar-item>
-            <nldd-page-footer-legal-bar-item slot="end" text="Beveiliging" href="/security"></nldd-page-footer-legal-bar-item>
-        </nldd-page-footer-legal-bar>
-    </nldd-page-footer>
     </nldd-page>
     </nldd-split-view-pane>
 

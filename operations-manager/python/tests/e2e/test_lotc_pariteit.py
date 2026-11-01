@@ -518,13 +518,9 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
     )
 
 
-def test_de_voettekst_heeft_zijn_versieregel_en_een_werkende_link(app_server: str, auth_page: Page) -> None:
-    """De legal bar van nldd-page-footer: de versie links, Beveiliging rechts, op elke pagina.
-
-    De kop "Platform" met Introductie, Over het platform en API Referentie is bewust weg
-    (48e4529df, 844edadcd, 69c54f242): die herhaalde de zijbalk. Introductie staat sindsdien
-    bovenaan de groep Platform in de zijbalk, en dat blijft voor wie ingelogd is de weg
-    ernaartoe, want "/" gaat dan naar het dashboard.
+def test_beveiligingsbeleid_staat_onder_platform_en_navigeert(app_server: str, auth_page: Page) -> None:
+    """Geen page footer: het NLDD-applicatiepatroon heeft er geen. Het beveiligingsbeleid
+    staat in de zijbalk onder Platform, de versie alleen op de introductie.
 
     Er wordt echt geklikt: een item dat er staat maar niet navigeert, ziet er in de HTML
     precies zo uit.
@@ -532,24 +528,18 @@ def test_de_voettekst_heeft_zijn_versieregel_en_een_werkende_link(app_server: st
     auth_page.goto(f"{app_server}/projects")
     auth_page.wait_for_load_state("networkidle")
 
-    voet = auth_page.locator("nldd-page-footer")
-    assert voet.count() == 1, "er staat geen voettekst op de pagina"
-
-    # Op het attribuut: het item tekent zijn ``text`` in een shadow root.
-    assert voet.locator("nldd-page-footer-legal-bar-item[slot='start'][text^='Versie: ']").count() == 1, (
-        "de versievermelding staat niet in de voettekst"
-    )
-    beveiliging = voet.locator("nldd-page-footer-legal-bar-item[text='Beveiliging']")
-    assert beveiliging.count() == 1, "de link 'Beveiliging' staat niet in de voettekst"
+    assert auth_page.locator("nldd-page-footer").count() == 0, "er staat nog een page footer op de pagina"
 
     zijbalk = auth_page.locator("nldd-split-view-pane[slot='sidebar']")
     assert zijbalk.locator("nldd-list-item[href='/introductie']").count() == 1, (
         "de introductie is voor wie ingelogd is niet meer te bereiken vanuit de zijbalk"
     )
+    beleid = zijbalk.locator("nldd-list-item[href='/security']")
+    assert beleid.count() == 1, "Beveiligingsbeleid staat niet in de zijbalk"
 
-    beveiliging.click()
+    beleid.click()
     auth_page.wait_for_load_state("networkidle")
-    assert auth_page.url.endswith("/security"), f"de footerlink navigeert niet: {auth_page.url}"
+    assert auth_page.url.endswith("/security"), f"de link naar het beveiligingsbeleid navigeert niet: {auth_page.url}"
 
 
 def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: str, auth_page: Page) -> None:
