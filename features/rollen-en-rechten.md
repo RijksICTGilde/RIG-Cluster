@@ -34,7 +34,7 @@ Een platformbeheerder krijgt op elk project `[admin, ops]`, zonder lid te zijn.
 `/rollen`, voor iedereen die ingelogd is, in het menu onder Platform. Hij wordt uit
 het register gelezen, dus hij staat hier niet nog een keer: elke regel krijgt een
 rij per scope die hij noemt, met een kolom per rol. Een groen vinkje mag, een groen
-schild met vinkje mag met een verse code uit je 2-factor, leeg mag niet. Een service
+schild vereist bevestiging via je 2-factor, leeg mag niet. Een service
 account kan geen 2-factor geven, dus alles met het schild is voor een pijplijn dicht.
 
 ## Hoe je een regel toevoegt

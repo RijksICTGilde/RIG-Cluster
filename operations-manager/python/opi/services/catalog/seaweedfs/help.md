@@ -1,6 +1,6 @@
 # SeaweedFS Object Storage
 
-S3-compatibele object storage voor documenten, afbeeldingen en grote bestanden. Je deployment krijgt een eigen bucket en een eigen sleutelpaar, en jouw sleutels komen nergens anders bij.
+S3-compatibele object storage voor documenten, afbeeldingen en grote bestanden. Elke deployment krijgt een eigen bucket.
 
 ## Wanneer gebruik je dit?
 
