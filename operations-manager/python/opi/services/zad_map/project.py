@@ -408,9 +408,8 @@ def _service_nodes(data: dict[str, Any], column: str) -> list[Node]:
                 shape="pill",
                 color=_service_color(name),
                 title=definition.name,
-                subtitle=name,
                 click="focus",
-                info=Info(eyebrow="Service", title=definition.name, subtitle=name, sections=sections),
+                info=Info(eyebrow="Service", title=definition.name, sections=sections),
             )
         )
     return nodes
