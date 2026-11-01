@@ -523,6 +523,27 @@ class DomainConfigEnforcer:
         raise FieldError(field_path, f"Het kale domein '{base_domain}' is niet beschikbaar")
 
 
+class UniqueSourceCodeUrlEnforcer:
+    """Rejects duplicate source-code URLs (by url only, not by object identity)."""
+
+    _PATH = "source-code"
+    _MESSAGE = "Deze link staat er al."
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        links = value.get(self._PATH) or []
+        seen: set[str] = set()
+        for index, entry in enumerate(links):
+            if not isinstance(entry, dict):
+                continue
+            url = str(entry.get("url") or "")
+            if not url:
+                continue
+            if url in seen:
+                raise FieldError(f"{self._PATH}[{index}]/url", self._MESSAGE)
+            seen.add(url)
+        return value
+
+
 class UniqueInviteKeyEnforcer:
     """Ensures every invite key is unique across ALL projects, not just this one.
 

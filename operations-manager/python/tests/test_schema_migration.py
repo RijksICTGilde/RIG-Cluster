@@ -22,6 +22,7 @@ from opi.services.schema_migration import (
     remove_mail_accounts,
     restore_run_reference,
     roles_as_a_list,
+    source_code_links,
 )
 
 # ---------------------------------------------------------------------------
@@ -1849,6 +1850,30 @@ class TestRestoreRunReferenceMigration:
         data = {
             "name": "p",
             "schema-version": "2.15",
+            "users": [{"email": "a@b.nl", "roles": ["admin"]}],
+            "components": [{"name": "frontend", "type": "deployment"}],
+        }
+        before_without_stamp = {k: v for k, v in data.items() if k != "schema-version"}
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp
+
+
+class TestSourceCodeLinksMigration:
+    """v2.16 -> v2.17: het root-veld source-code kwam erbij, dus er is niets te migreren."""
+
+    def test_is_a_no_op(self) -> None:
+        data = {"name": "p", "source-code": [{"url": "https://github.com/x/y"}]}
+        assert source_code_links(data) is False
+        assert data == {"name": "p", "source-code": [{"url": "https://github.com/x/y"}]}
+
+    def test_a_2_16_file_reaches_the_latest_version_unchanged(self) -> None:
+        data = {
+            "name": "p",
+            "schema-version": "2.16",
             "users": [{"email": "a@b.nl", "roles": ["admin"]}],
             "components": [{"name": "frontend", "type": "deployment"}],
         }

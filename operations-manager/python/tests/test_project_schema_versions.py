@@ -302,6 +302,43 @@ class TestMigrationsCanBeFinished:
         with pytest.raises(ProjectSchemaError, match="run"):
             validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
 
+    def test_source_code_rejected_at_2_16_accepted_at_2_17(self) -> None:
+        """Een veld TOEGEVOEGD, net als clone-from.run hierboven: de root is gesloten."""
+        data = _project(**{"source-code": [{"url": "https://github.com/MinBZK/mijn-app", "name": "Applicatie"}]})
+        validate_project_schema(data, schema_version=parse_schema_version("2.17"))
+        with pytest.raises(ProjectSchemaError, match="source-code"):
+            validate_project_schema(data, schema_version=parse_schema_version("2.16"))
+
+    @pytest.mark.parametrize(
+        "links",
+        [
+            [{"url": "http://github.com/x/y"}],
+            [{"url": "ssh://git@github.com/x/y"}],
+            [{"url": "https://github.com/x/y met spatie"}],
+            [{"url": "https://github.com/x/y", "branch": "main"}],
+            [{"name": "Zonder link"}],
+            [{"url": "https://github.com/x/y"}, {"url": "https://github.com/x/y"}],
+            [{"url": f"https://github.com/x/{i}"} for i in range(21)],
+        ],
+        ids=["http", "ssh", "spatie", "extra-veld", "zonder-url", "dubbel-identiek", "te-veel"],
+    )
+    def test_de_poort_weigert_een_broncodelink_die_niet_klopt(self, links: list[dict[str, str]]) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(_project(**{"source-code": links}), schema_version=LATEST_SCHEMA_VERSION)
+
+    def test_dezelfde_url_met_een_andere_naam_komt_langs_de_poort(self) -> None:
+        """``uniqueItems`` vergelijkt hele objecten, dus deze twee zijn voor het schema verschillend.
+
+        Dat gat wordt een laag hoger gedicht, op elke schrijfweg: ``UniqueSourceCodeUrlEnforcer``
+        op de identiteitssectie en de modelvalidator op ``ProjectFileModel`` kijken alleen naar
+        de url. Zie tests/test_source_code_links.py.
+        """
+        links = [
+            {"url": "https://github.com/x/y", "name": "Een"},
+            {"url": "https://github.com/x/y", "name": "Twee"},
+        ]
+        validate_project_schema(_project(**{"source-code": links}), schema_version=LATEST_SCHEMA_VERSION)
+
     def test_the_newest_schema_is_the_newest_shape_only(self) -> None:
         # The regression this locks: someone re-adds a legacy form to the newest
         # schema "so the gate stops rejecting file X". That is what made the schema

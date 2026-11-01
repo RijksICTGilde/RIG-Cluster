@@ -450,6 +450,41 @@ REPOSITORY_PATH_PATTERN = (
 )
 
 
+#: Alleen https: de link wordt in de browser aangeklikt, en http, ssh of git@ leveren daar
+#: niets bruikbaars op.
+SOURCE_CODE_URL_PATTERN = r'^https://[^\s\u0000"<>]+\z'
+
+SOURCE_CODE_URL_MAX_LENGTH = 500
+SOURCE_CODE_NAME_MAX_LENGTH = 100
+SOURCE_CODE_MAX_LINKS = 20
+
+
+class SourceCodeLinkModel(BaseModel):
+    """Informative link to the project's source code (url and optional name)."""
+
+    url: Annotated[
+        str,
+        FormMeta(
+            label="project.source_code.url",
+            description="project.source_code.url.description",
+            widget="text",
+            placeholder="https://github.com/MinBZK/mijn-app",
+        ),
+    ] = Field(pattern=SOURCE_CODE_URL_PATTERN, max_length=SOURCE_CODE_URL_MAX_LENGTH)
+
+    name: Annotated[
+        str | None,
+        FormMeta(
+            label="project.source_code.name",
+            description="project.source_code.name.description",
+            widget="text",
+            placeholder="Applicatie",
+        ),
+    ] = Field(default=None, min_length=1, max_length=SOURCE_CODE_NAME_MAX_LENGTH)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+
 class RepositoryModel(BaseModel):
     """Git repository configuration."""
 
@@ -563,6 +598,16 @@ class ProjectFileModel(BaseModel):
         ),
     ] = Field(default=None)
 
+    source_code: Annotated[
+        list[SourceCodeLinkModel],
+        FormMeta(
+            label="project.source_code",
+            description="project.source_code.description",
+            widget="sequence",
+            section="basic",
+        ),
+    ] = Field(default_factory=list, alias="source-code", max_length=SOURCE_CODE_MAX_LINKS)
+
     # Infrastructure
     clusters: Annotated[
         list[str],
@@ -651,6 +696,19 @@ class ProjectFileModel(BaseModel):
         admin_users = [u for u in self.users if "admin" in u.roles and u.type is not LidSoort.SERVICE_ACCOUNT]
         if not admin_users:
             raise ValueError("At least one user must have the 'admin' role")
+        return self
+
+    @model_validator(mode="after")
+    def validate_source_code_urls_are_unique(self) -> ProjectFileModel:
+        """Weigert twee keer dezelfde url.
+
+        ``uniqueItems`` op het schemaveld vergelijkt hele objecten en laat dezelfde url met
+        een andere naam dus door; hier en in ``UniqueSourceCodeUrlEnforcer`` telt alleen de url.
+        """
+        urls = [link.url for link in self.source_code]
+        duplicates = sorted({url for url in urls if urls.count(url) > 1})
+        if duplicates:
+            raise ValueError(f"Dubbele broncodelinks: {', '.join(duplicates)}")
         return self
 
     @classmethod

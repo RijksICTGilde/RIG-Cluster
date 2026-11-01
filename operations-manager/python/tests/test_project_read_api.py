@@ -67,6 +67,7 @@ SAMPLE_PROJECT_DATA: dict[str, Any] = {
     "name": PROJECT,
     "display-name": "Test Project",
     "description": "A project used to prove the read endpoints",
+    "source-code": [{"url": "https://github.com/example/test-project", "name": "Applicatie"}],
     "clusters": ["local"],
     "services": [
         # A bare selection: on, without configuration. It must still be reported.
@@ -549,9 +550,23 @@ class TestWholeProject:
             "name": PROJECT,
             "display_name": "Test Project",
             "description": "A project used to prove the read endpoints",
+            "source_code": [{"url": "https://github.com/example/test-project", "name": "Applicatie"}],
             "clusters": ["local"],
         }
         assert payload["source"] == "project-file"
+
+    def test_header_reports_no_source_code_as_an_empty_list(
+        self, client: TestClient, mock_project_service: Any
+    ) -> None:
+        """A project without the optional field must not raise, and must not report None."""
+        project = mock_project_service.get(PROJECT)
+        original = project.data
+        project.data = {k: v for k, v in SAMPLE_PROJECT_DATA.items() if k != "source-code"}
+        try:
+            payload = _get(client, f"/api/v2/projects/{PROJECT}")
+            assert payload["project"]["source_code"] == []
+        finally:
+            project.data = original
 
     def test_services_are_field_for_field_the_separate_endpoint(self, client: TestClient) -> None:
         whole = _get(client, f"/api/v2/projects/{PROJECT}")

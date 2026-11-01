@@ -28,7 +28,8 @@
     "identity-edit": {
       "editables": [
         "display-name",
-        "description"
+        "description",
+        "source-code"
       ],
       "post_save_action": "save_only",
       "section_id": "identity-edit",

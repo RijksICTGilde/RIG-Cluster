@@ -57,7 +57,7 @@ class TestSectionDefinitions:
 class TestCoreSections:
     def test_identity_section(self):
         assert IDENTITY_SECTION.section_id == "identity"
-        assert len(IDENTITY_SECTION.editables) == 3
+        assert len(IDENTITY_SECTION.editables) == 4
         assert IDENTITY_SECTION.visible is True
 
     def test_services_section(self):

@@ -55,6 +55,7 @@ SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
         "2.14",
         "2.15",
         "2.16",
+        "2.17",
     )
 )
 
@@ -1582,6 +1583,14 @@ def restore_run_reference(project_data: dict[str, Any]) -> bool:
     return False
 
 
+def source_code_links(project_data: dict[str, Any]) -> bool:
+    """Added the root field source-code (v2.16 -> v2.17).
+
+    Optional field, so nothing to migrate. This step registers the new version in the chain.
+    """
+    return False
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1603,6 +1612,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.14"), remove_mail_accounts),
     (parse_schema_version("2.15"), component_description),
     (parse_schema_version("2.16"), restore_run_reference),
+    (parse_schema_version("2.17"), source_code_links),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

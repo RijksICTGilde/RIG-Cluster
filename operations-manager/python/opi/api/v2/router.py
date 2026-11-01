@@ -929,12 +929,26 @@ _SOURCE_DESCRIPTION = (
 )
 
 
+class SourceCodeLink(BaseModel):
+    """One informative link to the project's source code."""
+
+    url: str = Field(..., description="The https link to the repository.")
+    name: str | None = Field(default=None, description="Short label for the link; absent means show the url.")
+
+
 class ProjectHeader(BaseModel):
     """What a project calls itself."""
 
     name: str = Field(..., description="Technical name of the project, as used in every path.")
     display_name: str | None = Field(default=None, description="Human-readable name shown in the portal.")
     description: str | None = Field(default=None, description="Free-text description from the project file.")
+    source_code: list[SourceCodeLink] = Field(
+        default_factory=list,
+        description=(
+            "Informative links to the project's source code. The platform does nothing with them: "
+            "this is not the functional 'repositories' list a deployment builds from."
+        ),
+    )
     clusters: list[str] = Field(default_factory=list, description="Clusters this project targets.")
 
 
@@ -1084,6 +1098,10 @@ async def get_project_v2(request: Request, project_name: ProjectNamePath) -> JSO
                 name=project_name,
                 display_name=project_data.get("display-name"),
                 description=project_data.get("description"),
+                source_code=[
+                    SourceCodeLink(url=link["url"], name=link.get("name"))
+                    for link in project_data.get("source-code") or []
+                ],
                 clusters=list(project_data.get("clusters") or []),
             ),
             cluster=settings.CLUSTER_MANAGER,
