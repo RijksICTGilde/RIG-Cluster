@@ -10,11 +10,46 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - from: []
+    # De router, voor de publieke hostnamen (ingress.yaml en ingress-rijksapp.yaml). Dit is
+    # de bron die #195 als enige wil overhouden voor het client-IP achter de router; zie
+    # features/futures/client-ip-vertrouwen-achter-de-router.md.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+          podSelector:
+            matchLabels:
+              ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Prometheus scrapet de pod: hij draagt prometheus.io/scrape met poort 8000
+    # (../../base/deployment.yaml).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-staging-operations
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Tenant-namespaces, alleen voor het waker-endpoint van sleep-mode: de waker-pod in
+    # de projectnamespace belt ZAD_API_URL (opi/services/catalog/sleep_mode/manifests.py,
+    # ops_api_url). Geen andere poort, dus de debugpy-poort 5678 uit de Service blijft
+    # binnen de namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
       ports:
         - protocol: TCP
           port: 8000
   egress:
+    # Naar buiten op 443 en DNS. Op 443 zitten de Capsule-Proxy kube-API
+    # (KUBERNETES_SERVICE_HOST in patches/deployment.yaml), Keycloak op zijn publieke
+    # hostnaam (KEYCLOAK_URL in configmap.yaml), de git-servers en de registry.
     - to: []
       ports:
         - protocol: TCP
@@ -23,6 +58,46 @@ spec:
           port: 53
         - protocol: UDP
           port: 53
+    # De gedeelde services in deze namespace, per pod en per poort. Bronnen: DATABASE_HOST
+    # en MINIO_HOST, PROMETHEUS_URL, ARGOCD_HOST/ARGOCD_PORT in configmap.yaml, en
+    # redis_server in opi/core/cluster_config.py. ArgoCD op 8080: ARGOCD_PORT is 443 en de
+    # Service wijst zowel 80 als 443 naar podpoort 8080 (features/argocd-tls.md), en een
+    # NetworkPolicy kijkt naar de poort van de pod (zie allow-argo).
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: rig-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: rig-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: argocd
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
     # SeaweedFS: de S3-poort voor back-up, restore en kloon (mc), en de twee gRPC-poorten
     # waarover `weed shell` het beheer doet. Bron: seaweedfs_host in
     # opi/core/cluster_config.py en SEAWEEDFS_FILER_ADDRESS/SEAWEEDFS_MASTER_ADDRESS in

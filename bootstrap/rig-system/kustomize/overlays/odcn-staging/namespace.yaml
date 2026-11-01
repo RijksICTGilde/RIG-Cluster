@@ -2,6 +2,9 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: rig-staging-operations
+  # BEWUST ZONDER `created-by: operations-manager`. Policies gebruiken dat label om
+  # tenant-namespaces te herkennen; dit label hier zou de operations-namespace zichzelf
+  # als tenant toelaten. Issue #83; zie features/restrictive-network-policies.md.
   annotations:
     # https://docs.rijksapps.nl/egress-internet-traffic/
     egress.projectcalico.org/egressGatewayPolicy: "internet"

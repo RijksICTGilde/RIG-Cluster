@@ -99,7 +99,7 @@ Lokaal is alles gebouwd en gerenderd; dit kan alleen op de cluster:
 ## Open beslissingen
 
 - **TransIP.** Besloten: external-dns op staging gebruikt het TransIP-account van productie, met eigen filter en owner-id. TransIP kent geen sleutels per zone, dus wie staging overneemt kan met die sleutel ook `rijksapp.nl` en `rijks.app` wijzigen; een eigen TransIP-sleutel (in te trekken zonder productie te raken) is het minimum om later te regelen.
-- **`emergency-restore-allow-all`.** Productie draagt een allow-all-netpol in `rig-prd-operations` sinds de storing van 10 juni; staging heeft hem overgenomen om gelijk aan productie te zijn. Voor de pentest is dat een bewuste keuze: met de policy toets je wat productie heeft, zonder toets je wat productie zou moeten hebben.
+- **`emergency-restore-allow-all`.** Productie draagt een allow-all-netpol in `rig-prd-operations` sinds de storing van 10 juni; staging heeft hem overgenomen om gelijk aan productie te zijn. Sinds RC-335 krimpt hij per component, en staging volgt dat: dezelfde uitsluitlijst en dezelfde netpols per component (OPI, Keycloak, Prometheus, kube-state-metrics, external-dns, de ACME-solver). Voor de pentest is dat een bewuste keuze: je toetst wat productie heeft.
 - **Wie er bij mag.** `ALLOWED_EMAILS` en `ADMIN_EMAILS` zijn die van productie.
 - **De kubecontext.** Staging en productie bereik je met dezelfde context. Het fundament pinde `KUBE_CONTEXT` per cluster en controleerde hem voor elke taak; hier is dat nog niet gebouwd. De overlays van staging noemen hun namespaces expliciet, maar een verkeerd geselecteerd cluster past de overlays van productie toe.
 

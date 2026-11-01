@@ -1,0 +1,31 @@
+# De solverpods die cert-manager neerzet voor een http01-challenge. Ze bestaan alleen
+# tijdens een uitgifte en horen bij geen enkel component, daarom staat deze policy in de
+# bootstrap-overlay van de namespace en niet in een component-overlay: de twee eigen
+# issuers (operations-manager/overlays/odcn-staging/issuer-letsencrypt.yaml en
+# keycloak/controller/overlays/odcn-staging/issuer-letsencrypt.yaml) leveren solverpods in
+# dezelfde namespace, en een policy dekt ze beide.
+#
+# Alleen Ingress in policyTypes: een solver belt niemand, en zo laat deze policy de
+# uitgaande kant van die pods onaangeroerd.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-acme-solver-ingress
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes: [Ingress]
+  ingress:
+    # De router: Let's Encrypt valideert over de publieke hostnaam, dus de challenge komt
+    # binnen via de Ingress die cert-manager tijdelijk aanmaakt.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+          podSelector:
+            matchLabels:
+              ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig
+      ports:
+        - protocol: TCP
+          port: 8089

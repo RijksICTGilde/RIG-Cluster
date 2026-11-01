@@ -6,6 +6,7 @@ namespace: rig-staging-operations
 resources:
   - ../../base
   - ingress.yaml
+  - network-policies/prometheus-networkpolicy.yaml
   # Prometheus RBAC (namespace-scoped) for kubernetes_sd_configs
   - role.yaml
   - rolebinding.yaml
