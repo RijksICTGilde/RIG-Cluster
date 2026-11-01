@@ -51,7 +51,7 @@ Branch off `main`. Do not bundle with logout-endpoint work.
   - `CookieProvider` / `CookieType` API shape.
   - `IdentityProviderMapper` abstract method changes.
 - [ ] Bump artifact version (`1.1.0` → `1.2.0`) to mark the 26-targeted build.
-- [ ] Run `task test-keycloak-custom-mapper` and `task test-keycloak-custom-mapper-docker`.
+- [ ] Run `task test-keycloak-custom-mapper` and `task test-keycloak-image`.
 
 ### Phase 2 — Sandbox runtime
 

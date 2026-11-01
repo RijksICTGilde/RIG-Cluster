@@ -2087,13 +2087,165 @@ tasks:
         mvn test
     silent: false
 
-  test-keycloak-custom-mapper-docker:
-    desc: "Test Keycloak custom mapper in standalone Docker container"
-    deps: [build-keycloak-custom-mapper]
+  test-keycloak-image:
+    desc: "Toets de providers van de eigen Keycloak-image in Docker, zoals de deployment hem start"
+    summary: |
+      Bouwt images/keycloak-zad/Dockerfile voor deze machine, start hem tegen een
+      wegwerp-PostgreSQL en toetst per provider dat hij geregistreerd EN bereikbaar is.
+
+      De startargumenten komen uit de basisdeployment en worden hier niet overgeschreven,
+      zodat deze toets niet stil kan afwijken van wat productie start. Een pod die opkomt
+      bewijst niets: met --optimized start Keycloak ook op een non-existent provider. Na
+      26.2 kunnen endpoints geladen zijn en toch 404 geven, dus de twee endpoints worden
+      ook getoetst. Zie features/keycloak-eigen-image.md.
+    deps: [requirements-check]
+    vars:
+      IMAGE: zad/keycloak-zad:toets
+      NETWORK: zad-keycloak-image-test
+      KC_CONTAINER: zad-keycloak-image-test
+      DB_CONTAINER: zad-keycloak-image-test-db
+      DEPLOYMENT: infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+      PORT: '{{.PORT | default "58081"}}'
+      # Per run verzonnen: deze containers bestaan alleen binnen deze taak, en zo staat er
+      # geen wachtwoordvorm in de repo.
+      ADMIN_PASSWORD:
+        sh: pwgen -s 24 1
+      DB_PASSWORD:
+        sh: pwgen -s 24 1
+      METRICS_TOKEN:
+        sh: pwgen -s 32 1
+    cmds:
+      - defer: |
+          docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} >/dev/null 2>&1
+          docker network rm {{.NETWORK}} >/dev/null 2>&1
+          exit 0
+      - |
+        echo "Bouwen van {{.IMAGE}} uit images/keycloak-zad/Dockerfile..."
+        docker build -f images/keycloak-zad/Dockerfile -t {{.IMAGE}} .
+      - |
+        docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} >/dev/null 2>&1
+        docker network create {{.NETWORK}} >/dev/null 2>&1
+        docker run -d --name {{.DB_CONTAINER}} --network {{.NETWORK}} \
+          -e POSTGRES_DB=keycloak \
+          -e POSTGRES_USER=keycloak \
+          -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
+          postgres:17-alpine >/dev/null
+        # Keycloak faalt bij het starten op een database die nog niet luistert, dus wachten
+        # op de toestand zelf; de teller is een vangnet en geen wachtmechanisme.
+        i=0
+        until docker exec {{.DB_CONTAINER}} pg_isready -q -U keycloak -d keycloak; do
+          i=$((i + 1))
+          if [ "$i" -gt 30 ]; then
+            echo "De wegwerp-PostgreSQL kwam niet op binnen 60 seconden:" >&2
+            docker logs --tail 40 {{.DB_CONTAINER}} >&2
+            exit 1
+          fi
+          sleep 2
+        done
+      - |
+        # Woordsplitsing met opzet: de args komen een per regel uit het manifest. Een
+        # argument met witruimte zou hier stil in twee stukken vallen, dus dat weigert hij.
+        ARGS=""
+        while IFS= read -r arg; do
+          [ -n "$arg" ] || continue
+          case "$arg" in
+            *" "*|*"	"*)
+              echo "Een startargument in {{.DEPLOYMENT}} bevat witruimte: $arg" >&2
+              exit 1
+              ;;
+          esac
+          ARGS="$ARGS $arg"
+        done <<ARGSEOF
+        $(yq '.spec.template.spec.containers[0].args[]' {{.DEPLOYMENT}})
+        ARGSEOF
+        # Zonder deze grendel zou een mislukte yq een lege ARGS opleveren, en dan start
+        # Keycloak zonder --optimized en zonder de spi-vlaggen: een toets die niets meet.
+        case "$ARGS" in
+          *" start "*) ;;
+          *) echo "Geen startargumenten gelezen uit {{.DEPLOYMENT}}" >&2; exit 1 ;;
+        esac
+        echo "Starten met de argumenten van de deployment:$ARGS"
+        docker run -d --name {{.KC_CONTAINER}} --network {{.NETWORK}} \
+          -p {{.PORT}}:8080 \
+          -e KEYCLOAK_ADMIN=admin \
+          -e KEYCLOAK_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
+          -e KC_DB_URL="jdbc:postgresql://{{.DB_CONTAINER}}:5432/keycloak" \
+          -e KC_DB_USERNAME=keycloak \
+          -e KC_DB_PASSWORD='{{.DB_PASSWORD}}' \
+          -e KC_HTTP_ENABLED=true \
+          -e KC_HOSTNAME_STRICT=false \
+          -e KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED=true \
+          -e RIG_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
+          -e ZAD_MAIL_RELAY_HOST=mail-relay.toets.invalid \
+          -e ZAD_MAIL_RELAY_PORT=587 \
+          -e ZAD_MAIL_RELAY_USERNAME=zad-keycloak \
+          -e ZAD_MAIL_RELAY_FROM=noreply-rijksapp@rijksoverheid.nl \
+          -e ZAD_MAIL_RELAY_PASSWORD='{{.DB_PASSWORD}}' \
+          -e ZAD_MAIL_RELAY_STARTTLS=false \
+          {{.IMAGE}} $ARGS >/dev/null
+      - |
+        # Wachten op de toestand zelf; de teller is een vangnet en geen wachtmechanisme.
+        i=0
+        until curl -sf -o /dev/null "http://localhost:{{.PORT}}/realms/master"; do
+          i=$((i + 1))
+          if [ "$i" -gt 150 ]; then
+            echo "Keycloak kwam niet op binnen 300 seconden:" >&2
+            docker logs --tail 60 {{.KC_CONTAINER}} >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "Keycloak antwoordt op http://localhost:{{.PORT}}"
+      - |
+        cd operations-manager/python
+        KEYCLOAK_IMAGE_TEST_URL="http://localhost:{{.PORT}}" \
+        KEYCLOAK_IMAGE_TEST_ADMIN=admin \
+        KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
+        KEYCLOAK_IMAGE_TEST_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
+          uv run pytest tests/integration/test_keycloak_image_providers.py -m requires_infra -q
+    silent: false
+
+  keycloak-telling:
+    desc: "Tel wat er in de database keycloak staat: realms, clients, gebruikers, credentials per type"
+    summary: |
+      De telling waarmee een versiesprong "alle data behouden" kan aantonen. Draai hem voor
+      de migratie en na de start van de nieuwe versie; een verschil is een reden om terug
+      te vallen. Alleen AANTALLEN, geen persoonsgegevens.
+
+      Standaard de sandbox. Voor productie: task keycloak-telling CONTEXT=prd OUT=voor.txt
+    vars:
+      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
+      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
+      OUT: '{{.OUT | default ""}}'
+      CLUSTER: '{{.CLUSTER | default "rig-db"}}'
+      SQL_FILE: keycloak-migration/telling.sql
     cmds:
       - |
-        cd keycloak-migration/custom-mapper
-        ./test-local-docker.sh
+        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
+        # De primary via het label van CNPG en niet via een vaste podnaam: na een failover
+        # is rig-db-1 een replica, en een telling op een replica kan achterlopen.
+        POD="$($KUBECTL get pods -l cnpg.io/cluster={{.CLUSTER}},cnpg.io/instanceRole=primary \
+          -o jsonpath='{.items[0].metadata.name}')"
+        if [ -z "$POD" ]; then
+          echo "Geen primary van {{.CLUSTER}} gevonden in {{.NAMESPACE}} op {{.CONTEXT}}" >&2
+          exit 1
+        fi
+        ROLE="$($KUBECTL get secret keycloak-db-credentials -o jsonpath='{.data.username}' | base64 -d)"
+        SQL="$(cat {{.SQL_FILE}})"
+        # Het wachtwoord gaat via stdin en nooit als argument: de argv van een pod is te
+        # lezen. `$(cat)` en niet `read -r`, want zonder afsluitende newline stopt read de
+        # keten stil. De SQL en de rol gaan als $0 en $1 mee, want stdin is al bezet door
+        # het wachtwoord; zo komt geen van beide in het script zelf terecht.
+        TELLING="$($KUBECTL get secret keycloak-db-credentials -o jsonpath='{.data.password}' \
+          | base64 -d \
+          | $KUBECTL exec -i "$POD" -c postgres -- sh -c \
+              'PGPASSWORD=$(cat) exec psql -h localhost -U "$1" -d keycloak \
+                 -v ON_ERROR_STOP=1 -A -F "|" -P footer=off -c "$0"' "$SQL" "$ROLE")"
+        printf '%s\n' "$TELLING"
+        if [ -n "{{.OUT}}" ]; then
+          printf '%s\n' "$TELLING" > "{{.OUT}}"
+          echo "Weggeschreven naar {{.OUT}}" >&2
+        fi
     silent: false
 
   build-keycloak-relay-email-sender:
@@ -2145,6 +2297,8 @@ tasks:
             echo "        te zoeken is."
             ;;
         esac
+      # Voor de push: er gaat geen image naar ghcr die deze toets niet haalt.
+      - task: test-keycloak-image
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .

@@ -179,7 +179,20 @@ vandaag geen enkel registry-credential; dat is dan een eigen wijziging.
 ```bash
 task test-keycloak-relay-email-sender    # mvn test van de ene module
 task test-keycloak-custom-mapper         # mvn test van de andere
+task test-keycloak-image                 # de gebouwde image, met zijn providers, in Docker
 ```
+
+`test-keycloak-image` bouwt deze Dockerfile voor de eigen machine, start hem met de
+STARTARGUMENTEN VAN DE BASISDEPLOYMENT tegen een wegwerp-PostgreSQL in een eigen
+Docker-netwerk, en toetst per provider dat hij geregistreerd is (via `/admin/serverinfo`)
+en dat de twee endpoints ook antwoorden. Die argumenten worden gelezen en niet
+overgeschreven, zodat de toets niet stil kan afwijken van wat productie start. De
+containers en het netwerk gaan daarna weg, ook als de toets faalt.
+
+`publish-keycloak-image` draait hem voor de push, dus er gaat geen image naar ghcr die
+deze toets niet haalt. De toets zelf zit in
+`operations-manager/python/tests/integration/test_keycloak_image_providers.py` en slaat
+zichzelf over zonder `KEYCLOAK_IMAGE_TEST_URL`.
 
 CI draait `mvn -B test` voor allebei bij elke pull request (job `keycloak-providers`).
 

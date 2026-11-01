@@ -24,6 +24,15 @@ public final class PrometheusExporter {
     private static final Logger logger = Logger.getLogger(PrometheusExporter.class);
     private static PrometheusExporter INSTANCE;
 
+    /**
+     * Name of the gauge that reports whether a collection step succeeded. A failed step
+     * publishes 1 and omits its own series, so a broken query can never read as "no data".
+     */
+    static final String ERROR_METRIC = "rig_keycloak_metrics_collection_error";
+
+    static final String PART_USERS_BY_IDP = "users_by_idp";
+    static final String PART_GAUGES = "gauges";
+
     // Identity provider type constants
     public static final String IDP_LOCAL = "local";
     public static final String IDP_SAML = "saml";
@@ -180,6 +189,11 @@ public final class PrometheusExporter {
     }
 
     private void exportGauges(StringBuilder sb, KeycloakSession session) {
+        StringBuilder errorSb = new StringBuilder();
+        errorSb.append(String.format("# HELP %s 1 when a metrics collection step failed, 0 when it succeeded%n", ERROR_METRIC));
+        errorSb.append(String.format("# TYPE %s gauge%n", ERROR_METRIC));
+        boolean gaugesFailed = false;
+
         try {
             // Count realms (excluding master)
             long realmCount = session.realms().getRealmsStream()
@@ -214,9 +228,11 @@ public final class PrometheusExporter {
                             usersByIdpSb.append(String.format("rig_keycloak_users_by_idp_total{realm=\"%s\",idp=\"%s\"} %d%n",
                                 escape(realmName), escape(entry.getKey()), entry.getValue()));
                         }
+                        errorSb.append(errorLine(realmName, PART_USERS_BY_IDP, 0));
 
                     } catch (Exception e) {
                         logger.warnf("Error collecting metrics for realm %s: %s", realmName, e.getMessage());
+                        errorSb.append(errorLine(realmName, PART_USERS_BY_IDP, 1));
                     }
                 });
 
@@ -226,59 +242,60 @@ public final class PrometheusExporter {
 
         } catch (Exception e) {
             logger.error("Error exporting gauge metrics", e);
-            sb.append("# Error collecting gauge metrics: ").append(e.getMessage()).append("\n");
+            gaugesFailed = true;
         }
+
+        errorSb.append(errorLine("", PART_GAUGES, gaugesFailed ? 1 : 0));
+        sb.append(errorSb);
+        sb.append("\n");
+    }
+
+    /** One series of {@link #ERROR_METRIC}; the realm label is empty for realm-independent steps. */
+    private String errorLine(String realmName, String part, int value) {
+        return String.format("%s{realm=\"%s\",part=\"%s\"} %d%n", ERROR_METRIC, escape(realmName), part, value);
     }
 
     /**
      * Count users by identity provider for a realm.
      * Returns a map of IDP alias to user count (e.g., "digid" -> 5, "eherkenning" -> 3, "local" -> 2)
+     *
+     * <p>A failing query propagates on purpose. The earlier fallback counted every user as
+     * {@code local}, which made a broken query indistinguishable from a realm without
+     * federation; the caller publishes {@link #ERROR_METRIC} instead.
      */
     private Map<String, Integer> countUsersByIdp(KeycloakSession session, RealmModel realm) {
         Map<String, Integer> idpCounts = new java.util.LinkedHashMap<>();
 
-        try {
-            EntityManager em = session.getProvider(JpaConnectionProvider.class).getEntityManager();
-            String realmId = realm.getId();
+        EntityManager em = session.getProvider(JpaConnectionProvider.class).getEntityManager();
+        String realmId = realm.getId();
 
-            // Count users by federated identity provider alias
-            String federatedQuery = """
-                SELECT fi.identityProvider, COUNT(DISTINCT fi.userId)
-                FROM FederatedIdentityEntity fi
-                WHERE fi.realmId = :realmId
-                GROUP BY fi.identityProvider
-                """;
+        // Count users by federated identity provider alias
+        String federatedQuery = """
+            SELECT fi.identityProvider, COUNT(DISTINCT fi.userId)
+            FROM FederatedIdentityEntity fi
+            WHERE fi.realmId = :realmId
+            GROUP BY fi.identityProvider
+            """;
 
-            Query query = em.createQuery(federatedQuery);
-            query.setParameter("realmId", realmId);
+        Query query = em.createQuery(federatedQuery);
+        query.setParameter("realmId", realmId);
 
-            @SuppressWarnings("unchecked")
-            List<Object[]> results = query.getResultList();
+        @SuppressWarnings("unchecked")
+        List<Object[]> results = query.getResultList();
 
-            long federatedTotal = 0;
-            for (Object[] row : results) {
-                String idpAlias = (String) row[0];
-                long count = (Long) row[1];
-                federatedTotal += count;
-                idpCounts.put(idpAlias, (int) count);
-            }
+        long federatedTotal = 0;
+        for (Object[] row : results) {
+            String idpAlias = (String) row[0];
+            long count = (Long) row[1];
+            federatedTotal += count;
+            idpCounts.put(idpAlias, (int) count);
+        }
 
-            // Local users = total users - federated users
-            int totalUsers = session.users().getUsersCount(realm);
-            int localCount = totalUsers - (int) federatedTotal;
-            if (localCount > 0) {
-                idpCounts.put(IDP_LOCAL, localCount);
-            }
-
-        } catch (Exception e) {
-            logger.warnf("Error counting users by IDP for realm %s: %s", realm.getName(), e.getMessage());
-            // Fallback: return total as local if query fails
-            try {
-                int totalUsers = session.users().getUsersCount(realm);
-                idpCounts.put(IDP_LOCAL, totalUsers);
-            } catch (Exception ex) {
-                logger.warnf("Fallback count also failed for realm %s", realm.getName());
-            }
+        // Local users = total users - federated users
+        int totalUsers = session.users().getUsersCount(realm);
+        int localCount = totalUsers - (int) federatedTotal;
+        if (localCount > 0) {
+            idpCounts.put(IDP_LOCAL, localCount);
         }
 
         return idpCounts;
