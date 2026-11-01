@@ -34,6 +34,17 @@ def test_introductie_is_bereikbaar_zonder_sessie(test_client: TestClient) -> Non
     assert "Zelfservice Applicatie Deployment" in response.text
 
 
+def test_de_versie_staat_alleen_op_de_introductie(test_client: TestClient) -> None:
+    """Geen page footer meer (het NLDD-applicatiepatroon heeft er geen): de versie staat hier."""
+    introductie = test_client.get("/introductie").text
+    beleid = test_client.get("/security").text
+
+    assert "Versie: " in introductie
+    assert "Versie: " not in beleid
+    assert "nldd-page-footer" not in introductie
+    assert "nldd-page-footer" not in beleid
+
+
 def test_de_route_draagt_geen_sso_eis() -> None:
     """De middleware leest ``_requires_sso`` van het endpoint; dat attribuut hoort er niet.
 

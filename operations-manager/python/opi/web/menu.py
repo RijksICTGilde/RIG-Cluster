@@ -54,6 +54,8 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
         # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
         {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
+        # In the sidebar and not in a page footer: the NLDD application pattern has no footer.
+        {"label": "Beveiligingsbeleid", "link": "/security", "icon": "schild-met-vinkje-erop"},
     ]
 
     # Auto-detect admin status from user email
