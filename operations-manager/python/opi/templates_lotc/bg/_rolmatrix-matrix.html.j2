@@ -19,7 +19,12 @@
                     {% for cel in rij.cells %}
                         {% if cel.allowed %}
                             <nldd-icon-cell>
-                                <nldd-icon icon="{{ "shield-check-mark" if cel.step_up else "check-mark" }}" color="success" role="img" aria-hidden="false" aria-label="{{ cel.mark }}"></nldd-icon>
+                                {# Two literal tags, not one expression: the icon-name test can only check a literal name. #}
+                                {% if cel.step_up %}
+                                    <nldd-icon icon="shield-check-mark" color="success" role="img" aria-hidden="false" aria-label="{{ cel.mark }}"></nldd-icon>
+                                {% else %}
+                                    <nldd-icon icon="check-mark" color="success" role="img" aria-hidden="false" aria-label="{{ cel.mark }}"></nldd-icon>
+                                {% endif %}
                             </nldd-icon-cell>
                         {% else %}
                             <nldd-cell></nldd-cell>
