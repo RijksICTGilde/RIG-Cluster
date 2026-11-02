@@ -12,7 +12,7 @@ metadata:
 spec:
   instances: 1
   # De Kyverno-regel pdb-cnpg-cluster-validation eist dit onder twee instances: een PDB over
-  # een enkele pod blokkeert een node-drain. Zie features/platformdatabase-hoge-beschikbaarheid.md.
+  # een enkele pod blokkeert een node-drain. Zie features/platformdatabase-een-instance.md.
   enablePDB: false
   # Hetzelfde beeld als de base van rig-db. Op ODCN herschrijft admission dit pad naar de
   # rcr-proxy, en dan vervangt CNPG zijn eigen pod in een lus; de task zet er daarom met

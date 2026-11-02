@@ -19,22 +19,11 @@ patches:
       - op: add
         path: /spec/storage/resizeInUseVolumes
         value: true
-      # Twee instances: nodeonderhoud, CNPG-upgrade of herstart wordt switchover, niet downtime.
-      # Replicatie asynchroon (CNPG-standaard): synchroon laat schrijfacties wachten als replica weg is.
-      - op: replace
-        path: /spec/instances
-        value: 2
-      # Met twee instances mag PDB aan (Kyverno eist het uit onder twee instances).
+      # Een instance, zie features/platformdatabase-een-instance.md. Kyverno eist de PDB
+      # uit onder twee instances.
       - op: add
         path: /spec/enablePDB
-        value: true
-      # Anti-affinity preferred: required zou replica Pending laten als <2 nodes beschikbaar zijn.
-      - op: add
-        path: /spec/affinity
-        value:
-          enablePodAntiAffinity: true
-          podAntiAffinityType: preferred
-          topologyKey: kubernetes.io/hostname
+        value: false
       # Production is a shared multi-tenant instance (Keycloak, Forgejo, OPI +
       # all project/PR databases). The 512Mi/500m base default is a dev value;
       # under load (many concurrent project/PR connections + high log volume)
@@ -79,8 +68,8 @@ patches:
       # 1113 MB, dus je cachet er praktisch alles mee, en het is de gebruikelijke
       # 25% van de 4Gi hierboven.
       #
-      # Postmaster-parameters: herstart nodig. Met instances: 2 wordt het switchover, maar
-      # client-verbindingen sneuvelen. Rol uit op gepland moment, niet terloops.
+      # Postmaster-parameters: herstart nodig, en met een instance is dat even downtime
+      # voor het hele platform. Rol uit op gepland moment, niet terloops.
       - op: replace
         path: /spec/postgresql/parameters/max_connections
         value: "500"
