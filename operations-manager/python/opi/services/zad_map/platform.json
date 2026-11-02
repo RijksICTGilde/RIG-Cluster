@@ -190,7 +190,7 @@
    "docs": [
     {
      "file": "features/keycloak-26-upgrade.md",
-     "title": "Keycloak 26 Upgrade (25.0.6 to 26.7.0)"
+     "title": "Keycloak 26.8.1: het runbook voor de versiesprong"
     },
     {
      "file": "features/keycloak-additional-clients.md",
@@ -237,7 +237,7 @@
     {
      "name": "postgres",
      "file": "opi/connectors/postgres.py",
-     "uses": 5
+     "uses": 6
     }
    ],
    "services": [
