@@ -95,20 +95,12 @@
         <c-breadcrumbs-item label="{{ tabs[active_tab].label }}" />
     </c-breadcrumbs>
 
-    {# De knop naar modal-edit-identity stond hier naast de naam en staat nu in Acties
-       op Overzicht. #}
+    {# De knop naar modal-edit-identity en de broncodelinks stonden hier, op elk tabblad,
+       en staan nu in eigen kaarten op Overzicht. #}
     <c-stack gap="xs">
         <c-heading type="h1" size="3" label="{{ project.display_name }}" />
         {% if project.description %}
             <c-paragraph>{{ project.description }}</c-paragraph>
-        {% endif %}
-        {% if project.source_code %}
-            <c-rich-text><ul>
-                {% for link in project.source_code %}
-                    <li><c-link :href="link.url" target="_blank" :attrs="{'rel': 'noopener noreferrer'}"
-                                :label="link.name or link.url" /></li>
-                {% endfor %}
-            </ul></c-rich-text>
         {% endif %}
     </c-stack>
 
@@ -159,6 +151,17 @@
                        gelezen wordt. #}
                     <c-button type="secondary" size="sm" label="Project herverwerken" icon="refresh" show-icon="before" @click="{{ project_herverwerken }}" />
                 </c-action-group>
+            {% endcall %}
+        {% endif %}
+
+        {% if project.source_code %}
+            {% call panel("Broncode", "terminal", info_text="Waar de code van dit project staat. Alleen ter informatie: ZAD doet niets met deze links.") %}
+                <c-rich-text><ul>
+                    {% for link in project.source_code %}
+                        <li><c-link :href="link.url" target="_blank" :attrs="{'rel': 'noopener noreferrer'}"
+                                    :label="link.name or link.url" /></li>
+                    {% endfor %}
+                </ul></c-rich-text>
             {% endcall %}
         {% endif %}
 

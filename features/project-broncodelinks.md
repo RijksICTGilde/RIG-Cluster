@@ -1,7 +1,7 @@
 # Broncodelinks bij de projectgegevens
 
 Een project kan vastleggen waar zijn code staat: een lijst links naar git-repo's op
-GitHub, GitLab, code.overheid.nl of Forgejo. Ze staan bij de projectgegevens, naast de
+GitHub, GitLab, code.overheid.nl of Forgejo. Ze horen bij de projectgegevens, net als de
 weergavenaam en de omschrijving, en meer is het niet.
 
 **Puur informatief.** ZAD doet niets met deze links: geen clone, geen build, geen
@@ -59,7 +59,8 @@ langs de schemapoort, en die laat dezelfde url met een andere naam door.
 ## Wijzigen
 
 - In de wizard, in de stap **Projectgegevens**.
-- Op de projectpagina via **Bewerken** (de dialoog `modal-edit-identity`).
+- Op de projectpagina via **Projectgegevens bewerken** in de kaart Acties (de dialoog
+  `modal-edit-identity`).
 
 Er is geen nieuwe rol en geen nieuwe action: wie de omschrijving mag wijzigen
 (`project.edit`), mag ook de links wijzigen.
@@ -70,7 +71,8 @@ er niet in. Eén uitzondering: twee keer dezelfde url met een andere naam, zie h
 
 ## Weergave
 
-Op de projectpagina staat onder de omschrijving een opsomming met de links. De tekst van
+Op het tabblad Overzicht van de projectpagina staat onder Acties een kaart **Broncode**
+met een opsomming van de links; zonder links is er geen kaart. De tekst van
 een link is zijn `name`, of anders de url. Elke link opent in een nieuw tabblad, met
 `rel="noopener noreferrer"`.
 
