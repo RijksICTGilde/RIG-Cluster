@@ -2,9 +2,10 @@
   De regels die geen projectrecht zijn. Ze staan op de pagina omdat hun afwezigheid zou
   lezen als "die routes zijn vrij".
 #}
-{% from "bg/_patterns.html.j2" import panel %}
+{# No panel(): a card around an nldd-table puts a frame in a frame. #}
 {% for naam, regels in andere_regels %}
-    {% call panel(naam) %}
+    <c-stack gap="md">
+        <c-section-head title="{{ naam }}" />
         <c-paragraph>
             Deze routes werken niet op een project, dus er is geen projectrol die ze opent.
         </c-paragraph>
@@ -20,5 +21,5 @@
                 </nldd-table-row>
             {% endfor %}
         </nldd-table>
-    {% endcall %}
+    </c-stack>
 {% endfor %}

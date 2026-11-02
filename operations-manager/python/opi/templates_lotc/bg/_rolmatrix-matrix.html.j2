@@ -1,9 +1,10 @@
 {#
   De matrix zelf: per sectie een tabel, per regel en scope een rij.
 #}
-{% from "bg/_patterns.html.j2" import panel %}
+{# No panel(): a card around an nldd-table puts a frame in a frame. #}
 {% for naam, rijen in secties %}
-    {% call panel(naam) %}
+    <c-stack gap="md">
+        <c-section-head title="{{ naam }}" />
         <nldd-table columns="2fr 1.2fr 0.8fr 1.2fr 0.7fr 0.8fr 1.1fr 0.8fr" accessible-label="{{ naam }}">
             <nldd-table-row slot="header">
                 <nldd-text-cell text="**Handeling**"></nldd-text-cell>
@@ -33,5 +34,5 @@
                 </nldd-table-row>
             {% endfor %}
         </nldd-table>
-    {% endcall %}
+    </c-stack>
 {% endfor %}

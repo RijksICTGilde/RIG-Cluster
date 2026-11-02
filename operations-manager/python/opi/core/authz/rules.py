@@ -46,20 +46,20 @@ PLATFORM = "Platformbeheer"
 # projectsleutel.
 
 for _actie, _label, _sectie in (
-    (Action.PROJECT_READ, "Project lezen", PROJECT),
-    (Action.PROJECT_LIST, "Projecten lijsten", PROJECT),
-    (Action.DEPLOYMENT_READ, "Deployment lezen", DEPLOYMENTS),
-    (Action.COMPONENT_READ, "Component lezen", COMPONENTS),
-    (Action.SERVICE_READ, "Service lezen", SERVICES),
-    (Action.DATABASE_SCHEMA_READ, "Databaseschema lezen", DATA),
-    (Action.BACKUP_READ, "Back-ups lezen", BACKUPS),
-    (Action.RESTORE_READ, "Herstel lezen", BACKUPS),
-    (Action.LOGS_READ, "Logs lezen", OBSERVATION),
-    (Action.SUBDOMAIN_READ, "Subdomein lezen", OBSERVATION),
-    (Action.CLUSTER_READ, "Cluster lezen", OBSERVATION),
-    (Action.TASK_READ, "Taak lezen", TASKS),
-    (Action.SLEEP_READ, "Slaapstand lezen", TASKS),
-    (Action.TOKEN_READ, "Tokens lezen", MEMBERS),
+    (Action.PROJECT_READ, "Project bekijken", PROJECT),
+    (Action.PROJECT_LIST, "Projectenoverzicht bekijken", PROJECT),
+    (Action.DEPLOYMENT_READ, "Deployment bekijken", DEPLOYMENTS),
+    (Action.COMPONENT_READ, "Component bekijken", COMPONENTS),
+    (Action.SERVICE_READ, "Service bekijken", SERVICES),
+    (Action.DATABASE_SCHEMA_READ, "Databaseschema bekijken", DATA),
+    (Action.BACKUP_READ, "Back-ups bekijken", BACKUPS),
+    (Action.RESTORE_READ, "Herstelacties bekijken", BACKUPS),
+    (Action.LOGS_READ, "Logs bekijken", OBSERVATION),
+    (Action.SUBDOMAIN_READ, "Subdomein bekijken", OBSERVATION),
+    (Action.CLUSTER_READ, "Clustergegevens bekijken", OBSERVATION),
+    (Action.TASK_READ, "Taken bekijken", TASKS),
+    (Action.SLEEP_READ, "Slaapstand bekijken", TASKS),
+    (Action.TOKEN_READ, "Tokens bekijken", MEMBERS),
 ):
     rule(_actie, label=_label, section=_sectie, read=True, grants=[Grant(Role.VIEWER)])
 

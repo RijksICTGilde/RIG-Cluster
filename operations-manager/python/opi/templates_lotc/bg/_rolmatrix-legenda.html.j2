@@ -1,8 +1,8 @@
 {#
   Hoe je de markeringen in de matrix leest.
 #}
-{% from "bg/_patterns.html.j2" import panel %}
-{% call panel("Hoe je deze tabel leest", "information") %}
+<c-stack gap="md">
+    <c-section-head title="Hoe je deze tabel leest" icon="information" />
     <c-stack gap="sm">
         <c-paragraph>
             <nldd-icon icon="check-mark" color="success" size="inherit"></nldd-icon> betekent dat de rol het mag.
@@ -24,4 +24,4 @@
             ruimer.
         </c-paragraph>
     </c-stack>
-{% endcall %}
+</c-stack>
