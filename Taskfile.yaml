@@ -605,6 +605,10 @@ tasks:
       # Stap 1 van de uitrol van de AppProjects (features/argocd-appprojects.md): de
       # dichte default uit git overslaan, zodat de Applications eerst kunnen omschakelen.
       KEEP_DEFAULT_APPPROJECT: '{{default "false" .KEEP_DEFAULT_APPPROJECT}}'
+      # Het vangnet uit #238 bij een uitrol: prune uit op de Applications uit deze overlay.
+      # Met de hand uitzetten helpt niet, want deze apply zet prune: true uit git terug.
+      # Draai de taak daarna nog een keer zonder deze optie, dan staat prune weer aan.
+      PAUSE_PRUNE: '{{default "false" .PAUSE_PRUNE}}'
     preconditions:
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
@@ -630,6 +634,9 @@ tasks:
         RENDERED="$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone)"
         if [[ "{{.KEEP_DEFAULT_APPPROJECT}}" == "true" ]]; then
           RENDERED="$(printf '%s\n' "$RENDERED" | yq 'select(.kind != "AppProject" or .metadata.name != "default")')"
+        fi
+        if [[ "{{.PAUSE_PRUNE}}" == "true" ]]; then
+          RENDERED="$(printf '%s\n' "$RENDERED" | yq '(select(.kind == "Application" and .spec.syncPolicy.automated != null) | .spec.syncPolicy.automated.prune) = false')"
         fi
         printf '%s\n' "$RENDERED" | kubectl apply $KUBECTL_FLAGS -f -
 

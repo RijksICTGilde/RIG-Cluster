@@ -44,6 +44,18 @@ metadata:
   namespace: rig-staging-operations
 spec:
   project: zad-platform
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: handmatig
+  namespace: rig-staging-operations
+spec:
+  project: zad-platform
 """
 
 
@@ -54,13 +66,14 @@ def taakshell() -> str:
     return "\n".join(cmd for cmd in taskfile["tasks"][TAAK]["cmds"] if isinstance(cmd, str))
 
 
-def _render(shell: str, keep_default: str) -> str:
+def _render(shell: str, keep_default: str, pause_prune: str = "false") -> str:
     return (
         shell.replace("{{.CLUSTER}}", "odcn-staging")
         .replace("{{.DRY_RUN}}", "false")
         .replace("{{.KEY_FILE}}", "security/key.txt")
         .replace("{{.RIG_NAMESPACE}}", "rig-staging-operations")
         .replace("{{.KEEP_DEFAULT_APPPROJECT}}", keep_default)
+        .replace("{{.PAUSE_PRUNE}}", pause_prune)
         .replace("{{.SECRETS_DIR}}", "")
     )
 
@@ -133,4 +146,37 @@ class TestKeepDefaultAppproject:
         """Het filter mag alleen de default weglaten, niet de Applications die erop stonden."""
         documenten = _toegepast(_render(taakshell, "true"), tmp_path, _omgeving(tmp_path))
 
-        assert _namen(documenten, "Application") == ["staging-infrastructure"]
+        assert _namen(documenten, "Application") == ["staging-infrastructure", "handmatig"]
+
+
+def _syncpolicy(documenten: list[dict], naam: str) -> dict | None:
+    app = next(doc for doc in documenten if doc.get("kind") == "Application" and doc["metadata"]["name"] == naam)
+    return app["spec"].get("syncPolicy")
+
+
+class TestPausePrune:
+    """Het vangnet uit #238: prune uit tijdens de uitrol, in de apply zelf.
+
+    Met de hand uitzetten helpt niet: de apply zet `prune: true` uit git terug.
+    """
+
+    def test_zonder_de_optie_blijft_prune_zoals_in_git(self, taakshell: str, tmp_path: Path) -> None:
+        documenten = _toegepast(_render(taakshell, "false"), tmp_path, _omgeving(tmp_path))
+
+        assert _syncpolicy(documenten, "staging-infrastructure") == {"automated": {"prune": True, "selfHeal": True}}
+
+    def test_met_de_optie_staat_prune_uit_en_selfheal_aan(self, taakshell: str, tmp_path: Path) -> None:
+        documenten = _toegepast(_render(taakshell, "false", "true"), tmp_path, _omgeving(tmp_path))
+
+        assert _syncpolicy(documenten, "staging-infrastructure") == {"automated": {"prune": False, "selfHeal": True}}
+
+    def test_een_app_zonder_automatische_sync_krijgt_er_geen_bij(self, taakshell: str, tmp_path: Path) -> None:
+        documenten = _toegepast(_render(taakshell, "false", "true"), tmp_path, _omgeving(tmp_path))
+
+        assert _syncpolicy(documenten, "handmatig") is None
+
+    def test_samen_met_keep_default(self, taakshell: str, tmp_path: Path) -> None:
+        documenten = _toegepast(_render(taakshell, "true", "true"), tmp_path, _omgeving(tmp_path))
+
+        assert _namen(documenten, "AppProject") == ["zad-platform"]
+        assert _syncpolicy(documenten, "staging-infrastructure") == {"automated": {"prune": False, "selfHeal": True}}

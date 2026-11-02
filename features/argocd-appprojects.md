@@ -84,29 +84,39 @@ kubectl get applications,appprojects -n rig-staging-operations -o yaml > terugva
 ```
 
 Stap 1, de nieuwe AppProjects en de omgezette Applications, met `default` nog zoals hij in
-het cluster staat:
+het cluster staat en met prune uit:
 
 ```bash
-task bootstrap-argo-system CLUSTER_TYPE=odcn-staging KEEP_DEFAULT_APPPROJECT=true
+task bootstrap-argo-system CLUSTER_TYPE=odcn-staging KEEP_DEFAULT_APPPROJECT=true PAUSE_PRUNE=true
 ```
 
 `KEEP_DEFAULT_APPPROJECT=true` laat alleen het AppProject `default` uit de gerenderde
-overlay weg; de rest gaat mee. Controleer daarna dat elke Application Synced en
-Healthy is, en dat geen enkele een `ComparisonError` over zijn project meldt:
+overlay weg; de rest gaat mee. `PAUSE_PRUNE=true` zet `prune: false` op de Applications uit
+de overlay. Rendert een app-of-apps in dit venster maar half, dan haalt ArgoCD daardoor geen
+child-Application weg, en via de finalizer dus ook niet de workloads eronder. Met de hand
+uitzetten vóór de taak helpt niet: de apply zet `prune: true` uit git meteen terug.
+Controleer daarna dat elke Application Synced en Healthy is, en dat geen enkele een
+`ComparisonError` over zijn project meldt:
 
 ```bash
 kubectl get applications -n rig-staging-operations \
   -o custom-columns=NAAM:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
 ```
 
-Stap 2, `default` dichtzetten, pas als stap 1 groen is:
+Stap 2, `default` dichtzetten, pas als stap 1 groen is. Prune blijft nog uit:
+
+```bash
+task bootstrap-argo-system CLUSTER_TYPE=odcn-staging PAUSE_PRUNE=true
+```
+
+Stap 3, prune weer aan, als ook stap 2 groen is:
 
 ```bash
 task bootstrap-argo-system CLUSTER_TYPE=odcn-staging
 ```
 
 Op productie is het dezelfde volgorde met `CLUSTER_TYPE=odcn-production` en
-`rig-prd-operations`. Op een cluster dat van nul af wordt opgebouwd is de tweede stap genoeg:
+`rig-prd-operations`. Op een cluster dat van nul af wordt opgebouwd is de laatste stap genoeg:
 daar is nog geen Application die op `default` staat.
 
 ## Hangt samen met
