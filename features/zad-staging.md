@@ -103,9 +103,22 @@ Lokaal is alles gebouwd en gerenderd; dit kan alleen op de cluster:
 - **Wie er bij mag.** `ALLOWED_EMAILS` en `ADMIN_EMAILS` zijn die van productie.
 - **De kubecontext.** Staging en productie bereik je met dezelfde context. Het fundament pinde `KUBE_CONTEXT` per cluster en controleerde hem voor elke taak; hier is dat nog niet gebouwd. De overlays van staging noemen hun namespaces expliciet, maar een verkeerd geselecteerd cluster past de overlays van productie toe.
 
+## Een release eerst op staging
+
+Productie volgt RIG-Cluster `main`, staging volgt de branch `staging`. Dat geldt voor de twee Applications die uit RIG-Cluster lezen: `staging-infrastructure` en `ron-infrastructure`. De Applications op `zad-staging-secrets` en `zad-staging-argo-applications` blijven op `main` van hun eigen repo.
+
+Op `staging` komt nooit een eigen commit. Hij schuift alleen fast-forward naar een commit die daarna ongewijzigd naar `main` gaat, meestal de tip van de release-PR:
+
+```bash
+git push https://github.com/RijksICTGilde/RIG-Cluster.git <commit>:refs/heads/staging
+```
+
+Weigert GitHub die push omdat hij geen fast-forward is, dan is de release herschreven of loopt `staging` voor op wat er naar `main` gaat. Zoek dan eerst uit waarom; forceer niet. Zo loopt `staging` nooit uit elkaar met `main`: hij staat er gelijk mee of loopt een release voor.
+
+Een wijziging aan de bootstrap-laag zelf (deze Applications, de AppProjects) gaat niet via de branch maar met `task bootstrap-argo-system`, net als op productie.
+
 ## Bekende verschillen die blijven
 
-- Staging en productie volgen allebei RIG-Cluster `main`. Een wijziging in een gedeelde base raakt beide tegelijk; promotie via een branch is een latere stap.
 - Grafana en de registry-upload staan uit op staging: de Mimir-datasources tonen productie, en de registry-organisatie `rig/zad` is die van productie.
 - De mailsink krijgt een zelfondertekend certificaat met de naam `rig-ron` in plaats van `rig-staging-ron`; de relay accepteert dat certificaat met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS`, net als in de sandbox.
 

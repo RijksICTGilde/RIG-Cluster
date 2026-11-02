@@ -28,7 +28,10 @@ spec:
   source:
     repoURL: https://github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn-staging
-    targetRevision: main
+    # De branch staging en niet main: staging draait een release voordat productie hem
+    # krijgt. Op staging komt nooit een eigen commit, hij schuift alleen fast-forward naar
+    # een commit die daarna ongewijzigd naar main gaat. Zie features/zad-staging.md.
+    targetRevision: staging
     plugin:
       name: kustomize-sops-platform-v1.0
       env:
