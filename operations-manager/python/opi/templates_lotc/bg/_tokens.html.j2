@@ -49,7 +49,7 @@
     </form>
 {% endmacro %}
 
-{% call panel("Leden en tokens", "key", info_text="Een lid is een mens of een service account. Wat een token mag volgt uit de rollen van zijn lid, dus rollen wijzigen of een lid verwijderen werkt meteen door op al zijn tokens. Intrekken is een commit en staat dus in de historie van het project.") %}
+{% call panel("Leden en tokens", "key", info_text="Een lid is een mens of een service account. Wat een token mag volgt uit de rollen van zijn lid, dus rollen wijzigen of een lid verwijderen werkt meteen door op al zijn tokens.") %}
     <c-stack gap="lg">
         {% for lid in leden %}
             {# Het nummer van dit lid, voor de ids verderop: binnen de tokenlus wijst
