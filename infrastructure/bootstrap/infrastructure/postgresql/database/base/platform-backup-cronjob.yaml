@@ -41,7 +41,8 @@ spec:
           containers:
             - name: backup
               image: ghcr.io/minbzk/base-images/rig-backup@sha256:3de60a9f38f9166a36e100561665eee86cc6a1723ccba5089803392b257a7e0c
-              imagePullPolicy: IfNotPresent
+              # Geen imagePullPolicy: bij een digest is IfNotPresent al de standaard, en ODCN
+              # zet bij admission Always. Een waarde hier houdt ArgoCD daar OutOfSync.
               securityContext:
                 allowPrivilegeEscalation: false
                 capabilities:
