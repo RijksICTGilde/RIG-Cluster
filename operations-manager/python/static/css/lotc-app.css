@@ -258,9 +258,9 @@ form.is-bezig {
     width: auto;
 }
 
-/* Ruimte tussen het logo en de naam in de kopbalk; de toolbar-title zet ze tegen elkaar. */
-.kop-logo {
-    margin-inline-end: var(--primitives-space-4);
+/* Het woordmerk in de kopbalk, even hoog als het losse logo dat er stond. */
+.zad-woordmerk--kop {
+    font-size: 2.25rem;
 }
 
 /*

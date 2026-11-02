@@ -74,6 +74,17 @@
 
 
 {#
+  Het woordmerk: het huisje uit de favicon staat voor de A. Groot op /introductie, klein in
+  de kopbalk; ``klasse`` zet de maat.
+#}
+{% macro woordmerk(klasse='', slot='') %}
+<div {% if slot %}slot="{{ slot }}" {% endif %}class="zad-woordmerk {{ klasse }}" role="img" aria-label="ZAD">
+    <span aria-hidden="true">Z</span><img src="{{ static_url('img/zad-logo.png') }}" alt=""><span aria-hidden="true">D</span>
+</div>
+{% endmacro %}
+
+
+{#
   Uitleg bij een kopregel.
 
   GEEN icoon met een tooltip. Die stond hier twee versies lang en deed niets zichtbaars:

@@ -12,7 +12,7 @@
   van dat bestand. Een macro heeft dat probleem niet: bg/_service-card.html.j2 en
   bg/_patterns.html.j2 werken zo al.
 #}
-{% from "bg/_patterns.html.j2" import page_head %}
+{% from "bg/_patterns.html.j2" import page_head, woordmerk %}
 
 
 {#
@@ -35,10 +35,7 @@
   zegt, en de rest van dit portaal heeft nergens sierfoto's.
 #}
 {% macro kop() %}
-{# Het woordmerk: het huisje uit de favicon staat voor de A. #}
-<div class="zad-woordmerk" role="img" aria-label="ZAD">
-    <span aria-hidden="true">Z</span><img src="{{ static_url('img/zad-logo.png') }}" alt=""><span aria-hidden="true">D</span>
-</div>
+{{ woordmerk() }}
 {{ page_head(
     "Jij bouwt de applicatie. Wij de rest.",
     "Zelfservice Applicatie Deployment (ZAD): van een eenvoudige statische website tot een
