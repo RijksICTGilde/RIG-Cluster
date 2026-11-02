@@ -98,18 +98,23 @@ def describe_sync_waiting(application: dict[str, Any], *, fresh: bool) -> str | 
     return None
 
 
-def operation_age_seconds(operation: SyncOperation, *, now: datetime | None = None) -> int | None:
-    """Hoe lang de operation al loopt, of ``None`` als `startedAt` ontbreekt of onleesbaar is."""
-    if not operation.started_at:
+def seconds_since(timestamp: str | None, *, now: datetime | None = None) -> int | None:
+    """Seconden sinds een ArgoCD-tijdstip, of ``None`` als het ontbreekt of onleesbaar is."""
+    if not timestamp:
         return None
     try:
-        started = datetime.fromisoformat(operation.started_at)
+        moment = datetime.fromisoformat(timestamp)
     except ValueError:
-        logger.warning("Onleesbare startedAt op een sync-operation: %r", operation.started_at)
+        logger.warning("Onleesbaar tijdstip van ArgoCD: %r", timestamp)
         return None
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=UTC)
-    return int(((now or datetime.now(UTC)) - started).total_seconds())
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return int(((now or datetime.now(UTC)) - moment).total_seconds())
+
+
+def operation_age_seconds(operation: SyncOperation, *, now: datetime | None = None) -> int | None:
+    """Hoe lang de operation al loopt, of ``None`` als `startedAt` ontbreekt of onleesbaar is."""
+    return seconds_since(operation.started_at, now=now)
 
 
 def is_stuck(operation: SyncOperation, *, threshold_seconds: int, now: datetime | None = None) -> bool:

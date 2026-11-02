@@ -26,6 +26,7 @@ from opi.services.argocd_operation import (
     is_stuck,
     operation_age_seconds,
     read_sync_operation,
+    seconds_since,
 )
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -787,6 +788,9 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
     rendered or compared; health may still read ``Healthy`` from the last good sync, so a
     tile keyed on health alone would be misleadingly green. Treat that as ``Degraded`` so a
     broken render is visible at the top level.
+
+    ``Progressing`` only counts as "wordt bijgewerkt" while something can still move: a
+    failed or stuck sync, and a Progressing that outlasts OPI's own wait, are Degraded.
     """
     from opi.manager.argo_manager import terminal_condition_message
 
@@ -794,7 +798,21 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
         return "Unknown"
     if terminal_condition_message(status_data):
         return "Degraded"
-    return status_data.get("status", {}).get("health", {}).get("status", "Unknown")
+    operation = read_sync_operation(status_data)
+    if operation.phase in ("Failed", "Error") or is_stuck(
+        operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS
+    ):
+        return "Degraded"
+    health = status_data.get("status", {}).get("health", {}) or {}
+    health_status = health.get("status", "Unknown")
+    # Een pod die na een geslaagde rollout opnieuw ingepland wordt en zijn image niet kan
+    # halen, haalt nooit de progress deadline: Kubernetes houdt Progressing=True vanaf de
+    # vorige rollout, dus ArgoCD meldt Progressing, wekenlang. Hier gaat de duur beslissen.
+    if health_status == "Progressing":
+        progressing_for = seconds_since(health.get("lastTransitionTime"))
+        if progressing_for is not None and progressing_for >= STUCK_OPERATION_THRESHOLD_SECONDS:
+            return "Degraded"
+    return health_status
 
 
 def _deployment_inactivity(project_data: dict[str, Any], deployment_name: str) -> str | None:
