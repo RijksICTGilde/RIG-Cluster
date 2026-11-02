@@ -67,12 +67,16 @@ spec:
           args:
             ["start", "--optimized", "--spi-theme-welcome-theme=nl-design-system", "--spi-email-sender-provider=zad-relay" ]
           env:
-            - name: KEYCLOAK_ADMIN
+            # De namen van 26: KEYCLOAK_ADMIN en KEYCLOAK_ADMIN_PASSWORD doen daar niets
+            # meer, dus een verse database zou zonder beheerder opkomen. De SLEUTELS in
+            # keycloak-admin-credentials blijven heten zoals ze heten; dat secret wordt
+            # ook door OPI en door de taken gelezen.
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: keycloak-admin-credentials
                   key: KEYCLOAK_ADMIN
-            - name: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: keycloak-admin-credentials
@@ -105,8 +109,6 @@ spec:
                 secretKeyRef:
                   name: keycloak-db-credentials
                   key: password
-            - name: KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED
-              value: "true"
             # DE MAILRELAY, ZOALS DE POD HEM KENT. Deze vijf zijn de HELE configuratie van
             # de eigen verzender: geen realm draagt nog een bestemming, dus er is nergens
             # een veld dat een projectbeheerder kan omzetten. Zie

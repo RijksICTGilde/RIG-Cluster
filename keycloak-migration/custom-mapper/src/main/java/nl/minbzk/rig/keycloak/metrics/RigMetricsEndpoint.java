@@ -5,7 +5,6 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.ext.Provider;
 import org.jboss.logging.Logger;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.services.resource.RealmResourceProvider;
@@ -40,11 +39,12 @@ public class RigMetricsEndpoint implements RealmResourceProvider {
 
     /**
      * Separate JAX-RS resource class for the metrics endpoint.
-     * The @Provider annotation is required for RESTEasy in Keycloak Quarkus (v23+)
-     * to properly recognize JAX-RS annotations on returned resource classes.
-     * See: https://github.com/keycloak/keycloak/issues/25882
+     *
+     * <p>Deliberately NOT annotated {@code @Provider}: in Keycloak 26 that annotation marks
+     * ROOT resources (see {@code RealmsResource}), while a class returned by a sub-resource
+     * locator carries only its JAX-RS annotations, as Keycloak's own {@code DeviceEndpoint}
+     * does. Up to 25 the annotation was needed here and 26.2 turned it into a 404.
      */
-    @Provider
     public static class MetricsResource {
         private static final Logger logger = Logger.getLogger(MetricsResource.class);
 

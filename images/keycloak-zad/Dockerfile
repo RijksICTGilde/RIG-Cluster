@@ -22,7 +22,7 @@ RUN curl -fsSL -o keycloak-nl-design-system.jar \
  && echo "3adab8c9223127cf3aeb5b566fd9a08bab43bc79d9a0a92ff8a2ea1d2ecb9d35  keycloak-nl-design-system.jar" \
     | sha256sum -c -
 
-FROM quay.io/keycloak/keycloak:25.0.6
+FROM quay.io/keycloak/keycloak:26.8.1
 
 # Met een jokerteken en niet met de versie erin: de versie staat in de pom van de module en
 # hoort niet ook hier te staan. Vindt het jokerteken niets, dan faalt de bouw.

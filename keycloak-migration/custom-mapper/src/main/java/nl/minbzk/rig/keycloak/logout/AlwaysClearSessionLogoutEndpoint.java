@@ -4,7 +4,6 @@ import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.ext.Provider;
 import java.net.URI;
 import org.jboss.logging.Logger;
 import org.keycloak.cookie.CookieProvider;
@@ -50,12 +49,11 @@ public class AlwaysClearSessionLogoutEndpoint implements RealmResourceProvider {
     }
 
     /**
-     * The {@code @Provider} annotation is mandatory: RESTEasy in Keycloak's
-     * Quarkus distribution (v23+) silently skips JAX-RS annotations on resource
-     * classes without it, leading to 404s with no diagnostic. See
-     * <a href="https://github.com/keycloak/keycloak/issues/25882">keycloak#25882</a>.
+     * Deliberately NOT annotated {@code @Provider}: in Keycloak 26 that annotation marks
+     * ROOT resources (see {@code RealmsResource}), while a class returned by a sub-resource
+     * locator carries only its JAX-RS annotations, as Keycloak's own {@code DeviceEndpoint}
+     * does. Up to 25 the annotation was needed here and 26.2 turned it into a 404.
      */
-    @Provider
     public static class LogoutResource {
         private static final Logger logger = Logger.getLogger(LogoutResource.class);
 

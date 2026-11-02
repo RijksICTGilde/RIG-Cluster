@@ -33,7 +33,17 @@ DODE_OMGEVINGSVARIABELEN = (
     "KC_HOSTNAME_PORT",
     # Een WildFly-restant: de Quarkus-distributie kent de variabele niet.
     "KC_PROXY_ADDRESS_FORWARDING",
+    # Een bouwoptie in 26 (spi-<spi>-enabled), dus naast --optimized stopt Keycloak 26.8.1
+    # met exit 2 op "build time options differ". Hij deed ook niets: onze endpoints hangen
+    # aan realm-restapi-extension, niet aan admin-realm-restapi-extension.
+    "KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED",
 )
+
+#: De namen waarmee 25 de opstartbeheerder zette. In 26 doen ze niets meer.
+OPSTARTBEHEERDER_25 = ("KEYCLOAK_ADMIN", "KEYCLOAK_ADMIN_PASSWORD")
+
+#: De namen van 26, met dezelfde sleutels uit `keycloak-admin-credentials`.
+OPSTARTBEHEERDER_26 = ("KC_BOOTSTRAP_ADMIN_USERNAME", "KC_BOOTSTRAP_ADMIN_PASSWORD")
 
 
 def _kustomize_of_skip() -> None:
@@ -60,12 +70,7 @@ class TestDeUitrolMigreertNooitMetTweePods:
 
 
 class TestGeenDodeOptieInDeDeployment:
-    """Een optie die niets doet leest als geregeld, en dat is erger dan een ontbrekende regel.
-
-    `KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED` hoort hier NIET bij: een spi-optie wordt
-    niet ingebakken, dus die moet bij de pod staan om iets te doen. Zie
-    `test_keycloak_eigen_image.py::test_geen_bouwoptie_staat_in_de_omgeving`.
-    """
+    """Een optie die niets doet leest als geregeld, en dat is erger dan een ontbrekende regel."""
 
     @pytest.mark.parametrize("naam", DODE_OMGEVINGSVARIABELEN)
     def test_de_basis_noemt_hem_niet(self, naam: str) -> None:
@@ -74,5 +79,27 @@ class TestGeenDodeOptieInDeDeployment:
     @pytest.mark.parametrize("naam", DODE_OMGEVINGSVARIABELEN)
     @pytest.mark.parametrize("omgeving", OMGEVINGEN)
     def test_geen_overlay_zet_hem_terug(self, omgeving: str, naam: str) -> None:
+        _kustomize_of_skip()
+        assert naam not in _env_namen(_rendered_container(REPO_ROOT, omgeving)), (omgeving, naam)
+
+
+class TestDeOpstartbeheerderHeetZoalsKeycloak26HemKent:
+    """`KEYCLOAK_ADMIN` en `KEYCLOAK_ADMIN_PASSWORD` doen in 26 niets meer.
+
+    Ze werken alleen op een LEGE database, dus een bestaand cluster merkt er niets van; een
+    verse sandbox zou zonder beheerder opkomen en dat valt pas op bij de eerste inlog.
+    """
+
+    @pytest.mark.parametrize("naam", OPSTARTBEHEERDER_25)
+    def test_de_basis_noemt_de_namen_van_25_niet_meer(self, naam: str) -> None:
+        assert naam not in _env_namen(_basis_container()), naam
+
+    @pytest.mark.parametrize("naam", OPSTARTBEHEERDER_26)
+    def test_de_basis_noemt_de_namen_van_26(self, naam: str) -> None:
+        assert naam in _env_namen(_basis_container()), naam
+
+    @pytest.mark.parametrize("naam", OPSTARTBEHEERDER_25)
+    @pytest.mark.parametrize("omgeving", OMGEVINGEN)
+    def test_geen_overlay_zet_de_oude_namen_terug(self, omgeving: str, naam: str) -> None:
         _kustomize_of_skip()
         assert naam not in _env_namen(_rendered_container(REPO_ROOT, omgeving)), (omgeving, naam)
