@@ -18,7 +18,7 @@ public final class RelayMailConfig {
      * enige wat in een postbus laat zien WELKE code een bericht verstuurde, en een versie
      * die blijft staan terwijl de code verandert maakt dat merkteken waardeloos.
      */
-    public static final String VERSION = "1.0.0";
+    public static final String VERSION = "1.1.0";
 
     /** Het provider-id waaronder Keycloak deze verzender kent. Staat in de startvlag van de pod. */
     public static final String PROVIDER_ID = "zad-relay";

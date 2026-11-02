@@ -111,5 +111,7 @@ KC-SERVICES0047: zad-relay (nl.minbzk.rig.keycloak.email.RelayEmailSenderProvide
   is implementing the internal SPI emailSender.
 ```
 
-Een interne SPI mag zonder aankondiging veranderen. De geplande upgrade naar Keycloak 26
-vraagt dus een hertoets van dit hele mechanisme; dat staat in `features/keycloak-26-upgrade.md`.
+Een interne SPI mag zonder aankondiging veranderen. Bij de sprong naar 26.8.1 gebeurde dat
+ook: `validate(Map)` werd verplicht en `EmailException(Exception)` verdween. Wat dat voor
+deze module betekende staat in `features/keycloak-mail.md`, en het runbook van de sprong in
+`features/keycloak-26-upgrade.md`.

@@ -34,7 +34,7 @@ cd keycloak-migration/custom-mapper
 mvn clean package
 ```
 
-Output: `target/keycloak-saml-nameid-mapper-1.1.0.jar`
+Output: `target/keycloak-saml-nameid-mapper-<versie uit de pom>.jar`
 
 ## In Keycloak krijgen
 

@@ -292,11 +292,8 @@ class TestDePodBouwtDeImageNietOpnieuwOm:
             assert not any(a == f"--{optie}" or a.startswith(f"--{optie}=") for a in args), optie
 
     def test_geen_bouwoptie_staat_in_de_omgeving(self) -> None:
-        """Daar is hij stil: met --optimized waarschuwt Keycloak en doet hij niets.
-
-        Zo bleef KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED wel staan: een spi-optie wordt
-        niet ingebakken, dus die MOET bij de pod staan om iets te doen.
-        """
+        """Daar breekt hij de start: Keycloak 26 stopt met --optimized op elke bouwoptie die
+        afwijkt van de ingebakken waarde (gemeten op 26.8.1 met KC_HEALTH_ENABLED=false)."""
         namen = _env_namen(_basis_container())
         for optie in BOUWOPTIES:
             assert _omgevingsnaam(optie) not in namen, optie
