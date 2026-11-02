@@ -28,7 +28,17 @@ KUSTOMIZATIONS = sorted(KUSTOMIZE_ROOT.glob("overlays/*/kustomization.yaml"))
 ENV_SOURCE_MANIFESTS = {
     "operations-manager-access": KUSTOMIZE_ROOT / "overlays/odcn-production/operations-manager-access-secrets.yaml",
     "operations-manager-env-secrets": KUSTOMIZE_ROOT / "overlays/odcn-production/operations-manager-env-secrets.yaml",
-    "operations-manager-keycloak": KUSTOMIZE_ROOT / "base/secret-keycloak.yaml",
+}
+# Dit secret staat niet in git: OPI schrijft het zelf bij het opstarten
+# (opi/bootstrap/keycloak_setup.py, _update_operations_secret), met deze sleutels.
+OPI_WRITTEN_ENV_SOURCES = {
+    "operations-manager-keycloak": {
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        "OIDC_DISCOVERY_URL",
+        "OIDC_URL",
+        "OIDC_REALM",
+    },
 }
 
 # De aanroepen die een proces starten, per module. `asyncio.run` start geen proces en
@@ -146,6 +156,8 @@ def test_child_env_voegt_extra_toe(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _namen_uit_secret(naam: str, bron: pathlib.Path) -> set[str]:
+    if naam in OPI_WRITTEN_ENV_SOURCES:
+        return OPI_WRITTEN_ENV_SOURCES[naam]
     assert naam in ENV_SOURCE_MANIFESTS, f"onbekende envFrom-bron {naam} in {bron}"
     secret = yaml.safe_load(ENV_SOURCE_MANIFESTS[naam].read_text())
     return set(secret.get("data") or secret["stringData"])
