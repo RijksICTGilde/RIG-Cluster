@@ -137,32 +137,34 @@ class TestVerhoogdeRechtenInHetMenu:
     def test_met_een_verse_step_up_toont_het_menu_het_schild(self, app_server: str, browser) -> None:
         page = self._pagina_met_sessie(browser, app_server, {"step_up_at": datetime.now(UTC).isoformat()})
         try:
-            item = page.locator("nldd-menu-bar-item[icon='shield-check-mark']")
-            assert item.count() == 1
-            assert item.get_attribute("class") == "menu-verhoogd"
-            assert "verhoogde rechten actief" in (item.get_attribute("accessible-label") or "")
+            knop = page.locator("nldd-toolbar-item[slot=end] > nldd-icon-button")
+            assert knop.count() == 1
+            assert (
+                page.locator("nldd-icon-button > nldd-icon[slot=icon][icon='shield-check-mark'][color=success]").count()
+                == 1
+            )
+            assert "verhoogde rechten actief" in (knop.get_attribute("accessible-label") or "")
             assert "Verhoogde rechten tot" in page.content()
         finally:
             page.context.close()
 
-    def test_het_schild_is_echt_anders_van_kleur_dan_het_gewone_icoon(self, app_server: str, browser) -> None:
-        kleur = (
-            "() => { const el = document.querySelector('nldd-menu-bar-item[text]:not([text=Weergave]):not([text=Beheer])');"
-            " const b = el.shadowRoot.querySelector('.menu-bar-item'); return getComputedStyle(b).color; }"
-        )
-        verhoogd = self._pagina_met_sessie(browser, app_server, {"step_up_at": datetime.now(UTC).isoformat()})
-        gewoon = self._pagina_met_sessie(browser, app_server, {})
+    def test_het_schild_is_echt_anders_van_kleur_dan_de_knop(self, app_server: str, browser) -> None:
+        page = self._pagina_met_sessie(browser, app_server, {"step_up_at": datetime.now(UTC).isoformat()})
         try:
-            assert verhoogd.evaluate(kleur) != gewoon.evaluate(kleur)
+            page.wait_for_function("() => document.querySelectorAll('*:not(:defined)').length === 0")
+            schild, knop = page.evaluate(
+                "() => { const i = document.querySelector('nldd-icon-button > nldd-icon[slot=icon]');"
+                " return [getComputedStyle(i).color, getComputedStyle(i.parentElement).color]; }"
+            )
+            assert schild != knop
         finally:
-            verhoogd.context.close()
-            gewoon.context.close()
+            page.context.close()
 
-    def test_zonder_step_up_blijft_het_gewone_icoon(self, app_server: str, browser) -> None:
+    def test_zonder_step_up_blijft_de_avatar(self, app_server: str, browser) -> None:
         page = self._pagina_met_sessie(browser, app_server, {})
         try:
-            assert page.locator("nldd-menu-bar-item[icon='person-circle']").count() == 1
-            assert page.locator("nldd-menu-bar-item[icon='shield-check-mark']").count() == 0
+            assert page.locator("nldd-icon-button > nldd-avatar[slot=icon]").count() == 1
+            assert page.locator("nldd-icon-button > nldd-icon[slot=icon]").count() == 0
             assert "Verhoogde rechten tot" not in page.content()
         finally:
             page.context.close()

@@ -238,13 +238,27 @@ form.is-bezig {
 }
 
 /*
- * Accountmenu met verhoogde rechten (een verse step-up): het schild is groen. De kleur
- * komt uit de succesreeks van NLDD en wisselt mee met licht en donker. Het icoon en de
- * eindtijd in het menu dragen dezelfde boodschap voor wie geen kleur ziet.
+ * Het woordmerk op /introductie: Z, het huisje als A, D. De letters krijgen het blauw van
+ * het logo zelf, ook in donker, want het logo wisselt niet mee.
  */
-.menu-verhoogd {
-    --components-menu-bar-item-content-color: light-dark(
-        var(--primitives-color-success-750),
-        var(--primitives-color-success-300)
-    );
+.zad-woordmerk {
+    display: flex;
+    align-items: baseline;
+    gap: 0.04em;
+    color: #0776bd;
+    font: var(--primitives-font-display-1-lg);
+    font-size: clamp(4rem, 12vw, 8rem);
+    font-weight: 800;
+    line-height: 1;
+}
+
+.zad-woordmerk img {
+    height: 0.85em;
+    height: 1.2cap;
+    width: auto;
+}
+
+/* Ruimte tussen het logo en de naam in de kopbalk; de toolbar-title zet ze tegen elkaar. */
+.kop-logo {
+    margin-inline-end: var(--primitives-space-4);
 }

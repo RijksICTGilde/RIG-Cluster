@@ -7,7 +7,7 @@ De paginaschil van de LOTC-bouwlijn (`opi/templates_lotc/base_lotc.html.j2`) geb
 ```
 nldd-shell
 └ nldd-bar-split-view
-  ├ pane slot=header  → nldd-top-navigation-bar (logo, Weergave, Beheer, account)
+  ├ pane slot=header  → nldd-container > nldd-toolbar (ZAD-logo + naam, gebruikersmenu)
   └ pane slot=main
     └ nldd-navigation-split-view
       ├ pane slot=sidebar → nldd-page > nldd-simple-section > per groep een nldd-list
@@ -16,6 +16,8 @@ nldd-shell
                               ├ nldd-simple-section > #hoofdinhoud > {% block content %}
                               └ nldd-page-footer met alleen de legal bar
 ```
+
+De kopbalk is die van de Fundament-console: een `nldd-toolbar` in plaats van `nldd-top-navigation-bar`, omdat die laatste altijd het Rijkswapen tekent. Links staat het ZAD-logo (`static/img/zad-logo.png`, hetzelfde huisje als de favicon) met de naam, rechts een avatarknop met Profiel, Weergave (submenu Systeem, Licht, Donker) en Uitloggen. Bij verhoogde rechten wordt de avatar een groen schild en staat de eindtijd bovenin het menu. De beheeritems staan alleen in de zijbalk.
 
 De menustructuur komt ongewijzigd uit `opi/web/navigation_lotc.py`, met onze iconen via `to_nldd_icon`. De inhoud van pagina's (tabs, kaarten, formulieren) is niet veranderd.
 

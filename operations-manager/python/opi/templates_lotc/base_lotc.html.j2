@@ -92,65 +92,59 @@
 <nldd-bar-split-view>
 <nldd-split-view-pane slot="header" background="base">
 
-    {# logo-title is de tweede regel naast het logo; die droegen wij eerder als subtitle=
-       op <c-header> en waren we kwijt. Wies zet hem hier, en zonder valt de kopbalk uit
-       elkaar omdat er maar een van de twee regels is. #}
-    <nldd-top-navigation-bar width="full"
-        logo-title="Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie"
-        {# website-title is de KORTE naam van de site, als link linksboven; Wies zet daar
-           "Wies". De volledige zin stond hier eerst en las als een lap tekst in een link.
-           De organisatie hoort in logo-title hierboven. #}
-        website-title="Zelfservice Applicatie Deployment (ZAD)" website-href="/">
-        <nldd-menu-bar slot="utility" accessible-label="Gebruikersmenu">
+    {# De kopbalk van de Fundament-console: een toolbar met ons eigen beeldmerk in plaats
+       van nldd-top-navigation-bar, die altijd het Rijkswapen tekent. Het logo is
+       hetzelfde huisje als de favicon, zodat tab en balk hetzelfde teken tonen; alt is
+       leeg omdat de naam ernaast staat. De beheeritems staan alleen nog in de zijbalk. #}
+    <nldd-container padding-left="16" padding-right="8" padding-block="8">
+        <nldd-toolbar accessible-label="Applicatie">
+            <nldd-toolbar-title slot="start" text="Zelfservice Applicatie Deployment (ZAD)" min-width="96px" max-width="480px" href="/">
+                <img slot="media" class="kop-logo" src="{{ static_url('img/zad-logo.png') }}" alt="" height="32">
+            </nldd-toolbar-title>
 
-                    <nldd-menu-bar-item text="Weergave" icon="sun" expandable>
-                        <nldd-menu placement="bottom-start" variant="menu">
-                            {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
-                                <nldd-menu-item type="radio" text="{{ weergave_label }}"
-                                                href="/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}"
-                                                onclick="location.href='/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}'"
-                                                {% if waarde == gekozen_weergave %}selected{% endif %}></nldd-menu-item>
-                            {% endfor %}
+            <nldd-toolbar-item slot="end">
+                {% if is_ingelogd %}
+                    {# Verhoogde rechten (een verse step-up): een groen schild in plaats van de
+                       avatar, en de eindtijd bovenin het menu. Kleur alleen is niet toegankelijk.
+                       Een menu-item in een uitklapmenu navigeert niet zelf op zijn href, vandaar
+                       de onclick. #}
+                    <nldd-icon-button expandable popup-type="menu" type="button" tooltip-timing="never"
+                                      appearance="secondary"
+                                      accessible-label="{{ gebruikersnaam }}{% if verhoogd_tot %}, verhoogde rechten actief{% endif %}">
+                        {% if verhoogd_tot %}
+                            <nldd-icon slot="icon" icon="shield-check-mark" color="success"></nldd-icon>
+                        {% else %}
+                            <nldd-avatar slot="icon" name="{{ gebruikersnaam }}" color="inherit" icon-aligned decorative></nldd-avatar>
+                        {% endif %}
+                        <nldd-menu slot="popup" placement="bottom-end">
+                            <nldd-container slot="header" padding-inline="16" padding-block="12">
+                                <nldd-identity text="{{ gebruikersnaam }}"
+                                               {% if verhoogd_tot %}supporting-text="Verhoogde rechten tot {{ verhoogd_tot | dutch_date(only_time=True) }}"{% endif %}></nldd-identity>
+                            </nldd-container>
+                            <nldd-menu-item text="Profiel" icon="user" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                            <nldd-menu-divider></nldd-menu-divider>
+                            <nldd-menu-item text="Weergave" icon="appearance">
+                                <nldd-menu>
+                                    {% for waarde, weergave_label in [("", "Systeem"), ("light", "Licht"), ("dark", "Donker")] %}
+                                        <nldd-menu-item type="radio" text="{{ weergave_label }}"
+                                                        onclick="location.href='/weergave?scheme={{ waarde }}&terug={{ huidig_pad | urlencode }}'"
+                                                        {% if waarde == gekozen_weergave %}selected{% endif %}></nldd-menu-item>
+                                    {% endfor %}
+                                </nldd-menu>
+                            </nldd-menu-item>
+                            <nldd-menu-divider></nldd-menu-divider>
+                            <nldd-menu-item text="Uitloggen" icon="logout" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
                         </nldd-menu>
-                    </nldd-menu-bar-item>
-
-                    {% if navigation.beheer %}
-                        <nldd-menu-bar-item text="Beheer" icon="gear" expandable>
-                            <nldd-menu placement="bottom-start" variant="menu">
-                                {% for item in navigation.beheer %}
-                                    <nldd-menu-item text="{{ item.label }}" href="{{ item.link }}" onclick="location.href='{{ item.link }}'"></nldd-menu-item>
-                                {% endfor %}
-                            </nldd-menu>
-                        </nldd-menu-bar-item>
-                    {% endif %}
-
-                    {% if is_ingelogd %}
-                        {# Verhoogde rechten (een verse step-up): ander icoon EN groen, en de eindtijd in
-                           het menu. Kleur alleen is niet toegankelijk. #}
-                        <nldd-menu-bar-item text="{{ gebruikersnaam }}"
-                                            {% if verhoogd_tot %}icon="shield-check-mark"
-                                            accessible-label="{{ gebruikersnaam }}, verhoogde rechten actief"
-                                            class="menu-verhoogd"
-                                            {% else %}icon="person-circle"{% endif %} expandable>
-                            <nldd-menu placement="bottom-start" variant="menu">
-                                {% if verhoogd_tot %}
-                                    <nldd-menu-item text="Verhoogde rechten tot {{ verhoogd_tot | dutch_date(only_time=True) }}" disabled></nldd-menu-item>
-                                    <nldd-menu-divider></nldd-menu-divider>
-                                {% endif %}
-                                <nldd-menu-item text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
-                                <nldd-menu-divider></nldd-menu-divider>
-                                <nldd-menu-item text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
-                            </nldd-menu>
-                        </nldd-menu-bar-item>
-                    {% else %}
-                        {# Geen uitklapmenu maar een enkele knop: er valt niets te kiezen.
-                           Een <nldd-menu-BAR-item> navigeert wel gewoon op zijn href - het
-                           is de <nldd-menu-item> in een uitklapmenu die dat niet doet. #}
-                        <nldd-menu-bar-item text="Inloggen" icon="person-circle" href="/auth/login"></nldd-menu-bar-item>
-                    {% endif %}
-
-        </nldd-menu-bar>
-    </nldd-top-navigation-bar>
+                    </nldd-icon-button>
+                    <nldd-menu-item slot="overflow" text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                    <nldd-menu-item slot="overflow" text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
+                {% else %}
+                    <nldd-button text="Inloggen" start-icon="person-circle" appearance="secondary" href="/auth/login"></nldd-button>
+                    <nldd-menu-item slot="overflow" text="Inloggen" href="/auth/login" onclick="location.href='/auth/login'"></nldd-menu-item>
+                {% endif %}
+            </nldd-toolbar-item>
+        </nldd-toolbar>
+    </nldd-container>
 </nldd-split-view-pane>
 
 <nldd-split-view-pane slot="main">
