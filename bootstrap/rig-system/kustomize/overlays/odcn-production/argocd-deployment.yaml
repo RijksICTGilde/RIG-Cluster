@@ -163,7 +163,7 @@ spec:
       - name: cmp-server
         command:
           - /var/run/argocd/argocd-cmp-server
-        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops@sha256:0f82b84e5dd99ddd61897e31e5edcf333a5aa21b43b384189411783734cc0a26
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops:2026.11.02.2053-7128fb61@sha256:d2b684cba5bc35f6967466e2a27338d37524ba20328bd4d81d69adcb09194374
         imagePullPolicy: IfNotPresent
         env:
           - name: ARGOCD_EXEC_TIMEOUT
