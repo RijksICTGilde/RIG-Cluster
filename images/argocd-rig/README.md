@@ -1,6 +1,6 @@
 # argocd-rig — eigen Argo CD image met namespace-sync en health-fixes
 
-Upstream Argo CD **v3.5.1** plus patches, in drie groepen:
+Upstream Argo CD **v3.5.6** (sinds `v3.5.6-rig1`; daarvoor v3.5.1) plus patches, in drie groepen:
 - **correctheid**: de cluster-cache loopt niet stuk (en verliest geen namespaces) als één
   namespace weggaat of RBAC-restricted is (0001/0002);
 - **verse status**: `status.health` in de Application CR wordt direct bijgewerkt bij
@@ -23,7 +23,7 @@ we draaien in **namespace-mode**, precies het pad dat de cache-bug raakt.
 
 | Patch | Herkomst |
 |---|---|
-| `0001-cherry-pick-PR-27528.patch` | Upstream PR [argoproj/argo-cd#27528](https://github.com/argoproj/argo-cd/pull/27528) — cluster sync blijft leven als een namespace verdwijnt of RBAC-restricted is. Nog steeds niet gemerged upstream (ook niet in release-3.5); paste schoon toe op v3.5.1. |
+| `0001-cherry-pick-PR-27528.patch` | Upstream PR [argoproj/argo-cd#27528](https://github.com/argoproj/argo-cd/pull/27528) — cluster sync blijft leven als een namespace verdwijnt of RBAC-restricted is. Nog steeds niet gemerged upstream (ook niet in release-3.5); paste schoon toe op v3.5.6. |
 | `0002-fix-drop-stranded-GVK-on-error-and-cap-sync-warnings.patch` | Twee fixes uit onze review op die PR, met regressietests (groen onder `-race`): (1) GVK wordt uit `apisMeta` verwijderd bij een error in `startMissingWatches`, anders blijft die tot de volgende full resync ongewatcht; (2) cap op sync-warnings (max 50 + "... and N more"), anders groeit `ConnectionState.Message` bij 47 namespaces naar honderden KB's. |
 | `0003-fix-refresh-app-health-from-cluster-cache-on-tree-on.patch` | Eigen fix: het tree-only refreshpad van de application-controller (cluster-events op child-resources, zoals pods die Ready worden) herberekent nu ook `status.health`, via dezelfde `setApplicationHealth` als het volledige vergelijkingspad. Daarvoor bleef de health in de CR — wat de API serveert — achterlopen op de resource tree die de UI toont, tot de volgende volledige comparison. Met regressietest (`TestTreeOnlyRefreshUpdatesHealth`). Kandidaat om te upstreamen (issue nodig). |
 | `0004-test-adapt-carried-cache-tests-to-release-3.5-base.patch` | Aanpassing van de meegenomen tests aan de v3.5-basis (kubetest-importpad, `strings`-import in `cluster_test.go`). |
@@ -32,13 +32,13 @@ we draaien in **namespace-mode**, precies het pad dat de cache-bug raakt.
 | `0007-test-pass-incremental-namespace-sync-flag-at-release.patch` | Vijf `NewApplicationController`-callsites die alleen op release-3.5 bestaan krijgen het nieuwe ctor-argument. |
 
 De patches zijn de bron van waarheid: `task src:verify` bewijst dat de build-worktree exact
-`v3.5.1` + deze patches is.
+`v3.5.6` + deze patches is.
 
 ## Gebruik
 
 De image wordt gebouwd uit een **git worktree** van de argo-cd checkout, standaard
-`../../../argo-cd-rig` naast deze repo, op branch `rig/ns-sync-3.5`. Bestaat die branch niet
-(bijv. op een andere machine), dan bouwt `task src:prepare` hem op uit tag `v3.5.1` + `patches/`.
+`../../../argo-cd-rig-3.5.6` naast deze repo, op branch `rig/ns-sync-3.5.6`. Bestaat die branch niet
+(bijv. op een andere machine), dan bouwt `task src:prepare` hem op uit tag `v3.5.6` + `patches/`.
 
 ```bash
 cd images/argocd-rig

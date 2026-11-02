@@ -1,4 +1,4 @@
-From 77be0354bff08cc89fe6ee284027475de583b076 Mon Sep 17 00:00:00 2001
+From c11347e215219ee7bb3dfd7e8ac1d5a5abe62250 Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Tue, 18 Aug 2026 00:05:00 +0200
 Subject: [PATCH 5/7] cherry-pick PR 25229 (incremental namespace sync)
@@ -110,7 +110,7 @@ index 4406da6ef..db3733697 100644
  	EnvEnableGRPCTimeHistogramEnv = "ARGOCD_ENABLE_GRPC_TIME_HISTOGRAM"
  	// EnvGithubAppCredsExpirationDuration controls the caching of Github app credentials. This value is in minutes (default: 60)
 diff --git a/controller/appcontroller.go b/controller/appcontroller.go
-index 41641a4f5..6112499c5 100644
+index 4b1700678..194dbdbd7 100644
 --- a/controller/appcontroller.go
 +++ b/controller/appcontroller.go
 @@ -182,6 +182,7 @@ func NewApplicationController(
@@ -131,10 +131,10 @@ index 41641a4f5..6112499c5 100644
  	ctrl.appInformer = appInformer
  	ctrl.appLister = appLister
 diff --git a/controller/appcontroller_test.go b/controller/appcontroller_test.go
-index 54657f660..6cabcfb66 100644
+index 2a993c7b9..5b1e7fcd4 100644
 --- a/controller/appcontroller_test.go
 +++ b/controller/appcontroller_test.go
-@@ -227,6 +227,7 @@ func newFakeControllerWithResync(ctx context.Context, data *fakeData, appResyncP
+@@ -233,6 +233,7 @@ func newFakeControllerWithResync(ctx context.Context, data *fakeData, appResyncP
  		nil,
  		false,
  		false,
@@ -1635,7 +1635,7 @@ index d162c3caf..804c83372 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/core-install-with-hydrator.yaml b/manifests/core-install-with-hydrator.yaml
-index 40e173214..29b9ea328 100644
+index 1af0fb092..b63e1023e 100644
 --- a/manifests/core-install-with-hydrator.yaml
 +++ b/manifests/core-install-with-hydrator.yaml
 @@ -32735,6 +32735,12 @@ spec:
@@ -1652,7 +1652,7 @@ index 40e173214..29b9ea328 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/core-install.yaml b/manifests/core-install.yaml
-index 1ebba3ba6..e6717241d 100644
+index 89592914d..f2a9b0539 100644
 --- a/manifests/core-install.yaml
 +++ b/manifests/core-install.yaml
 @@ -32563,6 +32563,12 @@ spec:
@@ -1669,7 +1669,7 @@ index 1ebba3ba6..e6717241d 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/ha/install-with-hydrator.yaml b/manifests/ha/install-with-hydrator.yaml
-index 5baacede5..8340d8019 100644
+index b93662e1d..fe845d131 100644
 --- a/manifests/ha/install-with-hydrator.yaml
 +++ b/manifests/ha/install-with-hydrator.yaml
 @@ -34975,6 +34975,12 @@ spec:
@@ -1686,7 +1686,7 @@ index 5baacede5..8340d8019 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/ha/install.yaml b/manifests/ha/install.yaml
-index cf2aa8011..60833e058 100644
+index f17ab3e3a..aa9e97b98 100644
 --- a/manifests/ha/install.yaml
 +++ b/manifests/ha/install.yaml
 @@ -34805,6 +34805,12 @@ spec:
@@ -1703,7 +1703,7 @@ index cf2aa8011..60833e058 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/ha/namespace-install-with-hydrator.yaml b/manifests/ha/namespace-install-with-hydrator.yaml
-index 6ed10f75c..06fdec3db 100644
+index 967414b90..057523a47 100644
 --- a/manifests/ha/namespace-install-with-hydrator.yaml
 +++ b/manifests/ha/namespace-install-with-hydrator.yaml
 @@ -3893,6 +3893,12 @@ spec:
@@ -1720,7 +1720,7 @@ index 6ed10f75c..06fdec3db 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/ha/namespace-install.yaml b/manifests/ha/namespace-install.yaml
-index be43b61c0..cb2857335 100644
+index 5a2faed9e..71eb466d5 100644
 --- a/manifests/ha/namespace-install.yaml
 +++ b/manifests/ha/namespace-install.yaml
 @@ -3723,6 +3723,12 @@ spec:
@@ -1737,7 +1737,7 @@ index be43b61c0..cb2857335 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/install-with-hydrator.yaml b/manifests/install-with-hydrator.yaml
-index 1c58288f3..16706c5e8 100644
+index 8e9610de6..1429076b8 100644
 --- a/manifests/install-with-hydrator.yaml
 +++ b/manifests/install-with-hydrator.yaml
 @@ -33943,6 +33943,12 @@ spec:
@@ -1754,7 +1754,7 @@ index 1c58288f3..16706c5e8 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/install.yaml b/manifests/install.yaml
-index e7238840f..066d61f2d 100644
+index 2f9072cf0..fb5bf5474 100644
 --- a/manifests/install.yaml
 +++ b/manifests/install.yaml
 @@ -33771,6 +33771,12 @@ spec:
@@ -1771,7 +1771,7 @@ index e7238840f..066d61f2d 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/namespace-install-with-hydrator.yaml b/manifests/namespace-install-with-hydrator.yaml
-index 7831fe1b7..b6f19cb8f 100644
+index 158a25551..f3f430de8 100644
 --- a/manifests/namespace-install-with-hydrator.yaml
 +++ b/manifests/namespace-install-with-hydrator.yaml
 @@ -2861,6 +2861,12 @@ spec:
@@ -1788,7 +1788,7 @@ index 7831fe1b7..b6f19cb8f 100644
            valueFrom:
              configMapKeyRef:
 diff --git a/manifests/namespace-install.yaml b/manifests/namespace-install.yaml
-index 2a236aada..2bc4bdcdb 100644
+index 3971510ca..59ca284d8 100644
 --- a/manifests/namespace-install.yaml
 +++ b/manifests/namespace-install.yaml
 @@ -2689,6 +2689,12 @@ spec:
