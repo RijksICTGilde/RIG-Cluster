@@ -590,3 +590,22 @@ def test_de_weergaveroute_verwijst_niet_naar_een_ander_domein(app_server: str, a
     auth_page.wait_for_load_state("networkidle")
 
     assert auth_page.url.startswith(app_server), f"doorverwezen naar buiten: {auth_page.url}"
+
+
+def test_een_lange_pagina_heeft_een_scrollbalk_en_niet_twee(app_server: str, auth_page: Page) -> None:
+    """Op een breed scherm scrolt alleen #hoofdpagina, het document niet.
+
+    De verborgen hint van een externe nldd-link hing aan het document zolang nldd-page
+    geen containing block was, en rekte het op tot de lengte van de pagina.
+    """
+    auth_page.set_viewport_size({"width": 1280, "height": 800})
+    auth_page.goto(f"{app_server}/introductie")
+    auth_page.wait_for_load_state("networkidle")
+    auth_page.wait_for_timeout(500)
+
+    document, pagina = auth_page.evaluate(
+        "() => { const d = document.scrollingElement, p = document.getElementById('hoofdpagina');"
+        " return [d.scrollHeight - d.clientHeight, p.scrollHeight - p.clientHeight]; }"
+    )
+    assert pagina > 0, "de introductie is niet langer dan het scherm; dan meet deze test niets"
+    assert document == 0, f"het document scrolt {document}px mee naast de pagina"

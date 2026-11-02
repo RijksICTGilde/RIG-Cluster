@@ -262,3 +262,13 @@ form.is-bezig {
 .kop-logo {
     margin-inline-end: var(--primitives-space-4);
 }
+
+/*
+ * Een paneel dat zelf scrolt moet ook het containing block zijn van wat erin absoluut staat.
+ * NLDD 0.13.0 laat dat open: de verborgen hint "andere website" van een externe nldd-link
+ * (link__link-hint) hing daardoor aan het document, rekte dat op tot de lengte van de
+ * pagina, en gaf op /introductie een tweede scrollbalk.
+ */
+nldd-page {
+    position: relative;
+}
