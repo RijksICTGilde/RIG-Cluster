@@ -610,6 +610,13 @@ tasks:
       # Draai de taak daarna nog een keer zonder deze optie, dan staat prune weer aan.
       PAUSE_PRUNE: '{{default "false" .PAUSE_PRUNE}}'
     preconditions:
+      # CLUSTER_TYPE kiest de overlay, maar namespace, sleutel en secrets-map komen uit
+      # task select-cluster. Liepen die uiteen, dan ging het stil mis: op 2 november 2026
+      # schreef een deploy de prod-geheimen in de staging-namespace, en herstartte een
+      # bootstrap voor staging de ArgoCD van productie.
+      - &selected_cluster_guard
+        sh: '[ "$(sed -n "s/^CLUSTER_TYPE=//p" .env-taskfile-current 2>/dev/null)" = "{{.CLUSTER_TYPE}}" ]'
+        msg: "CLUSTER_TYPE={{.CLUSTER_TYPE}} is niet het cluster uit 'task select-cluster' (.env-taskfile-current). Namespace, sleutel en secrets komen uit de selectie: draai eerst 'task select-cluster' en kies {{.CLUSTER_TYPE}}."
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
@@ -930,6 +937,7 @@ tasks:
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
     preconditions:
+      - *selected_cluster_guard
       - &secrets_dir_current_guard
         # Op een verouderde clone maakt de generator een secret dat een ander al maakte
         # opnieuw aan, met een ander wachtwoord; dat zie je pas bij de push.
@@ -1031,6 +1039,7 @@ tasks:
       - task: _check-key-file
         vars: {KEY_FILE: '{{.KEY_FILE}}'}
     preconditions:
+      - *selected_cluster_guard
       - *age_key_file_guard
     cmds:
       - |
