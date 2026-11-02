@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 
 from lord_of_the_components.design_system import discover_design_systems
+from opi.core.static_files import LOTC_VERSIONED_PATH
 from opi.core.templates_lotc import DESIGN_SYSTEMS, resolve_lotc_static, templates_lotc
 from tests.e2e.test_sandbox_lotc import STATIC_ASSETS
 
@@ -68,8 +69,9 @@ def test_de_sandboxlijst_noemt_de_bestanden_die_deze_versie_levert() -> None:
     Hij draait alleen met E2E_BASE_URL gezet en toetst de gebouwde image, dus een
     vergeten regel valt daar nergens op. Deze test hangt hem aan wat het thema NU levert.
     """
-    uit_de_head = _verwijzingen_van_een_pagina()
-    genoemd = {pad.removeprefix("/static/lotc/") for pad in STATIC_ASSETS}
+    # Zonder de leverdirectory: die wisselt per LOTC-versie, de namen erin niet.
+    uit_de_head = {LOTC_VERSIONED_PATH.sub("", pad, count=1) for pad in _verwijzingen_van_een_pagina()}
+    genoemd = set(STATIC_ASSETS)
 
     verdwenen = sorted(genoemd - uit_de_head)
     assert verdwenen == [], (
@@ -90,13 +92,15 @@ def test_de_sandboxlijst_noemt_de_bestanden_die_deze_versie_levert() -> None:
     # element. Hij heeft de bundelherstructurering van 0.8.83 overleefd, en dat hoort
     # gepind te zijn en niet aangenomen.
     assert "nldd/dist/nldd.js" in uit_de_head
-    assert resolve_lotc_static("nldd/dist/nldd.js") is not None
+    nldd_js = next(pad for pad in _verwijzingen_van_een_pagina() if pad.endswith("nldd/dist/nldd.js"))
+    assert resolve_lotc_static(nldd_js) is not None
 
 
-def test_elke_verwijzing_uit_de_head_draagt_een_versie() -> None:
-    """Een kale URL houdt na een LOTC-upgrade zijn naam, en dan draait de browser de oude
-    bundel tegen nieuwe markup. Met ?v= is een gewijzigd bestand een andere URL."""
-    html = templates_lotc.env.from_string('<c-page title="meting"><c-paragraph>x</c-paragraph></c-page>').render()
-    kaal = re.findall(r'(?:href|src)="(/static/lotc/[^"?]+)"', html)
+def test_elke_verwijzing_uit_de_head_staat_in_een_leverdirectory() -> None:
+    """Een vaste URL houdt na een LOTC-upgrade zijn naam, en dan draait de browser de oude
+    bundel tegen nieuwe markup: een wit scherm tot de cache leeg is (2 november 2026). In
+    een leverdirectory is elke nieuwe LOTC-versie een URL die nog nooit is opgevraagd, ook
+    voor wat global.css via @import binnenhaalt."""
+    buiten = sorted(pad for pad in _verwijzingen_van_een_pagina() if not LOTC_VERSIONED_PATH.search(pad))
 
-    assert kaal == []
+    assert buiten == []

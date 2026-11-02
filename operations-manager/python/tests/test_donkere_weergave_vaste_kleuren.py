@@ -51,6 +51,7 @@ from pathlib import Path
 
 import lotc_nldd
 import opi
+from opi.web.nldd_iconen import _dist_map
 
 PYTHON_DIR = Path(opi.__file__).parent.parent
 STATIC_CSS = PYTHON_DIR / "static" / "css"
@@ -75,7 +76,9 @@ _KLEUR = re.compile(
 
 def _themabestanden() -> list[Path]:
     """De stylesheets waarin het NLDD-thema zijn tokens zet."""
-    return sorted((SITE_PACKAGES / "lotc_nldd" / "static" / "lotc" / "nldd" / "dist" / "css").glob("*.css"))
+    dist = _dist_map()
+    assert dist is not None, "de NLDD-bundel is niet gevonden; zonder die lijst toetst deze test niets"
+    return sorted((dist / "css").glob("*.css"))
 
 
 def _onze_bestanden() -> list[Path]:

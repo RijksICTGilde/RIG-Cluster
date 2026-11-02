@@ -53,12 +53,11 @@ from opi.core.errors import (
 )
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks, warm_connector_singletons
-from opi.core.static_files import CacheControlledStaticFiles, cache_control_for
+from opi.core.static_files import CacheControlledStaticFiles, lotc_cache_control
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.body_limit import BodyLimitMiddleware
-from opi.middleware.cache_reset import CacheResetMiddleware
 from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
@@ -813,8 +812,6 @@ def create_app() -> FastAPI:
         keycloak_url=settings.KEYCLOAK_URL,
         prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
     )
-    # Binnen ProxyHeadersMiddleware: het cookie is alleen Secure als het schema https is.
-    app.add_middleware(CacheResetMiddleware)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
     # Buiten ProxyHeadersMiddleware, dus vóór hem uitgevoerd: die overschrijft
     # scope["client"] met een waarde uit X-Forwarded-For, en het peer-adres is daarna niet
@@ -880,7 +877,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Static asset not found")
         # Zonder Cache-Control gokt de browser zelf hoe lang zijn kopie vers is, en na een
         # LOTC-upgrade draaide hij dan dagen de oude nldd.js tegen nieuwe markup.
-        return FileResponse(resolved, headers={"cache-control": cache_control_for(request.scope["query_string"])})
+        cache_control = lotc_cache_control(rel, request.scope["query_string"])
+        return FileResponse(resolved, headers={"cache-control": cache_control})
 
     logger.info("LOTC static files served at /static/lotc/")
 
