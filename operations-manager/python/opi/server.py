@@ -58,6 +58,7 @@ from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.body_limit import BodyLimitMiddleware
+from opi.middleware.cache_reset import CacheResetMiddleware
 from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
@@ -812,6 +813,8 @@ def create_app() -> FastAPI:
         keycloak_url=settings.KEYCLOAK_URL,
         prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
     )
+    # Binnen ProxyHeadersMiddleware: het cookie is alleen Secure als het schema https is.
+    app.add_middleware(CacheResetMiddleware)
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
     # Buiten ProxyHeadersMiddleware, dus vóór hem uitgevoerd: die overschrijft
     # scope["client"] met een waarde uit X-Forwarded-For, en het peer-adres is daarna niet
