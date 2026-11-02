@@ -57,7 +57,7 @@ from opi.utils.naming import (
 from opi.utils.passwords import generate_secure_password
 from opi.utils.redirect_uris import validate_redirect_uris
 from opi.utils.secrets import KeycloakSecret
-from opi.utils.totp import build_otpauth_uri, generate_totp_secret
+from opi.utils.totp import generate_totp_secret
 from opi.utils.url_paths import normalize_logout_path
 from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_path
 
@@ -1939,7 +1939,7 @@ class KeycloakManager:
         keycloak_url: str,
         config: dict[str, Any],
         ingress_hosts: list[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> None:
         """
         Set up project-level Keycloak infrastructure for a cluster using YAML configuration.
 
@@ -1960,12 +1960,6 @@ class KeycloakManager:
             keycloak_url: Base URL of the Keycloak server
             config: Keycloak configuration dict with template and variables
             ingress_hosts: Optional list of ingress hostnames for redirect URIs
-
-        Returns:
-            Dictionary with host, realm, username, password (plain text for immediate use).
-            When the realm and its admin user turn out to exist already and the project
-            file holds that admin's password, nothing is created and the existing entry is
-            returned as-is - the password then has the form the file stores it in.
 
         Raises:
             FileNotFoundError: If template file doesn't exist
@@ -2009,14 +2003,7 @@ class KeycloakManager:
                     f"the project file holds this admin's password - continuing with the existing realm "
                     f"instead of re-creating it"
                 )
-                return {
-                    "host": known_entry.get("host", keycloak_url),
-                    "realm": known_entry.get("realm", realm_name),
-                    "username": admin_username,
-                    # Stored form (AGE-encrypted or 'plain:'-prefixed): on this path the
-                    # plaintext is not ours to know, and we will not reset it to find out.
-                    "password": known_entry["password"],
-                }
+                return
 
             raise RuntimeError(
                 f"Refusing to re-create project Keycloak realm for {project_name}/{cluster}: "
@@ -2181,17 +2168,6 @@ class KeycloakManager:
             enforce_validation=False,
         )
         logger.info(f"Stored and pushed Keycloak config in project file for cluster {cluster}")
-
-        result = {
-            "host": keycloak_url,
-            "realm": realm_name,
-            "username": admin_username,
-            "password": admin_password,  # Return plain password for immediate use
-        }
-        if totp_secret:
-            result["totp_secret"] = totp_secret  # Plain TOTP secret for immediate use
-            result["totp_otpauth_uri"] = build_otpauth_uri(totp_secret, admin_username, realm_name)
-        return result
 
     async def _ensure_admin_otp(
         self,

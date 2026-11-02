@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 #: Platformdatabase -> de rollen die expliciet CONNECT krijgen. Spiegelt
 #: ``infrastructure/bootstrap/infrastructure/postgresql/database/base/databases.yaml``.
-#: De database van OPI zelf komt uit ``settings.DATABASE_NAME`` en staat er niet bij: zijn
-#: eigenaar is de superuser, en die houdt zijn rechten los van een GRANT.
+#: De database van OPI zelf komt uit ``settings.DATABASE_NAME`` en staat hier niet bij,
+#: want haar rol is een instelling; zie ``restrict_platform_databases``.
 PLATFORM_DATABASE_ROLES: dict[str, tuple[str, ...]] = {
     "keycloak": ("keycloak",),
     "forgejo": ("forgejo",),
@@ -49,7 +49,10 @@ async def restrict_platform_databases() -> None:
         settings.DATABASE_ADMIN_NAME,
         settings.DATABASE_ADMIN_PASSWORD,
     )
-    databases = {**PLATFORM_DATABASE_ROLES, settings.DATABASE_NAME: ()}
+    # De app-rol van OPI zelf hoort er expliciet bij: zodra DATABASE_RESTRICT_PUBLIC_CONNECT
+    # op "on" staat neemt deze functie CONNECT van PUBLIC af, en zonder deze regel sluit
+    # OPI zichzelf buiten zijn eigen database (RC-410).
+    databases = {**PLATFORM_DATABASE_ROLES, settings.DATABASE_NAME: (settings.DATABASE_APP_USER,)}
     try:
         for database, roles in databases.items():
             try:

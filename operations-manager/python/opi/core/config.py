@@ -450,6 +450,12 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "operations_manager"
     DATABASE_ADMIN_NAME: str = "postgres"
     DATABASE_ADMIN_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
+    # De rol waarmee OPI zijn EIGEN database opent: eigenaar van operations_manager, en
+    # zonder superuser, CREATEDB of CREATEROLE. De admin-credentials hierboven blijven
+    # voor het beheer van tenant- en platformdatabases. Geen default op het wachtwoord, om
+    # dezelfde reden als bij ARGOCD_*: een vergeten instelling moet een fout zijn.
+    DATABASE_APP_USER: str = "operations_manager"
+    DATABASE_APP_PASSWORD: str | None = None
     # libpq sslmode voor OPI's verbindingen naar databases van het platform. require
     # versleutelt zonder het servercertificaat te toetsen (CNPG's interne CA). Local dev:
     # zet op disable. Zie features/postgresql-tls.md.
@@ -757,6 +763,20 @@ class Settings(BaseSettings):
     # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.
     JOB_ENABLED: bool = True
     JOB_TTL_SECONDS: int = 3600  # Max job lifetime; pod kept until then so logs stay readable
+
+    @property
+    def database_app_password(self) -> str:
+        """Het wachtwoord van de app-rol, of een fout als de instelling leeg is.
+
+        Zonder deze controle valt een vergeten ``DATABASE_APP_PASSWORD`` pas om als een
+        authenticatiefout van asyncpg, en die wijst niet naar de instelling.
+        """
+        if not self.DATABASE_APP_PASSWORD:
+            raise ValueError(
+                "DATABASE_APP_PASSWORD is niet gezet. OPI opent zijn eigen database met de rol "
+                f"'{self.DATABASE_APP_USER}'; het wachtwoord komt uit het secret operations-manager-db-credentials."
+            )
+        return self.DATABASE_APP_PASSWORD
 
     @property
     def is_development_environment(self) -> bool:

@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from opi.api.rate_limiter import API_FLOOD_LIMITER, IPRateLimiter, retry_after_header
+from opi.api.rate_limiter import (
+    API_FLOOD_LIMITER,
+    FLOOD_COUNTED_IN_SCOPE,
+    IPRateLimiter,
+    retry_after_header,
+)
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
@@ -35,6 +40,12 @@ class RateLimitMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not scope.get("path", "").startswith(LIMITED_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        # Een middleware buiten deze heeft het verzoek al afgeteld (de voorcontrole van de
+        # image-push, die vóór de body weegt en dus buiten deze middleware staat).
+        if scope.get(FLOOD_COUNTED_IN_SCOPE):
             await self.app(scope, receive, send)
             return
 

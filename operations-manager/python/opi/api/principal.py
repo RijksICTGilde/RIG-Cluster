@@ -159,17 +159,6 @@ async def recognise_principal(presented: str, project: ProjectSummary) -> Princi
     raise NotRecognised("bewijsmiddel is onbekend of verlopen")
 
 
-def hoort_bij_project(principal: Principal, project: ProjectSummary) -> bool:
-    """Of dit bewijsmiddel bij dit project hoort, zonder al een action te beslissen.
-
-    Voor de voorcontrole van de image-push. :func:`recognise_principal` legt het bewijsmiddel
-    al tegen dit project, dus hier blijft over of het lid er nog staat.
-    """
-    if principal.kind is PrincipalKind.PROJECT_KEY:
-        return principal.project == project.name
-    return lid_met_naam(project, principal.name) is not None
-
-
 def beslis(
     principal: Principal,
     *,

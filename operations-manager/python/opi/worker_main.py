@@ -21,11 +21,12 @@ async def main() -> None:
     from opi.core.database_pool import DatabasePool
     from opi.core.task_worker import TaskWorker
 
-    # Initialize database pool
+    # Initialize database pool. De app-rol, net als de hoofdpool van de frontend: de
+    # worker raakt alleen OPI's eigen tabellen (RC-410).
     pool = DatabasePool(
         host=settings.DATABASE_HOST,
-        user=settings.DATABASE_ADMIN_NAME,
-        password=settings.DATABASE_ADMIN_PASSWORD,
+        user=settings.DATABASE_APP_USER,
+        password=settings.database_app_password,
         database=settings.DATABASE_NAME,
         sslmode=settings.DATABASE_SSLMODE,
     )

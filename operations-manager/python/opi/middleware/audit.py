@@ -58,6 +58,12 @@ def _hoort_in_de_audit(genomen: RecordedDecision) -> bool:
         return True
 
 
+def _rijen_van(request: Request) -> list[RecordedDecision]:
+    """De beslissingen van dit verzoek die een rij krijgen."""
+    genomen: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
+    return [beslissing for beslissing in genomen if _hoort_in_de_audit(beslissing)]
+
+
 class AuditMiddleware:
     """Schrijft na het antwoord een auditrij per beslissing van dit verzoek."""
 
@@ -90,23 +96,33 @@ class AuditMiddleware:
 
     def _schrijf(self, scope: Scope, status: int | None) -> None:
         """Zet de rijen van dit verzoek in de wachtrij, zonder het antwoord op te houden."""
-        request = Request(scope)
-        genomen: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
-        te_schrijven = [beslissing for beslissing in genomen if _hoort_in_de_audit(beslissing)]
-        if not te_schrijven:
-            return
+        zet_rijen_in_de_wachtrij(Request(scope), status)
 
-        taak = asyncio.create_task(
-            _schrijf_rijen(
-                te_schrijven,
-                actor=get_actor(),
-                status_code=status,
-                origin=client_ip(request),
-                spoor=trail(),
-            )
+
+def zet_rijen_in_de_wachtrij(request: Request, status_code: int | None) -> None:
+    """Zet de rijen van dit verzoek in de wachtrij, zonder het antwoord op te houden.
+
+    Ook de weg die deze hook niet bereikt gaat hierdoor: ``opi/middleware/body_limit.py``
+    weigert een image-push op de rol voordat de tarball binnen is, en staat daarmee buiten
+    de router waar deze hook om staat. Elke weigering hoort een rij te krijgen (BIO2
+    8.15.01), maar niet door het verzoek op de INSERT te laten wachten: dan houdt elke
+    weigering een verbinding uit de ORM-pool van de pod bezet.
+    """
+    te_schrijven = _rijen_van(request)
+    if not te_schrijven:
+        return
+
+    taak = asyncio.create_task(
+        _schrijf_rijen(
+            te_schrijven,
+            actor=get_actor(),
+            status_code=status_code,
+            origin=client_ip(request),
+            spoor=trail(),
         )
-        _schrijvers.add(taak)
-        taak.add_done_callback(_schrijvers.discard)
+    )
+    _schrijvers.add(taak)
+    taak.add_done_callback(_schrijvers.discard)
 
 
 async def _schrijf_rijen(

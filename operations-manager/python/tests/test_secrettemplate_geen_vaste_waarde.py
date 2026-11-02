@@ -33,6 +33,7 @@ NIET_GEHEIM: dict[str, str] = {
     "mail-relay-secret.yaml:MAIL_DOMAIN": "het vaste afzenderdomein; moet gelijk zijn op elk cluster",
     "mail-relay-secret.yaml:MAIL_RELAY_ADMIN_USERNAME": "gebruikersnaam van het relay-beheerdersaccount",
     "minio-admin-secret.yaml:MINIO_ROOT_USER": "gebruikersnaam van het rootaccount",
+    "operations-manager-db-secret.yaml:username": "databaserolnaam, geen geheim",
     "pgadmin-secret.yaml:PGADMIN_DEFAULT_EMAIL": "inlognaam van pgAdmin, geen wachtwoord",
     "platform-backup-secret.yaml:username": "databaserolnaam, geen geheim",
     "postgres-admin-secret.yaml:username": "databaserolnaam, geen geheim",

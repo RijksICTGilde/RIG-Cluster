@@ -282,7 +282,7 @@ class TestKeycloakRealmSetup:
             mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call the method
-            result = await self.keycloak_manager._setup_project_keycloak_realm(
+            await self.keycloak_manager._setup_project_keycloak_realm(
                 project_name="test-project",
                 cluster="local",
                 keycloak_url="http://keycloak.local",
@@ -336,7 +336,7 @@ class TestKeycloakRealmSetup:
             mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call the method
-            result = await self.keycloak_manager._setup_project_keycloak_realm(
+            await self.keycloak_manager._setup_project_keycloak_realm(
                 project_name="test-project",
                 cluster="local",
                 keycloak_url="http://keycloak.local",

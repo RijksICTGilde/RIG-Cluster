@@ -1,19 +1,7 @@
 """Een bovengrens op de body van een upload, voordat die helemaal binnen is.
 
-Een bijlage mag 64 KB zijn (``MAX_ATTACHMENT_BYTES``) en de routes lezen af op dat
-plafond, maar de multipart-parser van Starlette heeft de body dan al ontvangen: boven
-een MB spoolt hij naar schijf, en tot die grens staat alles in het geheugen. Deze
-middleware weigert zo'n verzoek op de ontvangen bytes, zodat de pod dat niet draagt.
-
-De grens is per route en niet app-breed: een image-tarball hoort veel hoger te mogen
-(``IMAGE_UPLOAD_MAX_SIZE_MB``) dan een bijlage, en een route zonder upload houdt de
-grens die Starlette zelf aanhoudt.
-
-Voor de image-push doet deze middleware twee dingen meer, en wel hier omdat dit de enige
-plek is die vóór de multipart-parser draait: de projectsleutel wordt gecontroleerd en het
-uploadslot wordt genomen. Een 401 of een 503 uit de route zelf valt pas nadat de parser de
-hele body heeft ontvangen, dus tien pushes van 5 GB zonder geldige sleutel zouden daar nog
-50 GB tempschijf kosten.
+Voor de image-push weegt deze middleware ook de rol voordat FastAPI de body leest,
+zodat een weigering geen tempschijf kost.
 """
 
 from __future__ import annotations
@@ -25,9 +13,16 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from opi.api.endpoint_util import legitimeert
-from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
+from opi.api.endpoint_util import image_push_refusal
+from opi.api.image_router import push_image
+from opi.api.rate_limiter import (
+    FLOOD_COUNTED_IN_SCOPE,
+    refuse_when_flood_limit_reached,
+    refuse_when_key_failures_exhausted,
+)
+from opi.core.audit_trail import begin_trail
 from opi.core.config import settings
+from opi.middleware.audit import zet_rijen_in_de_wachtrij
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.utils.uploads import SLOT_HELD_IN_SCOPE, upload_slot
 
@@ -47,10 +42,6 @@ ATTACHMENT_PATH_SEGMENT = "/attachments"
 IMAGE_PUSH_PATH_SEGMENT = "/images/push"
 
 _METHODS_WITH_BODY = frozenset({"POST", "PUT", "PATCH"})
-
-#: Dezelfde meldingen als ``validate_api_token``, want de controle is dezelfde.
-_GEEN_SLEUTEL = "Authentication required - provide X-API-Key header"
-_FOUTE_SLEUTEL = "Invalid API key"
 
 
 def attachment_body_limit() -> int:
@@ -79,6 +70,11 @@ def body_limit_for(path: str) -> int | None:
     return None
 
 
+async def _geen_body() -> Message:
+    """Een body van nul bytes, voor een verzoek dat nog niet gelezen mag worden."""
+    return {"type": "http.request", "body": b"", "more_body": False}
+
+
 class BodyLimitMiddleware:
     """Weigert een upload met 413 zodra zijn body de grens van zijn route passeert."""
 
@@ -104,12 +100,12 @@ class BodyLimitMiddleware:
         await self._count_while_reading(scope, receive, send, max_bytes)
 
     async def _image_push(self, scope: Scope, receive: Receive, send: Send, max_bytes: int, project_name: str) -> None:
-        """Sleutel en slot vóór de parser, want een tarball van gigabytes kost tempschijf.
+        """Sleutel, rol en slot vóór de parser, want een tarball van gigabytes kost tempschijf.
 
         Het slot blijft tot het antwoord verstuurd is, zodat het aantal tarballs op de
         tempschijf echt begrensd is en niet alleen het aantal dat tegelijk gelezen wordt.
         """
-        weigering = await self._key_refusal(scope, project_name)
+        weigering = await self._push_refusal(scope, project_name)
         if weigering is not None:
             await self._respond(scope, receive, send, *weigering)
             return
@@ -126,26 +122,26 @@ class BodyLimitMiddleware:
                 raise
             await self._respond(scope, receive, send, bezet.status_code, str(bezet.detail), bezet.headers)
 
-    async def _key_refusal(self, scope: Scope, project_name: str) -> tuple[int, str, Mapping[str, str] | None] | None:
-        """Het antwoord dat de sleutelcontrole eist, of ``None`` als het bewijsmiddel klopt.
-
-        Dezelfde twee faaltellers als ``validate_api_token``: deze weg loopt buiten
-        ``RateLimitMiddleware`` om, dus zonder dit zou raden hier ongeremd zijn. Welk
-        bewijsmiddel geldt beslist ``legitimeert``, zodat een token hier even ver komt als
-        de oude projectsleutel en de twee niet uiteen kunnen gaan lopen.
-        """
+    async def _push_refusal(
+        self, scope: Scope, project_name: str
+    ) -> tuple[int, str | dict[str, str], Mapping[str, str] | None] | None:
+        """Controleer de rol en return antwoord als weigering, of ``None`` als toegestaan."""
         presented = _header(scope, b"x-api-key")
-        detail = _FOUTE_SLEUTEL if presented else _GEEN_SLEUTEL
+        # Lege receive: headers en query zijn al op scope, body mag nog niet gelezen worden.
+        request = Request(scope, receive=_geen_body)
+        begin_trail()
         try:
+            refuse_when_flood_limit_reached(request)
+            scope[FLOOD_COUNTED_IN_SCOPE] = True
             refuse_when_key_failures_exhausted(presented)
-            if await legitimeert(presented, project_name):
-                return None
-            # Dezelfde WARNING als validate_api_token, die deze 401 voor is.
-            logger.warning("Authentication failed for image push to %s: %s", project_name, detail)
-            refuse_after_auth_failure(Request(scope), presented)
+            weigering = await image_push_refusal(request, presented, project_name, push_image)
         except HTTPException as geweigerd:
             return geweigerd.status_code, str(geweigerd.detail), geweigerd.headers
-        return 401, detail, None
+        if weigering is None:
+            return None
+        zet_rijen_in_de_wachtrij(request, weigering.status_code)
+        detail = weigering.detail if isinstance(weigering.detail, dict) else str(weigering.detail)
+        return weigering.status_code, detail, weigering.headers
 
     async def _count_while_reading(self, scope: Scope, receive: Receive, send: Send, max_bytes: int) -> None:
         """Chunked transfer kent geen Content-Length, dus daar valt de grens pas tijdens het lezen."""
@@ -196,7 +192,7 @@ class BodyLimitMiddleware:
         receive: Receive,
         send: Send,
         status_code: int,
-        detail: str,
+        detail: str | dict[str, str],
         headers: Mapping[str, str] | None = None,
     ) -> None:
         response = JSONResponse({"detail": detail}, status_code=status_code, headers=headers)

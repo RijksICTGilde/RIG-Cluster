@@ -17,7 +17,7 @@ import asyncpg
 import pytest
 import yaml
 from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, PostgresValidationError
-from opi.core.config import Settings
+from opi.core.config import Settings, settings
 from opi.core.platform_database_access import (
     PLATFORM_BACKUP_ROLE,
     PLATFORM_DATABASE_ROLES,
@@ -334,8 +334,9 @@ async def test_elke_platformdatabase_wordt_afgesloten_met_zijn_eigen_rol() -> No
         ("keycloak", ["keycloak", "platform_backup"]),
         ("forgejo", ["forgejo", "platform_backup"]),
         ("mailrelay", ["mailrelay", "platform_backup"]),
-        # De database van OPI zelf: eigenaar is de superuser, die heeft geen GRANT nodig.
-        ("operations_manager", ["platform_backup"]),
+        # De database van OPI zelf, met de app-rol erbij: die is sinds RC-410 de eigenaar,
+        # en zonder deze GRANT sluit OPI zich buiten zijn eigen database.
+        ("operations_manager", ["operations_manager", "platform_backup"]),
     ]
     connector.close.assert_awaited_once()
 
@@ -372,15 +373,17 @@ async def test_een_fout_op_de_ene_database_slaat_de_andere_niet_over() -> None:
 def test_de_lijst_spiegelt_databases_yaml() -> None:
     """Tegen het echte bestand, niet tegen een tweede kopie van de lijst in deze toets.
 
-    Een database-resource met ``owner: postgres`` (de eigen database van OPI) staat niet in
-    ``PLATFORM_DATABASE_ROLES``: zijn eigenaar is de superuser, die geen GRANT nodig heeft.
+    Een database-resource met ``owner: postgres`` staat niet in de lijst: zo'n eigenaar is
+    de superuser, die zijn rechten los van een GRANT houdt. De eigen database van OPI hoort
+    er sinds RC-410 wel bij; zijn rol komt niet uit ``PLATFORM_DATABASE_ROLES`` maar uit
+    ``DATABASE_APP_USER``, zoals ``restrict_platform_databases`` hem ook samenstelt.
     """
     documenten = [doc for doc in yaml.safe_load_all(_DATABASES_YAML.read_text(encoding="utf-8")) if doc]
     uit_yaml = {
         doc["spec"]["name"]: (doc["spec"]["owner"],) for doc in documenten if doc["spec"]["owner"] != "postgres"
     }
 
-    assert uit_yaml == PLATFORM_DATABASE_ROLES
+    assert uit_yaml == {**PLATFORM_DATABASE_ROLES, settings.DATABASE_NAME: (settings.DATABASE_APP_USER,)}
 
 
 def test_the_backup_role_exists_as_a_managed_role() -> None:
