@@ -40,7 +40,10 @@ Vier aanroepers:
   kloon-API komt daar langs buiten een verwerking om, dus zonder deze aanroep zou die
   database open blijven tot de volgende verwerking.
 * **De platformdatabases**: `opi/core/platform_database_access.py` loopt bij de start van OPI
-  langs `keycloak`, `forgejo`, `mailrelay` en de eigen database van OPI. Dit kan niet
+  langs `keycloak`, `forgejo`, `mailrelay` en de eigen database van OPI. Die laatste krijgt
+  `DATABASE_APP_USER` expliciet in zijn rollenlijst: OPI opent haar sinds RC-410 met een
+  eigen rol en niet meer als superuser (`features/opi-op-een-eigen-databaserol.md`), en
+  zonder die regel zou deze afsluiting OPI buiten zijn eigen database zetten. Dit kan niet
   declaratief: de `Database`-resource van CNPG beschrijft naam, eigenaar, encoding, locale,
   `allowConnections`, `connectionLimit`, schemas en extensies, en geen rechten per rol.
 

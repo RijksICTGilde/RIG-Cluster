@@ -9,9 +9,9 @@ from fastapi import HTTPException
 from opi.api.principal import (
     AccessDenied,
     NotRecognised,
+    Principal,
     PrincipalKind,
     beslis,
-    hoort_bij_project,
     recognise_principal,
     tel_gebruik,
 )
@@ -39,6 +39,11 @@ if TYPE_CHECKING:
 REQUIRES_PROJECT_NAME = "zad_requires_project_name"
 """Markering op een route die met een projectsleutel wordt afgeschermd."""
 
+#: De twee meldingen bij een bewijsmiddel dat niet herkend wordt. Een constante, want de
+#: voorcontrole van de image-push geeft dezelfde 401 als de poort hier.
+_GEEN_SLEUTEL = "Authentication required - provide X-API-Key header"
+_FOUTE_SLEUTEL = "Invalid API key"
+
 
 REQUIRES_METRICS_SCRAPE_TOKEN = "zad_requires_metrics_scrape_token"  # noqa: S105  # markering op een route, geen secret
 """Markering op een route die met PROMETHEUS_METRICS_AUTH_TOKEN wordt afgeschermd."""
@@ -55,7 +60,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
         x_api_key = request.headers.get("X-API-Key")
         if not x_api_key:
             logger.warning(f"Authentication failed for route {func.__name__} - no X-API-Key provided")
-            raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+            raise HTTPException(status_code=401, detail=_GEEN_SLEUTEL)
 
         # ALWAYS require project_name parameter and validate it matches
         project_name_from_url = kwargs.get("project_name")
@@ -76,7 +81,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
             # al iets dat een onbevoegde aanroeper niet hoort te kunnen aflezen.
             logger.warning(f"Authentication failed for route {func.__name__} - unknown project")
             refuse_after_auth_failure(request, x_api_key)
-            raise HTTPException(status_code=401, detail="Invalid API key")
+            raise HTTPException(status_code=401, detail=_FOUTE_SLEUTEL)
 
         await handhaaf(request, x_api_key, wrapper, project, route_kwargs=kwargs)
 
@@ -118,6 +123,36 @@ async def handhaaf(
             handeling hier niet opent.
     """
     logger = logging.getLogger(__name__)
+    principaal = await _weeg(request, presented, endpoint, project, route_kwargs=route_kwargs)
+
+    # De principal op het verzoek, zodat een handler een TWEEDE handeling kan laten
+    # toetsen zonder het bewijsmiddel opnieuw te herkennen (:func:`eis_handeling`).
+    request.state.authz_principal = principaal
+    tel_gebruik(project.name, principaal.kind)
+    if principaal.kind is PrincipalKind.HUMAN:
+        request.state.user = {"email": principaal.name}
+    logger.debug("Toegestaan: %s mag %s op %s", principaal.actor, action_of(endpoint), project.name)
+
+
+async def _weeg(
+    request: Request,
+    presented: str,
+    endpoint: Callable[..., Any],
+    project: ProjectSummary,
+    *,
+    route_kwargs: dict[str, Any] | None = None,
+) -> Principal:
+    """Herken het bewijsmiddel en laat de handeling van ``endpoint`` toe, of weiger.
+
+    Gedeeld met :func:`image_push_refusal`, die vóór de multipart-parser hetzelfde moet
+    wegen als de route erachter: wat de voorcontrole beslist en wat de poort beslist kan
+    zo niet uiteenlopen.
+
+    Raises:
+        HTTPException: 401 als het bewijsmiddel niet herkend wordt, 403 als het deze
+            handeling hier niet opent.
+    """
+    logger = logging.getLogger(__name__)
     project_name = project.name
     gevraagde = action_of(endpoint)
     if gevraagde is None:
@@ -130,7 +165,7 @@ async def handhaaf(
     except NotRecognised as exc:
         logger.warning("Authenticatie mislukt voor project %s: %s", project_name, exc)
         refuse_after_auth_failure(request, presented)
-        raise HTTPException(status_code=401, detail="Invalid API key") from exc
+        raise HTTPException(status_code=401, detail=_FOUTE_SLEUTEL) from exc
 
     # Hier en niet na de beslissing: een WEIGERING hoort de handelende partij te noemen
     # (BIO2 8.15.01), en die is bekend zodra het bewijsmiddel herkend is. Gemeten op de
@@ -165,13 +200,27 @@ async def handhaaf(
         # want dat zijn twee verschillende dingen om op te lossen.
         raise HTTPException(status_code=403, detail={"cause": exc.cause, "message": str(exc)}) from exc
 
-    # De principal op het verzoek, zodat een handler een TWEEDE handeling kan laten
-    # toetsen zonder het bewijsmiddel opnieuw te herkennen (:func:`eis_handeling`).
-    request.state.authz_principal = principaal
-    tel_gebruik(project_name, principaal.kind)
-    if principaal.kind is PrincipalKind.HUMAN:
-        request.state.user = {"email": principaal.name}
-    logger.debug("Toegestaan: %s mag %s op %s", principaal.actor, gevraagde.value, project_name)
+    return principaal
+
+
+async def image_push_refusal(
+    request: Request, presented: str | None, project_name: str, endpoint: Callable[..., Any]
+) -> HTTPException | None:
+    """Controleer of dit bewijsmiddel ``image.push`` mag; return antwoord als weigering."""
+    logger = logging.getLogger(__name__)
+    project = get_project_store().get(project_name)
+    if not presented or project is None:
+        # Verberg of het project bestaat of de sleutel fout is.
+        reden = "onbekend project" if presented else "geen X-API-Key"
+        logger.warning("Authenticatie mislukt voor project %s: %s", project_name, reden)
+        refuse_after_auth_failure(request, presented)
+        return HTTPException(status_code=401, detail=_FOUTE_SLEUTEL if presented else _GEEN_SLEUTEL)
+
+    try:
+        await _weeg(request, presented, endpoint, project)
+    except HTTPException as geweigerd:
+        return geweigerd
+    return None
 
 
 def eis_handeling(request: Request, project_name: str, handeling: Action, *, deployment: str | None = None) -> None:
@@ -283,23 +332,6 @@ def _bron_deployment(kloon: dict[str, Any]) -> str | None:
         return None
     verwijzing = kloon.get("reference")
     return str(verwijzing) if verwijzing else None
-
-
-async def legitimeert(presented: str | None, project_name: str) -> bool:
-    """Of dit bewijsmiddel bij dit project hoort, zonder al een handeling te beslissen.
-
-    Voor de voorcontrole van de image-push, die vóór de multipart-parser moet weten of de
-    aanroeper bekend is; :func:`handhaaf` doet daarachter de echte beslissing. Een token
-    komt hier dus even ver als de oude projectsleutel.
-    """
-    project = get_project_store().get(project_name)
-    if not presented or project is None:
-        return False
-    try:
-        principaal = await recognise_principal(presented, project)
-    except NotRecognised:
-        return False
-    return hoort_bij_project(principaal, project)
 
 
 def parse_ports(ports_str: str) -> list[int]:

@@ -111,6 +111,29 @@ spec:
         passwordSecret:
           name: platform-backup-credentials  # This must exist
 
+      # De rol waarmee OPI zijn EIGEN database opent (RC-410). Eigenaar van de database
+      # operations_manager (zie databases.yaml), zonder superuser, createdb of createrole:
+      # een foute query in OPI's eigen tabellen hoort niet elke tenantdatabase op deze
+      # server te kunnen raken. Het beheer van tenantdatabases houdt het superuser-secret.
+      # Limiet 25, boven de piek die deze rol kan openen. Per OPI-pod: 10, de
+      # asyncpg-hoofdpool (MAIN_POOL_MAX_SIZE 5 in opi/core/database_pools.py) plus de
+      # SQLAlchemy-engine uit opi/core/db.py (ORM_POOL_SIZE 5, ORM_MAX_OVERFLOW 0). De
+      # Deployment rolt uit met maxUnavailable 0 en maxSurge 1, dus tijdens een uitrol
+      # draaien er twee: 20, plus de verbinding die Alembic bij de start opent: 21. Een
+      # losse taakworker (opi/worker_main.py, vandaag niet uitgerold) zou daar 10 bij doen
+      # (eigen pool 5 plus een eigen ORM-engine 5); met 31 past dat niet meer in 25, dus
+      # wie die stap zet verhoogt deze limiet mee.
+      - name: operations_manager
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: true
+        connectionLimit: 25
+        passwordSecret:
+          name: operations-manager-db-credentials  # This must exist
+
   # Enable backups if the cluster provides S3-compatible storage
   # backup:
   #   barmanObjectStore:

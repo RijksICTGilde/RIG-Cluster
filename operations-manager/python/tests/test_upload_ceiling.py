@@ -16,7 +16,13 @@ gigabyte, en OPI heeft weinig marge voordat hij OOMKilled wordt. Wat hier gemete
   een verzoek zonder geldige sleutel en een verzoek op een vol slot laten geen byte body
   binnen (RC-367);
 * die sleutelcontrole loopt langs dezelfde faaltellers als de routes, want deze weg staat
-  buiten ``RateLimitMiddleware`` (RC-368).
+  buiten ``RateLimitMiddleware`` (RC-368);
+* die voorcontrole weegt ook de ROL en niet alleen het bewijsmiddel, dus een token dat
+  ``image.push`` niet opent krijgt zijn 403 voordat de tarball de tempschijf raakt, met
+  dezelfde body en dezelfde auditrij als de route erachter zou geven (RC-410);
+* die voorcontrole telt zelf af in de grove grens per client en legt zijn auditrij als
+  taak weg, want anders is een stortvloed van weigeringen hier ongeremd en wacht elke
+  weigering op een verbinding uit de ORM-pool van de pod (RC-410).
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ import asyncio
 import contextlib
 import io
 import os
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
@@ -33,8 +40,10 @@ import pytest
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
 from opi.api.image_router import image_router
-from opi.api.rate_limiter import AUTH_FAILURE_PER_KEY
+from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
+from opi.core.authz.engine import Cause
 from opi.core.config import settings
+from opi.core.leden import LidSoort
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
 from opi.middleware.body_limit import (
@@ -43,14 +52,16 @@ from opi.middleware.body_limit import (
     body_limit_for,
     image_push_body_limit,
 )
+from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
+from opi.services.project_leden import hash_van
 from opi.utils import uploads
 from opi.utils.uploads import CHUNK_SIZE, read_capped, spill_capped, upload_slot
 from opi.web.router_wizard_attachments import stage_attachment
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     import httpx
@@ -634,11 +645,11 @@ def test_een_push_zonder_sleutel_leest_geen_body(
 ) -> None:
     client, teller = push_stack
 
-    with caplog.at_level("WARNING", logger="opi.middleware.body_limit"):
+    with caplog.at_level("WARNING", logger="opi.api.endpoint_util"):
         response = client.post(PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)})
 
     assert response.status_code == 401
-    assert any("Authentication failed" in r.getMessage() for r in caplog.records)
+    assert any("Authenticatie mislukt" in r.getMessage() for r in caplog.records)
     assert teller.ontvangen == 0, "de body is toch gelezen"
     assert list(tmp_path.iterdir()) == []
 
@@ -649,13 +660,13 @@ def test_een_push_met_een_verkeerde_sleutel_leest_geen_body(
     """Een sleutel die niet bij het project in het pad hoort komt even ver als geen sleutel."""
     client, teller = push_stack
 
-    with caplog.at_level("WARNING", logger="opi.middleware.body_limit"):
+    with caplog.at_level("WARNING", logger="opi.api.endpoint_util"):
         response = client.post(
             PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "de-sleutel-van-een-ander"}
         )
 
     assert response.status_code == 401
-    assert any("Authentication failed" in r.getMessage() for r in caplog.records)
+    assert any("Authenticatie mislukt" in r.getMessage() for r in caplog.records)
     assert not any("de-sleutel-van-een-ander" in r.getMessage() for r in caplog.records)
     assert response.json()["detail"] == "Invalid API key"
     assert teller.ontvangen == 0, "de body is toch gelezen"
@@ -725,3 +736,220 @@ async def test_de_route_neemt_het_slot_niet_een_tweede_keer(slot_van_een: None) 
             pass
 
     await asyncio.wait_for(meting(), timeout=5)
+
+
+# --- de ROL vóór de upload (RC-410) ----------------------------------------
+#
+# Een geldig token met een rol die de push weigert streamde tot IMAGE_UPLOAD_MAX_SIZE_MB
+# naar de tempschijf voordat de 403 van de route viel, en hield zolang een uploadslot
+# bezet. De voorcontrole weegt daarom image.push, met de handeling van de route zelf.
+
+TOKEN_VAN_DE_PIJPLIJN = "zad_pijplijn"
+
+
+def _project_met_rol(*rollen: str) -> SimpleNamespace:
+    """Een project met één service account dat ``TOKEN_VAN_DE_PIJPLIJN`` draagt."""
+    return SimpleNamespace(
+        name="test-project",
+        api_key=None,
+        data={},
+        users=[
+            SimpleNamespace(
+                type=LidSoort.SERVICE_ACCOUNT,
+                name="bouwstraat",
+                principaal="bouwstraat",
+                email=None,
+                roles=list(rollen),
+                tokens=[
+                    SimpleNamespace(
+                        name="pijplijn",
+                        expires=datetime.now(UTC) + timedelta(days=30),
+                        hash=hash_van(TOKEN_VAN_DE_PIJPLIJN),
+                    )
+                ],
+            )
+        ],
+    )
+
+
+@pytest.fixture
+def push_met_rol(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[Callable[[str], tuple[TestClient, _TeltOntvangen]]]:
+    """De image-push achter de middleware, met een token waarvan de ROL instelbaar is."""
+    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "IMAGE_UPLOAD_MAX_SIZE_MB", 10)
+    monkeypatch.setattr(settings, "REGISTRY_URL", "rcr.rijksapps.nl")
+
+    connector = MagicMock()
+    connector.validate_push_target = MagicMock()
+    connector.push_image = AsyncMock(return_value="rcr.rijksapps.nl/rig/zad:test-project_app-v1")
+    monkeypatch.setattr("opi.api.image_router.SkopeoConnector", lambda: connector)
+
+    def bouw(rol: str) -> tuple[TestClient, _TeltOntvangen]:
+        store = MagicMock()
+        store.get.return_value = _project_met_rol(rol)
+        monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)
+        app = FastAPI()
+        app.include_router(image_router)
+        teller = _TeltOntvangen(app)
+        return TestClient(BodyLimitMiddleware(teller)), teller
+
+    return bouw
+
+
+def _push(client: TestClient) -> httpx.Response:
+    return client.post(PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": TOKEN_VAN_DE_PIJPLIJN})
+
+
+def test_een_te_smalle_rol_leest_geen_body(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]], tmp_path: Path
+) -> None:
+    """Een viewer is herkend maar opent image.push niet, en hoort dat vóór de parser."""
+    client, teller = push_met_rol("viewer")
+
+    response = _push(client)
+
+    assert response.status_code == 403
+    # Dezelfde body als handhaaf geeft: de reden als eigen veld naast de tekst.
+    assert response.json()["detail"]["cause"] == Cause.INSUFFICIENT_ROLE.value
+    assert response.json()["detail"]["message"]
+    assert teller.ontvangen == 0, "de body is toch gelezen"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_een_token_met_de_rol_komt_er_wel_door(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]], tmp_path: Path
+) -> None:
+    client, teller = push_met_rol("developer")
+
+    response = _push(client)
+
+    assert response.status_code == 200
+    assert response.json()["image"] == "rcr.rijksapps.nl/rig/zad:test-project_app-v1"
+    assert teller.ontvangen > 0, "de body is niet gelezen"
+    assert list(tmp_path.iterdir()) == [], "de tarball is niet opgeruimd"
+
+
+def test_een_te_smalle_rol_telt_niet_als_mislukte_poging(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]],
+) -> None:
+    """Een te smalle rol is geen raadpoging: de faaltellers blijven voor de 401.
+
+    Zonder dit onderscheid zou een pijplijn met een verkeerde rol zichzelf op 429 zetten,
+    en zou de emmer van de houder leeglopen door een fout in zijn eigen rollen.
+    """
+    client, _ = push_met_rol("viewer")
+
+    uitkomsten = [_push(client).status_code for _ in range(AUTH_FAILURE_PER_KEY.burst + 1)]
+
+    assert uitkomsten == [403] * (AUTH_FAILURE_PER_KEY.burst + 1)
+
+
+def test_de_weigering_op_de_rol_krijgt_een_auditrij(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """De audithook staat binnen de router, dus deze weigering legt zichzelf vast.
+
+    Zonder die rij zou het naar voren halen van de 403 juist de vastlegging ervan kwijt
+    maken, en elke weigering hoort de handelende partij te noemen (BIO2 8.15.01).
+    """
+    rijen = AsyncMock()
+    monkeypatch.setattr("opi.middleware.audit.record_action", rijen)
+    client, _ = push_met_rol("viewer")
+
+    assert _push(client).status_code == 403
+
+    rijen.assert_awaited_once()
+    rij = rijen.await_args.kwargs
+    assert rij["action"] == "image.push"
+    assert rij["allowed"] is False
+    assert rij["cause"] == Cause.INSUFFICIENT_ROLE.value
+    assert rij["status_code"] == 403
+    assert rij["project"] == "test-project"
+    assert rij["actor"].identity == "test-project/bouwstraat"
+    # De velden die @action(audit_fields=...) op deze route noemt, uit dezelfde bron als
+    # de hook ze zou lezen.
+    assert rij["fields"] == {"image_name": "app", "tag": "v1"}
+
+
+def test_een_push_zonder_query_parameters_blijft_een_403(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]], tmp_path: Path
+) -> None:
+    """De voorcontrole leest nooit een formulier, ook niet voor een auditveld.
+
+    ``capture_fields`` valt bij een ontbrekend auditveld terug op het formulier van het
+    verzoek. Hier draait dat vóór de router, op een verzoek dat nog geen byte mag leveren:
+    zonder het lege ontvangkanaal viel deze weigering om in een RuntimeError, en daarmee
+    in een 500 in plaats van de 403 die de rol verdient.
+    """
+    client, teller = push_met_rol("viewer")
+
+    response = client.post(
+        "/api/v1/projects/test-project/images/push",  # geen image_name, geen tag
+        data={"image_name": "app"},  # dus een formulier-content-type
+        headers={"X-API-Key": TOKEN_VAN_DE_PIJPLIJN},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["cause"] == Cause.INSUFFICIENT_ROLE.value
+    assert teller.ontvangen == 0, "de body is toch gelezen"
+    assert list(tmp_path.iterdir()) == []
+
+
+class _ZegtDatHetGeteldIs:
+    """Een buitenste middleware die de vlag zet die ``BodyLimitMiddleware`` ook zet."""
+
+    def __init__(self, app: object) -> None:
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: object, send: object) -> None:
+        scope[FLOOD_COUNTED_IN_SCOPE] = True
+        await self.app(scope, receive, send)  # type: ignore[operator]
+
+
+def test_de_voorcontrole_valt_ook_onder_de_grove_grens(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]],
+) -> None:
+    """De weigering op de rol komt nooit bij ``RateLimitMiddleware``, dus telt hier zelf af.
+
+    Zonder dit is een stortvloed van 403's op dit pad ongeremd, terwijl elk ander
+    ``/api/``-pad op de grove grens strandt. Elke weigering kost een auditrij.
+    """
+    client, _ = push_met_rol("viewer")
+    assert _push(client).status_code == 403
+
+    client_id = next(iter(API_FLOOD_LIMITER._tokens))
+    API_FLOOD_LIMITER._tokens[client_id] = 0.0
+
+    response = _push(client)
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Too many requests"
+    assert response.headers["Retry-After"]
+
+
+def test_een_toegestane_push_kost_een_token(
+    push_met_rol: Callable[[str], tuple[TestClient, _TeltOntvangen]],
+) -> None:
+    """Eenmaal tellen: de voorcontrole telt af en de middleware erbinnen niet opnieuw."""
+    client, _ = push_met_rol("developer")
+
+    assert _push(client).status_code == 200
+
+    (tokens,) = API_FLOOD_LIMITER._tokens.values()
+    assert tokens == pytest.approx(API_FLOOD_LIMITER.burst - 1, abs=0.01)
+
+
+def test_de_vlag_houdt_de_tweede_telling_tegen() -> None:
+    """``RateLimitMiddleware`` laat een verzoek door dat de buitenste al heeft geteld."""
+    app = FastAPI()
+
+    @app.post("/api/v1/iets")
+    async def _iets() -> dict[str, bool]:
+        return {"ok": True}
+
+    with TestClient(_ZegtDatHetGeteldIs(RateLimitMiddleware(app))) as client:
+        assert client.post("/api/v1/iets").status_code == 200
+
+    assert API_FLOOD_LIMITER._tokens == {}, "er is toch een tweede keer geteld"

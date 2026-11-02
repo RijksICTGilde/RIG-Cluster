@@ -21,7 +21,6 @@ from opi.api.principal import (
     NotRecognised,
     PrincipalKind,
     beslis,
-    hoort_bij_project,
     recognise_principal,
     reset_gebruik,
     tel_gebruik,
@@ -237,18 +236,6 @@ async def test_de_oude_sleutel_mag_geen_tokens_beheren() -> None:
     beslissing = beslis(principal, project=project, handeling=Action.TOKEN_MANAGE, step_up_fresh=False)
     assert beslissing.allowed is False
     assert beslissing.cause is Cause.PRINCIPAL_KIND_NOT_ALLOWED
-
-
-# --- voorcontrole van de image-push ----------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_hoort_bij_project_valt_op_een_verdwenen_lid(project: ProjectSummary) -> None:
-    principal = await recognise_principal(TOKEN_BOUWSTRAAT, project)
-    assert hoort_bij_project(principal, project)
-
-    project.users = [lid for lid in project.users or [] if lid.name != "bouwstraat"]
-    assert not hoort_bij_project(principal, project)
 
 
 # --- meting ----------------------------------------------------------------

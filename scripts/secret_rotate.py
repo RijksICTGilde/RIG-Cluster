@@ -307,6 +307,16 @@ COMPONENTS: list[Component] = [
         workloads=("statefulset/forgejo",),
     ),
     Component(
+        key="operations-manager-db",
+        title="Databaserol operations_manager (CNPG managed role, OPI's eigen database)",
+        template="operations-manager-db-secret.yaml",
+        category="cnpg-secret",
+        rotate_fields=("password",),
+        database="operations_manager",
+        db_user_fallback="operations_manager",
+        workloads=(OPI_DEPLOYMENT,),  # OPI leest het wachtwoord als env, dus een herstart hoort erbij
+    ),
+    Component(
         key="platform-backup",
         title="Databaserol platform_backup (CNPG managed role, nachtelijke platformback-up)",
         template="platform-backup-secret.yaml",

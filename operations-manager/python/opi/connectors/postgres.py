@@ -11,7 +11,7 @@ import contextlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import asyncpg
 
@@ -934,6 +934,119 @@ class PostgresConnector:
         except Exception as e:
             logger.exception(f"Failed to restrict database {database} on {self._host}")
             raise PostgresExecutionError(f"Database restriction failed: {e}") from e
+
+    #: De catalogusvragen van :meth:`transfer_public_objects`, per objectsoort. Elke vraag
+    #: bouwt zijn eigen ALTER-statement met ``quote_ident`` en de ``reg*``-casts van
+    #: PostgreSQL zelf: die namen komen uit de catalogus en zijn daar al correct genoteerd,
+    #: inclusief overload-signaturen die een identifier niet kan dragen.
+    #:
+    #: $1 is de nieuwe eigenaar, $2 de huidige. Een object dat al van de nieuwe eigenaar is
+    #: levert geen statement, dus een tweede ronde doet niets.
+    _OWNER_TRANSFER_QUERIES: ClassVar[dict[str, str]] = {
+        "database": """
+            SELECT 'ALTER DATABASE ' || quote_ident(d.datname) || ' OWNER TO ' || quote_ident($1)
+            FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba
+            WHERE d.datname = current_database() AND o.rolname = $2
+        """,
+        "schema": """
+            SELECT 'ALTER SCHEMA ' || quote_ident(n.nspname) || ' OWNER TO ' || quote_ident($1)
+            FROM pg_namespace n JOIN pg_roles o ON o.oid = n.nspowner
+            WHERE n.nspname = 'public' AND o.rolname = $2
+        """,
+        # Tabellen eerst, en zonder de sequences en indexen die aan een tabelkolom hangen:
+        # PostgreSQL weigert de eigenaar van zo'n sequence los te zetten, en laat hem bij
+        # de tabel mee verhuizen.
+        "relation": """
+            SELECT CASE c.relkind
+                       WHEN 'v' THEN 'ALTER VIEW '
+                       WHEN 'm' THEN 'ALTER MATERIALIZED VIEW '
+                       WHEN 'S' THEN 'ALTER SEQUENCE '
+                       ELSE 'ALTER TABLE '
+                   END || c.oid::regclass::text || ' OWNER TO ' || quote_ident($1)
+            FROM pg_class c JOIN pg_roles o ON o.oid = c.relowner
+            WHERE c.relnamespace = 'public'::regnamespace
+              AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+              AND o.rolname = $2
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
+              )
+            ORDER BY c.relkind
+        """,
+        # Alleen zelfstandige types: het compositetype van een tabel en het arraytype van
+        # een element volgen hun eigenaar automatisch.
+        "type": """
+            SELECT 'ALTER TYPE ' || t.oid::regtype::text || ' OWNER TO ' || quote_ident($1)
+            FROM pg_type t JOIN pg_roles o ON o.oid = t.typowner
+            WHERE t.typnamespace = 'public'::regnamespace
+              AND t.typrelid = 0
+              AND NOT EXISTS (SELECT 1 FROM pg_type e WHERE e.typarray = t.oid)
+              AND o.rolname = $2
+        """,
+        "routine": """
+            SELECT CASE p.prokind
+                       WHEN 'p' THEN 'ALTER PROCEDURE '
+                       WHEN 'a' THEN 'ALTER AGGREGATE '
+                       ELSE 'ALTER FUNCTION '
+                   END || p.oid::regprocedure::text || ' OWNER TO ' || quote_ident($1)
+            FROM pg_proc p JOIN pg_roles o ON o.oid = p.proowner
+            WHERE p.pronamespace = 'public'::regnamespace AND o.rolname = $2
+        """,
+    }
+
+    async def transfer_public_objects(self, database: str, new_owner: str, current_owner: str) -> dict[str, int]:
+        """Geef ``database`` en alles in zijn schema ``public`` aan ``new_owner``.
+
+        Voor OPI's eigen database: de migraties draaien als de app-rol en moeten dus elke
+        bestaande tabel bezitten, ook ``alembic_version`` (RC-410). Idempotent, en bedoeld
+        om bij elke start te draaien: alleen wat nog van ``current_owner`` is verhuist.
+
+        Geen ``REASSIGN OWNED BY``: dat raakt ook objecten buiten deze database, en op een
+        superuser is het ongeldig.
+
+        Args:
+            database: De database waarvan de objecten verhuizen
+            new_owner: De rol die eigenaar wordt
+            current_owner: Alleen objecten van deze rol verhuizen
+
+        Returns:
+            Het aantal verhuisde objecten per soort
+
+        Raises:
+            PostgresExecutionError: Als een ALTER faalt
+            PostgresValidationError: Als een naam ongeldig is
+        """
+        try:
+            validated_database = self._validate_identifier(database, "database")
+            validated_new_owner = self._validate_identifier(new_owner, "new owner")
+            validated_current_owner = self._validate_identifier(current_owner, "current owner")
+
+            conn = await self._get_or_create_connection(validated_database)
+            verhuisd: dict[str, int] = {}
+            for soort, vraag in self._OWNER_TRANSFER_QUERIES.items():
+                statements = [row[0] for row in await conn.fetch(vraag, validated_new_owner, validated_current_owner)]
+                for statement in statements:
+                    await conn.execute(statement)
+                verhuisd[soort] = len(statements)
+
+            if any(verhuisd.values()):
+                logger.info(
+                    f"Eigendom in {validated_database} verplaatst van {validated_current_owner} "
+                    f"naar {validated_new_owner}: {verhuisd}"
+                )
+            else:
+                logger.info(
+                    f"Eigendom in {validated_database} staat al goed; niets van "
+                    f"{validated_current_owner} te verplaatsen"
+                )
+            return verhuisd
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for owner transfer")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to transfer ownership in {database} on {self._host}")
+            raise PostgresExecutionError(f"Owner transfer failed: {e}") from e
 
     async def execute_init_sql(self, database_name: str, sql_statements: list[str]) -> dict[str, Any]:
         """Execute initialization SQL statements on a specific database.

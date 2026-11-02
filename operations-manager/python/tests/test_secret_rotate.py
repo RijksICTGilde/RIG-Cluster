@@ -86,6 +86,8 @@ def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
     met_zad = {c.key for c in rotate.COMPONENTS if rotate.OPI_DEPLOYMENT in c.workloads}
     assert met_zad == {
         "postgresql",
+        # OPI leest het wachtwoord van zijn eigen databaserol als env (RC-410).
+        "operations-manager-db",
         "redis",
         "mail-relay",
         "minio",
@@ -581,6 +583,7 @@ GEWONE_CLUSTERCOMPONENTEN = {
     "prometheus",
     "pgadmin",
     "platform-backup",
+    "operations-manager-db",
     "chisel",
 }
 

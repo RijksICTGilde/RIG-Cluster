@@ -27,6 +27,8 @@ PLATFORM_SECRET_NAMES: frozenset[str] = frozenset(
         "BACKUP_S3_SECRET_KEY",
         "BACKUP_SWEEP_DRY_RUN",
         "DATABASE_ADMIN_PASSWORD",
+        "DATABASE_APP_PASSWORD",
+        "DATABASE_APP_USER",
         "DEBUG_MODE",
         "GRAFANA_TOKEN",
         "GRAFANA_URL",

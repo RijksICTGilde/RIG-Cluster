@@ -426,3 +426,24 @@ def refuse_after_auth_failure(request: Request, presented: str | None) -> None:
     AUTH_FAILURE_PER_KEY.is_allowed(fingerprint_for_log(presented or ""))
     if not AUTH_FAILURE_PER_CLIENT.is_allowed(client):
         _refuse_as_exhausted(AUTH_FAILURE_PER_CLIENT, client, presented)
+
+
+#: Scope-sleutel: de grove grens heeft dit verzoek al afgeteld. ``RateLimitMiddleware``
+#: telt het dan niet opnieuw, want tweemaal tellen halveert de grens van een pijplijn.
+FLOOD_COUNTED_IN_SCOPE = "opi.flood_limit_counted"
+
+
+def refuse_when_flood_limit_reached(request: Request) -> None:
+    """Telt het verzoek af in de grove grens en weigert met 429 als zijn emmer leeg is.
+
+    Voor een weg die buiten ``RateLimitMiddleware`` om loopt: de voorcontrole van de
+    image-push weigert vóór de body en staat dus buiten die middleware. Wie dit aanroept
+    zet ``FLOOD_COUNTED_IN_SCOPE``, zodat het verzoek niet tweemaal wordt geteld.
+    """
+    client_id = IPRateLimiter.get_client_identifier(request)
+    if not API_FLOOD_LIMITER.is_allowed(client_id):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests",
+            headers=retry_after_header(API_FLOOD_LIMITER, client_id),
+        )

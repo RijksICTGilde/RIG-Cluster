@@ -81,7 +81,7 @@ De sandbox-ingress zet `proxy-body-size: "0"` en de OpenShift-router kent geen
 body-size-annotatie, dus de ingress vangt dit niet af. Deze middleware is de vangrail die
 er niet van afhangt.
 
-### De image-push: sleutel en slot vóór de parser
+### De image-push: sleutel, rol en slot vóór de parser
 
 FastAPI parseert de multipart-body voordat de handler draait, dus een 401 uit
 `validate_api_token` en een 503 uit het slot vallen pas nadat de hele body ontvangen is.
@@ -91,15 +91,22 @@ vraagt zonder verdere maatregel geen geldige sleutel. Een volle schijf van OPI i
 storing voor alle projecten.
 
 `BodyLimitMiddleware` is de enige plek die vóór de parser en vóór de autorisatie draait,
-en doet daarom voor een pad dat eindigt op `/images/push` twee dingen meer:
+en doet daarom voor een pad dat eindigt op `/images/push` drie dingen meer:
 
 1. **De projectsleutel.** De `X-API-Key` moet de sleutel zijn van het project in het pad.
    Zonder header of met de sleutel van een ander project volgt een 401 voordat er een byte
-   body gelezen is. De vergelijking is `authenticate_project_api_key`
-   (`opi/api/endpoint_util.py`), dezelfde functie die `validate_api_token` gebruikt, dus er
-   is geen tweede vergelijking die uiteen kan lopen. De decorator op de route blijft staan:
-   die zet de actor en normaliseert de projectnaam.
-2. **Het uploadslot.** Een plek in `upload_slot()`, ook vóór de parser, en vrijgegeven als
+   body gelezen is. Het bewijsmiddel gaat door `recognise_principal`
+   (`opi/api/principal.py`), dezelfde functie die de poort op de route gebruikt, dus er is
+   geen tweede vergelijking die uiteen kan lopen.
+2. **De rol** (`image.push`). Een token dat `image.push` niet mag krijgt zijn 403 ook
+   vóór de parser, zodat de voorcontrole en de route daarna niet uiteen kunnen lopen. Dit
+   is hetzelfde beslissingsresultaat als wat de route zou geven, met dezelfde auditvelden.
+   Een 401 telt als mislukte poging in de rate limiter; een 403 niet (want het is geen
+   raadpoging). De grove grens per client geldt hier wel, en telt eenmalig: het verzoek
+   bereikt `RateLimitMiddleware` niet, dus de voorcontrole telt zelf af en zet een vlag in
+   de scope. Een stortvloed op dit pad strandt dus op 429, net als op elk ander `/api/`-pad.
+   De decorator op de route blijft staan: die zet de actor en normaliseert de projectnaam.
+3. **Het uploadslot.** Een plek in `upload_slot()`, ook vóór de parser, en vrijgegeven als
    het antwoord verstuurd is. Is het slot vol en de wachtrij ook, dan volgt de 503 met
    `Retry-After` zonder dat er een body binnenkomt.
 

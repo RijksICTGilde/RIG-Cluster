@@ -10,7 +10,7 @@ Alles loopt één ingang: `scripts/edit-secret.py` (module `scripts/secret_rotat
 
 ## 0. Begrippen
 
-- **Categorie**: hoe het component zijn wachtwoord krijgt. Dat bepaalt de volgorde, niet andersom: `cnpg-secret` (postgres superuser en de managed roles keycloak-db / mail-db / forgejo-db / platform-backup: het bestand gaat eerst, de CNPG-operator past de rol dan zelf aan), `live-app` (redis / mail-relay / keycloak-mail / keycloak-admin: de app krijgt hem als eerste, het bestand volgt), `env-restart` (minio / prometheus / pgadmin / chisel / secret-key: lezen alleen bij start), `external` (transip / grafana / platform-repo-pat / keycloak-master-oidc / registry / argocd-webhook-github: wijziging loopt buiten het cluster).
+- **Categorie**: hoe het component zijn wachtwoord krijgt. Dat bepaalt de volgorde, niet andersom: `cnpg-secret` (postgres superuser en de managed roles keycloak-db / mail-db / forgejo-db / platform-backup / operations-manager-db: het bestand gaat eerst, de CNPG-operator past de rol dan zelf aan), `live-app` (redis / mail-relay / keycloak-mail / keycloak-admin: de app krijgt hem als eerste, het bestand volgt), `env-restart` (minio / prometheus / pgadmin / chisel / secret-key: lezen alleen bij start), `external` (transip / grafana / platform-repo-pat / keycloak-master-oidc / registry / argocd-webhook-github: wijziging loopt buiten het cluster).
 - **Gates**: drie metingen die de ronde dragen — de Argo-sync die als `Succeeded` terugkomt, het cluster-secret dat de nieuwe waarde draagt (poll met timeout), en bij cnpg de operator-reconcile (oude login faalt, nieuwe werkt). Pas daarna herstart een consumer.
 - **Dekkingspoort**: de tool meet vóór elke ronde en in CI dat elk geheim een rotatieweg heeft. Dat geldt voor de templates onder `infrastructure/bootstrap/infrastructure/secrets/templates/` en voor het envsecret van ZAD (`bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/operations-manager-env-secrets.yaml`): elke sleutel daarin is een rotatierij, staat in `ZAD_ENV_CONFIG` (configuratie, geen geheim) of in `ZAD_ENV_NON_ROTATABLE` (een benoemde reden). Een naam die alleen nog in die twee lijsten staat is ook een gat, zodat ze niet stil verouderen. De poort meet de envsecrets die in git staan: het bestand in de sandbox-overlay schrijft `task sandbox:generate-env-secrets` lokaal uit een eigen `.env`, en die inhoud verschilt per machine.
 - **Keyring**: de AGE-sleutels komen uit `SOPS_AGE_KEY[_FILE]`, dan `~/.config/sops/age/keys.txt`, dan `security/*.txt` in deze repo. Het bestand is altijd leidend via zijn recipients; de uitvoer noemt welke bron leverde.
@@ -90,6 +90,8 @@ Keycloak-verbindingen, maar kunnen nieuwe logins even tegen de net aangepaste ro
 ## 4. Verwachte onderbrekingen
 
 - postgresql / mail-db / forgejo-db: geen downtime van de database; consumer-restarts zijn kort.
+- operations-manager-db: de database blijft up; OPI zelf herstart, want hij leest het
+  wachtwoord als env (`features/opi-op-een-eigen-databaserol.md`).
 - platform-backup: geen downtime en geen herstart; de nachtelijke CronJob leest het secret bij zijn volgende run. KOPIA_PASSWORD in dezelfde template roteert niet mee.
 - keycloak-db: de database zelf blijft up; Keycloak herstart (login-onderbreking van seconden tot een halve minuut).
 - minio/prometheus/pgadmin: de pod herstart kort. Bij prometheus herstart ook Keycloak, die

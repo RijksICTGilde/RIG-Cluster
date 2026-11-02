@@ -151,6 +151,19 @@ spec:
             secretKeyRef:
               name: postgres-admin-credentials
               key: password
+        # De rol waarmee OPI zijn EIGEN database opent (RC-410). Bewust NIET optional:
+        # zonder dit secret start de pod niet, en dat is beter dan stil terugvallen op de
+        # superuser. Infra (de managed role en het secret) gaat dus vóór de OPI-release.
+        - name: DATABASE_APP_USER
+          valueFrom:
+            secretKeyRef:
+              name: operations-manager-db-credentials
+              key: username
+        - name: DATABASE_APP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: operations-manager-db-credentials
+              key: password
         - name: MINIO_ADMIN_ACCESS_KEY
           valueFrom:
             secretKeyRef:
