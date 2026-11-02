@@ -36,7 +36,7 @@ class RedisService(Service):
     service_type = ServiceType.REDIS
     definition = ServiceDefinition(
         name="Redis Cache",
-        description="Shared Redis cache en message broker voor caching en Celery task queues",
+        description="Gedeelde Redis voor caching, en als message broker voor Celery-task queues",
         help_template="redis/help.md",
         icon="zandloper",
         color="rood",

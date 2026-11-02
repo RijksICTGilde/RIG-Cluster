@@ -55,7 +55,7 @@
   diensten" is precies het soort belofte dat een jaar later niet meer klopt zonder dat
   iemand het merkt.
 #}
-{% macro wat_het_is(aantal_zelf, aantal_achtergrond) %}
+{% macro wat_het_is() %}
 <c-paragraph>
     ZAD is een deploymentplatform op overheidsclouds. Het is zelfservice met extra service:
     je beschrijft je project via click-ops of cli, en alles wordt voor je klaargezet. Behalve je applicatie,
@@ -67,16 +67,6 @@
     database, een cache, opslag en een inlogvoorziening. Het verschil tussen die twee is
     welke diensten je aanzet, niet welk platform je nodig hebt.
 </c-paragraph>
-
-{# <c-auto-grid> en GEEN <c-cluster>, en dat is gemeten. Een c-metric is een <a> met een
-   kaart erin; in een cluster kreeg hij breedte 0 - hij was 155 pixels hoog, stond in de
-   HTML compleet, en was op het scherm een lege strook onder de tekst. Zelfde soort val als
-   <c-stack> in een tabelcel. Beide bestaande plekken (bg/dashboard.html.j2 en
-   bg/project-context.html.j2) gebruiken dit raster met dezelfde minimumbreedte. #}
-<c-auto-grid min="200px" gap="md">
-    <c-metric icon="cylinder-split" value="{{ aantal_zelf }}" label="Diensten om te kiezen" />
-    <c-metric icon="gear" value="{{ aantal_achtergrond }}" label="Draaien altijd mee" />
-</c-auto-grid>
 {% endmacro %}
 
 
@@ -227,7 +217,8 @@
 {% macro aan_de_slag() %}
 <c-paragraph>
     Inloggen gaat met je organisatieaccount. Heb je nog geen toegang tot een project, dan
-    kan iemand uit dat project je een uitnodiging sturen.
+    kan iemand uit dat project je een uitnodiging sturen, of neem contact op met
+    <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" label="robbert.uittenbroek@rijksoverheid.nl" />
 </c-paragraph>
 <c-action-group align="start">
     <c-button type="primary" label="Inloggen" icon="chevron-right" show-icon="after" href="/auth/login" />

@@ -53,37 +53,37 @@
 {% block content %}
     {{ kop() }}
 
-    {% call panel("Wat ZAD is", "info") %}
-        {{ wat_het_is(diensten_zelf | length, diensten_achtergrond | length) }}
+    {% call panel("Wat ZAD is", "info", card=false) %}
+        {{ wat_het_is() }}
     {% endcall %}
 
-    {% call panel("Waarom dit platform?", "question-mark-circle") %}
+    {% call panel("Waarom dit platform?", "question-mark-circle", card=false) %}
         {{ waarom() }}
     {% endcall %}
 
-    {% call panel("De puzzel is al gelegd", "puzzle-piece") %}
+    {% call panel("De puzzel is al gelegd", "puzzle-piece", card=false) %}
         {{ de_puzzel() }}
     {% endcall %}
 
     {% call panel("Diensten die je zelf aanzet", "rectangle-stack",
-                  info_text="Dit is de volledige lijst zoals het platform hem kent. Elke dienst brengt zijn eigen omgevingsvariabelen mee, die je component automatisch krijgt.") %}
+                  info_text="Dit is de volledige lijst zoals het platform hem kent. Elke dienst brengt zijn eigen omgevingsvariabelen mee, die je component automatisch krijgt.", card=false) %}
         {{ dienstenraster(diensten_zelf) }}
     {% endcall %}
 
     {% call panel("Wat er op de achtergrond gebeurt", "eye",
-                  info_text="Deze diensten kies je niet: ze draaien altijd, voor elk project.") %}
+                  info_text="Deze diensten kies je niet: ze draaien altijd, voor elk project.", card=false) %}
         {{ op_de_achtergrond(diensten_achtergrond) }}
     {% endcall %}
 
-    {% call panel("En op de voorgrond: zien wat er gebeurt", "chart-x-y-axis-line") %}
+    {% call panel("En op de voorgrond: zien wat er gebeurt", "chart-x-y-axis-line", card=false) %}
         {{ op_de_voorgrond() }}
     {% endcall %}
 
-    {% call panel("Ook zonder deze interface", "terminal") %}
+    {% call panel("Ook zonder deze interface", "terminal", card=false) %}
         {{ gereedschap() }}
     {% endcall %}
 
-    {% call panel("Aan de slag", "arrow-right") %}
+    {% call panel("Aan de slag", "arrow-right", card=false) %}
         {{ aan_de_slag() }}
     {% endcall %}
 
