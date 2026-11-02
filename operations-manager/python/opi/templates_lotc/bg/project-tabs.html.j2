@@ -95,23 +95,10 @@
         <c-breadcrumbs-item label="{{ tabs[active_tab].label }}" />
     </c-breadcrumbs>
 
-    {# De kop met de bewerkknop ERNAAST, zoals project-details/section-header.html.j2 hem
-       heeft. page_head() kan dat niet en dat is hier geen bezwaar: dit is de enige plek
-       met een knop in de kop.
-
-       Deze knop was bij het omzetten verdwenen, en daarmee de ENIGE weg naar
-       modal-edit-identity: nergens anders op de pagina staat een verwijzing naar die
-       dialoog. Naam en omschrijving van een project waren dus niet meer te wijzigen.
-       Rol, functienaam en titel zijn letterlijk die van het origineel. #}
+    {# De knop naar modal-edit-identity stond hier naast de naam en staat nu in Acties
+       op Overzicht. #}
     <c-stack gap="xs">
-        <c-cluster gap="sm" align="center">
-            <c-heading type="h1" size="3" label="{{ project.display_name }}" />
-            {% if can('project.edit') %}
-                {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
-                <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"
-                          @click="{{ identiteit_bewerken }}" />
-            {% endif %}
-        </c-cluster>
+        <c-heading type="h1" size="3" label="{{ project.display_name }}" />
         {% if project.description %}
             <c-paragraph>{{ project.description }}</c-paragraph>
         {% endif %}
@@ -161,6 +148,10 @@
         {% if can('project.edit') %}
             {% call panel("Acties", "gear") %}
                 <c-action-group align="start">
+                    {# De ENIGE weg naar modal-edit-identity: zonder deze knop zijn naam en
+                       omschrijving van een project niet te wijzigen. #}
+                    {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
+                    <c-button type="secondary" size="sm" label="Projectgegevens bewerken" icon="pencil-on-square" show-icon="before" @click="{{ identiteit_bewerken }}" />
                     <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
                     {# Uit de Gevarenzone hierheen: herverwerken is een gewone handeling en
                        geen onomkeerbare. De aanroep wordt boven de tag opgebouwd omdat een

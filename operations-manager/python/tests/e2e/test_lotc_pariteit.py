@@ -470,28 +470,24 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
     assert aanroep == ["modal-restore", "Backup herstellen", {"deployment": "default"}], aanroep
 
 
-def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
-    """De knop "Bewerken" naast de projectnaam is de ENIGE weg naar modal-edit-identity.
+def test_acties_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
+    """De knop "Projectgegevens bewerken" in Acties is de ENIGE weg naar modal-edit-identity.
 
     Bij het omzetten was hij verdwenen, en daarmee de mogelijkheid om naam en
     omschrijving van een project te wijzigen. Niets sloeg daarop aan: de pagina rendert,
     de dialoog bestaat nog in de HTML, alleen roept niemand hem meer aan.
 
-    Daarom wordt hier geklikt en wordt AFGELEZEN waarmee openEditModal() geroepen wordt -
-    naam en titel moeten die van de kopregel van de projectpagina zijn. Toetsen dat
-    er "een knop Bewerken" staat zou niets bewijzen: op deze pagina staan er vijf.
+    Daarom wordt hier geklikt en wordt AFGELEZEN waarmee openEditModal() geroepen wordt.
     """
     auth_page.goto(f"{app_server}/projects/{PROJECT}/details")
     auth_page.wait_for_load_state("networkidle")
 
-    kop = auth_page.locator("nldd-title:has-text('Detail Test Project')").first
-    kop.wait_for(state="attached", timeout=10000)
+    knop = auth_page.locator("nldd-button[text='Projectgegevens bewerken']")
+    knop.wait_for(state="attached", timeout=10000)
 
     auth_page.evaluate("() => { window.__aanroep = null; window.openEditModal = (...a) => { window.__aanroep = a; }; }")
-    # De knop in de KOP, niet een van de vier in de secties eronder: de eerste
-    # nldd-button die op de projectnaam volgt.
     auth_page.eval_on_selector(
-        "nldd-button[text='Bewerken']",
+        "nldd-button[text='Projectgegevens bewerken']",
         "el => el.click()",
     )
 

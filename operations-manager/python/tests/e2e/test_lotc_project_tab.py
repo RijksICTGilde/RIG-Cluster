@@ -168,9 +168,8 @@ def test_geen_enkele_aanroep_van_het_projecttabblad_is_verdwenen(app_server: str
         # De actie bovenaan het tabblad; het cijfer is het aantal deployments, want de
         # wizard opent daarmee een NIEUWE regel achter de bestaande.
         ("Deployment toevoegen", f"/projects/{PROJECT}/modal-wizard/modal-add-deployment-2", "project"),
-        # In de KOP van het tabblad, niet die in de projectkop: sinds de knop
-        # "Projectgegevens bewerken" daar terugstaat zijn er twee met dit opschrift, en
-        # .first pakte de verkeerde. Vandaar de afbakening hieronder.
+        # In de KOP van het tabblad. Toen de projectkop ook een knop "Bewerken" had,
+        # pakte .first de verkeerde; vandaar de afbakening hieronder.
         # Op het tabblad TEAM en niet meer op Overzicht: a16338ee heeft het teamblok met
         # zijn knop naar een eigen tabblad verplaatst.
         ("Bewerken", f"/projects/{PROJECT}/modal-wizard/modal-edit-team", "team"),
