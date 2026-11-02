@@ -53,11 +53,11 @@ dependencies = [
     # Gepind op een commit. Die pin is de reden dat dit veilig is: de NLDD-afgeleide
     # componentlaag schuift met een bump mee, en meer dan duizend aanroepen mogen niet
     # stil van vorm veranderen.
-    "lord-of-the-components @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=python",
-    "lotc-rvo @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-rvo",
-    "lotc-nldd @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-nldd",
-    "lotc-layout @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-layout",
-    "lotc-forms @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-forms",
+    "lord-of-the-components @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@4c58652e8e737c7aecaa02f40608bff861f7df39#subdirectory=python",
+    "lotc-rvo @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@4c58652e8e737c7aecaa02f40608bff861f7df39#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@4c58652e8e737c7aecaa02f40608bff861f7df39#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@4c58652e8e737c7aecaa02f40608bff861f7df39#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@4c58652e8e737c7aecaa02f40608bff861f7df39#subdirectory=packages/lotc-forms",
     "beautifulsoup4>=4.13.4",
     "lxml>=6.0.1",
     "python-keycloak>=5.3.0",

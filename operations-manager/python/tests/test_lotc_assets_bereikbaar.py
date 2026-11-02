@@ -91,3 +91,12 @@ def test_de_sandboxlijst_noemt_de_bestanden_die_deze_versie_levert() -> None:
     # gepind te zijn en niet aangenomen.
     assert "nldd/dist/nldd.js" in uit_de_head
     assert resolve_lotc_static("nldd/dist/nldd.js") is not None
+
+
+def test_elke_verwijzing_uit_de_head_draagt_een_versie() -> None:
+    """Een kale URL houdt na een LOTC-upgrade zijn naam, en dan draait de browser de oude
+    bundel tegen nieuwe markup. Met ?v= is een gewijzigd bestand een andere URL."""
+    html = templates_lotc.env.from_string('<c-page title="meting"><c-paragraph>x</c-paragraph></c-page>').render()
+    kaal = re.findall(r'(?:href|src)="(/static/lotc/[^"?]+)"', html)
+
+    assert kaal == []

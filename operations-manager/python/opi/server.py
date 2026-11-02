@@ -53,7 +53,7 @@ from opi.core.errors import (
 )
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks, warm_connector_singletons
-from opi.core.static_files import CacheControlledStaticFiles
+from opi.core.static_files import CacheControlledStaticFiles, cache_control_for
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
@@ -871,11 +871,13 @@ def create_app() -> FastAPI:
         logger.info("LOTC-proefopstelling en testpagina's geregistreerd (ENVIRONMENT=%s)", settings.ENVIRONMENT)
 
     @app.get("/static/lotc/{rel:path}", include_in_schema=False)
-    async def lotc_static(rel: str) -> FileResponse:
+    async def lotc_static(rel: str, request: Request) -> FileResponse:
         resolved = resolve_lotc_static(rel)
         if resolved is None:
             raise HTTPException(status_code=404, detail="Static asset not found")
-        return FileResponse(resolved)
+        # Zonder Cache-Control gokt de browser zelf hoe lang zijn kopie vers is, en na een
+        # LOTC-upgrade draaide hij dan dagen de oude nldd.js tegen nieuwe markup.
+        return FileResponse(resolved, headers={"cache-control": cache_control_for(request.scope["query_string"])})
 
     logger.info("LOTC static files served at /static/lotc/")
 

@@ -57,3 +57,26 @@ def test_url_from_helper_is_served_and_pinned(static_client: TestClient) -> None
     response = static_client.get(url)
     assert response.status_code == 200
     assert response.headers["cache-control"] == IMMUTABLE_CACHE_CONTROL
+
+
+@pytest.fixture
+def lotc_client() -> TestClient:
+    """The real app, because the /static/lotc/ route lives inside create_app."""
+    from opi.server import app
+
+    return TestClient(app)
+
+
+def test_lotc_asset_with_version_is_immutable(lotc_client: TestClient) -> None:
+    """LOTC puts ?v=<content hash> on its URLs, so the same rule as /static applies."""
+    response = lotc_client.get("/static/lotc/nldd/lotc-nldd.js?v=deadbeef")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == IMMUTABLE_CACHE_CONTROL
+
+
+def test_lotc_asset_without_version_must_revalidate(lotc_client: TestClient) -> None:
+    """Without a header the browser guessed freshness from Last-Modified and kept the old
+    nldd.js for days after an upgrade: an empty shell until the cache was cleared."""
+    response = lotc_client.get("/static/lotc/nldd/lotc-nldd.js")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == REVALIDATE_CACHE_CONTROL

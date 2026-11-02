@@ -17,6 +17,12 @@ IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 REVALIDATE_CACHE_CONTROL = "no-cache"
 
 
+def cache_control_for(query_string: bytes) -> str:
+    """The Cache-Control for a static URL: immutable with a ``?v=`` hash, else revalidate."""
+    query = parse_qs(query_string.decode("latin-1"))
+    return IMMUTABLE_CACHE_CONTROL if query.get("v", [""])[0] else REVALIDATE_CACHE_CONTROL
+
+
 class CacheControlledStaticFiles(StaticFiles):
     """Serves static files, pinning only URLs that carry a ``?v=`` content hash.
 
@@ -26,12 +32,10 @@ class CacheControlledStaticFiles(StaticFiles):
     already fetched it.
 
     De assets van het componentensysteem lopen hier niet langs: die worden onder
-    /static/lotc/ door een eigen route geserveerd.
+    /static/lotc/ door een eigen route geserveerd, met dezelfde regel (cache_control_for).
     """
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         response = await super().get_response(path, scope)
-        query = parse_qs(scope.get("query_string", b"").decode("latin-1"))
-        versioned = bool(query.get("v", [""])[0])
-        response.headers["cache-control"] = IMMUTABLE_CACHE_CONTROL if versioned else REVALIDATE_CACHE_CONTROL
+        response.headers["cache-control"] = cache_control_for(scope.get("query_string", b""))
         return response
