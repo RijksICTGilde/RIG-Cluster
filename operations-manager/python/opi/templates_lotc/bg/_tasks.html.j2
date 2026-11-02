@@ -23,10 +23,8 @@
   en tijd in plaats van middenin. Bewaakt door
   tests/e2e/test_lotc_takentabel_datumkolom.py; die test meet het opnieuw.
 #}
-{% from "bg/_patterns.html.j2" import panel %}
-
 <div hx-get="/projects/{{ project_name }}/tasks" hx-trigger="every 5s" hx-swap="outerHTML">
-    {% call panel("Taken", "timer") %}
+    {# No panel around it: the tab is the page, a card only adds a frame and a second title. #}
         {% if not items %}
             <c-paragraph>Er zijn nog geen taken uitgevoerd voor dit project.</c-paragraph>
         {% else %}
@@ -41,26 +39,12 @@
                 </c-table-head>
                 {% for item in items %}
                     <c-table-row>
-                        {# De cel Soort is de INGANG naar de voortgang van die ene taak:
-                           /projects/progress/<id> toont de balk, de huidige stap, de
-                           subtaken en de fouten per component. Die pagina bestond al maar
-                           was alleen bereikbaar direct na het aanmaken van een project.
-
-                           Twee voorwaarden, en allebei om een eigen reden.
-
-                           item.task_id: alleen een achtergrondTAAK heeft een
-                           voortgangspagina. Deze tabel toont twee bronnen door elkaar, en
-                           een run (databaseconsole, job) heeft er geen; _normalize_run zet
-                           task_id daarom expliciet op None.
-
-                           item.active: alleen een taak die nog LOOPT. Een afgeronde taak
-                           wordt opgeruimd, en dan wijst de link naar een pagina die "Taak
-                           niet beschikbaar" zegt - een dode link die er levend uitziet.
-                           Hier stond eerst dat juist een mislukte taak een link verdiende
-                           ("daar staat wat er misging"), maar dat gaat alleen op zolang hij
-                           er nog is. #}
+                        {# De cel Soort is de ingang naar /projects/progress/<id>. item.task_id
+                           voor achtergrondtaken (runs hebben geen id). Een link zolang de taak
+                           loopt of zijn details nog heeft: RC-282 maakt die een uur na afloop
+                           leeg, en daarna zou de link naar een lege pagina wijzen. #}
                         <c-td>
-                            {% if item.task_id and item.active %}
+                            {% if item.task_id and (item.active or item.has_details) %}
                                 <c-link href="/projects/progress/{{ item.task_id }}">{{ item.soort }}</c-link>
                             {% else %}
                                 {{ item.soort }}
@@ -103,5 +87,4 @@
                 {% endfor %}
             </c-table>
         {% endif %}
-    {% endcall %}
 </div>

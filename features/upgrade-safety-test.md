@@ -29,11 +29,13 @@ The server does not have the production AGE key and must not get it. That is a
 hard constraint that decides where each step runs:
 
 - **Conversion is a local step.** `migrate_project_to_sandbox.py` decrypts
-  `age-private-key` with the production key and re-encrypts it with the sandbox
-  key. That only works on a machine that has `security/key.txt` -- your
-  workstation. What goes to the server's Forgejo is only the converted output:
-  encrypted with the sandbox key, with no production secret in it. The server
-  never sees production secrets, not even encrypted.
+  `age-private-key` with the production key, mints a NEW project key for the
+  sandbox and puts its private half under the sandbox key. That only works on a
+  machine that has `security/key.txt` -- your workstation. What goes to the
+  server's Forgejo is only the converted output: on a key that exists nowhere in
+  production, and with every secret in it a placeholder or freshly generated (see
+  `docs/productiebestanden-naar-een-sandbox.md`). The server never sees production
+  secrets, not even encrypted.
 - **Layer 1 needs no key at all.** Migration and validation work on the structure
   of the file; the AGE blocks are opaque strings that are never decrypted. So
   Layer 1 runs on the production files as they are, with no key, anywhere.

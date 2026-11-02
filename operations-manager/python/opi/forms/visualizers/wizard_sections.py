@@ -15,11 +15,12 @@ from opi.forms.editables.enforcers import (
     ComponentServicesEnforcer,
     UniqueDeploymentNameEnforcer,
     UniqueReferencesEnforcer,
+    UniqueSourceCodeUrlEnforcer,
     extract_service_names,
 )
 from opi.forms.layout import COMPONENT_IMAGE_SLOT, Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
-from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
+from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY
 from opi.forms.visualizers.fields.deployments import (
     BACKUP_DEPLOYMENT_NAME,
     BACKUP_RESOURCE_TYPES,
@@ -34,13 +35,14 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
     DEPLOYMENT_COMPONENTS_SEQ,
+    DEPLOYMENT_ENVIRONMENT,
     DEPLOYMENT_NAME,
     DEPLOYMENTS_SEQUENCE,
 )
 from opi.forms.visualizers.fields.domains import (
     WIZARD_DEPLOYMENT_NAME,
 )
-from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME
+from opi.forms.visualizers.fields.identity import CLUSTERS, DESCRIPTION, DISPLAY_NAME, SOURCE_CODE
 from opi.forms.visualizers.fields.services import (
     SERVICES,
 )
@@ -125,10 +127,12 @@ IDENTITY_SECTION = FormSection(
     title="Projectgegevens",
     icon="document-blanco",
     description="Basisinformatie over je project",
-    editables=[DISPLAY_NAME, DESCRIPTION, CLUSTERS],
+    enforcer=UniqueSourceCodeUrlEnforcer(),
+    editables=[DISPLAY_NAME, DESCRIPTION, SOURCE_CODE, CLUSTERS],
     layout=[
         "display-name",
         "description",
+        Sequence(field_name="source-code"),
         "clusters",
     ],
 )
@@ -166,6 +170,7 @@ COMPONENTS_SECTION = FormSection(
                     legend="Identificatie",
                     children=[
                         "name",
+                        "description",
                         "image",
                         *_service_component_layouts(COMPONENT_IMAGE_SLOT),
                         # Het startcommando hoort bij het image: het vervangt de entrypoint
@@ -229,17 +234,60 @@ DEPLOYMENTS_SECTION = FormSection(
     layout=[Sequence(field_name="deployments")],
 )
 
+
+def _components_create_section() -> FormSection:
+    """De componentenstap voor de AANMAAK-wizard, met de initiële omgevingsvariabelen.
+
+    RC-388 haalde het veld uit alle generieke formulieren: een opgeslagen waarde kan een
+    geheim bevatten en hoort achter een step-up. Bij het AANMAKEN van een project valt er
+    nog niets terug te lezen, dus daar is alleen schrijven zonder step-up zinvol en
+    veilig; alles daarna gaat via het venster in ``opi/web/router_env_vars.py``.
+    Het veld zelf blijft van de dienst (zelfde visualizer, zelfde validator); alleen de
+    keuze "wel op aanmaak, niet op bewerken" staat hier.
+    """
+    from opi.services.catalog.user_env_vars.visualizers import COMPONENT_USER_ENV_VARS
+
+    create_sequence = dataclasses.replace(
+        COMPONENTS_SEQUENCE,
+        children=[*(COMPONENTS_SEQUENCE.children or []), COMPONENT_USER_ENV_VARS],
+    )
+    basis_layout = COMPONENTS_SECTION.layout[0]
+    if not isinstance(basis_layout, Sequence):
+        raise TypeError("de componentenstap bestaat uit één Sequence")
+    # Achteraan: het veld vult de initiële waarde en is een toevoeging, geen kern van
+    # de stap. De dienst-layouts (aliassen e.d.) blijven op hun plek.
+    child_layout = [
+        *basis_layout.child_layout,
+        Fieldset(
+            legend="Eigen omgevingsvariabelen",
+            description="Omgevingsvariabelen voor dit component. Worden versleuteld opgeslagen; bekijken en wijzigen kan straks achter een extra bevestiging.",
+            children=["user-env-vars"],
+        ),
+    ]
+    layout: list[LayoutElement | str] = [dataclasses.replace(basis_layout, child_layout=child_layout)]
+    return FormSection(
+        section_id=COMPONENTS_SECTION.section_id,
+        title=COMPONENTS_SECTION.title,
+        icon=COMPONENTS_SECTION.icon,
+        description=COMPONENTS_SECTION.description,
+        enforcer=COMPONENTS_SECTION.enforcer,
+        editables=[create_sequence],
+        layout=layout,
+    )
+
+
+COMPONENTS_CREATE_SECTION = _components_create_section()
+
 CONFIG_DISPLAY_SECTION = FormSection(
     section_id="config",
     title="Configuratie",
     icon="instellingen",
     description="Automatisch gegenereerde configuratie (alleen-lezen)",
     is_readonly=True,
-    editables=[AGE_PUBLIC_KEY, AGE_PRIVATE_KEY, API_KEY],
+    editables=[AGE_PUBLIC_KEY, AGE_PRIVATE_KEY],
     layout=[
         "config/age-public-key",
         "config/age-private-key",
-        "config/api-key",
     ],
 )
 
@@ -371,6 +419,10 @@ REDIS_CONFIG_SECTION = _with_service_help(
 MINIO_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT), ServiceType.MINIO_STORAGE
 )
+SEAWEEDFS_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.SEAWEEDFS_STORAGE).config_form_section(ConfigLayer.PROJECT),
+    ServiceType.SEAWEEDFS_STORAGE,
+)
 SEND_EMAIL_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.SEND_EMAIL).config_form_section(ConfigLayer.PROJECT), ServiceType.SEND_EMAIL
 )
@@ -402,6 +454,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         IMAGE_REGISTRIES_CONFIG_SECTION,
     )
@@ -426,9 +479,10 @@ IDENTITY_EDIT_SECTION = FormSection(
     section_id="identity-edit",
     title="Projectgegevens bewerken",
     icon="document-blanco",
-    description="Wijzig de weergavenaam en projectomschrijving",
-    editables=[DISPLAY_NAME, DESCRIPTION],
-    layout=["display-name", "description"],
+    description="Wijzig de weergavenaam, projectomschrijving en broncodelinks",
+    enforcer=UniqueSourceCodeUrlEnforcer(),
+    editables=[DISPLAY_NAME, DESCRIPTION, SOURCE_CODE],
+    layout=["display-name", "description", Sequence(field_name="source-code")],
     post_save_action="save_only",
 )
 
@@ -691,6 +745,8 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
 def build_deployment_edit_section(
     deployment_index: int,
     component_count: int | None = None,
+    *,
+    include_environment: bool = True,
 ) -> FormSection:
     """Build a deployment edit section for editing component images and env vars.
 
@@ -703,6 +759,8 @@ def build_deployment_edit_section(
         component_count: Total number of project-level components.
             When set, limits the sequence to at most this many items
             (a deployment cannot have more components than defined).
+        include_environment: When False, omits the environment. De add-flow
+            vraagt het in zijn eigen informatiestap, dus daar zou het dubbel staan.
     """
     from opi.forms.editables.reindex import replace_segment_visualizer
 
@@ -728,14 +786,20 @@ def build_deployment_edit_section(
 
     seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, *service_vis, attach_vis])
 
+    environment_vis = [replace_segment_visualizer(DEPLOYMENT_ENVIRONMENT, old_seg, new_seg)]
+    environment_layout: list[LayoutElement | str] = [f"deployments[{deployment_index}]/environment"]
+    if not include_environment:
+        environment_vis, environment_layout = [], []
+
     return FormSection(
         section_id=f"deployment-edit-{deployment_index}",
         title="Deployment bewerken",
         icon="server",
-        description="Wijzig container images en omgevingsvariabelen per component",
+        description="Wijzig de omgeving, container images en omgevingsvariabelen per component",
         enforcer=UniqueReferencesEnforcer(),
-        editables=[seq_vis],
+        editables=[*environment_vis, seq_vis],
         layout=[
+            *environment_layout,
             Sequence(
                 field_name=f"deployments[{deployment_index}]/components",
                 child_layout=[
@@ -881,7 +945,7 @@ def _materialize_new_deployment_fields(
 
 
 # The base set of visualizers for creating a new deployment (info + domain).
-_NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_CLONE_FROM]
+_NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_ENVIRONMENT, DEPLOYMENT_CLONE_FROM]
 
 
 def _restore_new_visible(data: dict[str, Any]) -> bool:
@@ -930,14 +994,17 @@ def build_deployment_add_info_section(
         include_clone_from: When False, omits the clone-from field (used
             by the restore flow where the source is already selected).
     """
-    visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME]
+    visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME, DEPLOYMENT_ENVIRONMENT]
     editables = _materialize_new_deployment_fields(deployment_index, visualizers)
 
     # The name visualizer has readonly_on_edit=True - override for add flows
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
-    layout: list[LayoutElement | str] = [f"deployments[{deployment_index}]/name"]
+    layout: list[LayoutElement | str] = [
+        f"deployments[{deployment_index}]/name",
+        f"deployments[{deployment_index}]/environment",
+    ]
     if include_clone_from:
         layout.append(f"deployments[{deployment_index}]/clone-from")
 
@@ -963,7 +1030,9 @@ def build_deployment_add_components_section(
 
     Reuses the same logic as build_deployment_edit_section.
     """
-    section = build_deployment_edit_section(deployment_index, component_count=component_count)
+    section = build_deployment_edit_section(
+        deployment_index, component_count=component_count, include_environment=False
+    )
     return dataclasses.replace(
         section,
         section_id=f"add-deployment-components-{deployment_index}",

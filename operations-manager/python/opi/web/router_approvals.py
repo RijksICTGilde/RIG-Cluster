@@ -21,6 +21,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.visualizers.flows import get_flow
@@ -31,12 +32,12 @@ from opi.forms.wizard.resolver import (
 )
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
-    get_modal_state_by_token,
     init_modal_state_tokenized,
+    load_modal_state_for,
     save_modal_state_by_token,
 )
 from opi.services.approvals import collect_approval_items
-from opi.services.project_store import get_project_store
+from opi.services.project_store import ConflictError, get_project_store
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.web.lotc_switch import render_fragment
@@ -262,6 +263,7 @@ def groepeer_per_dienst(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 @approvals_router.get("", response_class=HTMLResponse)
+@action(Action.PLATFORM_APPROVALS)
 @requires_sso
 async def list_subdomains(request: Request) -> Response:
     """List all approval requests across all projects."""
@@ -312,6 +314,7 @@ async def list_subdomains(request: Request) -> Response:
 
 
 @approvals_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
+@action(Action.PLATFORM_APPROVALS)
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize the domain approval modal wizard for a project."""
@@ -343,12 +346,10 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         first_step=first_section.section_id,
         active_sections=[first_section.section_id],
         project_name=project_name,
+        owner_email=str(user.get("email", "")),
     )
     state.step_data = {first_section.section_id: seed_data}
     state.base_data = {"_admin_email": user.get("email", "")}
-    # The version this approval decision is being taken on; it travels with the save so
-    # a change made elsewhere in the meantime is merged instead of overwritten.
-    state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")
     save_modal_state_by_token(wizard_token, state)
 
     yaml_data = state.get_merged_data()
@@ -362,6 +363,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     "/{project_name}/modal-wizard/{flow_id}/step/{section_id}",
     response_class=HTMLResponse,
 )
+@action(Action.PLATFORM_APPROVALS)
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate and submit the approval step."""
@@ -371,7 +373,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         raise HTTPException(status_code=404, detail="Onbekende flow")
 
     wizard_token = request.query_params.get("_wizard_token")
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (state=%s)", project_name, flow_id, state)
         raise HTTPException(
@@ -429,7 +431,7 @@ def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> di
 
 async def _do_submit(request: Request, wizard_token: str | None, user: dict, project_name: str) -> HTMLResponse:
     """Execute the final approval submission."""
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state:
         raise HTTPException(
             status_code=400,
@@ -492,17 +494,23 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         # of 500ing (e.g. pre-existing structural drift surfaced by the full check).
         try:
             await project_manager.save_and_commit_project(
-                existing_data, f"Update project {project_name} (domain approval)"
+                existing_data,
+                f"Update project {project_name} (domain approval)",
+                # This route is the only place that may set an approval decision.
+                approval_decision=True,
             )
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)
+        # ConflictError hoort in dezelfde rij als de validatiefouten: zonder deze regel
+        # viel hij door naar buiten als een kale 500.
+        except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
+            logger.warning("Domain approval save rejected for %s (%s): %s", project_name, type(e).__name__, e)
             first_section = active_sections[0]
             render_data = _reseed_approval_items(state.get_merged_data(), project_name)
             step_html = _render_section_html(first_section, render_data)
-            # Say what was blocked. The bare validation message describes the resulting
-            # state ("het subdomein is afgewezen"), which reads as a report of the
-            # approver's own action instead of a refusal to record it.
-            message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
+            # ConflictError goes through as-is; validation errors get an intro ("het project is daarna niet geldig").
+            if isinstance(e, ConflictError):
+                message = str(e)
+            else:
+                message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
             rendered = _render_modal_step(
                 request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
             )
@@ -526,7 +534,8 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
             "project_name": project_name,
             "yaml_content": yaml_content,
             "deployment_names": deployment_names,
-            "base_version": state.base_version,
+            # Besluit al opgeslagen; taak moet het niet herschrijven.
+            "project_file_already_saved": True,
         },
         max_attempts=1,
     )

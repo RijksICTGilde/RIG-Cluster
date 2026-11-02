@@ -33,11 +33,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
-    get_modal_state_by_token,
     get_wizard_state,
+    load_modal_state_for_user,
     save_modal_state_by_token,
     save_wizard_state,
 )
@@ -47,8 +48,9 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
 )
 from opi.services import upload_staging
-from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_KB
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
+from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 
 logger = logging.getLogger(__name__)
 
@@ -64,18 +66,19 @@ REPLACE_TARGET_KEY = "_replace_attachment"
 REPLACE_MODE = "replace"
 
 
-def _resolve_state(request: Request, wizard_token: str | None) -> tuple[Any, Callable[[Any], None] | None]:
-    """Resolve the wizard state for both the full-page (cookie) and modal (_wizard_token) flows.
+def _resolve_state(
+    request: Request, wizard_token: str | None, flow_id: str
+) -> tuple[Any, Callable[[Any], None] | None]:
+    """Resolve the wizard state from session cookie (if it matches the flow) or modal token (for this user).
 
     Returns (state, save_fn) or (None, None) if no active wizard session.
     """
     state = get_wizard_state(request)
-    if state is not None:
+    if state is not None and state.flow_id == flow_id:
         return state, lambda s: save_wizard_state(request, s)
-    if wizard_token:
-        modal = get_modal_state_by_token(wizard_token)
-        if modal is not None:
-            return modal, lambda s: save_modal_state_by_token(wizard_token, s)
+    modal = load_modal_state_for_user(request, wizard_token)
+    if modal is not None:
+        return modal, lambda s: save_modal_state_by_token(wizard_token, s)
     return None, None
 
 
@@ -190,14 +193,16 @@ def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
 
 
 @wizard_attachments_router.get("/{flow_id}/attachments/list")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def list_staged(request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")):
     """Render the unified attachments list (used on section load)."""
-    state, _ = _resolve_state(request, wizard_token)
+    state, _ = _resolve_state(request, wizard_token, flow_id)
     return _attachments_list_response(request, state, wizard_token)
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/stage")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def stage_attachment(
     request: Request,
@@ -215,7 +220,7 @@ async def stage_attachment(
     written over instead of a second one being added -- which is what keeps every
     component that couples to that id pointing at it.
     """
-    state, save = _resolve_state(request, wizard_token)
+    state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
@@ -236,13 +241,13 @@ async def stage_attachment(
         if replace_error:
             return _attachments_list_response(request, state, wizard_token, error=replace_error)
 
-    raw = await file.read()
-    if len(raw) > MAX_ATTACHMENT_BYTES:
-        # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES):
-        # a limit only one road honours just moves the problem to the other one.
-        return _attachments_list_response(
-            request, state, wizard_token, error=f"Bestand te groot (max {MAX_ATTACHMENT_KB} KB)"
-        )
+    # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES): a
+    # limit only one road honours just moves the problem to the other one. The slot caps
+    # how many uploads read at once, over all three upload routes together.
+    async with upload_slot():
+        raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
+    if raw is None:
+        return _attachments_list_response(request, state, wizard_token, error=too_large_detail(MAX_ATTACHMENT_BYTES))
     try:
         token = upload_staging.stage_file(raw, file.filename or attachment_id)
     except ValueError as exc:
@@ -264,6 +269,7 @@ async def stage_attachment(
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/validate-id")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def validate_attachment_id(
     request: Request,
@@ -282,7 +288,7 @@ async def validate_attachment_id(
     check that accepts both would let a typo in a new id land on an existing attachment
     and overwrite it, which is the accident this endpoint exists to prevent.
     """
-    state, _ = _resolve_state(request, wizard_token)
+    state, _ = _resolve_state(request, wizard_token, flow_id)
     staged = _staged(state) if state else {}
     error: str | None = None
     if attachment_id:
@@ -295,6 +301,7 @@ async def validate_attachment_id(
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/unstage/{attachment_id}")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def unstage_attachment(
     request: Request,
@@ -307,7 +314,7 @@ async def unstage_attachment(
     ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the c-button
     re-emits attribute values with double quotes, which mangles inline JSON.
     """
-    state, save = _resolve_state(request, wizard_token)
+    state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
@@ -322,6 +329,7 @@ async def unstage_attachment(
 
 
 @wizard_attachments_router.post("/{flow_id}/attachments/remove-existing/{attachment_id}")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def remove_existing_attachment(
     request: Request,
@@ -335,7 +343,7 @@ async def remove_existing_attachment(
     and would otherwise re-write the deleted entry back on save. Blocked when a component
     still references the attachment.
     """
-    state, save = _resolve_state(request, wizard_token)
+    state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 

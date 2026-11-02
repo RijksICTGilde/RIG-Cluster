@@ -1,0 +1,66 @@
+# Wie welk beveiligingsgevoelig pad bewaakt.
+
+# Authenticatie en autorisatie
+/operations-manager/python/opi/middleware/ @uittenbroekrobbert
+/operations-manager/python/opi/api/auth_routes.py @uittenbroekrobbert
+/operations-manager/python/opi/api/user_token_auth.py @uittenbroekrobbert
+/operations-manager/python/opi/core/auth_decorators.py @uittenbroekrobbert
+/operations-manager/python/opi/services/project_authorization.py @uittenbroekrobbert
+/operations-manager/python/opi/utils/api_keys.py @uittenbroekrobbert
+/operations-manager/python/opi/configs/keycloak/bootstrap.yaml @uittenbroekrobbert
+/keycloak-migration/custom-mapper/src/main/java/ @uittenbroekrobbert
+
+# Sessie en CSRF
+/operations-manager/python/opi/core/secret_key.py @uittenbroekrobbert
+/operations-manager/python/opi/core/session_guard.py @uittenbroekrobbert
+/operations-manager/python/opi/services/session_revocation_service.py @uittenbroekrobbert
+/operations-manager/python/opi/utils/csrf.py @uittenbroekrobbert
+
+# Cryptografie
+/operations-manager/python/opi/utils/age.py @uittenbroekrobbert
+/operations-manager/python/opi/utils/sops.py @uittenbroekrobbert
+
+# Geheimen en beheer
+/operations-manager/python/opi/utils/passwords.py @uittenbroekrobbert
+/operations-manager/python/opi/utils/secrets.py @uittenbroekrobbert
+/scripts/edit-secret.py @uittenbroekrobbert
+/scripts/project_decrypt.py @uittenbroekrobbert
+/scripts/secret_rotate.py @uittenbroekrobbert
+
+# Secret-scan en exceptions
+/scripts/scan-secrets.py @uittenbroekrobbert
+/scripts/secret-scan-baseline.json @uittenbroekrobbert
+/workflow/secret-scan-allow.toml @uittenbroekrobbert
+/aanvalsproef/gitleaks.toml @uittenbroekrobbert
+/aanvalsproef/uitzonderingen.yaml @uittenbroekrobbert
+
+# Wat er in logs en in commits terechtkomt
+/operations-manager/python/opi/utils/logging_redact.py @uittenbroekrobbert
+/operations-manager/python/opi/core/actor.py @uittenbroekrobbert
+/operations-manager/python/opi/utils/git_signing.py @uittenbroekrobbert
+
+# Wat er op het cluster komt te staan
+/operations-manager/python/manifests/ @uittenbroekrobbert
+/bootstrap/ @uittenbroekrobbert
+/infrastructure/ @uittenbroekrobbert
+/images/*/Dockerfile @uittenbroekrobbert
+
+# De pijplijn en deze afspraken zelf
+/.github/workflows/ @uittenbroekrobbert
+/.github/CODEOWNERS @uittenbroekrobbert
+/SECURITY.md @uittenbroekrobbert
+/features/security-scanning-pipeline.md @uittenbroekrobbert
+/features/aanvalsproef-harnas.md @uittenbroekrobbert
+/features/kyverno-admission-audit.md @uittenbroekrobbert
+/features/falco-runtime-detectie.md @uittenbroekrobbert
+/features/asvs-zelfbeoordeling.md @uittenbroekrobbert
+/features/rollen-en-rechten.md @uittenbroekrobbert
+/docs/asvs-zelfbeoordeling.md @uittenbroekrobbert
+/architecture/asvs-zelfbeoordeling.yaml @uittenbroekrobbert
+
+# De maatregelen waar SECURITY.md naar verwijst als bewijs
+/features/leden-en-api-tokens.md @uittenbroekrobbert
+/features/logniveau-en-redactie.md @uittenbroekrobbert
+/features/portaalsessie-levensduur.md @uittenbroekrobbert
+/features/renovate.md @uittenbroekrobbert
+/features/sops-sleutel-roteren.md @uittenbroekrobbert

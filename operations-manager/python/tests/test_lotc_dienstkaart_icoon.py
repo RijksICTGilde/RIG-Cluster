@@ -44,7 +44,7 @@ def _diensttabblad(client: TestClient) -> str:
 
 
 def _iconen(html: str) -> list[str]:
-    return re.findall(r"<nldd-icon[^>]*name=\"([^\"]+)\"", html)
+    return re.findall(r"<nldd-icon[^>]*icon=\"([^\"]+)\"", html)
 
 
 def _dienstnamen(html: str) -> list[str]:

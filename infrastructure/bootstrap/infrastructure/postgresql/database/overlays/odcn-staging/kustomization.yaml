@@ -78,8 +78,8 @@ patches:
         value: 1GB
       # Zonder dit start de database niet meer zodra zijn pod opnieuw wordt
       # aangemaakt. ODCN herschrijft imageName bij admission van
-      # ghcr.io/cloudnative-pg/postgresql:17 naar
-      # rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17, en die proxy vraagt
+      # ghcr.io/cloudnative-pg/postgresql:17.11 naar
+      # rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11, en die proxy vraagt
       # authenticatie. De pod had geen enkele pull secret en zijn serviceaccount
       # ook niet, dus de pull faalt op 'invalid username/password'.
       #
@@ -107,4 +107,10 @@ patches:
       # admission-herschrijving en geen toegang tot rcr, dus die houden ghcr.io.
       - op: replace
         path: /spec/imageName
-        value: rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17
+        value: rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11
+
+# ODCN herschrijft het image van de backup-cronjob bij admission naar het rcr-pad. Zonder
+# dat pad in git blijft ArgoCD OutOfSync, zie de keycloak-overlay.
+images:
+  - name: ghcr.io/minbzk/base-images/rig-backup
+    newName: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-backup

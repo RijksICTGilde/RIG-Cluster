@@ -1,0 +1,78 @@
+# In de base en niet in een overlay: de gRPC-poorten nemen zonder JWT elke aanroep aan,
+# dus de afscherming hoort bij het component zelf en niet bij een cluster.
+# podSelector plus policyTypes is deny-by-default; alleen de regels hieronder laten iets toe.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-seaweedfs-access
+  namespace: rig-system
+spec:
+  podSelector:
+    matchLabels:
+      app: seaweedfs
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Tenant-namespaces gebruiken alleen de S3-poort.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        - protocol: TCP
+          port: 8333
+    # De eigen operations-namespace: S3 plus metrics (Prometheus draait hier). Een
+    # podSelector zonder namespaceSelector betekent "pods in de namespace van deze policy",
+    # en dat is per cluster een andere naam (rig-system, rig-prd-operations,
+    # rig-staging-operations) die kustomize in een selector niet meeherschrijft.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8333
+        - protocol: TCP
+          port: 9327
+    # Het beheer loopt over de gRPC-poorten, en dat mag alleen de OPI-pod.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: operations-manager
+      ports:
+        - protocol: TCP
+          port: 18888
+        - protocol: TCP
+          port: 19333
+    # De lifecycle-ronde (seaweedfs-lifecycle, de CronJob van dit component) draait
+    # `weed shell s3.lifecycle.run-shard -s3 <s3>:18333`. 18888 en 19333 zijn wat de ronde
+    # echt nodig heeft: `weed shell` start niet zonder filer en master, en zonder master
+    # blijft hij in WaitUntilConnected hangen (rij G18). 18333 staat erbij omdat het
+    # commando dat adres zelf meekrijgt; met die poort dicht deed de ronde zijn werk nog
+    # steeds (gemeten: 46 versies werden 31), dus hij is geen voorwaarde maar wel het adres
+    # in de aanroep. Geen van de drie staat in de tenant-regel hierboven.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: seaweedfs-lifecycle
+      ports:
+        - protocol: TCP
+          port: 18333
+        - protocol: TCP
+          port: 18888
+        - protocol: TCP
+          port: 19333
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # De eigen pod: master, volume, filer en de S3-gateway praten onderling.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: seaweedfs

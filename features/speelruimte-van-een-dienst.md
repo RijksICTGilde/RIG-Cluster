@@ -15,8 +15,13 @@ niet. Een grens stond hardgecodeerd in `opi/connectors/postgres.py`, of als los 
 een pydantic-model, of nergens: `storage: 500Gi` liep door tot het cluster het weigerde.
 
 > De eerste declaratie is de connectielimiet van `postgresql-database` (RC-201, zie
-> `postgresql-connection-limits.md`). Een dienst die niets declareert gedraagt zich precies
-> zoals hij deed.
+> `postgresql-connection-limits.md`). De tweede is de opslag en de vier
+> resources-hoeveelheden van een eigen PostgreSQL-cluster (RC-327, zie
+> `namespace-postgresql-database.md`), op beide diensten die dat clustertype aanbieden. Een
+> dienst die niets declareert gedraagt zich precies zoals hij deed. De derde is de grens op
+> de oude versies van een bucket met versioning (RC-380, zie
+> `oude-versies-in-een-bucket.md`), op `minio-storage` en `seaweedfs-storage`: beide
+> object-opslagdiensten lezen diezelfde declaratie.
 
 ## De drie regels
 
@@ -76,6 +81,12 @@ in de declaratie en geen verrassing in productie.
 | Geheel getal | `IntegerSetting(minimum=, maximum=)` | connectielimiet, `instances` |
 | Kubernetes-hoeveelheid | `QuantitySetting(minimum=, maximum=, kind=)` | `storage`, `resources.*.cpu`, `resources.*.memory` |
 | Gesloten verzameling | `ChoiceSetting(allowed=)` | `image`, `registry` |
+
+`default=None` declareert een veld dat **niet gezet** is tot een laag iets zegt:
+`resolve_setting` geeft dan None en de consument laat het ding weg. Dat is voor een veld
+waarvan het "uit" geen getal heeft om voor te staan, zoals de leeftijdsgrens op oude versies
+bovenop een aantal, waar 0 een magische waarde zou zijn in een reeks die bij 1 begint. Zo'n
+standaard wordt niet aan de grenzen gehouden, want het is geen waarde daarbinnen.
 
 Een hoeveelheid wordt **ontleed en als getal vergeleken**, nooit als tekst: `100m` en `2`
 zijn allebei cpu, `512Mi` en `1Gi` allebei geheugen, en alfabetisch komt `1Gi` voor
@@ -213,5 +224,7 @@ invulde dat mocht.
 - `opi/services/catalog/base.py` -- `Service.config_settings()` en `Service.config_setting(path)`
 - `opi/manager/project_validation.py` -- de toetsing bij het inlezen en bij een wijziging
 - `opi/forms/visualizers/config_setting_fields.py` -- het wizardveld uit de declaratie
-- `opi/services/resource_analyzer.py` -- de twee hoeveelheid-parsers
+- `opi/services/resource_analyzer.py` -- de twee hoeveelheid-parsers en `K8S_QUANTITY_PATTERN`, de vorm die een hoeveelheid moet hebben voor hij wordt geparseerd
+- `opi/services/catalog/shared/postgres_settings.py` -- de declaraties van een eigen PostgreSQL-cluster
+- `opi/services/catalog/shared/noncurrent_versions.py` -- de grens op oude versies in een bucket, gedeeld door de twee object-opslagdiensten
 - `tests/test_service_config_settings.py`

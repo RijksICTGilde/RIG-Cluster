@@ -9,8 +9,7 @@
   Als MACRO's en niet als losse templates die de pagina include't. Dat is geen smaak: een
   {% raw %}{% include %}{% endraw %} van een deeltemplate dat zelf componenten gebruikt breekt in deze omgeving
   zodra de schil <template slot=...> gebruikt, en dat doet base_lotc.html.j2 - zie de kop
-  van dat bestand, en de reden dat bg/about.html.j2 zijn vier deeltemplates juist heeft
-  samengevoegd. Een macro heeft dat probleem niet: bg/_service-card.html.j2 en
+  van dat bestand. Een macro heeft dat probleem niet: bg/_service-card.html.j2 en
   bg/_patterns.html.j2 werken zo al.
 #}
 {% from "bg/_patterns.html.j2" import page_head %}
@@ -36,6 +35,10 @@
   zegt, en de rest van dit portaal heeft nergens sierfoto's.
 #}
 {% macro kop() %}
+{# Het woordmerk: het huisje uit de favicon staat voor de A. #}
+<div class="zad-woordmerk" role="img" aria-label="ZAD">
+    <span aria-hidden="true">Z</span><img src="{{ static_url('img/zad-logo.png') }}" alt=""><span aria-hidden="true">D</span>
+</div>
 {{ page_head(
     "Jij bouwt de applicatie. Wij de rest.",
     "Zelfservice Applicatie Deployment (ZAD): van een eenvoudige statische website tot een
@@ -52,7 +55,7 @@
   diensten" is precies het soort belofte dat een jaar later niet meer klopt zonder dat
   iemand het merkt.
 #}
-{% macro wat_het_is(aantal_zelf, aantal_achtergrond) %}
+{% macro wat_het_is() %}
 <c-paragraph>
     ZAD is een deploymentplatform op overheidsclouds. Het is zelfservice met extra service:
     je beschrijft je project via click-ops of cli, en alles wordt voor je klaargezet. Behalve je applicatie,
@@ -64,16 +67,6 @@
     database, een cache, opslag en een inlogvoorziening. Het verschil tussen die twee is
     welke diensten je aanzet, niet welk platform je nodig hebt.
 </c-paragraph>
-
-{# <c-auto-grid> en GEEN <c-cluster>, en dat is gemeten. Een c-metric is een <a> met een
-   kaart erin; in een cluster kreeg hij breedte 0 - hij was 155 pixels hoog, stond in de
-   HTML compleet, en was op het scherm een lege strook onder de tekst. Zelfde soort val als
-   <c-stack> in een tabelcel. Beide bestaande plekken (bg/dashboard.html.j2 en
-   bg/project-context.html.j2) gebruiken dit raster met dezelfde minimumbreedte. #}
-<c-auto-grid min="200px" gap="md">
-    <c-metric icon="cylinder-split" value="{{ aantal_zelf }}" label="Diensten om te kiezen" />
-    <c-metric icon="gear" value="{{ aantal_achtergrond }}" label="Draaien altijd mee" />
-</c-auto-grid>
 {% endmacro %}
 
 
@@ -82,6 +75,21 @@
   omdat de eigenaar hem zelf ook gebruikt: de architectuurpuzzel is al opgelost, de
   stukjes liggen op hun plek.
 #}
+{# Overgenomen van de vroegere pagina Over ZAD (/about), die nu hierheen doorverwijst. Het
+   blok over veiligheid is een verwijzing geworden: /security vertelt wat er echt geregeld
+   is, en een algemene geruststelling hier zou daar stil van gaan afwijken. #}
+{% macro waarom() %}
+<c-paragraph>
+    Als je een applicatie ontwikkelt weet je aan het begin soms nog niet precies wat je
+    nodig hebt. Een database? Opslag? Authenticatie? Dat groeit gaandeweg. Tegelijkertijd
+    wil je wel ergens draaien waar je je werk kunt laten zien. En liefst, nu graag. Niet aanvragen
+    en dan weken of maanden wachten.
+</c-paragraph>
+<c-paragraph>
+    Binnen de overheid is het niet altijd eenvoudig om een plek te vinden waar je een
+    applicatie kunt hosten. Dit platform biedt die plek, voor ontwikkeling en voor productie.
+</c-paragraph>
+{% endmacro %}
 {% macro de_puzzel() %}
 <c-paragraph>
     De losse stukken zijn er meestal wel: ergens is een cluster, ergens een registry,
@@ -109,17 +117,26 @@
   vertaald heeft maakt niet uit: to_nldd_icon laat een naam die hij niet kent ongemoeid,
   dus het filter kan nooit kwaad, en de poort die dat bewaakt eist het hier terecht.
 #}
+{# Rechtstreeks NLDD en niet c-catalog-card: die kent geen kleur voor het icoon, en de
+   kleur van een service hoort erbij, net als op /services. Een kleurnaam die nldd-icon niet
+   kent (grijs-600) valt terug op de tekstkleur, ook daar. #}
 {% macro dienstenraster(diensten) %}
-<c-columns columns="1" lg="2" gap="md">
+<nldd-collection layout="grid" item-width="320px" max-items="{{ diensten | length }}">
     {% for dienst in diensten %}
-        <c-catalog-card
-            icon="{{ dienst.icon | nldd_icon }}"
-            title="{{ dienst.label }}"
-            subtitle="{{ dienst.name }}">
-            <c-paragraph size="sm">{{ dienst.summary }}</c-paragraph>
-        </c-catalog-card>
+        <nldd-card>
+            <nldd-container slot="header" layout="row" gap="12" vertical-alignment="center" padding="16" padding-bottom="0">
+                <nldd-icon icon="{{ dienst.icon | nldd_icon }}" color="{{ dienst.color }}" size="32"></nldd-icon>
+                <nldd-title size="5">
+                    <h3>{{ dienst.label }}</h3>
+                    <span slot="supporting-text">{{ dienst.name }}</span>
+                </nldd-title>
+            </nldd-container>
+            <nldd-container padding="16">
+                <nldd-rich-text><p>{{ dienst.summary }}</p></nldd-rich-text>
+            </nldd-container>
+        </nldd-card>
     {% endfor %}
-</c-columns>
+</nldd-collection>
 {% endmacro %}
 
 
@@ -191,7 +208,7 @@
     <c-shortcut
         icon="chevron-left-forward-slash-chevron-right"
         title="ZAD Actions"
-        desc="GitHub Actions die je image bijwerken vanuit je eigen pijplijn, en PR-omgevingen weer opruimen."
+        desc="GitHub Actions die je image bijwerken vanuit je eigen pipeline, en PR-omgevingen weer opruimen."
         cta="Naar zad-actions"
         href="https://github.com/RijksICTGilde/zad-actions" />
 </c-columns>
@@ -200,10 +217,10 @@
 {% macro aan_de_slag() %}
 <c-paragraph>
     Inloggen gaat met je organisatieaccount. Heb je nog geen toegang tot een project, dan
-    kan iemand uit dat project je een uitnodiging sturen.
+    kan iemand uit dat project je een uitnodiging sturen, of neem contact op met
+    <c-link href="mailto:robbert.uittenbroek@rijksoverheid.nl" label="robbert.uittenbroek@rijksoverheid.nl" />
 </c-paragraph>
 <c-action-group align="start">
     <c-button type="primary" label="Inloggen" icon="chevron-right" show-icon="after" href="/auth/login" />
-    <c-button type="secondary" label="Over het platform" href="/about" />
 </c-action-group>
 {% endmacro %}

@@ -8,15 +8,46 @@ on:
 permissions:
   contents: read
 
+# De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
+# en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
+# endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+env:
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.adoptium.net:443
+    api.github.com:443
+    archive.ubuntu.com:80
+    astral.sh:443
+    azure.archive.ubuntu.com:80
+    codeload.github.com:443
+    esm.ubuntu.com:443
+    files.pythonhosted.org:443
+    github.com:443
+    motd.ubuntu.com:443
+    objects.githubusercontent.com:443
+    pypi.org:443
+    raw.githubusercontent.com:443
+    release-assets.githubusercontent.com:443
+    repo.maven.apache.org:443
+    repo1.maven.org:443
+    results-receiver.actions.githubusercontent.com:443
+    security.ubuntu.com:80
+
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "latest"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - name: Install dependencies
@@ -26,7 +57,7 @@ jobs:
       # toetsen, net als de secret-scan-job in security.yml.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
-      - uses: pre-commit/action@v3.0.1
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
 
   test:
     runs-on: ubuntu-latest
@@ -34,11 +65,15 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "latest"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - name: Install dependencies
@@ -50,17 +85,19 @@ jobs:
       # Vastgepind op versie en checksum omdat een release-tag muteerbaar is.
       - name: Install sops
         run: |
-          curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.amd64
-          echo "154dfe4cd70554bdd82b98e4cd4acf191d43d01ead6f00a73477aa44c4ac42ef  /tmp/sops" | sha256sum -c -
+          curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  /tmp/sops" | sha256sum -c -
           chmod +x /tmp/sops
           sudo mv /tmp/sops /usr/local/bin/sops
           sops --version --disable-version-check
       # test_keycloak_eigen_image en test_sandbox_build_push renderen overlays met een
       # echte kustomize; zonder de binary slaan die toetsen stil over. Dezelfde versie als
-      # images/cmp-kustomize-sops/Dockerfile.
+      # images/cmp-kustomize-sops/Dockerfile, checksum er ook uit.
       - name: Install kustomize
         run: |
-          curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz" | tar xz -C "$RUNNER_TEMP"
+          curl -fsSLo "$RUNNER_TEMP/kustomize.tar.gz" "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.3/kustomize_v5.8.3_linux_amd64.tar.gz"
+          echo "cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61  $RUNNER_TEMP/kustomize.tar.gz" | sha256sum -c -
+          tar xz -C "$RUNNER_TEMP" -f "$RUNNER_TEMP/kustomize.tar.gz"
           sudo install -m 0755 "$RUNNER_TEMP/kustomize" /usr/local/bin/kustomize
           kustomize version
       # LOTC_STRICT=1 laat de componentlaag een onbekende ATTRIBUUTWAARDE weigeren (een
@@ -72,7 +109,11 @@ jobs:
           LOTC_STRICT: "1"
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report
-        run: uv run coverage report --fail-under=21
+        run: uv run coverage report --fail-under=71
+      # De beveiligingskritische modules: drempel mag omhoog, niet omlaag zonder reden in de PR.
+      # Zakt de dekking hier, dan is dat een bevinding.
+      - name: Coverage report (beveiligingskritische modules)
+        run: uv run coverage report --fail-under=86 --include="opi/middleware/*,opi/api/user_token_auth.py,opi/api/endpoint_util.py,opi/services/project_authorization.py,opi/utils/age.py,opi/utils/sops.py,opi/utils/api_keys.py"
 
   # De twee Java-pakketten die images/keycloak-zad/ tot een Keycloak-image bundelt. Die
   # imagebouw draait alleen op workflow_dispatch, dus zonder deze job draaien hun toetsen
@@ -83,8 +124,12 @@ jobs:
       matrix:
         module: [relay-email-sender, custom-mapper]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v4
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "21"
@@ -92,17 +137,68 @@ jobs:
         working-directory: keycloak-migration/${{ matrix.module }}
         run: mvn -B test
 
+  asvs-meetlat:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: uv sync
+      # Toetst of elke ASVS-eis een oordeel heeft, of elke genoemde toets bestaat, en of het
+      # afvinkdocument niet achterloopt. Zie features/asvs-zelfbeoordeling.md.
+      - name: ASVS-zelfbeoordeling
+        run: uv run python -m opi.tools.asvs_render --check
+
+  biv-inventaris:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: uv sync
+      # Toetst op gaten (score H zonder toets), drift en dekking. Zie features/biv-inventaris.md.
+      - name: BIV-inventaris en overzicht
+        run: uv run python -m opi.tools.biv_render --check
+
   license-check:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           version: "latest"
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - name: Install dependencies

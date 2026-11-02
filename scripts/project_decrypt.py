@@ -18,6 +18,10 @@ Daarom lopen er twee rondes over de boom: eerst met de projectsleutel, dan met d
 systeemsleutel voor de waarden die daar direct onder vallen. Wat met geen van beide
 opengaat blijft ongemoeid staan, zodat je aan de uitvoer ziet dat het niet gelukt is.
 
+Sinds RC-334 staat ``config.age-private-key`` onder de project-KEK en niet meer onder de
+platformsleutel. Geef dan de KEK mee (``security/project-kek-<cluster>.txt``): het script neemt één
+sleutel, dus in zo'n run blijft ``repositories[].password`` onleesbaar staan.
+
 LET OP: de uitvoer bevat platte geheimen. Schrijf hem niet weg in een git-werkmap.
 """
 
@@ -33,6 +37,7 @@ _OPI_ROOT = Path(__file__).resolve().parents[1] / "operations-manager" / "python
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
+from key_rotation import KeyFileTooOpen, require_private_file  # type: ignore[reportMissingImports]  # noqa: E402
 from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap above)
     decrypt_age_block_to_bytes,
     decrypt_age_content,
@@ -57,6 +62,10 @@ def read_key(argument: str) -> str:
     path = Path(argument)
     if not path.is_file():
         raise SystemExit(f"Sleutel is geen bestand en ziet er niet uit als een AGE-sleutel: {argument}")
+    try:
+        require_private_file(path)
+    except KeyFileTooOpen as te:
+        raise SystemExit(str(te)) from te
 
     for line in path.read_text().splitlines():
         if line.strip().startswith(AGE_KEY_MARKER):

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.htmx import scroll_backupblok_in_beeld
+from tests.e2e.helpers.tabs import click_tab
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page, Request, Route
@@ -139,7 +140,7 @@ def test_de_keuze_blijft_staan_bij_het_wisselen_van_tabblad(app_server: str, aut
     auth_page.goto(f"{app_server}{DEPLOYMENTS_URL}/tweede")
     auth_page.wait_for_load_state("networkidle")
 
-    auth_page.locator(f'a[href$="/{PROJECT}/backups/tweede"]').first.click()
+    click_tab(auth_page, f"/{PROJECT}/backups/tweede")
     auth_page.wait_for_load_state("networkidle")
 
     assert auth_page.url.endswith(f"{BACKUPS_URL}/tweede")

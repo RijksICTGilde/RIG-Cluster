@@ -15,8 +15,14 @@ resources:
 - argocd-deployment.yaml
 - argocd-pull-secrets.yaml
 - network-policies/argocd-network-policy.yaml
+- network-policies/acme-solver-network-policy.yaml
 - network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-staging
+# De AppProjects: default dicht, en een begrensd project voor het app-of-apps en een voor
+# de platform-apps. De Applications hieronder verwijzen ernaar.
+- ../../appprojects
+- argocd-appproject-zad-app-of-apps.yaml
+- argocd-appproject-zad-platform.yaml
 - argocd-application-staging-infrastructure.yaml
 - argocd-application-user-applications.yaml
 # De geheimen uit de private repo zad-staging-secrets: de infrasecrets in deze namespace
@@ -28,38 +34,12 @@ resources:
 - argocd-application-ron-infrastructure.yaml
 
 components:
-- ../../components/sops-plugin
+# De gedeelde CMP-inrichting van ODCN: de pull-secret op de eigen SA van de repo-server,
+# het gepinde image voor beide sidecars, hun env en resources. Deze component neemt
+# sops-plugin zelf op. Alleen het UID hieronder is per cluster.
+- ../../components/cmp-odcn
 
 patches:
-  # Set ARGOCD_EXEC_TIMEOUT on repo-server to allow longer manifest generation
-  # NB: this patch REPLACES spec.repo.env wholesale: repo-server env vars
-  # must be added HERE, not in argocd-deployment.yaml (the patch wins).
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: add
-        path: /spec/repo/env
-        value:
-        - name: ARGOCD_EXEC_TIMEOUT
-          value: "180s"
-        - name: ARGOCD_GIT_ATTEMPTS_COUNT
-          value: "3"
-        - name: ARGOCD_HELM_ALLOW_CONCURRENCY
-          value: "true"
-        # Stream only the app's manifest-generate-paths dir to the CMP
-        # instead of tarring the entire zad-deployments monorepo per render
-        # (measured 2026-06-11: ~27s of a 28.5s GenerateManifest was repo
-        # streaming; the kustomize+sops render itself is ~1s).
-        - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
-          value: "true"
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: replace
-        path: /spec/repo/sidecarContainers/0/image
-        value: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest
   # TESTING: use the userid assigned by openshift to our CMP instead of 999
   - target:
       kind: ArgoCD
@@ -72,57 +52,6 @@ patches:
       - op: replace
         path: /spec/repo/sidecarContainers/0/securityContext/runAsUser
         value: 1003110000
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: add
-        path: /spec/repo/sidecarContainers/0/env
-        value:
-        - name: ARGOCD_EXEC_TIMEOUT
-          value: "180s"
-        - name: KUSTOMIZE_PLUGIN_HOME
-          value: /etc/kustomize/plugin
-        - name: KUBERNETES_SERVICE_HOST
-          value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
-        - name: HELM_CONFIG_HOME
-          value: /tmp/.helm/config
-        - name: HELM_CACHE_HOME
-          value: /tmp/.helm/cache
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: add
-        path: /spec/repo/sidecarContainers/0/resources
-        value:
-          limits:
-            cpu: 500m
-            memory: 1Gi
-          requests:
-            cpu: 100m
-            memory: 512Mi
-  # The sops-plugin component replaces /spec/repo wholesale, so the repo resources in
-  # argocd-deployment.yaml never reach the cluster: this patch is the one that counts.
-  # 2Gi because the repo-server was OOMKilled at 1Gi on a cold cache (13 October 2026).
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: add
-        path: /spec/repo/resources
-        value:
-          limits:
-            cpu: "2"
-            memory: 2Gi
-          requests:
-            cpu: 250m
-            memory: 256Mi
-  # Scale repo-server to 2 replicas for better CMP throughput
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: add
-        path: /spec/repo/replicas
-        value: 2
+      - op: replace
+        path: /spec/repo/sidecarContainers/1/securityContext/runAsUser
+        value: 1003110000

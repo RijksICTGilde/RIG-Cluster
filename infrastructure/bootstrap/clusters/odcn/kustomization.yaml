@@ -12,6 +12,7 @@ resources:
 #  - ../../infrastructure/pgadmin/config/overlays/odcn
   - ../../infrastructure/minio/controller/overlays/odcn
   - ../../infrastructure/minio/config/overlays/odcn
+  - ../../infrastructure/seaweedfs/controller/overlays/odcn
   - ../../infrastructure/prometheus/controller/overlays/odcn
   - ../../infrastructure/redis/controller/overlays/odcn
   # De mailrelay draait NIET via deze kustomization en die regel komt hier ook niet

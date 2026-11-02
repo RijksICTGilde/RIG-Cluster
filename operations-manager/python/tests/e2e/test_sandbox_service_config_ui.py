@@ -1,4 +1,4 @@
-"""Live sandbox E2E for the redis and minio-storage config UI -- purely user-based.
+"""Live sandbox E2E for the redis and seaweedfs-storage config UI -- purely user-based.
 
 Both services carried a real project-level setting (``acl-key-prefix``,
 ``enable-versioning``) that had a model and an API route but no field anywhere, so the
@@ -37,7 +37,7 @@ _API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1",
 _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")
 
 #: De dienstconfig die de wizard achterliet, vastgelegd door de fixture. Zie daar waarom.
-_WIZARD_STAND: dict[str, dict] = {"redis": {}, "minio-storage": {}}
+_WIZARD_STAND: dict[str, dict] = {"redis": {}, "seaweedfs-storage": {}}
 
 
 def _select_service(page: Page, name: str) -> None:
@@ -48,7 +48,7 @@ def _select_service(page: Page, name: str) -> None:
 
 
 def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) -> tuple[str, str]:
-    """Create a project with redis + minio-storage; return (project_name, api_key).
+    """Create a project with redis + seaweedfs-storage; return (project_name, api_key).
 
     Asserts both config steps show up in the wizard once their service is ticked -- that
     is the gap this closes, so it is checked here and not only in the modals.
@@ -59,11 +59,11 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
     wizard.click_next()
     _select_service(page, "publish-on-web")
     _select_service(page, "redis")
-    _select_service(page, "minio-storage")
+    _select_service(page, "seaweedfs-storage")
     wizard.click_next()
 
     saw_redis_step = False
-    saw_minio_step = False
+    saw_seaweedfs_step = False
     for _ in range(18):
         page.wait_for_load_state("networkidle")
         if page.locator("button:has-text('Project aanmaken'), button:has-text('Indienen')").count() > 0:
@@ -82,12 +82,12 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
             zet_aan(acl.first, False)
         versioning = aanvinkvakje_eindigend_op(page, "enable-versioning")
         if versioning.count() > 0:
-            saw_minio_step = True
+            saw_seaweedfs_step = True
             zet_aan(versioning.first, True)
         wizard.click_next()
 
     assert saw_redis_step, "the redis config step never appeared in the create wizard"
-    assert saw_minio_step, "the minio-storage config step never appeared in the create wizard"
+    assert saw_seaweedfs_step, "the seaweedfs-storage config step never appeared in the create wizard"
     wizard.submit_wizard()
     # De naam komt van de voortgangspagina: de taak weet hem en weet of het gelukt is.
     return naam_en_sleutel_na_de_wizard(page, sandbox_url, forgejo, timeout=600)
@@ -95,7 +95,7 @@ def _walk_create_wizard(page: Page, sandbox_url: str, forgejo: ForgejoClient) ->
 
 @pytest.fixture(scope="module")
 def config_project(sandbox_context: BrowserContext, sandbox_url: str, forgejo: ForgejoClient):
-    """One project with redis + minio-storage, created through the real wizard.
+    """One project with redis + seaweedfs-storage, created through the real wizard.
 
     Retried like the sleep-mode walk: the shared WizardHelper's per-step HTMX wait
     occasionally times out on a loaded sandbox while the server-side step succeeds. The
@@ -122,7 +122,7 @@ def config_project(sandbox_context: BrowserContext, sandbox_url: str, forgejo: F
     # juist weer aan. Wie daarna nog naar de stand van de wizard zoekt, meet de volgorde
     # waarin pytest draait (en die is willekeurig). Vandaar deze momentopname.
     _WIZARD_STAND["redis"] = _service_config(forgejo, name, "redis")
-    _WIZARD_STAND["minio-storage"] = _service_config(forgejo, name, "minio-storage")
+    _WIZARD_STAND["seaweedfs-storage"] = _service_config(forgejo, name, "seaweedfs-storage")
     try:
         yield name
     finally:
@@ -155,7 +155,7 @@ def test_wizard_wrote_both_configs(config_project: str, forgejo: ForgejoClient) 
     # Op de momentopname uit de fixture en niet op het bestand van NU: zie daar.
     del config_project, forgejo
     assert _WIZARD_STAND["redis"].get("acl-key-prefix") is False
-    assert _WIZARD_STAND["minio-storage"].get("enable-versioning") is True
+    assert _WIZARD_STAND["seaweedfs-storage"].get("enable-versioning") is True
 
 
 def test_configure_button_opens_redis_config_modal(
@@ -170,14 +170,14 @@ def test_configure_button_opens_redis_config_modal(
     )
 
 
-def test_configure_button_opens_minio_config_modal(
+def test_configure_button_opens_seaweedfs_config_modal(
     config_project: str, sandbox_url: str, sandbox_page: Page, capture
 ) -> None:
     service_config.open_detail(sandbox_page, sandbox_url, config_project)
-    service_config.open_service_config_modal(sandbox_page, "MinIO")
-    capture(sandbox_page, "minio-configure-modal")
+    service_config.open_service_config_modal(sandbox_page, "SeaweedFS")
+    capture(sandbox_page, "seaweedfs-configure-modal")
     assert service_config.modal_field(sandbox_page, "enable-versioning").count() > 0, (
-        "enable-versioning not in the minio-storage config modal"
+        "enable-versioning not in the seaweedfs-storage config modal"
     )
 
 
@@ -207,6 +207,6 @@ def test_services_modal_reaches_both_config_steps(
     )
     capture(sandbox_page, "services-modal-redis-step")
     assert service_config.modal_advance_to_field(sandbox_page, "enable-versioning"), (
-        "the services modal did not chain to the minio-storage config step"
+        "the services modal did not chain to the seaweedfs-storage config step"
     )
-    capture(sandbox_page, "services-modal-minio-step")
+    capture(sandbox_page, "services-modal-seaweedfs-step")

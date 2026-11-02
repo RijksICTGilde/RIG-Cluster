@@ -141,6 +141,38 @@ async def test_update_rewrite_on_a_string_path() -> None:
     assert data["components"][0]["path"] == [{"match": "/api", "rewrite": "/"}]
 
 
+async def test_update_description_sets_it() -> None:
+    data = _project_with_component()
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", description="Wat dit component doet")
+
+    assert result["success"] is True
+    assert data["components"][0]["description"] == "Wat dit component doet"
+
+
+async def test_update_description_empty_string_removes_it() -> None:
+    data = _project_with_component()
+    data["components"][0]["description"] = "Oude omschrijving"
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", description="")
+
+    assert result["success"] is True
+    assert "description" not in data["components"][0]
+
+
+async def test_update_description_not_given_leaves_it_unchanged() -> None:
+    data = _project_with_component()
+    data["components"][0]["description"] = "Bestaande omschrijving"
+    pm = _pm(data)
+
+    result = await ProjectManager.update_component(pm, name="mgr", image="example.com/mgr:v2")
+
+    assert result["success"] is True
+    assert data["components"][0]["description"] == "Bestaande omschrijving"
+
+
 async def test_update_without_path_or_rewrite_leaves_the_path_alone() -> None:
     data = _project_with_component()
     data["components"][0]["path"] = [{"match": "/api", "rewrite": "/"}]

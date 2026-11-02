@@ -6,12 +6,8 @@ metadata:
   annotations:
     policies.kyverno.io/exclude: "disallow-capabilities-strict,disallow-privilege-escalation,restrict-seccomp-strict"
 spec:
-  # RIG-eigen image: upstream v3.5.1 + de namespace-sync en health-fixes uit images/argocd-rig.
-  # Alle componenten volgen dit, behalve repo-server (zie spec.repo hieronder) — zo is de
-  # sandbox dezelfde vorm als odcn-production, waar repo-server op de Red Hat build blijft.
-  # Uit de publieke registry, zodat de sandbox hem via GitOps binnenhaalt in plaats van
-  # via `task load-kind`; die taak blijft bestaan om een lokale build te testen voor je
-  # publiceert (bouw dan met IMAGE_TAG=<iets anders> en pin die tag hier tijdelijk).
+  # RIG-eigen image: upstream v3.5.1 + fixes, alle componenten volgen dit (inclusief repo-server).
+  # Uit ghcr.io voor GitOps-pull; task load-kind geeft IMAGE_TAG=<anders> voor lokale builds.
   image: ghcr.io/minbzk/base-images/argocd-rig
   version: v3.5.1-rig2
   # Alleen keys die de operator in argocd-cm zet EN die ArgoCD daar leest. De
@@ -25,18 +21,62 @@ spec:
       return hs
     timeout.reconciliation: "6m"
     timeout.hard.reconciliation: "0s"
+    # Het account waarmee OPI werkt: alleen apiKey, geen login, dus er is geen wachtwoord
+    # om mee in te loggen. Het token zet `scripts/edit-secret.py --component
+    # argocd-opi-token`.
+    accounts.opi: apiKey
+    # De enforce-beslissingen in de log van argocd-server. Die regel staat op debug-niveau
+    # (gemeten 18-10-2026); de PermissionDenied-waarschuwing ernaast staat er altijd, met
+    # subject, resource en actie.
+    server.rbac.log.enforce.enable: "true"
   server:
     logLevel: debug
-    insecure: true
+    # TLS met certificaat uit het secret argocd-server-tls (van `task sandbox:generate-argocd-tls`).
+    insecure: false
     host: argo.sandbox.rijksapp.dev
     ingress:
       enabled: true
       path: /
       ingressClassName: nginx
+      annotations:
+        # insecure: false zegt nginx om TLS te verwachten; anders krijgt de UI een 502.
+        nginx.ingress.kubernetes.io/backend-protocol: HTTPS
       tls:
       - hosts:
         - argo.sandbox.rijksapp.dev
         secretName: sandbox-wildcard-tls
+  # Least privilege per rol (RC-345). Welke RBAC-actie elke aanroep van OPI vraagt:
+  #
+  #   GET  /api/v1/applications                         applications, get
+  #   GET  /api/v1/applications/{app}                   applications, get
+  #   GET  /api/v1/applications/{app}?refresh=...       applications, get
+  #   GET  /api/v1/applications/{app}/manifests         applications, get
+  #   GET  /api/v1/applications/{app}/resource-tree     applications, get
+  #   POST /api/v1/applications/{app}/sync              applications, sync
+  #
+  # Dat is de hele lijst (opi/connectors/argo.py); POST /api/v1/session valt weg zodra OPI
+  # zijn API-token gebruikt. Aanmaken, wijzigen en verwijderen van een Application doet OPI
+  # via git, en wat hij rechtstreeks op de CR doet loopt via de Kubernetes-API (de Role bij
+  # operations-manager), niet via deze RBAC.
+  #
+  # De sandbox had hier geen blok, dus gold de operator-default (role:readonly voor elk
+  # account). Dezelfde rollen en dezelfde defaultPolicy als op odcn-production, zodat een
+  # meting hier over hetzelfde gaat; de groepsnamen van ODCN bestaan hier niet, de
+  # accounts wel. Het lokale admin-account houdt zijn ingebouwde role:admin.
+  rbac:
+    defaultPolicy: 'role:none'
+    policy: |-
+      # Het machine-account van OPI. Precies de twee acties uit de inventaris hierboven.
+      p, role:zad-opi, applications, get, */*, allow
+      p, role:zad-opi, applications, sync, */*, allow
+      g, opi, role:zad-opi
+      # Ontwikkelaars: deze rol draagt alleen de extra's bovenop role:readonly (syncen,
+      # refreshen, resource-actions); de groep krijgt beide rollen. Geen create, update of
+      # delete: een Application, AppProject of repository komt uit git en van OPI, of van
+      # de admingroep.
+      p, role:zad-developer, applications, sync, */*, allow
+      p, role:zad-developer, applications, action/*, */*, allow
+    scopes: '[groups]'
   prometheus:
     enabled: false
     ingress:
@@ -87,7 +127,7 @@ spec:
       requests:
         cpu: 1
         memory: 256Mi
-    serviceaccount: argocd-argocd-server
+    serviceaccount: argocd-cmp
     sidecarContainers:
       - name: cmp-server
         command:
@@ -97,8 +137,6 @@ spec:
         env:
           - name: ARGOCD_EXEC_TIMEOUT
             value: "180s"
-          - name: KUSTOMIZE_PLUGIN_HOME
-            value: /etc/kustomize/plugin
         securityContext:
           runAsNonRoot: true
           runAsUser: 999

@@ -20,6 +20,7 @@ from opi.forms.visualizers.wizard_sections import (
     ATTACHMENTS_SECTION,
     AUTH_WALL_CONFIG_SECTION,
     BACKUP_SELECT_SECTION,
+    COMPONENTS_CREATE_SECTION,
     COMPONENTS_EDIT_SECTION,
     COMPONENTS_SECTION,
     CONFIG_DISPLAY_SECTION,
@@ -36,6 +37,7 @@ from opi.forms.visualizers.wizard_sections import (
     REDIS_CONFIG_SECTION,
     RESTORE_SELECT_SECTION,
     RESTORE_TARGET_SECTION,
+    SEAWEEDFS_CONFIG_SECTION,
     SEND_EMAIL_CONFIG_SECTION,
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
@@ -81,6 +83,23 @@ class FlowTarget:
     """True when the item does not exist yet and the flow appends it."""
 
 
+@dataclass(frozen=True)
+class ListSelectable:
+    """A list in a flow of which the modal may show only part.
+
+    A list modal normally renders every item. With a selection it renders only the
+    named ones, and the save splices them back into the stored list, so everything
+    outside the selection is neither shown nor submitted and cannot be touched.
+    """
+
+    list_path: str
+    """Where the list sits, e.g. ``components`` or ``deployments[2]/components``."""
+
+    key_field: str
+    """The field that names an item: ``name`` for a component, ``reference`` for its
+    use in a deployment."""
+
+
 @dataclass
 class FormFlow:
     """Composes FormSections into a wizard or tabbed interface."""
@@ -101,6 +120,9 @@ class FormFlow:
     service config): those write wherever their editables point.
     """
 
+    selectable: ListSelectable | None = None
+    """The list a caller may narrow to a selection, for flows that edit a whole list."""
+
 
 CREATE_FLOW = FormFlow(
     flow_id="create-project",
@@ -120,14 +142,15 @@ CREATE_FLOW = FormFlow(
         AUTH_WALL_CONFIG_SECTION,
         TEAM_SECTION,
         ATTACHMENTS_SECTION,
-        COMPONENTS_SECTION,
-        # After COMPONENTS_SECTION so the waker-component select is populated from the
-        # components already entered into the draft project (empty earlier in the flow).
+        COMPONENTS_CREATE_SECTION,
+        # After COMPONENTS_CREATE_SECTION so the waker-component select is populated from
+        # the components already entered into the draft project (empty earlier in the flow).
         SLEEP_MODE_CONFIG_SECTION,
         # After COMPONENTS_SECTION too: the own-component select reads the draft components.
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         build_deployment_wizard_section(0),
         build_domain_section(0),
@@ -156,6 +179,7 @@ EDIT_FLOW = FormFlow(
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         DEPLOYMENTS_SECTION,
         CONFIG_DISPLAY_SECTION,
@@ -186,12 +210,16 @@ MODAL_EDIT_TEAM_FLOW = FormFlow(
     sections=[TEAM_SECTION],
 )
 
+#: De componentdefinities op het project, de lijst waar de componentenmodal op werkt.
+COMPONENTS_SELECTABLE = ListSelectable("components", "name")
+
 MODAL_EDIT_COMPONENTS_FLOW = FormFlow(
     flow_id="modal-edit-components",
     title="Components beheren",
     mode=FlowMode.WIZARD,
     show_review=False,
     sections=[COMPONENTS_EDIT_SECTION],
+    selectable=COMPONENTS_SELECTABLE,
 )
 
 MODAL_EDIT_SERVICES_FLOW = FormFlow(
@@ -211,6 +239,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         ATTACHMENTS_SECTION,
     ],
@@ -296,6 +325,14 @@ MODAL_EDIT_MINIO_FLOW = FormFlow(
     sections=[MINIO_CONFIG_SECTION],
 )
 
+MODAL_EDIT_SEAWEEDFS_FLOW = FormFlow(
+    flow_id="modal-edit-seaweedfs-config",
+    title="SeaweedFS-objectopslag configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[SEAWEEDFS_CONFIG_SECTION],
+)
+
 MODAL_EDIT_SEND_EMAIL_FLOW = FormFlow(
     flow_id="modal-edit-send-email-config",
     title="E-mail versturen",
@@ -357,6 +394,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_CROSS_DOMAIN_FLOW.flow_id: MODAL_EDIT_CROSS_DOMAIN_FLOW,
     MODAL_EDIT_REDIS_FLOW.flow_id: MODAL_EDIT_REDIS_FLOW,
     MODAL_EDIT_MINIO_FLOW.flow_id: MODAL_EDIT_MINIO_FLOW,
+    MODAL_EDIT_SEAWEEDFS_FLOW.flow_id: MODAL_EDIT_SEAWEEDFS_FLOW,
     MODAL_EDIT_SEND_EMAIL_FLOW.flow_id: MODAL_EDIT_SEND_EMAIL_FLOW,
     MODAL_EDIT_IMAGE_REGISTRIES_FLOW.flow_id: MODAL_EDIT_IMAGE_REGISTRIES_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
@@ -387,6 +425,7 @@ def build_deployment_edit_flow(
         show_review=False,
         sections=[section],
         target=FlowTarget("deployments", deployment_index),
+        selectable=ListSelectable(f"deployments[{deployment_index}]/components", "reference"),
     )
 
 
@@ -491,6 +530,49 @@ def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
     )
 
 
+def build_send_email_deployment_flow(deployment_index: int, inherited: dict[str, str] | None = None) -> FormFlow:
+    """De afzender en het dagbudget van een deployment (RC-401).
+
+    ``inherited`` zijn de waarden van het PROJECT, die een leeg veld hier gebruikt. Ze gaan
+    als placeholder het veld in, zodat wie dit formulier opent ziet wat er nu geldt in
+    plaats van een leeg vak.
+    """
+    section = get_service(ServiceType.SEND_EMAIL).deployment_form_section(deployment_index, inherited=inherited)
+    return FormFlow(
+        flow_id=f"modal-edit-send-email-deployment-{deployment_index}",
+        title="E-mail per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
+def build_minio_deployment_flow(deployment_index: int) -> FormFlow:
+    """De grens op oude versies van de bucket van een deployment (RC-380)."""
+    return _build_noncurrent_deployment_flow(
+        ServiceType.MINIO_STORAGE, "modal-edit-minio-deployment-", deployment_index
+    )
+
+
+def build_seaweedfs_deployment_flow(deployment_index: int) -> FormFlow:
+    """Dezelfde grens voor de bucket van seaweedfs-storage (RC-380)."""
+    return _build_noncurrent_deployment_flow(
+        ServiceType.SEAWEEDFS_STORAGE, "modal-edit-seaweedfs-deployment-", deployment_index
+    )
+
+
+def _build_noncurrent_deployment_flow(service_type: ServiceType, prefix: str, deployment_index: int) -> FormFlow:
+    return FormFlow(
+        flow_id=f"{prefix}{deployment_index}",
+        title="Oude versies per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[get_service(service_type).deployment_form_section(deployment_index)],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config.
 
@@ -546,6 +628,24 @@ def _component_count_context(base_data: dict[str, Any]) -> dict[str, Any]:
     return {"component_count": len(base_data.get("components", []))}
 
 
+def _send_email_inherited_context(base_data: dict[str, Any]) -> dict[str, Any]:
+    """Wat een leeg veld in de send-email-stap van een deployment betekent.
+
+    De EFFECTIEVE waarden van het project, want dat is wat een deployment die niets invult
+    werkelijk krijgt: het goedgekeurde adres (leeg = de relay leidt het af) en het budget
+    dat de poort doorlaat, niet het gevraagde.
+    """
+    from opi.services.catalog.send_email import approved_from_address, effective_messages_per_day, project_from_name
+
+    return {
+        "inherited_send_email": {
+            "from-name": project_from_name(base_data),
+            "from-address": approved_from_address(base_data),
+            "messages-per-day": str(effective_messages_per_day(base_data)),
+        }
+    }
+
+
 def _is_new_context(base_data: dict[str, Any]) -> dict[str, Any]:
     return {"is_new": True} if base_data.get("is_new") else {}
 
@@ -590,6 +690,22 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         prefix="modal-edit-postgresql-deployment-",
         list_key="deployments",
         build=lambda index, _ctx: build_postgresql_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-send-email-deployment-",
+        list_key="deployments",
+        build=lambda index, ctx: build_send_email_deployment_flow(index, ctx.get("inherited_send_email")),
+        context_from_base=_send_email_inherited_context,
+    ),
+    IndexedFlow(
+        prefix="modal-edit-minio-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_minio_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-seaweedfs-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_seaweedfs_deployment_flow(index),
     ),
 )
 

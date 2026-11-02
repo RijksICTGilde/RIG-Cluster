@@ -11,12 +11,15 @@ import contextlib
 import json
 import logging
 import os
-import re
 import tempfile
 import threading
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from opi.core.config import settings
+from opi.utils.naming import validate_bucket_name, validate_object_store_username, validate_policy_name
+from opi.utils.s3_policy import bucket_access_policy
+from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,11 @@ class MinioExecutionError(Exception):
 
 class MinioValidationError(Exception):
     """Exception raised when input validation fails."""
+
+
+#: Het ID van de lifecycle-regel die OPI op een bucket met versioning beheert. Andere
+#: regels op dezelfde bucket blijven staan; deze ene wordt vervangen.
+NONCURRENT_VERSION_RULE_ID = "zad-noncurrent-versions"
 
 
 class MinioConnector:
@@ -59,7 +67,7 @@ class MinioConnector:
         logger.debug("Initializing MinioConnector")
 
         # Setup environment variables for mc
-        self.env = os.environ.copy()
+        self.env = child_env()
 
         # Set MC_CONFIG_DIR if not already set via environment
         # This allows ConfigMap/env overrides while providing a sensible default
@@ -71,7 +79,7 @@ class MinioConnector:
         try:
             import subprocess
 
-            result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)
+            result = subprocess.run(["mc", "--version"], capture_output=True, text=True, env=self.env, timeout=10)  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
             if result.returncode == 0:
                 logger.info("MinIO CLI (mc) is available")
                 MinioConnector.is_mc_available = True
@@ -87,64 +95,32 @@ class MinioConnector:
 
     # Security validation methods
 
+    # De drie naamtoetsen staan in opi/utils/naming.py: seaweedfs-storage stelt dezelfde
+    # eis (RC-331). Hier blijft de vertaling naar MinioValidationError staan, zodat de
+    # aanroepers en hun foutafhandeling onveranderd zijn.
     @staticmethod
     def _validate_bucket_name(bucket_name: str) -> str:
         """Validate and sanitize bucket names according to S3 specifications."""
-        if not bucket_name:
-            raise MinioValidationError("Bucket name cannot be empty")
-
-        if len(bucket_name) < 3:
-            raise MinioValidationError("Bucket name must be at least 3 characters long")
-        if len(bucket_name) > 63:
-            raise MinioValidationError("Bucket name cannot exceed 63 characters")
-
-        if not re.match(r"^[a-z0-9][a-z0-9\-]*[a-z0-9]$", bucket_name):
-            raise MinioValidationError(
-                f"Bucket name '{bucket_name}' contains invalid characters. "
-                "Must contain only lowercase letters, numbers, and hyphens. "
-                "Must start and end with a letter or number."
-            )
-
-        if "--" in bucket_name:
-            raise MinioValidationError("Bucket name cannot contain consecutive hyphens")
-
-        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", bucket_name):
-            raise MinioValidationError("Bucket name cannot be formatted as an IP address")
-
-        return bucket_name
+        try:
+            return validate_bucket_name(bucket_name)
+        except ValueError as e:
+            raise MinioValidationError(str(e)) from e
 
     @staticmethod
     def _validate_username(username: str) -> str:
         """Validate and sanitize MinIO usernames."""
-        if not username:
-            raise MinioValidationError("Username cannot be empty")
-
-        if len(username) < 3:
-            raise MinioValidationError("Username must be at least 3 characters long")
-        if len(username) > 128:
-            raise MinioValidationError("Username cannot exceed 128 characters")
-
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-\.]*$", username):
-            raise MinioValidationError(
-                f"Username '{username}' contains invalid characters. "
-                "Must start with letter/underscore and contain only letters, digits, underscores, hyphens, and dots."
-            )
-
-        return username
+        try:
+            return validate_object_store_username(username)
+        except ValueError as e:
+            raise MinioValidationError(str(e)) from e
 
     @staticmethod
     def _validate_policy_name(policy_name: str) -> str:
         """Validate policy name."""
-        if not policy_name:
-            raise MinioValidationError("Policy name cannot be empty")
-
-        if not re.match(r"^[a-zA-Z0-9_\-\.]+$", policy_name):
-            raise MinioValidationError(
-                f"Policy name '{policy_name}' contains invalid characters. "
-                "Must contain only letters, digits, underscores, hyphens, and dots."
-            )
-
-        return policy_name
+        try:
+            return validate_policy_name(policy_name)
+        except ValueError as e:
+            raise MinioValidationError(str(e)) from e
 
     async def _test_mc_availability(self) -> bool:
         """
@@ -265,20 +241,19 @@ class MinioConnector:
 
         try:
             protocol = "https" if secure else "http"
-            endpoint = f"{protocol}://{host}"
 
-            args = ["alias", "set", alias, endpoint, access_key, secret_key]
-            stdout, stderr, code = await self._run_mc_command(args)
-
-            if code != 0:
-                error_msg = f"Failed to configure alias {alias}: {stderr}"
-                logger.error(error_msg)
-                return False
+            # MC_HOST_<alias> in de omgeving in plaats van "mc alias set": de sleutels
+            # staan dan niet op een commandoregel, die leesbaar is voor elk proces in de
+            # container via /proc/<pid>/cmdline.
+            self.env[f"MC_HOST_{alias}"] = (
+                f"{protocol}://{quote(access_key, safe='')}:{quote(secret_key, safe='')}@{host}"
+            )
 
             # Test the alias by listing buckets
             test_stdout, test_stderr, test_code = await self._run_mc_command(["ls", alias])
             if test_code != 0:
                 logger.warning(f"Alias {alias} configured but connection test failed: {test_stderr}")
+                del self.env[f"MC_HOST_{alias}"]
                 return False
 
             # Add to configured aliases set
@@ -361,8 +336,10 @@ class MinioConnector:
             if len(secret_key) < 8:
                 raise MinioValidationError("Secret key must be at least 8 characters long")
 
-            args = ["admin", "user", "add", alias, validated_username, secret_key]
-            stdout, stderr, code = await self._run_mc_command(args)
+            # De secret key via stdin: mc leest hem daar als hij niet als argument staat
+            # en stdin geen terminal is, en zo blijft hij van de commandoregel af.
+            args = ["admin", "user", "add", alias, validated_username]
+            stdout, stderr, code = await self._run_mc_command(args, stdin_input=f"{secret_key}\n")
 
             if code != 0:
                 if "already exists" in stderr.lower():
@@ -855,12 +832,17 @@ class MinioConnector:
             if stdout.strip():
                 try:
                     version_info = json.loads(stdout.strip())
-                    status = version_info.get("status", "").lower()
+                    # De staat staat onder ``versioning``; het veld ``status`` ernaast is dat van
+                    # het COMMANDO ("success"). Dat las elke bucket als onversioneerd, waardoor
+                    # ensure_bucket_versioning nooit "unchanged" zag en nooit kon suspenden.
+                    # Gemeten op mc RELEASE.2025-08-13.
+                    versioning = version_info.get("versioning")
+                    state = (versioning if isinstance(versioning, dict) else version_info).get("status") or ""
 
                     return {
-                        "enabled": status == "enabled",
-                        "suspended": status == "suspended",
-                        "status": version_info.get("status", "Unversioned"),
+                        "enabled": state.lower() == "enabled",
+                        "suspended": state.lower() == "suspended",
+                        "status": state or "Unversioned",
                     }
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse versioning info: {e}")
@@ -997,6 +979,85 @@ class MinioConnector:
             logger.exception(f"Failed to ensure versioning state for bucket {bucket_name}")
             raise MinioExecutionError(f"Ensuring versioning state failed: {e}") from e
 
+    # Bucket Lifecycle Operations
+
+    async def get_bucket_lifecycle(self, alias: str, bucket_name: str) -> list[dict[str, Any]]:
+        """The lifecycle rules on a bucket, as the S3 document carries them.
+
+        An empty list for a bucket without a lifecycle configuration: ``mc`` reports that
+        as a failure, and "no rules yet" is not an error here.
+        """
+        validated_bucket_name = self._validate_bucket_name(bucket_name)
+        bucket_path = f"{alias}/{validated_bucket_name}"
+
+        stdout, stderr, code = await self._run_mc_command(["ilm", "rule", "export", bucket_path])
+        if code != 0:
+            if "not exist" in stderr.lower() or "not found" in stderr.lower():
+                return []
+            raise MinioExecutionError(f"Failed to read lifecycle of bucket {validated_bucket_name}: {stderr}")
+        if not stdout.strip():
+            return []
+        try:
+            document = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise MinioExecutionError(f"Unreadable lifecycle document for bucket {validated_bucket_name}: {e}") from e
+        rules = document.get("Rules") or []
+        return [rule for rule in rules if isinstance(rule, dict)]
+
+    @staticmethod
+    def _noncurrent_version_rule(max_versions: int, expire_days: int | None) -> dict[str, Any]:
+        """The rule OPI owns: the newest ``max_versions`` noncurrent versions survive.
+
+        ``ExpiredObjectDeleteMarker`` cleans up a delete marker that has no version left
+        behind it, which is what remains once the versions under it are expired.
+        """
+        expiration: dict[str, Any] = {"NewerNoncurrentVersions": max_versions}
+        if expire_days is not None:
+            expiration["NoncurrentDays"] = expire_days
+        return {
+            "ID": NONCURRENT_VERSION_RULE_ID,
+            "Status": "Enabled",
+            "Expiration": {"ExpiredObjectDeleteMarker": True},
+            "NoncurrentVersionExpiration": expiration,
+        }
+
+    async def ensure_noncurrent_version_rule(
+        self, alias: str, bucket_name: str, max_versions: int, expire_days: int | None = None
+    ) -> dict[str, Any]:
+        """Idempotently put OPI's noncurrent-version rule on a bucket.
+
+        Only the rule with OPI's own ID is replaced; every other rule on the bucket is
+        written back untouched. An identical rule is left alone, so a reprocess does not
+        rewrite the configuration.
+
+        Returns:
+            ``{"status": "unchanged" | "created" | "updated", "rule": <the rule>}``
+        """
+        validated_bucket_name = self._validate_bucket_name(bucket_name)
+        desired = self._noncurrent_version_rule(max_versions, expire_days)
+        existing = await self.get_bucket_lifecycle(alias, validated_bucket_name)
+        current = next((rule for rule in existing if rule.get("ID") == NONCURRENT_VERSION_RULE_ID), None)
+
+        if current == desired:
+            logger.debug(f"Bucket {validated_bucket_name} already carries the noncurrent-version rule")
+            return {"status": "unchanged", "rule": desired}
+
+        others = [rule for rule in existing if rule.get("ID") != NONCURRENT_VERSION_RULE_ID]
+        document = json.dumps({"Rules": [*others, desired]})
+        bucket_path = f"{alias}/{validated_bucket_name}"
+        stdout, stderr, code = await self._run_mc_command(["ilm", "rule", "import", bucket_path], stdin_input=document)
+        if code != 0:
+            raise MinioExecutionError(
+                f"Failed to set the noncurrent-version rule on bucket {validated_bucket_name}: {stderr or stdout}"
+            )
+
+        status = "updated" if current is not None else "created"
+        logger.info(
+            f"Noncurrent-version rule {status} on bucket {validated_bucket_name}: "
+            f"max {max_versions} versions, expire_days={expire_days}"
+        )
+        return {"status": status, "rule": desired}
+
     # Convenience methods for common operations
 
     async def grant_bucket_access(
@@ -1034,36 +1095,8 @@ class MinioConnector:
             # Create policy for bucket access
             policy_name = f"{validated_username}-{validated_bucket_name}-policy"
 
-            # Build policy document
-            statements = []
-
-            if "list" in permissions or "read" in permissions:
-                statements.append(
-                    {
-                        "Effect": "Allow",
-                        "Action": [
-                            "s3:ListBucket",
-                            "s3:GetBucketVersioning",  # Required for apps like Grist that check versioning
-                            "s3:GetBucketLocation",  # Common requirement for S3 clients
-                        ],
-                        "Resource": [f"arn:aws:s3:::{validated_bucket_name}"],
-                    }
-                )
-
-            actions = []
-            if "read" in permissions:
-                actions.extend(["s3:GetObject", "s3:GetObjectVersion"])
-            if "write" in permissions:
-                actions.extend(["s3:PutObject"])
-            if "delete" in permissions:
-                actions.append("s3:DeleteObject")
-
-            if actions:
-                statements.append(
-                    {"Effect": "Allow", "Action": actions, "Resource": [f"arn:aws:s3:::{validated_bucket_name}/*"]}
-                )
-
-            policy_document = {"Version": "2012-10-17", "Statement": statements}
+            # Shared with seaweedfs-storage: one document, so one isolation (RC-331).
+            policy_document = bucket_access_policy(validated_bucket_name, permissions)
 
             # Create the policy
             policy_result = await self.create_policy(alias, policy_name, policy_document)

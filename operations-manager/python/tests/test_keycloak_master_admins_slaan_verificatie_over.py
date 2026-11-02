@@ -9,6 +9,11 @@ grendel voor die weg net zo stil weg als een ``if`` in de connector.
 De reden dat de master-beheerders hem nodig hebben: hun adres is ``{admin}@local.invalid``
 of ``{username}@localhost`` en bestaat niet. Verificatie afdwingen sluit elke
 projectbeheerder buiten zijn eigen realm.
+
+De uitzondering op ``operations-manager`` is de sandbox-beheerder uit
+``opi/configs/projects/operations-manager-local.yaml``: een bestand van het platform zelf,
+alleen gelezen als ``KEYCLOAK_BOOTSTRAP_CONFIG`` op ``local`` of ``sandbox`` staat, en met
+een adres (``admin@sandbox.rijksapp.dev``) dat geen postbus heeft.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ OPI = Path(__file__).resolve().parents[1] / "opi"
 #: twee niet zien.
 VERWACHTE_UITZONDERINGEN = {
     ("bootstrap/keycloak_setup.py", "master"): 1,
+    ("bootstrap/keycloak_setup.py", "operations-manager"): 1,
     ("manager/keycloak_manager.py", "master"): 2,
 }
 

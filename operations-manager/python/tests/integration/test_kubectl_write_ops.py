@@ -193,8 +193,8 @@ class TestKubectlLabelAnnotations:
         """Test applying a label to a namespace."""
         connector = connected_kubectl_connector
 
-        result = await connector.apply_label_to_resource(
-            resource_type="namespace", resource_name="test-project", label_key="test-label", label_value="test-value"
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace", resource_name="test-project", labels={"test-label": "test-value"}
         )
         assert result is True
 

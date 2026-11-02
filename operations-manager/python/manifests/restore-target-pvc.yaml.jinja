@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: "{{ pvc_name }}"
-  namespace: "{{ namespace }}"
+  name: {{ pvc_name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
     app.kubernetes.io/managed-by: opi-restore
     backup.rig.nl/restored: "true"
@@ -11,19 +11,19 @@ metadata:
 {% endif %}
   annotations:
     argocd.argoproj.io/sync-options: Replace=false
-    backup.rig.nl/restored-at: "{{ timestamp }}"
-    backup.rig.nl/restored-from: "{{ source_pvc_name }}"
+    backup.rig.nl/restored-at: {{ timestamp | yaml_scalar }}
+    backup.rig.nl/restored-from: {{ source_pvc_name | yaml_scalar }}
 {% if snapshot_id %}
-    backup.rig.nl/snapshot-id: "{{ snapshot_id }}"
+    backup.rig.nl/snapshot-id: {{ snapshot_id | yaml_scalar }}
 {% endif %}
 spec:
   accessModes:
 {% for mode in access_modes %}
-    - {{ mode }}
+    - {{ mode | yaml_scalar }}
 {% endfor %}
 {% if storage_class_name %}
-  storageClassName: {{ storage_class_name }}
+  storageClassName: {{ storage_class_name | yaml_scalar }}
 {% endif %}
   resources:
     requests:
-      storage: {{ size }}
+      storage: {{ size | yaml_scalar }}

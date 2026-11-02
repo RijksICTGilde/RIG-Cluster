@@ -42,8 +42,27 @@
         return el.closest("form") || el.closest("[data-htmx-blokkeer]");
     }
 
+    /* Wat er scrolt hangt af van de schil (base_lotc.html.j2): staan zijbalk en pagina naast
+       elkaar, dan scrolt de pagina zelf; in een kolom zet NLDD data-scroll="root" en scrolt
+       het venster. */
+    function scrollgebied() {
+        var pagina = document.getElementById("hoofdpagina");
+        return pagina && pagina.dataset.scroll !== "root" ? pagina : null;
+    }
+
+    function huidigeScroll() {
+        var gebied = scrollgebied();
+        return gebied ? gebied.scrollTop : window.scrollY;
+    }
+
+    function scrollNaar(y) {
+        var gebied = scrollgebied();
+        if (gebied) gebied.scrollTop = y;
+        else window.scrollTo(0, y);
+    }
+
     document.addEventListener("htmx:beforeSwap", function () {
-        scrollY = window.scrollY;
+        scrollY = huidigeScroll();
     });
 
     /* De pagina terug op de hoogte waar hij stond. In de volgende frame: de browser heeft
@@ -54,7 +73,7 @@
         var doel = scrollY;
         scrollY = null;
         requestAnimationFrame(function () {
-            if (Math.abs(window.scrollY - doel) > 1) window.scrollTo(0, doel);
+            if (Math.abs(huidigeScroll() - doel) > 1) scrollNaar(doel);
         });
     }
 

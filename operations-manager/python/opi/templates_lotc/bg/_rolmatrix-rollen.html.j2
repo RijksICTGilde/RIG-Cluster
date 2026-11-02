@@ -1,0 +1,21 @@
+{#
+  De rollen zelf: wat elke rol is, en of een service account hem kan dragen.
+#}
+{# No panel(): a card around an nldd-table puts a frame in a frame. #}
+<c-stack gap="md">
+    <c-section-head title="De rollen" icon="user" />
+    <nldd-table columns="1fr 3fr 1.4fr" accessible-label="De rollen">
+        <nldd-table-row slot="header">
+            <nldd-text-cell text="**Rol**"></nldd-text-cell>
+            <nldd-text-cell text="**Waarvoor**"></nldd-text-cell>
+            <nldd-text-cell text="**Service account**"></nldd-text-cell>
+        </nldd-table-row>
+        {% for kolom in kolommen %}
+            <nldd-table-row>
+                <nldd-text-cell text="{{ kolom.label }}"></nldd-text-cell>
+                <nldd-text-cell text="{{ kolom.description }}"></nldd-text-cell>
+                <nldd-text-cell text="{{ "ja" if kolom.service_account_reachable else "nee, vraagt een mens" }}"></nldd-text-cell>
+            </nldd-table-row>
+        {% endfor %}
+    </nldd-table>
+</c-stack>

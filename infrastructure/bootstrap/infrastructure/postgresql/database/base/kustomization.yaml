@@ -5,3 +5,5 @@ resources:
 - databases.yaml
 - users.yaml
 - podmonitor.yaml
+- platform-backup-cronjob.yaml
+- monitoring-queries.yaml

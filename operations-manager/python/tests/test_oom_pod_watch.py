@@ -1418,12 +1418,12 @@ class TestWatchPodsCommand:
 
 
 class TestClusterFlag:
-    def test_the_watch_is_off_on_every_cluster_for_now(self):
+    def test_the_watch_runs_only_on_the_odcn_clusters(self):
         """Een lange stream over alle pods die zelf remedieert gaat per cluster aan,
-        niet door gemerged te worden."""
+        niet door gemerged te worden: een volgend cluster is een bewuste wijziging hier."""
         from opi.core.cluster_config import CLUSTER_CONFIG, watches_pods_for_oom
 
-        assert [c for c in CLUSTER_CONFIG if watches_pods_for_oom(c)] == []
+        assert sorted(c for c in CLUSTER_CONFIG if watches_pods_for_oom(c)) == ["odcn-production", "odcn-staging"]
 
     def test_a_cluster_that_turns_it_on_gets_it(self):
         from opi.core.cluster_config import CLUSTER_CONFIG, watches_pods_for_oom

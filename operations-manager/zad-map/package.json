@@ -1,0 +1,18 @@
+{
+  "name": "zad-map",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "svelte": "^5.57.3",
+    "vite": "^6.4.5"
+  },
+  "dependencies": {
+    "@xyflow/svelte": "^1.7.0",
+    "elkjs": "^0.12.1",
+    "roughjs": "^4.6.6"
+  }
+}

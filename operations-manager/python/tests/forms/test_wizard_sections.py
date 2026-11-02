@@ -20,6 +20,9 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     _strip_removed_services_from_components,
     build_component_edit_section,
+    build_deployment_add_components_section,
+    build_deployment_add_info_section,
+    build_deployment_edit_section,
 )
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
@@ -54,7 +57,7 @@ class TestSectionDefinitions:
 class TestCoreSections:
     def test_identity_section(self):
         assert IDENTITY_SECTION.section_id == "identity"
-        assert len(IDENTITY_SECTION.editables) == 3
+        assert len(IDENTITY_SECTION.editables) == 4
         assert IDENTITY_SECTION.visible is True
 
     def test_services_section(self):
@@ -77,7 +80,7 @@ class TestCoreSections:
     def test_config_display_section_is_readonly(self):
         assert CONFIG_DISPLAY_SECTION.section_id == "config"
         assert CONFIG_DISPLAY_SECTION.is_readonly is True
-        assert len(CONFIG_DISPLAY_SECTION.editables) == 3
+        assert len(CONFIG_DISPLAY_SECTION.editables) == 2
 
 
 class TestConditionalSections:
@@ -127,8 +130,9 @@ class TestServiceConfigSectionsLookup:
 
     def test_lookup_count(self):
         # +1 for postgresql-database's schema-list section (RC-17), +2 for the redis /
-        # minio-storage project-level sections (RC-25), +1 for image-registries.
-        assert len(SERVICE_CONFIG_SECTIONS) == 11
+        # minio-storage project-level sections (RC-25), +1 for image-registries, +1 for
+        # seaweedfs-storage (RC-331).
+        assert len(SERVICE_CONFIG_SECTIONS) == 12
 
 
 class TestFlowDefinitions:
@@ -136,8 +140,9 @@ class TestFlowDefinitions:
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25), +1 for image-registries.
-        assert len(CREATE_FLOW.sections) == 18
+        # minio-storage (RC-25), +1 for image-registries, +1 for seaweedfs-storage
+        # (RC-331).
+        assert len(CREATE_FLOW.sections) == 19
         assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
         # invite-config sits after the keycloak step so its realm-role picker reads the
         # keycloak config already entered in the draft.
@@ -156,8 +161,9 @@ class TestFlowDefinitions:
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25), +1 for image-registries.
-        assert len(EDIT_FLOW.sections) == 17
+        # minio-storage (RC-25), +1 for image-registries, +1 for seaweedfs-storage
+        # (RC-331).
+        assert len(EDIT_FLOW.sections) == 18
         # Attachments are edited via a modal/service-edit flow in edit mode,
         # so the edit wizard has no dedicated attachments section (unlike create).
         assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]
@@ -302,6 +308,40 @@ class TestStripRemovedServicesFromComponents:
 
     def test_services_edit_section_has_post_merge(self):
         assert SERVICES_EDIT_SECTION.post_merge is _strip_removed_services_from_components
+
+
+class TestOmgevingVeldInDeploymentSecties:
+    """Het environment-veld staat in de add-flow's informatiestap (RC-330), niet ook nog
+    in de componentenstap: anders komt dezelfde editable er twee keer in te staan en
+    overschrijft de ene post de andere."""
+
+    def test_add_info_section_draagt_het_veld(self):
+        section = build_deployment_add_info_section(0)
+        assert "deployments[0]/environment" in section.layout
+        assert any(e.editable.yaml_path == "deployments[0]/environment" for e in section.editables)
+
+    def test_add_info_section_draagt_het_veld_ook_zonder_clone_from(self):
+        """De restore-flow laat clone-from weg maar niet environment."""
+        section = build_deployment_add_info_section(0, include_clone_from=False)
+        assert "deployments[0]/environment" in section.layout
+        assert any(e.editable.yaml_path == "deployments[0]/environment" for e in section.editables)
+        assert "deployments[0]/clone-from" not in section.layout
+
+    def test_add_components_section_laat_het_veld_weg(self):
+        """Die stap van de add-flow komt na de informatiestap: het veld staat daar al."""
+        section = build_deployment_add_components_section(0)
+        assert "deployments[0]/environment" not in section.layout
+        assert not any(e.editable.yaml_path == "deployments[0]/environment" for e in section.editables)
+
+    def test_edit_section_draagt_het_veld_standaard(self):
+        section = build_deployment_edit_section(1)
+        assert "deployments[1]/environment" in section.layout
+        assert any(e.editable.yaml_path == "deployments[1]/environment" for e in section.editables)
+
+    def test_edit_section_kan_het_veld_weglaten(self):
+        section = build_deployment_edit_section(1, include_environment=False)
+        assert "deployments[1]/environment" not in section.layout
+        assert not any(e.editable.yaml_path == "deployments[1]/environment" for e in section.editables)
 
 
 def _slot_divs(items: list) -> list[Div]:

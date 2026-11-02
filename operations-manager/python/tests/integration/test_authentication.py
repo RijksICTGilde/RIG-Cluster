@@ -322,15 +322,15 @@ class TestValidAuthentication:
 
 
 @pytest.mark.integration
-class TestMasterApiKey:
-    """Tests for master API key authentication."""
+class TestBackupStatusAuth:
+    """Tests for the platform-admin token on the backup status endpoint."""
 
-    def test_backup_status_endpoint_requires_master_key(
+    def test_backup_status_endpoint_requires_platform_admin_token(
         self,
         test_client: TestClient,
     ) -> None:
-        """Test that backup status endpoint requires master API key."""
-        # Without any key - the endpoint uses @validate_master_api_key
+        """Test that backup status endpoint requires a bearer token."""
+        # Without any credential - the endpoint uses @validate_platform_admin_token
         # The backup router is at /api/v1/backup
         response = test_client.get("/api/v1/backup/status")
         assert response.status_code == 401
@@ -344,11 +344,10 @@ class TestMasterApiKey:
         """Test that backup status endpoint rejects project API keys."""
         response = test_client.get(
             "/api/v1/backup/status",
-            headers={"X-API-Key": "valid-api-key-a"},  # Project key, not master key
+            headers={"X-API-Key": "valid-api-key-a"},  # Project key, no bearer token
         )
-        # Should fail - project key is not master key
-        # Returns 501 if MASTER_API_KEY not configured, 401 if it's wrong
-        assert response.status_code in (401, 501)
+        # A project key is not a weaker platform-admin token, it is a different credential.
+        assert response.status_code == 401
 
 
 @pytest.mark.integration

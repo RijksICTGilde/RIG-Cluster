@@ -16,63 +16,63 @@ class DatabaseVariables(Enum):
         name="DATABASE_SERVER_HOST",
         description="PostgreSQL server hostnaam",
         source="secret",
-        secret_key="host",
+        secret_key="host",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_SERVER_HOST", "APP_DATABASE_SERVER"],
     )
     PORT = VariableDefinition(
         name="DATABASE_SERVER_PORT",
         description="PostgreSQL server poort",
         source="secret",
-        secret_key="port",
+        secret_key="port",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_PORT", "APP_DATABASE_SERVER_PORT"],
     )
     USER = VariableDefinition(
         name="DATABASE_SERVER_USER",
         description="Database gebruikersnaam",
         source="secret",
-        secret_key="username",
+        secret_key="username",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_USER"],
     )
     PASSWORD = VariableDefinition(
         name="DATABASE_PASSWORD",
         description="Database gebruiker wachtwoord",
         source="secret",
-        secret_key="password",
+        secret_key="password",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_PASSWORD"],
     )
     USER_RO = VariableDefinition(
         name="DATABASE_SERVER_USER_RO",
         description="Read-only database gebruikersnaam",
         source="secret",
-        secret_key="ro_username",
+        secret_key="ro_username",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_USER_RO"],
     )
     PASSWORD_RO = VariableDefinition(
         name="DATABASE_PASSWORD_RO",
         description="Read-only database gebruiker wachtwoord",
         source="secret",
-        secret_key="ro_password",
+        secret_key="ro_password",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_PASSWORD_RO"],
     )
     DATABASE = VariableDefinition(
         name="DATABASE_DB",
         description="Database naam",
         source="secret",
-        secret_key="database",
+        secret_key="database",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_DB"],
     )
     SCHEMA = VariableDefinition(
         name="DATABASE_SCHEMA",
         description="Database schema naam",
         source="secret",
-        secret_key="schema",
+        secret_key="schema",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_SCHEMA"],
     )
     CONNECTION_STRING = VariableDefinition(
         name="DATABASE_SERVER_FULL",
         description="Volledige PostgreSQL connectiestring",
         source="secret",
-        secret_key="connection_string",
+        secret_key="connection_string",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_DATABASE_SERVER_FULL"],
     )
 

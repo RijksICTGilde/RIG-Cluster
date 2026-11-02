@@ -10,6 +10,25 @@ Dit is deel 3 van drie. Deel 1 (`features/futures/gebeurtenissen-inventarisatie.
 
 ---
 
+## Stand: wat er inmiddels gebouwd is
+
+**De tabel bestaat.** `notification_events` staat er sinds RC-393, als Alembic-migratie
+`013` met een model in `opi/services/persistence/notification_events.py`, in de vorm van
+deel 2 punt 7. De **audit** is de eerste schrijver geworden en niet de resource-tuner: de
+rechten-opdracht (`plans/rechten-op-paden-tad-en-wies.md`, paragraaf 6) had hem nodig, en
+die weg legt ook weigeringen vast. Zie `features/audit.md`.
+
+**De retentielus hoort daar wel bij, anders dan de kleinste eerste stap hieronder zegt.**
+De audit legt persoonsgegevens vast (`actor` en `origin`), dus de twee klokken uit deel 2
+punt 6 (90 dagen pseudonimiseren, een jaar bewaren) zijn meteen meegebouwd. Zonder lus
+bewaart de tabel die gegevens zonder termijn, en dat is geen latere fase.
+
+**Wat er nog niet is:** de tijdlijn in de portal, het postvak, de voorkeuren, de
+uitwaaiering naar ontvangers, elk push-kanaal, de export, en elke andere schrijfweg dan de
+audit. De fasering hieronder staat verder ongewijzigd.
+
+---
+
 ## De aanbeveling in een alinea
 
 Leg gebeurtenissen vast in een eigen tabel in rig-db, als vijfde Alembic-migratie naast `async_tasks`, `runs`, `users` en `marked_for_deletion`, met een gesloten enum van soorten waarvan de waarden meteen in reverse-DNS-notatie staan zodat een CloudEvents-projectie later alleen nog `source` hoeft in te vullen. Toon ze eerst in de portal als tijdlijn per project en per deployment, achter de autorisatie die er al is. Zet daar het postvak per persoon bovenop zodra de gebeurtenissen die je vastlegt de goede blijken. Bouw pas daarna push-kanalen, en dan in de volgorde webhook, Alertmanager, mail, Mattermost, omdat dat de volgorde is van "in ons beheer" naar "afhankelijk van een keten die aantoonbaar nog niet af is".
@@ -76,7 +95,7 @@ Let op het onderscheid uit deel 2, punt 4: de tijdlijn volgt het HEDEN (wie geen
 - **De regels.** `features/lotc-bouwlijn.md`: attributen in kebab-case, samenstellingen krijgen kinderen in plaats van data-props, Jinja niet op attribuutpositie. En: nooit een `{# ... #}`-commentaar BINNEN een componenttag.
 - **Het htmx-patroon voor verversen.** Ligt er in twee vormen, en het verschil tussen die twee is voor dit ontwerp belangrijker dan de snelheid. Een lopende taak vervangt zichzelf met een kale tijdklok: `hx-trigger="every 2s"` (`opi/templates_lotc/partials/task_progress_fragment.html.j2:34`). Dat mag daar, want dat venster bestaat alleen zolang de taak loopt. Het blok dat vanzelf bijwerkt gebruikt **bewust geen tijdklok**: `opi/templates_lotc/bg/project-tabs.html.j2:987` luistert met `hx-trigger="intersect once, zad-metingen-ververs"` op een **eigen gebeurtenis**, en een scriptje eronder (`TUSSENPOOS = 60000`, regels 993-1011) vuurt die gebeurtenis elke minuut, maar keert meteen terug zolang het tabblad onzichtbaar is (`if (document.hidden || typeof htmx === 'undefined') return;`), met daarnaast een haak op `visibilitychange` die ververst zodra je terugkomt. Het commentaar op de regels 975-986 legt uit waarom die vorm er staat en de kale vorm niet:
   - een htmx-tijdklok blijft doorpeilen als het tabblad naar de achtergrond gaat, dus een tabblad dat een dag openstaat bevraagt een dag lang elke minuut de server;
-  - en het voor de hand liggende lapmiddel daarvoor, een triggerfilter `every 60s [conditie]`, **kan hier niet**: htmx bouwt zo'n conditie met de `Function`-constructor en de Content-Security-Policy van deze applicatie staat geen `unsafe-eval` toe (`opi/middleware/security_headers.py:56`: `script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net`, en `unsafe-eval` staat er niet bij), dus de conditie zou stil nooit waar worden. Gemeten in RC-91.
+  - en het voor de hand liggende lapmiddel daarvoor, een triggerfilter `every 60s [conditie]`, **kan hier niet**: htmx bouwt zo'n conditie met de `Function`-constructor en de Content-Security-Policy van deze applicatie staat geen `unsafe-eval` toe (`opi/middleware/security_headers.py`: `script-src 'self' 'unsafe-inline'`, en `unsafe-eval` staat er niet bij), dus de conditie zou stil nooit waar worden. Gemeten in RC-91.
 - **De proefopstelling.** `/lotc/bg/<pagina>` met verzonnen gegevens uit `opi/web/lotc_fixtures.py`, zodat je vorm kunt kiezen zonder cluster.
 
 **Let op**: het startpunt van de opdracht verwijst naar een `ROOS_CLAUDE_REFERENCE.md` op een lokaal pad. Dat pad bestaat hier niet, en dat klopt: `jinja-roos-components` is sinds RC-67 uit het project verdwenen (`features/roos-eruit.md`), en `CLAUDE.md` zegt het ook met zoveel woorden ("de oude ROOS-referentie is met de bibliotheek verdwenen"). De geldende referentie is `features/lotc-bouwlijn.md` plus `request_for_components.md` voor wat het thema nog niet kan.
@@ -199,7 +218,7 @@ Voor het platformaccount is dat bewust anders. `ensure_platform_account` zet het
 Vier dingen, alle vier al gemeten en vastgelegd in `plans/mail-vervolgpunten.md` en `TODO.md` punt 26. Ze staan hier omdat ze de bruikbaarheid van dit kanaal bepalen, niet omdat dit traject ze moet oplossen. Ze zijn samen de reden dat mail laat in de fasering staat: **een meldsysteem opzetten op een keten die stil faalt, is een meldsysteem dat stil faalt.**
 
 1. **De relay staat aan (punt 5: GEDAAN).** Open blijven twee afspraken: die met het mailteam over `noreply-rijksapp(+project)@rijksoverheid.nl` als afzender, en een bounce-postbus die OPI via IMAP mag legen. Zonder die postbus is onbestelbare post onzichtbaar.
-2. **De upstream weigert ontvangers buiten `rijksoverheid.nl`.** Punt 8, gemeten op 21 augustus 2026: naar een adres bij rijksoverheid.nl volgde `250 ok`, naar een gmail-adres `550 #5.1.0 Address rejected` op de RCPT TO. **Dat raakt dit traject direct.** In `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:45` staat vandaag een `ALLOWED_EMAILS` met zes adressen, waarvan er een op `odc-noord.nl` staat. Die persoon is met de huidige afspraak per e-mail niet te bereiken. Een meldingssysteem dat ervan uitgaat dat mail werkt voor iedereen, klopt dus niet.
+2. **De upstream weigert ontvangers buiten `rijksoverheid.nl`.** Punt 8, gemeten op 21 augustus 2026: naar een adres bij rijksoverheid.nl volgde `250 ok`, naar een gmail-adres `550 #5.1.0 Address rejected` op de RCPT TO. **Dat raakt dit traject direct.** In `ALLOWED_EMAILS` (AGE-versleuteld in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-access-secrets.yaml`) staat een adres op `odc-noord.nl`. Die persoon is met de huidige afspraak per e-mail niet te bereiken. Een meldingssysteem dat ervan uitgaat dat mail werkt voor iedereen, klopt dus niet.
 3. **Bounces verdwijnen stil.** Punt 10: mislukt een bezorging, dan maakt de relay een DSN en stuurt die naar het envelope-adres, en de upstream weigert dat adres ALS ONTVANGER met dezelfde 550. De relay noteert "discarding message after double bounce" en gooit hem weg; de relaylog bewaart drie uur. **Voor meldingen betekent dat: het kanaal kan zeggen dat het is gelukt terwijl het bericht nergens aankwam.** Wat de outbox als `sent` markeert, is "de relay heeft hem aangenomen", en dat is niet hetzelfde als afgeleverd. Dat moet in de UI ook zo staan, en niet als "verstuurd".
 4. **De MTA-STS-lookup kost twee minuten per bericht naar een domein dat het publiceert.** Punt 9, gemeten: 131 seconden naar gmail.com. Raakt ons alleen als er ooit buiten `rijksoverheid.nl` gemaild wordt, en dat kan vandaag toch niet. Wel relevant voor de time-out van de outboxplanner: die moet royaal zijn, anders markeert hij een bezorging als mislukt terwijl hij nog loopt.
 

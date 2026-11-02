@@ -119,12 +119,15 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("Bouwen & draaien", ["/forms/wizard/restart", "/services"]),
     # /introductie als eerste van Platform: het is de uitleg OVER het platform, en zonder
     # groep viel hij bovenaan bij Dashboard en Mijn projecten, waar hij niet hoort.
-    ("Platform", ["/introductie", "/cli", "/actions", "/docs", "/eigen-domein"]),
+    ("Platform", ["/introductie", "/platform", "/rollen", "/cli", "/actions", "/docs", "/eigen-domein", "/security"]),
     # /metrics-explorer stond onder "Bouwen & draaien" en hoort hier: het is een
     # beheerpagina over het hele platform, niet iets dat je gebruikt om je eigen project
     # te bouwen. Het menu-item zelf is al alleen voor een platformbeheerder zichtbaar
     # (menu.py, achter is_admin), dus deze groep zegt hetzelfde als wie hem ziet.
-    ("Beheer", ["/metrics-explorer", "/admin/users", "/admin/usage", "/admin/approvals", "/admin/diensten"]),
+    (
+        "Beheer",
+        ["/metrics-explorer", "/admin/users", "/admin/usage", "/admin/approvals", "/admin/diensten"],
+    ),
 ]
 
 
@@ -196,10 +199,4 @@ def get_navigation(user: dict[str, Any] | None, current_path: str = "") -> dict[
         if in_group:
             sidebar.append((label, in_group))
 
-    # De beheeritems ook los, voor het gebruikersmenu rechtsboven. Ze blijven in de
-    # zijkolom staan: dit is een tweede WEG naar dezelfde pagina's, niet een verhuizing.
-    # Wie ze uit de zijkolom wil halen moet dat apart besluiten.
-    beheer_links = dict(GROUPS)["Beheer"]
-    beheer = [item for item in main if item["link"] in beheer_links]
-
-    return {"utility": utility, "sidebar": sidebar, "beheer": beheer}
+    return {"utility": utility, "sidebar": sidebar}

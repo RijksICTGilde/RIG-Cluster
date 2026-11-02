@@ -10,6 +10,8 @@ The operations manager uses declarative YAML templates to configure Keycloak rea
 - **Templates Available**:
   - `sso-only.yaml` - SSO-only authentication (auto-redirect to identity provider)
   - `sso-support.yaml` - SSO + local account authentication (login form with SSO button)
+  - `sso-support-otp.yaml` - as `sso-support`, but a local account also gives an OTP
+    (see [keycloak-verplichte-otp.md](keycloak-verplichte-otp.md))
 
 ## Idempotency
 
@@ -236,6 +238,16 @@ users:
     removeDefaultRoles: false  # Set true to remove default role assignments first
 ```
 
+**Een wachtwoord in een blauwdruk mag geen letterlijke waarde zijn.** De `value` onder
+`credentials` verwijst naar een variabele, en de lijst met gebruikers die zo'n wachtwoord
+dragen staat in een apart bestand dat alleen op een lokaal of sandboxcluster wordt geladen.
+De blauwdruk `algoritmeregister` doet dat zo: de vier demo-gebruikers staan in
+`algoritmeregister-demo-users.yaml` en komen als contextvariabele `demo_users` mee wanneer
+het cluster ze mag hebben (`demo_users: True` in `CLUSTER_CONFIG`, zie
+`get_keycloak_demo_users`). Op een productiecluster is `demo_users` leeg en maakt de
+`forEach` niets aan. `tests/test_keycloak_platform_zonder_ontwikkelresten.py` houdt beide
+kanten vast.
+
 **A user created here starts out unconfirmed.** `create_user` sets `emailVerified: false` plus a
 `VERIFY_EMAIL` required action for any item with an `email`, and nothing in OPI sends that mail
 or clears the flag again. Behind an authorization wall such an account is rejected for good; see
@@ -274,6 +286,7 @@ These variables are automatically provided:
 | `operations_manager_domain` | Operations manager domain (hostname) |
 | `invite_client_id` | Client ID for invite flow |
 | `platform_client_id` | Platform client ID for federation |
+| `demo_users` | Demo users for this cluster; empty outside local and sandbox |
 
 ### Captured Outputs
 

@@ -95,8 +95,8 @@ Drie dingen, en niet meer:
   - en het voor de hand liggende lapmiddel daarvoor, een triggerfilter
     `every 60s [conditie]`, **kan hier niet**: htmx bouwt zo'n conditie met de
     `Function`-constructor en de Content-Security-Policy van deze applicatie staat geen
-    `unsafe-eval` toe (`opi/middleware/security_headers.py:56`: `script-src 'self'
-    'unsafe-inline' https://cdn.jsdelivr.net`, en `unsafe-eval` staat er niet bij), dus de
+    `unsafe-eval` toe (`opi/middleware/security_headers.py`: `script-src 'self'
+    'unsafe-inline'`, en `unsafe-eval` staat er niet bij), dus de
     conditie zou stil nooit waar worden. Gemeten in RC-91.
 - **De proefopstelling.** `/lotc/bg/<pagina>` met verzonnen gegevens uit
   `opi/web/lotc_fixtures.py`, zodat je vorm kunt kiezen zonder cluster.
@@ -398,11 +398,11 @@ omdat ze de bruikbaarheid van dit kanaal bepalen, niet omdat dit traject ze moet
    via IMAP mag legen. Zonder die postbus is onbestelbare post onzichtbaar.
 2. **De upstream weigert ontvangers buiten `rijksoverheid.nl`.** Punt 8, gemeten op 21 augustus
    2026: naar een adres bij rijksoverheid.nl volgde `250 ok`, naar een gmail-adres `550 #5.1.0
-   Address rejected` op de RCPT TO. **Dat raakt dit traject direct.** In
-   `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:45`
-   staat vandaag een `ALLOWED_EMAILS` met zes adressen, waarvan er één op `odc-noord.nl` staat.
-   Die persoon is met de huidige afspraak per e-mail niet te bereiken. Een meldingssysteem dat
-   ervan uitgaat dat mail werkt voor iedereen, klopt dus niet.
+   Address rejected` op de RCPT TO. **Dat raakt dit traject direct.** In `ALLOWED_EMAILS`
+   (AGE-versleuteld in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-access-secrets.yaml`)
+   staat een adres op `odc-noord.nl`. Die persoon is met de huidige afspraak per e-mail
+   niet te bereiken. Een meldingssysteem dat ervan uitgaat dat mail werkt voor iedereen, klopt
+   dus niet.
 3. **Bounces verdwijnen stil.** Punt 10: mislukt een bezorging, dan maakt de relay een DSN en
    stuurt die naar het envelope-adres, en de upstream weigert dat adres ALS ONTVANGER met
    dezelfde 550. De relay noteert "discarding message after double bounce" en gooit hem weg.

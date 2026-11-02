@@ -1,0 +1,219 @@
+{#
+  Leden en hun tokens op het tabblad Team.
+
+  Hier en niet op een eigen tabblad: een token is een bewijsmiddel van een lid, en dat is
+  hetzelfde onderwerp als de ledenlijst erboven.
+
+  Het uitgegeven token staat EEN keer op het scherm, direct na het aanmaken. Daarna is het
+  nergens meer op te halen, ook niet door wie het uitgaf: in het projectbestand staat
+  alleen de hash.
+
+  Formulieren posten met htmx naar de step-up dialoog (RC-387): zonder code komt
+  bg/_step-up.html.j2 terug, met code een HX-Redirect. Zonder htmx is het een 403.
+#}
+
+{% from "bg/_patterns.html.j2" import panel %}
+
+{% if nieuw_token %}
+    <c-alert type="success" heading="Je nieuwe token voor {{ nieuw_token.eigenaar }}">
+        <c-stack gap="sm">
+            <c-paragraph>Bewaar hem nu. Dit is de enige keer dat hij te zien is; daarna kun je hem alleen roteren.</c-paragraph>
+            <c-secret-field value="{{ nieuw_token.token }}" revealed show-copy />
+        </c-stack>
+    </c-alert>
+{% endif %}
+
+{% if tokenfout %}
+    <c-alert type="error" heading="Dat is niet gelukt">
+        <c-paragraph>{{ tokenfout }}</c-paragraph>
+    </c-alert>
+{% endif %}
+
+{% macro tokenformulier(lid, actie, knop, maximum, sleutel) %}
+    <form autocomplete="off" method="post" action="{{ actie }}" novalidate
+          hx-post="{{ actie }}"
+          hx-target="#edit-section-inner" hx-swap="innerHTML">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <c-stack gap="sm">
+            {% if knop == 'Token maken' %}
+                <c-text-input-field id="tokennaam-{{ sleutel }}" name="tokennaam" label="Naam van het token"
+                                    required help="Kort en herkenbaar, bijvoorbeeld de naam van je pipeline." />
+            {% endif %}
+            <c-text-input-field id="dagen-{{ sleutel }}" name="dagen" type="number" label="Geldig (dagen)"
+                                value="30" required
+                                help="Hoogstens {{ maximum }} dagen. Een token zonder vervaldatum bestaat niet." />
+            <c-action-group align="start">
+                <c-button type="primary" size="sm" label="{{ knop }}" html-type="submit" />
+            </c-action-group>
+        </c-stack>
+    </form>
+{% endmacro %}
+
+{% call panel("Leden en tokens", "key", info_text="Een lid is een mens of een service account. Wat een token mag volgt uit de rollen van zijn lid, dus rollen wijzigen of een lid verwijderen werkt meteen door op al zijn tokens.") %}
+    <c-stack gap="lg">
+        {% for lid in leden %}
+            {# Het nummer van dit lid, voor de ids verderop: binnen de tokenlus wijst
+               `loop` naar die lus, en dan zou elk lid dezelfde id krijgen. #}
+            {% set lid_nr = loop.index %}
+            {% set maximum = token_max_dagen_service_account if lid.is_service_account else token_max_dagen_persoonlijk %}
+            <c-card outline padding="md">
+                <c-stack gap="sm">
+                    {% if lid.is_current_user %}
+                        {# tokencontext sorts the caller's own card to the front. #}
+                        <c-cluster gap="sm" align="center">
+                            <c-heading type="h3" size="5" label="{{ lid.naam }}" />
+                            <c-tag type="info" label="jij" />
+                        </c-cluster>
+                    {% else %}
+                        <c-heading type="h3" size="5" label="{{ lid.naam }}" />
+                    {% endif %}
+                    <c-paragraph size="sm">
+                        {{ 'Service account' if lid.is_service_account else 'Lid' }}, {{ lid.rol_labels | join(', ') }}
+                    </c-paragraph>
+
+                    {% if is_project_beheerder %}
+                        {# native="true" met gewone <option>: c-option bestaat niet, en Jinja
+                           mag niet op attribuutpositie. Zie bg/_deployment-selector.html.j2. #}
+                        <form autocomplete="off" method="post" action="/projects/{{ project.name }}/leden/{{ lid.naam }}/rol"
+                              hx-post="/projects/{{ project.name }}/leden/{{ lid.naam }}/rol"
+                              hx-target="#edit-section-inner" hx-swap="innerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                            <c-stack gap="sm">
+                                <c-fieldset legend="Rollen">
+                                    {% for rol in rollen %}
+                                        <c-checkbox-field id="rol-{{ loop.index0 }}-{{ lid.naam | replace('@','-') }}"
+                                                          name="roles" value="{{ rol.sleutel }}"
+                                                          label="{{ rol.label }}" help="{{ rol.uitleg }}"
+                                                          :checked="rol.sleutel in lid.rollen" />
+                                    {% endfor %}
+                                </c-fieldset>
+                                <c-action-group align="start">
+                                    <c-button type="secondary" size="sm" label="Rollen opslaan" html-type="submit" />
+                                </c-action-group>
+                            </c-stack>
+                        </form>
+                    {% endif %}
+
+                    {% if lid.tokens %}
+                        <c-table columns="2fr 1fr 1fr auto">
+                            <c-table-head>
+                                <c-th>Token</c-th>
+                                <c-th>Verloopt</c-th>
+                                <c-th>Status</c-th>
+                                <c-th>Actie</c-th>
+                            </c-table-head>
+                            {% for token in lid.tokens %}
+                                <c-table-row>
+                                    <c-td>{{ token.naam }}</c-td>
+                                    <c-td>{{ token.vervalt | dutch_date(include_time=False) }}</c-td>
+                                    <c-td>
+                                        {% if token.verlopen %}
+                                            <c-tag type="default" label="verlopen" />
+                                        {% else %}
+                                            <c-tag type="success" label="geldig" />
+                                        {% endif %}
+                                    </c-td>
+                                    <c-td>
+                                        {% if lid.mag_intrekken %}
+                                            {# De vraag gaat naar de dialoog uit bg/_bevestiging.html.j2; hx-confirm
+                                               zou bij een niet-geladen script terugvallen op een systeemvenster. #}
+                                            <form autocomplete="off" method="post"
+                                                  action="/projects/{{ project.name }}/leden/{{ lid.naam }}/tokens/{{ token.naam }}/intrekken"
+                                                  hx-post="/projects/{{ project.name }}/leden/{{ lid.naam }}/tokens/{{ token.naam }}/intrekken"
+                                                  data-bevestig="Token '{{ token.naam }}' van {{ lid.naam }} intrekken?"
+                                                  data-bevestig-uitleg="Dit token werkt daarna niet meer."
+                                                  data-bevestig-knop="Token intrekken"
+                                                  hx-target="#edit-section-inner" hx-swap="innerHTML">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                                <c-button type="warning" size="sm" label="Intrekken" html-type="submit" />
+                                            </form>
+                                        {% endif %}
+                                    </c-td>
+                                </c-table-row>
+                            {% endfor %}
+                        </c-table>
+
+                        {% if lid.mag_uitgeven %}
+                            {% set roteerformulieren %}
+                                <c-stack gap="sm">
+                                    {% for token in lid.tokens %}
+                                        <c-paragraph size="sm">{{ token.naam }}</c-paragraph>
+                                        {{ tokenformulier(lid,
+                                            "/projects/" ~ project.name ~ "/leden/" ~ lid.naam ~ "/tokens/" ~ token.naam ~ "/roteren",
+                                            "Roteren", maximum, "rot-" ~ lid_nr ~ "-" ~ loop.index) }}
+                                    {% endfor %}
+                                </c-stack>
+                            {% endset %}
+                            {% if lid.is_current_user %}
+                                {{ roteerformulieren }}
+                            {% else %}
+                                <c-accordion>
+                                    <c-accordion-item title="Een token roteren">{{ roteerformulieren }}</c-accordion-item>
+                                </c-accordion>
+                            {% endif %}
+                        {% endif %}
+                    {% else %}
+                        <c-paragraph size="sm">Dit lid heeft nog geen token.</c-paragraph>
+                    {% endif %}
+
+                    {% if lid.mag_uitgeven %}
+                        {% set uitgeefformulier %}
+                            {{ tokenformulier(lid, "/projects/" ~ project.name ~ "/leden/" ~ lid.naam ~ "/tokens",
+                                              "Token maken", maximum, "nieuw-" ~ lid_nr) }}
+                        {% endset %}
+                        {% if lid.is_current_user %}
+                            {{ uitgeefformulier }}
+                        {% else %}
+                            <c-accordion>
+                                <c-accordion-item title="Een token uitgeven">{{ uitgeefformulier }}</c-accordion-item>
+                            </c-accordion>
+                        {% endif %}
+                    {% endif %}
+
+                    {% if lid.is_service_account and is_project_beheerder %}
+                        <form autocomplete="off" method="post"
+                              action="/projects/{{ project.name }}/leden/{{ lid.naam }}/verwijderen"
+                              hx-post="/projects/{{ project.name }}/leden/{{ lid.naam }}/verwijderen"
+                              data-bevestig="Service account '{{ lid.naam }}' verwijderen?"
+                              data-bevestig-uitleg="Het account en al zijn tokens gaan weg."
+                              data-bevestig-knop="Service account verwijderen"
+                              hx-target="#edit-section-inner" hx-swap="innerHTML">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                            <c-action-group align="start">
+                                <c-button type="warning" size="sm" label="Service account verwijderen" html-type="submit" />
+                            </c-action-group>
+                        </form>
+                    {% endif %}
+                </c-stack>
+            </c-card>
+        {% endfor %}
+
+        {% if is_project_beheerder %}
+            <c-card outline padding="md">
+                <c-stack gap="sm">
+                    <c-heading type="h3" size="5" label="Service account toevoegen" />
+                    <c-paragraph size="sm">Een niet-menselijke aanroeper van dit project, bijvoorbeeld een bouwstraat. Hij krijgt geen Keycloak-gebruiker, geen uitnodiging en geen 2-factor.</c-paragraph>
+                    <form autocomplete="off" method="post" action="/projects/{{ project.name }}/leden/toevoegen" novalidate
+                          hx-post="/projects/{{ project.name }}/leden/toevoegen"
+                          hx-target="#edit-section-inner" hx-swap="innerHTML">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                        <c-stack gap="sm">
+                            <c-text-input-field id="sa-naam" name="naam" label="Naam" required
+                                                help="Kleine letters, cijfers en streepjes, beginnend met een letter." />
+                            <c-fieldset legend="Rollen">
+                                {% for rol in rollen %}
+                                    <c-checkbox-field id="sa-rol-{{ loop.index0 }}" name="roles" value="{{ rol.sleutel }}"
+                                                      label="{{ rol.label }}" help="{{ rol.uitleg }}"
+                                                      :checked="rol.sleutel in standaard_rollen" />
+                                {% endfor %}
+                            </c-fieldset>
+                            <c-action-group align="start">
+                                <c-button type="primary" size="sm" label="Toevoegen" html-type="submit" />
+                            </c-action-group>
+                        </c-stack>
+                    </form>
+                </c-stack>
+            </c-card>
+        {% endif %}
+    </c-stack>
+{% endcall %}

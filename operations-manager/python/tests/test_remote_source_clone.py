@@ -54,6 +54,16 @@ _TEST_PROJECT_DATA = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _kloonbron_toegestaan():
+    """Deze tests gaan over de kloonlogica, niet over de guard die de bronhost opzoekt."""
+    with (
+        patch("opi.manager.database_manager.clone_source_refusal", AsyncMock(return_value=None)),
+        patch("opi.manager.minio_manager.clone_source_refusal", AsyncMock(return_value=None)),
+    ):
+        yield
+
+
 @pytest.fixture
 def project_data() -> dict:
     """Return the amt-136 project data for testing."""

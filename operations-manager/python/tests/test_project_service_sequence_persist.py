@@ -163,12 +163,12 @@ def test_modal_edit_keeps_virtualized_service_key() -> None:
 def test_write_set_leaves_context_the_flow_does_not_declare() -> None:
     """A team edit writes users and nothing else, however much context travels along."""
     flow = get_flow("modal-edit-team")
-    merged = {"users": [{"email": "a@b.nl", "role": "admin"}], "config": {"k": "from-the-session"}}
-    existing = {"users": [{"email": "old@b.nl", "role": "admin"}], "config": {"k": "on-disk"}}
+    merged = {"users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}], "config": {"k": "from-the-session"}}
+    existing = {"users": [{"email": "old@b.nl", "roles": ["admin", "ops"]}], "config": {"k": "on-disk"}}
 
     result = apply_write_paths(existing, merged, flow_write_paths(list(flow.sections)))
 
-    assert result["users"] == [{"email": "a@b.nl", "role": "admin"}]
+    assert result["users"] == [{"email": "a@b.nl", "roles": ["admin", "ops"]}]
     assert result["config"] == {"k": "on-disk"}
 
 

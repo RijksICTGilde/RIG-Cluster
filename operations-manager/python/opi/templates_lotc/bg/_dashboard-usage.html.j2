@@ -30,10 +30,10 @@
    bg/_resource-formats.html.j2. #}
 {% from "bg/_resource-formats.html.j2" import cores, gib %}
 
-{# De kop IN de kaart, zoals overal: de kop van EEN blok hoort in dat blok. De vier
-   metingen blijven hun eigen kaart houden binnen deze; dat leest als een groep. #}
 {% if prometheus_available and metrics %}
-    {% call panel("Resourcegebruik", "chart-x-y-axis-line") %}
+    {# Eigen stack: het fragment landt via htmx in een kale div, buiten de stack van de
+       pagina, dus zonder deze zou "Gebruik per project" tegen de meters aan staan. #}
+    <c-stack gap="lg">
     {# .metrics-grid uit dashboard.css was repeat(auto-fit, minmax(280px, 1fr)):
        <c-auto-grid min="280px">. Let op: dezelfde KLASSENAAM staat ook in
        metrics-charts.css, waar hij een flexkolom is. Door dit raster een component te
@@ -42,8 +42,9 @@
        De KLASSE blijft er wel op staan: tests/e2e/test_lotc_pariteit.py leest de meters
        uit met locator(".metrics-grid"). Hij is dus geen opmaak meer maar een haak.
 
-       De kaart eromheen komt van de basis (RC-70): de kop van EEN kaart hoort erin. #}
-    <c-auto-grid min="280px" gap="lg" class="metrics-grid">
+       min is 200px en niet 280px, zodat de vier kaarten op een gewoon scherm naast
+       elkaar passen. #}
+    <c-auto-grid min="200px" gap="lg" class="metrics-grid">
         {% call panel("CPU", "chart-x-y-axis-line") %}
             <div class="gauge-container">
                 <canvas id="cpu-gauge" class="gauge"></canvas>
@@ -97,9 +98,8 @@
             {% endif %}
         {% endcall %}
     </c-auto-grid>
-    {% endcall %}
 
-    <script>
+    <script nonce="{{ csp_nonce }}">
         initializeGauges({{ metrics.cpu_percentage }}, {{ metrics.memory_percentage }}, {{ metrics.storage_percentage }});
         initializeCharts({{ metrics.network_in_data | tojson }}, {{ metrics.network_out_data | tojson }});
     </script>
@@ -226,6 +226,7 @@
             {% endif %}
         </c-stack>
     {% endcall %}
+    </c-stack>
 {% else %}
     <c-alert type="info" heading="Resourcegebruik niet beschikbaar">
         Prometheus is niet verbonden, of er zijn geen namespaces gevonden.

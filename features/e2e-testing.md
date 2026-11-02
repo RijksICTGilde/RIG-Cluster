@@ -15,7 +15,7 @@ Two test layers:
 
 The test suite starts a real FastAPI app instance on a free TCP port with:
 - Startup tasks patched out (no Keycloak, database, or MinIO connections needed)
-- A known `SECRET_KEY` used to pre-sign session cookies
+- A known `SECRET_KEY` used to sign session cookies, with the session content seeded in an in-memory store (server-side sessions, RC-390)
 - All readiness services marked as ready
 
 ### Sandbox Tests (Layer 2)
@@ -25,7 +25,7 @@ Playwright connects to the sandbox via `E2E_BASE_URL` (e.g., `https://zad.sandbo
 Caddy (ports 80/443) → Kind nginx-ingress (KIND_HTTP_PORT) → OPI pod
 ```
 
-Authentication uses the sandbox's `SECRET_KEY` (configurable via `E2E_SECRET_KEY` env var) to pre-sign a session cookie for the sandbox admin user (`admin@sandbox.rijksapp.dev`).
+Authentication writes a server-side session for the sandbox admin user (`admin@sandbox.rijksapp.dev`) into the `sessions` table of the sandbox rig-db and uses the sandbox's `SECRET_KEY` (configurable via `E2E_SECRET_KEY` env var) to sign the session id into a cookie.
 
 ## Running Tests
 
@@ -37,9 +37,7 @@ uv sync
 uv run playwright install chromium firefox --with-deps
 
 # Layer 1: Local tests (no sandbox needed, ~15s)
-# PROJECT_REPO_PASSWORD: de wizardtests schrijven een projectbestand en vallen zonder deze
-# variabele om, zie workflow/prepare.md. `task test-e2e` zet zelf een default.
-PROJECT_REPO_PASSWORD=plain:repo-secret uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
 task test-e2e
 
 # Layer 2: Sandbox tests (requires running sandbox cluster)
@@ -49,6 +47,12 @@ task test-e2e-sandbox
 ```
 
 E2E tests are **excluded by default** from regular `pytest` runs via the `addopts` configuration.
+
+De wizardtests schrijven een projectbestand, en `generate_self_service_project_yaml` weigert
+dat zonder `PROJECT_REPO_PASSWORD`. De testserver zet die instelling zelf
+(`tests/e2e/testserver.py`), dus een kale pytest-run werkt; staat de variabele in de
+omgeving, dan gaat die voor. Alleen de VORM telt (`plain:` plus een waarde), dus het is
+geen secret.
 
 ## Test Structure
 

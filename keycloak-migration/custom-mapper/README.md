@@ -34,7 +34,7 @@ cd keycloak-migration/custom-mapper
 mvn clean package
 ```
 
-Output: `target/keycloak-saml-nameid-mapper-1.1.0.jar`
+Output: `target/keycloak-saml-nameid-mapper-<versie uit de pom>.jar`
 
 ## In Keycloak krijgen
 
@@ -47,7 +47,18 @@ De GitHub-release van deze jar is gestopt nu de image de bron is. De bestaande `
 blijft staan, zodat een oud manifest of een terugval er niet op stukloopt, maar er worden
 geen nieuwe assets meer op gezet.
 
-Toetsen dat de providers geladen zijn:
+Toetsen dat de providers geladen zijn, zonder cluster:
+
+```bash
+task test-keycloak-image
+```
+
+Die taak bouwt de image, start hem in Docker zoals de deployment hem start en toetst per
+provider dat hij geregistreerd en bereikbaar is. Zie `features/keycloak-eigen-image.md`.
+Het oude `test-local-docker.sh` is daarvoor weg: het mountte een jarpad dat niet meer
+bestond op een kale Keycloak 26.0.0 en meldde bij een ontbrekende mapper dat dat normaal was.
+
+Op een draaiend cluster:
 
 ```bash
 kubectl exec -n rig-system deployment/keycloak -- ls -lh /opt/keycloak/providers/

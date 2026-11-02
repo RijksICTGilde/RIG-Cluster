@@ -113,6 +113,6 @@ class MetricsScraperService(Service):
             SecretFileSpec(
                 secret_name=MetricsAuthSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=MetricsAuthSecret(token=token).to_k8s_secret_data(),
-                secret_type="metrics",
+                secret_type="metrics",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
             )
         ]

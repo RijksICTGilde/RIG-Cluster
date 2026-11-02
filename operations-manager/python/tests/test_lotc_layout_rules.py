@@ -40,12 +40,20 @@ def test_cards_are_built_with_the_panel_macro() -> None:
     )
 
 
+#: Pages with neither a page head nor a panel, so an import would go unused.
+WITHOUT_PATTERNS = {
+    "security.html.j2": "SECURITY.md carries its own heading, and it is reading text, not a panel",
+}
+
+
 def test_pages_use_the_shared_patterns() -> None:
     """Elke hertekende pagina importeert de patronen, zodat ze ook te gebruiken zijn."""
     missing = [
         path.name
         for path in sorted(BG_DIR.glob("*.j2"))
-        if not path.name.startswith("_") and "bg/_patterns.html.j2" not in path.read_text()
+        if not path.name.startswith("_")
+        and path.name not in WITHOUT_PATTERNS
+        and "bg/_patterns.html.j2" not in path.read_text()
     ]
     assert not missing, f"gebruikt de gedeelde patronen niet: {missing}"
 
@@ -59,7 +67,8 @@ def test_spacing_uses_the_design_system_scale() -> None:
     """
     offenders: dict[str, list[str]] = {}
     for path in sorted(BG_DIR.glob("*.j2")):
-        raw_gaps = re.findall(r'gap="(\d[^"]*)"', path.read_text())
+        # Only LOTC c-* tags: an nldd-* element takes the NLDD scale in numbers (gap="12").
+        raw_gaps = re.findall(r'<c-[^>]*\bgap="(\d[^"]*)"', path.read_text())
         if raw_gaps:
             offenders[path.name] = raw_gaps
     assert not offenders, f"eigen rem-waarden in plaats van de schaal: {offenders}"

@@ -166,7 +166,7 @@ class DatabaseSecret(BaseSecret):
     # dynamic), so it defaults empty and is populated when the secret is authored.
     extra_schemas: list[tuple[str, str]] = field(default_factory=list)
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.POSTGRESQL_DATABASE
 
     def __post_init__(self) -> None:
@@ -226,7 +226,7 @@ class MinIOSecret(BaseSecret):
     bucket_name: str
     region: str = "us-east-1"  # Default region - will be overridden by settings.MINIO_REGION
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-minio"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-minio"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
 
     def __post_init__(self) -> None:
@@ -264,6 +264,43 @@ class MinIOSecret(BaseSecret):
 
 
 @dataclass
+class SeaweedFSSecret(MinIOSecret):
+    """Hetzelfde secret als MinIO, met een eigen naam en service (RC-331).
+
+    Een applicatie ziet dus precies dezelfde variabelen (``MinIOVariables``); alleen host,
+    poort en sleutels verschillen. Overstappen is een endpoint wisselen, geen code.
+    """
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-seaweedfs"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
+
+
+#: De twee diensten die dezelfde ``OBJECT_STORE_*``-variabelen leveren. Wie "de objectopslag
+#: van deze deployment" bedoelt noemt deze lijst, zodat een nieuwe afnemer er niet één
+#: vergeet; ``validate_project`` van seaweedfs-storage weigert ze samen op één deployment.
+OBJECT_STORAGE_SERVICE_TYPES: list[str] = [
+    ServiceType.MINIO_STORAGE.value,
+    ServiceType.SEAWEEDFS_STORAGE.value,
+]
+
+
+async def get_object_storage_secret(
+    kubectl_connector: KubectlConnector, namespace: str, prefix: str
+) -> MinIOSecret | None:
+    """Het objectopslag-secret van een deployment, van welke van de twee diensten het ook is.
+
+    De twee secrets hebben dezelfde velden en verschillen alleen in naam, dus een afnemer
+    (back-up, restore) hoeft het verschil niet te kennen. Eén van de twee kan bestaan, want
+    beide op één deployment is geweigerd.
+    """
+    for klasse in (MinIOSecret, SeaweedFSSecret):
+        secret = await klasse.get_data(kubectl_connector=kubectl_connector, namespace=namespace, prefix=prefix)
+        if secret is not None:
+            return secret
+    return None
+
+
+@dataclass
 class KeycloakSecret(BaseSecret):
     """Keycloak/OIDC secret configuration."""
 
@@ -274,7 +311,7 @@ class KeycloakSecret(BaseSecret):
     base_url: str
     realm: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-keycloak"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-keycloak"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.KEYCLOAK
 
     def __post_init__(self) -> None:
@@ -308,7 +345,7 @@ class RedisSecret(BaseSecret):
     password: str
     key_prefix: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.REDIS
 
     def __post_init__(self) -> None:
@@ -353,7 +390,7 @@ class SendEmailSecret(BaseSecret):
     password: str
     from_address: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-send-email"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-send-email"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEND_EMAIL
 
     @classmethod
@@ -378,7 +415,7 @@ class MetricsAuthSecret(BaseSecret):
 
     token: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.METRICS_SCRAPER
 
 
@@ -389,7 +426,7 @@ class PlatformSecret(BaseSecret):
     deployment_name: str
     component_name: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.PLATFORM
 
 
@@ -399,7 +436,7 @@ class UserSecret(BaseSecret):
 
     env_vars: dict[str, str]
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-user"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-user"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
 
     def __post_init__(self) -> None:
         """Validate user secret data."""
@@ -423,7 +460,7 @@ class RegistrySecret(BaseSecret):
     username: str
     password: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
 
     def __post_init__(self) -> None:
         """Validate registry secret data."""

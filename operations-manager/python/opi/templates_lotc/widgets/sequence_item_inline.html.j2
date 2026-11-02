@@ -8,6 +8,12 @@
 {% set min_items = (field.min_items or field.attributes.get('min_items', 0))|int %}
 {% set remove_disabled = (field.children|length if field.children else 0) <= min_items %}
 <div class="lotc-sequence__item--inline" data-index="{{ index }}">
+    {# De sleutel van deze rij, zodat de server weet WELKE rij dit is. Een readonly
+       sleutelveld rendert als disabled en komt dus niet mee; zonder dit paarde de
+       verwerker op index, en schoof elke rij achter een verwijderde rij een plek op.
+       Zie opi/forms/editables/sequence_identity.py. #}
+    {% for veld in identiteitsvelden|default([]) %}<input type="hidden" name="{{ veld.name|e }}" value="{{ veld.value|e }}">
+    {% endfor %}
     {{ item_html }}
     {% if field.add_remove %}
     {# @click met Jinja erin werkt niet: de voorbewerker leest de waarde van een

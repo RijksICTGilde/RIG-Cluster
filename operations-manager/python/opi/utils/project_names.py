@@ -62,7 +62,7 @@ def generate_project_name(display_name: str) -> tuple[str, str]:
         postfix = settings.FIXED_PROJECT_POSTFIX
     else:
         # Generate 3 random characters (letters and digits)
-        postfix = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(3))  # noqa: S311
+        postfix = "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(3))  # noqa: S311  # achtervoegsel voor leesbaarheid, geen beveiligingswaarde
 
     # Combine: base + dash + postfix
     technical_name = f"{base}-{postfix}"
@@ -70,7 +70,7 @@ def generate_project_name(display_name: str) -> tuple[str, str]:
     # Ensure it starts with a letter (required by validation)
     if not technical_name[0].isalpha():
         # Prepend a random letter if it doesn't start with one
-        technical_name = random.choice(string.ascii_lowercase) + technical_name[1:]  # noqa: S311
+        technical_name = random.choice(string.ascii_lowercase) + technical_name[1:]  # noqa: S311  # letter om aan de naamvorm te voldoen, geen beveiligingswaarde
 
     # Ensure it's not too long (max 20 characters)
     if len(technical_name) > 20:

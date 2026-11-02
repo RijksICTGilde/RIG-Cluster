@@ -23,6 +23,7 @@ import pytest
 from keycloak.exceptions import KeycloakGetError
 from opi.connectors.keycloak import KeycloakConnector
 from opi.manager.keycloak_manager import KeycloakManager
+from opi.services.project import Project
 from opi.utils.secrets import KeycloakSecret
 
 
@@ -125,7 +126,7 @@ class TestSetupProjectRealmImmediatePersist:
         ):
             yaml_handler_cls.return_value.execute_config = AsyncMock()
 
-            result = await manager._setup_project_keycloak_realm(
+            await manager._setup_project_keycloak_realm(
                 project_name="regel-k4c",
                 cluster="odcn-production",
                 keycloak_url="https://keycloak.example",
@@ -133,10 +134,13 @@ class TestSetupProjectRealmImmediatePersist:
             )
 
         project_manager.save_and_commit_project.assert_awaited_once()
-        commit_message = project_manager.save_and_commit_project.await_args.args[1]
+        bewaard, commit_message = project_manager.save_and_commit_project.await_args.args[:2]
         assert "regel-k4c" in commit_message
-        assert result["username"] == "regel_k4c_odcn_production_admin"
-        assert result["password"]
+        # Uit het projectBESTAND en niet uit een return-waarde: daar staan de
+        # credentials, en alleen versleuteld (RC-410).
+        entry = Project(bewaard).get("services/keycloak/config/realms")[0]
+        assert entry["username"] == "regel_k4c_odcn_production_admin"
+        assert entry["password"] == "ENCRYPTED"
 
 
 class TestSetupProjectRealmAdoptsKnownAdmin:
@@ -189,16 +193,13 @@ class TestSetupProjectRealmAdoptsKnownAdmin:
             patch("opi.manager.keycloak_manager.generate_secure_password") as gen_pw,
             patch("opi.manager.keycloak_manager.KeycloakYamlHandler") as yaml_handler_cls,
         ):
-            result = await manager._setup_project_keycloak_realm(
+            await manager._setup_project_keycloak_realm(
                 project_name="vp-8bw",
                 cluster="odcn-production",
                 keycloak_url="https://keycloak.example",
                 config={"template": "sso-only"},
             )
 
-        assert result["realm"] == "vp-8bw-odcn-production"
-        assert result["username"] == "vp_8bw_odcn_production_admin"
-        assert result["password"] == "AGE-ENCRYPTED-PASSWORD"
         # Nothing created, nothing rewritten.
         gen_pw.assert_not_called()
         yaml_handler_cls.assert_not_called()

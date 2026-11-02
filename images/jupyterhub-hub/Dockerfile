@@ -1,8 +1,11 @@
-# Base 5.5.2: kubespawner 7.1.0 (juli 2026) is ouder dan JupyterHub 6.0.0 (september 2026).
-FROM quay.io/jupyterhub/jupyterhub:5.5.2
+# Base 5.5.3: kubespawner 7.1.0 (juli 2026) is ouder dan JupyterHub 6.0.0 (september 2026).
+FROM quay.io/jupyterhub/jupyterhub:5.5.3
 
+# renovate: datasource=pypi depName=jupyterhub-kubespawner
 ARG KUBESPAWNER_VERSION=7.1.0
+# renovate: datasource=pypi depName=oauthenticator
 ARG OAUTHENTICATOR_VERSION=17.4.0
+# renovate: datasource=pypi depName=jupyterhub-idle-culler
 ARG IDLE_CULLER_VERSION=2.0.0
 
 RUN python3 -m pip install --no-cache-dir \

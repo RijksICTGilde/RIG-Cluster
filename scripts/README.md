@@ -15,7 +15,19 @@ Zie `features/sops-sleutel-roteren.md` voor het hele verhaal, inclusief de metin
 | `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead`, die laatste met `--pat-new-file` ook over de TOKEN en met `--pat-current-file` over de vraag of de vervangen token nog ergens ontsleutelt |
 | `rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo, commit per project |
 | `replace-git-pat.py` | de PAT-ronde, en die is even breed als de sleutelronde: de projectbestanden, de losse waarden die de token DRAGEN, en de ArgoCD repository-secrets (`--argo-applications`, verplicht). Neemt TWEE tokenbestanden (`security/pat_current.txt` en `security/pat_new.txt`) en vervangt alleen waar de waarde de huidige token IS |
-| `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten |
+| `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten; met `--target project-kek` de project-KEK van het gekozen cluster plaatsen in de OPI-namespace van dat cluster |
+| `rewrap-project-keys.py` | `config.age-private-key` per projectbestand, en de `age-key.txt.age`-back-ups in een clone van zad-deployments, van de platformsleutel naar de project-KEK (RC-334) |
+
+De KEK-ronde, in die orde: eerst het secret, dan de bestanden. Een projectbestand dat op een
+KEK staat die niet in de pod zit kan OPI niet lezen. De KEK is per cluster een andere sleutel, dus
+beide ingangen willen weten welk cluster het is: uit `--cluster`, of uit `CLUSTER_TYPE` die
+`task select-cluster` zet.
+
+```bash
+uv run --project operations-manager/python python scripts/set-sops-key-secret.py --target project-kek --cluster odcn-production --dry-run
+uv run --project operations-manager/python python scripts/rewrap-project-keys.py --cluster odcn-production --projects <projects-clone>/projects --deployments <deployments-clone> --dry-run
+```
+
 
 De logica zit in modules ernaast, want een streepje in een bestandsnaam is niet importeerbaar en
 de toetsen moeten bij de logica kunnen:
@@ -31,6 +43,15 @@ de toetsen moeten bij de logica kunnen:
 Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
 `test_sops_rotation_round.py`, `test_argo_repository_secrets.py`, `test_pat_loose_values.py`,
 `test_set_sops_key_secret.py`.
+
+## De checksums bij een versie-ophoging
+
+`renovate_checksums.py` zet elke `ARG <TOOL>_SHA256_<ARCH>` in de Dockerfiles gelijk aan de versie
+die ernaast staat, zodat een PR die een binary ophoogt niet omvalt op `sha256sum -c`. Renovate
+draait het als `postUpgradeTasks`; met de hand kan ook. Het raakt alleen de sommen van een
+versie die in deze werkboom wijzigt, `--alles` rekent alles door. Zie `features/renovate.md` en
+`images/README.md`. Alleen de standaardbibliotheek, want op de Renovate-runner draait het als
+`python3`. Toets: `operations-manager/python/tests/test_renovate_checksums.py`.
 
 ## Een wachtwoord in een secret vervangen
 
@@ -144,16 +165,26 @@ De logica zit in `secret_edit.py`; de sleutels, de recipients en het ontsleutele
 |---|---|
 | `scan-secrets.py` | de ingang: een boom, een lijst bestanden, of de hele historie |
 | `secret_scan.py` | de regels, en waarom een AGE-kandidaat pas telt als `age-keygen` hem accepteert |
+| `secret-scan-baseline.json` | de historietreffers waarvan het materiaal is ingetrokken: per regel de blob-SHA en de soort |
 
-Hangt aan drie plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de job `secret-scan`
-in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`.
+Hangt aan vier plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de jobs `secret-scan`
+en `secret-scan-history` in `.github/workflows/security.yml`, en `tests/test_secret_scan.py` (die
+de boomscan ook draait, zodat elke omgeving die de suite draait de guard heeft).
 
-De hele historie nalopen is een eigen gang, en die duurt lang:
+De hele historie nalopen is een eigen gang, en die duurt minuten:
 
 ```bash
 python3 scripts/scan-secrets.py --history                       # deze repo
 python3 scripts/scan-secrets.py --history --tree <andere repo>  # een andere clone
 ```
+
+Een volledige clone is daarvoor nodig; een shallow clone heeft geen historie om te lezen en meldt
+CLEAN over bijna niets. De job `secret-scan-history` draait dit wekelijks en op aanvraag, met
+`fetch-depth: 0`.
+
+**De baseline.** De geschiedenis wordt niet herschreven, dus een ingetrokken sleutel blijft leesbaar. `secret-scan-baseline.json` trekt die treffers af, zodat de wekelijkse job groen kan zijn. Een regel erbij zetten is een beslissing: alleen als het materiaal is ingetrokken en de reden staat in het bestand. Twijfel hoort bij de beheerder.
+
+Entries die niet meer voorkomen worden gemeld: ze kunnen weg. Dit faalt de run niet, het is huishouden.
 
 **De bevindingen van de scanner gaan nooit naar git.** Niet als document, niet als bijlage,
 ook niet samengevat tot aantallen en paden: dat is een routekaart naar geheimen die nog geldig

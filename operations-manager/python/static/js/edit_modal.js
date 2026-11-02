@@ -153,6 +153,30 @@
         modal.focus();
     }
 
+    /*
+     * Een htmx-antwoord dat zelf aangeeft in de dialoog te horen (RC-387, RC-388).
+     *
+     * De step-up-dialoog uit bg/_step-up.html.j2 en een fragment met het attribuut
+     * data-modal-fragment komen met htmx in #edit-section-inner terecht, ook als de
+     * gebruiker hen opriep van een knop op de pagina zelf (zoals het potloodje bij de
+     * omgevingsvariabelen). Dan staat de dialoog nog dicht, en zou de inhoud in een
+     * verborgen blok belanden. De titel neemt het fragment zelf mee in
+     * data-modal-title, of valt terug op de titel van de bevestigingsdialoog.
+     */
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var tgt = evt.detail && evt.detail.target;
+        if (!tgt || tgt.id !== 'edit-section-inner') return;
+        var fragment = tgt.querySelector('[data-step-up], [data-modal-fragment]');
+        if (!fragment) return;
+        if (document.querySelector('.edit-section-modal.is-open')) return;
+        var titel = document.getElementById('edit-section-title-text');
+        if (titel) titel.textContent = fragment.getAttribute('data-modal-title') || 'Extra bevestiging';
+        toonDialoog(
+            document.getElementById('edit-section-modal'),
+            document.getElementById('edit-section-backdrop')
+        );
+    });
+
     function closeAnyOpenModals() {
         document
             .querySelectorAll('.edit-section-modal.is-open, .edit-section-backdrop.is-open')
@@ -186,13 +210,18 @@
         if (window.isEditSubmitting) {
             return;
         }
-        if (
-            window.isEditDirty &&
-            !window.confirm('Er zijn niet-opgeslagen wijzigingen. Weet je zeker dat je de bewerking wilt sluiten?')
-        ) {
+        if (!window.isEditDirty) {
+            window.closeEditModal();
             return;
         }
-        window.closeEditModal();
+        /* De dialoog komt in de toplaag en staat boven deze bewerkmodal,
+           die een gewone div is. */
+        window.vraagBevestiging(
+            'De bewerking sluiten?',
+            'Niet-opgeslagen wijzigingen gaan verloren.',
+            'Sluiten zonder opslaan',
+            window.closeEditModal
+        );
     };
 
     /* De projectnaam staat op de dialoog zelf (data-project-name). Die stond hiervoor via

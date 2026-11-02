@@ -88,6 +88,19 @@ if [ "$SKIP_MIGRATIONS" = "false" ]; then
         exit 1
     fi
 
+    # De app-rol draait de migraties en moet dus bezitten wat ze wijzigen. Deze stap
+    # draait als admin, is idempotent, en moet daarom vóór alembic staan (RC-410).
+    echo -e "${YELLOW}▶${NC} Eigendom van de eigen database naar DATABASE_APP_USER..."
+    if ! python -m opi.core.app_database_owner; then
+        echo -e "${RED}✗ FATAL: eigendom van de eigen database kon niet naar DATABASE_APP_USER${NC}"
+        echo ""
+        echo "De migraties draaien als die rol en zouden falen op een tabel die hij niet"
+        echo "bezit. Controleer DATABASE_ADMIN_NAME, DATABASE_ADMIN_PASSWORD en of de rol"
+        echo "DATABASE_APP_USER op de server bestaat (managed role in cluster.yaml)."
+        exit 1
+    fi
+    echo ""
+
     echo -e "${YELLOW}▶${NC} Running Alembic migrations..."
     echo ""
 
@@ -129,8 +142,9 @@ if [ "$SKIP_MIGRATIONS" = "false" ]; then
         elif grep -qiE "could not connect|connection refused|password authentication|does not exist|timeout expired" "$MIGRATION_LOG"; then
             echo -e "${RED}✗ FATAL: de database is niet bereikbaar (afsluitcode: $EXIT_CODE)${NC}"
             echo ""
-            echo "Controleer DATABASE_HOST, DATABASE_NAME, DATABASE_ADMIN_NAME en"
-            echo "DATABASE_ADMIN_PASSWORD, en of de database al draait."
+            echo "Controleer DATABASE_HOST, DATABASE_NAME, DATABASE_APP_USER en"
+            echo "DATABASE_APP_PASSWORD, en of de database al draait. De migraties"
+            echo "verbinden met de app-rol, niet met de admin-rol."
         else
             # Niets herkend, dus ook niets beweren. Een verkeerde oorzaak noemen kost
             # meer tijd dan er geen noemen.

@@ -24,8 +24,8 @@ These tests pin what makes riding that out safe:
   - a caller that did ask to ride out a restart does wait for that login, even when it
     outlasts its own budget, because giving up there kills the deployment task,
   - the login branches that moved out of the old try still hold: an answer without a
-    usable token reports False and caches nothing, and a redirect to HTTPS switches the
-    connector over.
+    usable token reports False and caches nothing, and an answer that arrives over HTTPS
+    no longer switches the connector over (RC-315: the protocol is a setting, not a guess).
 """
 
 import asyncio
@@ -42,7 +42,7 @@ from aiohttp.client_reqrep import ConnectionKey
 from fastapi.responses import HTMLResponse
 from opi.api.v2.router import _connect_status_backend
 from opi.connectors import argo as argo_module
-from opi.connectors.argo import ArgoConnector, create_argo_connector
+from opi.connectors.argo import ArgoAuthConfigurationError, ArgoConnector, create_argo_connector
 from opi.manager.argo_manager import ArgoManager
 from opi.web import router
 from opi.web.router import argocd_status_fragment, dashboard
@@ -507,25 +507,27 @@ async def test_a_login_answer_that_carries_no_usable_token_reports_false(status:
 
 
 @pytest.mark.asyncio
-async def test_a_login_redirected_to_https_switches_the_connector_over() -> None:
-    """ArgoCD redirects plain HTTP to HTTPS, and the connector follows for every later call.
+async def test_a_login_answered_over_https_does_not_switch_the_connector_over() -> None:
+    """The protocol is a setting, not a guess (RC-315).
 
-    This block moved into _login_once as well. It rewrites the base URL, which is also
-    half of the token cache key, so losing it would send every later request back to the
-    port that redirected.
+    The connector used to rewrite its base URL to https on an answer that arrived there.
+    That URL is half of the token cache key, and it silently undid a configured http,
+    so TLS looked configured where it was not. ARGOCD_USE_TLS decides, and nothing else.
     """
     answer = _FakeResponse(200, '{"token": "token-fresh"}')
     answer.url = "https://argocd-server:443/api/v1/session"
     session_patch, connector_patch, sleep_patch, h = _harness([answer])
-    connector = ArgoConnector()
+    # Expliciet een gebruiker: de cachesleutel hieronder draagt hem, en sinds RC-345 heeft
+    # de constructor geen admin-default meer.
+    connector = ArgoConnector(username="admin", password="admin")
     assert connector.base_url == "http://argocd-server:80"
 
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is True
 
-    assert connector.base_url == "https://argocd-server:443", "a later call would go back to the plain port"
-    assert connector._actual_base_url == "https://argocd-server:443"
-    assert argo_module._token_cache == {("https://argocd-server:443", "admin"): "token-fresh"}
+    assert connector.base_url == "http://argocd-server:80"
+    assert connector._actual_base_url == "http://argocd-server:80"
+    assert argo_module._token_cache == {("http://argocd-server:80", "admin"): "token-fresh"}
     assert len(h.calls) == 1
 
 
@@ -596,6 +598,32 @@ async def test_the_status_fragment_builds_a_fail_fast_connector() -> None:
         await argocd_status_fragment(MagicMock(), "proj", "dep")
 
     assert [c.connect_retry_seconds for c in built] == [0], "a lazy-loaded card would wait out an ArgoCD restart"
+
+
+@pytest.mark.asyncio
+async def test_het_statusfragment_toont_een_kaart_als_er_geen_credentials_zijn() -> None:
+    """Zonder ARGOCD_TOKEN en zonder wachtwoord is er geen connector te maken (RC-345).
+
+    Dat hoort dezelfde kaart te geven als een ArgoCD die niet antwoordt. Liet dit fragment
+    de fout door, dan kreeg een projectpagina een 500 in het lui geladen blok zolang het
+    token nog niet is uitgegeven, en dat is precies de toestand die `optional: true` in
+    base/deployment.yaml toestaat.
+    """
+    with (
+        patch(
+            "opi.connectors.argo.create_argo_connector",
+            MagicMock(side_effect=ArgoAuthConfigurationError("geen ARGOCD_TOKEN")),
+        ),
+        patch("opi.web.router.get_current_user", MagicMock(return_value={"email": "u@example.com"})),
+        patch("opi.web.router.get_project_store", MagicMock(return_value=_project_with_one_deployment())),
+        patch("opi.web.router.is_user_authorized_for_project", MagicMock(return_value=True)),
+        patch("opi.web.router.render", MagicMock(return_value=HTMLResponse("ok"))) as render_mock,
+    ):
+        await argocd_status_fragment(MagicMock(), "proj", "dep")
+
+    status = render_mock.call_args.kwargs["context"]["argocd_status"]["dep"]
+    assert status["available"] is False
+    assert status["errors"] == [{"resource": "Application", "message": "ArgoCD niet beschikbaar"}]
 
 
 def test_the_project_page_checks_availability_with_a_fail_fast_connector() -> None:

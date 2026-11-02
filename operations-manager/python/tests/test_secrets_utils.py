@@ -7,14 +7,18 @@ serialization, deserialization, property computation, and secret naming.
 
 import base64
 import json
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from opi.utils.secrets import (
     DatabaseSecret,
     KeycloakSecret,
     MinIOSecret,
     RedisSecret,
     RegistrySecret,
+    SeaweedFSSecret,
     UserSecret,
+    get_object_storage_secret,
 )
 
 
@@ -219,6 +223,43 @@ class TestMinIOSecretProperties:
             region="eu-west-1",
         )
         assert secret.region == "eu-west-1"
+
+
+class TestGetObjectStorageSecret:
+    """``get_object_storage_secret`` verbergt welke van de twee diensten het secret heeft."""
+
+    @pytest.mark.asyncio
+    async def test_minio_secret_komt_eerst(self) -> None:
+        minio_secret = MinIOSecret(host="h", port=9000, access_key="a", secret_key="s", bucket_name="b")
+        with (
+            patch.object(MinIOSecret, "get_data", AsyncMock(return_value=minio_secret)),
+            patch.object(SeaweedFSSecret, "get_data", AsyncMock()) as seaweedfs_get_data,
+        ):
+            secret = await get_object_storage_secret(kubectl_connector=object(), namespace="ns", prefix="dep")
+
+        assert secret is minio_secret
+        seaweedfs_get_data.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_zonder_minio_valt_hij_terug_op_seaweedfs(self) -> None:
+        seaweedfs_secret = SeaweedFSSecret(host="h", port=8333, access_key="a", secret_key="s", bucket_name="b")
+        with (
+            patch.object(MinIOSecret, "get_data", AsyncMock(return_value=None)),
+            patch.object(SeaweedFSSecret, "get_data", AsyncMock(return_value=seaweedfs_secret)),
+        ):
+            secret = await get_object_storage_secret(kubectl_connector=object(), namespace="ns", prefix="dep")
+
+        assert secret is seaweedfs_secret
+
+    @pytest.mark.asyncio
+    async def test_zonder_een_van_beide_komt_er_niets(self) -> None:
+        with (
+            patch.object(MinIOSecret, "get_data", AsyncMock(return_value=None)),
+            patch.object(SeaweedFSSecret, "get_data", AsyncMock(return_value=None)),
+        ):
+            secret = await get_object_storage_secret(kubectl_connector=object(), namespace="ns", prefix="dep")
+
+        assert secret is None
 
 
 class TestRedisSecretProperties:

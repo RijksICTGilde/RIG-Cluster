@@ -172,7 +172,7 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
     <c-icon-button
         icon="question-mark-circle"
         accessible-label="Uitleg over {{ name|e }}"
-        variant="neutral-transparent"
+        appearance="neutral-transparent"
         size="sm"
         @click="{{ hulp_js }}" :attrs="{'class': 'service-card__help-btn'}" />
     {% endif %}
@@ -210,7 +210,6 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% macro task_status_icon_name(status) %}
 {%- if status == "completed" -%}{{ 'vinkje' | nldd_icon }}
 {%- elif status == "failed" -%}{{ 'kruis' | nldd_icon }}
-{%- elif status == "running" -%}{{ 'pijl-naar-rechts' | nldd_icon }}
 {%- else -%}{{ 'klok' | nldd_icon }}
 {%- endif -%}
 {% endmacro %}
@@ -263,19 +262,31 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {{- parts | join(' - ') -}}
 {% endmacro %}
 
+{#- The status cell of a task row. A running task gets a spinning nldd-progress-circle
+    instead of a static icon. No hx-preserve to keep it turning across the 2s polls: a
+    circle that htmx moves loses its drawing (nldd-progress-circle does not restart its
+    arc after a disconnect), and its spot stayed empty. A fresh one per poll stays visible. -#}
+{% macro progress_status_cell(status) %}
+{%- if status == "running" -%}
+<nldd-icon-cell size="20"><nldd-progress-circle indeterminate size="20" value-display="none" accessible-label="Bezig"></nldd-progress-circle></nldd-icon-cell>
+{%- else -%}
+<c-icon-cell size="20" icon="{{ task_status_icon_name(status) | trim }}"/>
+{%- endif -%}
+{% endmacro %}
+
 {% macro progress_task_list(tasks, show_errors=True) %}
 {% if tasks %}
-<c-list variant="simple" accessible-label="Voortgang per taak">
+<c-list appearance="simple" accessible-label="Voortgang per taak">
     {% for task in tasks %}
     <c-list-item size="sm">
-        <c-icon-cell size="20" icon="{{ task_status_icon_name(task.status) | trim }}"/>
+        {{ progress_status_cell(task.status) }}
         <c-spacer-cell size="8"/>
         <c-text-cell size="sm" supporting-text="{{ progress_step_detail(task, show_errors) | trim }}">{{ task.name }}</c-text-cell>
     </c-list-item>
     {% for subtask in task.subtasks or [] %}
     <c-list-item size="sm">
         <c-spacer-cell size="24"/>
-        <c-icon-cell size="20" icon="{{ task_status_icon_name(subtask.status) | trim }}"/>
+        {{ progress_status_cell(subtask.status) }}
         <c-spacer-cell size="8"/>
         <c-text-cell size="sm" supporting-text="{{ progress_step_detail(subtask, show_errors) | trim }}">{{ subtask.name }}</c-text-cell>
     </c-list-item>

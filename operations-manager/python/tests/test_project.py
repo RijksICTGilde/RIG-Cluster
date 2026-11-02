@@ -142,7 +142,7 @@ class TestGetSummary:
         data = {
             "name": "demo",
             "config": {"api-key": "stored-key"},
-            "users": [{"email": "a@b.nl", "role": "admin"}, {"email": "c@d.nl", "role": "developer"}],
+            "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}, {"email": "c@d.nl", "roles": ["developer"]}],
         }
         summary = Project(data).get_summary("demo.yaml")
         assert summary is not None
@@ -156,14 +156,35 @@ class TestGetSummary:
         assert Project(data).get_summary("f.yaml").api_key == "ENC[age-ciphertext]"
 
     def test_none_without_name(self) -> None:
-        assert Project({"config": {"api-key": "k"}}).get_summary("f.yaml") is None
+        assert Project({"config": {}}).get_summary("f.yaml") is None
 
-    def test_none_without_api_key(self) -> None:
-        assert Project({"name": "demo"}).get_summary("f.yaml") is None
+    def test_een_project_zonder_projectsleutel_heeft_wel_een_projectie(self) -> None:
+        """Sinds schemaversie 2.12 draagt een bestand geen ``config.api-key`` meer."""
+        summary = Project({"name": "demo"}).get_summary("f.yaml")
+        assert summary is not None
+        assert summary.api_key is None
 
     def test_users_optional(self) -> None:
-        summary = Project({"name": "demo", "config": {"api-key": "k"}}).get_summary("f.yaml")
+        summary = Project({"name": "demo"}).get_summary("f.yaml")
         assert summary.users is None
+
+    def test_een_ongeldig_lid_wordt_overgeslagen_en_houdt_het_project_niet_uit_de_cache(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Een halve regel in ``users`` mag niet het hele project onbereikbaar maken: dat
+        zou ook zijn API buitensluiten op grond van een enkel kapot lid."""
+        data = {
+            "name": "demo",
+            "users": [
+                {"email": "a@b.nl", "roles": ["admin", "ops"]},
+                {"email": "kapot@b.nl"},  # geen role: dat veld is verplicht
+            ],
+        }
+        summary = Project(data).get_summary("demo.yaml")
+
+        assert summary is not None
+        assert [u.email for u in summary.users] == ["a@b.nl"]
+        assert "overgeslagen" in caplog.text
 
 
 class TestServiceGenericAccess:

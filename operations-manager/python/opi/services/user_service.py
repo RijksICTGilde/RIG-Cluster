@@ -26,6 +26,10 @@ class UserService:
         # members list. Moved here from ProjectService, which held it alongside the
         # project cache -- an allowlist of emails belongs with the other user state.
         self._platform_admin_emails: set[str] = set()
+        # Sessies van voor dit tijdstip (epochseconden) gelden niet meer. Gevuld uit de
+        # tabel session_revocations bij het opstarten en bij elk intrekken, zodat de
+        # controle per verzoek geen database raakt. Dit leunt op een pod per cluster.
+        self._sessions_revoked_after: dict[str, float] = {}
         logger.info("UserService initialized with in-memory storage and email access control")
 
     def store_user(self, user_info: dict[str, Any]) -> None:
@@ -279,6 +283,16 @@ class UserService:
     def is_platform_admin(self, email: str) -> bool:
         """Whether this email has platform-admin rights."""
         return bool(email) and email.lower().strip() in self._platform_admin_emails
+
+    def set_sessions_revoked_after(self, email: str, revoked_after: float) -> None:
+        """Elke sessie van dit e-mailadres die voor ``revoked_after`` begon, vervalt."""
+        self._sessions_revoked_after[email.lower().strip()] = revoked_after
+        logger.info(f"Sessies van {email} ingetrokken vanaf {revoked_after}")
+
+    def are_sessions_revoked(self, email: str, login_at: float) -> bool:
+        """Of een sessie die op ``login_at`` is begonnen, is ingetrokken."""
+        revoked_after = self._sessions_revoked_after.get(email.lower().strip())
+        return revoked_after is not None and login_at < revoked_after
 
     def add_allowed_emails(self, emails: list[str]) -> None:
         """

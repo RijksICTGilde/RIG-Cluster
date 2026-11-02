@@ -1,0 +1,218 @@
+# Nachtelijke logische back-up van de databases van het platform zelf (Keycloak, OPI, de
+# mailrelay en op de sandbox Forgejo). De projectdatabases op dit cluster hebben hun eigen
+# back-up via OPI; deze loopt juist los van OPI, zodat hij ook draait als OPI stilstaat.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rig-db-platform-backup
+  namespace: rig-system
+  labels:
+    app.kubernetes.io/name: rig-db-platform-backup
+    app.kubernetes.io/part-of: postgresql
+    app.kubernetes.io/component: backup-job
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  schedule: "30 2 * * *"
+  timeZone: Europe/Amsterdam
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: rig-db-platform-backup
+            app.kubernetes.io/part-of: postgresql
+            app.kubernetes.io/component: backup-job
+        spec:
+          restartPolicy: Never
+          # De pod praat alleen met postgres en met de S3-bestemming, nooit met de
+          # API-server. Zelfde keuze als de deployments in infrastructure/.
+          automountServiceAccountToken: false
+          securityContext:
+            # Geen runAsUser: de image draait al als 1001 en op OpenShift deelt de SCC
+            # zelf een UID uit. Zie manifests/pod-security-context.yaml.jinja.
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: backup
+              image: ghcr.io/minbzk/base-images/rig-backup@sha256:3de60a9f38f9166a36e100561665eee86cc6a1723ccba5089803392b257a7e0c
+              # Geen imagePullPolicy: bij een digest is IfNotPresent al de standaard, en ODCN
+              # zet bij admission Always. Een waarde hier houdt ArgoCD daar OutOfSync.
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+
+                  # De dump is onversleuteld. Op de goede weg ruimt backup_database hem
+                  # op; breekt de run af, dan blijft de pod met zijn emptyDir staan
+                  # (failedJobsHistoryLimit), dus hier ook bij een fout.
+                  trap 'rm -f /dump/*.dump' EXIT
+
+                  REQUIRED_DATABASES="keycloak operations_manager mailrelay"
+                  # Forgejo is de GitOps-bron van de sandbox; op productie staat die
+                  # database niet op dit cluster.
+                  OPTIONAL_DATABASES="forgejo"
+
+                  KOPIA_REPO_ARGS="--bucket=${S3_BUCKET} --endpoint=${S3_ENDPOINT}"
+                  if [ "${S3_DISABLE_TLS}" = "true" ]; then
+                    KOPIA_REPO_ARGS="${KOPIA_REPO_ARGS} --disable-tls"
+                    MC_SCHEME=http
+                  else
+                    MC_SCHEME=https
+                  fi
+
+                  database_exists() {
+                    [ "$(psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$1'")" = "1" ]
+                  }
+
+                  # mc leest zijn bestemming uit MC_HOST_<alias>, zodat de sleutels niet in
+                  # argv staan. Percent-encoding omdat een sleutel leestekens mag bevatten.
+                  create_bucket() {
+                    creds="$(python3 -c 'import os, urllib.parse as u; print(u.quote(os.environ["AWS_ACCESS_KEY_ID"], safe="") + ":" + u.quote(os.environ["AWS_SECRET_ACCESS_KEY"], safe=""))')"
+                    export MC_HOST_backup="${MC_SCHEME}://${creds}@${S3_ENDPOINT}"
+                    export MC_CONFIG_DIR=/tmp/mc
+
+                    # Object lock kan alleen bij bucket-aanmaken gezet worden.
+                    # Geen default retention: dat zou kopia tegenhouden.
+                    mc mb --with-lock --ignore-existing "backup/${S3_BUCKET}"
+
+                    # Versioning opruimen: oudere objectversies na 210 dagen.
+                    # Alleen één keer: mc ilm rule add krijgt elke keer een ID.
+                    if ! mc ilm rule ls "backup/${S3_BUCKET}" >/dev/null 2>&1; then
+                      mc ilm rule add --noncurrent-expire-days 210 "backup/${S3_BUCKET}"
+                    fi
+                  }
+
+                  # Een snapshotbron per database: eigen identiteit, eigen bewaarregel, en
+                  # daarmee per database terug te zetten.
+                  backup_database() {
+                    db="$1"
+                    dump="/dump/${db}.dump"
+                    source="${db}@rig-db:${dump}"
+                    export KOPIA_CONFIG_PATH="/tmp/kopia-${db}.config"
+
+                    echo "Dump van ${db}"
+                    pg_dump -d "$db" --format=custom --file="$dump"
+
+                    kopia repository connect s3 ${KOPIA_REPO_ARGS} \
+                      --override-hostname=rig-db --override-username="$db"
+
+                    kopia snapshot create "$dump" \
+                      --description="Platformdatabase ${db}" \
+                      --tags="resource_type:platform-database" \
+                      --tags="database:${db}"
+
+                    kopia policy set "$source" \
+                      --keep-latest=14 --keep-hourly=0 --keep-daily=14 \
+                      --keep-weekly=8 --keep-monthly=6 --keep-annual=0
+                    kopia snapshot expire "$source" --delete
+
+                    rm -f "$dump"
+                  }
+
+                  create_bucket
+
+                  # De repository eenmalig aanmaken. Bestaat hij maar klopt het wachtwoord
+                  # niet, dan falen connect en create beide: geen herinitialisatie, want
+                  # dat zou de bestaande back-ups onbereikbaar achterlaten.
+                  #
+                  # Vaste identiteit, want die wordt de onderhoudseigenaar van de
+                  # repository. Zonder dat is de eigenaar de podnaam van de eerste run en
+                  # draait het onderhoud nooit meer, waardoor verlopen snapshots wel uit de
+                  # lijst gaan maar hun blobs in de bucket blijven staan.
+                  export KOPIA_CONFIG_PATH=/tmp/kopia-init.config
+                  KOPIA_INIT_ARGS="--override-hostname=rig-db --override-username=platform-backup"
+                  kopia repository connect s3 ${KOPIA_REPO_ARGS} ${KOPIA_INIT_ARGS} \
+                    || kopia repository create s3 ${KOPIA_REPO_ARGS} ${KOPIA_INIT_ARGS}
+
+                  for db in ${REQUIRED_DATABASES}; do
+                    backup_database "$db"
+                  done
+
+                  for db in ${OPTIONAL_DATABASES}; do
+                    if database_exists "$db"; then
+                      backup_database "$db"
+                    else
+                      echo "Database ${db} bestaat niet op dit cluster, overgeslagen"
+                    fi
+                  done
+
+                  # Pas na het verlopen: dit maakt de ruimte van weggevallen snapshots
+                  # echt vrij in de bucket.
+                  export KOPIA_CONFIG_PATH=/tmp/kopia-init.config
+                  kopia maintenance run --full
+
+                  echo "Back-up van de platformdatabase gereed"
+              env:
+                - name: PGHOST
+                  value: rig-db-rw
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: platform-backup-credentials
+                      key: username
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: platform-backup-credentials
+                      key: password
+                - name: KOPIA_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: platform-backup-credentials
+                      key: KOPIA_PASSWORD
+                # Dezelfde bestemming en dezelfde sleutels als de projectback-ups van OPI,
+                # uit het env-secret dat in deze namespace al staat.
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: operations-manager-env-secrets
+                      key: BACKUP_S3_ENDPOINT
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: operations-manager-env-secrets
+                      key: BACKUP_S3_ACCESS_KEY
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: operations-manager-env-secrets
+                      key: BACKUP_S3_SECRET_KEY
+                - name: S3_BUCKET
+                  value: rig-platform-db
+                # De bestemming is een MinIO in het cluster, net als bij de
+                # projectback-ups (BACKUP_S3_USE_TLS staat in OPI ook op false).
+                - name: S3_DISABLE_TLS
+                  value: "true"
+                # HOME is op OpenShift niet schrijfbaar; kopia krijgt zijn cache en logs
+                # daarom in /tmp.
+                - name: KOPIA_CACHE_DIRECTORY
+                  value: /tmp/kopia-cache
+                - name: KOPIA_LOG_DIR
+                  value: /tmp/kopia-logs
+              volumeMounts:
+                - name: dump
+                  mountPath: /dump
+              resources:
+                requests:
+                  memory: 256Mi
+                  cpu: 50m
+                limits:
+                  memory: 1Gi
+                  cpu: "1"
+          volumes:
+            # De dump staat hier tussen pg_dump en de snapshot. Per database aangemaakt en
+            # na de snapshot verwijderd, dus de piek is de grootste losse database.
+            - name: dump
+              emptyDir:
+                sizeLimit: 5Gi

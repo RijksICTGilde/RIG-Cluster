@@ -78,10 +78,38 @@ Verwachte uitkomst: `Done: 47/47 projects migrated`.
 | domeinen | `rijksapps.nl` | `sandbox.rijksapp.dev` |
 | repositories | productie-Forgejo | `forgejo.sandbox.rijksapp.dev` |
 | beheerder | de echte gebruikers | `admin@sandbox.rijksapp.dev` |
-| geheimen | AGE, productiesleutel | AGE, sandboxsleutel |
+| projectsleutel | de sleutel uit productie | een nieuw gegenereerd AGE-paar |
+| geheimen | AGE, productiesleutel | placeholder of opnieuw gegenereerd, op de nieuwe projectsleutel |
 | resources | getuned per project | probe-profiel: 32Mi/10m, limiet 128Mi/200m |
 
 Dat laatste is niet cosmetisch: productiewaarden passen niet op een kind-cluster. De tuner-historie gaat mee weg, anders zet die het bij de eerste sweep terug.
+
+## Het project krijgt een eigen sleutel
+
+Gemigreerde projecten krijgen nu hun eigen projectsleutel in plaats van de sleutel uit productie. Eerder hergebruikten we de publieke sleutel: dat betekende dat waarden die later in productie met die sleutel werden versleuteld ook op de sandbox leesbaar werden. Nu maakt de conversie een nieuw AGE-paar: publieke helft in `config.age-public-key`, private helft versleuteld voor het sandboxcluster in `config.age-private-key`.
+
+Alles wat versleuteld meegaat, gaat dus op die nieuwe sleutel. Wat er van de inhoud overblijft:
+
+| veld | wat ermee gebeurt |
+|---|---|
+| `config.api-key` | nieuw gegenereerd |
+| `config.keycloak` | weggehaald, OPI maakt het per cluster opnieuw |
+| `repositories[].password` | vervangen door de credentials van de sandbox-Forgejo |
+| `user-env-vars` (component en deployment-component) | sleutels blijven, elke waarde wordt `SANDBOX-PLACEHOLDER` |
+| `aliases` | inhoud blijft, alleen de ontvanger verandert (een alias verwijst naar een platformvariabele en is geen geheim) |
+| bijlagen (`attachments`, `data[].content`) | inhoud wordt een placeholder; `id` en `filename` blijven staan |
+| `deployments[].sleep.wake-token` | opnieuw gemunt |
+| `deployments[].configuration` | weggehaald |
+| elk ander versleuteld veld | placeholder, met een regel in het log welk pad |
+
+Die laatste regel is het vangnet voor velden die de conversie niet bij naam kent, zoals het wachtwoord van een private registry in de config van `image-registries` of de credentials op een `remote-sources`-regel. Die worden dus **niet** leesbaar meegenomen: wil je in de sandbox echt bij zo'n registry kunnen, dan vul je die waarde daar zelf in.
+
+Twee meldingen om op te letten in de uitvoer:
+
+- `N overig(e) geheim(en) vervangen door een placeholder: [...]` is normaal en noemt de paden.
+- `<pad> gaat met geen van beide projectsleutels open` betekent een waarde op een andere sleutel dan de projectsleutel. Dat hoort er niet meer te staan; controleer dat veld voordat je het bestand gebruikt.
+
+Komt er een nieuw versleuteld veld in het projectschema, dan faalt `tests/test_migrate_project_sandbox_keys.py` zolang `AGE_FIELD_HANDLING` in het conversiescript niet zegt wat er met dat veld moet gebeuren.
 
 ## Controleren of het gelukt is
 

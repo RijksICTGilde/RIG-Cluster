@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: prod-web-ingress
+  name: "prod-web-ingress"
   annotations:
     # ============================================================
     # OpenShift/HAProxy annotations
@@ -45,7 +45,7 @@ metadata:
     # ============================================================
     # Certificate manager annotations
     # ============================================================
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
     # Modern key material: ECDSA P-384, fresh key on every renewal (no RSA-2048 default).
     cert-manager.io/private-key-algorithm: ECDSA
     cert-manager.io/private-key-size: "384"

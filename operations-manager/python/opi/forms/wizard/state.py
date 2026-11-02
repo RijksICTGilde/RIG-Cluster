@@ -285,13 +285,8 @@ class WizardState:
     project_name: str | None = None
     """None for create wizard, set for edit wizard."""
 
-    base_version: str | None = None
-    """Version of the project file this wizard was seeded from (ProjectStore token).
-
-    Travels with the resulting write so it is applied as a change relative to what
-    the user saw, and a change someone else made in the meantime is merged rather
-    than overwritten. None for the create wizard: there is no earlier version.
-    """
+    owner_email: str | None = None
+    """Who started this wizard (lowercase). Legacy state files without this are treated as expired."""
 
     base_data: dict[str, Any] = field(default_factory=dict)
     """The base: what was already there before this wizard started.
@@ -331,6 +326,14 @@ class WizardState:
     Maps virtual key (e.g. ``_services-config``) to real key (e.g.
     ``services``).  Used by ``get_merged_data`` to fold virtual data
     back into the real structure.
+    """
+
+    selection: list[str] = field(default_factory=list)
+    """De items die deze modal toont, als de flow op een selectie is geopend.
+
+    Leeg betekent "de hele lijst". De flow zegt WELKE lijst (``FormFlow.selectable``);
+    dit zijn de namen daarin. Het opslaan zet ze terug tussen de items die de modal niet
+    toonde, zie ``opi.forms.wizard.selection``.
     """
 
     staged_attachments: dict[str, Any] = field(default_factory=dict)
@@ -471,11 +474,12 @@ class WizardState:
             "step_data": self.step_data,
             "active_sections": self.active_sections,
             "project_name": self.project_name,
-            "base_version": self.base_version,
+            "owner_email": self.owner_email,
             "base_data": self.base_data,
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
             "virt_mappings": self.virt_mappings,
+            "selection": self.selection,
             "staged_attachments": self.staged_attachments,
         }
 
@@ -510,12 +514,13 @@ class WizardState:
             step_data=data.get("step_data", {}),
             active_sections=data.get("active_sections", []),
             project_name=data.get("project_name"),
-            base_version=data.get("base_version"),
+            owner_email=data.get("owner_email"),
             # ``template_data`` is the old name for the same layer; a session written
             # before the rename must keep working across a deploy.
             base_data=data.get("base_data", data.get("template_data", {})),
             stashed_data=data.get("stashed_data", {}),
             locked_services=data.get("locked_services", []),
             virt_mappings=data.get("virt_mappings", {}),
+            selection=data.get("selection", []),
             staged_attachments=data.get("staged_attachments", {}),
         )

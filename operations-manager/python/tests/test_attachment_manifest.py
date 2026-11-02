@@ -1,24 +1,25 @@
 """Render deployment.yaml.jinja and assert attachment file-mode mounts/volumes appear."""
 
-from pathlib import Path
-
-import jinja2
-
-MANIFESTS = Path(__file__).resolve().parent.parent / "manifests"
+from opi.generation.manifests import render_template
 
 
 def _render(attachment_secret_mounts: list[dict[str, str]]) -> str:
-    env = jinja2.Environment(
-        loader=jinja2.FileSystemLoader(str(MANIFESTS)),
-        undefined=jinja2.ChainableUndefined,
-        autoescape=False,
-    )
-    template = env.get_template("deployment.yaml.jinja")
-    return template.render(
-        name="prod-api",
-        namespace="rig-prd-demo",
-        application_port=8080,
-        attachment_secret_mounts=attachment_secret_mounts,
+    """Rendert via de productie-omgeving, want die heeft de filters die het sjabloon
+    gebruikt; een eigen Environment hier mist yaml_scalar en tolereert andere waarden."""
+    return render_template(
+        "deployment.yaml.jinja",
+        {
+            "name": "prod-api",
+            "deployment_name": "prod",
+            "namespace": "rig-prd-demo",
+            "project": {"name": "demo"},
+            "cluster": "odcn-production",
+            "pod_replacement_mode": "RollingUpdate",
+            "imageURL": "ghcr.io/org/api:1",
+            "imagePullPolicy": "IfNotPresent",
+            "application_port": 8080,
+            "attachment_secret_mounts": attachment_secret_mounts,
+        },
     )
 
 

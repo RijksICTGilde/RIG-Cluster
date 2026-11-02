@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from opi.connectors.git import GitConnector
 from opi.handlers.project_file_handler import ProjectFileHandler
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 from opi.utils.yaml_util import dump_yaml_to_string
 
 if TYPE_CHECKING:
@@ -236,4 +236,4 @@ async def test_old_schema_file_is_migrated_and_flagged(tmp_path: Path) -> None:
     component = analysis["current_yaml"]["components"][0]
     assert "uses-services" not in component, "v1 key survived, so the data was not migrated"
     assert component["services"] == ["publish-on-web"]
-    assert analysis["current_yaml"]["schema-version"] == LATEST_SCHEMA_VERSION
+    assert analysis["current_yaml"]["schema-version"] == LATEST_SCHEMA_VERSION_VALUE

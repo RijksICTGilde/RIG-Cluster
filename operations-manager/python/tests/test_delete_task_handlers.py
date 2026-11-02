@@ -31,11 +31,15 @@ async def test_project_delete_completes_when_the_teardown_succeeded() -> None:
 
     progress = _progress()
     pm = AsyncMock()
+    # De echte set_progress_manager is synchroon; een kale AsyncMock maakt er een
+    # coroutine van die niemand afwacht.
+    pm.set_progress_manager = MagicMock()
     pm.delete_project = AsyncMock(return_value={"success": True})
 
     with patch(CREATE_PM_PATH, return_value=pm):
         result = await handle_delete_project({"project_name": "demo"}, progress)
 
+    pm.set_progress_manager.assert_called_once_with(progress)
     pm.delete_project.assert_awaited_once_with("demo")
     pm.close.assert_awaited_once()
     assert result["status"] == "completed"
@@ -49,6 +53,7 @@ async def test_a_partly_failed_project_delete_fails_the_task() -> None:
 
     progress = _progress()
     pm = AsyncMock()
+    pm.set_progress_manager = MagicMock()
     pm.delete_project = AsyncMock(return_value={"success": False, "errors": ["namespace stuck"]})
 
     with patch(CREATE_PM_PATH, return_value=pm), pytest.raises(RuntimeError, match="namespace stuck"):
@@ -64,6 +69,7 @@ async def test_deployments_on_another_cluster_say_so() -> None:
 
     progress = _progress()
     pm = AsyncMock()
+    pm.set_progress_manager = MagicMock()
     pm.delete_project = AsyncMock(
         return_value={"success": False, "remaining_deployments": [{"cluster": "odcn-production"}]}
     )

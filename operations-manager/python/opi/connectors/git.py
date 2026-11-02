@@ -3,19 +3,24 @@ Git connector for polling repository changes using GitPython.
 """
 
 import asyncio
+import base64
 import logging
 import os
 import re
 import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse, urlunparse
 
 from ruamel.yaml import YAML
 
+from opi.core.actor import Actor, get_actor
 from opi.core.config import settings
+from opi.generation.manifests import CMP_ENV_NAME, CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
-from opi.utils.sops import TO_SOPS_SUFFIX
+from opi.utils.git_signing import get_git_signing_identity
+from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
+from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -50,30 +55,97 @@ def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock
 # working-tree path (git config) and the plumbing path (commit-tree env) cannot drift.
 GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
 GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
+# Set explicitly on both paths: a global gpg.format=ssh would otherwise read the gpg
+# fingerprint as an ssh key.
+GIT_SIGNING_FORMAT = "openpgp"
+
+COMMIT_ACTOR_TRAILER = "Actor"
+"""Git-trailer voor wie de commit startte. Auteur/committer blijft OPI; trailer zodat git
+het kan uitlezen (``git log --format=%(trailers:key=Actor,valueonly)``).
+"""
+
+_TRAILER_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*: ")
+
+
+def _with_actor_trailer(message: str, actor: Actor | None = None) -> str:
+    """Vul een commitbericht aan met de actor. Zonder ``actor`` die van de context."""
+    body = message.rstrip("\n")
+    # Een nieuwe regel in de waarde zou er een tweede trailer van maken. Van buiten komt
+    # alleen het adres dat een federatie-peer meestuurt, en dat blijft hiermee één regel.
+    trailer = f"{COMMIT_ACTOR_TRAILER}: {' '.join(str(actor or get_actor()).split())}"
+    if any(line.startswith(f"{COMMIT_ACTOR_TRAILER}: ") for line in body.splitlines()):
+        return body
+
+    # Een trailer hoort in de laatste alinea, en de onderwerpregel is geen alinea om aan
+    # te vullen: alleen onder een bestaand trailerblok komt de regel er direct bij.
+    paragraphs = body.split("\n\n")
+    last = paragraphs[-1].splitlines()
+    if len(paragraphs) > 1 and last and all(_TRAILER_LINE.match(line) for line in last):
+        return f"{body}\n{trailer}"
+    return f"{body}\n\n{trailer}"
+
+
+#: Vast pad, zodat de hostsleutel die de eerste SSH-verbinding vastlegt de volgende
+#: verbindingen overleeft en een wijziging ertussen opvalt.
+SSH_KNOWN_HOSTS_PATH = os.path.join(settings.TEMP_DIR, "git-known-hosts")
+
+
+#: userinfo in een http(s)-URL: user:wachtwoord@host, en de vorm met alleen een token.
+#: De tweede sluit ":" uit zodat hij niet alsnog over het resultaat van de eerste heen gaat.
+_URL_USERINFO_PATTERN = re.compile(r"(https?://)([^:/@\s]+):[^@\s]+@")
+_URL_TOKEN_PATTERN = re.compile(r"(https?://)[^:/@\s]+@")
 
 
 def _obfuscate_git_command(cmd_str: str) -> str:
+    """Maskeer credentials in een git-commando voor de log.
+
+    Tweede laag: sinds credentials via de omgeving gaan (zie _credential_env) hoort er
+    geen userinfo meer in een URL te staan, maar een URL uit een projectbestand kan hem
+    nog bevatten.
     """
-    Obfuscate sensitive information in Git commands for logging.
+    obfuscated = _URL_USERINFO_PATTERN.sub(r"\1\2:***@", cmd_str)
+    return _URL_TOKEN_PATTERN.sub(r"\1***@", obfuscated)
 
-    Args:
-        cmd_str: The command string to obfuscate
 
-    Returns:
-        Command string with sensitive information replaced by asterisks
+def _authority(parsed: ParseResult) -> str:
+    """Host en poort van een geparste URL, zonder userinfo.
+
+    Uit netloc en niet uit parsed.hostname, want die haalt de blokhaken van een
+    IPv6-literal af en maakt er een onbruikbaar adres van (::1:3000).
     """
-    # Pattern to match URLs with credentials (https://user:password@host or https://token@host)
-    # This handles various formats including GitHub personal access tokens (ghp_*)
-    url_pattern = r"https://([^:/@\s]+):([^@\s]+)@"
+    return parsed.netloc.rsplit("@", 1)[-1]
 
-    # Replace with obfuscated version
-    obfuscated = re.sub(url_pattern, r"https://\1:***@", cmd_str)
 
-    # Also handle the case where there's just a token without username (https://token@host)
-    token_pattern = r"https://([^@\s]*ghp_[^@\s]+)@"
-    obfuscated = re.sub(token_pattern, r"https://***@", obfuscated)
+def _strip_url_credentials(url: str) -> str:
+    """Geef een http(s)-URL terug zonder userinfo. Andere vormen blijven ongewijzigd."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return url
 
-    return obfuscated
+    authority = _authority(parsed)
+    return urlunparse((parsed.scheme, authority, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _cmp_env_paths_added_or_modified(status_output: str) -> list[str]:
+    """Paden uit ``git status --porcelain`` waar een plain-text ``.cmp-env`` opduikt of wijzigt.
+
+    Een verwijdering is juist de bedoeling: zo verdwijnen de bestanden die er nog staan.
+    """
+    touched: list[str] = []
+    for line in status_output.splitlines():
+        if len(line) < 4:
+            continue
+        codes, path = line[:2], line[3:]
+        # Een rename noemt eerst de oude en dan de nieuwe naam; die laatste komt in de commit.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        path = path.strip('"')
+        if os.path.basename(path) != CMP_ENV_PLAINTEXT_FILENAME:
+            continue
+        if set(codes) <= {"D", " "}:
+            continue
+        touched.append(path)
+    return sorted(touched)
 
 
 class GitPushConflictError(RuntimeError):
@@ -170,6 +242,7 @@ class GitConnector:
 
         # Initialize URL parsing immediately (synchronous)
         self.url_config = self._parse_git_url(self.repo_url)
+        self._clean_repo_url = _strip_url_credentials(self.repo_url)
 
         logger.debug("GitConnector initialization completed")
 
@@ -188,8 +261,11 @@ class GitConnector:
 
     @property
     def repo_url_with_path(self) -> str:
-        """Get the repository URL with credentials embedded for HTTPS URLs."""
-        return self._construct_repo_url_with_credentials()
+        """De repo-URL zonder credentials, zoals hij als argument aan git gaat.
+
+        Authenticatie gaat via de omgeving, zie _credential_env.
+        """
+        return self._clean_repo_url
 
     def _parse_git_url(self, url: str) -> dict[str, Any]:
         """
@@ -283,48 +359,30 @@ class GitConnector:
         logger.debug(f"Normalized repo path: '{repo_path}'")
         return repo_path
 
-    def _construct_repo_url_with_credentials(self) -> str:
+    def _credential_env(self) -> dict[str, str]:
+        """Git-config in de omgeving die de Basic-auth-header aan één basis-URL bindt.
+
+        Via de omgeving in plaats van via de URL, zodat het wachtwoord niet in een
+        procesargument, in .git/config of in een logregel belandt (BIO2 5.17, 8.12). De
+        sleutel noemt scheme, host en poort van de eigen repo-URL, dus git stuurt de header
+        alleen daarheen en niet mee na een redirect naar een andere host.
         """
-        Construct the repository URL with embedded credentials for HTTPS URLs.
+        if not self.url_config or self.url_config.get("scheme") not in ("http", "https"):
+            return {}
 
-        Returns:
-            Repository URL with credentials and path
-        """
-        base_url = self.repo_url
+        parsed = urlparse(self.repo_url)
+        username = self.username or parsed.username
+        password = self._decrypted_password or parsed.password
+        if not username or not password:
+            return {}
 
-        # For HTTPS URLs, embed credentials if provided
-        if (
-            self.url_config
-            and self.url_config.get("scheme") in ("https", "http")
-            and (self.username or self._decrypted_password)
-        ):
-            from urllib.parse import urlparse, urlunparse
-
-            parsed = urlparse(self.repo_url)
-
-            # Extract existing username from URL if present
-            existing_username = parsed.username
-
-            # Use provided credentials or fall back to existing ones
-            username = self.username or existing_username
-            # Use decrypted password if available, otherwise don't embed credentials
-            password = self._decrypted_password
-
-            # Only embed credentials if both username and password are valid strings
-            if username and password and isinstance(username, str) and isinstance(password, str):
-                # Construct new netloc with credentials
-                netloc = f"{username}:{password}@{parsed.hostname}"
-                if parsed.port:
-                    netloc += f":{parsed.port}"
-
-                # Reconstruct URL with credentials
-                base_url = urlunparse(
-                    (parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
-                )
-
-        # Return the base URL without the repo path
-        # The repo path is used after cloning to navigate to subdirectories
-        return base_url
+        authority = _authority(parsed)
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": f"http.{parsed.scheme}://{authority}/.extraHeader",
+            "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token}",
+        }
 
     @property
     def ssh_port(self) -> int:
@@ -355,6 +413,21 @@ class GitConnector:
         if code != 0:
             logger.warning(f"Failed to configure git user email: {stderr}")
 
+        signing = get_git_signing_identity()
+        if signing:
+            # commit.gpgsign dekt ook de commits die een rebase na een push-conflict
+            # opnieuw maakt. commit-tree leest het niet, die krijgt -S in build_commit.
+            for config_key, config_value in (
+                ("gpg.format", GIT_SIGNING_FORMAT),
+                ("user.signingkey", signing.fingerprint),
+                ("commit.gpgsign", "true"),
+            ):
+                stdout, stderr, code = await self._run_git_command(
+                    ["config", config_key, config_value], cwd=self.__working_dir
+                )
+                if code != 0:
+                    logger.warning(f"Failed to configure git {config_key}: {stderr}")
+
         self._git_user_configured = True
         logger.debug("Git user identity configured successfully")
 
@@ -381,9 +454,19 @@ class GitConnector:
         logger.debug(f"Running Git command: {_obfuscate_git_command(cmd_str)} in {working_dir}")
 
         # Set up environment
-        cmd_env = os.environ.copy()
+        cmd_env = child_env()
+        # Geen interactieve vraag om een wachtwoord: een ontbrekende credential moet
+        # falen, niet wachten op een terminal die er niet is.
+        cmd_env["GIT_TERMINAL_PROMPT"] = "0"
+        cmd_env.update(self._credential_env())
         if env:
             cmd_env.update(env)
+
+        signing = get_git_signing_identity()
+        if signing:
+            # git geeft zijn eigen omgeving door aan gpg, dus hiermee vindt gpg de
+            # geïmporteerde sleutel. Een wrapper via gpg.program is daarvoor niet nodig.
+            cmd_env["GNUPGHOME"] = signing.gnupg_home
 
         # Configure SSH if using SSH URL and credentials are provided
         if (
@@ -399,8 +482,9 @@ class GitConnector:
             if port != 22:
                 ssh_cmd += f" -p {port}"
 
-            # Add options for StrictHostKeyChecking
-            ssh_cmd += " -o StrictHostKeyChecking=no"
+            # accept-new vertrouwt een onbekende host eenmalig en legt hem vast, zodat een
+            # gewijzigde hostsleutel daarna een fout geeft in plaats van stil door te gaan.
+            ssh_cmd += f" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={SSH_KNOWN_HOSTS_PATH}"
 
             logger.debug(f"Using SSH command: {ssh_cmd}")
             cmd_env["GIT_SSH_COMMAND"] = ssh_cmd
@@ -504,7 +588,7 @@ class GitConnector:
         Returns:
             Dictionary mapping reference names to commit hashes
         """
-        logger.debug(f"Fetching remote refs from: {self.repo_url_with_path}")
+        logger.debug(f"Fetching remote refs from: {_obfuscate_git_command(self.repo_url_with_path)}")
 
         # Use git ls-remote to get all references
         cmd = ["ls-remote", self.repo_url_with_path]
@@ -771,6 +855,7 @@ class GitConnector:
                     logger.debug("Repository is empty, creating initial setup")
 
                     # Create an initial empty commit
+                    await self._configure_git_user()
                     commit_cmd = ["commit", "--allow-empty", "--no-verify", "-m", "Initial commit"]
                     stdout, stderr, code = await self._run_git_command(commit_cmd, cwd=self.__working_dir)
                     if code != 0:
@@ -884,6 +969,10 @@ class GitConnector:
         logger.info(f"Rebasing local commits on origin/{target_branch}")
 
         try:
+            # De commits die de rebase opnieuw maakt moeten ook ondertekend zijn, en die
+            # identiteit staat in de git-config van deze werkmap.
+            await self._configure_git_user()
+
             # First fetch the latest from remote
             fetch_cmd = ["fetch", "origin", target_branch]
             stdout, stderr, code = await self._run_git_command(fetch_cmd, cwd=self.__working_dir)
@@ -1176,9 +1265,9 @@ class GitConnector:
             logger.error(error_msg)
             raise
 
-    def _abort_if_plaintext_secrets_present(self) -> None:
+    async def _abort_if_plaintext_secrets_present(self) -> None:
         """
-        Refuse to stage/commit if any *.to-sops.yaml file remains in the tree.
+        Refuse to stage/commit plain-text secrets: *.to-sops.yaml or a new .cmp-env.
 
         A .to-sops.yaml file holds a secret in plain text; it must have been
         replaced by its encrypted .sops.yaml counterpart before any git
@@ -1186,8 +1275,15 @@ class GitConnector:
         to fail closed on a SOPS error, no code path can leak plaintext secrets
         into the GitOps repository through this connector.
 
+        A ``.cmp-env`` holds the env-vars of a helmfile deployment in plain text
+        (RC-333). Those now travel as ``cmp-env.sops.yaml``, so a newly added or
+        modified ``.cmp-env`` is refused as well. Removing one is allowed, and an
+        untouched one does not block: the working tree is the whole repository and
+        the files other projects have not been reprocessed yet must not hold up a
+        commit.
+
         Raises:
-            RuntimeError: If one or more *.to-sops.yaml files are found.
+            RuntimeError: If one or more plain-text secret files are found.
         """
         working_dir = self.__working_dir
         leftover: list[str] = []
@@ -1211,6 +1307,31 @@ class GitConnector:
                 "Dit zou secrets in platte tekst naar git committen; operatie afgebroken."
             )
 
+        await self._abort_if_cmp_env_touched()
+
+    async def _abort_if_cmp_env_touched(self) -> None:
+        """Refuse when this commit would add or change a plain-text ``.cmp-env``."""
+        # --untracked-files=all: zonder dit noemt git alleen de nieuwe MAP, en een
+        # .cmp-env in een nieuwe deploymentmap komt er zo onder vandaan.
+        status_cmd = ["status", "--porcelain", "--untracked-files=all"]
+        stdout, stderr, code = await self._run_git_command(status_cmd, cwd=self.__working_dir)
+        if code != 0:
+            raise RuntimeError(
+                f"Kon de status van de werkboom niet opvragen voor de controle op "
+                f"{CMP_ENV_PLAINTEXT_FILENAME}: {stderr}. Operatie afgebroken."
+            )
+
+        touched = _cmp_env_paths_added_or_modified(stdout)
+        if touched:
+            server_info = self._get_server_context()
+            raise RuntimeError(
+                f"Geweigerd om te committen naar {server_info}: "
+                f"{len(touched)} toegevoegd(e) of gewijzigd(e) {CMP_ENV_PLAINTEXT_FILENAME}-bestand(en) "
+                f"aangetroffen in de werkboom: {', '.join(touched)}. "
+                f"De env-vars van een helmfile-deployment horen versleuteld in "
+                f"{sops_filenames(CMP_ENV_NAME).encrypted}; operatie afgebroken."
+            )
+
     async def commit_and_push(self, message: str) -> None:
         """
         Commit all changes in the working directory and push to remote repository.
@@ -1226,7 +1347,7 @@ class GitConnector:
         await self.ensure_repo_cloned()
 
         # Defense in depth: never commit plaintext secrets.
-        self._abort_if_plaintext_secrets_present()
+        await self._abort_if_plaintext_secrets_present()
 
         # Stage all changes in the working directory (new, modified, and deleted files)
         add_cmd = ["add", "-A"]
@@ -1429,7 +1550,7 @@ class GitConnector:
         await self.ensure_repo_cloned()
 
         # Defense in depth: never commit plaintext secrets.
-        self._abort_if_plaintext_secrets_present()
+        await self._abort_if_plaintext_secrets_present()
 
         # Stage all changes in the working directory (new, modified, and deleted files)
         add_cmd = ["add", "-A"]
@@ -1438,7 +1559,7 @@ class GitConnector:
 
         await self._configure_git_user()
 
-        commit_cmd = ["commit", "--no-verify", "-m", message]
+        commit_cmd = ["commit", "--no-verify", "-m", _with_actor_trailer(message)]
         stdout, stderr, code = await self._run_git_command(commit_cmd, cwd=self.__working_dir)
 
         if code != 0:
@@ -1758,7 +1879,13 @@ class GitConnector:
 
         return [line.strip() for line in stdout.splitlines() if line.strip()]
 
-    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+    async def build_commit(
+        self,
+        changes: dict[str, str | None],
+        message: str,
+        parent: str | None = None,
+        actor: Actor | None = None,
+    ) -> str | None:
         """Build a commit object directly, without touching the working tree or shared index.
 
         Uses git's low-level object commands so a write never materialises a file in the
@@ -1775,6 +1902,7 @@ class GitConnector:
             changes: repo-relative path -> new content, or None to delete that path
             message: commit message
             parent: parent commit (defaults to current HEAD; None-and-no-HEAD makes a root commit)
+            actor: de handelende partij voor de trailer; zonder deze die van de context
 
         Returns:
             The new commit sha, or None when the resulting tree is identical to the parent's
@@ -1841,9 +1969,12 @@ class GitConnector:
                 "GIT_COMMITTER_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
             }
             commit_args = ["commit-tree", tree]
+            signing = get_git_signing_identity()
+            if signing:
+                commit_args = ["-c", f"gpg.format={GIT_SIGNING_FORMAT}", *commit_args, f"-S{signing.fingerprint}"]
             if parent:
                 commit_args += ["-p", parent]
-            commit_args += ["-m", message]
+            commit_args += ["-m", _with_actor_trailer(message, actor)]
             commit, stderr, code = await self._run_git_command(commit_args, env=identity, cwd=self.__working_dir)
             self._check_git_command_result(code, stderr, "commit-tree")
 
@@ -1954,7 +2085,9 @@ async def poll_for_changes(
         stop_event: Optional asyncio Event to signal stopping the polling
     """
     logger.info(f"Starting to poll for changes to {file_path} every {interval} seconds")
-    logger.debug(f"Monitoring branch: {connector.branch}, Repo URL: {connector.repo_url_with_path}")
+    logger.debug(
+        f"Monitoring branch: {connector.branch}, Repo URL: {_obfuscate_git_command(connector.repo_url_with_path)}"
+    )
 
     # 1. On startup: Clone the repository and do initial load
     try:

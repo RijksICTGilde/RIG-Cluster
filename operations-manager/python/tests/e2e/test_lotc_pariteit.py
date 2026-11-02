@@ -420,6 +420,9 @@ def _backups_fragment(deployment: str) -> str:
         deployments=[{"name": deployment}],
         backups_by_deployment={deployment: [dict(SNAPSHOT, deployment_name=deployment)]},
         backups_error=None,
+        # Terugzetten vraagt een operationele rol (RC-323); hier wordt de herstelknop
+        # gemeten, dus het fragment komt zoals wie dat mag het ziet.
+        mag_terugzetten=True,
     )
 
 
@@ -467,28 +470,24 @@ def test_de_herstelknop_opent_de_gedeelde_dialoog(app_server: str, auth_page: Pa
     assert aanroep == ["modal-restore", "Backup herstellen", {"deployment": "default"}], aanroep
 
 
-def test_de_projectkop_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
-    """De knop "Bewerken" naast de projectnaam is de ENIGE weg naar modal-edit-identity.
+def test_acties_heeft_de_knop_naar_de_bewerkdialoog(app_server: str, auth_page: Page) -> None:
+    """De knop "Projectgegevens bewerken" in Acties is de ENIGE weg naar modal-edit-identity.
 
     Bij het omzetten was hij verdwenen, en daarmee de mogelijkheid om naam en
     omschrijving van een project te wijzigen. Niets sloeg daarop aan: de pagina rendert,
     de dialoog bestaat nog in de HTML, alleen roept niemand hem meer aan.
 
-    Daarom wordt hier geklikt en wordt AFGELEZEN waarmee openEditModal() geroepen wordt -
-    naam en titel moeten die van de kopregel van de projectpagina zijn. Toetsen dat
-    er "een knop Bewerken" staat zou niets bewijzen: op deze pagina staan er vijf.
+    Daarom wordt hier geklikt en wordt AFGELEZEN waarmee openEditModal() geroepen wordt.
     """
     auth_page.goto(f"{app_server}/projects/{PROJECT}/details")
     auth_page.wait_for_load_state("networkidle")
 
-    kop = auth_page.locator("nldd-title:has-text('Detail Test Project')").first
-    kop.wait_for(state="attached", timeout=10000)
+    knop = auth_page.locator("nldd-button[text='Projectgegevens bewerken']")
+    knop.wait_for(state="attached", timeout=10000)
 
     auth_page.evaluate("() => { window.__aanroep = null; window.openEditModal = (...a) => { window.__aanroep = a; }; }")
-    # De knop in de KOP, niet een van de vier in de secties eronder: de eerste
-    # nldd-button die op de projectnaam volgt.
     auth_page.eval_on_selector(
-        "nldd-button[text='Bewerken']",
+        "nldd-button[text='Projectgegevens bewerken']",
         "el => el.click()",
     )
 
@@ -515,40 +514,28 @@ def test_de_projectpagina_laat_geen_sluitknop_zweven(app_server: str, auth_page:
     )
 
 
-def test_de_voettekst_heeft_zijn_kop_links_en_versieregel(app_server: str, auth_page: Page) -> None:
-    """Vier bestemmingen plus een kop, op elke pagina.
+def test_beveiligingsbeleid_staat_onder_platform_en_navigeert(app_server: str, auth_page: Page) -> None:
+    """Geen page footer: het NLDD-applicatiepatroon heeft er geen. Het beveiligingsbeleid
+    staat in de zijbalk onder Platform, de versie alleen op de introductie.
 
-    De voettekst stond hier als <c-menu>, en dat rendert altijd een <nldd-menu-bar>: een
-    horizontale navigatiebalk met een overloopknop, waar de kop "Platform" niet in kan.
-
-    Er wordt echt geklikt, en niet omdat de links het niet deden - een menu-BAR-item
-    navigeert gewoon - maar omdat dat de enige toets is die ook standhoudt als iemand
-    hier ooit weer een uitklapmenu van maakt. Daar navigeert een item namelijk NIET op
-    zijn href.
+    Er wordt echt geklikt: een item dat er staat maar niet navigeert, ziet er in de HTML
+    precies zo uit.
     """
     auth_page.goto(f"{app_server}/projects")
     auth_page.wait_for_load_state("networkidle")
 
-    voet = auth_page.locator("nldd-page-footer")
-    assert voet.count() == 1, "er staat geen voettekst op de pagina"
+    assert auth_page.locator("nldd-page-footer").count() == 0, "er staat nog een page footer op de pagina"
 
-    # Via locators en niet via inner_text(): de tekst van deze links staat in de
-    # schaduwboom van het component, en inner_text() ziet daar niets van. Playwright's
-    # tekstselectors kijken er wel doorheen - precies het verschil dat elders in dit
-    # project al twee keer een meting waardeloos maakte.
-    assert voet.get_by_text("Platform", exact=True).count() >= 1, "de kop 'Platform' boven de links ontbreekt"
-    for bestemming in ("Introductie", "Over het platform", "API Referentie"):
-        assert voet.get_by_text(bestemming, exact=True).count() >= 1, (
-            f"de link '{bestemming}' staat niet in de voettekst"
-        )
-    assert voet.get_by_text("ZAD ").count() >= 1, "de versievermelding staat niet in de voettekst"
+    zijbalk = auth_page.locator("nldd-split-view-pane[slot='sidebar']")
+    assert zijbalk.locator("nldd-list-item[href='/introductie']").count() == 1, (
+        "de introductie is voor wie ingelogd is niet meer te bereiken vanuit de zijbalk"
+    )
+    beleid = zijbalk.locator("nldd-list-item[href='/security']")
+    assert beleid.count() == 1, "Beveiligingsbeleid staat niet in de zijbalk"
 
-    # En hij werkt: de eerste link brengt je naar /introductie. Die staat sinds de
-    # introductiepagina bovenaan, en juist voor wie ingelogd is is dit de enige weg
-    # ernaartoe - "/" gaat dan naar het dashboard.
-    auth_page.locator("nldd-page-footer a").first.click()
+    beleid.click()
     auth_page.wait_for_load_state("networkidle")
-    assert auth_page.url.endswith("/introductie"), f"de eerste footerlink navigeert niet: {auth_page.url}"
+    assert auth_page.url.endswith("/security"), f"de link naar het beveiligingsbeleid navigeert niet: {auth_page.url}"
 
 
 def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: str, auth_page: Page) -> None:
@@ -569,26 +556,23 @@ def test_het_gebruikersmenu_bevat_alles_en_zet_de_weergave_echt_om(app_server: s
     auth_page.goto(f"{app_server}/dashboard")
     auth_page.wait_for_load_state("networkidle")
 
-    # De hulplinks zijn sinds de omzetting naar de menubalk van bg.rijks.app geen enkele
-    # knop meer maar losse items: Weergave, eventueel Beheer, en de gebruiker. Alles wat
-    # deze test bewaakt geldt nog steeds, alleen zit het achter twee uitklappers.
-    balk = auth_page.locator("nldd-menu-bar[slot=utility]")
-    assert balk.count() == 1, "de menubalk met de hulplinks staat niet in de header"
+    # Sinds de kopbalk van de Fundament-console is er weer een knop: de avatar, met
+    # Weergave als submenu daarin. Die moet open voordat Donker klikbaar is.
+    gebruiker = auth_page.locator("nldd-toolbar-item[slot=end] > nldd-icon-button")
+    assert gebruiker.count() == 1, "het gebruikersmenu staat niet in de kopbalk"
 
-    gebruiker = balk.locator("nldd-menu-bar-item[expandable]").last
     gebruiker.click()
     auth_page.wait_for_timeout(500)
 
-    items = auth_page.locator("[slot=utility] nldd-menu nldd-menu-item")
+    items = gebruiker.locator("nldd-menu-item")
     labels = [items.nth(i).get_attribute("text") for i in range(items.count())]
-    for verwacht in ("Profiel", "Systeem", "Licht", "Donker", "Uitloggen"):
-        assert verwacht in labels, f"'{verwacht}' staat niet in de hulplinks: {labels}"
+    for verwacht in ("Profiel", "Weergave", "Systeem", "Licht", "Donker", "Uitloggen"):
+        assert verwacht in labels, f"'{verwacht}' staat niet in het gebruikersmenu: {labels}"
 
-    # De weergave zit in zijn eigen uitklapper; die moet open voordat Donker klikbaar is.
-    balk.locator("nldd-menu-bar-item[text='Weergave']").first.click()
+    gebruiker.locator("nldd-menu-item[text='Weergave']").first.click()
     auth_page.wait_for_timeout(500)
 
-    donker = auth_page.locator("[slot=utility] nldd-menu-item[text='Donker']").first
+    donker = gebruiker.locator("nldd-menu-item[text='Donker']").first
     assert donker.is_visible(), "het menu gaat niet open - de items staan er wel maar zijn onzichtbaar"
 
     donker.click()
@@ -606,3 +590,22 @@ def test_de_weergaveroute_verwijst_niet_naar_een_ander_domein(app_server: str, a
     auth_page.wait_for_load_state("networkidle")
 
     assert auth_page.url.startswith(app_server), f"doorverwezen naar buiten: {auth_page.url}"
+
+
+def test_een_lange_pagina_heeft_een_scrollbalk_en_niet_twee(app_server: str, auth_page: Page) -> None:
+    """Op een breed scherm scrolt alleen #hoofdpagina, het document niet.
+
+    De verborgen hint van een externe nldd-link hing aan het document zolang nldd-page
+    geen containing block was, en rekte het op tot de lengte van de pagina.
+    """
+    auth_page.set_viewport_size({"width": 1280, "height": 800})
+    auth_page.goto(f"{app_server}/introductie")
+    auth_page.wait_for_load_state("networkidle")
+    auth_page.wait_for_timeout(500)
+
+    document, pagina = auth_page.evaluate(
+        "() => { const d = document.scrollingElement, p = document.getElementById('hoofdpagina');"
+        " return [d.scrollHeight - d.clientHeight, p.scrollHeight - p.clientHeight]; }"
+    )
+    assert pagina > 0, "de introductie is niet langer dan het scherm; dan meet deze test niets"
+    assert document == 0, f"het document scrolt {document}px mee naast de pagina"

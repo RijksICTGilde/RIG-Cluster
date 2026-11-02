@@ -96,9 +96,33 @@ data:
             target_label: pod
         metrics_path: /minio/v2/metrics/cluster
 
+      # Scrape SeaweedFS metrics (bucket sizes per collection)
+      - job_name: 'seaweedfs'
+        scrape_interval: 2h
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: seaweedfs
+          - source_labels: [__address__]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?
+            replacement: $1:9327
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+        metrics_path: /metrics
+
       # Scrape Keycloak RIG custom metrics (user counts, login events per realm)
       - job_name: 'keycloak-rig-metrics'
         scrape_interval: 2h
+        # Hetzelfde token als bij kubernetes-pods: het endpoint weigert zonder deze header.
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/secrets/metrics-auth/token
         kubernetes_sd_configs:
           - role: pod
         relabel_configs:

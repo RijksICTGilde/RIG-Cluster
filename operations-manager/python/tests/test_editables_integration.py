@@ -273,13 +273,13 @@ class TestEnforcerIntegration:
     async def test_admin_required_enforcer(self):
         enforcer = AdminRequiredEnforcer()
         users_with_admin = [
-            {"email": "admin@example.nl", "role": "admin"},
-            {"email": "dev@example.nl", "role": "developer"},
+            {"email": "admin@example.nl", "roles": ["admin", "ops"]},
+            {"email": "dev@example.nl", "roles": ["developer"]},
         ]
         result = await enforcer.enforce(users_with_admin, {})
         assert result == users_with_admin
 
-        users_no_admin = [{"email": "dev@example.nl", "role": "developer"}]
+        users_no_admin = [{"email": "dev@example.nl", "roles": ["developer"]}]
         with pytest.raises(ValueError, match="administrator"):
             await enforcer.enforce(users_no_admin, {})
 
@@ -387,8 +387,8 @@ class TestPathUtilitiesIntegration:
             "display-name": "AMT ODC Production",
             "clusters": ["odcn-production"],
             "users": [
-                {"email": "admin@example.nl", "role": "admin"},
-                {"email": "dev@example.nl", "role": "developer"},
+                {"email": "admin@example.nl", "roles": ["admin", "ops"]},
+                {"email": "dev@example.nl", "roles": ["developer"]},
             ],
             "components": [
                 {
@@ -402,11 +402,11 @@ class TestPathUtilitiesIntegration:
         assert get_value(project, "name") == "amt-odc-prd"
         assert get_value(project, "display-name") == "AMT ODC Production"
         assert get_value(project, "users[0]/email") == "admin@example.nl"
-        assert get_value(project, "users[*]/role") == ["admin", "developer"]
+        assert get_value(project, "users[*]/roles") == [["admin", "ops"], ["developer"]]
         assert get_value(project, "components[0]/ports/inbound") == [8000]
 
     def test_set_value_on_project_structure(self):
-        project = {"name": "test", "users": [{"email": "a@b.c", "role": "admin"}]}
+        project = {"name": "test", "users": [{"email": "a@b.c", "roles": ["admin", "ops"]}]}
         set_value(project, "users[0]/email", "new@example.nl")
         assert project["users"][0]["email"] == "new@example.nl"
 

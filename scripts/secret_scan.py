@@ -1,9 +1,11 @@
 """Scan a tree, a set of files, or the whole git history for committed secrets.
 
-This is layer 1 and layer 2 of the guard described in ``features/sops-sleutel-roteren.md``: the
-pre-commit hook and the CI job both call ``scan-secrets.py``, which calls this module. Only the CI
-job binds -- ``--no-verify`` is standing practice in this project, because pre-commit stashes
-everything unstaged and knocks over other sessions working in the same checkout.
+This is the guard described in ``features/sops-sleutel-roteren.md``: the pre-commit hook, the CI
+jobs and a pytest test all call ``scan-secrets.py``, which calls this module. The hook does not
+bind -- ``--no-verify`` is standing practice in this project, because pre-commit stashes everything
+unstaged and knocks over other sessions working in the same checkout -- so the binding layers are
+the ``secret-scan`` job over the tree, the weekly ``secret-scan-history`` job over the history, and
+the pytest test that gives any build running the suite the same tree scan outside GitHub.
 
 **Why a valid AGE key and not the string ``AGE-SECRET-KEY-``.** The tree holds roughly twenty
 placeholders (``AGE-SECRET-KEY-1TEST``, ``AGE-SECRET-KEY-FAKE``, ``AGE-SECRET-KEY-1PLAINTEXT``)
@@ -23,7 +25,7 @@ import base64
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -66,9 +68,30 @@ class Finding:
     line_number: int
     kind: str
     hint: str
+    #: The git blob this came out of, for a history scan. Empty for a scan of files on disk, where
+    #: the path IS the identity. A blob sha is what a baseline entry pins: a path moves and a line
+    #: number shifts, while the sha of the content that leaked does not.
+    blob: str = ""
 
     def __str__(self) -> str:
         return f"{self.path}:{self.line_number}: {self.kind} ({self.hint})"
+
+
+@dataclass(frozen=True)
+class BaselineEntry:
+    """One history finding that has been dealt with: the material is retracted, the blob remains.
+
+    Rewriting the history of this repository is not on the table, so a rotated key stays readable
+    in every old commit forever. Without a baseline the weekly job reports it every week, and a job
+    that is red every week is a job nobody opens.
+
+    It pins the blob and the KIND, never the value and never the path: a list of where secrets sit
+    is a map to what is not revoked yet, and this file goes to GitHub. ``scripts/README.md`` says
+    the same about the scanner's output.
+    """
+
+    blob: str
+    kind: str
 
 
 @cache
@@ -89,6 +112,48 @@ def age_key_is_real(candidate: str) -> bool:
     return process.returncode == 0 and process.stdout.strip().startswith("age1")
 
 
+#: The capture group the ``url-credential`` rule puts the password in, so ``findings_in`` can hand
+#: that part and not the whole URL to the check below.
+URL_CREDENTIAL_GROUP = "credential"
+
+#: The shortest password the ``url-credential`` rule treats as one. Below this it is a stub: the
+#: tree holds ``user:x@``, ``postgres:p@`` and ``app:s@`` in connector tests.
+MIN_URL_CREDENTIAL = 8
+
+#: Characters that make a URL password a template rather than a value: a shell or Jinja variable,
+#: an angle-bracket placeholder, a masked value. A real password holding one of these is missed,
+#: and that is the trade: without it every documented example in the tree is a finding.
+URL_CREDENTIAL_TEMPLATE_CHARACTERS = frozenset("${}<>*")
+
+#: A password that spells out what it is. Matched as a substring, because the forms in this tree
+#: are ``devpassword`` and ``redispass`` rather than the bare word.
+URL_CREDENTIAL_PLACEHOLDER_WORDS = ("pass", "secret", "example", "changeme", "placeholder", "dummy", "redacted")
+
+#: The sandbox password, committed on purpose in some twenty-five places and printed in
+#: ``docs/sandbox-reference.md`` as the login for every service on a local Kind cluster. It opens
+#: nothing that outlives a ``task sandbox:destroy``, and alarming on it would put a permanent FAIL
+#: on a healthy tree: the known finding that teaches people to ignore the scan.
+COMMITTED_SANDBOX_PASSWORDS = frozenset({"admin1234"})
+
+
+def looks_like_a_real_url_credential(secret: str) -> bool:
+    """Whether the password in a ``scheme://user:password@host`` is a value and not a stand-in.
+
+    Measured over ``git ls-files`` of this repository: twenty-three URLs carry something in the
+    password position and not one of them is a live credential. Nine are stubs under eight
+    characters, six spell out what they are, four are shell or Jinja variables, and four are the
+    sandbox password. A rule without this check would report all twenty-three.
+    """
+    if len(secret) < MIN_URL_CREDENTIAL:
+        return False
+    if URL_CREDENTIAL_TEMPLATE_CHARACTERS.intersection(secret):
+        return False
+    lowered = secret.lower()
+    if any(word in lowered for word in URL_CREDENTIAL_PLACEHOLDER_WORDS):
+        return False
+    return lowered not in COMMITTED_SANDBOX_PASSWORDS
+
+
 #: Each rule is (kind, pattern, hint). A rule whose match needs proving carries its own check in
 #: ``findings_in`` rather than being weakened into a looser regex.
 RuleSet = tuple[tuple[str, re.Pattern[str], str], ...]
@@ -101,7 +166,26 @@ RULES: RuleSet = (
     ("kubeconfig-token", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b"), "JWT"),
     ("slack-token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"), "Slack token"),
     ("aws-access-key", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"), "AWS access key id"),
+    ("gitlab-token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"), "GitLab personal access token"),
+    (
+        "aws-secret-key",
+        re.compile(r"aws_secret_access_key\s*[=:]\s*[\"\']?[A-Za-z0-9/+]{40}", re.IGNORECASE),
+        "AWS secret access key next to its name",
+    ),
+    (
+        "url-credential",
+        re.compile(
+            rf"\b[a-z][a-z0-9+.\-]+://[A-Za-z0-9._%\-]*:(?P<{URL_CREDENTIAL_GROUP}>[^\s/@\"\'`]+)@[A-Za-z0-9.\-]"
+        ),
+        "a credential in a URL",
+    ),
 )
+
+# A Forgejo or Gitea token is forty hex characters with no prefix, and this platform runs on
+# Forgejo. There is deliberately no rule for it: forty hex characters is also a commit sha, and the
+# tree and the history are full of those. Such a rule can only produce findings nobody has to fix,
+# which is the one failure mode this scanner is built to avoid. An AWS secret access key has the
+# same problem on its own, hence the rule above wanting the key NAME beside it.
 
 #: Rules that need more than one line, so they run over the whole text.
 #:
@@ -114,7 +198,7 @@ MULTILINE_RULES: RuleSet = (
     (
         "pem-private-key",
         re.compile(
-            r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----\s*\n"
+            r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP |ENCRYPTED )?PRIVATE KEY-----\s*\n"
             r"(?:[A-Za-z0-9+/=]{32,}\s*\n){2,}"
         ),
         "PEM private key with a body",
@@ -186,7 +270,24 @@ def findings_in(text: str, path: str, line_number: int, rules: RuleSet) -> list[
                 continue
             if kind == "kubeconfig-token" and not looks_like_a_jwt(match.group(0)):
                 continue
+            if kind == "url-credential" and not looks_like_a_real_url_credential(match.group(URL_CREDENTIAL_GROUP)):
+                continue
             findings.append(Finding(path=path, line_number=line_number, kind=kind, hint=hint))
+    return findings
+
+
+def multiline_findings_in(text: str, path: str, *, line_number: int | None = None) -> list[Finding]:
+    """Apply the rules that need more than one line, over a whole piece of text.
+
+    ``line_number`` overrides the one computed from the text, which is what a decoded blob needs:
+    the line a commit has to lose is the encoded one, not a line inside a decoding that exists
+    nowhere on disk.
+    """
+    findings: list[Finding] = []
+    for kind, pattern, hint in MULTILINE_RULES:
+        for match in pattern.finditer(text):
+            where = line_number if line_number is not None else text.count("\n", 0, match.start()) + 1
+            findings.append(Finding(path=path, line_number=where, kind=kind, hint=hint))
     return findings
 
 
@@ -202,6 +303,10 @@ def scan_text(text: str, path: str, *, include_ciphertext: bool = False) -> list
     the decoded pass keeps the line number of the ENCODED line, because that is the line a commit
     has to lose. The decoded pass runs the alarm rules only: a base64 run that unwraps to
     ciphertext is the same ciphertext, and counting it twice would inflate the inventory.
+
+    The multi-line rules run over the decoded text as well as over the file. A PEM key in a
+    Kubernetes secret's ``data`` or in a kubeconfig's ``client-key-data`` is base64 and nothing
+    else, so a multi-line pass over the raw text alone saw none of them.
     """
     findings: list[Finding] = []
     rules = (*RULES, *CIPHERTEXT_RULES) if include_ciphertext else RULES
@@ -209,10 +314,8 @@ def scan_text(text: str, path: str, *, include_ciphertext: bool = False) -> list
         findings.extend(findings_in(line, path, number, rules))
         for decoded in decoded_blobs(line):
             findings.extend(findings_in(decoded, path, number, RULES))
-    for kind, pattern, hint in MULTILINE_RULES:
-        for match in pattern.finditer(text):
-            line_number = text.count("\n", 0, match.start()) + 1
-            findings.append(Finding(path=path, line_number=line_number, kind=kind, hint=hint))
+            findings.extend(multiline_findings_in(decoded, path, line_number=number))
+    findings.extend(multiline_findings_in(text, path))
     return findings
 
 
@@ -316,8 +419,8 @@ def history_blobs(tree: Path) -> list[tuple[str, str]]:
     return blobs
 
 
-def blob_texts(tree: Path, blobs: list[tuple[str, str]]) -> Iterator[tuple[str, str]]:
-    """Stream ``(name, text)`` for every readable blob, through ONE ``git cat-file --batch``.
+def blob_texts(tree: Path, blobs: list[tuple[str, str]]) -> Iterator[tuple[str, str, str]]:
+    """Stream ``(sha, name, text)`` for every readable blob, through ONE ``git cat-file --batch``.
 
     A ``git cat-file -p`` per blob is a subprocess per blob, and this repository holds 47k of them
     -- minutes of pure process startup for a scan that should be a coffee break at most. ``--batch``
@@ -349,7 +452,7 @@ def blob_texts(tree: Path, blobs: list[tuple[str, str]]) -> Iterator[tuple[str, 
             if header[1] != "blob" or size > MAX_BYTES:
                 continue
             try:
-                yield names[sha], payload.decode("utf-8")
+                yield sha, names[sha], payload.decode("utf-8")
             except UnicodeDecodeError:
                 continue
     finally:
@@ -358,12 +461,53 @@ def blob_texts(tree: Path, blobs: list[tuple[str, str]]) -> Iterator[tuple[str, 
 
 
 def scan_history(tree: Path, *, include_ciphertext: bool = False) -> list[Finding]:
-    """Scan every blob in the history. Slow by nature; meant to be run deliberately, not in CI."""
+    """Scan every blob in the history, each finding tagged with the blob it came out of.
+
+    Slow by nature, which is why the ``secret-scan-history`` job runs it weekly on a schedule and
+    not on a pull request. Nothing is subtracted here: hand the result to ``apply_baseline`` to
+    take the retracted findings off it.
+    """
     blobs = [(sha, name) for sha, name in history_blobs(tree) if Path(name).suffix.lower() not in SKIP_SUFFIXES]
     findings: list[Finding] = []
-    for name, text in blob_texts(tree, blobs):
-        findings.extend(scan_text(text, name, include_ciphertext=include_ciphertext))
+    for sha, name, text in blob_texts(tree, blobs):
+        findings.extend(
+            replace(finding, blob=sha) for finding in scan_text(text, name, include_ciphertext=include_ciphertext)
+        )
     return findings
+
+
+#: Where the baseline sits, relative to the root of the repository being scanned.
+BASELINE_FILE = Path("scripts/secret-scan-baseline.json")
+
+
+def load_baseline(path: Path) -> list[BaselineEntry]:
+    """Read the baseline, or return nothing when there is none.
+
+    An absent file is not an error: a clone without one simply has no retracted findings on
+    record, and the scan then reports everything it sees.
+
+    The blobs are grouped per kind under the one judgement that accounts for them, so the reason a
+    finding is accepted stands once rather than forty-seven times. The reason is for the reader;
+    nothing here acts on it.
+    """
+    if not path.is_file():
+        return []
+    document = json.loads(path.read_text(encoding="utf-8"))
+    return [BaselineEntry(blob=blob, kind=group["kind"]) for group in document["retracted"] for blob in group["blobs"]]
+
+
+def apply_baseline(findings: list[Finding], baseline: list[BaselineEntry]) -> tuple[list[Finding], list[BaselineEntry]]:
+    """The findings the baseline does not account for, and the entries that accounted for nothing.
+
+    The second half is what keeps the baseline from growing quietly. An entry whose blob no longer
+    turns up has either been garbage collected or stopped being a finding, and either way it is
+    now a line that silences nothing while reading as if it does.
+    """
+    retracted = {(entry.blob, entry.kind) for entry in baseline}
+    seen = {(finding.blob, finding.kind) for finding in findings}
+    remaining = [finding for finding in findings if (finding.blob, finding.kind) not in retracted]
+    stale = [entry for entry in baseline if (entry.blob, entry.kind) not in seen]
+    return remaining, stale
 
 
 def summarise(findings: list[Finding]) -> str:
@@ -390,12 +534,22 @@ def split_findings(findings: list[Finding]) -> tuple[list[Finding], list[Finding
     return alarms, inventory
 
 
-def report(findings: list[Finding], *, what: str, skipped: dict[str, int] | None = None) -> int:
+def report(
+    findings: list[Finding],
+    *,
+    what: str,
+    skipped: dict[str, int] | None = None,
+    stale_baseline: list[BaselineEntry] | None = None,
+) -> int:
     """Print the findings and return the exit code: 0 when clean, 1 when there is an alarm.
 
     ``skipped`` is what the scan did NOT open, per reason. It is printed under both verdicts and
     not only under FAIL: the moment "CLEAN" can cover fewer files than the operator handed over,
     the count of the difference is part of the verdict rather than a footnote to it.
+
+    ``stale_baseline`` is the entries that matched nothing, printed but deliberately NOT failing
+    the run: a line too many in the baseline silences nothing, so it is housekeeping and not an
+    alarm.
     """
     alarms, inventory = split_findings(findings)
     unique = sorted({(f.path, f.line_number, f.kind, f.hint) for f in alarms})
@@ -411,6 +565,11 @@ def report(findings: list[Finding], *, what: str, skipped: dict[str, int] | None
     if skipped:
         per_reason = ", ".join(f"{reason}: {count}" for reason, count in skipped.items())
         print(f"Unread: {sum(skipped.values())} files were not opened ({per_reason})")
+
+    if stale_baseline:
+        print(f"\nBaseline: {len(stale_baseline)} entries matched nothing in this run and can go:")
+        for entry in sorted(stale_baseline, key=lambda entry: (entry.kind, entry.blob)):
+            print(f"  {entry.blob} {entry.kind}")
 
     if inventory:
         places = sorted({finding.path for finding in inventory})

@@ -40,16 +40,22 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Mijn projecten", "link": "/projects", "icon": "applicatie"},
         {"label": "Nieuw Project", "link": "/forms/wizard/restart", "icon": "plus"},
         {"label": "Services overzicht", "link": "/services", "icon": "server"},
-        # Ook in het hoofdmenu en niet alleen in de voettekst: wie ingelogd is komt
-        # nooit meer langs "/" (dat gaat dan naar het dashboard), en dan was de
-        # voettekst de enige weg naar de uitleg over het platform.
+        # In het hoofdmenu: wie ingelogd is komt nooit meer langs "/" (dat gaat dan naar
+        # het dashboard), en dit is de weg naar de uitleg over het platform. Bovenaan de
+        # groep, want het is waar een nieuwkomer begint.
         {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
+        # De kaart van het platform: wat er draait en waar ZAD mee praat.
+        {"label": "Platform", "link": "/platform", "icon": "wolk"},
+        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
+        {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
         # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
         # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
         {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
+        # In the sidebar and not in a page footer: the NLDD application pattern has no footer.
+        {"label": "Beveiligingsbeleid", "link": "/security", "icon": "schild-met-vinkje-erop"},
     ]
 
     # Auto-detect admin status from user email

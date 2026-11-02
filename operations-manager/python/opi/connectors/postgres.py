@@ -6,14 +6,54 @@ schema operations, and database cloning operations following the connector patte
 security measures to prevent SQL injection and ensure safe database operations.
 """
 
+import asyncio
 import contextlib
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, ClassVar
 
 import asyncpg
 
+from opi.core.config import settings
+from opi.utils.patterns import POSTGRES_CLONEABLE_SCHEMA, POSTGRES_IDENTIFIER
+from opi.utils.subprocess_env import child_env
+
 logger = logging.getLogger(__name__)
+
+# Tokens zonder aanhalingsteken, dollar of ander scheidingsteken: een SQL-literal is altijd
+# gequoteerd, dus zo'n token kan geen wachtwoord zijn.
+_SQL_PLAIN_TOKEN = re.compile(r"^[A-Za-z0-9_.]+$")
+
+
+def _summarize_sql_statement(sql: str) -> str:
+    """Secret-free summary of a SQL statement for logging: the statement kind and its target.
+
+    Houdt de eerste drie ongequoteerde tokens over, dus "CREATE ROLE app_user" voor een
+    CREATE ROLE met een PASSWORD erachter. Het wachtwoord in zo'n statement mag niet in de
+    log staan, en de SQL komt uit het projectbestand, dus elke vorm kan voorkomen.
+    """
+    tokens: list[str] = []
+    for token in sql.split():
+        if not _SQL_PLAIN_TOKEN.match(token):
+            break
+        tokens.append(token)
+        if len(tokens) == 3:
+            break
+    return " ".join(tokens) if tokens else "unrecognised statement"
+
+
+@dataclass(frozen=True)
+class SchemaInventory:
+    """What a database holds, as a clone has to look at it (RC-360).
+
+    ``extension_namespaces`` are the schemas an extension lives in; ``public_objects``
+    are the objects in ``public`` that no extension owns.
+    """
+
+    schemas: list[str]
+    extension_namespaces: set[str]
+    public_objects: list[str]
 
 
 class PostgresConnectionError(Exception):
@@ -83,6 +123,7 @@ class PostgresConnector:
                 password=self._admin_password,
                 database=database,
                 port=5432,
+                ssl=settings.DATABASE_SSLMODE,
             )
             self._current_database = database
             logger.debug(f"Created connection to {self._host}/{database}")
@@ -100,6 +141,7 @@ class PostgresConnector:
                     password=self._admin_password,
                     database=database,
                     port=5432,
+                    ssl=settings.DATABASE_SSLMODE,
                 )
                 logger.debug(f"Recreated connection to {self._host}/{database}")
 
@@ -144,7 +186,7 @@ class PostgresConnector:
         # - Must start with a letter (a-z, A-Z) or underscore
         # - Can contain letters, digits, underscores, and dollar signs
         # - Cannot be a PostgreSQL reserved word
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_$]*$", identifier):
+        if not re.match(POSTGRES_IDENTIFIER, identifier):
             raise PostgresValidationError(
                 f"{identifier_type} '{identifier}' contains invalid characters. "
                 "Must start with letter/underscore and contain only letters, digits, underscores, and dollar signs."
@@ -222,6 +264,21 @@ class PostgresConnector:
             raise PostgresValidationError(f"{identifier_type} '{identifier}' is a PostgreSQL reserved word")
 
         return identifier
+
+    @classmethod
+    def validate_cloneable_schema_name(cls, schema_name: str) -> str:
+        """Validate app-created schema names in clone operations (RC-360).
+
+        Stricter than _validate_identifier: no uppercase or $ (used in unquoted psql statements).
+        """
+        if not re.match(POSTGRES_CLONEABLE_SCHEMA, schema_name):
+            raise PostgresValidationError(
+                f"schema '{schema_name}' is not a name the platform can clone: it accepts lowercase letters, "
+                "digits and underscores, starting with a letter or an underscore"
+            )
+        if len(schema_name) > 63:
+            raise PostgresValidationError(f"schema '{schema_name}' cannot exceed 63 characters")
+        return cls._validate_identifier(schema_name, "schema")
 
     @staticmethod
     def _validate_connection_limit(connection_limit: int) -> int:
@@ -785,6 +842,212 @@ class PostgresConnector:
             logger.exception(f"Failed to create database {database_name} on {self._host}")
             raise PostgresExecutionError(f"Database creation failed: {e}") from e
 
+    async def restrict_database_to_roles(self, database: str, roles: list[str]) -> dict[str, Any]:
+        """Sluit een database af voor ``PUBLIC`` en geef alleen ``roles`` CONNECT.
+
+        PostgreSQL geeft een nieuwe database CONNECT en TEMPORARY aan ``PUBLIC``, dus zonder
+        deze REVOKE kan elke rol op de server met elke database verbinden en de catalogus
+        lezen. De eigenaar houdt zijn rechten los van de GRANT-lijst, want een REVOKE van
+        ``PUBLIC`` raakt hem niet.
+
+        Herhaalbaar: REVOKE en GRANT zijn in PostgreSQL idempotent, dus elke verwerking mag
+        dit opnieuw doen. Welke standen er zijn en waarom ``dry-run`` de standaard is staat
+        bij ``DATABASE_RESTRICT_PUBLIC_CONNECT`` in ``opi/core/config.py``.
+
+        Args:
+            database: Database die wordt afgesloten
+            roles: Rollen die expliciet CONNECT krijgen
+
+        Returns:
+            Dictionary met de stand, de statements en bij ``dry-run`` wie er verbonden is
+
+        Raises:
+            PostgresExecutionError: If revoking or granting fails
+            PostgresValidationError: If input validation fails
+        """
+        try:
+            validated_database = self._validate_identifier(database, "database")
+            validated_roles = [self._validate_identifier(role, "role") for role in roles]
+
+            mode = settings.DATABASE_RESTRICT_PUBLIC_CONNECT
+            if mode == "off":
+                logger.debug(f"DATABASE_RESTRICT_PUBLIC_CONNECT=off, {validated_database} blijft open voor PUBLIC")
+                return {"status": "disabled", "database": validated_database}
+
+            quoted_database = self._quote_identifier(validated_database)
+            statements = [
+                f"REVOKE CONNECT, TEMPORARY ON DATABASE {quoted_database} FROM PUBLIC",
+                *(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} TO {self._quote_identifier(role)}"
+                    for role in validated_roles
+                ),
+            ]
+
+            conn = await self._get_or_create_connection("postgres")
+
+            database_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", validated_database)
+            if not database_exists:
+                logger.debug(f"Database {validated_database} does not exist on {self._host}, nothing to restrict")
+                return {"status": "not_found", "database": validated_database}
+
+            if mode == "dry-run":
+                connected = [
+                    row["usename"]
+                    for row in await conn.fetch(
+                        "SELECT DISTINCT usename FROM pg_stat_activity "
+                        "WHERE datname = $1 AND usename IS NOT NULL ORDER BY usename",
+                        validated_database,
+                    )
+                ]
+                # De rollen die NIET op de lijst staan zijn wat `on` gaat afsluiten; dat is
+                # de regel waar een beheerder naar zoekt voordat hij omzet.
+                afgesloten = [role for role in connected if role not in validated_roles]
+                logger.info(
+                    f"dry-run voor database {validated_database} op {self._host}: "
+                    f"{len(statements)} statement(s) {statements}, nu verbonden {connected}, "
+                    f"zou de toegang verliezen {afgesloten}"
+                )
+                return {
+                    "status": "dry-run",
+                    "database": validated_database,
+                    "statements": statements,
+                    "connected_roles": connected,
+                }
+
+            for statement in statements:
+                await conn.execute(statement)
+
+            logger.info(
+                f"Database {validated_database} op {self._host} is afgesloten voor PUBLIC, "
+                f"CONNECT voor {validated_roles}"
+            )
+            return {
+                "status": "restricted",
+                "database": validated_database,
+                "statements": statements,
+                "roles": validated_roles,
+            }
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for database restriction")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to restrict database {database} on {self._host}")
+            raise PostgresExecutionError(f"Database restriction failed: {e}") from e
+
+    #: De catalogusvragen van :meth:`transfer_public_objects`, per objectsoort. Elke vraag
+    #: bouwt zijn eigen ALTER-statement met ``quote_ident`` en de ``reg*``-casts van
+    #: PostgreSQL zelf: die namen komen uit de catalogus en zijn daar al correct genoteerd,
+    #: inclusief overload-signaturen die een identifier niet kan dragen.
+    #:
+    #: $1 is de nieuwe eigenaar, $2 de huidige. Een object dat al van de nieuwe eigenaar is
+    #: levert geen statement, dus een tweede ronde doet niets.
+    _OWNER_TRANSFER_QUERIES: ClassVar[dict[str, str]] = {
+        "database": """
+            SELECT 'ALTER DATABASE ' || quote_ident(d.datname) || ' OWNER TO ' || quote_ident($1)
+            FROM pg_database d JOIN pg_roles o ON o.oid = d.datdba
+            WHERE d.datname = current_database() AND o.rolname = $2
+        """,
+        "schema": """
+            SELECT 'ALTER SCHEMA ' || quote_ident(n.nspname) || ' OWNER TO ' || quote_ident($1)
+            FROM pg_namespace n JOIN pg_roles o ON o.oid = n.nspowner
+            WHERE n.nspname = 'public' AND o.rolname = $2
+        """,
+        # Tabellen eerst, en zonder de sequences en indexen die aan een tabelkolom hangen:
+        # PostgreSQL weigert de eigenaar van zo'n sequence los te zetten, en laat hem bij
+        # de tabel mee verhuizen.
+        "relation": """
+            SELECT CASE c.relkind
+                       WHEN 'v' THEN 'ALTER VIEW '
+                       WHEN 'm' THEN 'ALTER MATERIALIZED VIEW '
+                       WHEN 'S' THEN 'ALTER SEQUENCE '
+                       ELSE 'ALTER TABLE '
+                   END || c.oid::regclass::text || ' OWNER TO ' || quote_ident($1)
+            FROM pg_class c JOIN pg_roles o ON o.oid = c.relowner
+            WHERE c.relnamespace = 'public'::regnamespace
+              AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+              AND o.rolname = $2
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_depend d
+                  WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
+              )
+            ORDER BY c.relkind
+        """,
+        # Alleen zelfstandige types: het compositetype van een tabel en het arraytype van
+        # een element volgen hun eigenaar automatisch.
+        "type": """
+            SELECT 'ALTER TYPE ' || t.oid::regtype::text || ' OWNER TO ' || quote_ident($1)
+            FROM pg_type t JOIN pg_roles o ON o.oid = t.typowner
+            WHERE t.typnamespace = 'public'::regnamespace
+              AND t.typrelid = 0
+              AND NOT EXISTS (SELECT 1 FROM pg_type e WHERE e.typarray = t.oid)
+              AND o.rolname = $2
+        """,
+        "routine": """
+            SELECT CASE p.prokind
+                       WHEN 'p' THEN 'ALTER PROCEDURE '
+                       WHEN 'a' THEN 'ALTER AGGREGATE '
+                       ELSE 'ALTER FUNCTION '
+                   END || p.oid::regprocedure::text || ' OWNER TO ' || quote_ident($1)
+            FROM pg_proc p JOIN pg_roles o ON o.oid = p.proowner
+            WHERE p.pronamespace = 'public'::regnamespace AND o.rolname = $2
+        """,
+    }
+
+    async def transfer_public_objects(self, database: str, new_owner: str, current_owner: str) -> dict[str, int]:
+        """Geef ``database`` en alles in zijn schema ``public`` aan ``new_owner``.
+
+        Voor OPI's eigen database: de migraties draaien als de app-rol en moeten dus elke
+        bestaande tabel bezitten, ook ``alembic_version`` (RC-410). Idempotent, en bedoeld
+        om bij elke start te draaien: alleen wat nog van ``current_owner`` is verhuist.
+
+        Geen ``REASSIGN OWNED BY``: dat raakt ook objecten buiten deze database, en op een
+        superuser is het ongeldig.
+
+        Args:
+            database: De database waarvan de objecten verhuizen
+            new_owner: De rol die eigenaar wordt
+            current_owner: Alleen objecten van deze rol verhuizen
+
+        Returns:
+            Het aantal verhuisde objecten per soort
+
+        Raises:
+            PostgresExecutionError: Als een ALTER faalt
+            PostgresValidationError: Als een naam ongeldig is
+        """
+        try:
+            validated_database = self._validate_identifier(database, "database")
+            validated_new_owner = self._validate_identifier(new_owner, "new owner")
+            validated_current_owner = self._validate_identifier(current_owner, "current owner")
+
+            conn = await self._get_or_create_connection(validated_database)
+            verhuisd: dict[str, int] = {}
+            for soort, vraag in self._OWNER_TRANSFER_QUERIES.items():
+                statements = [row[0] for row in await conn.fetch(vraag, validated_new_owner, validated_current_owner)]
+                for statement in statements:
+                    await conn.execute(statement)
+                verhuisd[soort] = len(statements)
+
+            if any(verhuisd.values()):
+                logger.info(
+                    f"Eigendom in {validated_database} verplaatst van {validated_current_owner} "
+                    f"naar {validated_new_owner}: {verhuisd}"
+                )
+            else:
+                logger.info(
+                    f"Eigendom in {validated_database} staat al goed; niets van "
+                    f"{validated_current_owner} te verplaatsen"
+                )
+            return verhuisd
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for owner transfer")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to transfer ownership in {database} on {self._host}")
+            raise PostgresExecutionError(f"Owner transfer failed: {e}") from e
+
     async def execute_init_sql(self, database_name: str, sql_statements: list[str]) -> dict[str, Any]:
         """Execute initialization SQL statements on a specific database.
 
@@ -816,9 +1079,12 @@ class PostgresConnector:
                 try:
                     await conn.execute(sql)
                     executed.append(sql)
-                    logger.debug(f"Executed init SQL on {validated_database_name}: {sql[:100]}...")
+                    logger.debug(f"Executed init SQL on {validated_database_name}: {_summarize_sql_statement(sql)}")
                 except Exception as e:
-                    logger.error(f"Failed to execute init SQL on {validated_database_name}: {sql[:100]}... - {e}")
+                    logger.error(
+                        f"Failed to execute init SQL on {validated_database_name}: "
+                        f"{_summarize_sql_statement(sql)} - {e}"
+                    )
                     raise PostgresExecutionError(f"Init SQL failed on {validated_database_name}: {e}") from e
 
             logger.info(f"Executed {len(executed)} init SQL statement(s) on database {validated_database_name}")
@@ -1148,6 +1414,52 @@ class PostgresConnector:
             logger.exception(f"Failed to list schemas in database {database} on {self._host}")
             raise PostgresExecutionError(f"Schema listing failed: {e}") from e
 
+    async def describe_schemas(self, database: str) -> SchemaInventory:
+        """Inventory a database's schemas for a clone.
+
+        A clone takes along every schema of the source, but not ``public`` (postInitSQL
+        owns it in the target) and not a schema that only exists because an extension
+        lives in it. The caller needs to tell those apart, and needs to know what sits in
+        ``public`` to warn about what stays behind.
+        """
+        schemas = [row["schema_name"] for row in await self.list_schemas(database)]
+        extension_namespaces = {schema for schema in schemas if await self._get_schema_extensions(database, schema)}
+
+        conn = await self._get_or_create_connection(database)
+        rows = await conn.fetch("""
+            SELECT c.relname AS name
+            FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_depend d
+                WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+              )
+            UNION
+            SELECT p.proname
+            FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+            WHERE n.nspname = 'public'
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_depend d
+                WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
+              )
+            UNION
+            SELECT t.typname
+            FROM pg_type t JOIN pg_namespace n ON t.typnamespace = n.oid
+            WHERE n.nspname = 'public' AND t.typtype IN ('e', 'd', 'r', 'c')
+              AND (t.typrelid = 0 OR (SELECT c2.relkind FROM pg_class c2 WHERE c2.oid = t.typrelid) = 'c')
+              AND NOT EXISTS (
+                SELECT 1 FROM pg_depend d
+                WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e'
+              )
+            ORDER BY name
+        """)
+
+        return SchemaInventory(
+            schemas=schemas,
+            extension_namespaces=extension_namespaces,
+            public_objects=[row["name"] for row in rows],
+        )
+
     async def grant_schema_permissions(
         self, database: str, schema_name: str, username: str, permissions: list[str] | None = None
     ) -> dict[str, Any]:
@@ -1441,11 +1753,11 @@ class PostgresConnector:
             target_schema: Target schema name
             target_owner: Owner for the cloned schema
             target_owner_password: Password for target owner (needed for pg_dump)
-            additional_schemas: Extra schemas (RC-17) to clone into the same target
-                database, as ``(source_name, target_name)`` pairs. Each one is cloned
-                through the very same single-schema pipeline as the default schema (so
-                its extensions, restore and rename-if-different are handled identically);
-                when empty, this method behaves exactly as before.
+            additional_schemas: Extra schemas to clone into the same target database, as
+                ``(source_name, target_name)`` pairs: the schemas ZAD declared (RC-17)
+                plus the ones the application created itself (RC-360). They ride along in
+                the same single pg_dump as the default schema, so a reference between two
+                of them restores (RC-360).
 
         Returns:
             Dictionary with operation status and details
@@ -1488,15 +1800,21 @@ class PostgresConnector:
             else:
                 logger.info(f"Target database '{validated_target_db}' already exists")
 
-            # Pre-create extensions from source schema in target before pg_dump
+            schema_pairs = [(validated_source_schema, validated_target_schema), *validated_additional]
+
+            # Pre-create extensions per source schema in the target before pg_dump
             # pg_dump -n does not include CREATE EXTENSION, so extension functions
             # (e.g. uuid_generate_v4()) would be missing in the target
-            precreated_extensions = await self._precreate_extensions_for_clone(
-                source_database=validated_source_db,
-                source_schema=validated_source_schema,
-                target_database=validated_target_db,
-                target_schema=validated_source_schema,
-            )
+            precreated_schemas = {
+                source
+                for source, _ in schema_pairs
+                if await self._precreate_extensions_for_clone(
+                    source_database=validated_source_db,
+                    source_schema=source,
+                    target_database=validated_target_db,
+                    target_schema=source,
+                )
+            }
 
             # Clone within same server - use bound credentials for both source and target
             await self._execute_pgdump_clone(
@@ -1504,52 +1822,22 @@ class PostgresConnector:
                 source_username=self._admin_username,
                 source_password=self._admin_password,
                 source_database=validated_source_db,
-                source_schema=validated_source_schema,
                 target_host=self._host,
                 target_port=5432,
                 target_username=self._admin_username,
                 target_password=self._admin_password,
                 target_database=validated_target_db,
-                target_schema=validated_target_schema,
                 target_owner=validated_target_owner,
                 target_owner_password=target_owner_password,
+                schema_pairs=schema_pairs,
+                precreated_schemas=precreated_schemas,
                 source_port=5432,
-                schema_precreated=len(precreated_extensions) > 0,
             )
 
             logger.info(
                 f"Successfully cloned schema '{validated_source_schema}' from '{validated_source_db}' to '{validated_target_db}' as '{validated_target_schema}'"
             )
-
-            # Extra schemas (RC-17): clone each one through the identical single-schema
-            # pipeline. The default schema is created first, so any cross-schema
-            # dependency onto it already resolves. Same source/target name skips the
-            # rename; a cross-deployment clone (different names) renames just like the
-            # default schema does.
             for extra_source, extra_target in validated_additional:
-                extra_precreated = await self._precreate_extensions_for_clone(
-                    source_database=validated_source_db,
-                    source_schema=extra_source,
-                    target_database=validated_target_db,
-                    target_schema=extra_source,
-                )
-                await self._execute_pgdump_clone(
-                    source_host=self._host,
-                    source_username=self._admin_username,
-                    source_password=self._admin_password,
-                    source_database=validated_source_db,
-                    source_schema=extra_source,
-                    target_host=self._host,
-                    target_port=5432,
-                    target_username=self._admin_username,
-                    target_password=self._admin_password,
-                    target_database=validated_target_db,
-                    target_schema=extra_target,
-                    target_owner=validated_target_owner,
-                    target_owner_password=target_owner_password,
-                    source_port=5432,
-                    schema_precreated=len(extra_precreated) > 0,
-                )
                 logger.info(f"Cloned extra schema '{extra_source}' -> '{extra_target}' in '{validated_target_db}'")
 
             return {
@@ -1685,17 +1973,16 @@ class PostgresConnector:
                 source_username=source_username,
                 source_password=source_password,
                 source_database=validated_source_db,
-                source_schema=validated_source_schema,
                 target_host=self._host,
                 target_port=5432,
                 target_username=self._admin_username,
                 target_password=self._admin_password,
                 target_database=validated_target_db,
-                target_schema=validated_target_schema,
                 target_owner=validated_target_owner,
                 target_owner_password=target_owner_password,
+                schema_pairs=[(validated_source_schema, validated_target_schema)],
+                precreated_schemas={validated_source_schema} if precreated_extensions else set(),
                 force_clone=force_clone,
-                schema_precreated=len(precreated_extensions) > 0,
             )
 
             logger.info(
@@ -1725,29 +2012,49 @@ class PostgresConnector:
             )
             raise PostgresExecutionError(f"External schema cloning failed: {e}") from e
 
+    async def _psql(
+        self, env: dict[str, str], database: str, sql: str, *, tuples_only: bool = False
+    ) -> tuple[int, str, str]:
+        """Run one statement with psql, returning ``(returncode, stdout, stderr)``.
+
+        The clone pipeline needs the same call a dozen times over a set of schemas;
+        connection parameters come from ``env`` so no value reaches a command line.
+        """
+        cmd = ["psql", "-d", database, *(["-t"] if tuples_only else []), "-c", sql]
+        process = await asyncio.create_subprocess_exec(
+            *cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await process.communicate()
+        return process.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
     async def _execute_pgdump_clone(
         self,
         source_host: str,
         source_username: str,
         source_password: str,
         source_database: str,
-        source_schema: str,
         target_host: str,
         target_username: str,
         target_password: str,
         target_database: str,
-        target_schema: str,
         target_owner: str,
         target_owner_password: str,
+        schema_pairs: list[tuple[str, str]],
+        precreated_schemas: set[str] | None = None,
         source_port: int = 5432,
         target_port: int = 5432,
         force_clone: bool = False,
-        schema_precreated: bool = False,
     ) -> None:
         """Execute pg_dump clone from source to target with explicit connection parameters.
 
         This is the shared implementation used by both same-cluster and cross-cluster cloning.
         It uses pg_dump | psql streaming to copy schema data without requiring exclusive access.
+
+        All schemas go through ONE pg_dump with a ``-n`` per schema (RC-360). pg_dump
+        orders objects across schemas itself and adds foreign keys last, so schemas that
+        reference each other restore under ``ON_ERROR_STOP=1``; a run per schema has no
+        working order for a cycle. The restore runs as ``target_owner``, so every restored
+        object is owned by that role.
 
         Port is fixed at the PostgreSQL default (5432); we never accept an
         upstream port. Host must point at an in-cluster K8s service; external
@@ -1760,32 +2067,34 @@ class PostgresConnector:
             source_username: Username for source database connection
             source_password: Password for source database connection
             source_database: Source database name
-            source_schema: Source schema name
             target_host: Target database host (in-cluster K8s service only)
             target_username: Username for target database admin connection
             target_password: Password for target database admin connection
             target_database: Target database name
-            target_schema: Target schema name
-            target_owner: Owner for the cloned schema
+            target_owner: Owner for the cloned schemas
             target_owner_password: Password for target owner
-            force_clone: If True, allows dropping existing target schema (default: False)
-            schema_precreated: If True, source schema was pre-created in target for extensions
-                and the source schema existence check is skipped (default: False)
+            schema_pairs: The schemas to clone, as ``(source_name, target_name)`` pairs;
+                a pair with equal names keeps its name in the target.
+            precreated_schemas: Source names that ``_precreate_extensions_for_clone``
+                already created in the target, so their existence check is skipped
+            force_clone: If True, allows dropping existing target schemas (default: False)
 
         Raises:
             Exception: If clone operation fails
         """
-        import asyncio
-        import os
+        if not schema_pairs:
+            raise PostgresValidationError("schema_pairs cannot be empty")
+        precreated = precreated_schemas or set()
 
         logger.info(
-            f"Starting pg_dump streaming clone from {source_host}:{source_database}.{source_schema} "
-            f"to {target_host}:{target_database}.{target_schema}"
+            f"Starting pg_dump streaming clone from {source_host}:{source_database} "
+            f"to {target_host}:{target_database} for schemas: "
+            f"{', '.join(f'{src} -> {tgt}' for src, tgt in schema_pairs)}"
         )
 
         try:
             # Set environment for target connection (used in multiple steps)
-            env = os.environ.copy()
+            env = child_env()
             env.update(
                 {
                     "PGHOST": target_host,
@@ -1795,99 +2104,101 @@ class PostgresConnector:
                 }
             )
 
-            # Step 1: Check if source schema exists in target database (safety check)
-            # When schema_precreated=True, the schema was already verified and created by
-            # _precreate_extensions_for_clone() - skip the check to avoid duplication.
-            if schema_precreated:
-                logger.info(
-                    f"Source schema '{source_schema}' was pre-created in target database "
-                    f"'{target_database}' for extensions - skipping existence check"
-                )
+            # Stacked defense at the subprocess boundary. The public
+            # clone_schema entry point already validates, but a future refactor
+            # could route around it. This runs before step 1 so a malicious value
+            # gets a PostgresValidationError before the first process spawns, the
+            # schema-existence checks included:
+            #   * identifiers: PG identifier rules (letter/_ start, no special
+            #     chars, <=63 chars) -- _validate_identifier
+            #   * hosts: in-cluster K8s service only (bare service name or
+            #     '<svc>.<ns>.svc.cluster.local'); IPs and external domains
+            #     rejected so a tenant cannot stream data out of the cluster
+            #     -- _validate_in_cluster_host
+            #   * passwords: no NUL / CR / LF so they cannot smuggle anything
+            #     past env-var or libpq parsing -- _validate_pg_password_safe
+            identifiers: list[tuple[str, str]] = [
+                (source_database, "source_database"),
+                (target_database, "target_database"),
+                (source_username, "source_username"),
+                (target_username, "target_username"),
+                (target_owner, "target_owner"),
+            ]
+            for source_schema, target_schema in schema_pairs:
+                identifiers.append((source_schema, "source_schema"))
+                identifiers.append((target_schema, "target_schema"))
+            for ident_value, ident_name in identifiers:
+                self._validate_identifier(ident_value, ident_name)
+            self._validate_in_cluster_host(source_host, "source_host")
+            self._validate_in_cluster_host(target_host, "target_host")
+            self._validate_pg_port(source_port, "source_port")
+            self._validate_pg_port(target_port, "target_port")
+            self._validate_pg_password_safe(source_password, "source_password")
+            self._validate_pg_password_safe(target_password, "target_password")
+            self._validate_pg_password_safe(target_owner_password, "target_owner_password")
 
-                # The schema was created by admin via _precreate_extensions_for_clone().
-                # Transfer ownership to target_owner so the pg_dump pipeline (which runs
-                # as target_owner) has permission to create objects in the schema.
-                grant_cmd = [
-                    "psql",
-                    "-d",
+            # Step 1: Check if the source schemas exist in the target database (safety check)
+            # For a pre-created schema the check was already done by
+            # _precreate_extensions_for_clone() - skip it to avoid duplication.
+            for source_schema, _ in schema_pairs:
+                if source_schema in precreated:
+                    # The schema was created by admin via _precreate_extensions_for_clone().
+                    # Transfer ownership to target_owner so the pg_dump pipeline (which runs
+                    # as target_owner) has permission to create objects in the schema.
+                    rc, _, grant_err = await self._psql(
+                        env, target_database, f"ALTER SCHEMA {source_schema} OWNER TO {target_owner};"
+                    )
+                    if rc != 0:
+                        raise Exception(f"Failed to transfer schema ownership to {target_owner}: {grant_err}")
+                    logger.info(f"Transferred ownership of pre-created schema '{source_schema}' to {target_owner}")
+                    continue
+
+                _, check_out, _ = await self._psql(
+                    env,
                     target_database,
-                    "-c",
-                    f"ALTER SCHEMA {source_schema} OWNER TO {target_owner};",
-                ]
-                grant_process = await asyncio.create_subprocess_exec(
-                    *grant_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
+                    tuples_only=True,
                 )
-                _, grant_err = await grant_process.communicate()
-                if grant_process.returncode != 0:
-                    raise Exception(f"Failed to transfer schema ownership to {target_owner}: {grant_err.decode()}")
-                logger.info(f"Transferred ownership of pre-created schema '{source_schema}' to {target_owner}")
-            else:
-                check_source_schema_cmd = [
-                    "psql",
-                    "-d",
-                    target_database,
-                    "-t",
-                    "-c",
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",
-                ]
-                check_process = await asyncio.create_subprocess_exec(
-                    *check_source_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                )
-                check_out, _ = await check_process.communicate()
-                source_schema_exists_in_target = bool(check_out and check_out.decode().strip())
+                if not check_out.strip():
+                    continue
 
-                if source_schema_exists_in_target:
-                    if source_schema == "public":
-                        # Safe to drop 'public' schema - it's auto-created and we're about to recreate it
-                        logger.info("Source schema 'public' exists in target database, dropping it (safe to recreate)")
-                        drop_public_cmd = ["psql", "-d", target_database, "-c", "DROP SCHEMA IF EXISTS public CASCADE;"]
-                        drop_public_process = await asyncio.create_subprocess_exec(
-                            *drop_public_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                        )
-                        await drop_public_process.communicate()
-                    else:
-                        # Schema exists but was NOT pre-created - likely a leftover from a
-                        # previous failed clone. This is a legitimate safety concern.
-                        raise Exception(
-                            f"Source schema '{source_schema}' already exists in target database '{target_database}'. "
-                            f"Manual intervention required to prevent accidental data loss. "
-                            f"Please manually drop the schema if you want to proceed: "
-                            f"DROP SCHEMA IF EXISTS {source_schema} CASCADE;"
-                        )
+                if source_schema == "public":
+                    # Safe to drop 'public' schema - it's auto-created and we're about to recreate it
+                    logger.info("Source schema 'public' exists in target database, dropping it (safe to recreate)")
+                    await self._psql(env, target_database, "DROP SCHEMA IF EXISTS public CASCADE;")
+                else:
+                    # Schema exists but was NOT pre-created - likely a leftover from a
+                    # previous failed clone. This is a legitimate safety concern.
+                    raise Exception(
+                        f"Source schema '{source_schema}' already exists in target database '{target_database}'. "
+                        f"Manual intervention required to prevent accidental data loss. "
+                        f"Please manually drop the schema if you want to proceed: "
+                        f"DROP SCHEMA IF EXISTS {source_schema} CASCADE;"
+                    )
 
-            # Step 3: Drop target schema if it exists, schemas are different, AND force_clone is True
-            if source_schema != target_schema:
+            # Step 3: Drop target schemas that exist, where the names differ, AND force_clone is True
+            for source_schema, target_schema in schema_pairs:
+                if source_schema == target_schema:
+                    continue
                 if force_clone:
                     logger.info(f"force_clone=True: Preparing target schema {target_schema} (dropping if exists)")
-                    drop_cmd = ["psql", "-d", target_database, "-c", f"DROP SCHEMA IF EXISTS {target_schema} CASCADE;"]
-                    drop_process = await asyncio.create_subprocess_exec(
-                        *drop_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                    )
-                    await drop_process.communicate()
-                else:
-                    # Check if target schema exists
-                    check_target_cmd = [
-                        "psql",
-                        "-d",
-                        target_database,
-                        "-t",
-                        "-c",
-                        f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",
-                    ]
-                    check_target_process = await asyncio.create_subprocess_exec(
-                        *check_target_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-                    )
-                    check_target_out, _ = await check_target_process.communicate()
-                    target_schema_exists = bool(check_target_out and check_target_out.decode().strip())
+                    await self._psql(env, target_database, f"DROP SCHEMA IF EXISTS {target_schema} CASCADE;")
+                    continue
 
-                    if target_schema_exists:
-                        raise Exception(
-                            f"Target schema '{target_schema}' already exists in database '{target_database}' and force_clone=False. "
-                            f"Set force_clone=True to overwrite existing schema."
-                        )
+                _, check_target_out, _ = await self._psql(
+                    env,
+                    target_database,
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
+                    tuples_only=True,
+                )
+                if check_target_out.strip():
+                    raise Exception(
+                        f"Target schema '{target_schema}' already exists in database '{target_database}' and force_clone=False. "
+                        f"Set force_clone=True to overwrite existing schema."
+                    )
 
-            # Step 4: Stream complete schema (structure + data) in one step
-            logger.info("Streaming complete schema using pg_dump pipeline")
+            # Step 4: Stream complete schemas (structure + data) in one step
+            logger.info("Streaming complete schemas using pg_dump pipeline")
 
             # Connection parameters are passed via the environment, never via the
             # command line, so attacker-controlled source host/username/password
@@ -1898,7 +2209,7 @@ class PostgresConnector:
             # extensions are pre-created in the target schema before pg_dump runs
             # (pg_dump -n omits CREATE EXTENSION), so without it the duplicate
             # CREATE SCHEMA would fail under ON_ERROR_STOP=1.
-            source_env = os.environ.copy()
+            source_env = child_env()
             source_env.update(
                 {
                     "PGHOST": source_host,
@@ -1907,7 +2218,7 @@ class PostgresConnector:
                     "PGPASSWORD": source_password,
                 }
             )
-            target_env = os.environ.copy()
+            target_env = child_env()
             target_env.update(
                 {
                     "PGHOST": target_host,
@@ -1919,36 +2230,10 @@ class PostgresConnector:
 
             from opi.core.metrics import track_subprocess_memory
 
-            # Stacked defense at the subprocess boundary. The public
-            # clone_schema entry point already validates, but this is the
-            # last line where attacker-controlled input could leak through
-            # a future refactor. Cheap re-validation here means a malicious
-            # value gets a PostgresValidationError before any process spawns:
-            #   * identifiers: PG identifier rules (letter/_ start, no special
-            #     chars, <=63 chars) -- _validate_identifier
-            #   * hosts: in-cluster K8s service only (bare service name or
-            #     '<svc>.<ns>.svc.cluster.local'); IPs and external domains
-            #     rejected so a tenant cannot stream data out of the cluster
-            #     -- _validate_in_cluster_host
-            #   * passwords: no NUL / CR / LF so they cannot smuggle anything
-            #     past env-var or libpq parsing -- _validate_pg_password_safe
-            for ident_value, ident_name in (
-                (source_database, "source_database"),
-                (source_schema, "source_schema"),
-                (target_database, "target_database"),
-                (target_schema, "target_schema"),
-                (source_username, "source_username"),
-                (target_username, "target_username"),
-                (target_owner, "target_owner"),
-            ):
-                self._validate_identifier(ident_value, ident_name)
-            self._validate_in_cluster_host(source_host, "source_host")
-            self._validate_in_cluster_host(target_host, "target_host")
-            self._validate_pg_port(source_port, "source_port")
-            self._validate_pg_port(target_port, "target_port")
-            self._validate_pg_password_safe(source_password, "source_password")
-            self._validate_pg_password_safe(target_password, "target_password")
-            self._validate_pg_password_safe(target_owner_password, "target_owner_password")
+            dump_args = ["pg_dump", "-d", source_database]
+            for source_schema, _ in schema_pairs:
+                dump_args += ["-n", source_schema]
+            dump_args += ["--no-owner", "--no-privileges"]
 
             async with track_subprocess_memory("postgres-clone"):
                 # OS-pipe streaming pipeline: pg_dump -> sed -> psql.
@@ -1965,23 +2250,24 @@ class PostgresConnector:
                 import subprocess
 
                 def _run_clone_pipeline() -> tuple[int, bytes, int, bytes, bytes]:
-                    dump = subprocess.Popen(
-                        ["pg_dump", "-d", source_database, "-n", source_schema, "--no-owner", "--no-privileges"],
+                    dump = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+                        dump_args,
                         env=source_env,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                     )
                     rewrite = subprocess.Popen(
-                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],
+                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
                         stdin=dump.stdout,
                         stdout=subprocess.PIPE,
+                        env=child_env(),
                     )
                     # Close our handle so sed sees EOF when pg_dump exits.
                     if dump.stdout is None:
                         raise RuntimeError("pg_dump did not open a stdout pipe")
                     dump.stdout.close()
-                    restore = subprocess.Popen(
-                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],
+                    restore = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
                         env=target_env,
                         stdin=rewrite.stdout,
                         stdout=subprocess.PIPE,
@@ -2000,16 +2286,6 @@ class PostgresConnector:
 
                 dump_rc, dump_err, restore_rc, clone_out, clone_err = await asyncio.to_thread(_run_clone_pipeline)
 
-            # Adapter shims so the existing post-pipeline checks (returncode
-            # branches, schema-existence rename) keep working without a
-            # second refactor pass.
-            class _ReturncodeShim:
-                def __init__(self, rc: int) -> None:
-                    self.returncode = rc
-
-            dump_process = _ReturncodeShim(dump_rc)
-            restore_process = _ReturncodeShim(restore_rc)
-
             # Log only errors or important warnings
             combined_err = (dump_err or b"") + (clone_err or b"")
             if combined_err:
@@ -2020,11 +2296,11 @@ class PostgresConnector:
                 elif stderr_text:
                     logger.debug(f"pg_dump stderr: {stderr_text}")
 
-            if dump_process.returncode != 0:
+            if dump_rc != 0:
                 raise Exception(f"pg_dump failed: {dump_err.decode(errors='replace')}")
 
             # Check for errors
-            if restore_process.returncode != 0:
+            if restore_rc != 0:
                 raise Exception(f"Schema clone pipeline failed: {clone_err.decode(errors='replace')}")
 
             # Check if pg_dump actually produced any output
@@ -2036,64 +2312,43 @@ class PostgresConnector:
                 )
                 logger.debug(f"pg_dump output size: {len(clone_out)} bytes")
 
-            logger.info("Schema cloned successfully (structure + data)")
+            logger.info("Schemas cloned successfully (structure + data)")
 
-            # Step 5: Check if target schema was created successfully
+            # Step 5: Check per schema that the target name is there, renaming where needed
+            for source_schema, target_schema in schema_pairs:
+                _, check_out, _ = await self._psql(
+                    env,
+                    target_database,
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
+                    tuples_only=True,
+                )
+                if check_out.strip():
+                    logger.debug(f"Target schema '{target_schema}' was created directly")
+                    continue
 
-            check_target_schema_cmd = [
-                "psql",
-                "-d",
-                target_database,
-                "-c",
-                f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",
-                "-t",
-            ]
-
-            check_process = await asyncio.create_subprocess_exec(
-                *check_target_schema_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            check_out, _ = await check_process.communicate()
-
-            if check_out and check_out.decode().strip():
-                logger.debug(f"Target schema '{target_schema}' was created directly")
-            else:
                 # pg_dump restores a schema under its SOURCE name -- it cannot
                 # rename on the fly. So whenever source and target names differ
                 # (the normal generational-clone case), the cloned schema arrives
                 # as `source_schema` and we rename it to `target_schema` here.
                 # This is the expected path, NOT a failure -- only a dump that
                 # produced no schema at all is an error.
-                list_cmd = [
-                    "psql",
-                    "-d",
+                _, list_out, _ = await self._psql(
+                    env,
                     target_database,
-                    "-c",
                     "SELECT schema_name FROM information_schema.schemata "
                     "WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast');",
-                    "-t",
-                ]
-                list_process = await asyncio.create_subprocess_exec(
-                    *list_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    tuples_only=True,
                 )
-                list_out, _ = await list_process.communicate()
-                existing_schemas = list_out.decode().strip() if list_out else ""
+                existing_schemas = list_out.strip()
 
                 if source_schema in existing_schemas and source_schema != target_schema:
                     # Normal path: rename the freshly-restored schema to the target.
                     logger.info(f"Renaming cloned schema '{source_schema}' -> '{target_schema}'")
-                    rename_cmd = [
-                        "psql",
-                        "-d",
-                        target_database,
-                        "-c",
-                        f"ALTER SCHEMA {source_schema} RENAME TO {target_schema};",
-                    ]
-                    rename_process = await asyncio.create_subprocess_exec(
-                        *rename_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    rc, _, rename_err = await self._psql(
+                        env, target_database, f"ALTER SCHEMA {source_schema} RENAME TO {target_schema};"
                     )
-                    _, rename_err = await rename_process.communicate()
-                    if rename_process.returncode != 0:
-                        raise Exception(f"Failed to rename cloned schema to '{target_schema}': {rename_err.decode()}")
+                    if rc != 0:
+                        raise Exception(f"Failed to rename cloned schema to '{target_schema}': {rename_err}")
                     logger.info(f"Cloned schema is now '{target_schema}'")
                 else:
                     # Neither the target nor the source schema materialised: the
@@ -2107,25 +2362,16 @@ class PostgresConnector:
                         f"Schema '{target_schema}' was not created during clone - source '{source_schema}' may be empty"
                     )
 
-            # Step 6: Set proper ownership of the final schema
-            logger.info(f"Setting ownership of schema {target_schema} to {target_owner}")
-            ownership_cmd = [
-                "psql",
-                "-d",
-                target_database,
-                "-c",
-                f"ALTER SCHEMA {target_schema} OWNER TO {target_owner};",
-            ]
-
-            owner_process = await asyncio.create_subprocess_exec(
-                *ownership_cmd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            _, owner_err = await owner_process.communicate()
-
-            if owner_process.returncode != 0:
-                logger.warning(f"Failed to set schema ownership: {owner_err.decode()}")
-            else:
-                logger.info(f"Successfully set schema ownership to {target_owner}")
+            # Step 6: Set proper ownership of the final schemas
+            for _, target_schema in schema_pairs:
+                logger.info(f"Setting ownership of schema {target_schema} to {target_owner}")
+                rc, _, owner_err = await self._psql(
+                    env, target_database, f"ALTER SCHEMA {target_schema} OWNER TO {target_owner};"
+                )
+                if rc != 0:
+                    logger.warning(f"Failed to set schema ownership: {owner_err}")
+                else:
+                    logger.info(f"Successfully set schema ownership to {target_owner}")
 
         except Exception as e:
             logger.exception(f"pg_dump streaming clone failed: {e}")

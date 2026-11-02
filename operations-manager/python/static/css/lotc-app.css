@@ -29,11 +29,6 @@
     margin-bottom: 0;
 }
 
-nldd-page-footer {
-    display: block;
-    margin-top: 3rem;
-}
-
 /*
  * De ontwerpvariabelen die ONZE eigen stylesheets gebruiken.
  *
@@ -118,9 +113,8 @@ nldd-page-footer {
  * OPVRAAGT aan op het token van het thema dat er al is, en die tokens zijn zelf
  * light-dark(). De lichte weergave verandert er dus niet van (--semantics-surfaces-base-
  * background-color is daar #FFFFFF, precies de terugvalwaarde die er stond); de donkere
- * krijgt de waarde die hij altijd al had moeten hebben. Dezelfde weg als het blok
- * hieronder voor nldd-sidebar-section: een component leest zijn eigen custom properties,
- * en die zetten is de bedoelde manier.
+ * krijgt de waarde die hij altijd al had moeten hebben. Een component leest zijn eigen
+ * custom properties, en die zetten is de bedoelde manier.
  *
  * Dit hoort bij de componentenlaag en is daar gemeld (request_for_components.md, punt over
  * de donkere weergave). Zodra die componenten hun kleuren uit --semantics-* halen kan dit
@@ -185,44 +179,6 @@ form.is-bezig {
     cursor: progress;
 }
 
-/* Het muiswiel moet het venster kunnen bereiken.
- *
- * <nldd-page> draagt `overflow-y: auto` EN `overscroll-behavior-y: contain`. Die combinatie
- * maakt hem een scrollgebied dat wielgebeurtenissen opvangt en NIET doorgeeft aan het
- * venster. In onze pagina heeft hij zelf niets te scrollen (scrollHeight == clientHeight),
- * dus het wiel ging nergens heen: slepen aan de vensterscrollbalk werkte wel, het wiel niet.
- *
- * Gemeten met de keten onder de muis: div > div > nldd-sidebar-section > nldd-page
- * (oy=auto, ob=contain) > body > html. Alleen nldd-page onderbreekt de keten.
- *
- * Dit is een pleister op een component en hoort daar opgelost te worden; gemeld aan het
- * LOTC-project. Weghalen zodra <nldd-page> het wiel doorgeeft.
- */
-nldd-page {
-    overscroll-behavior-y: auto;
-}
-
-/* De navigatie zonder eigen vlak.
- *
- * <nldd-sidebar-section> tekent zijn zijkolom in een `div.sidebar-section__sidebar-box` in
- * zijn schaduwboom, met een grijze achtergrond en 10px ronde hoeken. Wij willen alleen de
- * vlakverdeling met ons eigen menu erin, dus dat vlak moet weg.
- *
- * Dit is GEEN hack op een schaduwboom: dat kan niet met gewone CSS, en hoeft ook niet. Het
- * component leest zijn kleuren uit eigen custom properties, en die erven wel naar binnen.
- * We zetten dus zijn eigen tokens, wat de bedoelde weg is:
- *
- *   --components-sidebar-section-sidebar-box-background-color
- *   --components-sidebar-section-sidebar-box-highlight-border-color   (de inset-rand)
- *
- * De hoekradius laten we staan: die komt uit --semantics-surfaces-corner-radius, een
- * GLOBAAL token dat ook andere vlakken bedient, en op een doorzichtig vlak is hij onzichtbaar.
- */
-nldd-sidebar-section {
-    --components-sidebar-section-sidebar-box-background-color: transparent;
-    --components-sidebar-section-sidebar-box-highlight-border-color: transparent;
-}
-
 /* Verbergen, voor de elementen die JavaScript aan- en uitzet.
  *
  * Deze klasse is geen vormgeving maar bedrading: static/js/edit_modal.js, wizard.js en
@@ -266,4 +222,53 @@ nldd-sidebar-section {
  */
 .lange-waarden-breken nldd-cell {
     overflow-wrap: anywhere;
+}
+
+/* De QR van een OTP-registratie (RC-329).
+ *
+ * De SVG komt zonder eigen afmeting uit de server (omitsize), zodat de pagina hem hier
+ * begrenst in plaats van hem op de schermgrootte van de maker te zetten. Zonder deze
+ * regel vult hij de hele kaart.
+ */
+.otp-qr svg {
+    display: block;
+    width: 100%;
+    max-width: 220px;
+    height: auto;
+}
+
+/*
+ * Het woordmerk op /introductie: Z, het huisje als A, D. De letters krijgen het blauw van
+ * het logo zelf, ook in donker, want het logo wisselt niet mee.
+ */
+.zad-woordmerk {
+    display: flex;
+    align-items: baseline;
+    gap: 0.04em;
+    color: #0776bd;
+    font: var(--primitives-font-display-1-lg);
+    font-size: clamp(4rem, 12vw, 8rem);
+    font-weight: 800;
+    line-height: 1;
+}
+
+.zad-woordmerk img {
+    height: 0.85em;
+    height: 1.2cap;
+    width: auto;
+}
+
+/* Ruimte tussen het logo en de naam in de kopbalk; de toolbar-title zet ze tegen elkaar. */
+.kop-logo {
+    margin-inline-end: var(--primitives-space-4);
+}
+
+/*
+ * Een paneel dat zelf scrolt moet ook het containing block zijn van wat erin absoluut staat.
+ * NLDD 0.13.0 laat dat open: de verborgen hint "andere website" van een externe nldd-link
+ * (link__link-hint) hing daardoor aan het document, rekte dat op tot de lengte van de
+ * pagina, en gaf op /introductie een tweede scrollbalk.
+ */
+nldd-page {
+    position: relative;
 }

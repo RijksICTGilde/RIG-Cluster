@@ -91,7 +91,7 @@ async def _confirm(action_key: str, *, role: str = "admin") -> Any:
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch("opi.web.router.get_user_roles_for_project", return_value=role),
         patch("opi.web.router.get_project_store", return_value=store),
     ):
         return await deployment_action_confirm(_request(), PROJECT, DEPLOYMENT, action_key)
@@ -179,7 +179,7 @@ async def test_a_modal_action_has_no_confirmation_of_its_own() -> None:
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+        patch("opi.web.router.get_user_roles_for_project", return_value=["admin", "ops"]),
         patch("opi.web.router.get_project_store", return_value=store),
         pytest.raises(HTTPException) as exc,
     ):
@@ -187,11 +187,28 @@ async def test_a_modal_action_has_no_confirmation_of_its_own() -> None:
     assert exc.value.status_code == 404
 
 
-@pytest.mark.parametrize("role", ["member", "developer", "viewer"])
-async def test_a_non_privileged_role_gets_no_dialog(role: str, service_with_an_action: None) -> None:
-    with pytest.raises(HTTPException) as exc:
-        await _confirm("cache-legen", role=role)
-    assert exc.value.status_code == 403
+@pytest.mark.parametrize(("rollen", "mag"), [(["viewer"], False), (["developer"], True), (["ops"], True)])
+def test_de_bevestiging_hangt_aan_het_recht_op_de_actie(rollen: list[str], mag: bool) -> None:
+    """De poort staat sinds RC-392 op de route, niet in de handler.
+
+    De route draagt ``service.action``, en de dependency op de web-router beslist daarop
+    voordat de handler draait. Wat hier vast moet staan is dus WELK recht de route
+    noemt en wat dat recht opent: een viewer niet, een developer op een deployment die
+    niet op productie staat wel.
+    """
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
+
+    assert action_of(deployment_action_confirm) is Action.SERVICE_ACTION
+
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name="iemand@example.com",
+        project=PROJECT,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    resource = Resource(project=PROJECT, path=f"project/{PROJECT}/deployment/{DEPLOYMENT}", deployment=DEPLOYMENT)
+    assert decide(principal, Action.SERVICE_ACTION, resource, step_up_fresh=True).allowed is mag
 
 
 async def test_the_route_takes_no_endpoint_from_the_request(service_with_an_action: None) -> None:
@@ -290,7 +307,9 @@ def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
         # De acties horen bij de deployment die de pagina toont; die komt uit het pad
         # (RC-92) en staat als ``deployment_geopend`` in de context.
         deployment_geopend={"name": DEPLOYMENT},
-        user_role="admin",
+        # Sinds RC-392 toetst het sjabloon met can(...) in plaats van op een rolnaam; de
+        # poort zelf staat op de route (zie test_de_bevestiging_hangt_aan_het_recht).
+        can=lambda *_args, **_kwargs: True,
         deployment_service_actions={DEPLOYMENT: [FAKE_ACTION]},
     )
 

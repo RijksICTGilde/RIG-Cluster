@@ -73,6 +73,30 @@ class TestBuildExpectedResources:
         assert len(result["minio_user"]) == 1
         assert len(result["minio_policy"]) == 1
 
+    def test_seaweedfs_service(self) -> None:
+        yamls = [
+            {
+                "name": "myproject",
+                "schema-version": 2,
+                "components": [],
+                "deployments": [
+                    {
+                        "name": "staging",
+                        "cluster": "local",
+                        "namespace": "myproject",
+                        "services": ["seaweedfs-storage"],
+                    }
+                ],
+            }
+        ]
+        result = _build_expected_resources(yamls)
+        assert len(result["seaweedfs_bucket"]) == 1
+        assert len(result["seaweedfs_user"]) == 1
+        assert len(result["seaweedfs_policy"]) == 1
+        # Eigen resourcetypes naast minio: beide diensten mogen tegelijk bestaan zonder
+        # dat de ene de verwachte set van de andere vult.
+        assert len(result["minio_bucket"]) == 0
+
     def test_cluster_dimension_prevents_cross_cluster_match(self) -> None:
         """Two clusters with same project/deployment should produce distinct entries."""
         yamls = [
@@ -680,6 +704,92 @@ class TestPurgeSafetyGates:
         mock_connector.delete_database.assert_awaited_once_with("regel_k4c_pr375")
         mock_service.delete_mark.assert_awaited_once()
         assert results["purged"] == [{"type": "postgresql_database", "name": "regel_k4c_pr375"}]
+
+
+class TestPurgeSeaweedfs:
+    """De SeaweedFS-tak van ``_purge_marks``: volgorde, en het cluster dat de dienst niet levert."""
+
+    def _marks(self) -> list[dict]:
+        # Met opzet in de verkeerde volgorde: de purge moet zelf policy, user, bucket zetten.
+        return [
+            {"id": "m-bucket", "resource_type": "seaweedfs_bucket", "resource_name": "proj-dep"},
+            {"id": "m-policy", "resource_type": "seaweedfs_policy", "resource_name": "proj_dep-proj-dep-policy"},
+            {"id": "m-user", "resource_type": "seaweedfs_user", "resource_name": "proj_dep"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_policy_user_bucket_in_die_volgorde(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opi.jobs.reconciliation import _purge_marks
+
+        connector = AsyncMock()
+        monkeypatch.setattr("opi.jobs.reconciliation.SeaweedfsConnector.is_configured", lambda: True)
+        monkeypatch.setattr("opi.jobs.reconciliation.create_seaweedfs_connector", lambda: connector)
+        service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+
+        await _purge_marks(self._marks(), service, results, dry_run=False)
+
+        volgorde = [aanroep[0] for aanroep in connector.method_calls]
+        assert volgorde == ["delete_policy", "delete_user", "delete_bucket"]
+        assert [item["name"] for item in results["purged"]] == [
+            "proj_dep-proj-dep-policy",
+            "proj_dep",
+            "proj-dep",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_een_cluster_zonder_seaweedfs_raakt_geen_connector_aan(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opi.jobs.reconciliation import _purge_marks
+
+        monkeypatch.setattr("opi.jobs.reconciliation.SeaweedfsConnector.is_configured", lambda: False)
+        aangemaakt = AsyncMock()
+        monkeypatch.setattr("opi.jobs.reconciliation.create_seaweedfs_connector", lambda: aangemaakt)
+        service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+
+        await _purge_marks(self._marks(), service, results, dry_run=False)
+
+        assert results["purged"] == []
+        assert aangemaakt.method_calls == []
+
+    @pytest.mark.asyncio
+    async def test_dry_run_verwijdert_de_markering_niet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from opi.jobs.reconciliation import _purge_marks
+
+        connector = AsyncMock()
+        monkeypatch.setattr("opi.jobs.reconciliation.SeaweedfsConnector.is_configured", lambda: True)
+        monkeypatch.setattr("opi.jobs.reconciliation.create_seaweedfs_connector", lambda: connector)
+        service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+
+        await _purge_marks(self._marks(), service, results, dry_run=True)
+
+        connector.delete_bucket.assert_not_awaited()
+        service.delete_mark.assert_not_awaited()
+        assert [item["name"] for item in results["purged"]] == [
+            "proj_dep-proj-dep-policy",
+            "proj_dep",
+            "proj-dep",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_een_mislukte_purge_komt_in_errors_en_stopt_de_rest_niet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from opi.jobs.reconciliation import _purge_marks
+
+        connector = AsyncMock()
+        connector.delete_policy.side_effect = RuntimeError("boem")
+        monkeypatch.setattr("opi.jobs.reconciliation.SeaweedfsConnector.is_configured", lambda: True)
+        monkeypatch.setattr("opi.jobs.reconciliation.create_seaweedfs_connector", lambda: connector)
+        service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict = {"purged": [], "errors": []}
+
+        await _purge_marks(self._marks(), service, results, dry_run=False)
+
+        assert "boem" in results["errors"][0]
+        connector.delete_user.assert_awaited_once()
+        connector.delete_bucket.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

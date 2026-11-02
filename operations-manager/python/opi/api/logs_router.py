@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import kenmerk_van, met_kenmerk
@@ -98,6 +99,7 @@ logs_router: APIRouter = APIRouter(
 
 
 @logs_router.get("/{project_name}")
+@action(Action.LOGS_READ)
 @validate_api_token
 async def get_deployment_logs(
     request: Request,

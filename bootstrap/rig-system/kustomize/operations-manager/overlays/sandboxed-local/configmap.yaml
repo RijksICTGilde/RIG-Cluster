@@ -13,12 +13,11 @@ data:
     # random key minten). Niet-internet-facing dev cluster, plaintext is OK.
     SECRET_KEY=sandbox-dev-secret-key-fixed-for-stable-sessions-32min
 
-    # Zonder deze sleutel geeft ELK admin-endpoint 501. Vaste dev-waarde, zelfde
-    # afweging als SECRET_KEY hierboven: niet-internet-facing wegwerpcluster.
-    ADMIN_API_KEY=sandbox-dev-admin-api-key-fixed-for-admin-endpoints
-
     ENABLE_GIT_MONITOR=false
     GIT_PROJECTS_SERVER_URL=http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-projects.git
+    # De kloon-URL hierboven is een clusteradres; de commitlinks in het audit-tabblad
+    # hebben de hostnaam nodig die een browser bereikt.
+    GIT_PROJECTS_WEB_URL=https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-projects
     GIT_PROJECTS_SERVER_USERNAME=rig-admin
     GIT_PROJECTS_SERVER_PASSWORD=plain:admin1234
     GIT_PROJECTS_SERVER_REPO_PATH=/
@@ -33,8 +32,25 @@ data:
 
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
+
+    # SeaweedFS (seaweedfs-storage, RC-331). Elk cluster met de dienst zet deze twee; de
+    # overlays van odcn-production en odcn-staging doen hetzelfde met hun eigen namespace.
+    # Beide adressen zijn nodig, `weed shell` hangt zonder masteradres (rij G18).
+    # Dit zijn de HTTP-poorten: weed leidt de gRPC-poort er zelf uit af door 10000 op te
+    # tellen, en dat zijn de twee die de Service en de NetworkPolicy openzetten.
+    SEAWEEDFS_FILER_ADDRESS=seaweedfs.rig-system.svc.cluster.local:8888
+    SEAWEEDFS_MASTER_ADDRESS=seaweedfs.rig-system.svc.cluster.local:9333
+
     ARGOCD_HOST=argocd-server
-    ARGOCD_PASSWORD=admin1234
+    # TLS: certificaat en bundel van `task sandbox:generate-argocd-tls`.
+    ARGOCD_PORT=443
+    ARGOCD_USE_TLS=true
+    ARGOCD_VERIFY_SSL=true
+    ARGOCD_CA_BUNDLE=/etc/ssl/argocd/ca.crt
+
+    # Hier aan en op productie nog niet: de sandbox is waar de afsluiting gemeten wordt
+    # (tests/e2e/test_sandbox_database_isolatie.py). Standaard is dry-run.
+    DATABASE_RESTRICT_PUBLIC_CONNECT=on
 
     KEYCLOAK_URL=https://keycloak.sandbox.rijksapp.dev
     # OIDC credentials are set dynamically by OPI after creating its own realm
@@ -54,6 +70,10 @@ data:
     ALLOWED_EMAILS=admin@sandbox.rijksapp.dev
     ADMIN_EMAILS=admin@sandbox.rijksapp.dev
 
+    # Van welke bronnen de renderketen een helmfile of helm chart mag klonen. Leeg
+    # betekent geen enkele, dus een nieuwe bron moet hier eerst bij.
+    RENDER_SOURCE_ALLOWLIST=https://github.com/MinBZK/mijn-bureau-infra.git,https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-deployments.git
+
     PROJECT_REPO_URL=https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-deployments.git
     PROJECT_REPO_USERNAME=rig-admin
     PROJECT_REPO_PASSWORD=plain:admin1234
@@ -68,6 +88,14 @@ data:
 
     PROMETHEUS_EXTERNAL_URL=https://prometheus.sandbox.rijksapp.dev
 
+    # ingress-nginx is hier de enige ingang en zet X-Forwarded-For op $remote_addr
+    # (nergens een use-forwarded-headers, dus de default), dus er is precies een
+    # vertrouwde hop en de inkomende header telt niet mee. Zonder dit telt de rem op het
+    # peer-adres, en dat is bij elk extern verzoek de ingress-pod: een emmer voor alle
+    # clients samen. Gemeten op de sandbox: hops=0 gaf 10.244.0.247 (de ingress-pod),
+    # hops=1 geeft het adres dat de ingress ziet.
+    TRUSTED_PROXY_HOPS=1
+
     LOG_TO_FILE=false
 
     # Sleep-mode: pull the published waker image, same tag as production and as the code
@@ -79,3 +107,7 @@ data:
     SLEEP_MODE_SCHEDULER_ENABLED=true
     SLEEP_MODE_SWEEP_MINUTES=1
     SLEEP_MODE_WAKER_IMAGE=ghcr.io/minbzk/base-images/zad-waker:latest
+
+    # Back-uppods op :latest en niet op de gepinde digest uit de code: task
+    # build-backup-image bouwt deze image lokaal en laadt hem onder die tag in kind.
+    BACKUP_IMAGE=ghcr.io/minbzk/base-images/rig-backup:latest

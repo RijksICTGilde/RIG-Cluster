@@ -92,11 +92,15 @@ def test_de_bevestiging_wijst_naar_dezelfde_actie(
     assert url == f"{app_server}{expected_path}"
 
 
-def test_de_dialoog_sluit_met_de_sluitknop(app_server: str, auth_page: Page) -> None:
-    """De sluitknop hangt aan closeEditModal(); zonder dat scherm je de pagina af."""
+def test_de_dialoog_sluit_met_annuleren(app_server: str, auth_page: Page) -> None:
+    """Annuleren hangt aan closeEditModal(); zonder dat scherm je de pagina af.
+
+    Een bevestiging heeft de vorm van <nldd-modal-dialog> en dus geen kop met sluitknop
+    (static/css/modal.css): Annuleren is de weg naar buiten.
+    """
     _open(auth_page, app_server, "Project herverwerken")
 
-    auth_page.locator("nldd-button.edit-modal-close-btn").first.click()
+    auth_page.locator("#edit-section-inner [data-confirm-action] nldd-button[text='Annuleren']").click()
 
     auth_page.locator("#edit-section-modal.is-open").wait_for(state="detached", timeout=5000)
     assert auth_page.evaluate("document.body.style.overflow") != "hidden"

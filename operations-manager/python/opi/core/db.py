@@ -45,21 +45,47 @@ class Base(DeclarativeBase):
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
+#: Het plafond van deze engine: ``ORM_POOL_SIZE`` verbindingen, zonder overloop. Samen met
+#: de asyncpg-hoofdpool (``MAIN_POOL_MAX_SIZE`` in ``opi/core/database_pools.py``) opent een
+#: OPI-pod zo maximaal 10 verbindingen naar zijn eigen database, en daarop is de
+#: ``connectionLimit`` van de rol ``operations_manager`` in CNPG gerekend (RC-410).
+ORM_POOL_SIZE = 5
+ORM_MAX_OVERFLOW = 0
 
-def _default_url() -> str:
+
+def app_database_url(scheme: str, ssl_param: str) -> str:
+    """De URL van OPI's eigen database, met de app-rol die haar objecten bezit.
+
+    De app-rol en niet de superuser: OPI's eigen tabellen horen van de rol te zijn die ze
+    gebruikt (RC-410). Het beheer van tenantdatabases houdt de admin-credentials.
+
+    Gedeeld met ``opi/migrations/env.py``, want de migraties draaien als diezelfde rol.
+    ``ssl_param`` verschilt per driver: asyncpg noemt hem ``ssl``, psycopg2 ``sslmode``;
+    de waarden zijn in beide gevallen die van libpq.
+    """
     from opi.core.config import settings
 
     return (
-        f"postgresql+asyncpg://{settings.DATABASE_ADMIN_NAME}:{settings.DATABASE_ADMIN_PASSWORD}"
+        f"{scheme}://{settings.DATABASE_APP_USER}:{settings.database_app_password}"
         f"@{settings.DATABASE_HOST}:5432/{settings.DATABASE_NAME}"
+        f"?{ssl_param}={settings.DATABASE_SSLMODE}"
     )
+
+
+def _default_url() -> str:
+    return app_database_url("postgresql+asyncpg", "ssl")
 
 
 def configure_engine(url: str | None = None) -> None:
     """(Re)create the async engine + sessionmaker. ``url`` defaults to the app DB; tests
     pass a throwaway-Postgres URL. Safe to call more than once."""
     global _engine, _sessionmaker
-    _engine = create_async_engine(url or _default_url(), pool_pre_ping=True)
+    _engine = create_async_engine(
+        url or _default_url(),
+        pool_pre_ping=True,
+        pool_size=ORM_POOL_SIZE,
+        max_overflow=ORM_MAX_OVERFLOW,
+    )
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
 
 

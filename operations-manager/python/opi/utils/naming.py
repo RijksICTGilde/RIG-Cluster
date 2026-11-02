@@ -5,6 +5,7 @@ This module provides standardized methods for generating unique names for Kubern
 including deployments, services, PVCs, and other manifest resources.
 """
 
+import hashlib
 import logging
 import posixpath
 import re
@@ -51,7 +52,7 @@ SAFE_FALLBACK_FORMAT = "component-deployment-project"
 # already imports that one -- taking it from here would be an import cycle. It is re-exported
 # here so every existing reader keeps its import, and the assertion that it matches the
 # templates stays where the templates are.
-assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101
+assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101  # importtijdcontrole op twee lijsten die gelijk moeten blijven
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
 
@@ -502,6 +503,12 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
+#: De tekenset van een container-image-verwijzing. Eén bron voor de drie plekken die hem
+#: toetsen: ``$defs/component.image`` in project_v2.json (zelfde tekst),
+#: ``ContainerImageValidator`` op het formulier en het databasemodel van een eigen
+#: PostgreSQL-cluster.
+CONTAINER_IMAGE_PATTERN = r"^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\Z"
+
 #: The character shape of an extra-schema postfix (RC-17): lowercase letters, digits and
 #: underscores, starting with a letter. It becomes part of a PostgreSQL schema name and,
 #: uppercased, part of an environment-variable name, so both have to accept it. Declared
@@ -793,6 +800,53 @@ def mail_project_label(project_name: str) -> str:
     return _truncate_if_needed(_sanitize_for_lowercase(project_name), MAIL_PROJECT_LABEL_MAX_LENGTH)
 
 
+#: How many hex characters of the sha256 a deployment label ends in.
+#:
+#: The hash is not decoration. Project and deployment names both contain hyphens, so
+#: ``a-b``/``c`` and ``a``/``b-c`` compose the same readable label; the readable part is
+#: also TRUNCATED to fit the address, so two long names collapse onto each other. Six
+#: characters over a project's own deployments is plenty, and it is also what keeps a new
+#: deployment label out of the old ``project-<project>`` namespace, which is what makes the
+#: 2.14 transition safe.
+_MAIL_DEPLOYMENT_HASH_LENGTH = 6
+
+
+def mail_deployment_label(project_name: str, deployment_name: str) -> str:
+    """The label of ONE deployment in mail: the part that follows ``project-`` and ``+``.
+
+    ``<project>-<deployment>-<hash>``, shortened so the whole label stays within
+    ``MAIL_PROJECT_LABEL_MAX_LENGTH`` -- the account name and the sender address have to
+    agree character for character, because the relay derives the address from the name.
+    """
+    digest = hashlib.sha256(f"{project_name}/{deployment_name}".encode()).hexdigest()[:_MAIL_DEPLOYMENT_HASH_LENGTH]
+    readable = _sanitize_for_lowercase(f"{project_name}-{deployment_name}")
+    room = MAIL_PROJECT_LABEL_MAX_LENGTH - len(digest) - 1
+    return f"{_truncate_if_needed(readable, room).rstrip('-')}-{digest}"
+
+
+def generate_deployment_mail_account_name(project_name: str, deployment_name: str) -> str:
+    """The SMTP account name ONE deployment gets on the platform mail relay.
+
+    Format: ``project-{project}-{deployment}-{hash}``.
+
+    Per deployment and not per project (RC-401): the account is the unit the daily budget,
+    the password and the bounce address hang on, so a test deployment sends its hundred
+    messages without anyone approving anything and production its hundred thousand after
+    approval. The password lives in that deployment's Kubernetes secret, like its database
+    password.
+
+    The ``project-`` prefix stays, so the relay keeps deriving the sender address the same
+    way and the platform accounts stay out of reach (``MAIL_PROJECT_ACCOUNT_PREFIX``). Which
+    project an account belongs to is no longer readable from the label, so OPI writes it
+    into the relay's generated script (``zad.project.<account>``).
+
+    Example:
+        >>> generate_deployment_mail_account_name("algor", "prod")
+        'project-algor-prod-5e4f20'
+    """
+    return f"{MAIL_PROJECT_ACCOUNT_PREFIX}{mail_deployment_label(project_name, deployment_name)}"
+
+
 def generate_mail_sender_address(base_address: str, project_name: str) -> str:
     """
     Generate the address a project sends from: ``<local>+<project>@<domain>``.
@@ -822,6 +876,22 @@ def generate_mail_sender_address(base_address: str, project_name: str) -> str:
     """
     local_part, _, domain = base_address.partition("@")
     return f"{local_part}+{mail_project_label(project_name)}@{domain}"
+
+
+def generate_deployment_mail_sender_address(base_address: str, project_name: str, deployment_name: str) -> str:
+    """The address one deployment sends from: ``<local>+<project>-<deployment>-<hash>@<domain>``.
+
+    The deployment counterpart of ``generate_mail_sender_address``, and the same REPORT of
+    what the relay will do: it cuts ``project-`` off the authenticated account name and
+    puts the rest after the ``+``. So the plus part carries project AND deployment, which is
+    what makes a bounce traceable to the deployment that sent it.
+
+    Example:
+        >>> generate_deployment_mail_sender_address("noreply-rijksapp@rijksoverheid.nl", "algor", "prod")
+        'noreply-rijksapp+algor-prod-5e4f20@rijksoverheid.nl'
+    """
+    local_part, _, domain = base_address.partition("@")
+    return f"{local_part}+{mail_deployment_label(project_name, deployment_name)}@{domain}"
 
 
 def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
@@ -903,6 +973,73 @@ def generate_minio_policy_name(project_name: str, deployment_name: str) -> str:
     bucket = generate_bucket_name(project_name, deployment_name)
     policy_name = f"{username}-{bucket}-policy"
     return _truncate_if_needed(policy_name, 128)  # MinIO policy name limit
+
+
+def validate_bucket_name(bucket_name: str) -> str:
+    """Toets een bucketnaam tegen de S3-regels en geef hem terug.
+
+    Hier en niet bij een connector: beide object-storage-services stellen dezelfde eis aan
+    een naam die van buiten komt (RC-331).
+    """
+    if not bucket_name:
+        raise ValueError("Bucket name cannot be empty")
+
+    if len(bucket_name) < 3:
+        raise ValueError("Bucket name must be at least 3 characters long")
+    if len(bucket_name) > 63:
+        raise ValueError("Bucket name cannot exceed 63 characters")
+
+    if not re.match(r"^[a-z0-9][a-z0-9\-]*[a-z0-9]$", bucket_name):
+        raise ValueError(
+            f"Bucket name '{bucket_name}' contains invalid characters. "
+            "Must contain only lowercase letters, numbers, and hyphens. "
+            "Must start and end with a letter or number."
+        )
+
+    if "--" in bucket_name:
+        raise ValueError("Bucket name cannot contain consecutive hyphens")
+
+    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", bucket_name):
+        raise ValueError("Bucket name cannot be formatted as an IP address")
+
+    return bucket_name
+
+
+def validate_object_store_username(username: str) -> str:
+    """Toets de naam van een object-storage-identiteit; die naam IS de access key."""
+    if not username:
+        raise ValueError("Username cannot be empty")
+
+    if len(username) < 3:
+        raise ValueError("Username must be at least 3 characters long")
+    if len(username) > 128:
+        raise ValueError("Username cannot exceed 128 characters")
+
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-\.]*$", username):
+        raise ValueError(
+            f"Username '{username}' contains invalid characters. "
+            "Must start with letter/underscore and contain only letters, digits, underscores, hyphens, and dots."
+        )
+
+    return username
+
+
+def validate_policy_name(policy_name: str) -> str:
+    """Toets de naam van een object-storage-policy en geef hem terug.
+
+    Zelfde reden als de twee toetsen hierboven: beide object-storage-services stellen
+    dezelfde eis (RC-331).
+    """
+    if not policy_name:
+        raise ValueError("Policy name cannot be empty")
+
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", policy_name):
+        raise ValueError(
+            f"Policy name '{policy_name}' contains invalid characters. "
+            "Must contain only letters, digits, underscores, hyphens, and dots."
+        )
+
+    return policy_name
 
 
 def generate_keycloak_client_id(project_name: str, deployment_name: str, component_name: str | None = None) -> str:

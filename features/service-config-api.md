@@ -408,6 +408,14 @@ replace -- but per-service config now belongs here. The image-update endpoint's
 per-mount storage *actions* (clone/recreate) are storage operations, not config, and
 are out of scope.
 
+## Niet hier: het geheim van een deployment vervangen
+
+Een credential is geen config. Het wachtwoord, de secret key en het clientsecret van
+een deployment worden door OPI gemaakt en staan niet in het projectbestand, dus ze gaan
+niet via deze routes. Vervangen doe je met
+`POST /api/v2/projects/{p}/deployments/{d}/:rotate-credentials`, beschreven in
+`features/credentials-van-een-deployment-vervangen.md`.
+
 ## Dependencies
 
 - Service registry and the `Service` config hooks (`opi/services/catalog/base.py`).

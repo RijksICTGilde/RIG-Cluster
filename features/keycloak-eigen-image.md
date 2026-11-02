@@ -179,7 +179,50 @@ vandaag geen enkel registry-credential; dat is dan een eigen wijziging.
 ```bash
 task test-keycloak-relay-email-sender    # mvn test van de ene module
 task test-keycloak-custom-mapper         # mvn test van de andere
+task test-keycloak-image                 # de gebouwde image, met zijn providers, in Docker
 ```
+
+`test-keycloak-image` bouwt deze Dockerfile voor de eigen machine, start hem met de
+STARTARGUMENTEN VAN DE BASISDEPLOYMENT tegen een wegwerp-PostgreSQL in een eigen
+Docker-netwerk, en toetst per provider dat hij geregistreerd is (via `/admin/serverinfo`)
+en dat de twee endpoints ook antwoorden. Die argumenten worden gelezen en niet
+overgeschreven, zodat de toets niet stil kan afwijken van wat productie start. De
+containers en het netwerk gaan daarna weg, ook als de toets faalt.
+
+Hij start daarnaast TWEE SMTP-sinks (mailpit) op dat netwerk: een als de relay uit de
+podomgeving, een als de bestemming die een projectbeheerder in zijn realm zou kunnen zetten.
+Zo meet hij ook dat de post door onze eigen verzender gaat en niet naar de `smtpServer` van
+de realm (`features/keycloak-mail.md`), dat de idp-telling van `/rig-metrics` een echte
+federated-identity koppeling telt, en dat de inlogpagina met het nl-design-system-thema
+rendert.
+
+Als derde draait hij de ADMIN-API ZOALS OPI HEM GEBRUIKT
+(`tests/integration/test_keycloak_admin_api.py`, RC-413). Elke methode van
+`KeycloakConnector` die in `opi/` wordt aangeroepen draait daar minstens een keer, en na
+elke schrijvende aanroep leest de toets terug wat Keycloak opsloeg. Keycloak negeert onbekende
+velden stil: "geen exceptie" bewijst niets.
+
+Dekt: realm (gesloten standen, sessie- en audit-instellingen, identiteitsvelden read-only,
+required actions); clients (URI's, web origins, logout-attributen, PKCE, publieke twin,
+scope met mappers); identity providers (config, endpoints, SAML, mappers uit de eigen image);
+authenticatieflows (executions in volgorde, requirements, authenticators uit de eigen image);
+rollen/groepen/gebruikers (mappings, memberships, credentials, required actions); idempotentie
+(alle `ensure_*` twee keer); de volledige bootstrap `KeycloakSetup.setup_all` twee keer.
+
+Dekt NIET: de stroom `KeycloakManager.create_resources_for_deployment` (vereist halve
+`ProjectManager`; connector-aanroepen staan allemaal hier en `tests/test_keycloak_admin_api_coverage.py`
+bewaakt dekking); vier ongebruikte methodes (`update_deployment_client_hosts`,
+`ensure_standard_oidc_mappers`, `assign_realm_management_role`, `assign_realm_role_to_user`);
+OIDC-tokenaanroepen buiten de connector (standaard-OIDC).
+
+De module weigert tegen alles dan `localhost` te draaien: hij maakt/verwijdert realms en
+verhardt master. Draait met service account `opi-admin-service` van productie.
+
+`publish-keycloak-image` draait hem voor de push, dus er gaat geen image naar ghcr die
+deze toets niet haalt. De toetsen zelf zitten in
+`operations-manager/python/tests/integration/test_keycloak_image_providers.py`,
+`test_keycloak_image_mail.py` en `test_keycloak_admin_api.py`, en slaan zichzelf over
+zonder `KEYCLOAK_IMAGE_TEST_URL`.
 
 CI draait `mvn -B test` voor allebei bij elke pull request (job `keycloak-providers`).
 
@@ -244,4 +287,5 @@ bestond.
   manifest of een terugval er niet op stukloopt.
 - **Een Keycloak-upgrade is nu ook een imagebouw.** De basisversie staat in de Dockerfile en
   moet gelijk blijven aan `keycloak.version` in allebei de poms; een toets pint dat. Wat er
-  bij zo'n upgrade gemeten moet worden staat in `features/keycloak-26-upgrade.md`.
+  bij zo'n upgrade gemeten moet worden staat in `features/keycloak-26-upgrade.md`. De
+  basisversie is sinds RC-412 `26.8.1`.

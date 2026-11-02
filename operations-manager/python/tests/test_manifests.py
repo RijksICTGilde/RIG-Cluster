@@ -10,7 +10,8 @@ import os
 from unittest.mock import patch
 
 import pytest
-from opi.generation.manifests import ManifestGenerator, render_template
+from jinja2 import UndefinedError
+from opi.generation.manifests import ManifestGenerator, cmp_env_rejection, render_template
 from ruamel.yaml import YAML
 
 MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
@@ -32,6 +33,40 @@ class TestDuurInSeconden:
     def test_elke_eenheid_die_oauth2_proxy_leest(self, duur: str, seconden: int) -> None:
         """De ordeningsgrendel hieronder vergelijkt deze getallen, dus ze moeten kloppen."""
         assert _duur_in_seconden(duur) == seconden
+
+
+class TestCmpEnvRejection:
+    """Rechtstreeks op ``cmp_env_rejection``: het schema blokkeert een ongeldige sleutel al
+    bij het opslaan, dus die tak van de functie wordt via de schrijfkant niet geraakt
+    (``tests/test_helmfile_env_vars_decrypt.py`` dekt de gereserveerde naam en het
+    regeleinde na ontsleuteling, beide via de echte processtap)."""
+
+    def test_een_gewoon_paar_mag(self) -> None:
+        assert cmp_env_rejection("ENVIRONMENT", "production") is None
+
+    def test_een_sleutel_die_geen_variabelenaam_is_wordt_geweigerd(self) -> None:
+        rejection = cmp_env_rejection("1FOUT", "waarde")
+
+        assert rejection is not None
+        assert "1FOUT" in rejection
+
+    def test_een_gereserveerde_sleutel_wordt_geweigerd(self) -> None:
+        rejection = cmp_env_rejection("ARGOCD_APP_NAMESPACE", "waarde")
+
+        assert rejection is not None
+        assert "reserved" in rejection
+
+    def test_een_waarde_met_regeleinde_wordt_geweigerd(self) -> None:
+        rejection = cmp_env_rejection("MELDING", "eerste\nARGOCD_APP_NAMESPACE=kaper")
+
+        assert rejection is not None
+        assert "newline" in rejection
+
+    def test_de_melding_noemt_nooit_de_waarde(self) -> None:
+        """De waarde is configuratie van de tenant en kan een secret zijn."""
+        rejection = cmp_env_rejection("MELDING", "geheime-waarde\nmet-tweede-regel")
+
+        assert "geheime-waarde" not in rejection
 
 
 @pytest.fixture
@@ -670,6 +705,7 @@ class TestRenderRealTemplates:
             {
                 "name": "allow-web",
                 "namespace": "rig-proj",
+                "from_selector": {"namespace": "ingress-nginx", "pod_labels": {}},
                 "ports": [8080, 443],
             },
         )
@@ -678,9 +714,20 @@ class TestRenderRealTemplates:
         assert doc["kind"] == "NetworkPolicy"
         # podSelector should be empty dict when not provided
         assert doc["spec"]["podSelector"] == {}
-        ingress_ports = doc["spec"]["ingress"][0]["ports"]
-        assert len(ingress_ports) == 2
-        assert ingress_ports[0]["port"] == 8080
+        ingress = doc["spec"]["ingress"][0]
+        assert ingress["from"] == [
+            {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}}}
+        ]
+        assert len(ingress["ports"]) == 2
+        assert ingress["ports"][0]["port"] == 8080
+
+    def test_network_policy_template_eist_een_bron(self):
+        """Zonder from_selector mag er geen policy uitkomen: die zou elke bron toelaten."""
+        with pytest.raises(UndefinedError):
+            render_template(
+                "network-policy.yaml.jinja",
+                {"name": "allow-web", "namespace": "rig-proj", "ports": [8080]},
+            )
 
     def test_generic_secret_template(self):
         result = render_template(
@@ -709,29 +756,34 @@ class TestRenderRealTemplates:
         assert doc["metadata"]["annotations"]["argocd.argoproj.io/sync-options"] == "Replace=true"
 
     def test_generic_secret_empty_value(self):
-        """Empty string values need special quoting to avoid YAML null."""
+        """An empty string stays an empty string instead of becoming YAML null."""
+        pairs = {"key": ""}
         result = render_template(
             "generic-secret.yaml.to-sops.jinja",
-            {
-                "name": "s",
-                "namespace": "ns",
-                "secret_pairs": {"key": ""},
-            },
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
         )
-        assert 'key: ""' in result
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
 
     def test_generic_secret_multiline_value(self):
-        """Multiline values should use YAML literal block scalar."""
-        cert = "-----BEGIN CERT-----\nABC123\n-----END CERT-----"
+        """A multiline value comes back byte-identical, trailing newline or not.
+
+        No longer a literal block scalar: that form needs one fixed chomping indicator,
+        and whichever one it picks gives some values a trailing newline they never had.
+        """
+        pairs = {
+            "cert": "-----BEGIN CERT-----\nABC123\n-----END CERT-----",
+            "trailing_newline": "regel1\nregel2\n",
+            "leading_space": "  regel1\nregel2",
+        }
         result = render_template(
             "generic-secret.yaml.to-sops.jinja",
-            {
-                "name": "s",
-                "namespace": "ns",
-                "secret_pairs": {"cert": cert},
-            },
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
         )
-        assert "cert: |" in result
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
 
     def test_generic_secret_backslash_value(self):
         """Values with a backslash (passwords, connection strings) must be
@@ -752,9 +804,9 @@ class TestRenderRealTemplates:
         assert doc["stringData"] == pairs
 
     def test_generic_secret_carriage_return_value(self):
-        """A lone carriage return does not hit the block-scalar branch, and inside a
-        quoted scalar YAML folds it into a space. Unescaped it fails silently: the pod
-        gets a different value than the user typed, with nothing in the log."""
+        """Inside a quoted scalar YAML folds a lone carriage return into a space.
+        Unescaped it fails silently: the pod gets a different value than the user
+        typed, with nothing in the log."""
         pairs = {"folded": "regel1\rregel2", "trailing": "eind\r"}
         result = render_template(
             "generic-secret.yaml.to-sops.jinja",

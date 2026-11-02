@@ -5,10 +5,33 @@ import logging
 
 from fastapi import HTTPException, Request
 
+from opi.core.actor import ACTOR_UNKNOWN, get_actor
 from opi.core.auth_decorators import get_current_user
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def task_actor(request: Request) -> str | None:
+    """Wie deze aanroep doet, voor de taak en de git-trailer die eruit volgt.
+
+    Het e-mailadres uit de sessie, anders de actor die de ingang zette: een benoemd
+    service account, een persoonlijk token of de oude projectsleutel. Die waarde komt van
+    :mod:`opi.core.actor`, dus de taakweg noemt dezelfde aanroeper als de log en als een
+    commit die niet via een taak loopt.
+
+    Stond er niets, dan is dit de laatste terugval ``"API"``: een sleutel is een geheim en
+    hoort niet in een trailer, en de aanroeper was er wel. Zonder die terugval zou een
+    oudere weg zonder actor stil als een handeling zonder aanroeper geboekt worden.
+    """
+    user = get_current_user(request)
+    actor = (user or {}).get("email") or None
+    if actor:
+        return actor
+    huidige = get_actor()
+    if huidige is not ACTOR_UNKNOWN:
+        return str(huidige)
+    return "API" if request.headers.get("X-API-Key") else None
 
 
 def get_task_service(request: Request):
@@ -52,15 +75,7 @@ async def create_async_task(
     # Who started it, when a session started it. The task-progress fragment is scoped on
     # this as well as on the project, so the one who pressed the button can still follow
     # a task for a project that does not exist yet (creation) or no longer does (delete).
-    user = get_current_user(request)
-    # Een taak die via de API is gestart heeft geen sessie en dus geen e-mailadres; die
-    # stond als een streepje in de takenlijst, en dan is niet te zien of er niemand achter
-    # zat of dat het simpelweg niet bekend was. "API" zegt wat er gebeurd is. De naam van
-    # het project staat er al naast, en de sleutel zelf hoort hier niet: dat is een geheim
-    # en het zegt bovendien niets meer dan "de API".
-    created_by = (user or {}).get("email") or None
-    if not created_by and request.headers.get("X-API-Key"):
-        created_by = "API"
+    created_by = task_actor(request)
 
     federation_service = getattr(request.app.state, "federation_service", None)
     if federation_service:

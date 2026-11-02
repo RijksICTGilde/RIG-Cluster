@@ -14,9 +14,11 @@ from fastapi import HTTPException
 from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
+from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
+from opi.services.project_roles import roles_from_value
 from opi.services.project_service import get_project_service
-from opi.utils.age import encrypt_age_content, is_age_encrypted
-from opi.utils.api_keys import generate_api_key
+from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
+from opi.utils.age import encrypt_age_content, wrap_project_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
@@ -174,6 +176,7 @@ async def build_component_config(
     public_key: str | None = None,
     default_port: int | None = None,
     ports: list[int] | None = None,
+    description: str | None = None,
 ) -> dict[str, Any]:
     """
     Build a complete component config dict.
@@ -197,6 +200,7 @@ async def build_component_config(
         public_key: AGE public key for encrypting env vars
         default_port: Default port if none specified (e.g., 8080 for project creation)
         ports: Inbound ports as a list (takes precedence over the single-port `port`)
+        description: Free text saying what the component does. Left out when empty.
 
     Returns:
         Component configuration dictionary
@@ -216,6 +220,7 @@ async def build_component_config(
 
     component_config: dict[str, Any] = {
         "name": name,
+        **({"description": description} if description else {}),
         "type": component_type,
         "ports": {"inbound": inbound_ports, "outbound": [80, 443]},
         # Schema expects an array of component-path objects (see project_v2.json
@@ -300,6 +305,33 @@ def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any
     return min(on_cluster, key=lambda d: str(d["name"]))
 
 
+#: De melding bij een gereserveerde projectnaam, zodat wizard, API en git dezelfde zin
+#: geven. Zie is_reserved_project_name in opi.core.cluster_config.
+RESERVED_PROJECT_NAME_MESSAGE = (
+    "Projectnaam '{name}' is niet beschikbaar: de namespace van dit project zou samenvallen "
+    "met een namespace van het platform zelf. Kies een andere naam."
+)
+
+
+def namespace_level_deployment(
+    deployments: list[dict[str, Any]], cluster: str, namespace: str
+) -> dict[str, Any] | None:
+    """De deployment die de NAMESPACE-brede manifests van deze namespace schrijft, of None.
+
+    Dezelfde regel als ``project_level_deployment``, een laag lager: de alfabetisch
+    eerste deployment in de namespace is de eigenaar. Zonder zo'n eigenaar zetten twee
+    deployments in dezelfde namespace hetzelfde object in twee ArgoCD-applicaties.
+    """
+    in_namespace = [
+        d
+        for d in deployments
+        if isinstance(d, dict) and d.get("name") and d.get("cluster") == cluster and d.get("namespace") == namespace
+    ]
+    if not in_namespace:
+        return None
+    return min(in_namespace, key=lambda d: str(d["name"]))
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.
@@ -321,7 +353,7 @@ def validate_project_name(name: str) -> bool:
 # should_encrypt_user_env_var function removed - all user env vars are now always encrypted
 
 
-async def generate_self_service_project_yaml(project_data: Any) -> str:
+async def generate_self_service_project_yaml(project_data: Any, *, api_token: str | None = None) -> str:
     """
     Generate project YAML from self-service form data.
 
@@ -340,21 +372,22 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     # Generate AGE key pair for this project
     try:
         private_key, public_key = generate_sops_key_pair()
-        # Encrypt the private key with the global SOPS AGE key for storage
-        encrypted_private_key = await encrypt_age_content(private_key, settings.SOPS_AGE_PUBLIC_KEY)
+        encrypted_private_key = await wrap_project_key(private_key)
         logger.debug(f"Generated AGE key pair for project: {project_data.project_name}")
     except Exception as e:
         logger.error(f"Failed to generate AGE key pair: {e}")
         raise HTTPException(status_code=500, detail=f"Cannot create project: AGE key generation failed. {e!s}")
 
-    # Generate and encrypt API key using project's public key
-    try:
-        plain_api_key = generate_api_key()
-        encrypted_api_key = await encrypt_age_content(plain_api_key, public_key)
-        logger.debug(f"Successfully generated and encrypted API key for project: {project_data.project_name}")
-    except Exception as e:
-        logger.error(f"Failed to generate encrypted API key: {e}")
-        raise HTTPException(status_code=500, detail=f"Cannot create project: API key encryption failed. {e!s}")
+    # Het eerste bewijsmiddel van dit project: een token van het service account
+    # ``project-api``. Geen ``config.api-key`` meer (schemaversie 2.12): alleen de hash
+    # gaat het bestand in, dus de waarde is hierna door niemand meer terug te lezen en
+    # moet de aanroeper hem nu bewaren.
+    #
+    # Alleen als de aanroeper die waarde ook KRIJGT, en dat is bij de API-aanmaak. De
+    # wizard krijgt hem niet, dus daar blijft het account zonder token: een token dat
+    # niemand kent is een bewijsmiddel dat niemand kan gebruiken en niemand opruimt. De
+    # beheerder geeft er een uit op het tabblad Team.
+    token_hash = hash_van(api_token) if api_token else None
 
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
     repo_password = settings.PROJECT_REPO_PASSWORD
@@ -465,7 +498,6 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     config_section = {
         "age-public-key": public_key,
         "age-private-key": LiteralScalarString(encrypted_private_key),
-        "api-key": LiteralScalarString(encrypted_api_key),
     }
 
     # Add contact-email if specified (overrides cluster default for Let's Encrypt)
@@ -473,10 +505,10 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         config_section["contact-email"] = project_data.contact_email
 
     # Create project structure
-    from opi.services.schema_migration import LATEST_SCHEMA_VERSION
+    from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 
     project_config = {
-        "schema-version": LATEST_SCHEMA_VERSION,
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "name": project_data.project_name,
         "display-name": project_data.display_name,
         "description": project_data.project_description or "Project created via self-service portal",
@@ -498,13 +530,34 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     }
 
     # Add users if provided
-    if project_data.user_email and project_data.user_role:
-        users = []
-        for email, role in zip(project_data.user_email, project_data.user_role, strict=False):
+    users: list[dict[str, Any]] = []
+    if project_data.user_email and project_data.user_roles:
+        for email, rollen in zip(project_data.user_email, project_data.user_roles, strict=False):
             if email and email.strip():  # Skip empty entries
-                users.append({"email": email.strip(), "role": role})
-        if users:
-            project_config["users"] = users
+                gekozen = sorted(rol.value for rol in roles_from_value(rollen))
+                users.append({"email": email.strip(), "roles": gekozen or list(PROJECT_API_ROLLEN)})
+
+    # Het service account dat de API-toegang van dit project draagt. De rollen van een
+    # beheerder, want het vervangt de projectsleutel en die opende de hele schrijfkant.
+    users.append(
+        {
+            "type": "service-account",
+            "name": PROJECT_API_ACCOUNT,
+            "roles": list(PROJECT_API_ROLLEN),
+            "tokens": (
+                [
+                    {
+                        "name": "eerste",
+                        "expires": vervaldatum(settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT).isoformat(),
+                        "hash": token_hash,
+                    }
+                ]
+                if token_hash
+                else []
+            ),
+        }
+    )
+    project_config["users"] = users
 
     from opi.utils.yaml_util import dump_yaml_to_string
 
@@ -512,11 +565,6 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     password = project_config["repositories"][0]["password"]
     if password and "\n" in password:
         project_config["repositories"][0]["password"] = LiteralScalarString(password)
-
-    # Handle multiline API key with literal block scalar
-    api_key = project_config["config"]["api-key"]
-    if api_key and "\n" in api_key:
-        project_config["config"]["api-key"] = LiteralScalarString(api_key)
 
     # Generate YAML content via the single canonical writer
     yaml_content = dump_yaml_to_string(project_config)
@@ -577,12 +625,13 @@ async def generate_base_project_file(
         issuer=None,
         contact_email=None,
         user_email=[owner_email],
-        user_role=["admin"],
+        user_roles=["admin"],
         services=[],
         components=None,
     )
 
-    yaml_content = await generate_self_service_project_yaml(project_data)
+    waarde, _ = nieuw_token()
+    yaml_content = await generate_self_service_project_yaml(project_data, api_token=waarde)
     project_dict = load_yaml_from_string(yaml_content)
     if not project_dict:
         raise ProjectApiKeyError(f"Kon het gegenereerde projectbestand voor '{project_name}' niet inlezen")
@@ -594,14 +643,15 @@ async def generate_base_project_file(
     project_dict.pop("components", None)
     project_dict.pop("deployments", None)
 
-    # config.api-key is stored AGE-encrypted. Read it back through the same path
-    # the project store uses, so the caller gets the key the API will compare
-    # against - and refuse to hand out anything else.
+    # Het token staat alleen gehasht in het bestand, dus deze waarde is de enige die er
+    # ooit van bestaat. Controleren dat de hash erin staat, zodat de aanroeper nooit een
+    # token krijgt dat nergens tegen matcht.
     summary = get_project_service().build_project_from_data(dict(project_dict), f"projects/{project_name}.yaml")
-    if summary is None or not summary.api_key or is_age_encrypted(str(summary.api_key)):
+    hashes = {t.hash for lid in (summary.users or []) for t in lid.tokens} if summary else set()
+    if hash_van(waarde) not in hashes:
         raise ProjectApiKeyError(
-            f"De API-sleutel voor '{project_name}' kon niet in leesbare vorm worden bepaald; "
+            f"Het eerste API-token voor '{project_name}' staat niet in het projectbestand; "
             f"het project is niet aangemaakt."
         )
 
-    return project_dict, str(summary.api_key)
+    return project_dict, waarde

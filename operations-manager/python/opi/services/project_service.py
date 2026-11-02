@@ -9,22 +9,80 @@ This service provides centralized management of projects including:
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
-from opi.core.config import settings
+from opi.core.authz.engine import role_label
+from opi.core.leden import LidSoort
 from opi.services.project import Project
-from opi.services.schema_migration import migrate_to_latest
+from opi.services.schema_migration import ROLE_MIGRATION, migrate_to_latest
 from opi.services.user_service import get_user_service
-from opi.utils.age import decrypt_age_content_sync, is_age_encrypted
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
+
+
+class ProjectToken(BaseModel):
+    """Een uitgegeven token van een lid, zoals het in het projectbestand staat.
+
+    Alleen de hash: de waarde zelf is na uitgifte door niemand meer te lezen.
+    """
+
+    name: str
+    expires: datetime
+    hash: str
 
 
 class ProjectUser(BaseModel):
-    """Pydantic model for project user."""
+    """Een lid van een project: een mens met een e-mailadres, of een service account."""
 
-    email: str
-    role: str
+    email: str | None = None
+    roles: list[str]
+    type: LidSoort = LidSoort.PERSOON
+    name: str | None = None
+    tokens: list[ProjectToken] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def accepteer_de_oude_ene_rol(cls, data: Any) -> Any:
+        """``role: admin`` leest als ``roles: [...]``.
+
+        De projectstore migreert een bestand bij het inlezen (schemaversie 2.13), maar dit
+        model leest ook gegevens die die weg niet zijn gegaan: een testfixture, een
+        formulierinzending, een bestand dat de migratie nog moet krijgen. Eén vertaaltabel
+        voor alle drie, dezelfde als de migratie gebruikt.
+        """
+        if isinstance(data, dict) and "role" in data and "roles" not in data:
+            # Een onbekende rol wordt GEEN rol: hier wordt gelezen, niet gemigreerd, en
+            # een lid met een onleesbare rol hoort niets te openen. De migratie geeft zo
+            # iemand wel ``viewer``, want daar moet het bestand na afloop geldig zijn.
+            data = {**data, "roles": list(ROLE_MIGRATION.get(str(data["role"]), ()))}
+            data.pop("role", None)
+        return data
+
+    @model_validator(mode="after")
+    def validate_principaal_bestaat(self) -> ProjectUser:
+        """Een lid heeft een principaal: een mens een e-mailadres, een service account een naam.
+
+        Zonder deze eis wordt een regel met alleen een ``role`` een lid met een leeg
+        principaal, en dan matcht elke vergelijking met een leeg e-mailadres hem.
+        """
+        if self.type is LidSoort.SERVICE_ACCOUNT:
+            if not self.name:
+                raise ValueError("Een service account heeft een name nodig")
+        elif not self.email:
+            raise ValueError("Een lid heeft een email nodig")
+        return self
+
+    @property
+    def rol_labels(self) -> list[str]:
+        """De rollen zoals een mens ze ziet (B13). Een onbekende sleutel toont zichzelf."""
+        return [role_label(rol) for rol in self.roles]
+
+    @property
+    def principaal(self) -> str:
+        """Waaronder dit lid in het logboek en in de git-trailer staat."""
+        return (self.name or "") if self.type is LidSoort.SERVICE_ACCOUNT else (self.email or "")
 
 
 logger = logging.getLogger(__name__)
@@ -34,7 +92,9 @@ class ProjectSummary(BaseModel):
     """Pydantic model for project mapping."""
 
     name: str
-    api_key: str
+    #: De oude projectsleutel, zolang het bestand nog op schemaversie 2.11 staat. Vanaf
+    #: 2.12 is hij een token van het service account ``project-api`` en is dit veld None.
+    api_key: str | None = None
     filename: str
     users: list[ProjectUser] | None = None
     data: dict[str, Any] | None = None  # Full project YAML data
@@ -66,9 +126,9 @@ class ProjectService:
     def register(
         self,
         project_name: str,
-        api_key: str,
+        api_key: str | None,
         filename: str,
-        users: list[ProjectUser] | None = None,
+        users: list[ProjectUser] | dict[str, Any] | None = None,
         data: dict[str, Any] | None = None,
     ) -> bool:
         """
@@ -87,22 +147,27 @@ class ProjectService:
         Returns:
             True if registration was successful
         """
+        # Aanroepers geven de leden als ProjectUser of als ruwe dicts uit het bestand.
+        # Hier een keer omzetten, zodat alles achter dit punt met echte leden werkt en niet
+        # met twee vormen.
+        leden = [lid if isinstance(lid, ProjectUser) else ProjectUser.model_validate(lid) for lid in users or []]
+
         is_update = project_name in self._projects
-        project = ProjectSummary(name=project_name, api_key=api_key, filename=filename, users=users, data=data)
+        project = ProjectSummary(name=project_name, api_key=api_key, filename=filename, users=leden or None, data=data)
         self._projects[project_name] = project
         action = "Updated" if is_update else "Registered"
-        logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(users) if users else 0} users")
+        logger.debug(f"{action} project: {project_name} (file: {filename}) with {len(leden)} users")
 
         # Keep the global access allowlist in sync with project membership so a
         # newly added member can reach the portal immediately, without waiting
         # for the next periodic Git refresh or an app restart. Without this, a
         # member added via the team-edit modal (which only calls register) is
         # redirected to /permission-denied until the allowlist is rebuilt.
-        if users:
-            member_emails = [
-                (user.get("email") if isinstance(user, dict) else getattr(user, "email", None)) for user in users
-            ]
-            get_user_service().add_allowed_emails([email for email in member_emails if email])
+        # Alleen de MENSEN: een service account heeft geen postvak en hoort niet op de
+        # inloglijst te staan. Zie opi/services/project_leden.py.
+        menselijk = [lid for lid in leden if lid.type is not LidSoort.SERVICE_ACCOUNT]
+        if menselijk:
+            get_user_service().add_allowed_emails([lid.email for lid in menselijk if lid.email])
 
         return True
 
@@ -182,28 +247,31 @@ class ProjectService:
         self._projects.clear()
         logger.debug("Cleared all project mappings")
 
-    def _resolve_plaintext_api_key(self, project_name: str, api_key: str, config: dict[str, Any]) -> str:
+    def _resolve_plaintext_api_key(self, project_name: str, api_key: str, config: dict[str, Any]) -> str | None:
         """Return the plaintext API key for in-memory registration.
 
         ``config.api-key`` is AGE-encrypted with the project key, which is in
-        turn AGE-encrypted with the operations-manager key. A plaintext value
-        (legacy/test data) is returned as-is. When decryption fails, the
-        previously registered plaintext is kept so a bad save cannot break
-        API authentication for the project.
+        turn wrapped with the project-KEK. A plaintext value (legacy/test data)
+        is returned as-is. When decryption fails, the previously registered
+        plaintext is kept so a bad save cannot break API authentication for the
+        project.
         """
         if not is_age_encrypted(api_key):
             return api_key
 
         encoded_private_key = config.get("age-private-key")
-        if encoded_private_key and settings.SOPS_AGE_PRIVATE_KEY:
-            private_key = decrypt_age_content_sync(str(encoded_private_key), settings.SOPS_AGE_PRIVATE_KEY)
-            if private_key:
+        if encoded_private_key:
+            try:
+                private_key = unwrap_project_key_sync(str(encoded_private_key))
+            except ValueError as e:
+                logger.warning(f"Could not unwrap the project key of '{project_name}': {e}")
+            else:
                 plaintext = decrypt_age_content_sync(api_key, private_key)
                 if plaintext:
                     return plaintext
 
         existing = self._projects.get(project_name)
-        if existing and not is_age_encrypted(existing.api_key):
+        if existing and existing.api_key and not is_age_encrypted(existing.api_key):
             logger.warning(f"Could not decrypt api-key for project '{project_name}'; keeping previously registered key")
             return existing.api_key
 
@@ -211,7 +279,9 @@ class ProjectService:
             f"Could not decrypt api-key for project '{project_name}' and no usable previous key; "
             "API key authentication for this project will fail until it is re-registered"
         )
-        return api_key
+        # Niet de ciphertext: die wordt dan zijn eigen wachtwoord, en wie het projectbestand
+        # kan lezen legitimeert zich ermee als projectsleutel.
+        return None
 
     def build_project_from_data(self, project_data: dict[str, Any], filename: str) -> ProjectSummary | None:
         """Parse project data into a Project WITHOUT registering it.
@@ -231,10 +301,7 @@ class ProjectService:
             # Project aggregate root; this service owns the crypto step below.
             summary = Project(project_data).get_summary(filename)
             if summary is None:
-                if not project_data.get("name"):
-                    logger.warning("Project data missing 'name' field")
-                else:
-                    logger.warning(f"No API key found in project config for: {project_data.get('name')}")
+                logger.warning("Project data missing 'name' field")
                 return None
 
             # Project files store api-key AGE-encrypted, but every API-layer
@@ -242,8 +309,9 @@ class ProjectService:
             # Registering the ciphertext here poisons the in-memory key and
             # 401s all API calls for the project until the next process run
             # re-registers the decrypted key.
-            config = project_data.get("config", {})
-            summary.api_key = self._resolve_plaintext_api_key(summary.name, str(summary.api_key), config)
+            if summary.api_key:
+                config = project_data.get("config", {})
+                summary.api_key = self._resolve_plaintext_api_key(summary.name, summary.api_key, config)
             return summary
         except Exception:
             logger.exception("Error building project from project data")

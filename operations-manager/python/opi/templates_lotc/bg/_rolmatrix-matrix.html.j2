@@ -1,0 +1,38 @@
+{#
+  De matrix zelf: per sectie een tabel, per regel en scope een rij.
+#}
+{# No panel(): a card around an nldd-table puts a frame in a frame. #}
+{% for naam, rijen in secties %}
+    <c-stack gap="md">
+        <c-section-head title="{{ naam }}" />
+        <nldd-table columns="2fr 1.2fr 0.8fr 1.2fr 0.7fr 0.8fr 1.1fr 0.8fr" accessible-label="{{ naam }}">
+            <nldd-table-row slot="header">
+                <nldd-text-cell text="**Handeling**"></nldd-text-cell>
+                <nldd-text-cell text="**Waar**"></nldd-text-cell>
+                {% for kolom in kolommen %}
+                    <nldd-text-cell text="**{{ kolom.label }}**"></nldd-text-cell>
+                {% endfor %}
+            </nldd-table-row>
+            {% for rij in rijen %}
+                <nldd-table-row>
+                    <nldd-text-cell text="{{ rij.label }}"></nldd-text-cell>
+                    <nldd-text-cell text="{{ rij.scope_label or "overal" }}"></nldd-text-cell>
+                    {% for cel in rij.cells %}
+                        {% if cel.allowed %}
+                            <nldd-icon-cell>
+                                {# Two literal tags, not one expression: the icon-name test can only check a literal name. #}
+                                {% if cel.step_up %}
+                                    <nldd-icon icon="shield-check-mark" color="success" role="img" aria-hidden="false" aria-label="{{ cel.mark }}"></nldd-icon>
+                                {% else %}
+                                    <nldd-icon icon="check-mark" color="success" role="img" aria-hidden="false" aria-label="{{ cel.mark }}"></nldd-icon>
+                                {% endif %}
+                            </nldd-icon-cell>
+                        {% else %}
+                            <nldd-cell></nldd-cell>
+                        {% endif %}
+                    {% endfor %}
+                </nldd-table-row>
+            {% endfor %}
+        </nldd-table>
+    </c-stack>
+{% endfor %}

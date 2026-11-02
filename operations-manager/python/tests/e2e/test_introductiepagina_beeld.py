@@ -49,9 +49,9 @@ ICONEN_PROBE = """
 #: Per dienstkaart: de titel, en of hij ECHT ruimte inneemt. Een kaart met tekst in de HTML
 #: en hoogte 0 is precies de fout die een HTML-assertie niet ziet.
 KAARTEN_PROBE = """
-() => Array.from(document.querySelectorAll('[data-lotc-component="catalog-card"]')).map(el => {
+() => Array.from(document.querySelectorAll('nldd-collection > nldd-card')).map(el => {
   const doos = el.getBoundingClientRect();
-  const titel = el.querySelector('.lotc-catalog-title');
+  const titel = el.querySelector('nldd-title h3');
   return {
     titel: titel ? titel.textContent.trim() : '',
     tekst: el.textContent.trim().length,

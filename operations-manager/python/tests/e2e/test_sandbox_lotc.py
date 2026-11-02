@@ -49,7 +49,7 @@ def test_lotc_shell_is_served(sandbox_page, sandbox_url: str) -> None:
         timeout=15000,
     )
 
-    assert sandbox_page.locator("nldd-top-navigation-bar").count() > 0, "de schil rendert geen NLDD"
+    assert sandbox_page.locator("nldd-toolbar").count() > 0, "de schil rendert geen NLDD"
     assert sandbox_page.locator(".lotc-unimplemented").count() == 0
 
 

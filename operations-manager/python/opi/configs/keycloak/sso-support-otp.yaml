@@ -1,0 +1,64 @@
+# SSO-Support-OTP Keycloak Configuration
+# Purpose: projectrealm met SSO Rijk EN lokale accounts, waarbij een lokaal account naast
+# zijn wachtwoord een OTP geeft. BIO2 8.05 vraagt sterkere authenticatie voor wie niet via
+# de federatie binnenkomt.
+#
+# Alles behalve de inlogflow komt van sso-support: de platform-client, de identity provider
+# met zijn mappers, de uitnodigingsclient en de client scope. Een kopie zou op elk van die
+# plekken afdrijven.
+#
+# Een SSO-gebruiker merkt hier niets van. Die komt via de Identity Provider Redirector
+# binnen en komt de forms-subflow, waar de OTP-stap staat, nooit tegen.
+
+---
+extends: sso-support
+
+# De realm wordt herhaald omdat erven stil is: een blauwdruk die een realmveld niet NOEMT,
+# krijgt het ongezien van zijn basis (zie test_geen_blauwdruk_erft_zijn_realmvelden). De
+# waarden zijn dus dezelfde als in sso-support.yaml, met de afweging die daar staat.
+realms:
+  - name: "{{ project_realm_name }}"
+    displayName: "{{ project_display_name }}"
+    enabled: true
+    registrationAllowed: false
+    loginWithEmailAllowed: false
+    resetPasswordAllowed: false
+    editUsernameAllowed: false
+    verifyEmail: true
+    internationalizationEnabled: true
+    supportedLocales: ["nl", "en"]
+    defaultLocale: "nl"
+    bruteForceProtected: true
+    loginTheme: "nl-design-system"
+    eventsEnabled: true
+    eventsExpiration: 7776000  # 90 days
+    adminEventsEnabled: true
+    adminEventsDetailsEnabled: true
+    disabledRequiredActions:
+      - UPDATE_PASSWORD
+    removeFromDefaultRoles:
+      - account:manage-account
+    # Een nieuw lokaal account stelt zijn authenticator-app bij de eerste login in. De
+    # verplichte OTP-stap in de flow hieronder vraagt daar zelf ook om, dus dit is de
+    # tweede weg naar dezelfde uitkomst; hij geldt ook waar de stap niet langskomt.
+    requiredActionDefaults:
+      CONFIGURE_TOTP: true
+
+# De flow wordt door OPI GEBOUWD en niet hier beschreven: de blauwdruklezer kent alleen
+# platte executions met een setAsBrowserFlow-redirector (_process_authentication_flows) en
+# heeft geen bouwer voor geneste subflows. De structuur staat in
+# KeycloakConnector.ensure_required_otp_browser_flow, dat dezelfde helpers gebruikt als de
+# rolpoortflow. De blauwdruk zegt dus WELKE flow dit realm krijgt, niet hoe hij eruitziet.
+# Het alias komt uit REQUIRED_OTP_BROWSER_FLOW in opi/connectors/keycloak.py.
+authenticationFlows:
+  - alias: "Browser with required OTP"
+    description: "Browser flow where a local account must give an OTP"
+    requireOtp: true
+
+browserFlow: "Browser with required OTP"
+
+# Client override points to the realm's required-OTP flow to enforce the factor on public clients.
+# See features/keycloak-verplichte-otp.md for the history and context.
+clients:
+  - clientId: "{{ invite_client_id }}"
+    browserFlowOverride: "Browser with required OTP"

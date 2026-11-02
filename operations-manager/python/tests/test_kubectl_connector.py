@@ -2,12 +2,14 @@
 Tests for the kubectl connector.
 """
 
+import asyncio
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
+from ruamel.yaml import YAML
 
 
 @pytest.fixture(autouse=True)
@@ -122,6 +124,132 @@ async def test_a_namespace_without_the_label_is_present_with_an_empty_value(conn
         }
 
 
+async def test_resource_exists_true_when_kubectl_finds_it(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("role.rbac.authorization.k8s.io/cmp-sops-key-reader", "", 0)
+
+        assert await connector.resource_exists("role", "cmp-sops-key-reader", "rig-demo") is True
+        args = mock_run_cmd.call_args[0][0]
+        assert args == ["get", "role", "cmp-sops-key-reader", "-n", "rig-demo", "-o", "name"]
+
+
+async def test_resource_exists_false_on_notfound(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = (
+            "",
+            'Error from server (NotFound): roles.rbac.authorization.k8s.io "cmp-sops-key-reader" not found',
+            1,
+        )
+
+        assert await connector.resource_exists("role", "cmp-sops-key-reader", "rig-demo") is False
+
+
+async def test_resource_exists_none_on_an_unexpected_error(connector):
+    """RC-384: onbekend moet onbekend blijven, een caller mag hier geen 'bestaat niet' van maken."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): roles is forbidden", 1)
+
+        assert await connector.resource_exists("role", "cmp-sops-key-reader", "rig-demo") is None
+
+
+async def test_secret_exists_delegates_to_resource_exists_with_secret_as_the_type(connector):
+    with patch.object(connector, "resource_exists", new_callable=AsyncMock) as mock_resource_exists:
+        mock_resource_exists.return_value = True
+
+        assert await connector.secret_exists("sops-age-key", "rig-demo") is True
+        mock_resource_exists.assert_awaited_once_with("secret", "sops-age-key", "rig-demo")
+
+
+async def test_encrypt_file_with_sops_gebruikt_de_gefilterde_omgeving(connector, tmp_path, monkeypatch):
+    """RC-279: deze aanroep had geen env, en erfde dus de volle omgeving van OPI zelf."""
+    monkeypatch.setenv("DATABASE_ADMIN_PASSWORD", "geheim")
+    connector.env = {"PATH": "/usr/bin", "HOME": "/home/opi"}
+
+    source = tmp_path / "plain.yaml"
+    source.write_text("key: value\n")
+    output = tmp_path / "encrypted.yaml"
+
+    mock_process = MagicMock()
+    mock_process.communicate = AsyncMock(return_value=(b"versleuteld", b""))
+    mock_process.returncode = 0
+
+    with patch(
+        "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_process)
+    ) as mock_exec:
+        result = await connector.encrypt_file_with_sops(str(source), "age1publiek", str(output))
+
+    assert result is True
+    assert output.read_text() == "versleuteld"
+    assert mock_exec.call_args.kwargs["env"] == connector.env
+    assert "DATABASE_ADMIN_PASSWORD" not in mock_exec.call_args.kwargs["env"]
+
+
+async def test_apply_labels_to_resource_sets_all_labels_in_one_call(connector):
+    """RC-316: namespace creation sets managed-by and Pod Security labels together."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "", 0)
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace",
+            resource_name="rig-myproject",
+            labels={"argocd.argoproj.io/managed-by": "rig-system", "pod-security.kubernetes.io/enforce": "baseline"},
+        )
+
+        assert result is True
+        mock_run_cmd.assert_called_once()
+        args = mock_run_cmd.call_args[0][0]
+        assert args[:3] == ["label", "namespace", "rig-myproject"]
+        assert "argocd.argoproj.io/managed-by=rig-system" in args
+        assert "pod-security.kubernetes.io/enforce=baseline" in args
+        assert "--overwrite" in args
+        assert "-n" not in args, "namespace is cluster-scoped, no -n flag"
+
+
+async def test_apply_labels_to_resource_with_no_labels_skips_kubectl(connector):
+    """An empty dict (e.g. a cluster without pod_security configured) is a no-op, not a call."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        assert await connector.apply_labels_to_resource(resource_type="namespace", resource_name="x", labels={})
+
+        mock_run_cmd.assert_not_called()
+
+
+async def test_apply_labels_to_resource_retries_then_succeeds(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.side_effect = [("", "conflict", 1), ("", "", 0)]
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace", resource_name="x", labels={"a": "b"}, retry_delay=0
+        )
+
+        assert result is True
+        assert mock_run_cmd.call_count == 2
+
+
+async def test_apply_labels_to_resource_fails_after_exhausting_retries(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Forbidden", 1)
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace", resource_name="x", labels={"a": "b"}, max_retries=2, retry_delay=0
+        )
+
+        assert result is False
+        assert mock_run_cmd.call_count == 2
+
+
+async def test_apply_labels_to_resource_passes_the_namespace_for_a_namespaced_resource(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "", 0)
+
+        assert await connector.apply_labels_to_resource(
+            resource_type="pod", resource_name="x", labels={"a": "b"}, namespace="rig-myproject"
+        )
+
+        args = mock_run_cmd.call_args[0][0]
+        assert "a=b" in args
+        assert args[-2:] == ["-n", "rig-myproject"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
 
@@ -142,5 +270,242 @@ def test_template_manifest_renders_generic_secret(connector):
         },
     )
 
-    assert 'username: "zad"' in result
-    assert 'password: "p\\\\a\\"s"' in result
+    # Op de geparste waarden: het filter bepaalt de quoting, dus de tekstvorm is geen contract.
+    stringdata = YAML(typ="safe", pure=True).load(result)["stringData"]
+    assert stringdata == {"username": "zad", "password": 'p\\a"s'}
+
+
+FAKE_KUBECTL = """#!/usr/bin/env python3
+import os
+import pathlib
+import subprocess
+import sys
+
+
+# /proc where it exists, ps elsewhere (macOS has no /proc), so this measures the property
+# on both and never skips itself quietly.
+def argv_of(pid):
+    cmdline = pathlib.Path(f"/proc/{pid}/cmdline")
+    if cmdline.exists():
+        return cmdline.read_bytes()
+    return subprocess.run(["ps", "-ww", "-o", "args=", "-p", str(pid)], capture_output=True).stdout
+
+
+def parent_of(pid):
+    stat = pathlib.Path(f"/proc/{pid}/stat")
+    if stat.exists():
+        return int(stat.read_text().rsplit(")", 1)[1].split()[1])
+    out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return int(out) if out else 1
+
+
+# Own command line plus that of every ancestor: an intermediate /bin/sh is what carries the
+# input in its argv, so dumping only this process would miss exactly the leak under test.
+cmdlines = []
+pid = os.getpid()
+while pid > 1:
+    cmdlines.append(argv_of(pid))
+    pid = parent_of(pid)
+pathlib.Path(os.environ["KUBECTL_ARGV_DUMP"]).write_bytes(b"\\n".join(cmdlines))
+pathlib.Path(os.environ["KUBECTL_STDIN_DUMP"]).write_bytes(sys.stdin.buffer.read())
+"""
+
+
+@pytest.fixture
+def fake_kubectl(connector, tmp_path):
+    """A real ``kubectl`` on PATH that dumps its argv and its stdin, so a test can assert
+    what the process table showed and what arrived through the pipe."""
+    script = tmp_path / "kubectl"
+    script.write_text(FAKE_KUBECTL)
+    script.chmod(0o755)
+    connector.env = connector.env | {"PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    KubectlConnector.isConnected = True
+
+    argv_dump = tmp_path / "argv"
+    stdin_dump = tmp_path / "stdin"
+    env = {"KUBECTL_ARGV_DUMP": str(argv_dump), "KUBECTL_STDIN_DUMP": str(stdin_dump)}
+    return env, argv_dump, stdin_dump
+
+
+async def test_stdin_input_travels_through_a_pipe_and_never_through_the_arguments(connector):
+    """The old path wrapped the input in a heredoc for ``create_subprocess_shell``, which put
+    the whole manifest (project keys, client secrets) in the argv of ``/bin/sh -c``."""
+    process = MagicMock()
+    process.communicate = AsyncMock(return_value=(b"applied", b""))
+    process.returncode = 0
+    KubectlConnector.isConnected = True
+
+    with (
+        patch(
+            "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)
+        ) as exec_mock,
+        patch("opi.connectors.kubectl.asyncio.create_subprocess_shell") as shell_mock,
+    ):
+        await connector._run_kubectl_command(["apply", "-f", "-"], stdin_input="kind: Secret\n")
+
+    shell_mock.assert_not_called()
+    assert exec_mock.call_args.args == ("kubectl", "apply", "-f", "-")
+    assert exec_mock.call_args.kwargs["stdin"] is asyncio.subprocess.PIPE
+    process.communicate.assert_awaited_once_with(input=b"kind: Secret\n")
+
+
+async def test_a_command_without_input_opens_no_stdin_pipe(connector):
+    process = MagicMock()
+    process.communicate = AsyncMock(return_value=(b"", b""))
+    process.returncode = 0
+    KubectlConnector.isConnected = True
+
+    with patch(
+        "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)
+    ) as exec_mock:
+        await connector._run_kubectl_command(["get", "pods"])
+
+    assert exec_mock.call_args.kwargs["stdin"] is None
+    process.communicate.assert_awaited_once_with(input=None)
+
+
+async def test_a_manifest_containing_a_line_eof_is_data_and_not_a_command(connector, fake_kubectl, tmp_path):
+    """Under the heredoc a line reading exactly ``EOF`` ended the input and the shell ran the
+    rest. The templates quote their values today, but the connector may not depend on that."""
+    env, _argv_dump, stdin_dump = fake_kubectl
+    sentinel = tmp_path / "pwned"
+    manifest = f"kind: ConfigMap\nEOF\ntouch {sentinel}\n"
+
+    stdout, stderr, code = await connector.run_command(["apply", "-f", "-"], env=env, stdin_input=manifest)
+
+    assert (stdout, stderr, code) == ("", "", 0)
+    assert stdin_dump.read_text() == manifest
+    assert not sentinel.exists(), "the input after the EOF line was executed by a shell"
+
+
+async def test_no_secret_from_the_input_appears_in_the_argv_of_the_process(connector, fake_kubectl):
+    """Measured on the old path: the marker was visible in ``/proc/<pid>/cmdline`` of
+    ``/bin/sh`` for as long as the apply ran."""
+    env, argv_dump, _stdin_dump = fake_kubectl
+    marker = "AGE-SECRET-KEY-1KANARIE"
+
+    await connector.run_command(["apply", "-f", "-"], env=env, stdin_input=f"kind: Secret\ndata:\n  key: {marker}\n")
+
+    assert marker not in argv_dump.read_text()
+
+
+async def test_an_input_of_several_megabytes_is_no_longer_bounded_by_the_argument_length(connector, fake_kubectl):
+    """As a shell argument this hit the kernel limit (``E2BIG``); through a pipe it does not."""
+    env, _argv_dump, stdin_dump = fake_kubectl
+    manifest = "kind: ConfigMap\ndata:\n  blob: " + "x" * (4 * 1024 * 1024) + "\n"
+
+    _stdout, _stderr, code = await connector.run_command(["apply", "-f", "-"], env=env, stdin_input=manifest)
+
+    assert code == 0
+    assert stdin_dump.read_text() == manifest
+
+
+async def test_namespace_absent_is_true_on_notfound(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", 'Error from server (NotFound): namespaces "rig-demo" not found', 1)
+
+        assert await connector.namespace_absent("rig-demo") is True
+
+
+async def test_namespace_absent_is_false_when_kubectl_finds_it(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("namespace/rig-demo", "", 0)
+
+        assert await connector.namespace_absent("rig-demo") is False
+
+
+async def test_namespace_absent_is_none_on_an_unrelated_error(connector):
+    """A Forbidden or a timeout says nothing about whether the namespace is there."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): namespaces is forbidden", 1)
+
+        assert await connector.namespace_absent("rig-demo") is None
+
+
+async def test_wait_for_namespace_deletion_stops_as_soon_as_it_is_gone(connector):
+    with (
+        patch.object(connector, "namespace_absent", new_callable=AsyncMock) as absent,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        absent.side_effect = [False, False, True]
+
+        gone = await connector.wait_for_namespace_deletion("rig-demo", max_retries=5, retry_delay=1)
+
+        assert gone is True
+        assert absent.await_count == 3
+        assert sleep.await_count == 2
+
+
+async def test_wait_for_namespace_deletion_gives_up_after_max_retries(connector):
+    with (
+        patch.object(connector, "namespace_absent", new_callable=AsyncMock) as absent,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        absent.return_value = False
+
+        gone = await connector.wait_for_namespace_deletion("rig-demo", max_retries=3, retry_delay=1)
+
+        assert gone is False
+        assert absent.await_count == 3
+
+
+async def test_wait_for_resource_absence_is_meteen_klaar_als_de_resource_weg_is(connector):
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        exists.return_value = False
+
+        gone = await connector.wait_for_resource_absence("appproject", "demo-demo", "argocd")
+
+        assert gone is True
+        assert exists.await_count == 1
+        exists.assert_awaited_with("appproject", "demo-demo", "argocd")
+        sleep.assert_not_awaited()
+
+
+async def test_wait_for_resource_absence_stopt_zodra_de_resource_weg_is(connector):
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock) as sleep,
+    ):
+        exists.side_effect = [True, True, False]
+
+        gone = await connector.wait_for_resource_absence(
+            "appproject", "demo-demo", "argocd", max_retries=5, retry_delay=1
+        )
+
+        assert gone is True
+        assert exists.await_count == 3
+        assert sleep.await_count == 2
+
+
+async def test_wait_for_resource_absence_geeft_false_bij_een_timeout(connector):
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        exists.return_value = True
+
+        gone = await connector.wait_for_resource_absence(
+            "appproject", "demo-demo", "argocd", max_retries=3, retry_delay=1
+        )
+
+        assert gone is False
+        assert exists.await_count == 3
+
+
+async def test_wait_for_resource_absence_blijft_bij_een_onmeetbare_lezing_tot_de_timeout(connector):
+    """Een lezing die faalde (None) is geen bewijs van afwezigheid."""
+    with (
+        patch.object(connector, "resource_exists", new_callable=AsyncMock) as exists,
+        patch("opi.connectors.kubectl.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        exists.return_value = None
+
+        gone = await connector.wait_for_resource_absence(
+            "appproject", "demo-demo", "argocd", max_retries=3, retry_delay=1
+        )
+
+        assert gone is False
+        assert exists.await_count == 3

@@ -40,7 +40,7 @@ def _build_wizard_merged_data() -> dict:
     return {
         "display-name": "Test Subdomain Project",
         "name": "test-subdomain-project",
-        "users": [{"email": "test@example.com", "role": "admin"}],
+        "users": [{"email": "test@example.com", "roles": ["admin", "ops"]}],
         "components": [{"name": "frontend", "image": "nginx:latest"}],
         "services": [],
         "deployments": [

@@ -5,13 +5,14 @@ Elke omgezette pagina is bereikbaar op ``/lotc/<pad>`` terwijl het origineel op
 bruikbare toets een vergelijking tussen de twee, en die is alleen te maken als ze
 tegelijk bestaan. De screenshottests draaien op precies dit paar.
 
-Deze router is PUBLIEK. Hij wordt onvoorwaardelijk geregistreerd (opi/server.py) en
-lord-of-the-components is sinds RC-67 een gewone runtime-dependency, dus hij zit ook in
-de release-image; geen enkele route hier draagt ``requires_sso``. Dat is voor een
-proefopstelling ook de bedoeling - maar het betekent dat wat ``page_data()`` aanlevert
-op straat ligt. Alleen zichtbaar verzonnen waarden dus, ook voor de beheerderspagina's:
+Deze router is PUBLIEK: geen enkele route hier draagt ``requires_sso``. Dat is voor een
+proefopstelling de bedoeling, maar het betekent dat wat ``page_data()`` aanlevert op
+straat ligt. Alleen zichtbaar verzonnen waarden dus, ook voor de beheerderspagina's:
 grenswaarden, of de lijst van welke platformdiensten niet gemeten worden, horen achter
 ``require_platform_admin`` en niet hier.
+
+Daarom registreert ``opi/server.py`` hem alleen als ENVIRONMENT ``local`` of
+``sandboxed-local`` is. In productie bestaan deze paden niet.
 """
 
 import logging

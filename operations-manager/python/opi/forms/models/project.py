@@ -41,8 +41,8 @@ class UserFormModel(BaseModel):
     role: Annotated[
         str,
         FormMeta(
-            label="user.role",
-            description="user.role.description",
+            label="user.roles",
+            description="user.roles.description",
             widget="select",
             options_provider="UserRoleOptionsProvider",
         ),

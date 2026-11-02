@@ -7,7 +7,10 @@ Interactive modal wizards for creating backups and restoring from backups direct
 Adds two buttons to the Backups section of the project details page:
 
 - **Backup aanmaken** - Opens a wizard to create a backup of a deployment's resources (PVCs, databases, MinIO buckets)
-- **Herstellen** - Opens a wizard to restore from an existing backup run (only visible when backups exist)
+- **Herstellen** - Opens a wizard to restore from an existing backup run (only visible when backups exist, and only for the roles that may restore)
+
+Who may what: a backup is for every project member, a restore is not. See
+`features/rollen-voor-operationele-handelingen.md`.
 
 Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSection` with `TemplatePartial` layouts) with custom `post_save_action` types (`trigger_backup` / `trigger_restore`).
 
@@ -50,7 +53,7 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 ### Key Design Decisions
 
 - **No project file changes**: Backup/restore flows skip the YAML save step - they trigger operations directly (except when creating a new deployment, which modifies the project file)
-- **Member-level auth**: Any project member can create backups and restore, not just admins/owners
+- **Member-level auth**: Any project member can create backups. Restore requires developer, owner, or admin role. See `features/rollen-voor-operationele-handelingen.md`
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization
@@ -89,14 +92,17 @@ PVC naming for the new deployment uses generation 0 (no version suffix), while t
 
 ### Clone-from Type "backup"
 
-When restoring to a new deployment, the `clone-from` field is set to `type: "backup"`. This signals to infrastructure managers (`database_manager`, `minio_manager`, `pvc_manager`) that they should create empty resources rather than attempting to live-clone data from another deployment. The restore process then fills these resources with backup data.
+When restoring to a new deployment, the `clone-from` field is set to `type: "backup"`. This signals to infrastructure managers (`database_manager`, `minio_manager`, `seaweedfs_manager`, `pvc_manager`) that they should create empty resources rather than attempting to live-clone data from another deployment. The restore process then fills these resources with backup data.
 
 ```yaml
 clone-from:
   type: backup
-  reference: source-deployment-name
+  reference: productie          # the deployment the backup was taken from
+  run: '20261030084847'         # the backup_run_id to restore
   mode: once
 ```
+
+`run` names the backup run, and `run` only: which snapshots that run holds is runtime state at Kopia, not project data. Each manager looks the run up itself through `clone_backup_items` (`opi/manager/backup/runs.py`) and picks the item for its own resource type. A run that no longer exists is an error naming the run and the source deployment, not an empty restore that reports success.
 
 ## Scope
 

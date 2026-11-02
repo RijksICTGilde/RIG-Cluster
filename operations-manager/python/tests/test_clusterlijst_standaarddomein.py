@@ -47,7 +47,7 @@ PROJECT_DATA: dict[str, Any] = {
     "schema-version": 2,
     "name": PROJECT,
     "clusters": ["local"],
-    "users": [{"email": "user@example.com", "role": "admin"}],
+    "users": [{"email": "user@example.com", "roles": ["admin", "ops"]}],
     "config": {"age-public-key": "age1notarealkey"},
 }
 

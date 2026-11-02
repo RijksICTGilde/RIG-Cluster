@@ -161,6 +161,9 @@ class ComponentDetail(BaseModel):
     """A component definition as it stands in the project file."""
 
     name: str = Field(..., description="Component name, as referenced by deployments.")
+    description: str | None = Field(
+        default=None, description="Free text saying what this component is and does. Null when it has none."
+    )
     type: str | None = Field(default=None, description="Component type, e.g. 'single' or 'frontend'.")
     ports: dict[str, list[int]] = Field(
         default_factory=dict, description="Inbound and outbound ports declared for this component."
@@ -342,6 +345,7 @@ async def build_component_details(
         details.append(
             ComponentDetail(
                 name=name,
+                description=component.get("description"),
                 type=component.get("type"),
                 ports={key: list(value or []) for key, value in ports.items()} if isinstance(ports, dict) else {},
                 path=component.get("path"),

@@ -317,12 +317,12 @@
    want de plugin heeft Chart nodig en de tekencode heeft beide nodig. Pas als alles er is
    wordt er getekend; dat is dezelfde aanroep die het roos-fragment doet, alleen wacht deze
    op zijn scripts in plaats van aan te nemen dat de pagina ze al had. #}
-<script>
+<script nonce="{{ csp_nonce }}">
 (function () {
     var stijl = "{{ static_url('css/metrics-charts.css') }}";
     var scripts = [
-        "https://cdn.jsdelivr.net/npm/chart.js",
-        "https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation",
+        "{{ static_url('js/chart.min.js') }}",
+        "{{ static_url('js/chartjs-plugin-annotation.min.js') }}",
         "{{ static_url('js/metrics_charts.js') }}"
     ];
 

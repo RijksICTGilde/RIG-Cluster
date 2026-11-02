@@ -14,6 +14,7 @@ from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
+from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
@@ -63,6 +64,7 @@ def _get_project_data(project_name: str) -> tuple[dict[str, Any], str]:
 
 
 @resource_router.post("/{project_name}/tune")
+@action(Action.RESOURCES_ADJUST)
 @validate_api_token
 async def tune_resources(
     request: Request,
@@ -104,6 +106,7 @@ async def tune_resources(
 
 
 @resource_router.post("/{project_name}/sanitize")
+@action(Action.RESOURCES_CLEANUP)
 @validate_api_token
 async def sanitize_deployment(
     request: Request,

@@ -59,7 +59,7 @@ PAGINAS: list[tuple[str, str]] = [
     # beheerpagina's noemt. Die route bestaat niet: de zijkolom kent er drie
     # (navigation_lotc.py). Een verzonnen pad levert een 404 die als bevinding LIJKT.
     ("metrics-explorer", "/metrics-explorer"),
-    ("over", "/about"),
+    ("introductie", "/introductie"),
     ("account", "/account"),
     ("wizard-start", "/forms/wizard/start"),
 ]
@@ -106,10 +106,6 @@ ROOS_MARKER = "data-roos-component"
 #: Meldingen in de console die niets over deze omzetting zeggen. Een lijst die te ruim is
 #: maakt de meting waardeloos, dus staat de reden erbij.
 CONSOLE_NEGEER = (
-    # Chart.js en htmx komen van een CDN; in een afgesloten omgeving is dat geen bevinding
-    # over de vormgeving.
-    "unpkg.com",
-    "cdn.jsdelivr.net",
     # Favicon ontbreekt in de sandbox.
     "favicon",
 )

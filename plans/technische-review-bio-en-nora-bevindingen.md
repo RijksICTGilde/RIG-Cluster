@@ -4,6 +4,8 @@ Status: bevindingen, 13 augustus 2026. Reviewopdracht uit `plans/technische-revi
 
 Werkwijze: vier onderzoekssporen (multi-tenancy, autorisatie, netwerk, audit) plus een eigen sweep op geheimen. Elke bevinding die hieronder als constatering staat, is tegen de daadwerkelijke code geverifieerd, niet alleen gelezen. Waar ik iets niet kon vaststellen staat dat er expliciet bij.
 
+De BIV-classificatie staat in `architecture/biv-inventaris.yaml`; niet hieronder. Koppel elke bevinding aan het component: wat nu als mitigatie met toets staat, en wat gat is. Het BBN bepaalt de BIO2-zwaarte; de zwaarte hieronder is van toen.
+
 ## Kernoordeel
 
 De fundamenten staan er goed op. De API-sleutelbinding, de server-side namespace-afleiding in de restore- en backup-paden, de centrale fail-closed CSRF-laag, de AGE-versleutelde opslag van sleutels met timing-safe vergelijking en de verplichte tenant-baseline-NetworkPolicy per deployment zijn stuk voor stuk correct en consistent doorgevoerd. Dat is de helft van het werk die niet opnieuw bedacht hoeft te worden.

@@ -69,12 +69,13 @@ ROUTES = [
     "/admin/approvals",
     "/admin/usage",
     "/metrics-explorer",
-    "/about",
+    "/introductie",
     "/forms/wizard/start",
+    "/platform",
 ]
 
 #: De projectpagina geeft elk tabblad een eigen URL, dus elk tabblad is een eigen meting.
-TABBLADEN = ("project", "componenten", "services", "deployments", "metrics", "backups", "taken")
+TABBLADEN = ("project", "componenten", "services", "deployments", "metrics", "backups", "taken", "kaart")
 
 #: De dialogen die de projectpagina opent. Elk is een eigen flow met eigen velden; ze delen
 #: alleen de schil, en dat is precies waarom ze los gemeten worden. Aan die velden en dat

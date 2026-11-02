@@ -381,3 +381,27 @@ class TestUpsertDeploymentClone:
         assert new_deployment["sleep"]["state"] == "awake"
         assert new_deployment["sleep"]["expires-at"]
         assert "wake-token" not in new_deployment["sleep"]
+
+    async def test_clone_from_does_not_match_a_jsonpath_filter_injection(self):
+        """The source lookup used to interpolate ``clone_from`` straight into a jsonpath
+        filter (``@.name=='{clone_from}'``). A reference closing that filter and opening
+        a union onto another path matched a deployment whose name was never asked for
+        (RC-361), e.g. ``x')] | $.deployments[?(@.name=='production`` reads out
+        'production' regardless of the exact reference, and the clone would have
+        succeeded with production's config. The exact-match lookup must not fall for it:
+        it finds no source, so the upsert fails instead of cloning the wrong deployment."""
+        pm = _make_manager()
+        project_data = _project_with_scheduled_source()
+        _wire_create_mocks(pm, project_data)
+        injected_reference = "x')] | $.deployments[?(@.name=='production"
+
+        with patch("opi.manager.project_manager.ensure_domain_requests"):
+            result = await pm.upsert_deployment(
+                deployment_name="pr-123",
+                components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:pr-123")],
+                clone_from=injected_reference,
+            )
+
+        assert result["success"] is False
+        assert "not found in project" in result["error"]
+        assert not any(d["name"] == "pr-123" for d in project_data["deployments"])

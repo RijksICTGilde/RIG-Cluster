@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import html
 import logging
+import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,9 +14,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
+from opi.core.leden import ledenlijst_wijzigt
+from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
+from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import (
     find_service_in_list,
@@ -24,6 +31,7 @@ from opi.forms.editables.service_path import (
 )
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -38,10 +46,13 @@ from opi.forms.wizard.session import (
 )
 from opi.forms.wizard.state import CLEARED_FIELD
 from opi.handlers.project_file_handler import merge_staged_attachments
+from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
+from opi.services.services import ServiceAdapter
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.authz import authorize, authorized_project
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
 from opi.web.navigation_lotc import get_navigation, to_nldd_icon
@@ -175,6 +186,18 @@ def _render_step_html(
 
             # Check if this is a transient field that depends on another field
             if ed.transient and ed.depends_on:
+                # Een wildcardpad (deployments[*]/...) kan alleen per item geschreven
+                # worden: een kale set_value erop is een ValueError. Gevonden via RC-388:
+                # de bewerkwizard gaf een 500 op elk project met base-domain of backup-schema.
+                if "[*]" in ed.yaml_path:
+                    list_path = ed.yaml_path.split("[*]", 1)[0]
+                    items = smart_get_value(data, list_path) or []
+                    for index in range(len(items)):
+                        dep_value = smart_get_value(data, resolve_path(ed.depends_on, index))
+                        if dep_value and dep_value != "__custom__":
+                            smart_set_value(data, resolve_path(ed.yaml_path, index), dep_value)
+                    continue
+
                 # Get the dependency value (the parent field value)
                 dep_value = smart_get_value(data, ed.depends_on)
 
@@ -368,6 +391,7 @@ def _detect_locked_presets(
 
 
 @wizard_router.get("/restart")
+@action(Action.WIZARD_USE)
 @requires_sso
 async def wizard_restart(request: Request) -> RedirectResponse:
     """Clear any existing wizard state and redirect to the start page."""
@@ -381,6 +405,7 @@ async def wizard_restart(request: Request) -> RedirectResponse:
 
 
 @wizard_router.get("/start", response_class=HTMLResponse)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def wizard_start(request: Request) -> Response:
     """Render the wizard introduction / landing page."""
@@ -402,11 +427,28 @@ async def wizard_start(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
+def flow_uit_pad(flow_id: str, **context: Any) -> FormFlow:
+    """De flow waar een pad naar wijst, of 404.
+
+    ``get_flow`` werpt een KeyError op onbekende id; dit vangt die en geeft 404 in plaats van 500.
+    """
+    try:
+        return get_flow(flow_id, **context)
+    except KeyError as fout:
+        raise HTTPException(status_code=404, detail=f"Onbekende wizard: {flow_id}") from fout
+
+
+def creator_as_member(email: str) -> dict[str, Any]:
+    """The signing-in user as the first member of a new project: admin, so someone can manage it."""
+    return {"email": email, "roles": ["admin"]}
+
+
 @wizard_router.get("/{flow_id}", response_class=HTMLResponse)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     """Render the full wizard page, resuming existing state if available."""
-    flow = get_flow(flow_id)
+    flow = flow_uit_pad(flow_id)
     user = get_current_user(request)
 
     # Check for existing wizard state for this flow
@@ -440,7 +482,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
         # three required fields whose select was empty, so the step could not be saved at all.
         state.base_data.update(build_cross_domain_context(user_email))
         if user_email:
-            state.store_step_data("team", {"users": [{"email": user_email, "role": "admin"}]})
+            state.store_step_data("team", {"users": [creator_as_member(user_email)]})
 
         # Seed the components step with one default component.
         # The services checkbox is left unset (None) so the renderer
@@ -524,18 +566,17 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
 
 @wizard_router.get("/{flow_id}/edit/{project_name}", response_class=HTMLResponse)
+@action(Action.PROJECT_EDIT)
 @requires_sso
 async def wizard_edit_page(request: Request, flow_id: str, project_name: str) -> HTMLResponse:
     """Render the wizard page pre-filled from an existing project."""
-    from opi.web.project_edit_security import require_project_edit_access
-
-    flow = get_flow(flow_id)
+    flow = flow_uit_pad(flow_id)
     user = get_current_user(request)
 
-    # Enforce admin/owner role: the wizard edit flow exposes users/role and
-    # config fields as editable, so a plain member must not be able to enter
-    # it (project takeover).
-    project, _user_email = require_project_edit_access(request, project_name)
+    # De wizard-bewerkstroom toont users en config als bewerkbaar, dus een lid dat het
+    # projectbestand niet mag wijzigen hoort er niet in (projectovername). De poort op de
+    # route weegt dat; hier staat alleen wat zij toeliet.
+    project = authorized_project(request)
 
     project_data = project.data
     if not project_data:
@@ -546,8 +587,16 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     for section in flow.sections:
         processor.populate_deferred_fields(project_data, section.editables)
 
-    # Pre-fill step data from existing project
-    step_data = _split_data_across_sections(flow, project_data)
+    # Lokale import: ``router_detail_edit`` importeert deze module.
+    from opi.web.router_detail_edit import _fully_owned_list_keys
+
+    # Pre-fill step data from existing project. Alleen de mensen, zoals in
+    # ``modal_wizard_init``: zonder dit schuift de merge-per-index de tokenhash van een
+    # weggehaald lid naar de rij die zijn plaats inneemt.
+    form_data = project_data
+    if "users" in _fully_owned_list_keys(flow):
+        form_data = leden_voor_formulier(project_data)
+    step_data = _split_data_across_sections(flow, form_data)
 
     # Resolve active sections with pre-filled data
     active_section_ids = resolve_active_section_ids(flow, step_data)
@@ -763,6 +812,7 @@ async def _navigate_to_step(
 
 
 @wizard_router.get("/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a wizard step via HTMX or direct browser navigation.
@@ -850,6 +900,7 @@ async def load_step(request: Request, flow_id: str, section_id: str) -> HTMLResp
 
 
 @wizard_router.post("/{flow_id}/step/{section_id}", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLResponse | RedirectResponse:
     """Process form data and navigate to the requested step.
@@ -870,9 +921,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
     # Edit-mode only: fail fast per step instead of stripping data at final
     # save. Also covers any future step-driven side-effects (e.g. auto-save).
     if state.project_name:
-        from opi.web.project_edit_security import require_project_edit_access
-
-        require_project_edit_access(request, state.project_name)
+        authorize(request, action=Action.PROJECT_EDIT, project_name=state.project_name)
 
     section = _get_section_from_flow(flow_id, section_id)
     flow = get_flow(flow_id)
@@ -1112,6 +1161,7 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
 
 @wizard_router.post("/{flow_id}/preset/{section_id}/{preset_id}", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def toggle_preset(
     request: Request,
@@ -1219,8 +1269,15 @@ def _list_contains_item(items: list[Any], candidate: Any) -> bool:
 # Service help modal
 # ---------------------------------------------------------------------------
 
+#: De bestanden die een dienstpakket als uitleg mag aanleveren.
+HELP_BESTANDSNAMEN = ("help.md", "guide.md", "help.html.j2")
+
+#: De vorm van een helpverwijzing: geen ``.`` in de mapnaam, dus geen pad naar buiten.
+HELP_TEMPLATE_VORM = re.compile(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9_-]+\.(?:html\.j2|md)")
+
 
 @wizard_router.get("/help/{template_name:path}", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def service_help(request: Request, template_name: str) -> HTMLResponse:
     """Render a help text inside a modal-friendly HTML fragment.
@@ -1237,13 +1294,16 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
     * ``<name>.html.j2`` -- a help text that belongs to no single service (the
       container-image note), still under ``templates/help/``.
 
-    The directory segment deliberately disallows ``.``, so no combination of these can
-    walk out of the search path.
+    De bestandsnaam is een vaste lijst: Jinja kent elke template en zou zonder die
+    controle ook beheerschermen renderen.
     """
-    import re
-
-    if not re.fullmatch(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9._-]+\.(?:html\.j2|md)", template_name):
+    if not HELP_TEMPLATE_VORM.fullmatch(template_name):
         raise HTTPException(status_code=400, detail="Invalid template name")
+
+    dienstmap, _, bestandsnaam = template_name.rpartition("/")
+    hoort_hier = bestandsnaam in HELP_BESTANDSNAMEN if dienstmap else bestandsnaam.endswith(".html.j2")
+    if not hoort_hier:
+        raise HTTPException(status_code=404, detail="Help template not found")
 
     if is_markdown_help(template_name):
         try:
@@ -1540,6 +1600,7 @@ def _is_service_config_child(relative_path: str) -> bool:
 
 
 @wizard_router.get("/{flow_id}/review", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def review_page(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Render the review page."""
@@ -2182,6 +2243,7 @@ def _resolve_option_labels(editable: Any, value: Any) -> str:
 
 
 @wizard_router.post("/{flow_id}/submit", response_model=None)
+@action(Action.WIZARD_USE)
 @requires_sso
 async def submit_wizard(request: Request, flow_id: str) -> HTMLResponse | RedirectResponse:
     """Final submission: validate all steps and create/update the project."""
@@ -2556,18 +2618,55 @@ async def _save_existing_project(
 ) -> HTMLResponse:
     """Save updated data to an existing project."""
     from opi.manager.project_manager import ProjectManager
-    from opi.web.project_edit_security import apply_form_data_to_project, require_project_edit_access
+    from opi.web.project_edit_security import apply_form_data_to_project
 
     # TOCTOU recheck on the mutating request.
-    require_project_edit_access(request, project_name)
+    authorize(request, action=Action.PROJECT_EDIT, project_name=project_name)
 
     # Read fresh from Git, not the cache, so the form merges onto current state and a
     # lagging cache is never committed back over newer Git data (the cache/Git timing fix).
     # Explicitly close the ProjectManager so its temp git clone is cleaned up.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
-        existing_data = await project_manager.get_contents()
-        existing_data = apply_form_data_to_project(existing_data, data)
+        stored_data = await project_manager.get_contents()
+        environment_before = environment_markings(stored_data)
+        existing_data = apply_form_data_to_project(copy.deepcopy(stored_data), data)
+
+        # Form path bypasses set_service_config, so guard platform fields here (RC-286).
+        ServiceAdapter.enforce_platform_managed_fields(existing_data, stored_data)
+
+        # Hetzelfde voor de ledenlijst, op dezelfde plek als op de modaalweg: het
+        # teamformulier bezit ``users`` als geheel maar rendert alleen de mensen en hun rol.
+        zet_verborgen_leden_terug(existing_data, stored_data)
+
+        ensure_approval_requests(existing_data)
+
+        # De rolpoort op de leden, op dezelfde grens als de Team-kaart en de rolroute:
+        # deze wizard draagt ``project.edit``, en die heeft een developer sinds RC-392 ook
+        # op een project zonder productie. Zonder deze poort kon hij zichzelf hier admin
+        # maken, want de step-up hieronder toetst alleen de VERSHEID en niet de rol.
+        if ledenlijst_wijzigt(stored_data, existing_data):
+            authorize(request, action=Action.MEMBER_MANAGE, project_name=project_name)
+
+        # Dezelfde poort als op de modaalweg, om dezelfde reden: de step-up hieronder
+        # toetst alleen de VERSHEID, dus zonder deze regel zette een developer hier de
+        # markering op productie met een step-up die hij via env-vars.manage zelf haalt.
+        if production_marking_change(environment_before, environment_markings(existing_data)):
+            authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
+
+        # Een kale 403 en niet de dialoog uit bg/_step-up.html.j2: die hangt aan de
+        # gedeelde modal van de projectpagina, en de volledige wizard heeft die niet.
+        handeling = save_requires_step_up(stored_data, existing_data)
+        if handeling is not None and not has_fresh_step_up(request):
+            tekst = log_step_up_refusal(
+                handeling,
+                project_name=project_name,
+                actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"{tekst} Doe dit vanaf de projectpagina, daar vraagt het portaal erom.",
+            )
 
         # The complete file only exists after the merge with the stored project -- the
         # form itself writes a subset. Same check the store makes, one step earlier, so
@@ -2577,6 +2676,12 @@ async def _save_existing_project(
         # Persist through the single validated path: schema + structural integrity
         # validation, canonical dumper, commit + push, and cache refresh in one shot.
         await project_manager.save_and_commit_project(existing_data, f"Update project {project_name} via wizard")
+        log_production_downgrades(
+            environment_before,
+            environment_markings(existing_data),
+            project_name=project_name,
+            actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
+        )
     finally:
         await project_manager.close()
 
@@ -2616,6 +2721,10 @@ async def _start_project_creation(
 
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
+
+    # Een nieuw project kan al in een stand worden aangemaakt die een goedkeuring vraagt,
+    # dus legt het aanmaken die aanvraag vast, met dezelfde functie als de bewerkwizard.
+    ensure_approval_requests(data)
 
     # The file is complete here: generators ran, the deployment is assembled, staged
     # attachments are merged and the service entries are normalized. This is the last

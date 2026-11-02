@@ -1,0 +1,53 @@
+# Het AppProject van de twee platform-apps (`sandbox-infrastructure` en
+# `ron-infrastructure`): alleen de infrastructuur-repo in Forgejo als bron, en alleen
+# rig-system en rig-ron als bestemming.
+#
+# De lijst hieronder is gemeten op de render van main en wijkt af van de odcn-production
+# overlay: de sandbox heeft forgejo (StatefulSet) en de registry, ODCN heeft external-dns
+# (Role, RoleBinding) en een cert-manager Issuer. ServiceAccount staat er sinds RC-409 ook
+# hier in, voor de SA van Prometheus; zonder die soort valt de hele sync met
+# "resource :ServiceAccount is not permitted in project zad-platform".
+# Beide lijsten volgen hun eigen cluster; een nieuwe soort laat de sync hierop vallen met
+# een duidelijke melding.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: zad-platform
+  namespace: rig-system
+spec:
+  description: De platform-infrastructuur van de sandbox
+  sourceRepos:
+    - http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
+  destinations:
+    - namespace: rig-system
+      server: https://kubernetes.default.svc
+    - namespace: rig-ron
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: PersistentVolumeClaim
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: CronJob
+    - group: apps
+      kind: StatefulSet
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: monitoring.coreos.com
+      kind: PodMonitor
+    - group: postgresql.cnpg.io
+      kind: Cluster
+    - group: postgresql.cnpg.io
+      kind: Database

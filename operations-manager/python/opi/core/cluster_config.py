@@ -4,11 +4,46 @@ Cluster configuration for different environments.
 This module defines cluster-specific settings including ingress postfixes.
 """
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from opi.core.config import settings
+from opi.utils.subprocess_env import child_env
+
+logger = logging.getLogger(__name__)
+
+#: De S3-API van MinIO; staat zowel in minio_port als in de egressregel hieronder.
+MINIO_PORT = 9000
+
+#: De S3-API van SeaweedFS; staat zowel in seaweedfs_port als in de egressregel hieronder.
+SEAWEEDFS_S3_PORT = 8333
+
+# Pod- en service-CIDRs van de ODCN-cluster, voor de except van de internetregel.
+# 2026-10-21 afgeleid omdat network.config/cluster niet leesbaar is.
+ODCN_CLUSTER_CIDRS = {
+    "ipv4": ["10.128.0.0/14", "172.30.0.0/16"],
+    "ipv6": ["2a04:9a00:1007:4000::/64"],
+}
+
+# Gedeelde services in de operations-namespace: elk op zijn eigen poort.
+OPS_EGRESS = [
+    {"endpoint": "database_server", "pod_labels": {"cnpg.io/cluster": "rig-db"}, "ports": [5432]},
+    {"endpoint": "redis_server", "pod_labels": {"app": "rig-redis"}, "ports": [6379]},
+    {"endpoint": "minio_host", "pod_labels": {"app": "minio"}, "ports": [MINIO_PORT]},
+    {"endpoint": "operations_manager", "pod_labels": {"app": "operations-manager"}, "ports": [8000]},
+]
+
+# De egressregel naar SeaweedFS staat niet in OPS_EGRESS maar volgt uit de clustersleutel
+# seaweedfs_host: get_ops_egress() zet hem erbij voor een cluster dat de dienst levert.
+# Zo is "dit cluster levert seaweedfs" op één plek geregeld, en ontstaat er geen kopie van
+# de hele lijst per cluster.
+SEAWEEDFS_OPS_EGRESS = {
+    "endpoint": "seaweedfs_host",
+    "pod_labels": {"app": "seaweedfs"},
+    "ports": [SEAWEEDFS_S3_PORT],
+}
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -24,7 +59,7 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.kind",  # For pods in cluster
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
@@ -38,6 +73,9 @@ CLUSTER_CONFIG = {
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
+        "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -54,11 +92,16 @@ CLUSTER_CONFIG = {
         },
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
+            "demo_users": True,  # Blauwdruk-demogebruikers met een wachtwoord uit de repo mogen hier
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
+        # Pod Security Admission op namespaceniveau; zie features/pod-security-labels.md.
+        # Hier NIET afdwingen: ca_certificate.enabled mount de CA van de node met een
+        # hostPath, en dat verbiedt baseline. Waarschuwen geeft wel de lijst.
+        "pod_security": {"enforce": "privileged", "warn": "baseline", "audit": "baseline"},
         "min_cpu_m": 25,
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
@@ -102,7 +145,12 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.sandbox.rijksapp.dev",
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
+        # De schakelaar van seaweedfs-storage (RC-331): alleen een cluster met deze twee
+        # sleutels biedt de dienst aan, accepteert een project dat hem noemt, en krijgt de
+        # egressregel naar 8333 in zijn tenant-baseline.
+        "seaweedfs_host": "seaweedfs.rig-system.svc.cluster.local",
+        "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
@@ -116,6 +164,9 @@ CLUSTER_CONFIG = {
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
+        "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -131,11 +182,14 @@ CLUSTER_CONFIG = {
         },
         "keycloak": {
             "support_http": False,
+            "demo_users": True,
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
+        # Pod Security Admission op namespaceniveau; zie features/pod-security-labels.md.
+        "pod_security": {"enforce": "baseline", "warn": "restricted", "audit": "restricted"},
         "min_cpu_m": 25,
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
@@ -192,7 +246,9 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.rijksapp.nl",
         "database_server": "rig-db-rw.rig-prd-operations.svc.cluster.local",  # Assuming production DB is in operations namespace
         "minio_host": "minio.rig-prd-operations.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
+        "seaweedfs_host": "seaweedfs.rig-prd-operations.svc.cluster.local",
+        "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
         # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
@@ -214,6 +270,8 @@ CLUSTER_CONFIG = {
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
             "pod_labels": {
@@ -241,7 +299,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
-        "oom_pod_watch": False,
+        "oom_pod_watch": True,
         # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
         # challenge for a domain of the user's own can complete here.
         "supports_custom_domain_certificates": True,
@@ -384,7 +442,9 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.staging.rijksapp.dev",
         "database_server": "rig-db-rw.rig-staging-operations.svc.cluster.local",
         "minio_host": "minio.rig-staging-operations.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
+        "seaweedfs_host": "seaweedfs.rig-staging-operations.svc.cluster.local",
+        "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-staging-operations.svc.cluster.local",
         "backup_namespace": "rig-staging-backup",
         # Een relay met de mailsink van de sandbox: er gaat geen mail naar buiten.
@@ -394,6 +454,9 @@ CLUSTER_CONFIG = {
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        # Staging draait op dezelfde cluster als productie, dus dezelfde CIDRs.
+        "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
             "pod_labels": {
@@ -420,7 +483,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
-        "oom_pod_watch": False,
+        "oom_pod_watch": True,
         "supports_custom_domain_certificates": True,
         # Een PLAATSHOUDER, net als in de sandbox: er is geen VLAM op staging. Alleen de
         # bedrading van de dienst is zo end-to-end te doorlopen; het adres wijst naar een
@@ -579,6 +642,25 @@ def get_service_namespaces(cluster_name: str) -> list[str]:
     return list(cluster_config.get("service_namespaces", []))
 
 
+def get_external_clone_allowed_private_networks(cluster_name: str) -> list[str]:
+    """De private bereiken waarnaar een externe kloon van dit cluster wel mag verbinden.
+
+    Standaard geen: een kloonbron hoort op een publiek adres te staan. Een cluster dat een
+    bereik nodig heeft, zet het hier met de reden erbij. Een project kan dit niet zetten.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        De toegestane CIDR's, of een lege lijst.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return list(cluster_config.get("external_clone_allowed_private_networks", []))
+
+
 def get_argo_namespace(cluster_name: str) -> str:
     """
     Get the ArgoCD namespace for a specific cluster.
@@ -612,6 +694,52 @@ def get_prefixed_namespace(cluster_name: str, namespace: str) -> str:
     """
     prefix = get_namespace_prefix(cluster_name)
     return f"{prefix}{namespace}"
+
+
+# Vaste voorvoegsels van namespaces die niet van ons zijn, maar waar een project evenmin
+# in mag landen.
+RESERVED_NAMESPACE_PREFIXES = ("kube-", "openshift-", "cnpg-")
+
+# De sleutels in CLUSTER_CONFIG die een platformnamespace aanwijzen.
+_PLATFORM_NAMESPACE_KEYS = (
+    "namespace",
+    "argo_namespace",
+    "backup_namespace",
+    "mail_relay_namespace",
+    "database_operator_namespace",
+)
+
+
+def get_platform_namespaces() -> frozenset[str]:
+    """De namespaces waarin het platform zelf draait, over ALLE clusters.
+
+    Afgeleid uit CLUSTER_CONFIG, niet uit een tweede lijst: een platformnamespace die
+    daar bijkomt is zo meteen gereserveerd in plaats van pas na een bewerking hier.
+    """
+    namespaces: set[str] = set()
+    for cluster_config in CLUSTER_CONFIG.values():
+        for key in _PLATFORM_NAMESPACE_KEYS:
+            value = cluster_config.get(key)
+            if isinstance(value, str) and value:
+                namespaces.add(value)
+        namespaces.update(str(ns) for ns in cluster_config.get("service_namespaces", []))
+    return frozenset(namespaces)
+
+
+def is_platform_namespace(namespace: str) -> bool:
+    """True als deze namespace van het platform is en dus nooit van een project."""
+    return namespace in get_platform_namespaces() or namespace.startswith(RESERVED_NAMESPACE_PREFIXES)
+
+
+def is_reserved_project_name(name: str) -> bool:
+    """True als de namespace van dit project op enig cluster een platformnamespace is.
+
+    De namespace is de clusterprefix plus de projectnaam, dus een naam als ``operations``
+    of ``system`` komt uit op de namespace van het platform zelf.
+    """
+    if not name:
+        return False
+    return any(is_platform_namespace(get_prefixed_namespace(cluster, name)) for cluster in CLUSTER_CONFIG)
 
 
 def get_storage_config(cluster_name: str) -> dict:
@@ -805,6 +933,16 @@ def get_keycloak_support_http(cluster_name: str) -> bool:
     return keycloak_config.get("support_http", False)
 
 
+def get_keycloak_demo_users(cluster_name: str) -> bool:
+    """Whether realm blueprints may create their demo users on this cluster.
+
+    Those users carry a password from the repository, so they exist only on a local or
+    sandbox cluster. See ``load_demo_users`` in ``opi/manager/keycloak_manager.py``.
+    """
+    keycloak_config = get_keycloak_config(cluster_name)
+    return keycloak_config.get("demo_users", False)
+
+
 def get_database_server(cluster_name: str) -> str:
     """
     Get the database server hostname for pods in a specific cluster.
@@ -856,6 +994,21 @@ def get_minio_port(cluster_name: str) -> int:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["minio_port"]
+
+
+def get_seaweedfs_host(cluster_name: str) -> str | None:
+    """Het SeaweedFS-adres van dit cluster, of None als het die dienst niet levert.
+
+    Zoals bij ``get_vlam_config`` is dit de hele beschikbaarheidsvraag, zodat de dienst
+    zelf geen clusternaam noemt. Het bepaalt ook of de tenant-baseline een egressregel naar
+    de S3-poort krijgt, zie :func:`get_ops_egress`.
+    """
+    return get_cluster_config(cluster_name).get("seaweedfs_host")
+
+
+def get_seaweedfs_port(cluster_name: str) -> int:
+    """De S3-poort van SeaweedFS op dit cluster."""
+    return get_cluster_config(cluster_name)["seaweedfs_port"]
 
 
 def get_minio_server(cluster_name: str) -> str:
@@ -921,6 +1074,31 @@ def get_database_operator_namespace(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("database_operator_namespace", "cnpg-system")
+
+
+def get_ops_egress(cluster_name: str) -> list[dict[str, Any]]:
+    """Gedeelde services in de operations-namespace per poort voor de tenant-baseline.
+
+    Een cluster dat seaweedfs-storage levert krijgt de S3-poort van die dienst erbij; dat
+    volgt uit ``seaweedfs_host`` en staat niet per cluster in de lijst.
+    """
+    config = get_cluster_config(cluster_name)
+    egress: list[dict[str, Any]] = list(config["ops_egress"])
+    if config.get("seaweedfs_host"):
+        egress.append(SEAWEEDFS_OPS_EGRESS)
+    return egress
+
+
+def get_cluster_cidrs(cluster_name: str) -> dict[str, list[str]] | None:
+    """Pod- en service-CIDRs voor de except van de internetregel, of None."""
+    cidrs = get_cluster_config(cluster_name).get("cluster_cidrs")
+    if not cidrs:
+        logger.warning(
+            f"Cluster '{cluster_name}' heeft geen cluster_cidrs: de internetregel van de tenant-baseline "
+            "krijgt geen except en opent daarmee ook pods in andere namespaces op 80 en 443"
+        )
+        return None
+    return cidrs
 
 
 def get_ingress_controller_selector(cluster_name: str) -> dict:
@@ -1188,6 +1366,21 @@ def uses_capsule(cluster_name: str) -> bool:
     return cluster_config.get("uses_capsule", False)
 
 
+def get_pod_security_labels(cluster_name: str) -> dict[str, str]:
+    """Pod Security Admission labels for this cluster, or {} if not configured."""
+    cluster_config = get_cluster_config(cluster_name)
+    modes: dict[str, str] = cluster_config.get("pod_security", {})
+    return {f"pod-security.kubernetes.io/{mode}": level for mode, level in modes.items()}
+
+
+def namespace_labels(cluster_name: str) -> dict[str, str]:
+    """The labels every namespace OPI manages must carry on this cluster."""
+    return {
+        "argocd.argoproj.io/managed-by": get_argo_namespace(cluster_name),
+        **get_pod_security_labels(cluster_name),
+    }
+
+
 def supports_vpa(cluster_name: str) -> bool:
     """
     Check if the cluster provides a Vertical Pod Autoscaler recommender.
@@ -1339,11 +1532,12 @@ def _compute_ca_hash(cert_path: str) -> str | None:
         return None
 
     try:
-        result = subprocess.run(
-            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],
+        result = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
     except subprocess.CalledProcessError, FileNotFoundError:
         return None

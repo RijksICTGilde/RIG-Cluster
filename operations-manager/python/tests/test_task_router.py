@@ -1,15 +1,20 @@
 """
 Unit tests for the task router API endpoints.
 
-Tests cover GET /api/tasks/{id}, GET /api/tasks, and POST /api/tasks/{id}/:cancel
-with various task states and error conditions.
+Tests cover GET /api/tasks/{id}, GET /api/tasks, POST /api/tasks/{id}/:cancel, and
+POST /api/tasks (dicht sinds RC-386), with various task states and error
+conditions.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from opi.core.leden import LidSoort
+from opi.services.project_leden import hash_van
+from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -488,6 +493,98 @@ class TestGetTaskWithBearerToken:
         assert response.status_code == 401
 
 
+class TestGetTaskWithApiToken:
+    """Een ``zad_`` token loopt sinds dit plan langs hetzelfde handhavingspunt als de
+    projectsleutel (``opi.api.endpoint_util.handhaaf``), dus taken zijn er ook mee te
+    pollen. Het aangrenzende geval: een token dat WEL herkend wordt maar de handeling
+    niet mag, geeft 403 en valt niet terug op de maker-bearer, ook niet als die er ook
+    bij staat -- anders zou een herkend maar te krap token zich via de bearer alsnog
+    toegang kunnen verschaffen.
+    """
+
+    TOKEN = "zad_eentoken"
+    TOKEN_HEADERS: ClassVar[dict[str, str]] = {"X-API-Key": "zad_eentoken"}
+
+    def _store(self, *, rol: str):
+        project = ProjectSummary(
+            name=SAMPLE_PROJECT,
+            filename=f"projects/{SAMPLE_PROJECT}.yaml",
+            users=[
+                ProjectUser(
+                    type=LidSoort.SERVICE_ACCOUNT,
+                    name="bouwstraat",
+                    role=rol,
+                    tokens=[
+                        ProjectToken(
+                            name="pijplijn",
+                            expires=datetime.now(UTC) + timedelta(days=30),
+                            hash=hash_van(self.TOKEN),
+                        )
+                    ],
+                )
+            ],
+        )
+        store = MagicMock()
+        store.get.return_value = project
+        return store
+
+    def test_een_token_van_een_beheerder_mag_de_taak_pollen(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        mock_task_service.get_task.return_value = _make_task(status="running")
+
+        with patch("opi.api.task_router.get_project_store", return_value=self._store(rol="admin")):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=self.TOKEN_HEADERS)
+
+        assert response.status_code == 202
+
+    def test_een_token_van_een_onbekende_rol_krijgt_403_en_niet_de_maker_fallback(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """Zelfs met een geldige bearer van de maker erbij mag een 403 niet verdwijnen:
+        anders maakt een extra header een te krap token weer ruim genoeg."""
+        mock_task_service.get_task.return_value = _make_task(status="running", created_by="creator@example.com")
+
+        with (
+            patch("opi.api.task_router.get_project_store", return_value=self._store(rol="toeschouwer")),
+            patch(
+                "opi.api.task_router.verify_user_token",
+                new=AsyncMock(return_value={"email": "creator@example.com"}),
+            ),
+            patch("opi.api.task_router.authorize_claims", return_value={"email": "creator@example.com"}),
+        ):
+            response = test_client_with_task_service.get(
+                f"/api/tasks/{SAMPLE_TASK_ID}",
+                headers={**self.TOKEN_HEADERS, "Authorization": "Bearer a.valid.token"},
+            )
+
+        assert response.status_code == 403
+
+    def test_een_token_van_een_viewer_annuleert_geen_taak(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """``task.cancel`` is geen leesactie, dus een viewer-token komt er niet doorheen.
+
+        Sinds RC-392 is annuleren operationeel: een developer mag het wel, buiten
+        productie (ontwerp paragraaf 4, rij 14). De rol die het sluit is viewer.
+        """
+        mock_task_service.get_task.return_value = _make_task(status="pending")
+
+        with patch("opi.api.task_router.get_project_store", return_value=self._store(rol="member")):
+            response = test_client_with_task_service.post(
+                f"/api/tasks/{SAMPLE_TASK_ID}/:cancel", headers=self.TOKEN_HEADERS
+            )
+
+        assert response.status_code == 403
+        mock_task_service.update_task_status.assert_not_awaited()
+
+
 class TestListTasks:
     """Tests for GET /api/tasks."""
 
@@ -664,10 +761,15 @@ class TestTaskServiceUnavailable:
         self,
         test_client_without_task_service: TestClient,
     ) -> None:
-        """GET /api/tasks should return 503 when task_service is absent."""
-        response = test_client_without_task_service.get(
-            f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
-        )
+        """GET /api/tasks should return 503 when task_service is absent.
+
+        De sleutel moet hier echt kloppen: de route controleert de herkenning voordat hij de
+        taakdienst opzoekt, zodat een naamloze aanroeper 401 krijgt en niet 503 (RC-371).
+        """
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_without_task_service.get(
+                f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
+            )
 
         assert response.status_code == 503
 
@@ -679,3 +781,103 @@ class TestTaskServiceUnavailable:
         response = test_client_without_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel")
 
         assert response.status_code == 503
+
+
+class TestPostApiTasksIsDicht:
+    """POST /api/tasks is dicht sinds RC-386.
+
+    De route bestond alleen voor de federatie en liet zich herkennen met de
+    MASTER_API_KEY, een sleutel die iedere houder het platform maakte. Die sleutel is
+    weg, en een peer heeft nog geen eigen identiteit, dus is er niemand die deze route
+    mag aanroepen. Hij is daarom niet geregistreerd, en omdat GET op dit pad nog bestaat
+    antwoordt Starlette met 405 in plaats van 404. Het punt is dat het geen 5xx is.
+    """
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "task_type": "upsert_deployment",
+            "project_name": SAMPLE_PROJECT,
+            "cluster": "odcn-production",
+        }
+
+    @pytest.mark.parametrize(
+        "headers",
+        [
+            pytest.param({}, id="zonder-sleutel"),
+            pytest.param(AUTH_HEADERS, id="met-projectsleutel"),
+            pytest.param({"X-API-Key": "test-master-api-key-not-a-project-key"}, id="met-oude-master-sleutel"),
+        ],
+    )
+    def test_de_route_bestaat_niet_meer(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+        headers: dict[str, str],
+    ) -> None:
+        response = test_client_with_task_service.post("/api/tasks", headers=headers, json=self._payload())
+
+        assert response.status_code == 405
+        mock_task_service.create_task.assert_not_awaited()
+
+
+class TestOpgeruimdeWerkgegevens:
+    """Een taak waarvan de werkgegevens zijn leeggemaakt (RC-282).
+
+    De kop blijft 90 dagen staan, de werkgegevens gaan na een uur leeg. Het antwoord houdt
+    dus dezelfde sleutels, met niets erin.
+    """
+
+    def test_get_task_geeft_200_met_de_kop_en_lege_werkgegevens(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        task = _make_task(
+            status="completed",
+            progress_percent=100,
+            current_step="Done",
+            completed_at="2026-03-01T10:05:00+00:00",
+            subtasks=None,
+            result=None,
+            created_by="iemand@rijksoverheid.nl",
+        )
+        task["details_purged_at"] = "2026-03-01T11:05:00+00:00"
+        # De leegmaakpas zet ook de stapregel op NULL; het contract zegt daar een string.
+        task["current_step"] = None
+        mock_task_service.get_task.return_value = task
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == SAMPLE_TASK_ID
+        assert data["task_type"] == "upsert_deployment"
+        assert data["status"] == "completed"
+        assert data["completed_at"] == "2026-03-01T10:05:00+00:00"
+        assert data["current_step"] == ""
+        # Dezelfde sleutels als bij een verse taak, zodat een client niets extra hoeft te
+        # controleren.
+        for sleutel in ("subtasks", "result", "superseded_by", "error_message"):
+            assert sleutel in data, sleutel
+            assert data[sleutel] is None, sleutel
+
+    def test_een_mislukte_taak_houdt_zijn_foutregel_tot_de_opruiming(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """De fouttekst gaat met de werkgegevens mee, dus zolang die er zijn is hij er ook."""
+        task = _make_task(
+            status="failed",
+            completed_at="2026-03-01T10:05:00+00:00",
+            result=None,
+            error_message="Keycloak gaf 500",
+        )
+        mock_task_service.get_task.return_value = task
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        assert response.json()["error_message"] == "Keycloak gaf 500"

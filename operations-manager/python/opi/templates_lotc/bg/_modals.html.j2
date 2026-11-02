@@ -46,12 +46,15 @@
                 <span id="edit-section-title-text"></span>
             </c-heading>
         </c-cluster>
-        <c-button type="tertiary"
-                  size="sm"
-                  label="Sluiten"
-                  icon="dismiss"
-                  class="edit-modal-close-btn"
-                  @click="closeEditModal()" />
+        {# Plain nldd-button: the LOTC wrapper still writes `variant`, which nldd-button
+           0.13 no longer reads (it is `appearance`), and it dropped the icon. #}
+        <nldd-button appearance="neutral-transparent"
+                     size="sm"
+                     text="Sluiten"
+                     start-icon="dismiss"
+                     type="button"
+                     class="edit-modal-close-btn"
+                     onclick="closeEditModal()"></nldd-button>
     </c-cluster>
     <div id="edit-section-error" class="edit-section-error is-hidden"></div>
     <div id="edit-section-inner">
@@ -63,6 +66,9 @@
     </div>
 </div>
 
+{# De dialoog voor niet-opgeslagen werk: de bewerkmodal vraagt hem. #}
+{% include "bg/_bevestiging.html.j2" %}
+
 {# De hulpdialoog van een dienst. De bestaande projectpagina heeft hem ook: de
    dienstblokken op deze pagina openen hem met openServiceHelp(). #}
 {% include "widgets/service_help_modal.html.j2" %}
@@ -72,5 +78,5 @@
    null zijn en zou de viewer stilzwijgend niets doen. #}
 {% include "bg/_log-viewer.html.j2" %}
 <link rel="stylesheet" href="{{ static_url('css/project-details.css') }}">
-<script src="{{ static_url('js/wizard.js') }}"></script>
-<script src="{{ static_url('js/log_viewer.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/wizard.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/log_viewer.js') }}"></script>

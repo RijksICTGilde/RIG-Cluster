@@ -13,6 +13,8 @@ reach a project file.
 import logging
 from typing import TYPE_CHECKING
 
+from opi.services.project_leden import human_members
+from opi.services.project_roles import PLATFORM_ADMIN_ROLES
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
@@ -21,26 +23,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The roles that may change a project, and therefore the roles that may hold its
-# API key: that key opens every mutating per-project API route and carries no role
-# of its own, so handing it out wider than this gate widens the gate.
-PROJECT_EDIT_ROLES: tuple[str, ...] = ("admin", "owner")
-
 
 def get_project_users(project_name: str) -> list[ProjectUser] | None:
-    """Return the members of a project, or None when the project is unknown."""
+    """De MENSEN in een project, of None als het project onbekend is.
+
+    Alleen de mensen: deze twee functies beantwoorden "mag deze aanmelding dit project
+    openen", en een service account meldt zich nergens aan. Wat een service account mag
+    loopt langs :mod:`opi.api.principal`, dat de hele ledenlijst leest.
+    """
     project = get_project_store().get(project_name)
     if project is None:
         logger.debug(f"No project found: {project_name}")
         return None
-    logger.debug(f"Retrieved {len(project.users) if project.users else 0} users for project: {project_name}")
-    return project.users
+    mensen = human_members(project)
+    logger.debug(f"Retrieved {len(mensen)} users for project: {project_name}")
+    return mensen
 
 
-def is_user_authorized_for_project(project_name: str, user_email: str) -> bool:
-    """Check whether a user may access a project. Platform admins always may."""
+def is_user_authorized_for_project(project_name: str, user_email: str, audit: bool = True) -> bool:
+    """Check whether a user may access a project. Platform admins always may.
+
+    Geef ``audit=False`` mee in een lijst die dit per project vraagt: de INFO-regel moet
+    het spoor zijn van een geopend project, niet van elk project op het platform.
+    """
     if get_user_service().is_platform_admin(user_email):
-        logger.debug(f"User {user_email} authorized for project {project_name} (admin)")
+        if audit:
+            # INFO, anders is er met LOG_LEVEL=INFO in productie geen spoor van een
+            # platformbeheerder die een project opent waar hij geen lid van is.
+            logger.info(f"User {user_email} authorized for project {project_name} (admin)")
         return True
 
     users = get_project_users(project_name)
@@ -49,25 +59,26 @@ def is_user_authorized_for_project(project_name: str, user_email: str) -> bool:
         return False
 
     for user in users:
-        if user.email.lower() == user_email.lower():
-            logger.debug(f"User {user_email} authorized for project {project_name} with role: {user.role}")
+        if (user.email or "").lower() == user_email.lower():
+            logger.debug(f"User {user_email} authorized for project {project_name} with roles: {user.roles}")
             return True
 
     logger.debug(f"User {user_email} not authorized for project: {project_name}")
     return False
 
 
-def get_user_role_for_project(project_name: str, user_email: str) -> str | None:
-    """Return a user's role in a project. Platform admins always get "admin"."""
+def get_user_roles_for_project(project_name: str, user_email: str) -> list[str]:
+    """De rollen van deze gebruiker op dit project; een platformbeheerder krijgt die van B6.
+
+    Leeg betekent "geen rol hier". Voor een beslissing: gebruik
+    :func:`opi.web.authz.authorize`; dit is de lezing die een pagina in zijn context zet.
+    """
     if get_user_service().is_platform_admin(user_email):
-        return "admin"
+        return sorted(rol.value for rol in PLATFORM_ADMIN_ROLES)
 
     users = get_project_users(project_name)
-    if not users:
-        return None
+    for user in users or []:
+        if (user.email or "").lower() == user_email.lower():
+            return list(user.roles)
 
-    for user in users:
-        if user.email.lower() == user_email.lower():
-            return user.role
-
-    return None
+    return []

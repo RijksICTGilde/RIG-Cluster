@@ -15,7 +15,7 @@
 # `WIZARD_DEPLOYMENT_NAME_EDITABLE`), en dat is ook de naam op de sandbox. De twee
 # variabelen die van die naam afhangen staan daarop: noem je de deployment anders, dan
 # passen die twee mee. Zie docs/jupyterhub-poc-verslag.md.
-schema-version: 2.9
+schema-version: '2.13'
 name: jupyterhub-poc
 display-name: JupyterHub POC
 description: JupyterLab met VS Code per gebruiker, achter de Keycloak van het project
@@ -25,7 +25,7 @@ clusters:
 
 users:
   - email: robbertuittenbroek@gmail.com
-    role: admin
+    roles: [admin, ops]
 
 services:
   - publish-on-web

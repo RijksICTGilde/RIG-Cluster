@@ -24,12 +24,14 @@ config models are wired into the read path in Phase 3.
 from __future__ import annotations
 
 from abc import ABC
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
 from pydantic import ValidationError
 
+from opi.core.project_schema import parse_schema_version
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
 from opi.services.services import ServiceDefinition, service_entry_name
@@ -37,6 +39,7 @@ from opi.services.services import ServiceDefinition, service_entry_name
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
+    from opi.core.authz.actions import Action
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.visualizers.visualizer import EditableVisualizer
@@ -154,6 +157,9 @@ def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: st
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
 
+#: Eén migratiestap: neemt een config van de vorige versie en geeft hem terug op de versie waarmee hij is gestempeld.
+ConfigMigrationStep = Callable[[ServiceConfigData], ServiceConfigData]
+
 
 @dataclass
 class ProvisionContext:
@@ -171,11 +177,15 @@ class ProvisionContext:
     force_clone: bool
     database_manager: Any
     minio_manager: Any
+    seaweedfs_manager: Any
     keycloak_manager: Any
     redis_manager: Any
     mail_manager: Any
     # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
     clone_interrupted: bool = False
+    #: Diensten (``ServiceType``-waarden) waarvan het geheim deze ronde vervangen moet worden
+    #: in plaats van hergebruikt. Leeg bij een gewone ronde.
+    rotate_credentials: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -608,12 +618,13 @@ class ProjectPageContext:
     input grows a field here instead of a new argument at every call site.
 
     ``project_data`` is the DECRYPTED project dict, so a service can surface the
-    credentials it manages; ``user_role`` lets a service gate on the viewer's role -- a
-    section that returns nothing for a role simply omits itself.
+    credentials it manages; ``can`` answers whether this caller may perform an action, so
+    a block that shows a secret reads the same rule as the route behind it instead of
+    naming a role of its own. A block that may show nothing simply omits itself.
     """
 
     project_data: dict[str, Any]
-    user_role: str
+    can: Callable[[Action], bool]
 
 
 @dataclass
@@ -633,7 +644,7 @@ class DeploymentPageContext:
 
     project_data: dict[str, Any]
     deployment: dict[str, Any]
-    user_role: str
+    user_roles: list[str]
     #: The cluster this OPI instance manages (``settings.CLUSTER_MANAGER``).
     current_cluster: str
     #: Probed availability of optional platform back-ends, keyed by name.
@@ -729,7 +740,10 @@ class Service(ABC):
       project file is validated against it; the global ``project_v2.json`` validates
       only the envelope and stays stable as service configs evolve.
     * ``config_schema_version`` -- the service's *current* ("hub"/storage) schema
-      version as a ``major.minor`` string. Each service versions independently.
+      version as a ``major.minor`` string. Each service versions independently, and
+      every comparison of one runs through ``SchemaVersion``, so 1.10 is newer than 1.9.
+    * ``config_migration_steps`` -- the ordered forward steps, each stamped with the
+      version it brings the config to.
     * ``migrate_config`` -- forward-only conversion (spoke -> hub). ZAD never serves
       old versions to clients; it only ever reads a possibly-old file and writes the
       current version, so no down-conversion is needed. Convert-then-validate: an
@@ -747,6 +761,11 @@ class Service(ABC):
     #: its directory. ``__init_subclass__`` rejects a subclass that forgets it.
     definition: ClassVar[ServiceDefinition]
 
+    #: De dienst die deze dienst opvolgt, of None. Zie ``replaced_on_cluster``.
+    #: Niet te verwarren met ``superseded_by_component_details``, dat een feit op de
+    #: deploymentkaart is en niets over de catalogus zegt.
+    replaced_by: ClassVar[ServiceType | None] = None
+
     #: Pydantic model for this service's config, or None if it takes no config.
     config_model: ClassVar[type[BaseModel] | None] = None
     #: Current config schema version (major.minor), or None for a service that takes no
@@ -754,6 +773,10 @@ class Service(ABC):
     #: had a versioned contract; the pairing with config_model is enforced by
     #: tests/test_service_config_schema.py.
     config_schema_version: ClassVar[str | None] = None
+    #: Migratiestappen in oplopende volgorde, elk gestempeld met de versie waar hij naar voert.
+    #: De laatste landt op ``config_schema_version``. ``__init_subclass__`` handhaaft dat,
+    #: stempels vergeleken als ``SchemaVersion``.
+    config_migration_steps: ClassVar[tuple[tuple[str, ConfigMigrationStep], ...]] = ()
 
     #: Wizard/edit config-section id for this service (RC-5 Phase 3), or None if the
     #: service has no config UI. The FormSection object itself lives in the forms
@@ -860,6 +883,7 @@ class Service(ABC):
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         cls.event_handlers = collect_event_handlers(cls)
+        cls._check_config_migration_steps()
         # A concrete provider must declare which service it is AND what that service
         # is (its definition), both in its own package. Abstract intermediate
         # subclasses (no service_type) are allowed and simply skipped.
@@ -874,6 +898,29 @@ class Service(ABC):
             )
         if not isinstance(definition, ServiceDefinition):
             raise TypeError(f"{cls.__name__}.definition must be a ServiceDefinition, got {type(definition).__name__}")
+
+    @classmethod
+    def _check_config_migration_steps(cls) -> None:
+        """Check dat migratiestappen in oplopende volgorde eindigen op de huidige versie.
+
+        Een tekstsortering zet 1.10 voor 1.9, dus de stempels worden vergeleken als
+        ``SchemaVersion``; een onleesbare stempel faalt hier, bij het laden, in plaats van bij
+        het eerste projectbestand dat hem draagt.
+        """
+        versions = [parse_schema_version(version) for version, _ in cls.config_migration_steps]
+        if versions != sorted(set(versions)):
+            raise TypeError(
+                f"{cls.__name__}.config_migration_steps must be in ascending version order "
+                f"without repeats, got {[str(version) for version in versions]}"
+            )
+        if not versions:
+            return
+        current = None if cls.config_schema_version is None else parse_schema_version(cls.config_schema_version)
+        if versions[-1] != current:
+            raise TypeError(
+                f"{cls.__name__}: the last config migration step lands on {versions[-1]}, "
+                f"but config_schema_version is {cls.config_schema_version!r}"
+            )
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """The model that validates this service's config *at ``layer``*.
@@ -936,16 +983,20 @@ class Service(ABC):
         return (ConfigRole.USE,) if layer in self.config_layers() else ()
 
     def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
-        """Convert an older config forward to ``config_schema_version`` (hub).
+        """Zet een oudere config vooruit naar ``config_schema_version`` (hub).
 
-        Forward-only (spoke -> hub); the default is identity, correct for a service
-        still at its first version. A service that bumps its version overrides this
-        and applies the ordered steps ``from_version -> ... -> current``. Keep each
-        step simple and lossless where possible (the Kubernetes conversion rule).
+        Alleen vooruit (spoke -> hub): voert elke stap uit ``config_migration_steps`` uit die
+        de opgeslagen versie nog niet gehad heeft, in volgorde. Een dienst die nog op zijn
+        eerste versie staat declareert geen stappen, en dit is dan de identiteit. Houd elke
+        stap eenvoudig en verliesvrij waar mogelijk (de Kubernetes-conversieregel).
 
-        ``config`` is a dict for most services, or a list for services whose config
-        is a sequence (e.g. storage mounts).
+        ``config`` is een dict voor de meeste diensten, of een lijst voor diensten waarvan de
+        config een reeks is (bijvoorbeeld storage mounts).
         """
+        stored = parse_schema_version(from_version)
+        for step_version, step in self.config_migration_steps:
+            if stored < parse_schema_version(step_version):
+                config = step(config)
         return config
 
     def validate_config(
@@ -1174,9 +1225,10 @@ class Service(ABC):
 
     #: Whether hanging this service on a component/deployment may also add it to the
     #: project's ``services`` list, without anyone selecting it there. False (the safe
-    #: answer) for every service that does not say otherwise; a service that declares
-    #: approvals is never implicit, whatever it sets here. Only asked of a service that
-    #: HAS a project layer -- without one there is no decision to protect (RC-103).
+    #: answer) for every service that does not say otherwise; a service whose approvals
+    #: say the implicit config needs a request is never implicit, whatever it sets here.
+    #: Only asked of a service that HAS a project layer -- without one there is no
+    #: decision to protect (RC-103).
     allows_implicit_project_selection: ClassVar[bool] = False
 
     def implicit_project_config(self) -> ServiceConfigData | None:
@@ -1207,9 +1259,12 @@ class Service(ABC):
           to make it with, so refusing would send the caller to a layer that does not
           exist -- a promise the API cannot keep. This outranks the two rules below,
           which both exist to protect a project-level decision;
-        * a service that declares approvals (``config_approvals``) is never implicit --
-          enrolling itself would enrol the thing an administrator has to approve, so the
-          approval wins over whatever the service declares;
+        * a service may never enrol itself into a state that needs approving. Not the
+          mere presence of an ``ApprovalSpec``: the spec is asked whether the config the
+          service would enrol with needs a request (``requires_approval``). A
+          ``service_use_approval`` always says yes, so such a service stays non-implicit;
+          a ``config_value_approval`` says yes only for the value its predicate names, so
+          a service whose default config is the narrow one still enrols itself;
         * a service that says yes must produce an entry that validates. If its default
           project config does not pass its own project-layer model, that is a programming
           error in the service and it fails loudly here instead of writing a project file
@@ -1230,7 +1285,9 @@ class Service(ABC):
             # refusing would name a layer the caller cannot reach.
             return self.service_type.value
 
-        if not self.allows_implicit_project_selection or self.approval_specs():
+        if not self.allows_implicit_project_selection:
+            return None
+        if self.enabling_needs_approval():
             return None
 
         if model is not None:
@@ -1327,14 +1384,18 @@ class Service(ABC):
         surface stays in lock-step with the schema."""
         return []
 
-    def config_model_field_names(self) -> list[str]:
-        """The field names of this service's ``config_model`` (alias-aware), or [].
+    def config_model_field_names(self, layer: ConfigLayer | None = None) -> list[str]:
+        """The field names of this service's config model at ``layer`` (alias-aware), or [].
 
         The single source for "which config keys does this service have" - reused by
-        ``config_api_fields`` so the API surface is not a second hand-maintained copy."""
-        if self.config_model is None:
+        ``config_api_fields`` so the API surface is not a second hand-maintained copy.
+        ``layer`` is for a service whose layers carry different shapes (send-email, whose
+        deployment layer overrides three of the project's fields); without it the answer is
+        about ``config_model``."""
+        model = self.config_model if layer is None else self.config_model_for(layer)
+        if model is None:
             return []
-        return [field.alias or name for name, field in self.config_model.model_fields.items()]
+        return [field.alias or name for name, field in model.model_fields.items()]
 
     def platform_managed_fields(self, layer: ConfigLayer) -> frozenset[str]:
         """The config keys at ``layer`` that OPI writes and the API may never touch.
@@ -1394,6 +1455,16 @@ class Service(ABC):
             for spec in self.config_approvals(layer):
                 seen.setdefault(spec.key, spec)
         return list(seen.values())
+
+    def enabling_needs_approval(self) -> bool:
+        """Of het AANZETTEN van deze dienst zelf een aanvraag is.
+
+        Niet de aanwezigheid van een spec: een goedkeuring over een CONFIGWAARDE geldt
+        pas bij die waarde, en de dienst aanzetten vraagt dan niets. Dezelfde vraag als
+        in ``implicit_project_entry``, voor de kaart en de uitleg in het formulier.
+        """
+        config = self.implicit_project_config() or {}
+        return any(spec.requires_approval(config) for spec in self.approval_specs())
 
     def get_approval(self, key: str) -> ApprovalSpec | None:
         """This service's ApprovalSpec with ``key`` (searched across layers), or None."""
@@ -1564,6 +1635,29 @@ class Service(ABC):
         """
         return True
 
+    def replaced_on_cluster(self, cluster: str) -> bool:
+        """Of deze dienst op ``cluster`` vervangen is door ``replaced_by``.
+
+        Alleen waar de opvolger er echt is: zolang die op een cluster ontbreekt, is er
+        niets om naar over te stappen en verandert daar niets. Dezelfde twee lezers als
+        ``available_on_cluster``, met een zachtere uitkomst: de kiezer laat de kaart weg
+        voor wie de dienst nog niet heeft, en de validatie weigert alleen een deployment
+        die hem erbij krijgt.
+        """
+        if self.replaced_by is None:
+            return False
+        from opi.services.registry import get_service
+
+        return get_service(self.replaced_by).available_on_cluster(cluster)
+
+    def replacement_name(self) -> str | None:
+        """De weergavenaam van de opvolger, voor een melding die hem noemt."""
+        if self.replaced_by is None:
+            return None
+        from opi.services.registry import get_service
+
+        return get_service(self.replaced_by).definition.name
+
     def manifest_activation_types(self) -> tuple[ServiceType, ...]:
         """Service types whose presence in a component activates this provider's
         manifest contribution (RC-5 Phase 6). Defaults to just this provider's own
@@ -1621,6 +1715,21 @@ class Service(ABC):
         Called for EVERY project, not only for projects that declare this service: a rule
         about what a project may point AT would otherwise be dodged by leaving the service
         out. Return [] when the service has nothing to say.
+        """
+        return []
+
+    def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
+        """Regels van deze dienst op wat de save VERANDERT, als meldingen (standaard geen).
+
+        De zuster van ``validate_project`` voor een regel die alleen kan oordelen met de
+        versie die vervangen wordt in de hand: een striktere grens op een NIEUWE waarde, want
+        een waarde die al een jaar in het projectbestand staat moet blijven valideren, anders
+        kan de eigenaar niet meer opslaan. ``ConfigSetting``'s ``grow_only`` dekt dat voor een
+        scalar met een getalsgrens (zie ``validate_service_setting_changes``); dit is voor een
+        regel die niet in een declaratie past.
+
+        ``previous`` is de vastgelegde versie, en ``{}`` op een aanmaak: een bestand dat
+        niets vervangt heeft niets opgeslagen, dus elke waarde daarin is nieuw.
         """
         return []
 

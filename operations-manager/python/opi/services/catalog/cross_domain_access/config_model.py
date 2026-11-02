@@ -43,9 +43,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-#: DNS-1123 label: the shape a project / deployment / component name has, mirroring the
-#: patterns in ``project_v2.json``. Names are the identity we select pods and namespaces on.
-DNS1123_LABEL = r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+from opi.utils.patterns import DNS1123_LABEL
 
 #: A rule name is a short DNS-1123 label; it is the key the deployment-layer patch merges on.
 _NAME_MAX_LENGTH = 40

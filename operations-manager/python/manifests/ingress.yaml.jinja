@@ -1,11 +1,11 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ name }}
+  name: {{ name | tojson }}
 {% if extra_labels %}
   labels:
 {% for k, v in extra_labels.items() %}
-    {{ k }}: {{ v | tojson }}
+    {{ k | tojson }}: {{ v | tojson }}
 {% endfor %}
 {% endif %}
   annotations:
@@ -73,9 +73,9 @@ metadata:
     # Certificate manager annotations
     # ============================================================
 {% if issuer_name %}
-    cert-manager.io/issuer: {{ issuer_name }}
+    cert-manager.io/issuer: {{ issuer_name | tojson }}
 {% elif cluster_issuer %}
-    cert-manager.io/cluster-issuer: {{ cluster_issuer }}
+    cert-manager.io/cluster-issuer: {{ cluster_issuer | tojson }}
 {% endif %}
 {% if issuer_name or cluster_issuer %}
     # Modern key material: ECDSA P-384, fresh key on every renewal (no RSA-2048 default).

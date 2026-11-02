@@ -1,22 +1,30 @@
 kind: NetworkPolicy
 apiVersion: networking.k8s.io/v1
 metadata:
-  name: "{{ name }}"
-  namespace: "{{ namespace }}"
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
 spec:
   # Per-deployment policy: selects only pods of this deployment so that
   # multiple deployments in the same project namespace stay isolated from
-  # each other and from helm/helmfile workloads (which do not carry this
-  # label and therefore fall through to Kubernetes' default-allow).
+  # each other and from helm/helmfile workloads (which carry no such label
+  # and get the unlabeled render of this same template instead).
   #
   # This is a permissive baseline: it blocks cross-tenant traffic via the
-  # explicit allow-list (only own deployment + platform namespaces) but
-  # leaves internet egress open. Tightening internet egress is intentionally
-  # deferred (see features/restrictive-network-policies.md).
+  # explicit allow-list (own deployment plus the shared services) and leaves
+  # internet egress open on 80 and 443, minus the cluster CIDRs in the except
+  # (see features/restrictive-network-policies.md).
 {% if deployment_selector %}
   podSelector:
     matchLabels:
-      deployment: "{{ deployment_selector }}"
+      deployment: {{ deployment_selector | yaml_scalar }}
+{% elif unlabeled_selector %}
+  # Pods zonder deployment-label: helm- en helmfile-workloads, cronjobs uit een
+  # chart, backup- en restorepods. Dezelfde rechten als een deployment, maar van
+  # de deployments in de namespace gescheiden.
+  podSelector:
+    matchExpressions:
+      - key: deployment
+        operator: DoesNotExist
 {% else %}
   # No deployment selector: apply to every pod in the namespace. Used for
   # the project infrastructure namespace (CNPG cluster) where there is no
@@ -32,7 +40,13 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              deployment: "{{ deployment_selector }}"
+              deployment: {{ deployment_selector | yaml_scalar }}
+{% elif unlabeled_selector %}
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: deployment
+                operator: DoesNotExist
 {% else %}
     - from:
         - podSelector: {}
@@ -78,7 +92,7 @@ spec:
 {% for ns in allowed_ingress_namespaces %}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: "{{ ns }}"
+              kubernetes.io/metadata.name: {{ ns | yaml_scalar }}
 {% endfor %}
 {% endif %}
   egress:
@@ -98,16 +112,64 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              deployment: "{{ deployment_selector }}"
+              deployment: {{ deployment_selector | yaml_scalar }}
+{% elif unlabeled_selector %}
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: deployment
+                operator: DoesNotExist
 {% else %}
     - to:
         - podSelector: {}
 {% endif %}
-    # Operations / platform namespace (shared Postgres, Redis, MinIO, Keycloak).
+    # Een toegewijd PostgreSQL-cluster in dezelfde namespace: de enige uitzondering
+    # op de scheiding hierboven, want die pods dragen geen deployment-label.
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: cnpg.io/cluster
+                operator: Exists
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Gedeelde services per poort, niet per namespace.
+{% for service in ops_egress %}
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: "{{ ops_namespace }}"
+          podSelector:
+            matchLabels:
+{% for label_key, label_value in service.pod_labels.items() %}
+              {{ label_key }}: "{{ label_value }}"
+{% endfor %}
+      ports:
+{% for port in service.ports %}
+        - protocol: TCP
+          port: {{ port }}
+{% endfor %}
+{% endfor %}
+    # Router: een app bereikt Keycloak en andere platformdiensten op hun publieke
+    # hostnaam, en die naam wijst naar de ingress-controller. Dat doel valt binnen de
+    # except van de internetregel hieronder, dus zonder deze regel gaat het hele
+    # OIDC-pad dicht zodra een cluster cluster_cidrs noemt.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ ingress_controller_selector.namespace }}"
+{% if ingress_controller_selector.pod_labels %}
+          podSelector:
+            matchLabels:
+{% for k, v in ingress_controller_selector.pod_labels.items() %}
+              {{ k }}: "{{ v }}"
+{% endfor %}
+{% endif %}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
     # Backup destination namespace.
     - to:
         - namespaceSelector:
@@ -118,7 +180,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: "{{ project_infra_namespace }}"
+              kubernetes.io/metadata.name: {{ project_infra_namespace | yaml_scalar }}
 {% endif %}
     # Internet egress (HTTP/HTTPS) zodat tenant-apps externe APIs kunnen aanroepen.
     # Beide adresfamilies: het cluster is dual-stack, dus een pod krijgt naast zijn
@@ -128,11 +190,26 @@ spec:
     # uitgaande verbinding kost dan seconden extra. Gemeten in wies op 2 september:
     # IPv4 naar keycloak.rijksapp.nl verbond in 0,00s, IPv6 liep na 6s in een timeout,
     # en /inloggen/ tilde daardoor de gunicorn-worker over zijn WORKER TIMEOUT heen.
+    # De except houdt het cluster zelf buiten "internet": zonder die lijst dekt
+    # 0.0.0.0/0 ook elk pod-IP in elke andere namespace. Ontbreekt cluster_cidrs voor
+    # dit cluster, dan blijft de regel zoals hij was; get_cluster_cidrs waarschuwt.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
+{% if cluster_cidrs and cluster_cidrs.get("ipv4") %}
+            except:
+{% for cidr in cluster_cidrs["ipv4"] %}
+              - {{ cidr }}
+{% endfor %}
+{% endif %}
         - ipBlock:
             cidr: ::/0
+{% if cluster_cidrs and cluster_cidrs.get("ipv6") %}
+            except:
+{% for cidr in cluster_cidrs["ipv6"] %}
+              - {{ cidr }}
+{% endfor %}
+{% endif %}
       ports:
         - protocol: TCP
           port: 443

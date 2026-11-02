@@ -14,9 +14,12 @@
   maar het verplaatsen is een besluit over de pagina en niet over de componenten, en dus
   niet iets om ongemerkt in een omzetting mee te nemen.
 
-  Het verwijderen blijft een gewoon formulier met een confirm(), precies zoals nu. Het is
-  geen htmx en geen dialoog, en er is in deze omzetting geen reden om daar iets anders van
-  te maken; alleen de aanspreekvorm is informeel geworden, zoals overal in deze bouwlijn.
+  De drie handelingen posten met htmx naast hun action: de step-up zet een dialoog in de
+  plaats van het formulier, en die komt alleen terug op een htmx-verzoek. De route
+  antwoordt dan met HX-Redirect, want een 303 zou htmx de hele pagina in die dialoog laten
+  hangen. Wat ze vragen voordat ze doen gaat door de dialoog uit bg/_bevestiging.html.j2:
+  de vraag, de uitleg en het label van de knop staan in data-attributen op het formulier,
+  en bevestiging.js kent de combinatie met hx-post.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -34,10 +37,10 @@
 {# NLDD maakt van een tabel een CSS-grid: zonder columns valt alles in een
                kolom en stapelen de cellen. En c-table-head IS de kopregel, daar hoort
                geen c-table-row in. #}
-            {# De laatste kolom draagt twee knoppen naast elkaar en heeft daarom meer
+            {# De laatste kolom draagt vier knoppen naast elkaar en heeft daarom meer
                ruimte nodig dan de datum ervoor; met gelijke breedtes vallen ze onder
                elkaar. #}
-            <c-table columns="2fr 2fr 1fr 2fr">
+            <c-table columns="2fr 3fr 1.5fr 8fr">
                 <c-table-head>
                     <c-th>Naam</c-th>
                     <c-th>E-mailadres</c-th>
@@ -58,10 +61,28 @@
                                     icon="pencil-on-square"
                                     show-icon="before"
                                     href="/admin/users/{{ user.id }}/edit" />
-                                {# Het formulier draagt de bevestiging en het CSRF-token, net als nu.
-                                   De knop erin is alleen de verzendknop. #}
+                                {# De naam gaat in een attribuutwaarde: autoescape beschermt tegen XSS. #}
+                                <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/revoke-sessions"
+                                      hx-post="/admin/users/{{ user.id }}/revoke-sessions"
+                                      hx-target="#edit-section-inner" hx-swap="innerHTML"
+                                      data-bevestig="De sessies van {{ user.full_name }} beëindigen?"
+                                      data-bevestig-uitleg="Daarna moet {{ user.full_name }} opnieuw inloggen."
+                                      data-bevestig-knop="Sessies beëindigen">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                    <c-button
+                                        type="tertiary"
+                                        size="sm"
+                                        label="Sessies beëindigen"
+                                        icon="logout"
+                                        show-icon="before"
+                                        html-type="submit" />
+                                </form>
                                 <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
-                                      onsubmit="return confirm('Weet je zeker dat je {{ user.full_name }} wilt verwijderen?');">
+                                      hx-post="/admin/users/{{ user.id }}/delete"
+                                      hx-target="#edit-section-inner" hx-swap="innerHTML"
+                                      data-bevestig="{{ user.full_name }} verwijderen?"
+                                      data-bevestig-uitleg="Daarna kan {{ user.full_name }} niet meer inloggen op het portaal."
+                                      data-bevestig-knop="Gebruiker verwijderen">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                     <c-button
                                         type="warning"
@@ -71,6 +92,25 @@
                                         show-icon="before"
                                         html-type="submit" />
                                 </form>
+                                {# Je eigen factor hoort niet hier maar op /account/otp, en de
+                                   route weigert hem ook. #}
+                                {% if user.email | lower != eigen_email %}
+                                    <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/otp-reset"
+                                          hx-post="/admin/users/{{ user.id }}/otp-reset"
+                                          hx-target="#edit-section-inner" hx-swap="innerHTML"
+                                          data-bevestig="De 2-factor van {{ user.full_name }} leegmaken?"
+                                          data-bevestig-uitleg="Daarna richt {{ user.full_name }} hem zelf opnieuw in."
+                                          data-bevestig-knop="2-factor leegmaken">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                        <c-button
+                                            type="tertiary"
+                                            size="sm"
+                                            label="OTP resetten"
+                                            icon="lock-open"
+                                            show-icon="before"
+                                            html-type="submit" />
+                                    </form>
+                                {% endif %}
                             </c-cluster>
                         </c-td>
                     </c-table-row>
@@ -84,4 +124,7 @@
     {% if success_message %}
         <c-alert type="success" heading="{{ success_message }}" />
     {% endif %}
+
+    {% include "bg/_bevestiging.html.j2" %}
+    {% include "bg/_step-up-venster.html.j2" %}
 {% endblock %}

@@ -40,6 +40,7 @@ import copy
 import glob
 import os
 import subprocess
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,7 @@ import pytest
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.manager.project_validation import validate_project_structure
 from opi.services.catalog.image_registries.resolution import project_registries
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from opi.utils.yaml_util import load_yaml_from_path
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "upgrade_safety"
@@ -146,7 +147,11 @@ async def replay_project_data(raw: dict[str, Any], name: str) -> ReplayOutcome:
         return outcome
 
     try:
-        await validate_project_structure(migrated)
+        # As the first save after an upgrade (ProjectStore.mutate): previous is the loaded,
+        # migrated file. Without it every service counts as newly chosen, and a service
+        # that was since replaced on its cluster (minio-storage) is refused to a project
+        # that already runs it.
+        await validate_project_structure(migrated, previous=deepcopy(migrated))
     except ProjectIntegrityError as exc:
         outcome.stage = "structure"
         outcome.error = str(exc)
@@ -190,8 +195,8 @@ async def test_fixture_migrates_and_validates(path: str) -> None:
     assert outcome.ok, f"{outcome.name} failed at {outcome.stage}: {outcome.error}"
     # The migration must always land the file on the latest schema version, so no
     # file is left carrying a stale version number after a successful reprocess.
-    assert outcome.to_version == LATEST_SCHEMA_VERSION, (
-        f"{outcome.name}: expected schema-version {LATEST_SCHEMA_VERSION}, got {outcome.to_version}"
+    assert outcome.to_version == LATEST_SCHEMA_VERSION_VALUE, (
+        f"{outcome.name}: expected schema-version {LATEST_SCHEMA_VERSION_VALUE}, got {outcome.to_version}"
     )
 
 
@@ -394,7 +399,7 @@ async def test_replay_reports_schema_failure() -> None:
     """A file that violates the JSON schema must be reported at the schema stage."""
     raw = _load(str(FIXTURES_DIR / "algor-odc.yaml"))
     # An encrypted field carrying a plaintext value fails the AGE pattern in the schema.
-    raw["config"]["api-key"] = "not-an-encrypted-value"
+    raw["config"]["age-private-key"] = "not-an-encrypted-value"
 
     outcome = await replay_project_data(raw, "broken-schema")
     assert outcome.stage == "schema", f"expected schema failure, got {outcome.stage}: {outcome.error}"

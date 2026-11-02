@@ -75,3 +75,16 @@ spec:
       ports:
         - protocol: TCP
           port: 9187
+    # Onze eigen Prometheus in de platform-namespace: de job cloudnative-pg scrapet de
+    # CNPG-pods op 9187 (prometheus/controller/overlays/odcn-staging/configmap-patch.yaml).
+    # Zonder deze regel was die scrape dood zodra de allow-all over de namespace weg is.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-staging-operations
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187

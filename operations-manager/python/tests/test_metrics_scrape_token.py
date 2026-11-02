@@ -51,13 +51,13 @@ class TestMetricsScrapeToken:
         assert response.status_code == 401
         _geen_metrieken(response)
 
-    def test_token_niet_geconfigureerd_501(self, test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Zonder geconfigureerd token is het endpoint dicht, zoals bij een ontbrekende ADMIN_API_KEY."""
+    def test_token_niet_geconfigureerd_404(self, test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Zonder geconfigureerd token is het endpoint dicht, en dat is een 404: geen serverfout."""
         monkeypatch.setattr(endpoint_util.settings, "PROMETHEUS_METRICS_AUTH_TOKEN", None)
 
         response = test_client.get("/metrics", headers={"Authorization": f"Bearer {SCRAPE_TOKEN}"})
 
-        assert response.status_code == 501
+        assert response.status_code == 404
         _geen_metrieken(response)
 
     def test_goed_token_200_met_metrieken(self, test_client: TestClient, scrape_token: str) -> None:
@@ -65,7 +65,8 @@ class TestMetricsScrapeToken:
 
         assert response.status_code == 200
         assert "# HELP" in response.text
-        assert "process_" in response.text
+        # python_info and not process_*: the process collector reads /proc, so it is empty on macOS.
+        assert "python_info" in response.text
 
     def test_metrics_explorer_blijft_naar_login_sturen(self, test_client: TestClient, scrape_token: str) -> None:
         """De pagina ernaast verandert niet: zonder sessie nog steeds een redirect naar login."""

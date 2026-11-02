@@ -40,7 +40,7 @@ live workloads).
 - ArgoCD operator-managed in `rig-prd-operations`; 1 application-controller, 2
   repo-servers, applicationset-controller **deployed but unused** (no webhook
   flags), 0 ApplicationSets.
-- Umbrella `user-applications`: project `default`, source
+- Umbrella `user-applications`: project `zad-app-of-apps` (as of RC-301), source
   `github.com/RijksICTGilde/argo-applications.git` path `odcn-production`, plugin
   `kustomize-sops-v1.0` env `KUSTOMIZE_FOLDERS=subfolders`,
   `automated.prune=true, selfHeal=true`. No `manifest-generate-paths`.
@@ -112,6 +112,15 @@ live workloads).
 3. **Create org `repo-creds` template** (bootstrap, all overlays); verify ArgoCD
    resolves creds for the bare URL. 36 per-project secrets stay, coexist.
    *Rollback: delete secret.*
+
+   Werkend voorbeeld: `features/forgejo-repositories-prive.md`. De sandbox heeft
+   deze stap al gezet, omdat haar privé-repositories er niet zonder kunnen. Daar is
+   gemeten wat hier nodig is: de template matcht op prefix en levert de toegang
+   werkelijk (zonder template meldt een applicatie `failed to list refs:
+   authentication required`), de per-project secrets coexisteren en gaan voor, en de
+   repoURL's dragen daar geen userinfo omdat `make_argocd_repository_url_unique`
+   alleen github/gitlab/bitbucket herschrijft. Dat laatste is precies het verschil
+   met odcn-production, en dus de voorwaarde die deze stap hier eerst moet maken.
 4. **Stand up dedicated AppProject Application**; populate `_appprojects/`
    verbatim; sync `prune=false`; verify AppProject count unchanged.
    *Rollback: delete app `--cascade=orphan`.*
@@ -155,6 +164,13 @@ live workloads).
   restarted.
 - **3-env bootstrap:** parallel changes; set appset `template.metadata.namespace`
   explicitly (kustomize namespace xform won't rewrite it). Sandbox first.
+- **Handtekeningcontrole beschermt de Application-laag niet meer:** bij optie B komen de
+  child-Applications niet meer uit een gesynchroniseerde commit, dus de `signatureKeys` op
+  het app-of-apps-AppProject beschermen ze niet meer. De ApplicationSet-controller leest de
+  `config.json`-bestanden van de `files`-generator zonder handtekeningcontrole.
+  Wie deze migratie bouwt, zet `signatureKeys` over naar het AppProject van de
+  `_appprojects`-Application en weegt de Application-laag afzonderlijk. Zie
+  `features/ondertekende-gitops-commits.md`.
 
 ## Verification (sandbox before prod)
 

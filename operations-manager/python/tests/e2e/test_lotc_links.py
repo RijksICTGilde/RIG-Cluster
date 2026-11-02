@@ -37,7 +37,7 @@ PAGINAS = [
     "/admin/users",
     "/admin/approvals",
     "/admin/usage",
-    "/about",
+    "/introductie",
     "/account",
     "/forms/wizard/start",
 ]

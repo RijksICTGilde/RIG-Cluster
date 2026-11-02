@@ -15,6 +15,11 @@ name: voorbeeld-volledig
 display-name: Voorbeeldproject (volledig)
 description: Een verzonnen project om alle schermonderdelen te kunnen bekijken.
 
+source-code:
+  - url: https://github.com/voorbeeld/voorbeeld-app
+    name: Applicatie
+  - url: https://github.com/voorbeeld/voorbeeld-infra
+
 users:
   - email: beheerder@voorbeeld.nl
     role: admin
@@ -81,6 +86,7 @@ repositories:
 
 components:
   - name: backend
+    description: API voor de zoekfunctie, leest uit de gedeelde database
     type: single
     ports:
       inbound: [8000]
@@ -98,6 +104,9 @@ components:
       POSTGRES_SERVER: $DATABASE_SERVER_HOST
       POSTGRES_USER: $DATABASE_SERVER_USER
       KEYCLOAK_URI: $OIDC_URL
+    # Zo levert de detailroute ze sinds RC-388: alleen de namen; het versleutelde blok
+    # zelf komt de paginacontext nooit in.
+    user-env-var-namen: [API_TOKEN, FEATURE_VLAG]
     services:
       - publish-on-web
       - keycloak
@@ -129,6 +138,7 @@ deployments:
       - reference: backend
         image: ghcr.io/voorbeeld/backend:2026.08.01
         registry: voorbeeld-registry
+        user-env-var-namen: [API_TOKEN]
         resources:
           requests:
             memory: 512Mi

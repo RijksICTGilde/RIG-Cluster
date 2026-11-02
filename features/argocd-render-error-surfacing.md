@@ -43,7 +43,10 @@ This feature makes that error visible in three places.
 (`deployment_diagnostics.conditions_to_errors`) unconditionally - even when health still reads
 `Healthy` from the last good reconciliation - so a `ComparisonError` is no longer filtered out
 behind the health guard. A `ComparisonError` is rendered with a readable heading,
-"Configuratiefout (kustomize CMP)", and the raw kustomize/CMP message underneath. The sync
+"Configuratiefout (kustomize CMP)", and the raw kustomize/CMP message underneath. ArgoCD uses
+the same condition for a refused commit signature (`GIT/GPG: Failed verifying revision ...`);
+that one gets its own heading, "Commit niet ondertekend", so it does not read as a manifest
+problem (see `features/ondertekende-gitops-commits.md`). The sync
 badge shows `Unknown` in red instead of neutral grey.
 
 ### 3. As a pre-commit failsafe
@@ -58,7 +61,27 @@ it ever reaches ArgoCD.
 The kustomize build in the CMP script (`bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml`)
 ends a failure with a single, final `KUSTOMIZE BUILD FAILED in <folder>: <stderr>` line, so
 the real error survives ArgoCD's truncation of long plugin output and is easy to find. The
-`.cmp-env` contents (which hold secrets) are no longer dumped to the logs.
+env-vars (which hold secrets) are no longer dumped to the logs: the plugin logs only that
+it read them from `cmp-env.sops.yaml`, never the values.
+
+Noemt die stderr een bestand dat de plugin zelf heeft ontsleuteld (`zz-ksops-*.yaml` uit een
+ksops-generator, of een `*-helm-values.yaml`), dan meldt de eindregel alleen de bestandsnaam:
+`KUSTOMIZE BUILD FAILED in <folder>: fout in ontsleuteld bestand <naam>`. Kustomize citeert
+namelijk de regel waarop hij struikelde, en die inhoud is geheim. In alle andere gevallen gaat
+de stderr integraal mee, zoals hiervoor. Zie `features/helmfile-single-app-deployment.md` voor
+waarom de plugin die bestanden zelf ontsleutelt.
+
+### Een ComparisonError die over de sleutel gaat
+
+```
+ERROR: cannot read secret 'sops-age-key' in namespace 'rig-<project>':
+the namespace or the secret does not exist, or the repo-server may not read it
+```
+
+Dit is geen kapotte kustomization maar een ontbrekende Role `cmp-sops-key-reader` naast het
+sleutel-secret. OPI zet die bij elke verwerking en bij het opstarten, dus een herstart of een
+verwerking van dat project herstelt het; wie en wanneer staat in
+`instructions/sops-sleutel-in-het-cluster.md`.
 
 ## Files
 

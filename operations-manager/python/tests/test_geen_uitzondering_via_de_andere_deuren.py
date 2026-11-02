@@ -89,6 +89,12 @@ class TestDeSjabloonDeur:
         project.name = PROJECT
         project.data = {"deployments": [{"name": "main", "cluster": settings.CLUSTER_MANAGER, "namespace": PROJECT}]}
         monkeypatch.setattr(webrouter, "get_project_store", lambda: MagicMock(get=lambda naam: project))
+        # De rolpoort op de web-router leest hetzelfde project en vraagt wie de aanroeper
+        # is; zonder deze twee valt het fragment op een 404 voordat de meting begint.
+        from opi.web import authz
+
+        monkeypatch.setattr(authz, "get_project_store", lambda: MagicMock(get=lambda naam: project))
+        monkeypatch.setattr(authz, "get_user_service", lambda: MagicMock(is_platform_admin=lambda _e: True))
 
         async def _prometheus_valt_om() -> object:
             raise OSError(PROMETHEUS_STORING)

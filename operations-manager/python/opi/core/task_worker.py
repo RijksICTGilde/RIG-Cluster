@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
+from opi.core.actor import actor_from_stored, set_actor
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
 from opi.core.task_errors import (
@@ -24,6 +25,9 @@ from opi.core.task_supersede import (
     reset_current_task,
     set_current_task,
 )
+from opi.services.otp_herlogin_service import OtpHerloginService
+from opi.services.session_store import get_session_store
+from opi.services.user_otp_service import UserOtpService
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -219,6 +223,7 @@ class TaskWorker:
         deployment_name = task.get("deployment_name")
 
         fid = set_flow_id(f"task-{task_id[:8]}")
+        set_actor(actor_from_stored(task.get("created_by")))
         started = time.monotonic()
         logger.info("Executing task %s (type=%s, project=%s, flow=%s)", task_id, task_type, project_name, fid)
 
@@ -439,9 +444,19 @@ class TaskWorker:
             try:
                 deleted = await self._task_service.cleanup_old_tasks(
                     retention_hours=settings.TASK_WORKER_CLEANUP_RETENTION_HOURS,
+                    header_retention_days=settings.TASK_WORKER_HEADER_RETENTION_DAYS,
                 )
                 if deleted > 0:
                     logger.info("Cleaned up %d old tasks", deleted)
+                pending = await UserOtpService().purge_expired_pending_registrations()
+                if pending > 0:
+                    logger.info("Cleaned up %d expired OTP registrations", pending)
+                purged = await get_session_store().purge_expired()
+                if purged > 0:
+                    logger.info("Cleaned up %d expired sessions", purged)
+                herlogins = await OtpHerloginService().purge_expired()
+                if herlogins > 0:
+                    logger.info("Cleaned up %d expired OTP re-logins", herlogins)
             except asyncio.CancelledError:
                 break
             except Exception:

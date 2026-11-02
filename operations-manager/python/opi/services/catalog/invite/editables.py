@@ -32,6 +32,7 @@ from opi.services.catalog.invite.defaults import (
     default_success_title_en,
     default_success_title_nl,
 )
+from opi.services.catalog.keycloak.templates import LOCAL_ACCOUNT_TEMPLATES
 from opi.services.services_enums import ServiceType
 
 
@@ -145,15 +146,15 @@ INVITE_APPLICATION_TARGET_EDITABLE = Editable(
 #
 # An invite can only NARROW what the realm offers, never widen it:
 #     allow_sso = realm_auth["sso"] and invite_auth_config["sso"]   (invite_routes)
-# The realm follows the keycloak template, and the two blueprints differ exactly here:
-# sso-only sets registrationAllowed/loginWithEmailAllowed to false (SSO is the only way in),
-# sso-support sets both to true. So under sso-only there is one possible answer and the
-# field is inert -- it is hidden rather than shown as a choice that changes nothing.
+# The realm follows the keycloak template, and the blueprints differ exactly here:
+# sso-only shows no login form (SSO is the only way in); sso-support and sso-support-otp
+# show Keycloak's login form. Under sso-only there is one possible answer and the field
+# is inert: it is hidden rather than shown as a choice that changes nothing.
 INVITE_AUTH_METHODS_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "auth-methods"),
     values_provider="InviteAuthMethodOptionsProvider",
     depends_on="services/keycloak/config/template",
-    show_when={"value": ["sso-support"]},
+    show_when={"value": list(LOCAL_ACCOUNT_TEMPLATES)},
     virtualize=SERVICE_VIRTUALIZE,
 )
 

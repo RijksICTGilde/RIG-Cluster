@@ -21,7 +21,7 @@ bound was dead for nine months, and the paragraph that leaned on it was reasonin
 measurement.
 
 It is now set the only way that reaches this operator's controller, as
-``--sync-timeout=600`` in ``spec.controller.extraCommandArgs``, in both overlays.
+``--sync-timeout=600`` in ``spec.controller.extraCommandArgs``, in all three overlays.
 It remains a setting on the ArgoCD instance, so it covers every Application on that
 cluster, the generated ones as much as these two handwritten ones.
 ``test_argocd_extra_config_keys.py`` guards both halves: no cmd-params key back in
@@ -91,10 +91,10 @@ def test_the_walk_finds_the_applications_and_reads_their_sync_options() -> None:
     would report success over nothing at all -- which is what a moved ``_OVERLAYS`` or a
     wrong ``parents`` index leaves behind.
 
-    The two files are named because the ``SyncTimeout`` lines came off them. The two
+    The two files are named because the ``SyncTimeout`` lines came off them. The three
     cluster overlays are named next to them because naming only those two files leaves the
     other direction open: a walk that narrows to odcn-production keeps both of them and
-    drops the three Applications in the other overlay without failing anything.
+    drops the Applications in the other overlays without failing anything.
 
     Finding the files is not enough, because ``_handwritten_applications`` falls back to
     an empty list for anything it cannot read: rename the ``syncOptions`` key or lose
@@ -106,7 +106,11 @@ def test_the_walk_finds_the_applications_and_reads_their_sync_options() -> None:
     assert _RON_INFRA in _IDS
 
     covered = {Path(path).relative_to(_OVERLAYS_FROM_REPO_ROOT).parts[0] for path in _IDS}
-    assert covered == {"odcn-production", "sandboxed-local"}, f"overlays covered: {sorted(covered)}"
+    assert covered == {
+        "odcn-production",
+        "odcn-staging",
+        "sandboxed-local",
+    }, f"overlays covered: {sorted(covered)}"
 
     for named in (_PRODUCTION_INFRA, _RON_INFRA):
         read = [options for path, options in _APPLICATIONS if path == named]

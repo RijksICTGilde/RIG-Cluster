@@ -11,7 +11,7 @@
         }
       ],
       "default": null,
-      "description": "Path metrics are scraped from; /metrics when left out.",
+      "description": "Path metrics are scraped from; /metrics when left out. Only '/', letters, digits and '-._~'; the path ends up in the scrape config of the ServiceMonitor.",
       "title": "Path"
     },
     "port": {

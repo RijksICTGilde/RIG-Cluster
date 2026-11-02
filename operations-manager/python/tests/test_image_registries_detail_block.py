@@ -37,7 +37,7 @@ def _ctx(registries: list[dict[str, Any]] | None) -> ProjectPageContext:
     services: list[Any] = ["publish-on-web"]
     if registries is not None:
         services.append({"name": "image-registries", "config": {"registries": registries}})
-    return ProjectPageContext(project_data={"name": "demo", "services": services}, user_role="admin")
+    return ProjectPageContext(project_data={"name": "demo", "services": services}, can=lambda _handeling: True)
 
 
 class TestHetBlok:

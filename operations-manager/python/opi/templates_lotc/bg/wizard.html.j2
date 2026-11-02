@@ -14,7 +14,7 @@
     - <c-fieldset> per groep, met <c-stack gap="md"> voor de velden erbinnen.
     - <c-action-group align="end"> voor de knoppen.
 
-  De stappenbalk is <c-step-indicator>. In de huidige wizard is dat een eigen blok met
+  De stappenbalk is <nldd-step-bar>. In de huidige wizard is dat een eigen blok met
   rvo-klassen; hier komt hij uit het thema, dus hij verandert mee als het thema verandert.
 
   De velden zijn dezelfde FormField-objecten als op /lotc/formulier, gerenderd door de
@@ -30,11 +30,11 @@
     <c-stack gap="lg">
         {{ page_head("{{ flow_title }}", "{{ flow_description }}") }}
 
-        <c-step-indicator current="{{ current_step }}" accessible-label="Stappen in deze wizard">
+        <nldd-step-bar accessible-label="Stappen in deze wizard">
             {% for step in steps %}
-                <c-step-indicator-item text="{{ step.label }}" :status="step.status or none" />
+                <nldd-step-bar-item text="{{ step.label }}" status="{{ step.status or 'future' }}"></nldd-step-bar-item>
             {% endfor %}
-        </c-step-indicator>
+        </nldd-step-bar>
 
         <form autocomplete="off" method="post" action="#">
             {# Een stack om de fieldsets: zonder staan twee groepen tegen elkaar aan en

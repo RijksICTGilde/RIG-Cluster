@@ -307,12 +307,22 @@ def _delete_manager() -> tuple[DeleteProjectManager, MagicMock, MagicMock]:
     """Een delete-ronde waarin alles slaagt; de test sloopt er één stap van."""
     pm = AsyncMock()
     pm.get_name = AsyncMock(return_value="test-project")
+    # Geen voortgangsmanager: de delete-stappen melden dan niets.
+    pm.get_progress_manager = MagicMock(return_value=None)
     pm._kubectl_connector = AsyncMock()
     pm._kubectl_connector.delete_namespace = AsyncMock(return_value=True)
+    # Echte antwoorden voor de hermeting aan het eind van delete_deployment: een kale
+    # AsyncMock zou "onleesbaar" heten, en dan beslist de foutenlijst alsnog.
+    pm._kubectl_connector.argocd_application_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.resource_exists = AsyncMock(return_value=False)
+    pm._kubectl_connector.namespace_absent = AsyncMock(return_value=True)
     pm._keycloak_manager = AsyncMock()
     pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
     pm._minio_manager = AsyncMock()
     pm._minio_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
+    # Deze deployment noemt seaweedfs-storage niet, dus de guard in delete_deployment
+    # slaat die tak over. Een AsyncMock zegt uit zichzelf overal ja.
+    pm._project_file_handler.deployment_uses_service = MagicMock(return_value=False)
     pm._ensure_database_manager = AsyncMock()
     pm._ensure_database_manager.return_value.delete_resources_for_deployment = AsyncMock(
         return_value={"operations": [], "errors": []}

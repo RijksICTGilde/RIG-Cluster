@@ -17,6 +17,9 @@ from pathlib import Path
 import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from opi.connectors.kubectl import KubectlConnector
+from opi.generation.manifests import MANIFEST_FILTERS, render_template, render_template_source
+from tests.test_template_injection_sweep import BACKUP_CTX, BACKUP_EN_RESTORE_SJABLONEN
 
 _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 
@@ -24,6 +27,7 @@ _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 # kopia_hostname/kopia_source are computed in Python — defaults here cover the
 # scheduled case so individual tests can override for manual.
 _BASE_CTX: dict = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "test-pod",
     "namespace": "rig-test",
     "service_account_name": "wies-sa",
@@ -36,6 +40,8 @@ _BASE_CTX: dict = {
     "s3_disable_tls": True,
     "backup_prefix": "local/rig-test",
     "kopia_password": "pw",
+    "credentials_secret": "test-pod-credentials",
+    "repository_unusable_exit_code": 21,
     "kopia_hostname": "wies-production-pvc-data",
     "kopia_source": "opi-backup@wies-production-pvc-data",
     "timeout_seconds": 3600,
@@ -52,11 +58,13 @@ _BASE_CTX: dict = {
 
 @pytest.fixture
 def env() -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(_MANIFESTS_DIR)),
         undefined=StrictUndefined,
         autoescape=False,
     )
+    env.filters.update(MANIFEST_FILTERS)
+    return env
 
 
 def _render(env: Environment, template_name: str, **overrides: object) -> str:
@@ -139,6 +147,12 @@ class TestPVCBackupPod:
         assert manifest["kind"] == "Pod"
         assert manifest["metadata"]["name"] == "test-pod"
 
+    def test_bestaande_repository_wordt_niet_gewist(self, env: Environment) -> None:
+        """Een repository die niet opengaat wordt nooit gewist: de pod stopt met een foutcode."""
+        rendered = _render(env, "backup-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
+        assert "mc rm" not in rendered
+        assert "exit 21" in rendered
+
 
 # ---------------------------------------------------------------------------
 # Database template
@@ -195,6 +209,12 @@ class TestDatabaseBackupPod:
     def test_trigger_tag_present(self, env: Environment) -> None:
         rendered = _render(env, "backup-database-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
         assert '--tags="trigger:scheduled"' in rendered
+
+    def test_bestaande_repository_wordt_niet_gewist(self, env: Environment) -> None:
+        """Een repository die niet opengaat wordt nooit gewist: de pod stopt met een foutcode."""
+        rendered = _render(env, "backup-database-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
+        assert "mc rm" not in rendered
+        assert "exit 21" in rendered
 
     def test_yaml_is_valid(self, env: Environment) -> None:
         rendered = _render(env, "backup-database-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
@@ -255,6 +275,12 @@ class TestBucketBackupPod:
     def test_trigger_tag_present(self, env: Environment) -> None:
         rendered = _render(env, "backup-bucket-pod.yaml.jinja", **self._ctx(trigger="manual"))
         assert '--tags="trigger:manual"' in rendered
+
+    def test_bestaande_repository_wordt_niet_gewist(self, env: Environment) -> None:
+        """Een repository die niet opengaat wordt nooit gewist: de pod stopt met een foutcode."""
+        rendered = _render(env, "backup-bucket-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
+        assert "mc rm" not in rendered
+        assert "exit 21" in rendered
 
     def test_yaml_is_valid(self, env: Environment) -> None:
         rendered = _render(env, "backup-bucket-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
@@ -660,3 +686,30 @@ class TestBackupLockRetry:
         )
         result = asyncio.run(lock.acquire(wait_seconds=0, poll_seconds=0.01))
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Een Jinja-omgeving (RC-339)
+# ---------------------------------------------------------------------------
+
+
+class TestEenJinjaOmgeving:
+    """``KubectlConnector.template_manifest`` rendert via de gedeelde omgeving.
+
+    Hij bouwde per aanroep een eigen ``Environment()``, zonder ``trim_blocks`` en zonder de
+    loader voor ``{% include %}``, dus een filter of instelling kon op een van de twee
+    plekken ontbreken.
+    """
+
+    @pytest.mark.parametrize("template", BACKUP_EN_RESTORE_SJABLONEN)
+    def test_beide_routes_geven_hetzelfde_document(self, template: str) -> None:
+        bron = (_MANIFESTS_DIR / template).read_text()
+        kubectl = KubectlConnector.__new__(KubectlConnector)
+
+        via_naam = render_template(template, BACKUP_CTX)
+        via_bron = kubectl.template_manifest(bron, BACKUP_CTX)
+
+        assert yaml.safe_load(via_naam) == yaml.safe_load(via_bron)
+
+    def test_de_gedeelde_omgeving_kent_yaml_scalar(self) -> None:
+        assert render_template_source("a: {{ v | yaml_scalar }}\n", {"v": 'x"y'}) == 'a: "x\\"y"\n'

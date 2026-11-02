@@ -16,11 +16,13 @@ hem opent.
 
 from typing import TYPE_CHECKING
 
+from opi.core.config import settings
 from opi.services.registry import SERVICE_DEFINITIONS
-from opi.services.services_enums import ServiceKind
+from opi.services.services_enums import ServiceKind, ServiceType
 from opi.web.lotc_switch import build_lotc_introductie
 
 if TYPE_CHECKING:
+    import pytest
     from fastapi.testclient import TestClient
 
 
@@ -30,6 +32,17 @@ def test_introductie_is_bereikbaar_zonder_sessie(test_client: TestClient) -> Non
 
     assert response.status_code == 200, response.text
     assert "Zelfservice Applicatie Deployment" in response.text
+
+
+def test_de_versie_staat_alleen_op_de_introductie(test_client: TestClient) -> None:
+    """Geen page footer meer (het NLDD-applicatiepatroon heeft er geen): de versie staat hier."""
+    introductie = test_client.get("/introductie").text
+    beleid = test_client.get("/security").text
+
+    assert "Versie: " in introductie
+    assert "Versie: " not in beleid
+    assert "nldd-page-footer" not in introductie
+    assert "nldd-page-footer" not in beleid
 
 
 def test_de_route_draagt_geen_sso_eis() -> None:
@@ -50,6 +63,24 @@ def test_root_stuurt_een_anonieme_bezoeker_naar_de_introductie(test_client: Test
 
     assert response.status_code == 302
     assert response.headers["location"] == "/introductie"
+
+
+def test_about_verwijst_permanent_door_naar_de_introductie(test_client: TestClient) -> None:
+    """Over ZAD is in de introductie opgegaan; een oude link moet daar uitkomen."""
+    response = test_client.get("/about", follow_redirects=False)
+
+    assert response.status_code == 301
+    assert response.headers["location"] == "/introductie"
+
+
+def test_een_vervangen_dienst_staat_er_niet_op(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MinIO is vervangen door SeaweedFS waar die er is; dan is het geen keuze meer."""
+    monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    namen = [d["name"] for d in build_lotc_introductie(None)["diensten_zelf"]]
+
+    assert ServiceType.MINIO_STORAGE.value not in namen
+    assert ServiceType.SEAWEEDFS_STORAGE.value in namen
 
 
 def _catalogus() -> tuple[list[str], list[str]]:

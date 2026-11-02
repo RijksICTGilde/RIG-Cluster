@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: bootstrap
-        image: codeberg.org/forgejo/forgejo:14-rootless
+        image: codeberg.org/forgejo/forgejo:14.0.5-rootless
         command:
         - sh
         - -c
@@ -52,7 +52,7 @@ spec:
               -d "{
                 \"name\":\"$REPO\",
                 \"description\":\"$REPO repository for RIG sandbox\",
-                \"private\":false,
+                \"private\":true,
                 \"auto_init\":true,
                 \"default_branch\":\"main\",
                 \"gitignores\":\"\",
@@ -60,6 +60,20 @@ spec:
                 \"readme\":\"Default\"
               }" \
               "$FORGEJO_URL/api/v1/user/repos" || echo "Repository $REPO may already exist"
+          done
+
+          # Step 2b: zet bestaande repositories op privé. Een bestaande sandbox slaat de
+          # POST hierboven over ("already exists") en zou dus publiek blijven.
+          echo ""
+          echo "Step 2b: Marking repositories private..."
+
+          for REPO in zad-projects zad-argo-user-applications zad-argo-infrastructure zad-deployments; do
+            echo "Marking private: $REPO"
+            curl -sf -X PATCH \
+              -H "Content-Type: application/json" \
+              -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+              -d '{"private":true}' \
+              "$FORGEJO_URL/api/v1/repos/$ADMIN_USER/$REPO" || echo "Could not mark $REPO private"
           done
 
           echo ""

@@ -35,17 +35,19 @@ class TestServiceType:
             "send-email",
             "vlam",
             "image-registries",
+            "seaweedfs-storage",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        # 24 sinds image-registries erbij kwam (RC-177); 23 sinds vlam (RC-142); 22 sinds
+        # 25 sinds seaweedfs-storage erbij kwam (RC-331); 24 sinds image-registries
+        # (RC-177); 23 sinds vlam (RC-142); 22 sinds
         # send-email (RC-114); 21 sinds de gezondheidscheck een
         # systeemdienst werd (RC-28); 20 sinds user-env-vars en aliases systeemdiensten
         # werden (RC-25); daarvoor 18, sinds cross-domain-access en resource-tuning er
         # allebei bij kwamen.
-        assert len(ServiceType) == 24
+        assert len(ServiceType) == 25
 
 
 class TestGetAllServices:
@@ -189,6 +191,7 @@ class TestSelectionAndSharing:
             ServiceType.POSTGRESQL_DATABASE,
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
             ServiceType.MINIO_STORAGE,
+            ServiceType.SEAWEEDFS_STORAGE,
             ServiceType.REDIS,
             ServiceType.NAMESPACE_REDIS,
         ],
@@ -199,7 +202,7 @@ class TestSelectionAndSharing:
     def test_de_rest_van_de_catalogus_deelt_niets_per_deployment(self):
         """De omkering, want zonder haar bewaakt de lijst hierboven alleen zichzelf.
 
-        Een zesde dienst die ``shared_per_deployment`` krijgt zet er een chip bij op de
+        Een zevende dienst die ``shared_per_deployment`` krijgt zet er een chip bij op de
         dienstkaart ("Gedeeld per deployment"), en dat is een belofte over wie dezelfde
         inloggegevens krijgt. Dat hoort een bewuste regel in dit bestand te zijn.
         """
@@ -210,6 +213,7 @@ class TestSelectionAndSharing:
             ServiceType.POSTGRESQL_DATABASE,
             ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
             ServiceType.MINIO_STORAGE,
+            ServiceType.SEAWEEDFS_STORAGE,
             ServiceType.REDIS,
             ServiceType.NAMESPACE_REDIS,
         }

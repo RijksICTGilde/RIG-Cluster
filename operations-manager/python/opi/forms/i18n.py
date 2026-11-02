@@ -179,6 +179,12 @@ DEFAULT_NL_TRANSLATIONS = {
     "project.display_name.description": "Een beschrijvende naam voor je project",
     "project.description": "Projectomschrijving",
     "project.description.description": "Korte beschrijving van het doel en de scope van het project",
+    "project.source_code": "Broncode",
+    "project.source_code.description": "Links naar de repositories met de code van dit project. Alleen ter informatie: ZAD doet er niets mee.",
+    "project.source_code.url": "Link",
+    "project.source_code.url.description": "Een https-link naar de repository, bijvoorbeeld op GitHub, GitLab of code.overheid.nl",
+    "project.source_code.name": "Naam",
+    "project.source_code.name.description": "Optioneel. Zonder naam toont het portaal de link zelf.",
     "project.cluster": "Cluster",
     "project.cluster.description": "Selecteer het gewenste cluster voor je project",
     "project.services": "Beschikbare Services",
@@ -205,8 +211,8 @@ DEFAULT_NL_TRANSLATIONS = {
     # User form labels
     "user.email": "E-mailadres",
     "user.email.description": "Rijksoverheid e-mailadres",
-    "user.role": "Rol",
-    "user.role.description": "De rol van de gebruiker in het project",
+    "user.roles": "Rollen",
+    "user.roles.description": "Wat dit lid in dit project mag. Zie /rollen",
     # Service labels
     "service.web": "Publiceren op het web",
     "service.web.description": "Maak de applicatie toegankelijk via het publieke internet",

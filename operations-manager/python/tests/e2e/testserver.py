@@ -16,18 +16,30 @@ Usage:
 
 import logging
 import os
+import secrets
+from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from opi.services.otp_herlogin_service import Herlogin
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
+from tests.inmemory_session_store import InMemorySessionStore
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
 SECRET_KEY = "e2e-test-secret-key-padded-to-32-chars-minimum"
+
+#: De PAT-vorm die het schrijven van een projectbestand nodig heeft, uit de omgeving als
+#: die er staat. Zie de patch in create_test_app.
+PROJECT_REPO_PASSWORD = os.environ.get("PROJECT_REPO_PASSWORD") or "plain:repo-secret"
 
 
 @cache
@@ -123,8 +135,136 @@ class InMemoryUserAdminService:
         return self._users.pop(user_id, None) is not None
 
 
+class InMemoryUserOtpService:
+    """In-memory stub for UserOtpService used in E2E tests.
+
+    Dezelfde reden als :class:`InMemoryUserAdminService`: geen Postgres in deze suite.
+    De TOTP-verificatie komt WEL uit de echte module, want dat is precies het gedrag dat
+    de pagina's moeten tonen. Alleen de AGE-versleuteling valt weg: in het geheugen is
+    het versleutelde zaad het zaad zelf.
+    """
+
+    def __init__(self) -> None:
+        self._rows: dict[str, dict] = {}
+        self._pending: dict[str, tuple] = {}
+
+    async def status(self, email: str):
+        from opi.services.user_otp_service import OtpStatus
+
+        row = self._rows.get(email)
+        if not row or not row.get("confirmed_at"):
+            return OtpStatus(registered=False)
+        return OtpStatus(registered=True, confirmed_at=row["confirmed_at"], locked_until=row.get("locked_until"))
+
+    async def start_registration(self, email: str):
+        from opi.utils.totp import generate_totp_secret
+
+        return self._registration(email, generate_totp_secret())
+
+    async def resume_registration(self, email: str, encrypted_secret: str):
+        return self._registration(email, encrypted_secret)
+
+    # Lopende registraties: zoals de echte service (tabel otp_pending_registrations),
+    # hier in het geheugen. Zie de uitleg in opi/services/persistence/otp_pending.py.
+
+    async def note_pending_registration(self, email: str, fingerprint: str):
+        from datetime import UTC, datetime, timedelta
+
+        self._pending[email] = (fingerprint, datetime.now(UTC) + timedelta(minutes=10))
+
+    async def consume_pending_registration(self, email: str, fingerprint: str) -> bool:
+        from datetime import UTC, datetime
+
+        row = self._pending.get(email)
+        if row is None or row[1] <= datetime.now(UTC):
+            return False
+        return row[0] == fingerprint
+
+    async def discard_pending_registration(self, email: str) -> None:
+        self._pending.pop(email, None)
+
+    async def purge_expired_pending_registrations(self) -> int:
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        verlopen = [email for email, row in self._pending.items() if row[1] <= now]
+        for email in verlopen:
+            del self._pending[email]
+        return len(verlopen)
+
+    async def confirm_registration(self, email: str, code: str, encrypted_secret: str, full_name: str = "") -> bool:
+        from datetime import UTC, datetime
+
+        from opi.utils.totp import verify_totp
+
+        step = verify_totp(encrypted_secret, code)
+        if step is None:
+            return False
+        self._rows[email] = {
+            "secret": encrypted_secret,
+            "confirmed_at": datetime.now(UTC),
+            "last_step": step,
+            "failed": 0,
+            "locked_until": None,
+        }
+        return True
+
+    async def verify(self, email: str, code: str):
+        from datetime import UTC, datetime
+
+        from opi.services.user_otp_service import OTP_LOCK_DURATION, OTP_MAX_FAILED_ATTEMPTS, OtpVerification
+        from opi.utils.totp import verify_totp
+
+        row = self._rows.get(email)
+        if not row or not row.get("confirmed_at"):
+            return OtpVerification.NOT_REGISTERED
+        now = datetime.now(UTC)
+        if row.get("locked_until") and row["locked_until"] > now:
+            return OtpVerification.LOCKED
+        step = verify_totp(row["secret"], code, last_used_step=row["last_step"])
+        if step is None:
+            row["failed"] += 1
+            if row["failed"] >= OTP_MAX_FAILED_ATTEMPTS:
+                row["locked_until"] = now + OTP_LOCK_DURATION
+            return OtpVerification.INVALID
+        row["last_step"] = step
+        row["failed"] = 0
+        row["locked_until"] = None
+        return OtpVerification.OK
+
+    async def reset(self, email: str, by: str) -> bool:
+        return self._rows.pop(email, None) is not None
+
+    @staticmethod
+    def _registration(email: str, secret: str):
+        from opi.services.user_otp_service import OtpRegistration
+        from opi.utils.totp import build_otpauth_uri, totp_base32
+
+        return OtpRegistration(
+            secret=secret,
+            encrypted_secret=secret,
+            otpauth_uri=build_otpauth_uri(secret, email, "ZAD test"),
+            base32_secret=totp_base32(secret),
+        )
+
+
 # Singleton so the test server and tests share the same instance
 _in_memory_user_service: InMemoryUserAdminService | None = None
+_in_memory_otp_service: InMemoryUserOtpService | None = None
+_in_memory_session_store: InMemorySessionStore | None = None
+
+
+def get_in_memory_session_store() -> InMemorySessionStore:
+    """De server-side sessies van deze suite, in het geheugen (RC-390).
+
+    Zonder Postgres in deze harnas kan de sessiemiddleware niet naar de echte store. De
+    app krijgt deze via de patch hieronder; de fixtures schrijven er sessies in met
+    ``seed`` en tekenen alleen het id als cookie.
+    """
+    global _in_memory_session_store
+    if _in_memory_session_store is None:
+        _in_memory_session_store = InMemorySessionStore()
+    return _in_memory_session_store
 
 
 def get_in_memory_user_service() -> InMemoryUserAdminService:
@@ -138,6 +278,82 @@ def get_in_memory_user_service() -> InMemoryUserAdminService:
 def _mock_get_service() -> InMemoryUserAdminService:
     """Drop-in replacement for router_user_admin._get_service."""
     return get_in_memory_user_service()
+
+
+def get_in_memory_otp_service() -> InMemoryUserOtpService:
+    """Get (or create) the shared in-memory OTP service."""
+    global _in_memory_otp_service
+    if _in_memory_otp_service is None:
+        _in_memory_otp_service = InMemoryUserOtpService()
+    return _in_memory_otp_service
+
+
+class InMemoryHerloginService:
+    """In-memory stub voor OtpHerloginService: er is in deze suite geen Keycloak om bij in te loggen.
+
+    Een test zet een gebruiker in ``vers`` om te doen alsof hij zojuist opnieuw inlogde. De
+    poort zelf (de route, de sjablonen) is echt; alleen de herlogin bij Keycloak ontbreekt.
+    """
+
+    def __init__(self) -> None:
+        self.vers: set[str] = set()
+        self._lopend: dict[str, tuple[str, float, Herlogin]] = {}
+
+    async def begin(self, email: str, login_at: float) -> Herlogin:
+        herlogin = Herlogin(
+            state=secrets.token_urlsafe(32),
+            nonce=secrets.token_urlsafe(24),
+            code_verifier=secrets.token_urlsafe(48),
+        )
+        self._lopend[herlogin.state] = (email, login_at, herlogin)
+        return herlogin
+
+    async def take(self, state: str, email: str, login_at: float) -> Herlogin | None:
+        lopend = self._lopend.get(state)
+        if lopend is None or lopend[:2] != (email, login_at):
+            return None
+        return lopend[2]
+
+    async def mark_verified(self, state: str) -> None:
+        lopend = self._lopend.pop(state, None)
+        if lopend is not None:
+            self.vers.add(lopend[0])
+
+    async def is_fresh(self, email: str, login_at: float | None) -> bool:
+        return email in self.vers
+
+
+_in_memory_herlogin_service: InMemoryHerloginService | None = None
+
+
+def get_in_memory_herlogin_service() -> InMemoryHerloginService:
+    """Get (or create) the shared in-memory herlogin service."""
+    global _in_memory_herlogin_service
+    if _in_memory_herlogin_service is None:
+        _in_memory_herlogin_service = InMemoryHerloginService()
+    return _in_memory_herlogin_service
+
+
+def _mock_get_otp_service() -> InMemoryUserOtpService:
+    """Drop-in replacement for router_otp._get_otp_service."""
+    return get_in_memory_otp_service()
+
+
+@contextmanager
+def _otp_stubs() -> Iterator[None]:
+    """De 2-factor en de herlogin zonder Postgres en Keycloak.
+
+    Op /account, /account/otp en de resetknop in het gebruikersbeheer. Eén context in plaats
+    van vier, want een ``with`` kent maximaal twintig geneste contexten en dit blok zit
+    ertegenaan.
+    """
+    with (
+        patch("opi.web.router_user_admin._get_otp_service", _mock_get_otp_service),
+        patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
+        patch("opi.web.router_otp._get_herlogin_service", get_in_memory_herlogin_service),
+        patch("opi.web.router.UserOtpService", _mock_get_otp_service),
+    ):
+        yield
 
 
 #: Vaste metriekreeksen voor /admin/diensten, gesleuteld op de naam die de meetlaag
@@ -319,6 +535,7 @@ async def _fake_store_save(
     filename: str | None = None,
     refresh_cache: bool = True,
     base: dict | None = None,
+    approval_decision: bool = False,
 ):
     """In-memory stand-in for GitProjectStore.save.
 
@@ -326,6 +543,9 @@ async def _fake_store_save(
     zad-projects repo - unavailable here. This keeps the store's write-through
     cache update (so save-then-read round trips behave like production) and
     skips only the git commit/push.
+
+    ``approval_decision`` wordt alleen geaccepteerd: het stuurt in de echte store de
+    structuurvalidatie, en die slaat dit stand-in over.
     """
     from opi.services.project_store import MutationResult
 
@@ -471,6 +691,8 @@ def create_test_app():
             # "Missing public age key for encryption". The matching public key is
             # already defined above but was never wired to settings.
             patch("opi.core.config.settings.SOPS_AGE_PUBLIC_KEY", test_age_keypair()[1]),
+            # HTTP 500 zonder deze; wizards hangen op domains. Vorm telt (plain: + waarde).
+            patch("opi.core.config.settings.PROJECT_REPO_PASSWORD", PROJECT_REPO_PASSWORD),
             patch(
                 "opi.connectors.prometheus.get_metrics_connector",
                 return_value=SimpleNamespace(is_connected=False),
@@ -481,17 +703,21 @@ def create_test_app():
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
-            # version_of() clones the real zad-projects repo to read a blob SHA -
-            # unavailable here, same reason save is faked above. The edit-modal init
-            # records this as the compare-and-swap base_version, so without a stand-in
-            # every edit-modal open would fail decrypting the git creds. Return a fixed
-            # valid blob SHA (40 hex chars, per _BLOB_SHA_RE); the faked save ignores it.
+            # version_of() clones the real repo, hier niet beschikbaar. Stand-in: een vaste
+            # geldige blob-SHA (40 hex per _BLOB_SHA_RE); de nagemaakte save negeert hem.
             patch(
                 "opi.services.project_store.GitProjectStore.version_of",
                 new_callable=AsyncMock,
                 return_value="0" * 40,
             ),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
+            _otp_stubs(),
+            # De server-side sessies (RC-390): de middleware vraagt per request om de
+            # store, en krijgt hier de in-memory variant.
+            patch(
+                "opi.middleware.server_side_session.get_session_store",
+                get_in_memory_session_store,
+            ),
             # /admin/diensten leest via de metriekconnector; hier is geen Prometheus.
             patch(
                 "opi.services.gedeelde_diensten.get_metrics_connector",
@@ -536,6 +762,23 @@ def create_test_app():
     return patched_app
 
 
+#: Vast sessie-id voor de standalone server (aanvalsproef-CI): twee processen delen geen
+#: geheugen, dus de scan kan geen vers geseede sessie ophalen en gebruikt deze vaste id,
+#: die de server bij het starten zelf in zijn in-memory store legt (:func:`run_standalone`).
+TEST_SESSION_ID = "e2e-testserver-sessie"
+
+
+def aanvalsproef_cookie() -> str:
+    """De sessiecookie van de standalone server: het ondertekende vaste sessie-id.
+
+    Aangeroepen vanuit een tweede proces (de aanvalsproef-workflow); het ondertekenen kan
+    daar, want het geheim is een constante van deze harnas en de rij is al gelegd.
+    """
+    from itsdangerous import TimestampSigner
+
+    return TimestampSigner(SECRET_KEY).sign(TEST_SESSION_ID.encode()).decode()
+
+
 def run_standalone() -> None:
     """Run the test server standalone for interactive UI development."""
     import uvicorn
@@ -558,6 +801,14 @@ def run_standalone() -> None:
 
     ctx = create_test_app()
     with ctx() as app:
+        # De sessie achter TEST_SESSION_ID, zodat een tweede proces (de aanvalsproef) er
+        # mee kan ondertekenen. login_at vers, anders weigert de guard de sessie direct.
+        import time
+
+        get_in_memory_session_store().seed(
+            TEST_SESSION_ID,
+            {"user": {"sub": "e2e-user", "email": TEST_USER_EMAIL, "name": "E2E Test User", "login_at": time.time()}},
+        )
         config = uvicorn.Config(
             app,
             host="127.0.0.1",

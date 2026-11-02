@@ -47,6 +47,13 @@ ARGOCD_CM_KEYS = {
     # op odcn-production en op sandboxed-local.
     "timeout.reconciliation",
     "timeout.hard.reconciliation",
+    # Lokale accounts naast admin, met hun toegestane capabilities. ArgoCD leest ze als
+    # `accounts.<naam>` uit argocd-cm (upstream user-management/index.md); `opi` staat er
+    # met alleen apiKey, dus er is geen wachtwoord om mee in te loggen.
+    "accounts.opi",
+    # RBAC-logging: argocd-server logt elke geweigerde aanroep met subject, resource en
+    # actie. Een server-key uit argocd-cm, niet uit argocd-cmd-params-cm.
+    "server.rbac.log.enforce.enable",
 }
 
 #: ``resource.customizations.*`` is een familie en geen vaste key: de staart is
@@ -107,7 +114,11 @@ def test_the_walk_finds_an_argocd_cr_in_every_overlay_and_reads_its_keys() -> No
     bij, want ``_argocd_crs`` valt bij een ontbrekende ``spec`` terug op een leeg dict en dan
     passeert elke check over nul keys."""
     covered = {Path(path).relative_to(_OVERLAYS_FROM_REPO_ROOT).parts[0] for path in _IDS}
-    assert covered == {"odcn-production", "sandboxed-local"}, f"overlays gedekt: {sorted(covered)}"
+    assert covered == {
+        "odcn-production",
+        "odcn-staging",
+        "sandboxed-local",
+    }, f"overlays gedekt: {sorted(covered)}"
 
     for path, spec in _CRS:
         assert spec.get("extraConfig"), f"{path} leverde geen extraConfig"

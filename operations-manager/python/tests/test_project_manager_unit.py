@@ -183,6 +183,20 @@ class TestServiceCategoryMapping:
         assert m._get_service_category_name(ServiceType.POSTGRESQL_DATABASE) == "database"
         assert m._get_service_category_name(ServiceType.NAMESPACE_POSTGRESQL_DATABASE) == "database"
 
+    def test_minio_and_seaweedfs_collapse_to_minio_category(self):
+        """seaweedfs-storage hergebruikt MinIOVariables, dus dezelfde val als redis.
+
+        Zonder de collapse routeert een alias op $OBJECT_STORE_HOST naar de bucket
+        "seaweedfs-storage" en verdwijnt hij stil uit het minio-secret, ook bij een
+        bestaand project dat seaweedfs niet eens gebruikt.
+        """
+        from opi.manager.project_manager import ProjectManager
+        from opi.services.services_enums import ServiceType
+
+        m = ProjectManager.__new__(ProjectManager)
+        assert m._get_service_category_name(ServiceType.MINIO_STORAGE) == "minio"
+        assert m._get_service_category_name(ServiceType.SEAWEEDFS_STORAGE) == "minio"
+
 
 def _valid_project_for_save() -> dict:
     """A minimal schema-valid project used by the central-save tests."""
@@ -190,7 +204,7 @@ def _valid_project_for_save() -> dict:
         "name": "valid-project",
         "description": "A valid project",
         "clusters": ["local", "odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",

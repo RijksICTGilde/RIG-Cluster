@@ -13,8 +13,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.services.runs_service import get_runs_service
-from opi.web.router_detail_edit import _require_project_member_access
 from opi.web.stap_labels import stap_label
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,9 @@ _RUN_LABELS = {"db-console": "Databaseconsole", "job": "Job"}
 _TASK_LABELS = {
     "create_project": "Project aanmaken",
     "refresh_project": "Project verversen",
+    "rotate_project_key": "Projectsleutel vervangen",
     "refresh_deployment": "Deployment verversen",
+    "rotate_credentials": "Credentials vervangen",
     "update_image": "Image bijwerken",
     "delete_deployment": "Deployment verwijderen",
     "delete_project": "Project verwijderen",
@@ -102,6 +104,9 @@ def _normalize_task(task: dict) -> dict:
         "deployment": task.get("deployment_name"),
         "status": _STATUS_LABELS.get(status, status),
         "active": status in _TASK_ACTIVE,
+        # RC-282 keeps a finished task for 90 days but clears its details after an hour;
+        # until then the progress page still has something to show.
+        "has_details": not task.get("details_purged_at"),
         "step": stap_label(task.get("current_step")),
         "progress": task.get("progress_percent"),
         "door": task.get("created_by"),
@@ -111,10 +116,10 @@ def _normalize_task(task: dict) -> dict:
 
 
 @tasks_router.get("/{project_name}/tasks", response_class=HTMLResponse)
+@action(Action.TASK_READ)
 @requires_sso
 async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
     """Unified Taken table: console/job runs + background tasks (upserts, refreshes)."""
-    _require_project_member_access(request, project_name)
     items: list[dict] = []
 
     try:

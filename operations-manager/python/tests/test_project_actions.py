@@ -191,7 +191,7 @@ async def _confirm(action_key: str, target: str | None = None, *, role: str = "a
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch("opi.web.router.get_user_roles_for_project", return_value=role),
         patch("opi.web.router.get_project_store", return_value=store),
     ):
         return await project_action_confirm(_request(), "demo", action_key, target)
@@ -219,11 +219,34 @@ async def test_an_unknown_action_is_a_404() -> None:
     assert exc.value.status_code == 404
 
 
-@pytest.mark.parametrize("role", ["member", "developer", "viewer"])
-async def test_a_non_privileged_role_gets_no_dialog(role: str) -> None:
-    with pytest.raises(HTTPException) as exc:
-        await _confirm("delete-project", role=role)
-    assert exc.value.status_code == 403
+@pytest.mark.parametrize(("rollen", "mag"), [(["viewer"], False), (["developer"], True), (["ops"], True)])
+def test_de_bevestiging_hangt_aan_het_recht_op_de_actie(rollen: list[str], mag: bool) -> None:
+    """De poort staat sinds RC-392 op de route en niet in de handler.
+
+    De route draagt ``service.action``; de dependency op de web-router beslist daarop
+    voordat de handler draait. Wat hier vast moet staan is welk recht de route noemt en
+    wat dat opent.
+    """
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
+
+    assert action_of(project_action_confirm) is Action.SERVICE_ACTION
+
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name="iemand@example.com",
+        project=PROJECT,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    assert (
+        decide(
+            principal,
+            Action.SERVICE_ACTION,
+            Resource(project=PROJECT, path=f"project/{PROJECT}"),
+            step_up_fresh=True,
+        ).allowed
+        is mag
+    )
 
 
 async def test_a_blocked_action_offers_no_button() -> None:
@@ -243,7 +266,7 @@ async def test_a_blocked_action_offers_no_button() -> None:
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+        patch("opi.web.router.get_user_roles_for_project", return_value=["admin", "ops"]),
         patch("opi.web.router.get_project_store", return_value=store),
     ):
         response = await project_action_confirm(_request(), "demo", "delete-attachment", "keystore")

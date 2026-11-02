@@ -1,0 +1,26 @@
+{#
+  De rolmatrix, gelezen uit het regelregister (opi/core/authz/rules.py).
+
+  Er staat hier GEEN tweede lijst rechten. Elke rij komt uit een regel; een regel met
+  scopes krijgt een rij per scope. Een rol die niets mag heeft een lege kolom, en dat is
+  informatie: zo is zichtbaar dat een CI-rol smal is in plaats van vergeten.
+
+  De vier blokken staan in eigen deeltemplates, zodat deze pagina ze samenstelt in plaats
+  van ze uit te schrijven.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}Rollen en rechten - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Rollen en rechten",
+        "Wat elke rol op een project mag. Deze tabel wordt gelezen uit de regels in de code, dus wat hier staat is wat er wordt afgedwongen."
+    ) }}
+
+    {% include "bg/_rolmatrix-rollen.html.j2" %}
+    {% include "bg/_rolmatrix-matrix.html.j2" %}
+    {% include "bg/_rolmatrix-andere-regels.html.j2" %}
+    {% include "bg/_rolmatrix-legenda.html.j2" %}
+{% endblock %}

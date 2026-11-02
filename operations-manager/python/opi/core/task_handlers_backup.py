@@ -27,7 +27,7 @@ from opi.manager.backup import (
 from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.utils.naming import generate_backup_run_id
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 
 if TYPE_CHECKING:
     from opi.core.persistent_task_progress import PersistentTaskProgressManager
@@ -157,18 +157,19 @@ async def handle_backup(
             progress.fail_subtask(db_subtask, str(e))
             logger.exception("Database backup failed for %s/%s", project_name, deployment_name)
 
-    # MinIO backup
-    minio_service_types = [ServiceType.MINIO_STORAGE.value]
+    # Objectopslag: minio-storage of seaweedfs-storage. Beide dragen het backup_label
+    # "minio", hebben hetzelfde secret en gaan via dezelfde bucket-back-up.
+    minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
     if "minio" in resource_types and project_file_handler.deployment_uses_service(
         project_data, deployment_name, minio_service_types
     ):
-        minio_subtask = progress.add_subtask(backup_task, "MinIO backup")
+        minio_subtask = progress.add_subtask(backup_task, "Objectopslag backup")
         try:
             kubectl = create_kubectl_connector()
             minio_components = project_file_handler.get_components_using_service(
                 project_data, deployment_name, minio_service_types
             )
-            minio_secret = await MinIOSecret.get_data(
+            minio_secret = await get_object_storage_secret(
                 kubectl_connector=kubectl,
                 namespace=app_namespace,
                 prefix=deployment_name,
@@ -201,7 +202,7 @@ async def handle_backup(
                 total_results += 1
                 if not bucket_result.success:
                     all_success = False
-                    progress.fail_subtask(minio_subtask, "MinIO backup mislukt")
+                    progress.fail_subtask(minio_subtask, "Backup van de objectopslag mislukt")
                 else:
                     progress.complete_subtask(minio_subtask)
             else:
@@ -209,7 +210,7 @@ async def handle_backup(
         except (ValueError, RuntimeError, OSError, ConnectionError) as e:
             all_success = False
             progress.fail_subtask(minio_subtask, str(e))
-            logger.exception("MinIO backup failed for %s/%s", project_name, deployment_name)
+            logger.exception("Backup van de objectopslag mislukte voor %s/%s", project_name, deployment_name)
 
     if all_success:
         progress.complete_task(backup_task)
@@ -238,6 +239,7 @@ async def handle_restore(
     project_name = payload["project_name"]
     backup_run_id = payload["backup_run_id"]
     target_deployment = payload["target_deployment"]
+    # De onderdelen uit de payload zijn die van deze run, al opgehaald door de wizard.
     backup_items = payload.get("backup_items", [])
     create_new_deployment = payload.get("create_new_deployment", False)
     source_deployment = payload.get("source_deployment", "")
@@ -245,6 +247,18 @@ async def handle_restore(
 
     try:
         if create_new_deployment:
+            # Een lege run of bron komt door het schema (beide zijn gewone strings) en laat
+            # daarna elke verwerking op clone-from stuklopen, dus hij wordt hier geweigerd.
+            if not backup_run_id or not source_deployment:
+                msg = (
+                    f"Backup-run '{backup_run_id}' is niet gevonden bij project '{project_name}', "
+                    "dus er valt niets terug te zetten"
+                )
+                lookup_task = progress.add_task("Backup-run opzoeken")
+                progress.fail_task(lookup_task, msg)
+                progress.fail_project(msg)
+                return {"success": False, "error": msg}
+
             pvc_items = [item for item in backup_items if item.get("resource_type") == "pvc"]
 
             # Step 1: Create new deployment
@@ -255,7 +269,7 @@ async def handle_restore(
                     target_deployment,
                     source_deployment,
                     deployment_config=deployment_config,
-                    backup_items=backup_items,
+                    backup_run_id=backup_run_id,
                 )
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(create_task, str(e))
@@ -283,7 +297,7 @@ async def handle_restore(
 
             # Step 3: Provision infrastructure and restore data
             # Database and minio data is restored by their respective managers
-            # during provisioning (clone-from type "backup" with backup_items).
+            # during provisioning (clone-from type "backup", which names the run).
             # PVC data was pre-restored in step 2.
             infra_task = progress.add_task("Infrastructuur aanmaken en data herstellen")
             try:

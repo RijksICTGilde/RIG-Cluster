@@ -10,27 +10,30 @@
 # rig-staging-ron: de namespace die de CMP dan injecteert is gelijk aan de namespace die de
 # overlay zelf al zet.
 #
-# VOORDAT deze app kan renderen (de CMP stopt er anders hard mee, en de namespaced
-# ArgoCD kan het geen van beide zelf):
-#   1. de namespace rig-staging-ron bestaat: die staat als namespace-ron.yaml in deze
-#      bootstrap-overlay en wordt door task bootstrap-argo-system met kubectl
-#      aangebracht, met de RON-annotatie en het managed-by-label erop;
-#   2. het secret sops-age-key staat in rig-staging-ron (de CMP leest de AGE-sleutel in de
-#      namespace van de app); task bootstrap-argo-system zet het er sinds RC-261 zelf in.
-# CreateNamespace staat bewust uit: zie punt 1.
+# VOORDAT deze app kan renderen moet de namespace rig-staging-ron bestaan: die staat als
+# namespace-ron.yaml in deze bootstrap-overlay en wordt door task bootstrap-argo-system
+# met kubectl aangebracht, met de RON-annotatie en het managed-by-label erop.
+# CreateNamespace staat bewust uit, om dezelfde reden.
+#
+# Een sops-age-key in rig-staging-ron is sinds RC-351 niet meer nodig: deze app rendert op
+# de platform-plugin, die de sleutel uit de mount in de cmp-platform-sidecar leest in
+# plaats van uit de bestemmingsnamespace.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: ron-infrastructure
   namespace: rig-system
 spec:
-  project: default
+  project: zad-platform
   source:
     repoURL: https://github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn-staging
-    targetRevision: main
+    # De branch staging en niet main: staging draait een release voordat productie hem
+    # krijgt. Op staging komt nooit een eigen commit, hij schuift alleen fast-forward naar
+    # een commit die daarna ongewijzigd naar main gaat. Zie features/zad-staging.md.
+    targetRevision: staging
     plugin:
-      name: kustomize-sops-v1.0
+      name: kustomize-sops-platform-v1.0
       env:
         - name: SOPS_KEY_SECRET
           value: "sops-age-key"

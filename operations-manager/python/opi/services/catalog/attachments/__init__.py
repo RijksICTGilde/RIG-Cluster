@@ -16,6 +16,7 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.core.authz.actions import Action
 from opi.services.catalog.attachments.catalog_model import AttachmentCatalog
 from opi.services.catalog.attachments.config_model import AttachmentsConfig
 from opi.services.catalog.base import (
@@ -59,7 +60,7 @@ class AttachmentsService(Service):
         description="Geuploade bestanden (bijv. certificaten) gekoppeld als bestand of env-var aan een component",
         help_template="attachments/help.md",
         icon="paperclip",
-        color="grijs-600",
+        color="paars",
         variables=[],
     )
     # Component-level config is a list of couplings; the project-level entry holds the
@@ -279,7 +280,7 @@ class AttachmentsService(Service):
                 template="attachments/section-detail.html.j2",
                 context={
                     "attachments": sorted(attachments, key=lambda a: a["id"]),
-                    "can_edit": ctx.user_role in ("admin", "owner"),
+                    "can_edit": ctx.can(Action.ATTACHMENT_MANAGE),
                     # The delete confirmation is addressed per project, and this section
                     # reads its data from ``section.context`` only.
                     "project_name": ctx.project_data.get("name"),

@@ -14,6 +14,7 @@ from opi.connectors.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.core import config as opi_config
+from opi.core.authz.engine import Role
 from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -55,12 +56,12 @@ class FieldWarning(Exception):
 
 
 class AdminRequiredEnforcer:
-    """Ensures at least one user has role='admin'."""
+    """Minstens een lid met de rol ``admin``; zonder admin beheert niemand de leden nog."""
 
     async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
         if not value or not isinstance(value, list):
             raise ValueError("Er moet minimaal één gebruiker zijn")
-        has_admin = any(isinstance(user, dict) and user.get("role") == "admin" for user in value)
+        has_admin = any(isinstance(user, dict) and Role.ADMIN.value in (user.get("roles") or []) for user in value)
         if not has_admin:
             raise ValueError("Er moet minimaal één administrator zijn")
         return value
@@ -350,20 +351,31 @@ class DomainConfigEnforcer:
                 "Een subdomein is vereist voor het gekozen URL-formaat",
             )
 
-        # Check if domain format (with dots) is compatible with the selected domain
-        if actual_domain and "." in domain_format:
+        # Beide (URL-formaat en subdomein) vallen onder dezelfde dots-regel per domein.
+        supports_dots = False
+        if actual_domain:
             supports_dots = get_domain_supports_dots(cluster, actual_domain)
             # For custom domains not in cluster config, check project-level config
             if not supports_dots and actual_domain.lower() not in supported:
                 custom_config = get_project_allowed_domain_config(value, actual_domain)
                 if custom_config:
                     supports_dots = custom_config.get("supports-dots", False)
-            if not supports_dots:
-                raise ValueError(
-                    f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
-                    f"Dit domein ({actual_domain}) ondersteunt punten niet. "
-                    f"Kies een ander URL-formaat of een ander domein."
-                )
+
+        if actual_domain and "." in domain_format and not supports_dots:
+            raise ValueError(
+                f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
+                f"Dit domein ({actual_domain}) ondersteunt punten niet. "
+                f"Kies een ander URL-formaat of een ander domein."
+            )
+
+        # Dezelfde guard als de reserveringscheck hieronder: een formaat zonder
+        # ``{subdomain}`` gebruikt de waarde niet, en een restwaarde hoort niets te blokkeren.
+        if subdomain and "." in subdomain and "{subdomain}" in template and not supports_dots:
+            raise FieldError(
+                domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
+                f"Dit domein ({resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))}) ondersteunt "
+                f"geen punten in het subdomein. Kies een subdomein zonder punten of een ander domein.",
+            )
 
         # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
         # veldvalidator krijgt het basisdomein niet mee. Twee valkuilen: een leeg
@@ -373,7 +385,9 @@ class DomainConfigEnforcer:
         # niet-blokkerende FieldWarning heft en de enforcer daarmee afsluit.
         if subdomain and "{subdomain}" in template:
             reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
-            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
+            is_valid, error_msg = validate_subdomain_for_domain(
+                subdomain, reserved_domain, cluster, allow_dots=supports_dots
+            )
             if not is_valid and error_msg:
                 raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
@@ -507,6 +521,27 @@ class DomainConfigEnforcer:
             return  # Owned by this project
 
         raise FieldError(field_path, f"Het kale domein '{base_domain}' is niet beschikbaar")
+
+
+class UniqueSourceCodeUrlEnforcer:
+    """Rejects duplicate source-code URLs (by url only, not by object identity)."""
+
+    _PATH = "source-code"
+    _MESSAGE = "Deze link staat er al."
+
+    async def enforce(self, value: Any, context: dict[str, Any]) -> Any:
+        links = value.get(self._PATH) or []
+        seen: set[str] = set()
+        for index, entry in enumerate(links):
+            if not isinstance(entry, dict):
+                continue
+            url = str(entry.get("url") or "")
+            if not url:
+                continue
+            if url in seen:
+                raise FieldError(f"{self._PATH}[{index}]/url", self._MESSAGE)
+            seen.add(url)
+        return value
 
 
 class UniqueInviteKeyEnforcer:

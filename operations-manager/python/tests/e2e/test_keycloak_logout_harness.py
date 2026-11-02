@@ -1,4 +1,4 @@
-"""Harnas voor de uitlogketen: een echte Keycloak 25.0.6 met de shim, drie wegwerprealms.
+"""Harnas voor de uitlogketen: een echte Keycloak 26.8.1 met de shim, drie wegwerprealms.
 
 Dit harnas bestaat omdat het drie verkeerde oplossingen heeft tegengehouden. Het staat
 daarom in de repo in plaats van in een scratchpad, achter de marker ``keycloak_harness``
@@ -43,11 +43,13 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.keycloak_harness, pytest.mark.requires_infra, pytest.mark.slow]
 
-KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:25.0.6"
+# Dezelfde versie als images/keycloak-zad/Dockerfile: sinds RC-412 draait de shim zonder
+# @Provider, en op een 25-server zou het logout-endpoint daarmee juist 404 geven.
+KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.8.1"
 CONTAINER = "kc-logout-harness"
 ADMIN = "admin"
 SHIM_SOURCE = Path(__file__).resolve().parents[4] / "keycloak-migration" / "custom-mapper"
-SHIM_JAR = SHIM_SOURCE / "target" / "keycloak-saml-nameid-mapper-1.1.0.jar"
+SHIM_JAR_PATROON = "target/keycloak-saml-nameid-mapper-*.jar"
 BROKER_SECRET = "harness-secret"
 #: Veiligheidsnet voor de browser, geen wachtmechanisme: het harnas wacht eerst zelf op de
 #: voorwaarde (zie ``_wacht_tot_de_inlogpagina_staat``). Playwrights standaard van 30s was
@@ -71,6 +73,16 @@ def _vrije_poort() -> int:
 
 def _heeft(commando: str) -> bool:
     return subprocess.run(["which", commando], capture_output=True, check=False).returncode == 0
+
+
+def _shim_jar() -> Path | None:
+    """De nieuwste gebouwde shim-JAR, of None als er geen staat.
+
+    Op het patroon en niet op een vast versienummer: de pom bumpt mee met de Keycloak-versie
+    en een hardgecodeerd nummer liet dit harnas na elke bump stil omvallen. De nieuwste, want
+    een target van voor een bump houdt de oude JAR naast de nieuwe.
+    """
+    return max(SHIM_SOURCE.glob(SHIM_JAR_PATROON), key=lambda pad: pad.stat().st_mtime, default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -191,9 +203,11 @@ def harnas() -> Iterator[_Harnas]:
         if not _heeft(commando):
             pytest.skip(f"{commando} is niet beschikbaar")
 
-    if not SHIM_JAR.exists():
+    shim_jar = _shim_jar()
+    if shim_jar is None:
         subprocess.run(["mvn", "-B", "-q", "clean", "package", "-DskipTests"], cwd=SHIM_SOURCE, check=True, timeout=900)
-    assert SHIM_JAR.exists(), f"de shim-JAR is niet gebouwd: {SHIM_JAR}"
+        shim_jar = _shim_jar()
+    assert shim_jar is not None, f"de shim-JAR is niet gebouwd: {SHIM_SOURCE / SHIM_JAR_PATROON}"
 
     # Het bouwen en opstarten duurt langer dan de globale ``faulthandler_timeout`` van 60s;
     # die dumpt dan elke stack en dat leest als een storing.
@@ -218,9 +232,9 @@ def harnas() -> Iterator[_Harnas]:
             "-p",
             f"127.0.0.1:{kc_poort}:{kc_poort}",
             "-e",
-            f"KEYCLOAK_ADMIN={ADMIN}",
+            f"KC_BOOTSTRAP_ADMIN_USERNAME={ADMIN}",
             "-e",
-            f"KEYCLOAK_ADMIN_PASSWORD={ADMIN}",
+            f"KC_BOOTSTRAP_ADMIN_PASSWORD={ADMIN}",
             "-e",
             f"KC_HTTP_PORT={kc_poort}",
             "-e",
@@ -236,7 +250,7 @@ def harnas() -> Iterator[_Harnas]:
         capture_output=True,
         timeout=120,
     )
-    subprocess.run(["docker", "cp", str(SHIM_JAR), f"{CONTAINER}:/opt/keycloak/providers/shim.jar"], check=True)
+    subprocess.run(["docker", "cp", str(shim_jar), f"{CONTAINER}:/opt/keycloak/providers/shim.jar"], check=True)
     subprocess.run(["docker", "start", CONTAINER], check=True, capture_output=True)
 
     keycloak_url = f"http://localhost:{kc_poort}"
@@ -769,13 +783,14 @@ def test_de_afgebroken_terugreis_is_na_de_shim_niet_te_hervatten(harnas: _Harnas
 
 
 def test_een_realm_binnengaan_met_initiating_idp_vraagt_een_klik(harnas: _Harnas, page: Page) -> None:
-    """De tweede kandidaat, gemeten: hij werkt, maar niet zonder gebruiker.
+    """De tweede kandidaat, gemeten: ook na een klik geen fan-out.
 
-    ``initiating_idp`` laat het realm de brokerstap overslaan en meteen
-    ``finishBrowserLogout`` draaien, dus het pad WORDT gebeld. Alleen staat er eerst een
-    bevestigingsscherm: zonder ``id_token_hint`` blijft ``confirmationNeeded`` waar
-    (``LogoutEndpoint`` 190-294), en een id_token voor een applicatierealm kan ``plat`` niet
-    maken. In een iframe klikt niemand, dus een onzichtbare fan-out is dit niet.
+    Zonder ``id_token_hint`` blijft ``confirmationNeeded`` waar (``LogoutEndpoint``), en een
+    id_token voor een applicatierealm kan ``plat`` niet maken; in een iframe klikt niemand.
+    Tot en met 25 sloeg ``initiating_idp`` na die klik de brokerstap over en werd het pad
+    gebeld. Op 26.8.1 gaat de logout na de klik toch naar de upstream (``/bzk-logout``), het
+    pad blijft weg, en omdat de upstream doodloopt blijft ook de sessie in ``app`` staan.
+    Een onzichtbare fan-out is dit dus nog steeds niet.
     """
     _bouw_realms(harnas, stand="gezet")
     _log_via_de_keten_in(page, harnas, "app")
@@ -794,5 +809,7 @@ def test_een_realm_binnengaan_met_initiating_idp_vraagt_een_klik(harnas: _Harnas
 
     page.click("#kc-logout")
     page.wait_for_load_state("networkidle")
-    assert "/app/logout" in harnas.stub.paden(), f"na de klik bleef de fan-out weg: {harnas.stub.paden()}"
-    assert harnas.sessies("app") == 0
+    paden = harnas.stub.paden()
+    assert "/app/logout" not in paden, f"de fan-out kwam toch, de kandidaat verdient een nieuwe blik: {paden}"
+    assert "/bzk-logout" in paden, paden
+    assert harnas.sessies("app") == 1

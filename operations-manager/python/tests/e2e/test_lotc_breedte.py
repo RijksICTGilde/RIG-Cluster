@@ -16,6 +16,11 @@ zijn: andere binnenmarges, andere randen, een andere zijkolom. Wat deze test moe
 niet een verschil van tientallen pixels maar een blok dat de HELFT van zijn ruimte kwijt is.
 Strakker afstellen levert een test op die bij elke stijlwijziging piept, en zo'n test wordt
 weggeklikt in plaats van gelezen.
+
+De oude weergave (``?layout=roos``) bestaat sinds RC-67 niet meer: beide waarden van die
+parameter gaven dezelfde pagina, en de vergelijking was daarmee altijd 100%. De maat is nu
+de ruimte die de pagina de inhoud geeft: het paneel ``#hoofdpagina`` van de app-shell
+(fbc5a2489). Het blok dat de inhoud draagt hoort daar het grootste deel van te vullen.
 """
 
 from __future__ import annotations
@@ -32,27 +37,25 @@ pytestmark = pytest.mark.e2e
 VENSTER_BREEDTE = 1440
 VENSTER_HOOGTE = 900
 
-# Per pagina: waar je heen gaat, en welk element de inhoud draagt.
+# Per pagina: waar je heen gaat, en welk element de inhoud draagt. ``#hoofdinhoud`` en niet
+# ``main``: de app-shell van NLDD (fbc5a2489) heeft geen <main> meer.
 GEVALLEN = [
     ("/forms/wizard/create-project", "#wizard-step-form"),
-    ("/forms/wizard/start", "main"),
+    ("/forms/wizard/start", "#hoofdinhoud"),
 ]
 
-# Onder deze verhouding tot de oude weergave gaan we ervan uit dat er iets afknijpt.
+#: Het paneel van de app-shell waarin de pagina staat: de ruimte die er is.
+PANEEL = "#hoofdpagina"
+
+# Onder deze verhouding tot het paneel gaan we ervan uit dat er iets afknijpt.
 DREMPEL = 0.75
 
 
-def _breedte(page: Page, app_server: str, pad: str, selector: str, layout: str) -> float:
-    scheider = "&" if "?" in pad else "?"
-    page.goto(f"{app_server}{pad}{scheider}layout={layout}")
-    page.wait_for_load_state("networkidle")
-    # De NLDD-componenten zijn webcomponenten; voor ze door de browser zijn opgebouwd
-    # klopt hun afmeting niet.
-    page.wait_for_function("() => !document.querySelector('*:not(:defined)')", timeout=10000)
+def _breedte(page: Page, selector: str, pad: str) -> float:
     element = page.locator(selector).first
     element.wait_for(state="attached", timeout=10000)
     doos = element.bounding_box()
-    assert doos is not None, f"{selector} heeft geen afmeting op {pad} ({layout})"
+    assert doos is not None, f"{selector} heeft geen afmeting op {pad}"
     return doos["width"]
 
 
@@ -61,11 +64,16 @@ def test_de_nieuwe_weergave_perst_de_inhoud_niet_in_een_smalle_kolom(
     app_server: str, auth_page: Page, pad: str, selector: str
 ) -> None:
     auth_page.set_viewport_size({"width": VENSTER_BREEDTE, "height": VENSTER_HOOGTE})
+    auth_page.goto(f"{app_server}{pad}")
+    auth_page.wait_for_load_state("networkidle")
+    # De NLDD-componenten zijn webcomponenten; voor ze door de browser zijn opgebouwd
+    # klopt hun afmeting niet.
+    auth_page.wait_for_function("() => !document.querySelector('*:not(:defined)')", timeout=10000)
 
-    oud = _breedte(auth_page, app_server, pad, selector, "roos")
-    nieuw = _breedte(auth_page, app_server, pad, selector, "nldd")
+    ruimte = _breedte(auth_page, PANEEL, pad)
+    inhoud = _breedte(auth_page, selector, pad)
 
-    assert nieuw >= oud * DREMPEL, (
-        f"{pad}: {selector} is {nieuw:.0f}px in de nieuwe weergave tegen {oud:.0f}px in de oude "
-        f"({nieuw / oud:.0%}). Zit er een kolom of een max-width omheen die het origineel niet heeft?"
+    assert inhoud >= ruimte * DREMPEL, (
+        f"{pad}: {selector} is {inhoud:.0f}px in een paneel van {ruimte:.0f}px "
+        f"({inhoud / ruimte:.0%}). Zit er een kolom of een max-width omheen?"
     )

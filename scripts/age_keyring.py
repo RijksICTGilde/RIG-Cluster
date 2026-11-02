@@ -28,7 +28,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from key_rotation import public_key_of  # type: ignore[reportMissingImports]
+from key_rotation import public_key_of, require_private_file  # type: ignore[reportMissingImports]
 
 
 class KeyringFailed(RuntimeError):
@@ -57,6 +57,18 @@ def _entries_from_lines(lines: list[str], source: str) -> list[KeyEntry]:
     return found
 
 
+def _entries_from_file(path: Path) -> list[KeyEntry]:
+    """De sleutels in een bestand, met de rechtencontrole zodra er een sleutel in staat.
+
+    De controle hangt aan de inhoud en niet aan de naam, want de keyring globt op `*.txt`:
+    een `security/readme.txt` zonder sleutel is geen sleutelbestand en wordt niet afgewezen.
+    """
+    entries = _entries_from_lines(path.read_text(encoding="utf-8").splitlines(), str(path))
+    if entries:
+        require_private_file(path)
+    return entries
+
+
 def load_keyring(security_dir: Path | None = None) -> list[KeyEntry]:
     """Alle beschikbare sleutels in bronvolgorde, ontdubbeld op de publieke helft.
 
@@ -72,13 +84,13 @@ def load_keyring(security_dir: Path | None = None) -> list[KeyEntry]:
     if env_file:
         path = Path(env_file).expanduser()
         if path.is_file():
-            staged.extend(_entries_from_lines(path.read_text(encoding="utf-8").splitlines(), str(path)))
+            staged.extend(_entries_from_file(path))
     home = Path.home() / ".config" / "sops" / "age" / "keys.txt"
     if home.is_file():
-        staged.extend(_entries_from_lines(home.read_text(encoding="utf-8").splitlines(), str(home)))
+        staged.extend(_entries_from_file(home))
     if security_dir is not None and Path(security_dir).is_dir():
         for path in sorted(Path(security_dir).glob("*.txt")):
-            staged.extend(_entries_from_lines(path.read_text(encoding="utf-8").splitlines(), str(path)))
+            staged.extend(_entries_from_file(path))
 
     seen: dict[str, KeyEntry] = {}
     for entry in staged:

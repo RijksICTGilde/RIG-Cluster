@@ -101,7 +101,7 @@ def test_the_macro_only_shows_the_help_button_when_there_is_help() -> None:
     for rendered in (with_help, without_help):
         assert "Naam" in rendered
         assert "Omschrijving" in rendered
-        assert 'name="lock-closed"' in rendered
+        assert 'icon="lock-closed"' in rendered
 
 
 # ---------------------------------------------------------------------------

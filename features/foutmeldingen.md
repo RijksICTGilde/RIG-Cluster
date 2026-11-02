@@ -178,7 +178,7 @@ Een plek die de regel bewust niet volgt draagt `# foutmelding-gewogen: <reden>` 
 except-blok. Zonder reden telt het teken niet, en een test houdt het aantal op ten hoogste
 twee: een uitzondering die je moet opschrijven blijft zichtbaar, een gat in het model niet.
 Vandaag is er één, in `opi/api/federation_router.py`: de health-check zet de fout van een
-peer naast de url van diezelfde peer, achter de master-sleutel.
+peer naast de url van diezelfde peer, achter het token van een platformbeheerder.
 
 ## Bestanden
 

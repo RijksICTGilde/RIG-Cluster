@@ -28,7 +28,7 @@ Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts
 ### Existing Patterns We Build On
 
 - `CLUSTER_MANAGER` setting -- each OPI manages exactly one cluster (`config.py`)
-- `MASTER_API_KEY` + `validate_master_api_key` -- admin auth already exists (`endpoint_util.py`)
+- `validate_platform_admin_token` -- platform-admin auth already exists (`user_token_auth.py`)
 - `DatabasePool` -- asyncpg connection pool for PostgreSQL (`core/database_pool.py`)
 - `TaskProgressManager` -- in-memory task tracking with subtasks (`core/task_manager.py`)
 - `simple_background.py` -- existing background project processing
@@ -131,7 +131,8 @@ CREATE TABLE IF NOT EXISTS async_tasks (
     created_by VARCHAR(255),
     attempt_count SMALLINT NOT NULL DEFAULT 0,
     max_attempts SMALLINT NOT NULL DEFAULT 3,
-    affects_deployments VARCHAR(63)[]
+    affects_deployments VARCHAR(63)[],
+    details_purged_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_async_tasks_pending
@@ -165,6 +166,10 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
   from `scope_of()`. NULL means project-wide. Claiming compares these scopes for OVERLAP, so a
   project-wide task and a deployment-scoped task of the same project no longer run at the same
   time. Added in migration 005 - see `features/taakscope-en-de-uitrolwacht.md`.
+- **details_purged_at**: Wanneer de werkgegevens van deze rij zijn leeggemaakt; NULL is
+  "nog niet". Geschreven door `cleanup_old_tasks()`, dat er ook op filtert zodat een rij niet
+  elk uur opnieuw wordt herschreven. Toegevoegd in migratie 007, zie
+  [Bewaartermijn](#bewaartermijn-twee-vensters).
 - **cluster column**: Each task records which cluster it targets. Workers only claim tasks matching their own `CLUSTER_MANAGER`. This is also the foundation for federation routing later.
 - **No separate subtasks table**: The subtask count is small enough that a JSONB array is sufficient.
 
@@ -211,7 +216,7 @@ class AsyncTaskStatus(str, Enum):
 | `get_task()` | SELECT by id | Get single task status |
 | `list_tasks()` | SELECT with filters | List tasks filtered by project, deployment, status |
 | `recover_stale_tasks()` | UPDATE WHERE heartbeat stale | Reset tasks from dead workers |
-| `cleanup_old_tasks()` | DELETE WHERE completed > retention | Remove old completed/failed tasks |
+| `cleanup_old_tasks()` | UPDATE werkgegevens leeg, daarna DELETE | Twee vensters, zie [Bewaartermijn](#bewaartermijn-twee-vensters) |
 
 ### Task Claiming (Multi-Instance Safe)
 
@@ -296,7 +301,7 @@ Stale Recovery Loop (every 60s):
     recover_stale_tasks(threshold=120s)
 
 Cleanup Loop (every hour):
-    cleanup_old_tasks(retention=72h)
+    cleanup_old_tasks(retention_hours=1, header_retention_days=90)
 ```
 
 Processes 1 task at a time per worker instance. Scale by adding more worker pods/processes -- they coordinate via `SKIP LOCKED` on the shared database.
@@ -412,7 +417,6 @@ When running in combined mode (worker inside the API server process), the `Persi
 GET  /api/tasks/{task_id}          -- Full status, progress, subtasks, logs
 GET  /api/tasks                    -- List (filters: project_name, deployment_name, status)
 POST /api/tasks/{task_id}/:cancel  -- Cancel pending task
-POST /api/tasks                    -- Create task directly (used by federation, protected by MASTER_API_KEY)
 ```
 
 ### HTTP Status Codes on `GET /api/tasks/{task_id}`
@@ -588,8 +592,45 @@ TASK_WORKER_POLL_INTERVAL: float = 2.0    # Seconds between claim attempts
 TASK_WORKER_HEARTBEAT_INTERVAL: float = 30.0  # Seconds between heartbeat writes
 TASK_WORKER_STALE_THRESHOLD: int = 120    # Seconds before a task is considered abandoned
 TASK_WORKER_MAX_ATTEMPTS: int = 3         # Max retry attempts for failed tasks
-TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 72  # Hours to keep completed/failed tasks
+TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1   # Uren dat de werkgegevens blijven
+TASK_WORKER_HEADER_RETENTION_DAYS: int = 90    # Dagen dat de rij zelf blijft
 ```
+
+### Bewaartermijn: twee vensters
+
+Een taakrij draagt twee soorten gegevens, en die hebben niet dezelfde bewaartermijn.
+
+- De **kop**: type, project, deployment, cluster, `created_by`, status en de tijdstippen.
+  Dit is vandaag de enige persistente vastlegging van wie een projectwijziging startte, want
+  elke git-commit die OPI schrijft draagt het systeemaccount als auteur. Hij blijft
+  `TASK_WORKER_HEADER_RETENTION_DAYS` staan (90 dagen).
+- De **werkgegevens**: `payload`, `logs`, `subtasks`, `events`, `result`,
+  `error_message` en `current_step`. Die kunnen groot zijn en kunnen invoer bevatten die
+  niet lang bewaard hoeft te worden, zoals de doelgegevens van een restore naar een externe
+  database. Ze worden na `TASK_WORKER_CLEANUP_RETENTION_HOURS` leeggemaakt (1 uur), en
+  `details_purged_at` houdt bij dat dat gebeurd is, zodat de lus dezelfde rij niet elk uur
+  herschrijft.
+
+`error_message` staat bij de werkgegevens en niet bij de kop: het is de tekst van de
+exceptie die de handler opgooide, dus wat er in staat is wat de handler aan zijn invoer had.
+Wat de kop over de uitkomst zegt is `status`, en die blijft 90 dagen staan.
+
+`current_step` staat er om dezelfde reden bij: de voortgangsschrijvers zetten er vrije tekst
+in. Een mislukking schrijft sinds RC-282 alleen `Failed` in dat veld, zodat de fouttekst zelf
+er nooit in belandt; de leegmaakpas zet hem daarna op NULL voor de rijen die er al staan.
+
+Een uitgestelde uitrol die nog niet is uitgerold blijft in zijn geheel staan, ongeacht zijn
+leeftijd: wat hem uitgesteld maakt staat in zijn `payload`, dus leegmaken zou hem even goed
+laten verdwijnen als verwijderen. Zie `features/opslaan-zonder-verwerken.md`.
+
+Voor de lezers van zo'n rij betekent dit: het API-antwoord houdt dezelfde sleutels met
+niets erin (`GET /api/tasks/{id}` geeft 200 met de kop), de Taken-tabel leest alleen de kop
+en wordt dus juist vollediger, en de voortgangspagina meldt dat de details niet meer
+beschikbaar zijn in plaats van een geslaagde taak zonder stappen te tonen.
+
+Dit is een tussenstap. De duurzame vastlegging wordt de gebeurtenissentabel uit
+`features/futures/gebeurtenissen-plan-van-aanpak.md`, met zijn eigen retentie- en
+pseudonimiseringsregels; deze twee vensters vervangen die niet.
 
 ### Deployment Configurations
 

@@ -72,14 +72,36 @@ class TestLayersAndPaths:
         ]
         assert [e.yaml_path for e in ALIASES.config_editables(ConfigLayer.COMPONENT)] == ["components[*]/aliases"]
 
-    def test_both_layers_have_a_form_section(self) -> None:
-        assert ENV_VARS.config_form_section(ConfigLayer.COMPONENT) is not None
-        assert ENV_VARS.config_form_section(ConfigLayer.DEPLOYMENT_COMPONENT) is not None
+    def test_form_presence_is_a_declaration_per_service(self) -> None:
+        # Aliassen horen in het algemene formulier: hun waarden zijn verwijzingen, geen
+        # geheimen. user-env-vars heeft juist GEEN sectie meer (RC-388): de waarden
+        # kunnen geheimen bevatten en horen alleen in het eigen step-up-venster. Dat de
+        # afwezigheid een keuze is en geen omissie legt form_exempt_layers vast.
         assert ALIASES.config_form_section(ConfigLayer.COMPONENT) is not None
+        assert ENV_VARS.config_form_section(ConfigLayer.COMPONENT) is None
+        assert ENV_VARS.config_form_section(ConfigLayer.DEPLOYMENT_COMPONENT) is None
+        assert set(ENV_VARS.form_exempt_layers) == {ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT_COMPONENT}
+
+    def test_alleen_de_aanmaakwizard_kent_het_veld(self) -> None:
+        """RC-388: invullen bij aanmaken vraagt geen step-up - er valt nog niets te lezen.
+
+        De create-flow krijgt daarom een eigen componentenstap mét het veld; de bewerk-
+        wizard en de modals delen de kale COMPONENTS_SECTION zonder. Zo blijft "geen
+        env-vars in een algemeen bewerkformulier" toetsbaar in plaats van afgesproken.
+        """
+        from opi.forms.visualizers.flows import CREATE_FLOW, EDIT_FLOW
+        from opi.forms.wizard.secrets import reachable_leaf_keys
+
+        def kent_veld(flow) -> bool:
+            return any("user-env-vars" in reachable_leaf_keys(section.editables) for section in flow.sections)
+
+        assert kent_veld(CREATE_FLOW)
+        assert not kent_veld(EDIT_FLOW)
 
     def test_system_service_fieldsets_are_unconditional(self) -> None:
         # A user service's fieldset hides until the service is ticked; a system service's
-        # must not, or it would never show at all.
+        # must not, or it would never show at all. user-env-vars heeft sinds RC-388 geen
+        # fieldset meer (zie hierboven), dus die levert hier niets op om te toetsen.
         for service in (ENV_VARS, ALIASES):
             for node in service.config_component_layout():
                 assert getattr(node, "depends_on", None) is None

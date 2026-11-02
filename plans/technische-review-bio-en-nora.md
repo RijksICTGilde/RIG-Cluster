@@ -13,6 +13,12 @@ Beoordeel het systeem tegen twee kaders, en beide in díé volgorde:
 
 **Geen algemene checklist afvinken.** Een bevinding die net zo goed over een willekeurig ander systeem had kunnen gaan, is geen bevinding. Wat wij willen weten is waar DIT systeem, met DEZE code, afwijkt van wat die kaders vragen, met de vindplaats erbij.
 
+## BIV-classificatie
+
+De BIV-classificatie staat in `architecture/biv-inventaris.yaml`. Schrijf hem hier niet over. Begin bij de inventaris en weeg je bevinding tegen het BBN dat daar voor dat component staat.
+
+Wijkt je oordeel af van een score, meld welk component, welke as en waarom. Pas de inventaris aan in plaats van een tweede classificatie op te schrijven.
+
 ## Waar je moet kijken, en wat er al bekend is
 
 Dit is geen uitputtende lijst maar een startpunt, zodat je niet opnieuw hoeft te ontdekken wat er staat.

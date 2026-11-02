@@ -62,7 +62,8 @@
       "id": "minio",
       "kind": "s3",
       "services": [
-        "minio-storage"
+        "minio-storage",
+        "seaweedfs-storage"
       ]
     },
     {

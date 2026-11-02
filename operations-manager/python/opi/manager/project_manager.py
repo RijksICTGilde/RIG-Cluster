@@ -30,24 +30,26 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
-from opi.connectors.chisel_connector import ChiselConnector
 from opi.connectors.git import (
     GitConnector,
     create_git_connector_for_argocd,
     create_git_connector_from_repo_config,
 )
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.subdomain import (
     ensure_domain_requests,
     get_supported_base_domains,
     is_deployment_domain_approved,
     validate_bare_domain_allowed,
 )
+from opi.core.actor import get_actor
 from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
     get_ca_certificate_config,
+    get_cluster_cidrs,
+    get_database_operator_namespace,
     get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
     get_ingress_cluster_issuer,
@@ -58,25 +60,32 @@ from opi.core.cluster_config import (
     get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
     get_namespace,
+    get_ops_egress,
+    get_pod_security_labels,
     get_prefixed_namespace,
+    is_reserved_project_name,
+    namespace_labels,
     supports_vpa,
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.task_errors import TaskInputError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
+    CMP_ENV_NAME,
+    CMP_ENV_PLAINTEXT_FILENAME,
     CONFIG_HASH_IGNORE_LABEL_KEY,
     CONFIG_HASH_IGNORE_LABEL_VALUE,
     ManifestGenerator,
+    cmp_env_rejection,
 )
 from opi.handlers.project_file_handler import (
-    COMPONENT_USAGE_WEB_ADDRESS,
     USAGE_CERTIFICATE,
+    ComponentInUseError,
     ProjectFileHandler,
     attachment_usage_sites,
-    component_usage_sites,
     ensure_attachment_data_list,
     extract_attachment_catalog,
     extract_component_attachment_uses,
@@ -84,9 +93,9 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
     image_is_confirmed_absent,
     remove_attachment_references,
-    remove_component_references,
+    remove_component,
 )
-from opi.handlers.sops import SopsHandler
+from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SopsHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
     ARGOCD_HERSTEL_BUDGET_SECONDEN,
@@ -96,6 +105,7 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
+from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -162,6 +172,11 @@ from opi.utils.env_vars import (
     substitute_known_variables,
     substitute_variables,
 )
+from opi.utils.fs_paths import (
+    reject_escaping_symlinks,
+    safe_join,
+    single_segment,
+)
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
@@ -193,12 +208,15 @@ from opi.utils.naming import (
     get_component_ingress_map,
 )
 from opi.utils.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
     ComponentValidationError,
     build_component_config,
+    namespace_level_deployment,
     normalize_container_image,
     project_level_deployment,
     validate_root_component,
 )
+from opi.utils.render_sources import path_inside_clone, require_allowed_render_source
 from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
@@ -227,6 +245,20 @@ if TYPE_CHECKING:
     from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
     from opi.services.catalog.image_registries.rules import ResolvedImage
+
+# Bestandsnamen waar de renderketen zelf betekenis aan geeft: een helmfile-bron die er een
+# van meebrengt, zou de gegenereerde deployment overschrijven.
+HELMFILE_RESERVED_FILENAMES = frozenset(
+    {
+        "kustomization.yaml",
+        "kustomization.yml",
+        "decrypt-sops.yaml",
+        CMP_ENV_PLAINTEXT_FILENAME,
+        ".helmfile-entry",
+        *sops_filenames("values"),
+        *sops_filenames(CMP_ENV_NAME),
+    }
+)
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
@@ -518,6 +550,20 @@ def _looks_like_render_failure(detail: str | None) -> bool:
     return any(marker in lowered for marker in _RENDER_FAILURE_MARKERS)
 
 
+def _clear_destination(path: str) -> None:
+    """Haal `path` weg zodat een kopie die symlinks behoudt er niet op stuit.
+
+    `os.symlink` en een geneste symlink in `copytree` weigeren op een bestaande
+    bestemming, en bij een tweede uitrol staat de vorige ronde er nog.
+    """
+    if not os.path.lexists(path):
+        return
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
+
+
 @dataclass
 class DeploymentResult:
     """Result information for a processed deployment."""
@@ -678,11 +724,13 @@ class ProjectManager:
         from opi.manager.minio_manager import MinioManager
         from opi.manager.pvc_manager import PVCManager
         from opi.manager.redis_manager import RedisManager
+        from opi.manager.seaweedfs_manager import SeaweedfsManager
 
         # DatabaseManager will be lazily initialized on first access
         # This allows us to determine the correct database host based on project services
         self._database_manager: DatabaseManager | None = None
         self._minio_manager = MinioManager(self)
+        self._seaweedfs_manager = SeaweedfsManager(self)
         self._keycloak_manager = KeycloakManager(self)
         self._redis_manager = RedisManager(self)
         self._mail_manager = MailManager(self)
@@ -709,7 +757,7 @@ class ProjectManager:
         if self._database_manager is not None:
             # If we have a cached manager but it was created with placeholder credentials,
             # and now we need real credentials, reinitialize it
-            if not skip_credential_check and self._database_manager._admin_password == "placeholder":
+            if not skip_credential_check and self._database_manager._admin_password == "placeholder":  # noqa: S105  # placeholder tot de echte credentials er zijn, geen secret
                 logger.info(
                     "DatabaseManager was initialized with placeholder credentials, reinitializing with real credentials"
                 )
@@ -741,7 +789,7 @@ class ProjectManager:
                 # During infrastructure creation, credentials don't exist yet
                 # Use placeholder values - they'll be replaced after infrastructure is ready
                 admin_username = "postgres"
-                admin_password = "placeholder"
+                admin_password = "placeholder"  # noqa: S105  # placeholder tot de echte credentials er zijn, geen secret
                 logger.info(
                     f"Initializing DatabaseManager for configuration only (credentials not validated): {db_host}"
                 )
@@ -1147,6 +1195,10 @@ class ProjectManager:
             ServiceType.REDIS: "redis",
             ServiceType.NAMESPACE_REDIS: "redis",
             ServiceType.MINIO_STORAGE: "minio",
+            # seaweedfs-storage hergebruikt MinIOVariables, dus dezelfde collapse als
+            # redis/postgresql: anders routeert een OBJECT_STORE_*-alias naar een bucket
+            # die geen enkel project consumeert en verdwijnt hij stil uit het secret.
+            ServiceType.SEAWEEDFS_STORAGE: "minio",
             ServiceType.KEYCLOAK: "keycloak",
             ServiceType.PUBLISH_ON_WEB: "web",
             ServiceType.PERSISTENT_STORAGE: "storage",
@@ -1515,7 +1567,7 @@ class ProjectManager:
         Renders the waker Deployment + ConfigMap and its SOPS token Secret behind the
         component's Service (same ``app`` label, ``zad-role: waker``) when the deployment
         is asleep/waking and this is the chosen waker component. The token comes from the
-        deployment's own ``sleep.wake-token`` (minted by the sweeper). All files go into
+        deployment's own ``sleep.wake-token`` (minted on its first sleep). All files go into
         ``created_files`` so the obsolete-manifest prune removes them once awake.
 
         ``service_port`` is what this component's Service targets -- the value the caller
@@ -1948,6 +2000,7 @@ class ProjectManager:
         refresh_cache: bool = True,
         enforce_validation: bool = True,
         base: dict[str, Any] | None = None,
+        approval_decision: bool = False,
     ) -> None:
         """The ONLY validated way to persist a mutated project file.
 
@@ -1977,6 +2030,9 @@ class ProjectManager:
         silently dropping whatever landed in between. Passing the version the form was
         rendered from restores the compare-and-swap, so the store merges the two
         changes instead of overwriting one.
+
+        approval_decision: mark this save as an approver's decision; only the approval route
+        sets True, and it is the one write that may set status to ``approved`` / ``denied``.
         """
         filename = (
             os.path.basename(self._project_file_relative_path)
@@ -1997,11 +2053,12 @@ class ProjectManager:
             str(project_data.get("name")),
             project_data,
             message=commit_message,
-            actor="operations-manager",
+            actor=get_actor(),
             enforce_validation=enforce_validation,
             filename=filename,
             refresh_cache=refresh_cache,
             base=base if base is not None else self.__contents_as_read,
+            approval_decision=approval_decision,
         )
 
         # This manager now knows the current state, so a second save from the same
@@ -2047,7 +2104,7 @@ class ProjectManager:
             name,
             mutator,
             message=commit_message,
-            actor="operations-manager",
+            actor=get_actor(),
             enforce_validation=enforce_validation,
             filename=filename,
         )
@@ -2057,7 +2114,7 @@ class ProjectManager:
         self,
         deployment_name: str | None = None,
         deployment_names: list[str] | None = None,
-        known_namespace_labels: dict[str, str] | None = None,
+        known_namespace_labels: dict[str, dict[str, str]] | None = None,
     ) -> bool:
         """
         Check and create namespaces for all deployments in the project for this cluster.
@@ -2066,11 +2123,11 @@ class ProjectManager:
             deployment_name: Optional single deployment to process
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``)
-            known_namespace_labels: namespace -> argocd managed-by value, as read in one
-                call by the caller. Given this, an existing namespace with the right
-                label costs no kubectl invocation at all. Startup passes it because it
-                walks every project; per-request callers leave it None and each check
-                talks to the cluster, which is what you want for a single deployment.
+            known_namespace_labels: namespace -> its labels, as read in one call by the
+                caller. Given this, an existing namespace with the right labels costs no
+                kubectl invocation at all. Startup passes it because it walks every
+                project; per-request callers leave it None and each check talks to the
+                cluster, which is what you want for a single deployment.
 
         Returns:
             True if all namespaces were checked/created successfully
@@ -2108,7 +2165,7 @@ class ProjectManager:
             namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast("str", deployment["namespace"]))
             namespaces.setdefault(namespace, []).append(cast("str", deployment["name"]))
 
-        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
+        wanted_labels = namespace_labels(settings.CLUSTER_MANAGER)
 
         for namespace, deployment_list in namespaces.items():
             logger.info(
@@ -2117,10 +2174,11 @@ class ProjectManager:
 
             if known_namespace_labels is not None:
                 namespace_exists = namespace in known_namespace_labels
-                label_is_correct = known_namespace_labels.get(namespace) == manager_value
+                present = known_namespace_labels.get(namespace, {})
+                labels_are_correct = all(present.get(key) == value for key, value in wanted_labels.items())
             else:
                 namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
-                label_is_correct = False  # unknown, so apply it as before
+                labels_are_correct = False  # unknown, so apply them as before
 
             if namespace_exists:
                 logger.info(f"Namespace '{namespace}' already exists for project '{project_data['name']}'")
@@ -2128,11 +2186,11 @@ class ProjectManager:
                 logger.info(f"Creating namespace '{namespace}' for project '{project_data['name']}':")
                 # Create the namespace using shared function
                 await self._create_namespace_with_argocd_label(namespace)
-                label_is_correct = True  # applied as part of creation
+                labels_are_correct = True  # applied as part of creation
 
-            # Idempotent, but not free: skip it when we already read the right value.
-            if not label_is_correct:
-                await self._ensure_argocd_managed_by_label(namespace)
+            # Idempotent, but not free: skip it when we already read the right values.
+            if not labels_are_correct:
+                await self._ensure_namespace_labels(namespace)
 
             if progress_manager:
                 progress_manager.set_namespace(namespace)
@@ -2166,7 +2224,11 @@ class ProjectManager:
         manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
 
         # Template variables
-        variables = {"namespace": namespace, "manager": get_argo_namespace(settings.CLUSTER_MANAGER)}
+        variables = {
+            "namespace": namespace,
+            "manager": get_argo_namespace(settings.CLUSTER_MANAGER),
+            "pod_security_labels": get_pod_security_labels(settings.CLUSTER_MANAGER),
+        }
 
         await self._kubectl_connector.apply_manifest(manifest_path, variables)
 
@@ -2182,48 +2244,24 @@ class ProjectManager:
                     "Cannot proceed with namespace configuration."
                 )
 
-        # Apply the argocd.argoproj.io/managed-by label after creating the namespace
-        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
-        label_result = await self._kubectl_connector.apply_label_to_resource(
+        # Nog een keer labelen na het aanmaken: het manifest zet ze al, maar op een cluster
+        # met Capsule komt dit pas langs nadat de tenantlabel-wacht klaar is.
+        await self._ensure_namespace_labels(namespace)
+
+        logger.info(f"Successfully created namespace '{namespace}' with the managed-by and Pod Security labels")
+
+    async def _ensure_namespace_labels(self, namespace: str) -> None:
+        """Ensure the managed-by and Pod Security labels exist on this namespace (idempotent)."""
+        label_result = await self._kubectl_connector.apply_labels_to_resource(
             resource_type="namespace",
             resource_name=namespace,
-            label_key="argocd.argoproj.io/managed-by",
-            label_value=manager_value,
-        )
-
-        if not label_result:
-            raise RuntimeError(
-                f"Failed to apply ArgoCD managed-by label to namespace '{namespace}'. "
-                "ArgoCD will not be able to manage resources in this namespace."
-            )
-
-        logger.info(f"Successfully created namespace '{namespace}' with ArgoCD managed-by label")
-
-    async def _ensure_argocd_managed_by_label(self, namespace: str) -> None:
-        """
-        Ensure the ArgoCD managed-by label exists on a namespace (idempotent).
-
-        This applies the label regardless of whether it already exists,
-        ensuring namespaces are always properly configured for ArgoCD management.
-
-        Args:
-            namespace: Full namespace name (with cluster prefix already applied)
-
-        Raises:
-            RuntimeError: If the label cannot be applied
-        """
-        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
-        label_result = await self._kubectl_connector.apply_label_to_resource(
-            resource_type="namespace",
-            resource_name=namespace,
-            label_key="argocd.argoproj.io/managed-by",
-            label_value=manager_value,
+            labels=namespace_labels(settings.CLUSTER_MANAGER),
         )
         if label_result:
-            logger.info(f"Ensured ArgoCD managed-by label on namespace: {namespace}")
+            logger.info(f"Ensured ArgoCD managed-by and Pod Security labels on namespace: {namespace}")
         else:
             raise RuntimeError(
-                f"Failed to apply ArgoCD managed-by label to namespace '{namespace}'. "
+                f"Failed to apply the managed-by and Pod Security labels to namespace '{namespace}'. "
                 "ArgoCD will not be able to manage resources in this namespace."
             )
 
@@ -2290,6 +2328,14 @@ class ProjectManager:
                     )
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
+            # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
+            # hem niet, en dan rendert ArgoCD dit project niet meer.
+            try:
+                await self._sops_handler.ensure_cmp_key_reader(namespace)
+            except KubectlExecutionError as e:
+                raise RuntimeError(
+                    f"Failed to apply the CMP key reader role ({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {e}"
+                ) from e
 
     @staticmethod
     async def _test_infrastructure_database_connection(username: str, password: str, host: str) -> tuple[bool, str]:
@@ -2383,8 +2429,8 @@ class ProjectManager:
                     f"Infrastructure namespace '{infrastructure_namespace}' already exists for project '{project_name}'"
                 )
 
-            # Always ensure ArgoCD managed-by label exists (idempotent)
-            await self._ensure_argocd_managed_by_label(infrastructure_namespace)
+            # Always ensure the managed-by and Pod Security labels exist (idempotent)
+            await self._ensure_namespace_labels(infrastructure_namespace)
 
             # Create SOPS secret in the infrastructure namespace (using shared function)
             await self._ensure_sops_secret_in_namespace(infrastructure_namespace, project_data)
@@ -2665,6 +2711,8 @@ class ProjectManager:
                     "ops_namespace": get_namespace(cluster_name),
                     "backup_namespace": get_backup_namespace(cluster_name),
                     "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                    "ops_egress": get_ops_egress(cluster_name),
+                    "cluster_cidrs": get_cluster_cidrs(cluster_name),
                     # The CNPG operator (in its own namespace) must reach the
                     # dedicated cluster's pods to extract instance status, or the
                     # Cluster never becomes Ready. The DB subsystem owns which
@@ -2773,16 +2821,7 @@ class ProjectManager:
             logger.info(
                 f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
             )
-            from opi.connectors.argo import ArgoConnector
-
-            argo_connector = ArgoConnector(
-                server_host=settings.ARGOCD_HOST,
-                server_port=settings.ARGOCD_PORT,
-                username=settings.ARGOCD_USERNAME,
-                password=settings.ARGOCD_PASSWORD,
-                use_tls=settings.ARGOCD_USE_TLS,
-                verify_ssl=settings.ARGOCD_VERIFY_SSL,
-            )
+            argo_connector = create_argo_connector()
 
             if not await argo_connector.login():
                 raise RuntimeError("Failed to login to ArgoCD")
@@ -3113,6 +3152,7 @@ class ProjectManager:
         force_reenable: bool = True,
         wait_for_healthy: bool = True,
         reset_running_sync: bool = False,
+        rotate_credentials: frozenset[str] = frozenset(),
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -3142,6 +3182,8 @@ class ProjectManager:
                 Application CR is not yet present), so this flag no longer controls
                 it. Redeploys of existing apps skip the expensive umbrella refresh
                 regardless of this value.
+            rotate_credentials: Diensten waarvan het geheim deze ronde vervangen wordt in
+                plaats van hergebruikt (zie ``opi.services.credential_rotation``)
             wait_for_healthy: Wait for each application to become Synced + Healthy.
                 Pass False when the deployment this run produces cannot become Healthy
                 by design (sleep-mode's waking state), so the wait would only ever end
@@ -3199,6 +3241,13 @@ class ProjectManager:
                 # migrate cleanly would be written to zad-projects with our ops-
                 # manager identity *before* validation rejected it. Fails closed.
                 validate_project_schema(current_yaml)
+
+                # Een projectbestand dat hier voor het eerst opduikt is een create, ook
+                # als het rechtstreeks naar zad-projects is gecommit.
+                if analysis["previous_yaml"] is None and is_reserved_project_name(str(current_yaml.get("name", ""))):
+                    raise ProjectIntegrityError(
+                        RESERVED_PROJECT_NAME_MESSAGE.format(name=current_yaml.get("name", "(onbekend)"))
+                    )
             except Exception as e:
                 self._end_step(read_step, str(e))
                 raise
@@ -3350,6 +3399,7 @@ class ProjectManager:
                     deployment_names=targets,
                     force_reenable=force_reenable,
                     reset_running_sync=reset_running_sync,
+                    rotate_credentials=rotate_credentials,
                 )
             except Exception as e:
                 self._end_step(process_step, str(e))
@@ -4314,18 +4364,29 @@ class ProjectManager:
 
         logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
 
+        # Voor alle drie de soorten deployments, want juist een helm- of helmfile-pod
+        # draagt geen deployment-label en viel tot nu toe buiten elk beleid.
+        namespace_policy_files = self._emit_namespace_network_policies(
+            project_data=project_data,
+            project_name=project_name,
+            deployment=deployment,
+            cluster_name=cluster_name,
+            namespace=prefixed_namespace,
+            output_dir=target_path,
+        )
+
         # Check if this is a helmfile deployment, helm chart deployment, or component deployment
         if self._deployment_uses_helmfile(deployment):
             # Process helmfile deployment (ArgoCD CMP runs helmfile template)
             logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
-            await self._process_helmfile_deployment(deployment, git_connector, target_path)
+            await self._process_helmfile_deployment(deployment, git_connector, target_path, namespace_policy_files)
             # Note: SOPS encryption is handled inside _process_helmfile_deployment
             return
 
         if self._deployment_uses_helm_charts(deployment):
             # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
             logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
-            await self._process_helm_chart_deployment(deployment, git_connector, target_path)
+            await self._process_helm_chart_deployment(deployment, git_connector, target_path, namespace_policy_files)
             # Note: SOPS encryption is handled inside _process_helm_chart_deployment
             return
 
@@ -4342,6 +4403,9 @@ class ProjectManager:
             # Rollback subdomain registration if manifest creation fails
             await self._rollback_subdomain_if_needed()
             raise
+
+        # Hoort bij de gewenste staat van deze map, dus de prunes hieronder laten ze staan.
+        created_files.extend(namespace_policy_files)
 
         # Note: SSO and user secrets are already created in create_application_manifests above
 
@@ -4626,6 +4690,8 @@ class ProjectManager:
         if not chart_name:
             raise ValueError("Helm chart missing required 'name' field")
 
+        require_allowed_render_source(git_url, f"helm chart '{chart_name}'")
+
         logger.info(f"Cloning helm chart '{chart_name}' from {git_url}#{git_ref}")
 
         # Create a temporary git connector to clone the chart repo
@@ -4647,20 +4713,22 @@ class ProjectManager:
             await git_connector.clone()
 
             # Get the chart source path
-            source_chart_path = os.path.join(temp_dir, chart_path)
+            source_chart_path = path_inside_clone(temp_dir, chart_path, f"helm chart '{chart_name}'")
 
             if not os.path.exists(source_chart_path):
                 raise FileNotFoundError(f"Chart path not found: {chart_path} in {git_url}")
+
+            reject_escaping_symlinks(source_chart_path)
 
             # Create charts directory in target
             charts_dir = os.path.join(target_dir, "charts")
             os.makedirs(charts_dir, exist_ok=True)
 
             # Copy chart to target directory
-            dest_chart_path = os.path.join(charts_dir, chart_name)
+            dest_chart_path = safe_join(charts_dir, single_segment(chart_name, "helm-charts[].name"))
             if os.path.exists(dest_chart_path):
                 await asyncio.to_thread(shutil.rmtree, dest_chart_path)
-            await asyncio.to_thread(shutil.copytree, source_chart_path, dest_chart_path)
+            await asyncio.to_thread(shutil.copytree, source_chart_path, dest_chart_path, symlinks=True)
 
             logger.info(f"Copied helm chart '{chart_name}' to {dest_chart_path}")
 
@@ -4679,13 +4747,18 @@ class ProjectManager:
                     # Handle local file:// dependencies
                     if dep_repo.startswith("file://"):
                         rel_path = dep_repo.replace("file://", "")
-                        dep_source = os.path.join(temp_dir, chart_path, rel_path)
+                        dep_source = path_inside_clone(
+                            temp_dir,
+                            os.path.join(chart_path, rel_path),
+                            f"dependency '{dep_name}' of helm chart '{chart_name}'",
+                        )
 
                         if os.path.exists(dep_source):
-                            dep_dest = os.path.join(charts_dir, dep_name)
+                            reject_escaping_symlinks(dep_source)
+                            dep_dest = safe_join(charts_dir, single_segment(dep_name, "Chart.yaml dependencies[].name"))
                             if os.path.exists(dep_dest):
                                 await asyncio.to_thread(shutil.rmtree, dep_dest)
-                            await asyncio.to_thread(shutil.copytree, dep_source, dep_dest)
+                            await asyncio.to_thread(shutil.copytree, dep_source, dep_dest, symlinks=True)
 
                             # Update the dependency path in Chart.yaml
                             dep["repository"] = f"file://../{dep_name}"
@@ -4699,11 +4772,115 @@ class ProjectManager:
 
         return dest_chart_path
 
+    def _emit_acme_network_policy(
+        self,
+        *,
+        deployment_name: str,
+        namespace: str,
+        cluster_name: str,
+        output_dir: str,
+    ) -> str:
+        """NetworkPolicy voor de HTTP-01-solver van cert-manager op poort 8089 vanaf de router."""
+        template_path = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja")
+        manifest_name = generate_network_policy_manifest_name("acme-http", deployment_name)
+        path = self._manifest_generator.create_manifest_file(
+            template_path=template_path,
+            values={
+                "name": generate_network_policy_name("acme-http", deployment_name),
+                "namespace": namespace,
+                "pod_selector": 'acme.cert-manager.io/http01-solver: "true"',
+                "from_selector": get_ingress_controller_selector(cluster_name),
+                "ports": [8089],
+            },
+            output_dir=output_dir,
+            output_filename=manifest_name,
+            use_sops=False,
+        )
+        logger.info(f"Created ACME HTTP-01 solver network policy: {path}")
+        return f"{manifest_name}.yaml"
+
+    def _emit_namespace_network_policies(
+        self,
+        *,
+        project_data: dict[str, Any],
+        project_name: str,
+        deployment: dict[str, Any],
+        cluster_name: str,
+        namespace: str,
+        output_dir: str,
+    ) -> list[str]:
+        """Create or clean up namespace-level NetworkPolicies (default-deny, unlabeled-baseline, dedicated-database)."""
+        default_deny_name = generate_network_policy_manifest_name("default-deny")
+        unlabeled_name = generate_network_policy_manifest_name("unlabeled-baseline")
+        database_name = generate_network_policy_manifest_name("dedicated-database")
+
+        owner = namespace_level_deployment(project_data.get("deployments", []), cluster_name, deployment["namespace"])
+        if owner is None or owner["name"] != deployment["name"]:
+            for filename in (default_deny_name, unlabeled_name, database_name):
+                stale = os.path.join(output_dir, f"{filename}.yaml")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                    logger.info(f"Removed namespace network policy '{filename}' from non-owner '{deployment['name']}'")
+            return []
+
+        os.makedirs(output_dir, exist_ok=True)
+        template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
+        baseline_values = {
+            "name": generate_network_policy_name("unlabeled-baseline"),
+            "namespace": namespace,
+            # Geen deployment_selector maar de tegenhanger ervan: precies de pods die
+            # het label niet dragen, met dezelfde rechten als een deployment.
+            "deployment_selector": None,
+            "unlabeled_selector": True,
+            "ops_namespace": get_namespace(cluster_name),
+            "backup_namespace": get_backup_namespace(cluster_name),
+            "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+            "ops_egress": get_ops_egress(cluster_name),
+            "cluster_cidrs": get_cluster_cidrs(cluster_name),
+            # De operator komt bij het databasecluster via de policy hieronder, niet via
+            # de baseline: hij hoeft de helm-pods in deze namespace niet te bereiken.
+            "database_operator_namespace": None,
+            "project_infra_namespace": get_infrastructure_namespace(cluster_name, project_name),
+        }
+        specs = (
+            (
+                default_deny_name,
+                "default-deny-network-policy.yaml.jinja",
+                {"name": generate_network_policy_name("default-deny"), "namespace": namespace},
+            ),
+            (unlabeled_name, "tenant-baseline-network-policy.yaml.jinja", baseline_values),
+            (
+                database_name,
+                "dedicated-database-network-policy.yaml.jinja",
+                {
+                    "name": generate_network_policy_name("dedicated-database"),
+                    "namespace": namespace,
+                    "database_operator_namespace": get_database_operator_namespace(cluster_name),
+                },
+            ),
+        )
+        created_files = []
+        for filename, template_name, values in specs:
+            self._manifest_generator.create_manifest_file(
+                template_path=os.path.join(template_dir, template_name),
+                values=values,
+                output_dir=output_dir,
+                output_filename=filename,
+                use_sops=False,
+            )
+            created_files.append(f"{filename}.yaml")
+        logger.info(
+            f"Created namespace network policies for '{namespace}' "
+            f"(owner deployment '{deployment['name']}'): {', '.join(created_files)}"
+        )
+        return created_files
+
     async def _process_helm_chart_deployment(
         self,
         deployment: dict[str, Any],
         git_connector: GitConnector,
         target_path: str,
+        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """
         Process a deployment that uses helm-charts instead of components.
@@ -4807,8 +4984,11 @@ class ProjectManager:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helm deployment")
 
+        # De namespace-brede policies staan al op schijf; ze moeten alleen nog in de
+        # kustomization, want die wordt hier uit een lijst gebouwd en niet uit een scan.
+        regular_files: list[str] = list(namespace_policy_files or [])
+
         # Create Let's Encrypt Issuer manifest if configured
-        regular_files: list[str] = []
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
@@ -4850,29 +5030,14 @@ class ProjectManager:
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
                 logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
-                # Create network policy for ACME HTTP-01 challenge.
-                # cert-manager's HTTP-01 solver pod listens on 8089 (the router
-                # forwards the challenge to the pod on 8089, not 80), so the
-                # solver port must be allowed or the self-check times out.
-                network_policy_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                regular_files.append(
+                    self._emit_acme_network_policy(
+                        deployment_name=deployment_name,
+                        namespace=prefixed_namespace,
+                        cluster_name=cluster_name,
+                        output_dir=target_path,
+                    )
                 )
-                network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
-                network_policy_variables = {
-                    "name": generate_network_policy_name("acme-http", deployment_name),
-                    "namespace": prefixed_namespace,
-                    "pod_selector": None,  # Match all pods
-                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
-                }
-                network_policy_path = self._manifest_generator.create_manifest_file(
-                    template_path=network_policy_template_path,
-                    values=network_policy_variables,
-                    output_dir=target_path,
-                    output_filename=network_policy_filename,
-                    use_sops=False,
-                )
-                regular_files.append(f"{network_policy_filename}.yaml")
-                logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
             else:
                 logger.warning(
                     f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
@@ -4965,6 +5130,13 @@ class ProjectManager:
                 logger.warning(f"Skipping file '{filename}': path traversal not allowed")
                 continue
 
+            reserved = [part for part in filename.split("/") if part in HELMFILE_RESERVED_FILENAMES]
+            if reserved:
+                raise ValueError(
+                    f"Bestand '{filename}' mag niet: '{reserved[0]}' is voorbehouden aan de renderketen "
+                    "en zou de gegenereerde deployment overschrijven."
+                )
+
             file_path = os.path.join(target_path, filename)
 
             # Create parent directories if needed
@@ -5007,6 +5179,8 @@ class ProjectManager:
         if not source_url:
             raise ValueError(f"Helmfile '{helmfile_name}' missing required 'url' field")
 
+        require_allowed_render_source(source_url, f"helmfile '{helmfile_name}'")
+
         # Create a temporary directory for cloning the source
         with tempfile.TemporaryDirectory() as temp_dir:
             git_connector = GitConnector(
@@ -5017,15 +5191,17 @@ class ProjectManager:
             await git_connector.clone()
 
             # Determine source path within the cloned repo
-            full_source_path = os.path.join(temp_dir, source_path) if source_path else temp_dir
+            full_source_path = path_inside_clone(temp_dir, source_path, f"helmfile '{helmfile_name}'")
 
             if not os.path.exists(full_source_path):
                 await git_connector.close()
                 raise ValueError(f"Helmfile path '{source_path}' not found in repository for '{helmfile_name}'")
 
+            reject_escaping_symlinks(full_source_path)
+
             # If entry is specified, verify it exists within the source path
             if entry_path:
-                full_entry_path = os.path.join(full_source_path, entry_path)
+                full_entry_path = path_inside_clone(full_source_path, entry_path, f"helmfile '{helmfile_name}'")
                 if not os.path.exists(full_entry_path):
                     await git_connector.close()
                     raise ValueError(
@@ -5044,10 +5220,11 @@ class ProjectManager:
                     continue
                 src_item = os.path.join(full_source_path, item)
                 dst_item = os.path.join(dest_helmfile_path, item)
-                if os.path.isdir(src_item):
-                    await asyncio.to_thread(shutil.copytree, src_item, dst_item, dirs_exist_ok=True)
+                await asyncio.to_thread(_clear_destination, dst_item)
+                if os.path.isdir(src_item) and not os.path.islink(src_item):
+                    await asyncio.to_thread(shutil.copytree, src_item, dst_item, symlinks=True)
                 else:
-                    await asyncio.to_thread(shutil.copy2, src_item, dst_item)
+                    await asyncio.to_thread(shutil.copy2, src_item, dst_item, follow_symlinks=False)
 
             logger.info(f"Copied helmfile source from {full_source_path} to {dest_helmfile_path}")
             if entry_path:
@@ -5062,6 +5239,7 @@ class ProjectManager:
         deployment: dict[str, Any],
         git_connector: GitConnector,
         target_path: str,
+        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """
         Process a deployment that uses helmfile instead of components or helm-charts.
@@ -5140,9 +5318,13 @@ class ProjectManager:
                     f.write(entry_path)
                 logger.info(f"Created helmfile entry config: {helmfile_config_path} -> {entry_path}")
 
-            # Write .cmp-env file with environment variables for the CMP
-            cmp_env_path = os.path.join(target_path, ".cmp-env")
-            cmp_env_vars: list[str] = []
+            # De env-vars voor de CMP gaan als SOPS-bestand naar git; de plugin
+            # ontsleutelt ze met de projectsleutel en leest ze daarna als KEY=waarde.
+            cmp_env_names = sops_filenames(CMP_ENV_NAME)
+            cmp_env_to_sops_path = os.path.join(target_path, cmp_env_names.plaintext)
+            cmp_env_sops_path = os.path.join(target_path, cmp_env_names.encrypted)
+            cmp_env_plaintext_path = os.path.join(target_path, CMP_ENV_PLAINTEXT_FILENAME)
+            cmp_env_vars: dict[str, str] = {}
 
             # Add env-vars from the deployment's helmfile reference
             # These can be plain text or AGE-encrypted values
@@ -5161,15 +5343,39 @@ class ProjectManager:
                                 f"Helmfile deployment {deployment_name} has AGE-encrypted env var "
                                 f"'{key}' but no project age-private-key is configured"
                             )
-                        decrypted_value = await decrypt_age_content(value, env_private_key)
-                        cmp_env_vars.append(f"{key}={decrypted_value}")
+                        plain_value = await decrypt_age_content(value, env_private_key)
                     else:
-                        cmp_env_vars.append(f"{key}={value}")
+                        plain_value = str(value)
+
+                    # De plugin leest de env-vars als regels KEY=waarde en weigert hetzelfde.
+                    # Toetsen gebeurt na ontsleuteling: alleen daar is te zien wat de
+                    # plugin uiteindelijk voor zich krijgt.
+                    rejection = cmp_env_rejection(key, plain_value)
+                    if rejection:
+                        raise ValueError(
+                            f"Helmfile deployment {deployment_name} cannot pass this env var to the CMP: {rejection}"
+                        )
+                    cmp_env_vars[key] = plain_value
 
             if cmp_env_vars:
-                with open(cmp_env_path, "w") as f:
-                    f.write("\n".join(cmp_env_vars) + "\n")
-                logger.info(f"Created CMP environment file: {cmp_env_path}")
+                # Vaste sleutelvolgorde, zodat de skip-if-unchanged van SOPS een
+                # ongewijzigde map ook echt als ongewijzigd ziet.
+                cmp_env_writer = YAML()
+                cmp_env_writer.default_flow_style = False
+                # Zonder deze breedte vouwt de emitter een lange waarde over regels, en
+                # vouwen trekt een reeks spaties samen: het secret komt gewijzigd terug.
+                cmp_env_writer.width = 10**9
+                with open(cmp_env_to_sops_path, "w") as f:
+                    cmp_env_writer.dump({key: cmp_env_vars[key] for key in sorted(cmp_env_vars)}, f)
+                logger.info(f"Created CMP environment file (to be encrypted): {cmp_env_to_sops_path}")
+            elif os.path.exists(cmp_env_sops_path):
+                # Weggehaalde env-vars moeten ook uit de render verdwijnen.
+                os.remove(cmp_env_sops_path)
+                logger.info(f"Removed CMP environment file, deployment has no env-vars: {cmp_env_sops_path}")
+
+            if os.path.exists(cmp_env_plaintext_path):
+                os.remove(cmp_env_plaintext_path)
+                logger.info(f"Removed plain-text CMP environment file: {cmp_env_plaintext_path}")
 
             # Extract base helm-values from helmfile definition
             base_values = await self._project_file_handler.extract_helmfile_values(project_data, helmfile_reference)
@@ -5224,8 +5430,11 @@ class ProjectManager:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helmfile deployment")
 
+        # De namespace-brede policies staan al op schijf; ze moeten alleen nog in de
+        # kustomization, want die wordt hier uit een lijst gebouwd en niet uit een scan.
+        regular_files: list[str] = list(namespace_policy_files or [])
+
         # Create Let's Encrypt Issuer manifest if configured
-        regular_files: list[str] = []
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
@@ -5264,26 +5473,14 @@ class ProjectManager:
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
                 logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
-                # Create network policy for ACME HTTP-01 challenge
-                network_policy_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                regular_files.append(
+                    self._emit_acme_network_policy(
+                        deployment_name=deployment_name,
+                        namespace=prefixed_namespace,
+                        cluster_name=cluster_name,
+                        output_dir=target_path,
+                    )
                 )
-                network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
-                network_policy_variables = {
-                    "name": generate_network_policy_name("acme-http", deployment_name),
-                    "namespace": prefixed_namespace,
-                    "pod_selector": None,
-                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
-                }
-                network_policy_path = self._manifest_generator.create_manifest_file(
-                    template_path=network_policy_template_path,
-                    values=network_policy_variables,
-                    output_dir=target_path,
-                    output_filename=network_policy_filename,
-                    use_sops=False,
-                )
-                regular_files.append(f"{network_policy_filename}.yaml")
-                logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
             else:
                 logger.warning(f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured")
 
@@ -5520,6 +5717,7 @@ class ProjectManager:
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
         reset_running_sync: bool = False,
+        rotate_credentials: frozenset[str] = frozenset(),
     ) -> bool:
         """
         Process the project file and create all required resources.
@@ -5531,6 +5729,8 @@ class ProjectManager:
                 (takes precedence over ``deployment_name``; empty list = none)
             reset_running_sync: Break off a sync that is still running, however young.
                 Komt van een refresh; zie ``_clear_blocking_sync_operations``.
+            rotate_credentials: Diensten waarvan het geheim deze ronde vervangen wordt in
+                plaats van hergebruikt (zie ``opi.services.credential_rotation``)
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -5700,10 +5900,12 @@ class ProjectManager:
                         force_clone=force_clone,
                         database_manager=db_manager,
                         minio_manager=self._minio_manager,
+                        seaweedfs_manager=self._seaweedfs_manager,
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
                         mail_manager=self._mail_manager,
                         clone_interrupted=current_deployment_name in interrupted_clones,
+                        rotate_credentials=rotate_credentials,
                     )
                     for provider in provisioning_services():
                         await provider.provision(provision_ctx)
@@ -7155,29 +7357,14 @@ class ProjectManager:
                             f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
                         )
 
-                        # Create network policy for ACME HTTP-01 challenge.
-                        # cert-manager's HTTP-01 solver pod listens on 8089 (the router
-                        # forwards the challenge to the pod on 8089, not 80), so the
-                        # solver port must be allowed or the self-check times out.
-                        network_policy_template_path = os.path.join(
-                            os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                        created_files.append(
+                            self._emit_acme_network_policy(
+                                deployment_name=deployment_name,
+                                namespace=namespace,
+                                cluster_name=cluster,
+                                output_dir=full_output_dir,
+                            )
                         )
-                        network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
-                        network_policy_variables = {
-                            "name": generate_network_policy_name("acme-http", deployment_name),
-                            "namespace": namespace,
-                            "pod_selector": None,  # Match all pods
-                            "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
-                        }
-                        network_policy_path = self._manifest_generator.create_manifest_file(
-                            template_path=network_policy_template_path,
-                            values=network_policy_variables,
-                            output_dir=full_output_dir,
-                            output_filename=network_policy_filename,
-                            use_sops=False,
-                        )
-                        created_files.append(f"{network_policy_filename}.yaml")
-                        logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
                     else:
                         logger.warning(
                             f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
@@ -7205,9 +7392,9 @@ class ProjectManager:
         # Emit one tenant-baseline NetworkPolicy per deployment after all
         # components have been processed. The policy selects pods by the
         # `deployment: <name>` label (added in deployment.yaml.jinja), so
-        # multiple components of the same deployment share one policy and
-        # helm/helmfile pods are left unselected (default-allow remains the
-        # status quo for those until a separate baseline is added).
+        # multiple components of the same deployment share one policy, while
+        # unlabeled pods (helm, helmfile, backup/restore) are covered by the
+        # namespace-level baseline policy.
         if target_dir:
             deployment_output_dir = os.path.join(working_dir, target_dir)
         else:
@@ -7225,6 +7412,8 @@ class ProjectManager:
             "ops_namespace": get_namespace(cluster),
             "backup_namespace": get_backup_namespace(cluster),
             "ingress_controller_selector": get_ingress_controller_selector(cluster),
+            "ops_egress": get_ops_egress(cluster),
+            "cluster_cidrs": get_cluster_cidrs(cluster),
             # A regular app namespace hosts no CNPG cluster, so the operator does
             # not need ingress here (only the infrastructure namespace does).
             "database_operator_namespace": None,
@@ -7541,6 +7730,8 @@ class ProjectManager:
         domain_format: str | None = None,
         subdomain: str | None = None,
         base_domain: str | None = None,
+        environment: str | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """Create or update a deployment, retrying a concurrent-edit conflict.
 
@@ -7562,6 +7753,8 @@ class ProjectManager:
                     domain_format=domain_format,
                     subdomain=subdomain,
                     base_domain=base_domain,
+                    environment=environment,
+                    actor=actor,
                 )
             except (ConflictError, ConcurrencyError) as e:
                 if attempt == _UPSERT_CONFLICT_RETRIES - 1:
@@ -7594,6 +7787,8 @@ class ProjectManager:
         domain_format: str | None = None,
         subdomain: str | None = None,
         base_domain: str | None = None,
+        environment: str | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """
         Create or update a deployment in the project YAML file.
@@ -7629,6 +7824,10 @@ class ProjectManager:
                     "error": validation_result["error"],
                     "error_type": "invalid_component_references",
                 }
+
+            # De markeringen van VOOR deze wijziging, om een verlaging van productie te
+            # kunnen melden zodra de nieuwe staat er is.
+            environment_before = environment_markings(project_data)
 
             # Check if deployment already exists
             existing_deployments = await self.get_deployments(cluster_filter=False)
@@ -7685,6 +7884,11 @@ class ProjectManager:
                                     f"Added new component '{component.reference}' with image '{normalized_image}'"
                                 )
 
+                        if environment is not None:
+                            # .value: de v1-route geeft een enumlid door, en de YAML-dumper
+                            # kent alleen gewone strings.
+                            deployment["environment"] = Omgeving(environment).value
+
                         # Update domain settings if provided
                         if domain_format is not None:
                             set_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT, domain_format)
@@ -7695,6 +7899,7 @@ class ProjectManager:
 
                         # Handle clone_from only if force_clone is true
                         if clone_from and force_clone:
+                            resolve_clone_source_deployment(project_data, clone_from, deployment_name)
                             deployment["clone-from"] = {
                                 "type": "deployment",
                                 "reference": clone_from,
@@ -7745,6 +7950,8 @@ class ProjectManager:
                     change_parts.append(f"subdomain to {subdomain}")
                 if base_domain is not None:
                     change_parts.append(f"base-domain to {base_domain}")
+                if environment is not None:
+                    change_parts.append(f"environment to {environment}")
                 if clone_from and force_clone:
                     change_parts.append(f"clone-from {clone_from}")
 
@@ -7753,6 +7960,14 @@ class ProjectManager:
 
                 # Validate (schema + structural) then save and commit through the single path
                 await self.save_and_commit_project(project_data, commit_message)
+
+                # Na de opslag: weigert die de wijziging, dan is er niets verlaagd.
+                log_production_downgrades(
+                    environment_before,
+                    environment_markings(project_data),
+                    project_name=project_name,
+                    actor=actor or "de API",
+                )
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
                 result: dict[str, Any] = {
@@ -7774,6 +7989,8 @@ class ProjectManager:
 
                 # Create new deployment object
                 new_deployment: dict[str, Any] = {"name": deployment_name, "components": []}
+                if environment is not None:
+                    new_deployment["environment"] = Omgeving(environment).value
 
                 # Apply domain settings if provided. Kept as a mapping because the clone
                 # path has to write them a second time: the copy from the source lands on
@@ -7802,10 +8019,9 @@ class ProjectManager:
 
                 # Handle clone-from logic for new deployments
                 if clone_from:
-                    # Find source deployment to clone from
-                    source_deployment = find_value_by_jsonpath(
-                        project_data, f"$.deployments[?(@.name=='{clone_from}')]"
-                    )
+                    # Exact name match, like the provisioning guard: a jsonpath filter built
+                    # from the reference also matched crafted values, which then got written.
+                    source_deployment = Project(project_data).find("deployments", name=clone_from)
 
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
@@ -7985,6 +8201,7 @@ class ProjectManager:
         image: str | None,
         deployment_names: list[str],
         component_type: str = "single",
+        description: str | None = None,
         port: int | None = None,
         ports: list[int] | None = None,
         path: str = "/",
@@ -8004,6 +8221,7 @@ class ProjectManager:
             image: Container image URL
             deployment_names: Deployments to add this component to (must already exist)
             component_type: Component type (e.g. "single", "frontend", "backend")
+            description: Free text saying what the component does (None leaves it out)
             port: Inbound port (None for background workers that don't serve HTTP)
             path: Ingress path (only relevant if publish-on-web is in services)
             rewrite: Path the ingress rewrites `path` to before the request reaches the
@@ -8091,6 +8309,7 @@ class ProjectManager:
             try:
                 component_config = await build_component_config(
                     name=name,
+                    description=description,
                     component_type=component_type,
                     port=port,
                     ports=ports,
@@ -8175,6 +8394,9 @@ class ProjectManager:
         is built around (``root-component`` or ``expose-component-on-bare-domain``). There is
         no reference to remove there without also deciding how that site should be served
         instead, and that is not a decision this call gets to make.
+
+        The rule itself lives in ``remove_component``; the components modal removes a
+        component through the same function, so there is one implementation of it.
         """
         try:
             project_data = await self.get_contents()
@@ -8188,31 +8410,15 @@ class ProjectManager:
                     "error_type": "not_found",
                 }
 
-            sites = component_usage_sites(project_data).get(component_name, [])
-            web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
-            if sites and (not confirm_in_use or web_addresses):
-                if web_addresses:
-                    reason = (
-                        f"Component '{component_name}' bepaalt het webadres van: "
-                        f"{', '.join(site.label for site in web_addresses)}. Wijzig eerst het webadres daar; "
-                        "een component waar een adres omheen gebouwd is kan niet zomaar worden verwijderd."
-                    )
-                else:
-                    reason = (
-                        f"Component '{component_name}' is in gebruik door: "
-                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
-                    )
+            try:
+                uncoupled = remove_component(project_data, component_name, confirm_in_use=confirm_in_use)
+            except ComponentInUseError as e:
                 return {
                     "success": False,
-                    "error": reason,
+                    "error": str(e),
                     "error_type": "in_use",
-                    "used_by": [site.as_dict() for site in sites],
+                    "used_by": [site.as_dict() for site in e.sites],
                 }
-
-            uncoupled = remove_component_references(project_data, component_name) if sites else []
-            project_data["components"] = [
-                c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
-            ]
 
             where = f" and removed from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
             await self.save_and_commit_project(
@@ -8235,6 +8441,7 @@ class ProjectManager:
     async def update_component(
         self,
         name: str,
+        description: str | None = None,
         image: str | None = None,
         port: int | None = None,
         ports: list[int] | None = None,
@@ -8267,6 +8474,13 @@ class ProjectManager:
                 }
 
             warnings: list[str] = []
+
+            # Empty string removes the field; None leaves the current value unchanged.
+            if description is not None:
+                if description:
+                    component["description"] = description
+                else:
+                    component.pop("description", None)
 
             if image is not None:
                 normalized_image, was_normalized = normalize_container_image(image)
@@ -8664,6 +8878,10 @@ class ProjectManager:
             # that mutation away while the response still reported the component as
             # updated, which is the ordinary second call (configure, then bind).
             if result["services_added"] or result["components_updated"]:
+                # De dienst aanzetten IS de aanvraag, op deze weg net zo goed als in
+                # configure_service en in het portaal -- deze route sloeg hem over, dus
+                # een via de API aangezette goedkeuringsplichtige dienst vroeg nooit iets.
+                ensure_approval_requests(project_data)
                 commit_message = self._add_service_commit_message(project_name, service_name, result)
                 await self.save_and_commit_project(project_data, commit_message)
 
@@ -9773,6 +9991,8 @@ class ProjectManager:
         Clone a database from a remote source via Chisel tunnel.
 
         This method is for manual API operations, not project-file-based cloning.
+        De tunnel wordt door de gedeelde kloonfunctie opgezet, zodat de guard de
+        chisel-server-url toetst in plaats van het lokale tunnel-endpoint.
         """
 
         logger.info(
@@ -9780,48 +10000,23 @@ class ProjectManager:
             f"<- {tunnel_remote_host}:{tunnel_remote_port} (via {tunnel_server_url})"
         )
 
-        connector = ChiselConnector(
-            server_url=tunnel_server_url,
-            username=tunnel_username,
-            password=tunnel_password,
+        db_manager = await self._ensure_database_manager()
+        return await db_manager.clone_database_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=tunnel_remote_host,
+            source_port=tunnel_remote_port,
+            source_username=source_username,
+            source_password=source_password,
+            source_database=source_database,
+            source_schema=source_schema,
+            force_clone=force_clone,
+            chisel_config={
+                "server-url": tunnel_server_url,
+                "username": tunnel_username,
+                "password": tunnel_password,
+            },
         )
-
-        try:
-            # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect.
-            _ = await asyncio.to_thread(
-                connector.start_tunnel,
-                remote_host=tunnel_remote_host,
-                remote_port=tunnel_remote_port,
-            )
-
-            endpoint = connector.get_local_endpoint()
-            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']}")
-
-            db_manager = await self._ensure_database_manager()
-            result = await db_manager.clone_database_from_external_source(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=endpoint["host"],
-                source_port=endpoint["port"],
-                source_username=source_username,
-                source_password=source_password,
-                source_database=source_database,
-                source_schema=source_schema,
-                force_clone=force_clone,
-            )
-
-            result["tunnel"] = {
-                "used": True,
-                "server": tunnel_server_url,
-                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
-                "remote_endpoint": f"{tunnel_remote_host}:{tunnel_remote_port}",
-            }
-
-            return result
-
-        finally:
-            await asyncio.to_thread(connector.stop_tunnel)
-            logger.info("Tunnel cleaned up")
 
     async def clone_database_from_external_direct(
         self,
@@ -9877,53 +10072,30 @@ class ProjectManager:
         Clone a MinIO bucket from a remote source via Chisel tunnel.
 
         This method is for manual API operations, not project-file-based cloning.
+        De tunnel wordt door de gedeelde kloonfunctie opgezet, zodat de guard de
+        chisel-server-url toetst in plaats van het lokale tunnel-endpoint.
         """
         logger.info(
             f"Manual MinIO clone via tunnel: {project_name}/{deployment_name} "
             f"<- {tunnel_remote_host}:{tunnel_remote_port}/{source_bucket} (via {tunnel_server_url})"
         )
 
-        connector = ChiselConnector(
-            server_url=tunnel_server_url,
-            username=tunnel_username,
-            password=tunnel_password,
+        return await self._minio_manager.clone_bucket_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=tunnel_remote_host,
+            source_port=tunnel_remote_port,
+            source_access_key=source_access_key,
+            source_secret_key=source_secret_key,
+            source_bucket=source_bucket,
+            source_secure=source_secure,
+            force_clone=force_clone,
+            chisel_config={
+                "server-url": tunnel_server_url,
+                "username": tunnel_username,
+                "password": tunnel_password,
+            },
         )
-
-        try:
-            # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect.
-            _ = await asyncio.to_thread(
-                connector.start_tunnel,
-                remote_host=tunnel_remote_host,
-                remote_port=tunnel_remote_port,
-            )
-
-            endpoint = connector.get_local_endpoint()
-            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']}")
-
-            result = await self._minio_manager.clone_bucket_from_external_source(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=endpoint["host"],
-                source_port=endpoint["port"],
-                source_access_key=source_access_key,
-                source_secret_key=source_secret_key,
-                source_bucket=source_bucket,
-                source_secure=source_secure,
-                force_clone=force_clone,
-            )
-
-            result["tunnel"] = {
-                "used": True,
-                "server": tunnel_server_url,
-                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
-                "remote_endpoint": f"{tunnel_remote_host}:{tunnel_remote_port}",
-            }
-
-            return result
-
-        finally:
-            await asyncio.to_thread(connector.stop_tunnel)
-            logger.info("Tunnel cleaned up")
 
     async def clone_minio_bucket_from_external_direct(
         self,

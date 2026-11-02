@@ -51,7 +51,7 @@ REGISTRY_NAME_MESSAGE = (
 
 #: Een RFC-1123-subdomeinnaam: precies wat kubernetes een secret laat heten. Net als
 #: ``UPSTREAM_PATTERN`` een veiligheidsgrendel, en met ``$`` om dezelfde reden.
-SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"  # noqa: S105  # vormregel voor secretnamen, geen secret
 
 
 def _normalize_upstream(value: object, info: ValidationInfo) -> object:

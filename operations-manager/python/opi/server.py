@@ -6,11 +6,10 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.sessions import SessionMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from opi.api.admin_router import admin_router
@@ -22,22 +21,31 @@ from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
+from opi.api.otp_step_up import (
+    OTP_CODE_HEADER,
+    STEP_UP_PROBLEM_MEDIA_TYPE,
+    STEP_UP_PROBLEM_TYPE,
+    StepUpProblem,
+)
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
 from opi.api.task_router import task_router
-from opi.api.user_token_auth import REQUIRES_USER_TOKEN
+from opi.api.token_router import token_router
+from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
-from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
+from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
+from opi.core.authz.actions import Action, action
+from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, SECURITY_PROOF_HEADER, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
 # Initialize logging first, before any other imports that might log
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
 from opi.core.errors import (
     GENERIEKE_FOUTTEKST,
-    NOT_FOUND_PAGE,
+    client_error_page,
     kenmerk_van,
     met_kenmerk,
     server_error_page,
@@ -45,19 +53,23 @@ from opi.core.errors import (
 )
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks, warm_connector_singletons
-from opi.core.static_files import CacheControlledStaticFiles
+from opi.core.static_files import CacheControlledStaticFiles, cache_control_for
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
+from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.middleware.body_limit import BodyLimitMiddleware
+from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
+from opi.middleware.rate_limit import RateLimitMiddleware
+from opi.middleware.server_side_session import ServerSideSessionMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
-from opi.web.router import web_router
+from opi.utils.logging_redact import redact_invite_key_in_path
+from opi.web.lotc_switch import render
+from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from starlette.requests import Request
-    from starlette.responses import Response
+    from collections.abc import AsyncGenerator, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +177,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_clone_database,
                 handle_refresh_deployment,
                 handle_refresh_project,
+                handle_rotate_credentials,
+                handle_rotate_project_key,
             )
             from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
                 handle_create_project,
@@ -188,9 +202,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
             _worker_instance.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
             _worker_instance.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+            _worker_instance.register_handler(TaskType.ROTATE_CREDENTIALS, handle_rotate_credentials)
             _worker_instance.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
             _worker_instance.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
             _worker_instance.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
+            _worker_instance.register_handler(TaskType.ROTATE_PROJECT_KEY, handle_rotate_project_key)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
             _worker_instance.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)
@@ -231,6 +247,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                     app.state.resource_tuning_scheduler = _tuning_scheduler
                 except Exception as e:
                     logger.error("Failed to start resource tuning scheduler: %s", e)
+
+            # Start audit retention loop (geen schakelaar: zie AUDIT_RETENTION_HOUR)
+            try:
+                from opi.core.audit_retention_scheduler import AuditRetentionScheduler
+
+                _audit_retention_scheduler = AuditRetentionScheduler()
+                await _audit_retention_scheduler.start()
+                app.state.audit_retention_scheduler = _audit_retention_scheduler
+            except Exception as e:
+                logger.error("Failed to start audit retention scheduler: %s", e)
 
             # Start reconciliation scheduler if enabled
             if settings.RECONCILIATION_SCHEDULER_ENABLED:
@@ -374,6 +400,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     if resource_tuning_scheduler is not None:
         await resource_tuning_scheduler.stop()
 
+    # Stop audit retention scheduler
+    audit_retention_scheduler = getattr(app.state, "audit_retention_scheduler", None)
+    if audit_retention_scheduler is not None:
+        await audit_retention_scheduler.stop()
+
     # Stop reconciliation scheduler
     reconciliation_scheduler = getattr(app.state, "reconciliation_scheduler", None)
     if reconciliation_scheduler is not None:
@@ -482,8 +513,10 @@ def create_app() -> FastAPI:
         description=API_DESCRIPTION,
         summary=PROJECT_DESCRIPTION,
         version=VERSION,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        # Swagger en ReDoc staan niet hier maar als eigen route met requires_sso, verderop.
+        docs_url=None,
+        redoc_url=None,
+        # Afschermen beschermt niet (zad-cli haalt het live op) en breekt de CLI.
         openapi_url="/openapi.json",
         default_response_class=HTMLResponse,
         debug=settings.DEBUG,
@@ -525,7 +558,8 @@ def create_app() -> FastAPI:
                 "description": (
                     "SSO access token, for the endpoints that cannot use a project's API key "
                     "because they are not about one project yet: listing the projects you may "
-                    "see, and creating a project. Send it as 'Authorization: Bearer <token>'."
+                    "see, creating a project, and platform maintenance by a platform admin. "
+                    "Send it as 'Authorization: Bearer <token>'."
                 ),
             },
         }
@@ -537,7 +571,11 @@ def create_app() -> FastAPI:
         bearer_operations = {
             (route.path, method.lower())
             for route in app.routes
-            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_USER_TOKEN, False)
+            if getattr(route, "endpoint", None) is not None
+            and any(
+                getattr(route.endpoint, marker, False)
+                for marker in (REQUIRES_USER_TOKEN, REQUIRES_PLATFORM_ADMIN_TOKEN)
+            )
             for method in getattr(route, "methods", None) or []
         }
 
@@ -549,6 +587,39 @@ def create_app() -> FastAPI:
         envelop = ProblemDetail.model_json_schema(ref_template="#/components/schemas/{model}")
         schemas.update(envelop.pop("$defs", {}))
         schemas["ProblemDetail"] = envelop
+
+        # De step-up, op dezelfde manier uit de route zelf gelezen: welke routes een verse
+        # tweede factor vragen staat in hun decorator, en een client hoort de header en de
+        # 403 in dit document te vinden in plaats van ze te ontdekken (RC-332).
+        step_up_operations = {
+            (route.path, method.lower())
+            for route in app.routes
+            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_STEP_UP, None)
+            for method in getattr(route, "methods", None) or []
+        }
+        step_up_schema = StepUpProblem.model_json_schema(ref_template="#/components/schemas/{model}")
+        schemas.update(step_up_schema.pop("$defs", {}))
+        schemas["StepUpProblem"] = step_up_schema
+        step_up_header = {
+            "name": OTP_CODE_HEADER,
+            "in": "header",
+            "required": False,
+            "schema": {"type": "string"},
+            "description": (
+                "Een verse code uit de authenticator van de aanroeper, voor een handeling die "
+                "productie raakt of het platform beheert. Alleen nodig als deze aanroep dat echt doet, en alleen te "
+                "gebruiken met een persoonlijk token: de code wordt getoetst tegen de tweede "
+                "factor van de eigenaar van dat token. Met een projectsleutel kan de handeling niet."
+            ),
+        }
+        step_up_403 = {
+            "description": (
+                "Deze handeling vraagt een verse 2-factor. Het antwoord "
+                f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
+                f"'remedy' wat er moet gebeuren. Herhaal de aanroep met '{OTP_CODE_HEADER}'."
+            ),
+            "content": {STEP_UP_PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/StepUpProblem"}}},
+        }
         vijf_xx = {
             "description": (
                 "Er ging iets mis aan onze kant. Het lag niet aan je verzoek, dus opnieuw "
@@ -567,6 +638,9 @@ def create_app() -> FastAPI:
                 scheme = "BearerToken" if (path, verb) in bearer_operations else "APIKeyHeader"
                 method["security"] = [{scheme: []}]
                 method.setdefault("responses", {})["5XX"] = vijf_xx
+                if (path, verb) in step_up_operations:
+                    method.setdefault("parameters", []).append(step_up_header)
+                    method["responses"]["403"] = step_up_403
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})
@@ -622,13 +696,19 @@ def create_app() -> FastAPI:
             return False
         return "text/html" in request.headers.get("accept", "")
 
-    def _fout_antwoord(request: Request, status_code: int, detail: object) -> Response:
+    def _fout_antwoord(
+        request: Request, status_code: int, detail: object, headers: Mapping[str, str] | None = None
+    ) -> Response:
         """Het antwoord op een 5xx: een pagina voor een browser, een envelop voor de rest.
 
         Wat hier NIET in komt is de uitzondering. Die stond tot nu toe kaal op het scherm
         van de gebruiker -- inclusief het interne IP-adres en de databasepoort van de
         server die niet antwoordde -- en staat vanaf nu alleen in de log. Het kenmerk is
         de koppeling: dezelfde tekens op het scherm en op elke logregel van dit verzoek.
+
+        De headers van de uitzondering gaan mee, zodat een belofte als de ``Retry-After``
+        van het uploadslot de client bereikt. Alleen de headers over de body zelf niet,
+        want die body wordt hier opnieuw gemaakt.
         """
         tekst = detail if isinstance(detail, str) and detail.strip() else GENERIEKE_FOUTTEKST
         if tekst == statusomschrijving(status_code):
@@ -636,8 +716,13 @@ def create_app() -> FastAPI:
             # en zeker niet wat hij eraan kan doen, dus vervangen door de zin die dat wel doet.
             tekst = GENERIEKE_FOUTTEKST
         kenmerk = kenmerk_van(request)
+        door_te_geven = {
+            naam: waarde
+            for naam, waarde in (headers or {}).items()
+            if naam.lower() not in ("content-length", "content-type")
+        } or None
         if _wil_een_pagina(request):
-            return HTMLResponse(server_error_page(tekst, kenmerk), status_code=status_code)
+            return HTMLResponse(server_error_page(tekst, kenmerk), status_code=status_code, headers=door_te_geven)
         probleem = ProblemDetail(
             title=statusomschrijving(status_code),
             status=status_code,
@@ -650,6 +735,7 @@ def create_app() -> FastAPI:
             content=probleem.model_dump(),
             status_code=status_code,
             media_type="application/problem+json",
+            headers=door_te_geven,
         )
 
     # Log all unhandled exceptions through Python logging so they appear in
@@ -664,7 +750,7 @@ def create_app() -> FastAPI:
         om te melden. Starlette gooit na dit antwoord alsnog opnieuw op, dus de server
         blijft de fout zien; alleen de aanroeper krijgt nu een pagina in plaats van niets.
         """
-        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        logger.exception("Unhandled exception on %s %s", request.method, redact_invite_key_in_path(request.url.path))
         return _fout_antwoord(request, 500, None)
 
     @app.exception_handler(StarletteHTTPException)
@@ -679,18 +765,27 @@ def create_app() -> FastAPI:
         Een 5xx viel daar tot nu toe doorheen naar de standaard-JSON van FastAPI, en dat
         is precies wat er tijdens de databasestoring op het scherm stond. Hij loopt nu
         langs dezelfde keuze, met een envelop in plaats van een los ``detail``-veld.
-        Elke andere 4xx blijft onveranderd: daar leest een client op wat er staat.
+        Every 4xx gets a page for a browser too (a 403 on a project link was raw JSON);
+        an API client keeps the ``detail`` body it parses today.
         """
         if exc.status_code >= 500:
-            return _fout_antwoord(request, exc.status_code, exc.detail)
-        if exc.status_code != 404 or not _wil_een_pagina(request):
+            return _fout_antwoord(request, exc.status_code, exc.detail, exc.headers)
+        if not _wil_een_pagina(request):
             return await http_exception_handler(request, exc)
-        return HTMLResponse(NOT_FOUND_PAGE, status_code=404)
+        return HTMLResponse(
+            client_error_page(exc.status_code, exc.detail), status_code=exc.status_code, headers=exc.headers
+        )
 
     from opi.middleware.security_headers import SecurityHeadersMiddleware
 
     # Als eerste toegevoegd, dus als binnenste uitgevoerd: het document wordt pas
     # beantwoord nadat onderhoud en autorisatie het verzoek hebben doorgelaten.
+    #
+    # De audit staat daar nog binnen, direct om de router. Niet uit smaak: de commit-SHA's
+    # en de taak-id van dit verzoek reizen als contextvar, en een BaseHTTPMiddleware
+    # (CSRF, autorisatie, onderhoud) draait de rest van de applicatie in een eigen taak,
+    # waardoor een contextvar die daarbinnen wordt gezet niet meer terugkomt.
+    app.add_middleware(AuditMiddleware)
     app.add_middleware(OpenApiETagMiddleware)
     app.add_middleware(CSRFMiddleware)
     app.add_middleware(AuthorizationMiddleware)
@@ -703,18 +798,28 @@ def create_app() -> FastAPI:
     # CSRFMiddleware (double-submit token + Origin/Referer check) is the real
     # defense against the same-site sibling-subdomain tenant attacker.
     app.add_middleware(
-        SessionMiddleware,
+        ServerSideSessionMiddleware,
         secret_key=settings.SECRET_KEY,
         same_site="lax",
         https_only=not settings.DEBUG,
         max_age=settings.SESSION_MAX_AGE_SECONDS,
     )
+    # Binnen de veiligheidsheaders (ook een 429 draagt ze) en buiten sessie, onderhoud en
+    # autorisatie: een stortvloed wordt geweigerd voordat hij die stappen kost.
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         SecurityHeadersMiddleware,
         keycloak_url=settings.KEYCLOAK_URL,
         prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
     )
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
+    # Buiten ProxyHeadersMiddleware, dus vóór hem uitgevoerd: die overschrijft
+    # scope["client"] met een waarde uit X-Forwarded-For, en het peer-adres is daarna niet
+    # meer te lezen. Zie opi/utils/client_ip.py.
+    app.add_middleware(PeerAddressMiddleware)
+    # Buiten sessie, CSRF en autorisatie: een te grote bijlage-upload wordt geweigerd
+    # voordat de multipart-parser zijn body ontvangt.
+    app.add_middleware(BodyLimitMiddleware)
 
     # Flow ID middleware - runs first (outermost) to tag all log lines for this request
     from opi.core.flow_id import set_flow_id
@@ -745,6 +850,7 @@ def create_app() -> FastAPI:
     app.include_router(sleep_mode_router, include_in_schema=True)  # Sleep-mode wake/status (waker pod + projectsleutel)
     app.include_router(v2_router, include_in_schema=True)  # V2 async API endpoints
     app.include_router(task_router, include_in_schema=True)  # Async task status API
+    app.include_router(token_router, include_in_schema=True)  # API-tokens en service accounts
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
     app.include_router(admin_router, include_in_schema=True)  # Admin cleanup/reconciliation API
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
@@ -757,14 +863,21 @@ def create_app() -> FastAPI:
     from opi.core.templates_lotc import resolve_lotc_static
     from opi.web.lotc_router import router as lotc_web_router
 
-    app.include_router(lotc_web_router, include_in_schema=False)
+    # De proefopstelling en testpagina's tonen fixture-data zonder SSO, dus alleen lokaal
+    # en in de sandbox. Zonder ENVIRONMENT staat er "production" en bestaan ze niet.
+    if settings.is_development_environment:
+        app.include_router(lotc_web_router, include_in_schema=False)
+        app.include_router(dev_router, include_in_schema=False)
+        logger.info("LOTC-proefopstelling en testpagina's geregistreerd (ENVIRONMENT=%s)", settings.ENVIRONMENT)
 
     @app.get("/static/lotc/{rel:path}", include_in_schema=False)
-    async def lotc_static(rel: str) -> FileResponse:
+    async def lotc_static(rel: str, request: Request) -> FileResponse:
         resolved = resolve_lotc_static(rel)
         if resolved is None:
             raise HTTPException(status_code=404, detail="Static asset not found")
-        return FileResponse(resolved)
+        # Zonder Cache-Control gokt de browser zelf hoe lang zijn kopie vers is, en na een
+        # LOTC-upgrade draaide hij dan dagen de oude nldd.js tegen nieuwe markup.
+        return FileResponse(resolved, headers={"cache-control": cache_control_for(request.scope["query_string"])})
 
     logger.info("LOTC static files served at /static/lotc/")
 
@@ -782,6 +895,31 @@ def create_app() -> FastAPI:
         """Serve favicon from the expected root path."""
         return FileResponse(favicon_path, media_type="image/x-icon")
 
+    # De API-documentatie is beheerdersgereedschap, geen publieke pagina: de paden van
+    # FastAPI zelf staan uit (docs_url/redoc_url) en deze twee vragen een sessie.
+    # Eigen sjablonen in plaats van get_swagger_ui_html/get_redoc_html: die bouwen hun
+    # scripts in Python en kunnen geen nonce dragen (features/security-headers.md). De
+    # assets komen uit static/ in plaats van cdn.jsdelivr.net (zie static/HERKOMST.md).
+    @app.get("/docs", include_in_schema=False)
+    @action(Action.PORTAL_READ)
+    @requires_sso
+    async def swagger_ui(request: Request) -> Response:
+        return render(
+            request,
+            template="api-docs-swagger.html.j2",
+            context={"titel": f"{PROJECT_NAME} - Swagger UI", "openapi_url": "/openapi.json"},
+        )
+
+    @app.get("/redoc", include_in_schema=False)
+    @action(Action.PORTAL_READ)
+    @requires_sso
+    async def redoc_ui(request: Request) -> Response:
+        return render(
+            request,
+            template="api-docs-redoc.html.j2",
+            context={"titel": f"{PROJECT_NAME} - ReDoc", "openapi_url": "/openapi.json"},
+        )
+
     # security.txt: redirect to NCSC central file per Rijksoverheid guidance
     # https://www.ncsc.nl/.well-known/security.txt
     @app.get("/.well-known/security.txt", include_in_schema=False)
@@ -795,8 +933,10 @@ def create_app() -> FastAPI:
     @app.get("/health", include_in_schema=False, response_class=JSONResponse)
     @app.get("/healthz", include_in_schema=False, response_class=JSONResponse)
     async def liveness_check():
-        """Liveness probe for Kubernetes - always returns OK."""
-        return {"status": "ok"}
+        """Liveness probe for Kubernetes; draagt het proefdoel-token terug (als gezet)."""
+        token = settings.SECURITY_PROOF_TOKEN
+        headers = {SECURITY_PROOF_HEADER: token} if token else None
+        return JSONResponse({"status": "ok"}, headers=headers)
 
     # Version info - public, so anyone (and the E2E suite) can see which build is running.
     @app.get("/version", include_in_schema=True, tags=["meta"], response_class=JSONResponse)
@@ -836,7 +976,9 @@ if __name__ == "__main__":
         # Debug mode: Start with debugpy, no reload
         import debugpy
 
-        debugpy.listen(("0.0.0.0", 5678))
+        # Alleen op localhost: kubectl port-forward praat met localhost in de pod, dus de
+        # Skaffold-debugweg werkt, maar de poort hangt niet aan het netwerk van het cluster.
+        debugpy.listen(("127.0.0.1", 5678))
         logger.info("🐛 Debug mode: Waiting for debugger to attach on port 5678...")
         debugpy.wait_for_client()
         logger.info("🐛 Debugger attached! Starting server...")

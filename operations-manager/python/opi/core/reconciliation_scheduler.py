@@ -21,6 +21,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from opi.core.actor import scheduler_actor, set_actor
 from opi.core.config import settings
 from opi.services.project_store import get_project_store
 
@@ -69,6 +70,7 @@ class ReconciliationScheduler:
 
     async def _run(self) -> None:
         """Sleep until the nightly hour, run reconciliation, repeat."""
+        set_actor(scheduler_actor("reconciliation"))
         while self._running:
             try:
                 delay = _seconds_until_next_run(settings.RECONCILIATION_HOUR, datetime.now(_TZ))

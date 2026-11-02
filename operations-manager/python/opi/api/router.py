@@ -1,14 +1,18 @@
 import logging
-import threading
 import time
-from collections import defaultdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token
+from opi.api.endpoint_util import (
+    deployment_in_body,
+    eis_doelwitten_uit_de_upsertbody,
+    eis_handeling,
+    validate_api_token,
+)
 from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
 from opi.api.params import DeploymentNamePath, ProjectNamePath
+from opi.api.rate_limiter import IPRateLimiter
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -23,9 +27,14 @@ from opi.connectors.subdomain import (
     SubdomainNotAvailableError,
     SubdomainValidationError,
 )
+from opi.core.auth_decorators import requires_step_up
+from opi.core.authz.actions import Action, action, deployment_from
+from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
+from opi.core.project_environment import Omgeving
+from opi.core.step_up import StepUpAction
 from opi.core.task_handlers_operations import terminated_sync_fields
-from opi.core.task_helpers import build_accepted_response, create_async_task
+from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.catalog.image_registries.config_model import (
@@ -35,8 +44,16 @@ from opi.services.catalog.image_registries.config_model import (
 )
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
+from opi.services.step_up_conditions import deployment_environment_change
+from opi.utils.age import encrypt_age_content
+from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
-from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
+from opi.utils.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    generate_self_service_project_yaml,
+    normalize_container_image,
+    validate_project_name,
+)
 from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
@@ -64,280 +81,6 @@ def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
     # Remove other ASCII control characters (0x00-0x1F except tab, 0x7F)
     sanitized = "".join(c for c in sanitized if ord(c) >= 32 or c == "\t")
     return sanitized
-
-
-# Robust rate limiter for subdomain check endpoint with anti-spoofing measures
-class IPRateLimiter:
-    """Token bucket rate limiter with multi-factor client identification.
-
-    Uses a combination of factors to identify clients, making X-Forwarded-For
-    spoofing attacks much harder:
-    - IP address (from X-Forwarded-For or direct connection)
-    - Client fingerprint (hash of User-Agent + Accept-Language headers)
-    - Session ID (when available)
-
-    This defense-in-depth approach means attackers would need to rotate all
-    factors simultaneously to bypass rate limiting.
-
-    Additionally implements:
-    - Per-IP secondary rate limiting (stricter limit applied even when fingerprint rotates)
-    - Gradual emergency purge (removes only truly stale entries, not arbitrary half)
-    - New client rate limiting (prevents rapid creation of new identifiers)
-
-    Implements bounded memory usage with aggressive cleanup.
-    Thread-safe for use in async environments with concurrent requests.
-    """
-
-    # Maximum number of tracked clients to prevent memory exhaustion
-    MAX_TRACKED_CLIENTS = 10000
-    # Cleanup threshold - trigger cleanup when approaching max
-    CLEANUP_THRESHOLD = 8000
-    # Minimum age for emergency purge (only remove entries older than this)
-    EMERGENCY_PURGE_MIN_AGE_SECONDS = 60
-    # Maximum new clients per minute (to prevent identifier flooding)
-    MAX_NEW_CLIENTS_PER_MINUTE = 100
-
-    def __init__(
-        self,
-        requests_per_minute: int = 30,
-        burst: int = 10,
-        cleanup_interval: float = 60.0,
-        per_ip_requests_per_minute: int | None = None,
-    ):
-        self.rate = requests_per_minute / 60.0  # requests per second
-        self.burst = burst
-        self._tokens: dict[str, float] = defaultdict(lambda: float(burst))
-        self._last_update: dict[str, float] = defaultdict(time.monotonic)
-        self._cleanup_interval = cleanup_interval
-        self._last_cleanup = time.monotonic()
-        # Lock to ensure thread-safety for concurrent async requests
-        self._lock = threading.Lock()
-
-        # Secondary per-IP rate limiting (stricter, cannot be bypassed by rotating fingerprint)
-        # Default: 3x the normal rate to allow legitimate users with multiple sessions
-        self._per_ip_rate = (per_ip_requests_per_minute or (requests_per_minute * 3)) / 60.0
-        self._per_ip_burst = burst * 3
-        self._ip_tokens: dict[str, float] = defaultdict(lambda: float(self._per_ip_burst))
-        self._ip_last_update: dict[str, float] = defaultdict(time.monotonic)
-
-        # Track new client creation rate to detect flooding attacks
-        self._new_client_timestamps: list[float] = []
-
-    @staticmethod
-    def _get_client_fingerprint(request: Request) -> str:
-        """Generate a fingerprint from browser headers to identify clients.
-
-        This makes it harder to bypass rate limiting by just spoofing X-Forwarded-For,
-        as the attacker would also need to rotate User-Agent and Accept-Language.
-
-        Uses a hash to prevent the fingerprint from leaking header details in logs.
-        """
-        import hashlib
-
-        user_agent = request.headers.get("user-agent", "")
-        accept_language = request.headers.get("accept-language", "")
-        accept_encoding = request.headers.get("accept-encoding", "")
-
-        # Create a fingerprint hash from multiple headers
-        fingerprint_data = f"{user_agent}|{accept_language}|{accept_encoding}"
-        return hashlib.sha256(fingerprint_data.encode()).hexdigest()[:16]
-
-    @staticmethod
-    def get_client_ip(request: Request) -> str:
-        """Extract client IP from request, respecting X-Forwarded-For header.
-
-        X-Forwarded-For format: client, proxy1, proxy2, ...
-        We take the first (leftmost) IP which is the original client.
-
-        Note: X-Forwarded-For can be spoofed. Use get_client_identifier() for
-        robust rate limiting that combines multiple factors.
-        """
-        # Check X-Forwarded-For header first (set by reverse proxies)
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            # Take the first IP (original client)
-            client_ip = forwarded_for.split(",")[0].strip()
-            if client_ip:
-                return client_ip
-
-        # Fall back to direct connection IP
-        return request.client.host if request.client else "unknown"
-
-    @classmethod
-    def get_client_identifier(cls, request: Request) -> str:
-        """Get a robust client identifier combining multiple factors.
-
-        This combines:
-        1. IP address (can be spoofed via X-Forwarded-For)
-        2. Client fingerprint (harder to spoof - requires rotating multiple headers)
-        3. Session ID (when authenticated - impossible to spoof without valid session)
-
-        An attacker would need to control all three factors to bypass rate limiting.
-        """
-        ip = cls.get_client_ip(request)
-        fingerprint = cls._get_client_fingerprint(request)
-
-        # Try to get session ID if available (most reliable identifier)
-        session_id = ""
-        if hasattr(request, "session") and request.session:
-            # Use session ID if present - this is the most reliable identifier
-            session_id = request.session.get("_session_id", "")[:32] if request.session else ""
-
-        # Combine factors into a single identifier
-        # Format: ip|fingerprint|session (session may be empty for unauthenticated)
-        return f"{ip}|{fingerprint}|{session_id}"
-
-    def _check_new_client_rate_unlocked(self) -> bool:
-        """Check if we're creating new clients too fast (flooding attack detection).
-
-        Must be called while holding self._lock.
-
-        Returns:
-            True if a new client can be created, False if rate exceeded.
-        """
-        now = time.monotonic()
-        # Remove timestamps older than 1 minute
-        self._new_client_timestamps = [ts for ts in self._new_client_timestamps if now - ts < 60]
-
-        if len(self._new_client_timestamps) >= self.MAX_NEW_CLIENTS_PER_MINUTE:
-            logger.warning(
-                f"New client rate limit exceeded: {len(self._new_client_timestamps)} new clients in last minute"
-            )
-            return False
-
-        return True
-
-    def _check_per_ip_limit_unlocked(self, ip: str) -> bool:
-        """Check secondary per-IP rate limit.
-
-        This provides a backstop against attackers who rotate fingerprints but
-        cannot rotate their actual IP address.
-
-        Must be called while holding self._lock.
-        """
-        now = time.monotonic()
-        elapsed = now - self._ip_last_update[ip]
-        self._ip_last_update[ip] = now
-
-        # Add tokens based on time elapsed
-        self._ip_tokens[ip] = min(self._per_ip_burst, self._ip_tokens[ip] + elapsed * self._per_ip_rate)
-
-        if self._ip_tokens[ip] >= 1:
-            self._ip_tokens[ip] -= 1
-            return True
-        return False
-
-    def is_allowed(self, client_id: str) -> bool:
-        """Check if request from client is allowed. Thread-safe.
-
-        Applies two levels of rate limiting:
-        1. Per-client-identifier limit (primary, based on IP+fingerprint+session)
-        2. Per-IP limit (secondary, cannot be bypassed by rotating fingerprint)
-
-        Args:
-            client_id: Client identifier from get_client_identifier() or get_client_ip()
-        """
-        with self._lock:
-            now = time.monotonic()
-
-            # Extract IP from client_id for secondary rate limiting
-            ip = client_id.split("|")[0] if "|" in client_id else client_id
-
-            # Check if this is a new client (for flooding detection)
-            is_new_client = client_id not in self._last_update
-            if is_new_client:
-                if not self._check_new_client_rate_unlocked():
-                    return False  # Too many new clients being created
-                self._new_client_timestamps.append(now)
-
-            elapsed = now - self._last_update[client_id]
-            self._last_update[client_id] = now
-
-            # Add tokens based on time elapsed
-            self._tokens[client_id] = min(self.burst, self._tokens[client_id] + elapsed * self.rate)
-
-            # Time-based periodic cleanup
-            if now - self._last_cleanup > self._cleanup_interval:
-                self._cleanup_old_entries_unlocked()
-                self._last_cleanup = now
-            # Emergency cleanup if approaching memory limit
-            elif len(self._tokens) > self.CLEANUP_THRESHOLD:
-                self._cleanup_old_entries_unlocked(max_age_seconds=300)
-                # If still over limit after cleanup, do gradual purge
-                if len(self._tokens) > self.MAX_TRACKED_CLIENTS:
-                    self._gradual_purge_unlocked()
-
-            # Primary check: per-client-identifier limit
-            if self._tokens[client_id] < 1:
-                return False
-
-            # Secondary check: per-IP limit (cannot be bypassed by rotating fingerprint)
-            if not self._check_per_ip_limit_unlocked(ip):
-                logger.debug(f"Per-IP rate limit exceeded for {ip}")
-                return False
-
-            self._tokens[client_id] -= 1
-            return True
-
-    def cleanup_old_entries(self, max_age_seconds: int = 600) -> None:
-        """Remove entries older than max_age_seconds to prevent memory leak. Thread-safe.
-
-        Default reduced to 10 minutes (was 1 hour) for more aggressive cleanup.
-        """
-        with self._lock:
-            self._cleanup_old_entries_unlocked(max_age_seconds)
-
-    def _cleanup_old_entries_unlocked(self, max_age_seconds: int = 600) -> None:
-        """Internal cleanup method. Must be called while holding self._lock."""
-        now = time.monotonic()
-        to_remove = [ip for ip, last in self._last_update.items() if now - last > max_age_seconds]
-        for ip in to_remove:
-            del self._tokens[ip]
-            del self._last_update[ip]
-
-        # Also cleanup per-IP tracking
-        ip_to_remove = [ip for ip, last in self._ip_last_update.items() if now - last > max_age_seconds]
-        for ip in ip_to_remove:
-            del self._ip_tokens[ip]
-            del self._ip_last_update[ip]
-
-        if to_remove or ip_to_remove:
-            logger.debug(
-                f"Rate limiter cleanup: removed {len(to_remove)} client entries, {len(ip_to_remove)} IP entries"
-            )
-
-    def _gradual_purge_unlocked(self) -> None:
-        """Gradual purge when memory limit exceeded. Only removes truly stale entries.
-
-        Unlike emergency_purge which removed arbitrary half, this only removes entries
-        that are older than EMERGENCY_PURGE_MIN_AGE_SECONDS. This prevents attackers
-        from evicting legitimate users by flooding with new identifiers.
-
-        Must be called while holding self._lock.
-        """
-        if not self._last_update:
-            return
-
-        now = time.monotonic()
-        min_age = self.EMERGENCY_PURGE_MIN_AGE_SECONDS
-
-        # Only remove entries older than minimum age
-        to_remove = [client_id for client_id, last_update in self._last_update.items() if now - last_update > min_age]
-
-        for client_id in to_remove:
-            del self._tokens[client_id]
-            del self._last_update[client_id]
-
-        if to_remove:
-            logger.warning(f"Rate limiter gradual purge: removed {len(to_remove)} stale entries (>{min_age}s old)")
-
-        # If still over limit after gradual purge, we have a real problem
-        # Log it but don't remove recent entries (they're likely legitimate)
-        if len(self._tokens) > self.MAX_TRACKED_CLIENTS:
-            logger.error(
-                f"Rate limiter still over limit ({len(self._tokens)} entries) after gradual purge. "
-                f"Possible DoS attack or configuration issue."
-            )
 
 
 # Global rate limiter instance for subdomain checks (30 requests/minute per IP)
@@ -431,6 +174,15 @@ class UpsertDeploymentRequest(BaseModel):
             "separately. Attach them afterwards with POST "
             "/api/projects/{project_name}/deployments/{deployment_name}/components."
         ),
+    )
+    environment: Omgeving | None = Field(
+        None,
+        description=(
+            "OTAP-markering van deze deployment: ontwikkeling, test, acceptatie of productie. "
+            "Laat het veld weg om de markering te laten staan zoals ze is; een deployment zonder "
+            "markering is 'ontwikkeling'."
+        ),
+        examples=["productie"],
     )
     cloneFrom: str | None = Field(
         None,
@@ -679,6 +431,15 @@ class ProjectDeleteRequest(BaseModel):
     model_config = {"json_schema_extra": {"example": {"confirmDeletion": True, "force": False}}}
 
 
+#: Hostnaam of IP-adres, zonder protocol, poort of pad.
+CLONE_HOST_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$"
+
+
+async def _encrypt_for_task(secret: str) -> str:
+    """Een geheim uit het verzoek staat versleuteld in ``async_tasks.payload``."""
+    return await encrypt_age_content(secret, settings.SOPS_AGE_PUBLIC_KEY)
+
+
 class ChiselTunnelConfig(BaseModel):
     """
     Chisel tunnel configuration for accessing remote services.
@@ -688,22 +449,44 @@ class ChiselTunnelConfig(BaseModel):
     """
 
     serverUrl: str = Field(
-        ..., description="Chisel server URL in source cluster", examples=["https://chisel.source-cluster.example.com"]
+        ...,
+        max_length=512,
+        pattern=r"^https://",
+        description="Chisel server URL in source cluster",
+        examples=["https://chisel.source-cluster.example.com"],
     )
     username: str = Field(..., description="Chisel authentication username", examples=["admin"])
     password: str = Field(..., description="Chisel authentication password", examples=["secret"])
     remoteHost: str = Field(
         ..., description="Remote service hostname in source cluster", examples=["postgres.namespace.svc.cluster.local"]
     )
-    remotePort: int = Field(..., description="Remote service port in source cluster", examples=[5432])
+    remotePort: int = Field(..., ge=1, le=65535, description="Remote service port in source cluster", examples=[5432])
+
+    async def to_task_payload(self) -> dict[str, Any]:
+        """De tunnel in de vorm die de taakhandlers lezen, met het wachtwoord versleuteld."""
+        return {
+            "server_url": self.serverUrl,
+            "username": self.username,
+            "password": await _encrypt_for_task(self.password),
+            "remote_host": self.remoteHost,
+            "remote_port": self.remotePort,
+        }
 
 
 class CloneDatabaseFromExternalRequest(BaseModel):
     sourceHost: str | None = Field(
-        None, description="External source database host (not needed if using tunnel)", examples=["localhost"]
+        None,
+        max_length=253,
+        pattern=CLONE_HOST_PATTERN,
+        description="External source database host (not needed if using tunnel)",
+        examples=["db.voorbeeld.nl"],
     )
     sourcePort: int | None = Field(
-        None, description="External source database port (not needed if using tunnel)", examples=[15432]
+        None,
+        ge=1,
+        le=65535,
+        description="External source database port (not needed if using tunnel)",
+        examples=[15432],
     )
     sourceUsername: str = Field(..., description="Username for external source connection", examples=["postgres"])
     sourcePassword: str = Field(..., description="Password for external source connection", examples=["password"])
@@ -716,11 +499,26 @@ class CloneDatabaseFromExternalRequest(BaseModel):
         None, description="Optional Chisel tunnel configuration for accessing remote source"
     )
 
+    async def to_task_payload(self) -> dict[str, Any]:
+        """De payload in de vorm die ``handle_clone_database`` leest, met de geheimen versleuteld."""
+        payload: dict[str, Any] = {
+            "source_host": self.sourceHost,
+            "source_port": self.sourcePort,
+            "source_username": self.sourceUsername,
+            "source_password": await _encrypt_for_task(self.sourcePassword),
+            "source_database": self.sourceDatabase,
+            "source_schema": self.sourceSchema,
+            "force_clone": self.forceClone,
+        }
+        if self.tunnel:
+            payload["tunnel"] = await self.tunnel.to_task_payload()
+        return payload
+
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
-                    "sourceHost": "localhost",
+                    "sourceHost": "db.voorbeeld.nl",
                     "sourcePort": 15432,
                     "sourceUsername": "postgres",
                     "sourcePassword": "password",
@@ -749,10 +547,18 @@ class CloneDatabaseFromExternalRequest(BaseModel):
 
 class CloneBucketFromExternalRequest(BaseModel):
     sourceHost: str | None = Field(
-        None, description="External source MinIO host (not needed if using tunnel)", examples=["localhost"]
+        None,
+        max_length=253,
+        pattern=CLONE_HOST_PATTERN,
+        description="External source MinIO host (not needed if using tunnel)",
+        examples=["minio.voorbeeld.nl"],
     )
     sourcePort: int | None = Field(
-        None, description="External source MinIO port (not needed if using tunnel)", examples=[19000]
+        None,
+        ge=1,
+        le=65535,
+        description="External source MinIO port (not needed if using tunnel)",
+        examples=[19000],
     )
     sourceAccessKey: str = Field(..., description="Access key for external source connection", examples=["minioadmin"])
     sourceSecretKey: str = Field(..., description="Secret key for external source connection", examples=["minioadmin"])
@@ -763,11 +569,26 @@ class CloneBucketFromExternalRequest(BaseModel):
         None, description="Optional Chisel tunnel configuration for accessing remote source"
     )
 
+    async def to_task_payload(self) -> dict[str, Any]:
+        """De payload in de vorm die ``handle_clone_bucket`` leest, met de geheimen versleuteld."""
+        payload: dict[str, Any] = {
+            "source_host": self.sourceHost,
+            "source_port": self.sourcePort,
+            "source_access_key": self.sourceAccessKey,
+            "source_secret_key": await _encrypt_for_task(self.sourceSecretKey),
+            "source_bucket": self.sourceBucket,
+            "source_secure": self.sourceSecure,
+            "force_clone": self.forceClone,
+        }
+        if self.tunnel:
+            payload["tunnel"] = await self.tunnel.to_task_payload()
+        return payload
+
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
-                    "sourceHost": "localhost",
+                    "sourceHost": "minio.voorbeeld.nl",
                     "sourcePort": 19000,
                     "sourceAccessKey": "minioadmin",
                     "sourceSecretKey": "minioadmin",
@@ -858,6 +679,12 @@ class AddComponentRequest(BaseModel):
     """Request to add a new component definition to an existing project."""
 
     name: str = Field(..., max_length=63, description="Component name (must be K8s-compliant)", examples=["frontend"])
+    description: str | None = Field(
+        None,
+        max_length=500,
+        examples=["API voor de zoekfunctie, leest uit de gedeelde database"],
+        description="Free text saying what this component is and does. Optional.",
+    )
     type: str = Field(
         "single",
         max_length=32,
@@ -1041,7 +868,7 @@ class SelfServiceProjectRequest(BaseModel):
 
     # Users (from array fields)
     user_email: list[str] | None = None  # Maps to name="user-email[]"
-    user_role: list[str] | None = None  # Maps to name="user-role[]"
+    user_roles: list[str] | None = None  # Maps to name="user-role[]"
 
     # Services (checkboxes)
     services: list[str] | None = None  # Maps to name="services[]"
@@ -1065,7 +892,10 @@ api_router: APIRouter = APIRouter(
         201: {"model": UpsertDeploymentResponse, "description": "Deployment created successfully"},
     },
 )
+@action(Action.DEPLOYMENT_WRITE)
+@deployment_from(deployment_in_body)
 @validate_api_token
+@requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
 async def upsert_deployment(
     request: Request,
     project_name: str,
@@ -1127,6 +957,13 @@ async def upsert_deployment(
             UPDATE_IMAGE_VALIDATORS,
         )
 
+    # De markering zetten is een eigen recht: ops met step-up (ontwerp paragraaf 7). Hij
+    # staat in de BODY en niet in het pad, dus de routepoort kan hem niet wegen.
+    if deployment_environment_change(request, project_name=project_name, deployment_data=deployment_data):
+        eis_handeling(request, project_name, Action.ENVIRONMENT_SET)
+
+    eis_doelwitten_uit_de_upsertbody(request, project_name, deployment_data)
+
     # Async path (default) - deprecated, use /api/v2/projects/{project_name}/:upsert-deployment
     if not sync:
         task = await create_async_task(
@@ -1143,6 +980,8 @@ async def upsert_deployment(
                 "domain_format": deployment_data.domain_format,
                 "subdomain": deployment_data.subdomain,
                 "base_domain": deployment_data.base_domain,
+                "environment": deployment_data.environment,
+                "actor": task_actor(request),
             },
         )
         task_id = str(task["task_id"])
@@ -1167,6 +1006,8 @@ async def upsert_deployment(
             domain_format=deployment_data.domain_format,
             subdomain=deployment_data.subdomain,
             base_domain=deployment_data.base_domain,
+            environment=deployment_data.environment,
+            actor=task_actor(request),
         )
 
         if result["success"]:
@@ -1249,6 +1090,12 @@ async def upsert_deployment(
 class UpdateComponentRequest(BaseModel):
     """Partial update of an existing component. Only provided fields are changed."""
 
+    description: str | None = Field(
+        None,
+        max_length=500,
+        examples=["API voor de zoekfunctie, leest uit de gedeelde database"],
+        description="Free text saying what this component is and does.",
+    )
     image: str | None = Field(
         None, max_length=512, description="Container image URL", examples=["ghcr.io/rijksictgilde/mijn-app:1.4.0"]
     )
@@ -1332,6 +1179,7 @@ class UpdateComponentRequest(BaseModel):
         201: {"description": "Component added successfully"},
     },
 )
+@action(Action.COMPONENT_ADD)
 @validate_api_token
 async def add_component(
     request: Request,
@@ -1397,6 +1245,7 @@ async def add_component(
             payload={
                 "project_name": project_name,
                 "name": component_data.name,
+                "description": component_data.description,
                 "type": component_data.type,
                 "image": component_data.image,
                 "deployment_names": component_data.deployment_names,
@@ -1428,6 +1277,7 @@ async def add_component(
         # Add the component
         result = await project_manager.add_component(
             name=component_data.name,
+            description=component_data.description,
             component_type=component_data.type,
             image=component_data.image,
             deployment_names=component_data.deployment_names,
@@ -1513,6 +1363,7 @@ async def add_component(
         200: {"description": "Component updated successfully"},
     },
 )
+@action(Action.COMPONENT_UPDATE)
 @validate_api_token
 async def update_component(
     request: Request,
@@ -1552,6 +1403,7 @@ async def update_component(
             payload={
                 "project_name": project_name,
                 "name": component_name,
+                "description": component_data.description,
                 "image": component_data.image,
                 "port": component_data.port,
                 "ports": component_data.ports,
@@ -1577,6 +1429,7 @@ async def update_component(
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
         result = await project_manager.update_component(
             name=component_name,
+            description=component_data.description,
             image=component_data.image,
             port=component_data.port,
             ports=component_data.ports,
@@ -1644,6 +1497,7 @@ async def update_component(
         201: {"description": "Component added to deployment successfully"},
     },
 )
+@action(Action.COMPONENT_LINK)
 @validate_api_token
 async def add_component_to_deployment(
     request: Request,
@@ -1804,6 +1658,7 @@ async def add_component_to_deployment(
         201: {"description": "Service added (or already present) successfully"},
     },
 )
+@action(Action.SERVICE_ADD)
 @validate_api_token
 async def add_service(
     request: Request,
@@ -1955,6 +1810,7 @@ async def add_service(
 
 
 @api_router.put("/projects/{project_name}/deployments/{deployment_name}/image")
+@action(Action.DEPLOYMENT_IMAGE_REPLACE)
 @validate_api_token
 async def update_deployment_image(
     request: Request,
@@ -2116,7 +1972,7 @@ async def update_deployment_image(
 #         "project_description": "Test project",
 #         "cluster": "local",
 #         "user_email": ["user@example.com"],
-#         "user_role": ["Developer"],
+#         "user_roles": ["Developer"],
 #         "services": ["service-web", "service-sso"],
 #         "components": [{
 #           "type": "deployment",
@@ -2135,6 +1991,7 @@ async def update_deployment_image(
         200: {"model": RefreshProjectResponse, "description": "Project refreshed successfully"},
     },
 )
+@action(Action.PROJECT_REFRESH)
 @validate_api_token
 async def refresh_project(request: Request, project_name: str, force_clone: bool = False) -> JSONResponse:
     """
@@ -2235,6 +2092,7 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         200: {"model": RefreshProjectResponse, "description": "Deployment refreshed successfully"},
     },
 )
+@action(Action.DEPLOYMENT_REFRESH)
 @validate_api_token
 async def refresh_deployment(
     request: Request,
@@ -2354,7 +2212,9 @@ async def refresh_deployment(
 
 
 @api_router.delete("/projects/{project_name}")
+@action(Action.PROJECT_DELETE)
 @validate_api_token
+@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
 async def delete_project(
     request: Request, project_name: ProjectNamePath, delete_data: ProjectDeleteRequest = Body(...)
 ) -> JSONResponse:
@@ -2448,7 +2308,9 @@ async def delete_project(
 
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
+@action(Action.DEPLOYMENT_DELETE)
 @validate_api_token
+@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_project_deployment(
     request: Request,
     project_name: ProjectNamePath,
@@ -2546,6 +2408,7 @@ async def delete_project_deployment(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-database-from-external")
+@action(Action.DATABASE_CLONE)
 @validate_api_token
 async def clone_database_from_external(
     request: Request,
@@ -2567,16 +2430,17 @@ async def clone_database_from_external(
     Headers:
         X-API-Key: The API key for the project (required)
 
-    Example curl command (with port-forward running):
-    ```bash
-    # First, establish port-forward from source cluster:
-    # kubectl port-forward -n namespace svc/postgresql 15432:5432
+    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
+    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
+    het antwoord 422. Een bron in private adresruimte gaat via een chisel-tunnel.
 
+    Example curl command:
+    ```bash
     curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-database-from-external" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key" \
       -d '{
-        "sourceHost": "localhost",
+        "sourceHost": "db.voorbeeld.nl",
         "sourcePort": 15432,
         "sourceUsername": "postgres",
         "sourcePassword": "password",
@@ -2595,6 +2459,12 @@ async def clone_database_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    refusal = await clone_source_refusal(
+        clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
+    )
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
+
     # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-database
     if not sync:
         task = await create_async_task(
@@ -2605,7 +2475,7 @@ async def clone_database_from_external(
             payload={
                 "project_name": project_name,
                 "deployment_name": deployment_name,
-                **clone_data.model_dump(),
+                **await clone_data.to_task_payload(),
             },
         )
         task_id = str(task["task_id"])
@@ -2711,6 +2581,7 @@ async def clone_database_from_external(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:clone-bucket-from-external")
+@action(Action.BUCKET_CLONE)
 @validate_api_token
 async def clone_bucket_from_external(
     request: Request,
@@ -2732,16 +2603,17 @@ async def clone_bucket_from_external(
     Headers:
         X-API-Key: The API key for the project (required)
 
-    Example curl command (with port-forward running):
-    ```bash
-    # First, establish port-forward from source cluster:
-    # kubectl port-forward -n namespace svc/minio 19000:9000
+    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
+    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
+    het antwoord 422. Een bron in private adresruimte gaat via een chisel-tunnel.
 
+    Example curl command:
+    ```bash
     curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-bucket-from-external" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key" \
       -d '{
-        "sourceHost": "localhost",
+        "sourceHost": "minio.voorbeeld.nl",
         "sourcePort": 19000,
         "sourceAccessKey": "minioadmin",
         "sourceSecretKey": "minioadmin",
@@ -2760,6 +2632,12 @@ async def clone_bucket_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    refusal = await clone_source_refusal(
+        clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
+    )
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
+
     # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-bucket
     if not sync:
         task = await create_async_task(
@@ -2770,7 +2648,7 @@ async def clone_bucket_from_external(
             payload={
                 "project_name": project_name,
                 "deployment_name": deployment_name,
-                **clone_data.model_dump(),
+                **await clone_data.to_task_payload(),
             },
         )
         task_id = str(task["task_id"])
@@ -2875,6 +2753,7 @@ async def clone_bucket_from_external(
 
 
 @api_router.post("/projects/{project_name}/deployments/{deployment_name}/:validate-clone")
+@action(Action.CLONE_VALIDATE)
 @validate_api_token
 async def validate_clone_configuration(
     request: Request, project_name: ProjectNamePath, deployment_name: str
@@ -2976,7 +2855,7 @@ async def create_self_service_project(
         "project_description": "Test project",
         "cluster": "local",
         "user_email": ["user@example.com"],
-        "user_role": ["Developer"],
+        "user_roles": ["Developer"],
         "services": ["service-web", "service-sso"],
         "components": [{
           "type": "deployment",
@@ -3005,6 +2884,11 @@ async def create_self_service_project(
             raise HTTPException(
                 status_code=400,
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+        if is_reserved_project_name(project_data.project_name):
+            raise HTTPException(
+                status_code=400,
+                detail=RESERVED_PROJECT_NAME_MESSAGE.format(name=project_data.project_name),
             )
 
         # Validate domain fields using editable validators
@@ -3189,6 +3073,7 @@ class SubdomainListResponse(BaseModel):
         200: {"description": "Paginated list of subdomain registrations"},
     },
 )
+@action(Action.SUBDOMAIN_READ)
 @validate_api_token
 async def list_subdomains(
     request: Request,
@@ -3274,6 +3159,7 @@ async def list_subdomains(
         200: {"description": "Registry updated successfully"},
     },
 )
+@action(Action.REGISTRY_ADD)
 @validate_api_token
 async def add_registry_by_secret(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryBySecretRequest = Body(...)
@@ -3371,6 +3257,7 @@ async def add_registry_by_secret(
         200: {"description": "Registry updated successfully"},
     },
 )
+@action(Action.REGISTRY_ADD)
 @validate_api_token
 async def add_registry_by_credentials(
     request: Request, project_name: ProjectNamePath, registry_data: AddRegistryByCredentialsRequest = Body(...)

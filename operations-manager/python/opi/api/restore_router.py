@@ -8,9 +8,10 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
-from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath
+from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath, ResourceNamePath
 from opi.api.v2.models import ErrorCategory
 from opi.connectors.kubectl import create_kubectl_connector
+from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
@@ -44,7 +45,16 @@ from opi.utils.naming import (
     generate_storage_name,
     generate_unique_name,
 )
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.patterns import (
+    DNS1123_SUBDOMAIN,
+    ENDPOINT_URL_OR_HOST_PORT,
+    HOST_WITH_OPTIONAL_PORT,
+    KOPIA_SNAPSHOT_ID,
+    KUBERNETES_QUANTITY,
+    POSTGRES_IDENTIFIER,
+    S3_BUCKET_NAME,
+)
+from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
@@ -132,10 +142,29 @@ class ListSnapshotsResponse(BaseModel):
 class RestoreRequest(BaseModel):
     """Request body for restore operations."""
 
-    snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
-    target_pvc_name: str | None = Field(default=None, description="Name for restored PVC (default: auto-generated)")
-    storage_size: str = Field(default="10Gi", description="Storage size for new PVC")
-    storage_class: str | None = Field(default=None, description="Storage class for new PVC (default: cluster default)")
+    snapshot_id: str | None = Field(
+        default=None,
+        description="Specific snapshot ID to restore (default: latest)",
+        pattern=KOPIA_SNAPSHOT_ID,
+        max_length=128,
+    )
+    target_pvc_name: str | None = Field(
+        default=None,
+        description="Name for restored PVC (default: auto-generated)",
+        pattern=DNS1123_SUBDOMAIN,
+        max_length=253,
+    )
+    storage_size: str = Field(
+        default="10Gi",
+        description="Storage size for the new PVC, as a Kubernetes quantity (e.g. 10Gi).",
+        pattern=KUBERNETES_QUANTITY,
+    )
+    storage_class: str | None = Field(
+        default=None,
+        description="Storage class for new PVC (default: cluster default)",
+        pattern=DNS1123_SUBDOMAIN,
+        max_length=253,
+    )
     overwrite: bool = Field(default=False, description="If true, allows restoring to existing PVC")
 
 
@@ -145,7 +174,12 @@ class ProjectRestoreRequest(BaseModel):
     deployment_name: str = Field(..., description="Deployment name within the project")
     component_name: str = Field(..., description="Component name that owns the storage")
     storage_name: str = Field(..., description="Storage name (mount path identifier, e.g., 'data')")
-    snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
+    snapshot_id: str | None = Field(
+        default=None,
+        description="Specific snapshot ID to restore (default: latest)",
+        pattern=KOPIA_SNAPSHOT_ID,
+        max_length=128,
+    )
 
 
 class BackupRunRestoreRequest(BaseModel):
@@ -289,16 +323,30 @@ class DatabaseRestoreRequest(BaseModel):
     in the rest: it is rejected naming the fields that are missing.
     """
 
-    snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
+    snapshot_id: str | None = Field(
+        default=None,
+        description="Specific snapshot ID to restore (default: latest)",
+        pattern=KOPIA_SNAPSHOT_ID,
+        max_length=128,
+    )
     target_database_host: str | None = Field(
-        default=None, description="Target database host address (omit to restore into the project's own database)"
+        default=None,
+        description="Target database host address (omit to restore into the project's own database)",
+        pattern=HOST_WITH_OPTIONAL_PORT,
+        max_length=253,
     )
     target_database_port: int = Field(default=5432, description="Target database port")
     target_database_name: str | None = Field(
-        default=None, description="Target database name (omit to restore into the project's own database)"
+        default=None,
+        description="Target database name (omit to restore into the project's own database)",
+        pattern=POSTGRES_IDENTIFIER,
+        max_length=63,
     )
     target_database_user: str | None = Field(
-        default=None, description="Target database username (omit to restore into the project's own database)"
+        default=None,
+        description="Target database username (omit to restore into the project's own database)",
+        pattern=POSTGRES_IDENTIFIER,
+        max_length=63,
     )
     target_database_password: str | None = Field(
         default=None, description="Target database password (omit to restore into the project's own database)"
@@ -372,12 +420,22 @@ class BucketRestoreRequest(BaseModel):
     project the API key belongs to. A subset is rejected naming what is missing.
     """
 
-    snapshot_id: str | None = Field(default=None, description="Specific snapshot ID to restore (default: latest)")
+    snapshot_id: str | None = Field(
+        default=None,
+        description="Specific snapshot ID to restore (default: latest)",
+        pattern=KOPIA_SNAPSHOT_ID,
+        max_length=128,
+    )
     target_minio_endpoint: str | None = Field(
-        default=None, description="Target MinIO endpoint URL (omit to restore into the project's own bucket)"
+        default=None,
+        description="Target MinIO endpoint URL (omit to restore into the project's own bucket)",
+        pattern=ENDPOINT_URL_OR_HOST_PORT,
+        max_length=253,
     )
     target_bucket_name: str | None = Field(
-        default=None, description="Target bucket name (omit to restore into the project's own bucket)"
+        default=None,
+        description="Target bucket name (omit to restore into the project's own bucket)",
+        pattern=S3_BUCKET_NAME,
     )
     target_access_key: str | None = Field(
         default=None, description="Target MinIO access key (omit to restore into the project's own bucket)"
@@ -610,9 +668,10 @@ def _bucket_result_to_model(result: BucketRestoreResult) -> BucketRestoreResultM
 
 
 @restore_router.get("/snapshots/{cluster}/{namespace}", response_model=ListSnapshotsResponse)
+@action(Action.RESTORE_READ)
 @validate_api_token
 async def list_snapshots(
-    request: Request, cluster: ClusterPath, namespace: str, project_name: str = _PROJECT_NAME_QUERY
+    request: Request, cluster: ClusterPath, namespace: NamespacePath, project_name: str = _PROJECT_NAME_QUERY
 ) -> ListSnapshotsResponse:
     """
     List all available Kopia snapshots for a namespace.
@@ -653,9 +712,14 @@ async def list_snapshots(
 
 
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
+@action(Action.RESTORE_READ)
 @validate_api_token
 async def list_pvc_snapshots(
-    request: Request, cluster: ClusterPath, namespace: str, pvc_name: str, project_name: str = _PROJECT_NAME_QUERY
+    request: Request,
+    cluster: ClusterPath,
+    namespace: NamespacePath,
+    pvc_name: ResourceNamePath,
+    project_name: str = _PROJECT_NAME_QUERY,
 ) -> ListSnapshotsResponse:
     """
     List available Kopia snapshots for a specific PVC.
@@ -694,12 +758,13 @@ async def list_pvc_snapshots(
 
 
 @restore_router.post("/pvc/{cluster}/{namespace}/{pvc_name}", response_model=RestoreResponse)
+@action(Action.RESTORE_RUN)
 @validate_api_token
 async def restore_pvc(
     request: Request,
     cluster: ClusterPath,
     namespace: NamespacePath,
-    pvc_name: str,
+    pvc_name: ResourceNamePath,
     body: RestoreRequest | None = None,
     project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
@@ -804,6 +869,7 @@ async def restore_pvc(
 
 
 @restore_router.post("/project/{project_name}", response_model=ProjectRestoreResponse)
+@action(Action.RESTORE_RUN)
 @validate_api_token
 async def restore_project_pvc(
     request: Request,
@@ -1334,6 +1400,7 @@ def _set_generation(
     "/project/{project_name}/deployment/{deployment_name}/run/{backup_run_id}",
     response_model=BackupRunRestoreResponse,
 )
+@action(Action.RESTORE_RUN, audit_fields=("backup_run_id",))
 @validate_api_token
 async def restore_backup_run(
     request: Request,
@@ -1505,7 +1572,10 @@ _DATABASE_SERVICE_TYPES = [
     ServiceType.POSTGRESQL_DATABASE.value,
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
 ]
-_MINIO_SERVICE_TYPES = [ServiceType.MINIO_STORAGE.value]
+#: minio-storage en seaweedfs-storage: dezelfde bucket achter dezelfde S3-API, dus dezelfde
+#: restore. Welke van de twee een deployment gebruikt staat in de naam van zijn secret, en
+#: ``get_object_storage_secret`` leest beide.
+_MINIO_SERVICE_TYPES = OBJECT_STORAGE_SERVICE_TYPES
 
 
 @dataclass
@@ -1726,7 +1796,7 @@ async def _resolve_own_bucket_target(project_name: str, namespace: str, referenc
             ),
         )
 
-    secret = await MinIOSecret.get_data(
+    secret = await get_object_storage_secret(
         kubectl_connector=create_kubectl_connector(), namespace=namespace, prefix=deployment_name
     )
     if secret is None:
@@ -1750,12 +1820,13 @@ async def _resolve_own_bucket_target(project_name: str, namespace: str, referenc
 
 
 @restore_router.post("/database/{cluster}/{namespace}/{reference_name}", response_model=DatabaseRestoreResponse)
+@action(Action.RESTORE_RUN)
 @validate_api_token
 async def restore_database(
     request: Request,
     cluster: ClusterPath,
     namespace: NamespacePath,
-    reference_name: str,
+    reference_name: ResourceNamePath,
     body: DatabaseRestoreRequest | None = None,
     project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
@@ -1901,12 +1972,13 @@ async def restore_database(
 
 
 @restore_router.post("/bucket/{cluster}/{namespace}/{reference_name}", response_model=BucketRestoreResponse)
+@action(Action.RESTORE_RUN)
 @validate_api_token
 async def restore_bucket(
     request: Request,
     cluster: ClusterPath,
     namespace: NamespacePath,
-    reference_name: str,
+    reference_name: ResourceNamePath,
     body: BucketRestoreRequest | None = None,
     project_name: str = _PROJECT_NAME_QUERY,
 ) -> JSONResponse:
@@ -2045,6 +2117,7 @@ async def restore_bucket(
     "/project/{project_name}/deployment/{deployment_name}",
     response_model=DeploymentRestoreResponse,
 )
+@action(Action.RESTORE_RUN)
 @validate_api_token
 async def restore_deployment_resource(
     request: Request,
@@ -2506,6 +2579,11 @@ async def _restore_database_with_versioning(
             }
 
         logger.info(f"Created new database: {new_database_name}")
+
+        # Een nieuwe generatie is een nieuwe database, dus ook hier dicht voor PUBLIC
+        # (RC-285). Alleen de eigenaar: de read-only rol krijgt zijn CONNECT bij de
+        # verwerking die deze generatie in gebruik neemt, en heeft hem daarvoor niet nodig.
+        await postgres_connector.restrict_database_to_roles(new_database_name, [db_username])
 
         # Create schema in new database
         schema_result = await postgres_connector.create_schema(

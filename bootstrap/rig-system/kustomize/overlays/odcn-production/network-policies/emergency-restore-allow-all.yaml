@@ -1,28 +1,33 @@
-# TEMPORARY — DO NOT REMOVE WITHOUT READING THIS
+# TIJDELIJK, EN HIJ KRIMPT PER COMPONENT. LEES DIT VOOR JE HEM AANRAAKT.
 #
-# Allow-all policy over every pod in rig-prd-operations. This recreates the
-# effective network state production ran under from day one until 2026-06-10:
-# the original `allow-argo` was podSelector:{} allow-all and masked every
-# restrictive policy in the namespace (NetworkPolicies are additive).
+# Allow-all over de pods in rig-prd-operations die nog geen eigen beleid dragen. Dit
+# recreeert de effectieve netwerktoestand waar productie vanaf dag een onder liep tot
+# 2026-06-10: de oorspronkelijke `allow-argo` was een podSelector:{}-allow-all en
+# maskeerde elke restrictieve policy in de namespace (NetworkPolicies zijn additief).
 #
-# PR #64 scoped allow-argo down (correct security fix), but the first apply
-# of it (2026-06-10 bootstrap run) revealed that no other workload had a
-# complete policy — Keycloak had none at all — and took production down
-# (incident 2026-06-10: OPI/Keycloak/external-dns lost database and egress).
+# PR #64 versmalde allow-argo (de juiste beveiligingsfix), maar de eerste toepassing
+# daarvan (bootstrap-run van 2026-06-10) liet zien dat geen andere workload een volledige
+# policy had, Keycloak zelfs geen enkele, en brak productie (incident 2026-06-10:
+# OPI/Keycloak/external-dns verloren database en uitgang).
 #
-# Removal plan (in this order, nothing skipped):
-#   1. Write per-component NetworkPolicies for EVERY workload in this
-#      namespace (keycloak, external-dns, minio, redis, rig-db, OPI, argocd).
-#   2. Test them on a cluster that actually ENFORCES policies — the kind
-#      sandbox runs kindnet, which ignores NetworkPolicies entirely.
-#   3. Apply the per-component policies to production.
-#   4. Only then delete this file and the live object.
+# DE UITSLUITLIJST IS DE VOLGORDE. Een workload die in `matchExpressions` staat valt niet
+# meer onder deze policy en draait op zijn eigen beleid. NotIn selecteert ook pods ZONDER
+# het label, dus een onbekende pod blijft onder de allow-all vallen.
+# Zie features/restrictive-network-policies.md voor de volgorde van de stappen en wat je per
+# stap meet (ArgoCD-health, readiness, logs, login).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: emergency-restore-allow-all
 spec:
-  podSelector: {}
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values:
+          - kube-state-metrics
+          - external-dns
+          - prometheus
   policyTypes:
     - Ingress
     - Egress

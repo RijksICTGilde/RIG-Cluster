@@ -1,0 +1,34 @@
+{#
+  De schil waar step-up-weigeringen in #edit-section-inner landen; edit_modal.js opent de dialoog.
+  De id's en klassen zijn die van bg/_modals.html.j2 voor selectie; extra inhoud (wizard, logs) is niet nodig.
+#}
+<link rel="stylesheet" href="{{ static_url('css/modal.css') }}">
+<div id="edit-section-backdrop" class="edit-section-backdrop" onclick="handleEditBackdropClick()"></div>
+{# tabindex="-1" maakt de dialoog focusbaar; zonder focus BINNEN de dialoog scrollen
+   Page Up en Page Down de pagina erachter. #}
+<div id="edit-section-modal"
+     class="edit-section-modal"
+     role="dialog"
+     aria-modal="true"
+     tabindex="-1"
+     aria-labelledby="edit-section-title">
+    <c-cluster justify="between" align="center" class="edit-section-header">
+        <c-cluster gap="sm" align="center">
+            <c-icon icon="person-2" size="lg" />
+            <c-heading type="h2" size="4" id="edit-section-title">
+                <span id="edit-section-title-text">Extra bevestiging</span>
+            </c-heading>
+        </c-cluster>
+        {# Kale nldd-button, net als in bg/_modals.html.j2: de LOTC-wrapper schrijft
+           variant, en nldd-button 0.13 leest appearance. #}
+        <nldd-button appearance="neutral-transparent"
+                     size="sm"
+                     text="Sluiten"
+                     start-icon="dismiss"
+                     type="button"
+                     class="edit-modal-close-btn"
+                     onclick="closeEditModal()"></nldd-button>
+    </c-cluster>
+    <div id="edit-section-inner"></div>
+</div>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/edit_modal.js') }}"></script>

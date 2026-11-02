@@ -22,6 +22,9 @@ from opi.core.database_pool import DatabasePool, DatabasePoolError
 
 logger = logging.getLogger(__name__)
 
+#: Het plafond van de hoofdpool (samen met SQLAlchemy-engine: max 10 verbindingen).
+MAIN_POOL_MAX_SIZE = 5
+
 # Global registry of database pools
 _pools: dict[str, DatabasePool] = {}
 
@@ -88,6 +91,7 @@ async def _ensure_database_exists() -> None:
         password=settings.DATABASE_ADMIN_PASSWORD,
         database="postgres",
         port=5432,
+        ssl=settings.DATABASE_SSLMODE,
     )
 
     try:
@@ -108,6 +112,37 @@ async def _ensure_database_exists() -> None:
         await conn.close()
 
 
+async def _verify_app_role(pool: DatabasePool) -> None:
+    """Weiger te starten als de rol superuser of create* rechten heeft."""
+    conn = await pool.acquire()
+    try:
+        rol = await conn.fetchrow(
+            "SELECT current_user AS naam, rolsuper, rolcreaterole, rolcreatedb "
+            "FROM pg_roles WHERE rolname = current_user"
+        )
+    finally:
+        await pool.release(conn)
+
+    if rol is None:  # pragma: no cover -- current_user staat altijd in pg_roles
+        return
+
+    te_veel = [recht for recht in ("rolsuper", "rolcreaterole", "rolcreatedb") if rol[recht]]
+    if rol["naam"] == settings.DATABASE_ADMIN_NAME:
+        te_veel.append("is de admin-rol zelf")
+    if not te_veel:
+        return
+
+    melding = (
+        f"DATABASE_APP_USER '{rol['naam']}' heeft rechten die OPI's eigen database niet nodig heeft "
+        f"({', '.join(te_veel)}). Zet DATABASE_APP_USER/DATABASE_APP_PASSWORD op de rol "
+        f"'{settings.DATABASE_APP_USER}' uit het secret operations-manager-db-credentials."
+    )
+    if settings.is_development_environment:
+        logger.warning(melding)
+        return
+    raise DatabasePoolError(melding)
+
+
 async def initialize_database_pools() -> None:
     """Initialize all database pools used by the application with robust retry logic.
 
@@ -124,16 +159,18 @@ async def initialize_database_pools() -> None:
         logger.error(f"Failed to ensure database exists: {e}")
         raise DatabasePoolError(f"Failed to create/verify database: {e}") from e
 
-    # Main PostgreSQL pool for operations - now uses our dedicated database
+    # Main PostgreSQL pool for operations, using the app role (not superuser).
+    # _ensure_database_exists above handles database creation with admin credentials.
     main_pool = DatabasePool(
         host=settings.DATABASE_HOST,
-        user=settings.DATABASE_ADMIN_NAME,
-        password=settings.DATABASE_ADMIN_PASSWORD,
+        user=settings.DATABASE_APP_USER,
+        password=settings.database_app_password,
         database=settings.DATABASE_NAME,
         port=5432,
         min_size=0,
-        max_size=20,
+        max_size=MAIN_POOL_MAX_SIZE,
         max_inactive_connection_lifetime=300.0,
+        sslmode=settings.DATABASE_SSLMODE,
     )
 
     try:
@@ -147,6 +184,10 @@ async def initialize_database_pools() -> None:
         )
         # Re-raise to fail application startup
         raise DatabasePoolError(f"Database pool initialization failed after all retries: {e}") from e
+
+    # Buiten de try hierboven, zodat deze weigering zijn eigen melding houdt en niet als
+    # "mislukt na alle pogingen" leest.
+    await _verify_app_role(main_pool)
 
 
 async def close_database_pools() -> None:

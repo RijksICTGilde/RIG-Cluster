@@ -1,6 +1,6 @@
 # Rechten in ZAD: plan van aanpak
 
-Status: **voorstel, nog geen besluit**. De feiten staan in [rechten-inventarisatie.md](rechten-inventarisatie.md), de afwegingen in [rechten-modellen-en-tokens.md](rechten-modellen-en-tokens.md). Dit document doet de aanbeveling, de fasering, de migratie en de vraag welke besluiten een mens moet nemen voordat er iets gebouwd wordt.
+Status: **voorstel**, met drie besluiten inmiddels genomen: 5.3 (wie geeft tokens uit) is C, 5.4 (wat gebeurt er met de projectsleutel) is A, en een project krijgt service accounts. Gebouwd in RC-322; zie `features/leden-en-api-tokens.md`. Fase 1 is daarbij ingevoerd voor het oppervlak dat een token kan bereiken, niet voor alle 158 routes. De rest van dit document is nog voorstel. De feiten staan in [rechten-inventarisatie.md](rechten-inventarisatie.md), de afwegingen in [rechten-modellen-en-tokens.md](rechten-modellen-en-tokens.md). Dit document doet de aanbeveling, de fasering, de migratie en de vraag welke besluiten een mens moet nemen voordat er iets gebouwd wordt.
 
 Elke zelfbedachte naam is **VOORSTEL**, net als in document 2.
 
@@ -44,7 +44,7 @@ Elke fase heeft op zichzelf waarde en kan apart worden uitgerold. De eerste is m
 Dit hangt niet aan enige keuze en hoort niet op een besluit te wachten.
 
 - `GET /api/subdomains/check/{subdomain}` en `GET /api/v1/backup/status` geven altijd 401 omdat hun handtekening geen `project_name` bevat (inventarisatie, 8.1). Repareer of verwijder ze. Merk op dat `get_backup_status` bij herstel platformbrede waarden (`current_namespace`, `locked_by`) aan elke projectsleutel zou tonen; herstellen is dus niet vanzelf de veilige keuze.
-- Vijf voortgangsroutes in de interface renderen een taak zonder te toetsen of de aanroeper lid is van het bijbehorende project (8.2). Voeg de controle toe die de API-tegenhanger al doet.
+- Vijf voortgangsroutes in de interface renderen een taak zonder te toetsen of de aanroeper lid is van het bijbehorende project (8.2: GEDAAN). Van de vijf zijn `/ui/tasks/{task_id}/status` en `task-errors` verdwenen, en is de voortgangspagina gesplitst in een pagina plus een fragment, dus er bestaan er vier. Alle vier toetsen nu: de twee zonder project in het pad via `_require_task_access` op de taak zelf, de twee met een project via `_require_task_of_project`. De laatste was `modal-wizard/progress`, zie `features/wizardtoken-eigenaar-en-project.md`.
 - `modal_wizard_load_step` mist de back-up-/hersteluitzondering die zijn vijf zusterroutes wel hebben (8.6).
 - `_enrich_user_info` schrijft `is_admin`, `is_developer` en `is_manager` uit een tokenclaim waar geen enkele beslissing aan hangt (8.11). Verwijder ze, en met hen de suggestie dat er een rollenmechanisme is. Let op: `operations-manager/python/tests/test_user_service.py` toetst de drie velden in vijf testfuncties (`test_role_flag_admin`, `test_role_flag_administrator_variant_not_recognized`, `test_role_flag_dev`, `test_role_flag_manager_variants`, `test_no_role_flags_when_no_role`). Die vallen om zodra de velden verdwijnen en horen in dezelfde wijziging mee te gaan; dit is dus geen wijziging van één regel.
 
@@ -86,6 +86,8 @@ De bestaande projectsleutel blijft werken en wordt intern vertaald naar een toke
 
 **Waarde op zichzelf:** vanaf hier is er een bewijsmiddel dat intrekbaar is, dat verloopt, dat minder mag dan alles, en waarvan het logboek weet welk het was.
 
+**Gebouwd in RC-322**, inclusief service accounts per project (het `zad-project-token` uit document 2, met een naam eraan) en de meting waar het afbouwpad van 5.4 op leunt. Twee dingen zijn daarbij anders gelopen dan hier beschreven: een token staat bij zijn lid in het projectbestand en niet in een eigen tabel, en een token draagt geen eigen scopes maar erft wat zijn ROL opent. Daardoor is er maar een plek waar rechten staan. Zie `features/leden-en-api-tokens.md`.
+
 ### Fase 6: agents
 
 Twee vormen, beide uit document 2, paragraaf 6: een gedelegeerde agent (kortlevend, versmald tot minder dan de persoon, sterft met diens recht) en een agent als eigen principaal aan een project (eigen rechten, kortlevende tokens uit een langlevende installatie). `via_agent` en `on_behalf_of` gaan mee in de context van elk verzoek.
@@ -120,9 +122,9 @@ De volgorde uit document 2, paragraaf 5.4, met de nadruk op de valkuil:
 
 1. `config.api-key` blijft geldig; er verandert niets aan het projectbestand.
 2. De nieuwe tokenweg komt ernaast te staan.
-3. Het handhavingspunt vertaalt de oude sleutel naar een token met **exact de 46 handelingen die hij vandaag opent** en geen enkele meer. Dit is de plek waar een verruiming er ongemerkt bij kan sluipen; de vertaling hoort daarom een expliciete, getoetste lijst te zijn en geen wildcard.
-4. Het gebruik van de oude sleutel is vanaf stap 3 meetbaar per project.
-5. Intrekken kan per project zodra dat project geen aanroepen meer met de oude sleutel doet. Het veld verdwijnt pas als geen enkel project hem nog gebruikt.
+3. De schemamigratie naar 2.12 maakt van de oude sleutel een TOKEN van het service account `project-api`, met rol `admin`: dezelfde waarde blijft werken, maar met een eigenaar, een vervaldatum en een manier om hem in te trekken. (De 46 uit de inventarisatie waren decoratoren in de bron; gemeten op de ROUTETABEL zijn het 132 routes, omdat de dienstroutes per dienst worden gegenereerd.) `config.api-key` verdwijnt daarmee uit bestand en schema.
+4. Het gebruik per soort bewijsmiddel is meetbaar per project, zodat zichtbaar is wanneer een project op tokens over is.
+5. De rol van `project-api` verlagen of het account verwijderen is daarna een keuze van de projectbeheerder, niet van het platform.
 
 ### 4.3 `ADMIN_API_KEY` en `MASTER_API_KEY`
 
@@ -135,7 +137,9 @@ Zolang beide sleutels niet zijn ingesteld, verandert er voor een draaiend cluste
 
 ### 4.4 Het hardgecodeerde adres in `startup.py`
 
-`opi/core/startup.py:470` en `:497` zetten hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder.
+**Stand:** stap 1 en 2 zijn gedaan in RC-272. Het adres staat nu in `ALLOWED_EMAILS` en `ADMIN_EMAILS` van het SOPS-secret `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-access-secrets.yaml`, en de twee lijsten in `opi/core/startup.py` zijn weg. Stap 3 staat nog open.
+
+De uitgangstoestand was: `opi/core/startup.py` zette hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder.
 
 Voorstel, en dit is de enige migratie met een echt risico op buitensluiting:
 
@@ -143,9 +147,9 @@ Voorstel, en dit is de enige migratie met een echt risico op buitensluiting:
 2. Verwijder daarna de regels uit de broncode.
 3. Voeg pas dan een opstartcontrole toe die faalt als er nul platformbeheerders zijn geconfigureerd. Die volgorde is bewust: eerst zorgen dat er altijd één is, dan pas afdwingen dat er één is.
 
-Stap 3 is meer waard dan hij lijkt. Vandaag is "OPI draait zonder platformbeheerder" een toestand die niet kan bestaan omdat er een adres in de code staat; zonder dat adres kan hij wél bestaan, en dan is er niemand die hem kan repareren.
+Stap 3 is meer waard dan hij lijkt. "OPI draait zonder platformbeheerder" was een toestand die niet kon bestaan omdat er een adres in de code stond; sinds RC-272 kan hij wél bestaan, en dan is er niemand die hem kan repareren.
 
-Merk ook op dat het laden van de `users`-tabel in een brede `except Exception` staat met alleen een waarschuwing (inventarisatie, 8.10). Zolang dat zo is, kan een databasestoring de allowlist stil verkleinen, en dat wordt pijnlijker zodra de hardgecodeerde noodingang weg is.
+Merk ook op dat het laden van de `users`-tabel in een brede `except Exception` staat met alleen een waarschuwing (inventarisatie, 8.10). Zolang dat zo is, kan een databasestoring de allowlist stil verkleinen, en dat is pijnlijker nu de hardgecodeerde noodingang weg is.
 
 ### 4.5 De ontsleutelde omgevingsvariabelen op de detailpagina
 
@@ -154,6 +158,11 @@ Gat 8.3: elk projectlid, ongeacht rol, ziet de ontsleutelde `user-env-vars` van 
 Dit is een besluit vermomd als bug (zie 5.6). Wat er ook uitkomt: het antwoord hoort in de handler te staan en niet in de template, want vandaag ontsleutelt de handler ze hoe dan ook (`opi/web/router.py:1027`) en is de template het enige wat ze tegenhoudt.
 
 **Let op:** als de uitkomst is dat alleen `admin`/`owner` ze mag zien, is dat een *versmalling* die vandaag werkende werkwijzen kan breken, een developer die zijn eigen applicatieconfiguratie opzoekt, kan dat dan niet meer. Dat is een gedragsverandering die aangekondigd hoort te worden, niet stilletjes doorgevoerd.
+
+**Uitgevoerd (RC-388):** de handler ontsleutelt niet meer voor de weergave; de pagina krijgt
+alleen de gesorteerde namen en een teller. Waarden bekijken en wijzigen gaan via een eigen
+venster achter een verse step-up. Zie
+[omgevingsvariabelen-achter-step-up.md](../omgevingsvariabelen-achter-step-up.md).
 
 ## 5. Besluiten die een mens moet nemen
 
@@ -181,7 +190,7 @@ Dit is een besluit vermomd als bug (zie 5.6). Wat er ook uitkomt: het antwoord h
 - **B.** Keycloak, met een client per project en token exchange voor delegatie.
 - **C.** Beide: Keycloak voor mensen (zoals nu), eigen tabel voor machines.
 
-**Aanbeveling: C.** Dat is de bestaande situatie voor mensen ongemoeid laten en er precies één ding bij bouwen. B alleen legt intrekking en scopes, juist de eigenschappen die het probleem oplossen, op de zwakste plek.
+**BESLOTEN: C** (RC-322). Dat is de bestaande situatie voor mensen ongemoeid laten en er precies één ding bij bouwen. B alleen legt intrekking en scopes, juist de eigenschappen die het probleem oplossen, op de zwakste plek.
 
 ### 5.4 Wat gebeurt er met de projectsleutel
 
@@ -189,7 +198,7 @@ Dit is een besluit vermomd als bug (zie 5.6). Wat er ook uitkomt: het antwoord h
 - **B.** Vervangen zodra de tokens er zijn.
 - **C.** Laten zoals hij is; alleen nieuwe integraties gebruiken tokens.
 
-**Aanbeveling: A.** B breekt draaiende pijplijnen. C betekent dat de allesopenende, nooit vervallende sleutel er over vijf jaar nog is, en dat is precies de toestand die dit hele plan wil beëindigen. Een einddatum zonder afbouwpad is echter een wens; het meetbare gebruik uit fase 5 is wat A uitvoerbaar maakt.
+**BESLOTEN: A** (RC-322). B breekt draaiende pijplijnen. C betekent dat de allesopenende, nooit vervallende sleutel er over vijf jaar nog is, en dat is precies de toestand die dit hele plan wil beëindigen. Een einddatum zonder afbouwpad is echter een wens; het meetbare gebruik uit fase 5 is wat A uitvoerbaar maakt.
 
 ### 5.5 Mag een agent meer dan de mens die hem startte
 
@@ -206,6 +215,12 @@ Dit is een besluit vermomd als bug (zie 5.6). Wat er ook uitkomt: het antwoord h
 - **C.** Elk lid, maar met een vermelding in het logboek dat ze zijn opgevraagd.
 
 **Aanbeveling: C.** A is de huidige praktijk en breekt niets; B is consistent maar versmalt zichtbaar wat mensen vandaag doen. C houdt de werkwijze intact en maakt tegelijk waar wat de andere twee niet doen: dat je achteraf kunt zien wie erbij is geweest. Dit besluit hangt aan RC-149 en hoort daar afgestemd te worden.
+
+**BESLOTEN: B, aangescherpt** (RC-388). De detailpagina toont de waarden helemaal niet
+meer, alleen de namen; bekijken én wijzigen vragen `admin`/`owner` plus een verse
+step-up, ongeacht de OTAP-markering. De stap per leesbeurt van C zit ook in deze vorm:
+elke step-up is een vastgelegde gebeurtenis. Zie
+[omgevingsvariabelen-achter-step-up.md](../omgevingsvariabelen-achter-step-up.md).
 
 ### 5.7 Waar komt "platformbeheerder" vandaan
 

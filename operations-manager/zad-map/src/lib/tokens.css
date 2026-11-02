@@ -1,0 +1,36 @@
+/* Oppervlakken, tekst en accent komen uit NLDD; de categoriekleuren zijn Rijkshuisstijl.
+   De custom properties erven door de shadow DOM heen, dus een pagina met het NLDD-thema
+   kleurt de kaart mee. Zonder NLDD gelden de waarden achter de komma.
+
+   Licht vastgezet: de schetsvullingen zijn niet op donker afgestemd. */
+:host {
+  display: block;
+  height: 100%;
+  color-scheme: light;
+  --paper: var(--semantics-surfaces-base-background-color, #ffffff);
+  --paper-2: var(--primitives-color-neutral-50, #ecedee);
+  --card: var(--semantics-surfaces-base-background-color, #ffffff);
+  --ink: var(--semantics-content-color, #1b2430);
+  --ink-soft: var(--semantics-content-secondary-color, #5a6673);
+  --ink-faint: color-mix(in srgb, var(--ink-soft) 60%, transparent);
+  --line: var(--semantics-dividers-color, #cdd3d8);
+  --radius: var(--semantics-surfaces-corner-radius, 6px);
+  --lintblauw: var(--semantics-content-accent-color, #007bc7);
+  --accent-soft: var(--semantics-surfaces-accent-tinted-background-color, #e5f1f8);
+  --donkerblauw: #154273;
+  --mono: var(--primitives-font-family-monospace, Menlo, monospace);
+  font-family: var(--primitives-font-family-body, system-ui, sans-serif);
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.svelte-flow { --xy-background-color: var(--paper); }
+.svelte-flow__node { font-family: inherit; transition: opacity 0.35s ease; }
+.svelte-flow__node.selectable:focus-visible { outline: none; }
+.svelte-flow__node.dim { opacity: 0.28; }
+.svelte-flow__edge { transition: opacity 0.35s ease; }
+.svelte-flow__edge.dim { opacity: 0.12; }
+.svelte-flow__minimap { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.svelte-flow__controls { box-shadow: none; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.svelte-flow__controls-button { background: var(--card); border-bottom: 1px solid var(--line); fill: var(--ink); }
+.svelte-flow__controls-button:hover { background: var(--paper-2); }

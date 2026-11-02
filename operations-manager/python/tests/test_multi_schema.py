@@ -146,7 +146,7 @@ async def test_readonly_role_granted_on_every_schema():
 
 
 @pytest.mark.asyncio
-async def test_clone_schema_clones_every_extra_schema_through_the_same_pipeline():
+async def test_clone_schema_clones_every_extra_schema_in_one_pipeline_run():
     connector = PostgresConnector(host="h", admin_username="a", admin_password="p")
 
     conn = AsyncMock()
@@ -166,11 +166,15 @@ async def test_clone_schema_clones_every_extra_schema_through_the_same_pipeline(
     )
 
     assert result["status"] == "success"
-    # One pipeline run for the default schema, one per extra schema.
-    dumped = [(kw["source_schema"], kw["target_schema"]) for _, kw in connector._execute_pgdump_clone.call_args_list]
-    assert ("proj_dep", "proj_dep_v2") in dumped
-    assert ("proj_dep_rapportage", "proj_dep_rapportage") in dumped
-    assert len(dumped) == 2
+    # Een run met alle schema's: pg_dump zet de objecten over de schema's heen zelf in de
+    # goede volgorde, en een run per schema heeft geen werkende volgorde voor schema's die
+    # naar elkaar verwijzen (RC-360).
+    connector._execute_pgdump_clone.assert_awaited_once()
+    _, kwargs = connector._execute_pgdump_clone.call_args
+    assert kwargs["schema_pairs"] == [
+        ("proj_dep", "proj_dep_v2"),
+        ("proj_dep_rapportage", "proj_dep_rapportage"),
+    ]
 
 
 @pytest.mark.asyncio

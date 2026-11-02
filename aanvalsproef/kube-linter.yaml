@@ -1,0 +1,29 @@
+# Selectie van de kube-linter-checks voor de posture-gate in .github/workflows/security.yml.
+#
+# De defaults staan uit en de selectie is expliciet: kube-linter geeft geen ernst mee, dus
+# de selectie IS de drempel. Wat hier in staat laat de run falen zodra het afwijkt, tenzij
+# het in aanvalsproef/uitzonderingen.yaml staat met een reden en een vervaldatum.
+#
+# Gescand wordt operations-manager/python/tests/golden/manifests: de gerenderde manifests
+# die ZAD voor elke tenant genereert. De platformcomponenten onder infrastructure/ zitten
+# hier niet in, want daar liggen losse overlay-patches naast de bases, en een patch is geen
+# volledig manifest: de gate zou de patch meten en niet de uitkomst. Die kant dekken de
+# Kyverno-policies bij admission (infrastructure/bootstrap/infrastructure/kyverno).
+checks:
+  doNotAutoAddDefaults: true
+  include:
+    - latest-tag
+    - privileged-container
+    - privilege-escalation-container
+    - run-as-non-root
+    - no-read-only-root-fs
+    - host-network
+    - host-pid
+    - host-ipc
+    - sensitive-host-mounts
+    - drop-net-raw-capability
+    - unsafe-sysctls
+    - unsafe-proc-mount
+    - ssh-port
+    - non-isolated-pod
+    - default-service-account

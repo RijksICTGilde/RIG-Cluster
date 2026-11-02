@@ -30,6 +30,7 @@ from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from fastapi import HTTPException
 from opi.connectors.keycloak import fetch_jwks, fetch_oidc_metadata
+from opi.core.actor import set_actor, user_actor
 from opi.core.config import settings
 from opi.services.user_service import get_user_service
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
@@ -231,34 +232,68 @@ def authorize_claims(claims: dict[str, Any]) -> dict[str, Any]:
 #: and got a 401 it could not explain (RC-113, bevinding 1). Reading the marker rather than
 #: listing paths keeps that from happening again: the next route that takes this decorator
 #: is documented correctly without anyone remembering to update a list.
-REQUIRES_USER_TOKEN = "zad_requires_user_token"
+REQUIRES_USER_TOKEN = "zad_requires_user_token"  # noqa: S105  # naam van de OpenAPI-marker, geen secret
 
 
-def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Decorator requiring a valid SSO bearer token on a route.
+#: Marker attribute set on a route that wants a bearer token of a platform admin.
+#: Read by ``opi/api/route_herkenning.py`` and by the OpenAPI document, like
+#: ``REQUIRES_USER_TOKEN``.
+REQUIRES_PLATFORM_ADMIN_TOKEN = "zad_requires_platform_admin_token"  # noqa: S105  # naam van de marker, geen secret
+
+
+async def _authenticate_bearer(request: Request, route_name: str) -> dict[str, Any]:
+    """Recognise the caller by their bearer token, or refuse the request with a 401.
 
     On success the caller lands in ``request.state.user`` in the same shape the
     session-based path uses, so everything downstream (task ownership, logging)
     sees one kind of user.
     """
+    try:
+        token = extract_bearer_token(request)
+        claims = await verify_user_token(token)
+        user = authorize_claims(claims)
+    except UserTokenError as exc:
+        logger.warning("Bearer authentication failed for route %s: %s", route_name, exc)
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required - provide a valid Authorization: Bearer token",
+            headers={"WWW-Authenticate": 'Bearer realm="zad"'},
+        ) from exc
+
+    logger.debug("Bearer authentication successful for route %s (user: %s)", route_name, user["email"])
+    request.state.user = user
+    set_actor(user_actor(user["email"]))
+    return user
+
+
+def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator requiring a valid SSO bearer token on a route."""
 
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
-        try:
-            token = extract_bearer_token(request)
-            claims = await verify_user_token(token)
-            user = authorize_claims(claims)
-        except UserTokenError as exc:
-            logger.warning("Bearer authentication failed for route %s: %s", func.__name__, exc)
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication required - provide a valid Authorization: Bearer token",
-                headers={"WWW-Authenticate": 'Bearer realm="zad"'},
-            ) from exc
-
-        logger.debug("Bearer authentication successful for route %s (user: %s)", func.__name__, user["email"])
-        request.state.user = user
+        await _authenticate_bearer(request, func.__name__)
         return await func(*args, request=request, **kwargs)
 
     setattr(wrapper, REQUIRES_USER_TOKEN, True)
+    return wrapper
+
+
+def validate_platform_admin_token(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator requiring a bearer token of a user who is a platform admin.
+
+    Platform maintenance through the API is a person acting, so the actor trail names
+    them instead of a shared key. A caller presenting only an ``X-API-Key`` has no
+    token at all and gets the 401 of ``_authenticate_bearer``: a project key is not a
+    weaker version of this credential, it is a different one.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+        user = await _authenticate_bearer(request, func.__name__)
+        if not get_user_service().is_platform_admin(user["email"]):
+            logger.warning("Platform admin refused for route %s (user: %s)", func.__name__, user["email"])
+            raise HTTPException(status_code=403, detail="Alleen platformbeheerders hebben toegang")
+        return await func(*args, request=request, **kwargs)
+
+    setattr(wrapper, REQUIRES_PLATFORM_ADMIN_TOKEN, True)
     return wrapper

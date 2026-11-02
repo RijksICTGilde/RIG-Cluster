@@ -122,8 +122,9 @@ is een niet-lege tekst, dus waar. Zie `features/aanvinkvakje.md` en
 
 Extra schema's leven in dezelfde database als het standaardschema. De generatie zit in de
 *databasenaam* (`proj_dep_v2`), niet in de schemanaam, dus een kloon neemt alle schema's
-mee. De kloonweg (`clone_schema`) kopieert elk extra schema via dezelfde single-schema
-pijplijn als het standaardschema. Backups dumpen de hele database, dus extra schema's
+mee. De kloonweg (`clone_schema`) herstelt ze in één `pg_dump` met een `-n` per schema,
+samen met de schema's die de applicatie zelf aanmaakte: zie
+`features/kloon-alle-schemas.md`. Backups dumpen de hele database, dus extra schema's
 zaten daar al in.
 
 Bij een **restore naar een nieuwe generatie** moet daarom precies één schema worden

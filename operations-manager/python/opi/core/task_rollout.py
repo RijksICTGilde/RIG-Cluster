@@ -42,6 +42,10 @@ DEFERRABLE_TASK_TYPES = frozenset(
 NON_DEFERRABLE_REASONS: dict[str, str] = {
     "refresh_project": "processing the project is the whole point of this operation",
     "refresh_deployment": "processing the deployment is the whole point of this operation",
+    "rotate_credentials": (
+        "the new credential only reaches the pods through the rollout; deferring it would leave "
+        "the deployment running on a value its services no longer accept"
+    ),
     "delete_deployment": (
         "deleting removes cluster resources; a later refresh reprocesses what the project "
         "file declares and would never perform the deletion"
@@ -73,6 +77,7 @@ PROCESSING_TASK_TYPES = frozenset(
         "delete_attachment",
         "manage_database_schemas",
         "refresh_deployment",
+        "rotate_credentials",
         "refresh_project",
         "delete_component",
         "restore",

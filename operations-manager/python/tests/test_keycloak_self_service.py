@@ -149,6 +149,7 @@ def _handler_with_fake_connector(realm: dict | None = None) -> tuple[KeycloakYam
     """
     keycloak = MagicMock()
     keycloak.set_required_action_enabled = AsyncMock()
+    keycloak.set_required_action_default = AsyncMock()
     keycloak.remove_default_role = AsyncMock()
     keycloak.get_realm = AsyncMock(
         return_value=realm
@@ -353,7 +354,7 @@ async def test_een_echt_andere_talenlijst_wordt_wel_geschreven() -> None:
     assert keycloak.update_realm_settings.await_args.args[1] == {"supportedLocales": ["nl", "en"]}
 
 
-@pytest.mark.parametrize("template", ["sso-only", "sso-support"])
+@pytest.mark.parametrize("template", ["sso-only", "sso-support", "sso-support-otp"])
 def test_de_projectblauwdrukken_zetten_nederlands_als_standaardtaal(template: str) -> None:
     """De glob-toets hierboven eist alleen dat een blauwdruk de velden NOEMT; dit is de
     waarde. Een blauwdruk die ``defaultLocale: en`` zou zetten noemt het veld keurig en
@@ -393,7 +394,10 @@ def test_elk_blueprint_noemt_elk_gelezen_realmveld() -> None:
     from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
     from ruamel.yaml import YAML
 
-    blauwdrukken = sorted(BLUEPRINT_DIR.glob("*.yaml"))
+    # master-realm.yaml doet niet mee: die realm maakt Keycloak zelf, hij komt nooit langs
+    # create_realm, en ensure_realm_hardening leest er alleen _HARDENING_REALM_FIELDS uit.
+    # Deze zeven velden daar neerzetten zou niets doen behalve suggereren dat ze gelden.
+    blauwdrukken = sorted(pad for pad in BLUEPRINT_DIR.glob("*.yaml") if pad.name != "master-realm.yaml")
     assert blauwdrukken, "geen blauwdrukken gevonden - het pad klopt niet"
 
     gemeten = 0

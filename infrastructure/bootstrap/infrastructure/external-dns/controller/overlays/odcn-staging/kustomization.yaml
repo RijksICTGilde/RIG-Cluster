@@ -5,6 +5,7 @@ namespace: rig-staging-operations
 
 resources:
   - ../../base
+  - network-policies/external-dns-networkpolicy.yaml
 
 # Tenant-eigenaar via owner promotion van Capsule, net als de SA's van de bootstrap
 # (zie argocd-pull-secrets.yaml daar). Hier zet ArgoCD het label. Dat zou moeten mogen,

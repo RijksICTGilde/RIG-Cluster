@@ -16,11 +16,12 @@
 # de grendel: hij laat een gewijzigd artefact omvallen, en een nieuwe waarde is een regel in
 # een diff die iemand goedkeurt. Bij een nieuwe MC_VERSION horen dus twee nieuwe sommen; de
 # hele weg staat in README.md hiernaast.
+# renovate: datasource=github-releases depName=minio/mc versioning=regex:^RELEASE\.(?<major>\d{4})-(?<minor>\d{2})-(?<patch>\d{2})T(?<build>[\d-]+)Z$
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 
 # Op BUILDPLATFORM, want deze stage haalt alleen een binary op voor TARGETARCH. Zonder dat
 # draait hij onder emulatie en heeft een multi-arch build qemu nodig.
-FROM --platform=$BUILDPLATFORM alpine:3.22 AS haal
+FROM --platform=$BUILDPLATFORM alpine:3.24.3 AS haal
 
 ARG MC_VERSION
 ARG TARGETARCH

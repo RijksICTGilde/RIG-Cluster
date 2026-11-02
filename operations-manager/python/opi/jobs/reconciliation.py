@@ -6,7 +6,7 @@ orphaned AND marked past the configurable grace period are purged.
 
 Deletion ordering:
 1. PostgreSQL databases and users (external to cluster)
-2. MinIO buckets, users, and policies (external to cluster)
+2. MinIO and SeaweedFS buckets, users, and policies (external to cluster)
 3. Backup data (S3 prefixes/buckets on backup destination)
 4. PVCs (require namespace to still exist)
 5. Namespaces (only when all conditions are met)
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.connectors.postgres import PostgresConnector, create_postgres_connector
+from opi.connectors.seaweedfs_shell import SeaweedfsConnector, create_seaweedfs_connector
 from opi.core.config import settings
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
@@ -39,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 _LEGACY_DB_ALIASES = {"database", "postgresql"}
 _LEGACY_MINIO_ALIASES = {"minio", "object-storage"}
+
+#: De resourcetypes van seaweedfs-storage, in de orde waarin ze weg moeten: eerst het
+#: recht, dan de identiteit, dan de data.
+_SEAWEEDFS_RESOURCE_TYPES = ("seaweedfs_policy", "seaweedfs_user", "seaweedfs_bucket")
 
 
 def _deployment_level_service_names(deployment: dict[str, Any]) -> set[str]:
@@ -104,6 +109,9 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
     handler = ProjectFileHandler()
     db_types = [ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
     minio_types = [ServiceType.MINIO_STORAGE.value]
+    # Eigen types naast die van minio: beide diensten noemen hun bucket, identiteit en
+    # policy met dezelfde functies, dus alleen het resourcetype zegt waar hij staat.
+    seaweedfs_types = [ServiceType.SEAWEEDFS_STORAGE.value]
 
     # keycloak_client is intentionally absent: it is only ever marked through
     # the orphan-sweep confirm endpoint, which re-validates against a fresh sweep
@@ -116,6 +124,9 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
         "minio_bucket": set(),
         "minio_user": set(),
         "minio_policy": set(),
+        "seaweedfs_bucket": set(),
+        "seaweedfs_user": set(),
+        "seaweedfs_policy": set(),
         "backup_data": set(),
     }
 
@@ -148,6 +159,11 @@ def _build_expected_resources(project_yamls: list[dict[str, Any]]) -> dict[str, 
                 expected["minio_bucket"].add((generate_bucket_name(project_name, deployment_name), cluster))
                 expected["minio_user"].add((generate_minio_username(project_name, deployment_name), cluster))
                 expected["minio_policy"].add((generate_minio_policy_name(project_name, deployment_name), cluster))
+
+            if _deployment_uses(handler, project, deployment, seaweedfs_types, set()):
+                expected["seaweedfs_bucket"].add((generate_bucket_name(project_name, deployment_name), cluster))
+                expected["seaweedfs_user"].add((generate_minio_username(project_name, deployment_name), cluster))
+                expected["seaweedfs_policy"].add((generate_minio_policy_name(project_name, deployment_name), cluster))
 
             # Build expected backup_data resource name (matches marking format)
             base_namespace = deployment.get("namespace", "")
@@ -291,9 +307,12 @@ async def _purge_marks(
             # cluster, so that is the one to configure the alias against.
             minio_host = get_minio_host(settings.CLUSTER_MANAGER)
             minio_port = get_minio_port(settings.CLUSTER_MANAGER)
-            minio_url = f"{'https' if settings.MINIO_USE_TLS else 'http'}://{minio_host}:{minio_port}"
             await minio_conn.configure_alias(
-                alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY
+                alias,
+                f"{minio_host}:{minio_port}",
+                settings.MINIO_ADMIN_ACCESS_KEY,
+                settings.MINIO_ADMIN_SECRET_KEY,
+                secure=settings.MINIO_USE_TLS,
             )
 
             for mark in minio_policy_marks:
@@ -306,6 +325,15 @@ async def _purge_marks(
             error_msg = f"Failed to initialize MinIO connector for purge: {e}"
             logger.exception(error_msg)
             results["errors"].append(error_msg)
+
+    # SeaweedFS resources, in dezelfde orde als bij MinIO: policy, identiteit, bucket.
+    # Alleen op een cluster dat de dienst levert; elders staan er ook geen markeringen.
+    seaweedfs_marks = [m for m in marks if m["resource_type"] in _SEAWEEDFS_RESOURCE_TYPES]
+    if seaweedfs_marks and SeaweedfsConnector.is_configured():
+        seaweedfs_conn = create_seaweedfs_connector()
+        for soort in _SEAWEEDFS_RESOURCE_TYPES:
+            for mark in (m for m in seaweedfs_marks if m["resource_type"] == soort):
+                await _purge_seaweedfs_resource(seaweedfs_conn, mark, service, results, dry_run)
 
     # Keycloak clients (confirmed orphans from the service-orphan sweep)
     keycloak_client_marks = [m for m in marks if m["resource_type"] == "keycloak_client"]
@@ -467,6 +495,39 @@ async def _purge_postgres_user(
         results["purged"].append({"type": "postgresql_user", "name": username})
     except Exception as e:
         error_msg = f"Failed to purge PostgreSQL user '{username}': {e}"
+        logger.exception(error_msg)
+        results["errors"].append(error_msg)
+
+
+async def _purge_seaweedfs_resource(
+    connector: SeaweedfsConnector,
+    mark: dict,
+    service: MarkedForDeletionService,
+    results: dict[str, list],
+    dry_run: bool,
+) -> None:
+    """Purge a SeaweedFS bucket, identity or policy that has passed the grace period.
+
+    Eén functie voor de drie types: ze verschillen alleen in het commando, en de connector
+    verdraagt "bestaat niet" al, dus een halve opruiming is af te maken.
+    """
+    soort = mark["resource_type"]
+    naam = mark["resource_name"]
+    verwijder = {
+        "seaweedfs_policy": connector.delete_policy,
+        "seaweedfs_user": connector.delete_user,
+        "seaweedfs_bucket": connector.delete_bucket,
+    }[soort]
+    try:
+        if dry_run:
+            logger.info("[DRY RUN] Would purge %s: %s", soort, naam)
+        else:
+            await verwijder(naam)
+            await service.delete_mark(mark["id"])
+            logger.info("Purged %s: %s", soort, naam)
+        results["purged"].append({"type": soort, "name": naam})
+    except Exception as e:
+        error_msg = f"Failed to purge {soort} '{naam}': {e}"
         logger.exception(error_msg)
         results["errors"].append(error_msg)
 

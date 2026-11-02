@@ -16,41 +16,41 @@ class KeycloakVariables(Enum):
         name="OIDC_CLIENT_ID",
         description="OAuth2/OIDC client identificatie voor authenticatie",
         source="secret",
-        secret_key="client_id",
+        secret_key="client_id",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     CLIENT_SECRET = VariableDefinition(
         name="OIDC_CLIENT_SECRET",
         description="OAuth2/OIDC client geheim voor authenticatie",
         source="secret",
-        secret_key="client_secret",
+        secret_key="client_secret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     PUBLIC_CLIENT_ID = VariableDefinition(
         name="OIDC_PUBLIC_CLIENT_ID",
         description="Public OAuth2/OIDC client identificatie voor browser-based authenticatie (keycloak-js)",
         source="secret",
-        secret_key="public_client_id",
+        secret_key="public_client_id",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     DISCOVERY_URL = VariableDefinition(
         name="OIDC_DISCOVERY_URL",
         description="OIDC discovery endpoint URL voor configuratie",
         source="secret",
-        secret_key="discovery_url",
+        secret_key="discovery_url",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     URL = VariableDefinition(
         name="OIDC_URL",
         description="Keycloak basis URL",
         source="secret",
-        secret_key="base_url",
+        secret_key="base_url",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     REALM = VariableDefinition(
         name="OIDC_REALM",
         description="Keycloak realm naam",
         source="secret",
-        secret_key="realm",
+        secret_key="realm",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )
     HOSTNAME = VariableDefinition(
         name="OIDC_HOSTNAME",
         description="Keycloak hostname zonder scheme (afgeleid van base_url)",
         source="secret",
-        secret_key="hostname",
+        secret_key="hostname",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
     )

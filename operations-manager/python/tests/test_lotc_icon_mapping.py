@@ -74,7 +74,7 @@ def _gerenderde_naam(icon: str) -> str:
     verkeerde kant van de aliaslaag.
     """
     html = templates_lotc.env.from_string(f'<c-icon icon="{icon}"/>').render()
-    treffer = re.search(r'name="([^"]*)"', html)
+    treffer = re.search(r'<nldd-icon[^>]*\sicon="([^"]*)"', html)
     return treffer.group(1) if treffer else icon
 
 
@@ -372,8 +372,7 @@ _GEGEVENS_ICOON = re.compile(r'(?<![-\w])icon="([^"]*\{\{[^"]*)"|(?<![-\w]):icon
 #: niet.
 FILTER_UITZONDERINGEN: dict[tuple[str, str], str] = {
     # De macro zelf filtert al: elke tak is {{ 'vinkje' | nldd_icon }}.
-    ("_macros.html.j2", "{{ task_status_icon_name(task.status) | trim }}"): "de macro filtert per tak",
-    ("_macros.html.j2", "{{ task_status_icon_name(subtask.status) | trim }}"): "de macro filtert per tak",
+    ("_macros.html.j2", "{{ task_status_icon_name(status) | trim }}"): "de macro filtert per tak",
     # Macroparameter: de aanroepers van panel() geven een NLDD-naam of nldd_icon(...).
     ("_patterns.html.j2", "kop_icoon"): "parameter van panel(); de aanroeper vertaalt",
 }

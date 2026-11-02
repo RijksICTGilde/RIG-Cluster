@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import pytest
 from playwright.sync_api import Error as PlaywrightError
 from tests.e2e.helpers import sandbox_api, service_config
-from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, naam_en_sleutel_na_de_wizard, read_api_key_with_retry
+from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, naam_en_sleutel_na_de_wizard, projecttoken_met_retry
 from tests.e2e.helpers.wizard import (
     WizardHelper,
     kies_verplichte_keuzelijsten,
@@ -269,7 +269,7 @@ def test_configure_via_api_writes_invite(
     # project through ArgoCD -- a slow deploy wait that is not what "did the config land"
     # depends on, and matches the invite's save_only nature (configuring an invite triggers
     # no manifest change). So we start the task and poll the project file for the key.
-    api_key = read_api_key_with_retry(sandbox_page, sandbox_url, invite_project)
+    api_key = projecttoken_met_retry(sandbox_url, invite_project)
     api_invite_key = f"probe-invite-api-{_RUN}"
     # ``active`` gaat er als EEN entry in, niet als lijst van een: de invite-dienst zet
     # ``api_singular_lists = {"active"}`` (4323ebae), dus de API toont en accepteert het

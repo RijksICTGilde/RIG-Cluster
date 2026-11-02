@@ -81,6 +81,7 @@ repos keep using their own `ProjectManager` git connectors and are explicitly ou
 ## Usage
 
 ```python
+from opi.core.actor import get_actor
 from opi.services.project_store import get_project_store
 
 store = get_project_store()
@@ -98,7 +99,7 @@ def add_component(data: dict) -> dict | None:
     return data
 
 result = await store.mutate(
-    "my-project", add_component, message="add component api", actor="user@example.com"
+    "my-project", add_component, message="add component api", actor=get_actor()
 )
 result.committed   # False when the change function returned None
 result.before      # state before the change
@@ -110,6 +111,13 @@ revisions = await store.history("my-project")
 old = await store.read_at("my-project", revisions[-1].ref)
 prev = await store.previous("my-project")   # file-scoped: last commit touching THIS path
 ```
+
+### De actor
+
+`actor` is de `Actor` uit `opi/core/actor.py`, server-side bepaald op de ingang die
+legitimeert en opgehaald met `get_actor()`. Hij komt in de logregel van de write en als
+`Actor:`-trailer in de commit, uit te lezen met
+`git log -1 --format=%(trailers:key=Actor,valueonly)`.
 
 ### Why a change function and not a dict
 
@@ -214,6 +222,40 @@ Three CI guards in `tests/test_single_path_enforcement.py` fail the build on a r
   store. Scoped per variable name, so a connector a module builds itself with `GitConnector(...)`
   may still be closed.
 
+## Repository credentials
+
+The warm copy is cloned and pushed by `GitConnector`, which never puts a credential in a URL.
+Every git invocation gets the credential through the environment instead
+(`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`), as
+`http.<scheme>://<host>[:<port>]/.extraHeader` = `Authorization: Basic <base64(user:password)>`.
+BIO2 5.17 and 8.12 ask that authentication data stays out of process arguments, configuration
+files and logs; an embedded `user:password@host` fails all three, because it is visible in the
+process list, is written to `.git/config` as `remote.origin.url` by every clone, and ends up in
+any log line that prints the command.
+
+Binding the key to the base URL is also the host boundary: git sends the header only to that
+scheme/host/port, so a redirect to another host does not carry it. Measured against a local
+`git http-backend`: the connector's own host receives the header, the redirect target receives
+none, and the request then fails rather than retrying anonymously. That measurement is kept as
+`tests/integration/test_git_http_credentials.py`, which serves a bare repo over
+`git http-backend` on loopback. The second layer, keeping
+platform credentials out of project files entirely, is a separate change ("Het schrijftoken voor
+de deployments-repo blijft bij ZAD").
+
+Three things follow from this:
+
+- `GitConnector.repo_url_with_path` is a clean URL. If a repository URL from a project file does
+  carry userinfo, it is stripped from the URL and used to build the header instead.
+- `GIT_TERMINAL_PROMPT=0` is set on every invocation, so a missing or wrong credential fails
+  immediately instead of blocking on a password prompt that no terminal will ever answer.
+- No clone outlives the process, so none has to be repaired: the warm copy's directory is
+  `rmtree`'d and recloned in `get_connector()`, and every other connector clones into a fresh
+  `tempfile` directory.
+
+For SSH remotes (local and sandbox setups only; production is HTTPS) the connector uses
+`StrictHostKeyChecking=accept-new` with a fixed `UserKnownHostsFile`, so the first connection
+pins the host key and a later change is an error instead of a silent accept.
+
 ## Not yet done
 
 - Piece A of the design (diffing against the last *successfully processed* version instead of the
@@ -230,3 +272,4 @@ Three CI guards in `tests/test_single_path_enforcement.py` fail the build on a r
   `build_commit`/`set_branch_ref`/`sync_worktree_to_head` (the plumbing write path),
   `push_changes(allow_rebase=...)`
 - `tests/test_project_store.py` — concurrency, validation, rollback, retry, reconcile, history
+- `tests/test_git_credentials.py`: credentials reach git through the environment, bound to one host

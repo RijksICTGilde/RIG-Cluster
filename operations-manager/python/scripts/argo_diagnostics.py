@@ -58,6 +58,7 @@ def create_connector(args: argparse.Namespace) -> ArgoConnector:
     port = int(args.port or os.environ.get("ARGOCD_PORT", "443"))
     username = args.username or os.environ.get("ARGOCD_USERNAME", "admin")
     password = args.password or os.environ.get("ARGOCD_PASSWORD", "")
+    ca_bundle = args.ca_bundle or os.environ.get("ARGOCD_CA_BUNDLE") or None
 
     if not host:
         print("Error: ArgoCD host is required (--host or ARGOCD_HOST)")
@@ -74,6 +75,7 @@ def create_connector(args: argparse.Namespace) -> ArgoConnector:
         password=password,
         use_tls=use_tls,
         verify_ssl=args.verify_ssl,
+        ca_bundle=ca_bundle,
     )
 
 
@@ -438,6 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--password", help="ArgoCD password (overrides ARGOCD_PASSWORD)")
     parser.add_argument("--tls", action="store_true", help="Force TLS (auto-detected for port 443)")
     parser.add_argument("--verify-ssl", action="store_true", default=False, help="Verify SSL certificates")
+    parser.add_argument("--ca-bundle", help="CA bundle to verify against (overrides ARGOCD_CA_BUNDLE)")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 

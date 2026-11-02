@@ -33,6 +33,11 @@ its to send instead of finding out by losing it.
 Preserved at the one pure mutator every write path goes through,
 ``ServiceAdapter.set_service_config`` (and its DELETE sibling), so a new write path
 inherits the protection rather than having to remember it.
+
+The form path does not go through that mutator -- it writes whole service entry lists --
+so it applies the same rule to its own data with
+``ServiceAdapter.enforce_platform_managed_fields``, which walks a complete project file
+(RC-286).
 """
 
 from __future__ import annotations

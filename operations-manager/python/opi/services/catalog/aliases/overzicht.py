@@ -5,17 +5,21 @@ Waarom dit bestaat: niemand wist wat er in het aliassenveld hoorde. Het hulpteks
 verspreid over acht dienstdefinities. Wie het niet uit zijn hoofd wist, moest de code in.
 
 De lijst wordt hier NIET opgeschreven maar afgeleid uit dezelfde bron als de validatie:
-``variable_to_service()`` in references.py, die over alle dienstdefinities loopt. Een
+de dienstdefinities waar ``variable_to_service()`` in references.py ook over loopt. Een
 dienst die er een variabele bij krijgt staat daarmee vanzelf in de uitleg, en de uitleg
 kan nooit een naam noemen die de validatie afkeurt. Een tweede lijst zou binnen een
 release uit de pas lopen.
+
+Wel per DEFINITIE en niet via de naam-naar-dienst-kaart van ``variable_to_service()``:
+die kaart is gesleuteld op variabelenaam, dus van twee diensten die dezelfde variabelen
+leveren (minio-storage en seaweedfs-storage, redis en namespace-redis) hield alleen de
+laatste uit de registry zijn regel over en verdween de andere uit de uitleg.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from opi.services.catalog.aliases.references import variable_to_service
 from opi.services.services import ServiceAdapter, ServiceType
 
 
@@ -48,17 +52,15 @@ def alias_variabelen() -> list[AliasDienst]:
     probleem dat hij oplost.
     """
     per_dienst: dict[ServiceType, list[AliasVariabele]] = {}
-    for service_type, var_def in variable_to_service().values():
-        variabelen = per_dienst.setdefault(service_type, [])
-        if any(bestaand.naam == var_def.name for bestaand in variabelen):
-            continue
-        variabelen.append(
-            AliasVariabele(
-                naam=var_def.name,
-                beschrijving=var_def.description,
-                andere_namen=list(var_def.aliases),
+    for service_type in ServiceAdapter.SERVICE_DEFINITIONS:
+        for var_def in ServiceAdapter.get_service_definition(service_type).variables:
+            per_dienst.setdefault(service_type, []).append(
+                AliasVariabele(
+                    naam=var_def.name,
+                    beschrijving=var_def.description,
+                    andere_namen=list(var_def.aliases),
+                )
             )
-        )
 
     diensten: list[AliasDienst] = []
     for service_type, variabelen in per_dienst.items():

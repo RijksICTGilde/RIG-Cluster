@@ -70,24 +70,27 @@ class TestLoadProjectFromData:
             "name": "proj",
             "config": {"api-key": "k"},
             "users": [
-                {"email": "a@b.com", "role": "admin"},
-                {"email": "c@d.com", "role": "viewer"},
+                {"email": "a@b.com", "roles": ["admin"]},
+                {"email": "c@d.com", "roles": ["viewer"]},
             ],
         }
         service.load_project_from_data(data, "f.yaml")
         users = get_project_users("proj")
         assert len(users) == 2
         assert users[0].email == "a@b.com"
-        assert users[1].role == "viewer"
+        assert users[1].roles == ["viewer"]
 
     def test_rejects_missing_name(self, service):
         assert service.load_project_from_data({"config": {"api-key": "k"}}, "f.yaml") is False
 
-    def test_rejects_missing_api_key(self, service):
-        assert service.load_project_from_data({"name": "proj", "config": {}}, "f.yaml") is False
+    def test_laadt_een_project_zonder_projectsleutel(self, service):
+        """Sinds schemaversie 2.12 heeft een project geen ``config.api-key`` meer: zijn
+        bewijsmiddelen zijn tokens bij de leden. Een bestand zonder sleutel weigeren zou
+        elk gemigreerd project uit de cache houden."""
+        assert service.load_project_from_data({"name": "proj", "config": {}}, "f.yaml") is True
 
-    def test_rejects_missing_config_section(self, service):
-        assert service.load_project_from_data({"name": "proj"}, "f.yaml") is False
+    def test_laadt_een_project_zonder_configblok(self, service):
+        assert service.load_project_from_data({"name": "proj"}, "f.yaml") is True
 
     def test_skips_malformed_users(self, service):
         """Users missing required fields or not dicts should be silently dropped."""
@@ -95,7 +98,7 @@ class TestLoadProjectFromData:
             "name": "proj",
             "config": {"api-key": "k"},
             "users": [
-                {"email": "valid@x.com", "role": "admin"},
+                {"email": "valid@x.com", "roles": ["admin", "ops"]},
                 {"bad": "entry"},  # missing email/role
                 "not-a-dict",  # wrong type entirely
                 {"email": "no-role@x.com"},  # missing role
@@ -146,19 +149,22 @@ class TestApiKeyDecryptionOnLoad:
     """
 
     def _patch_decrypt(self, monkeypatch):
-        """Route the two-step decrypt chain: global key -> project key -> api key."""
+        """Route the two-step chain: unwrap the project key, then open the api key with it."""
+
+        def fake_unwrap(wrapped: str) -> str:
+            if wrapped == AGE_PRIVATE_KEY:
+                return "AGE-SECRET-KEY-PROJECT"
+            raise ValueError("not the project key")
 
         def fake_decrypt(content: str, private_key: str) -> str | None:
-            if content == AGE_PRIVATE_KEY and private_key == "AGE-SECRET-KEY-GLOBAL":
-                return "AGE-SECRET-KEY-PROJECT"
             if content == AGE_API_KEY and private_key == "AGE-SECRET-KEY-PROJECT":
                 return "plain-api-key"
             return None
 
         import opi.services.project_service as ps
 
+        monkeypatch.setattr(ps, "unwrap_project_key_sync", fake_unwrap)
         monkeypatch.setattr(ps, "decrypt_age_content_sync", fake_decrypt)
-        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
 
     def test_encrypted_api_key_is_decrypted_before_registration(self, service, monkeypatch):
         self._patch_decrypt(monkeypatch)
@@ -170,8 +176,8 @@ class TestApiKeyDecryptionOnLoad:
         import opi.services.project_service as ps
 
         service.register("proj", "plain-api-key", "proj.yaml")
+        monkeypatch.setattr(ps, "unwrap_project_key_sync", lambda *_: "AGE-SECRET-KEY-PROJECT")
         monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
-        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
         assert service.get_project("proj").api_key == "plain-api-key", (
@@ -183,14 +189,47 @@ class TestApiKeyDecryptionOnLoad:
         assert service.load_project_from_data(data, "proj.yaml") is True
         assert service.get_project("proj").api_key == "plain-api-key"
 
-    def test_decrypt_failure_without_previous_registers_raw(self, service, monkeypatch):
+    def test_decrypt_failure_without_previous_registers_nothing(self, service, monkeypatch):
+        """Een sleutel die niet open gaat legitimeert niemand, ook niet als zijn ciphertext.
+
+        De ciphertext teruggeven maakte hem zijn eigen wachtwoord: ``recognise_principal``
+        vergelijkt de aangeboden sleutel met de geregistreerde waarde.
+        """
         import opi.services.project_service as ps
 
+        monkeypatch.setattr(ps, "unwrap_project_key_sync", lambda *_: "AGE-SECRET-KEY-PROJECT")
         monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
-        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
-        assert service.get_project("proj").api_key == AGE_API_KEY
+        assert service.get_project("proj").api_key is None
+
+    def test_zonder_age_private_key_in_config_blijft_de_vorige_sleutel_staan(self, service, monkeypatch):
+        """``age-private-key`` kan ontbreken (een bestand midden in de projectsleutel-
+        migratie); zonder sleutel om mee te ontsleutelen valt het terug op het vorige
+        geregistreerde adres, net als bij een mislukte ontsleuteling."""
+        import opi.services.project_service as ps
+
+        service.register("proj", "plain-api-key", "proj.yaml")
+        monkeypatch.setattr(
+            ps, "unwrap_project_key_sync", lambda *_: (_ for _ in ()).throw(AssertionError("niet aan te roepen"))
+        )
+
+        data = {"name": "proj", "config": {"api-key": AGE_API_KEY}}
+        assert service.load_project_from_data(data, "proj.yaml") is True
+        assert service.get_project("proj").api_key == "plain-api-key"
+
+    def test_een_niet_uit_te_pakken_projectsleutel_valt_terug_op_de_vorige(self, service, monkeypatch):
+        """``unwrap_project_key_sync`` faalt met een verkeerde KEK; de eerder geregistreerde
+        plaintext blijft staan in plaats van de pijplijn stuk te maken op een 401."""
+        import opi.services.project_service as ps
+
+        service.register("proj", "plain-api-key", "proj.yaml")
+        monkeypatch.setattr(
+            ps, "unwrap_project_key_sync", lambda *_: (_ for _ in ()).throw(ValueError("verkeerde kek"))
+        )
+
+        assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
+        assert service.get_project("proj").api_key == "plain-api-key"
 
 
 class TestRegisterSyncsAllowlist:
@@ -222,7 +261,7 @@ class TestRegisterSyncsAllowlist:
         data = {
             "name": "proj",
             "config": {"api-key": "k"},
-            "users": [{"email": "member@example.com", "role": "admin"}],
+            "users": [{"email": "member@example.com", "roles": ["admin", "ops"]}],
         }
         service.load_project_from_data(data, "f.yaml")
         assert get_user_service().is_email_allowed("member@example.com") is True
@@ -232,3 +271,18 @@ class TestRegisterSyncsAllowlist:
 
         service.register("proj", "k", "f.yaml")
         assert get_user_service().is_email_allowed("anybody@example.com") is False
+
+    def test_register_accepts_raw_dicts_as_users(self, service):
+        """De e2e-testserver geeft leden als ruwe dicts door, geen ``ProjectUser``.
+
+        ``register`` zette ze voorheen rechtstreeks in ``ProjectSummary.users`` en viel
+        later om op ``lid.type`` (een attribuut dat een dict niet heeft); nu normaliseert
+        hij ze een keer naar ``ProjectUser``.
+        """
+        from opi.services.user_service import get_user_service
+
+        service.register("proj", "k", "f.yaml", users=[{"email": "dict.member@example.com", "roles": ["admin", "ops"]}])
+
+        project = service.get_project("proj")
+        assert project.users[0].email == "dict.member@example.com"
+        assert get_user_service().is_email_allowed("dict.member@example.com") is True

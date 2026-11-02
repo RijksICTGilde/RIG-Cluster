@@ -11,7 +11,7 @@ These tests verify the project management endpoints:
 """
 
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.services.project_service import ProjectSummary, ProjectUser
@@ -592,6 +592,18 @@ class TestRefreshDeploymentEndpoint:
 @pytest.mark.integration
 class TestDeleteProjectEndpoint:
     """Tests for the delete project endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def _step_up_voldaan(self):
+        """De step-up op deze route staat los getoetst; hier gaat het om het verwijderen.
+
+        Het register vraagt sinds RC-392 ``admin`` met een verse tweede factor voor
+        ``project.delete``, en een projectsleutel kan die niet geven. Wat deze klasse
+        meet is wat de handler daarna doet, dus de step-up is hier voldaan verklaard;
+        dat hij ECHT afgedwongen wordt staat in ``tests/test_api_delete_project_step_up.py``.
+        """
+        with patch("opi.api.otp_step_up.verify_api_step_up", AsyncMock(return_value=None)):
+            yield
 
     def test_delete_project_success(
         self,

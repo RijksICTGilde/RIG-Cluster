@@ -2,8 +2,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool
 
 import opi.services.persistence  # noqa: F401  -- registers service ORM models on Base.metadata
-from opi.core.config import settings
-from opi.core.db import Base, include_orm_object
+from opi.core.db import Base, app_database_url, include_orm_object
 
 # Autogenerate target. Only tables declared as ORM models on Base.metadata are managed;
 # any table not declared as an ORM model is left untouched by autogenerate via
@@ -12,10 +11,12 @@ target_metadata = Base.metadata
 
 
 def _build_url() -> str:
-    return (
-        f"postgresql+psycopg2://{settings.DATABASE_ADMIN_NAME}:{settings.DATABASE_ADMIN_PASSWORD}"
-        f"@{settings.DATABASE_HOST}:5432/{settings.DATABASE_NAME}"
-    )
+    """De URL van OPI's eigen database, met de app-rol die haar objecten bezit.
+
+    De migraties draaien als die rol en niet als de superuser; de overdrachtsstap in
+    ``opi/core/app_database_owner.py`` zorgt dat ze alles bezit wat ze wijzigt (RC-410).
+    """
+    return app_database_url("postgresql+psycopg2", "sslmode")
 
 
 def run_migrations_offline() -> None:

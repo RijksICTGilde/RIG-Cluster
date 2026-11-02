@@ -28,7 +28,7 @@ spec:
       initContainers:
       # Wait for Forgejo to be healthy before attempting bootstrap
       - name: wait-for-forgejo
-        image: busybox:1.36
+        image: busybox:1.38.0
         command:
         - sh
         - -c
@@ -48,7 +48,7 @@ spec:
 
       containers:
       - name: bootstrap
-        image: codeberg.org/forgejo/forgejo:14
+        image: codeberg.org/forgejo/forgejo:14.0.5
         command:
         - sh
         - -c
@@ -121,7 +121,7 @@ spec:
               -d '{
                 "name":"user-applications",
                 "description":"User application deployments for RIG projects",
-                "private":false,
+                "private":true,
                 "auto_init":true,
                 "default_branch":"main",
                 "gitignores":"",
@@ -136,7 +136,7 @@ spec:
               -d '{
                 "name":"user-applications",
                 "description":"User application deployments for RIG projects",
-                "private":false,
+                "private":true,
                 "auto_init":true,
                 "default_branch":"main",
                 "gitignores":"",
@@ -155,7 +155,7 @@ spec:
               -d '{
                 "name":"argo-user-applications",
                 "description":"ArgoCD application manifests for RIG projects",
-                "private":false,
+                "private":true,
                 "auto_init":true,
                 "default_branch":"main",
                 "gitignores":"",
@@ -170,7 +170,7 @@ spec:
               -d '{
                 "name":"argo-user-applications",
                 "description":"ArgoCD application manifests for RIG projects",
-                "private":false,
+                "private":true,
                 "auto_init":true,
                 "default_branch":"main",
                 "gitignores":"",
@@ -179,6 +179,28 @@ spec:
               }' \
               "$FORGEJO_URL/api/v1/user/repos" || echo "Repository may already exist"
           fi
+
+          # Step 4: Mark existing repositories private
+          # Een bestaande Forgejo slaat de POST hierboven over en zou dus publiek blijven.
+          echo ""
+          echo "Step 4: Marking repositories private..."
+
+          for REPO in user-applications argo-user-applications; do
+            echo "Marking private: $REPO"
+            if [ "$USE_BASIC_AUTH" = "true" ]; then
+              curl -sf -X PATCH \
+                -H "Content-Type: application/json" \
+                -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+                -d '{"private":true}' \
+                "$FORGEJO_URL/api/v1/repos/$ADMIN_USER/$REPO" || echo "Could not mark $REPO private"
+            else
+              curl -sf -X PATCH \
+                -H "Content-Type: application/json" \
+                -H "Authorization: token $TOKEN" \
+                -d '{"private":true}' \
+                "$FORGEJO_URL/api/v1/repos/$ADMIN_USER/$REPO" || echo "Could not mark $REPO private"
+            fi
+          done
 
           echo ""
           echo "========================================="

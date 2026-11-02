@@ -10,7 +10,9 @@ from keycloak.exceptions import KeycloakError
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.keycloak import (
+    DEFAULT_BROWSER_FLOW,
     PLATFORM_IDP_ALIAS,
+    REQUIRED_OTP_BROWSER_FLOW,
     KeycloakConnector,
     create_keycloak_connector,
     legacy_restricted_flow_alias,
@@ -18,6 +20,7 @@ from opi.connectors.keycloak import (
 )
 from opi.core.cluster_config import (
     get_ingress_postfix,
+    get_keycloak_demo_users,
     get_keycloak_discovery_url,
     get_keycloak_support_http,
     get_namespace,
@@ -26,7 +29,13 @@ from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
-from opi.services.catalog.keycloak.config_model import LEGACY_ACCOUNT_LINK, AccountLink, RestrictAccessConfig
+from opi.services.catalog.keycloak.config_model import (
+    LEGACY_ACCOUNT_LINK,
+    AccountLink,
+    KeycloakClientEntry,
+    RestrictAccessConfig,
+)
+from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -46,24 +55,46 @@ from opi.utils.naming import (
     resolve_effective_base_domain,
 )
 from opi.utils.passwords import generate_secure_password
+from opi.utils.redirect_uris import validate_redirect_uris
 from opi.utils.secrets import KeycloakSecret
-from opi.utils.totp import build_otpauth_uri, generate_totp_secret
+from opi.utils.totp import generate_totp_secret
 from opi.utils.url_paths import normalize_logout_path
-from opi.utils.yaml_util import compiled_jsonpath
+from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_path
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
 
-#: De blauwdruk die meteen doorstuurt naar SSO Rijk in plaats van een inlogscherm te tonen,
-#: en tegelijk de blauwdruk die een project krijgt zolang zijn projectbestand er geen noemt.
-#:
-#: Dezelfde waarde als in ``KeycloakConfig.template`` en in het API-schema. Het FORMULIER
-#: kende hier ooit een eigen mening (``sso-support``), en dat is precies wat een scherm liet
-#: tonen wat het platform niet deed; het veld heeft daarom geen default meer en vraagt om een
-#: keuze (``opi/services/catalog/keycloak/editables.py``).
-SSO_ONLY_TEMPLATE = "sso-only"
+#: De browser flow die bij een blauwdruk hoort. Elke blauwdruk zet hem ook zelf (met
+#: ``setAsBrowserFlow`` of met de ``browserFlow``-sleutel); deze kaart is de expliciete
+#: assertie voor een realm die afdreef, en de reden dat er geen template-naam meer in een
+#: if-tak staat.
+BROWSER_FLOW_BY_TEMPLATE = {
+    SSO_ONLY_TEMPLATE: "External IDP Redirector",
+    SSO_SUPPORT_OTP_TEMPLATE: REQUIRED_OTP_BROWSER_FLOW,
+}
+
+#: De demo-gebruikers die de blauwdruk ``algoritmeregister`` aanmaakt. Ze dragen een
+#: wachtwoord uit de repo en staan daarom apart van de blauwdruk, zodat alleen een cluster
+#: dat ze mag hebben de lijst krijgt.
+DEMO_USERS_CONFIG = "algoritmeregister-demo-users.yaml"
+
+
+def load_demo_users(cluster: str) -> list[dict[str, Any]]:
+    """De demo-gebruikers voor een realm op dit cluster, leeg buiten lokaal en sandbox.
+
+    Een leeg resultaat laat de ``forEach`` in de blauwdruk niets aanmaken, dus een
+    productierealm krijgt geen gebruiker met een wachtwoord uit de repo.
+    """
+    if not get_keycloak_demo_users(cluster):
+        return []
+
+    yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / DEMO_USERS_CONFIG
+    config = load_yaml_from_path(str(yaml_path))
+    if not config or "demo_users" not in config:
+        raise ValueError(f"Geen demo_users gevonden in {DEMO_USERS_CONFIG}")
+    return config["demo_users"]
 
 
 def build_project_realm_context(
@@ -99,6 +130,8 @@ def build_project_realm_context(
         "invite_client_id": settings.INVITE_CLIENT_ID,
         # Per-realm SSO account-linking mode (automatic | confirm; None -> Keycloak's stock flow)
         "account_link": account_link,
+        # Leeg op een productiecluster; zie load_demo_users.
+        "demo_users": load_demo_users(cluster),
     }
 
 
@@ -184,7 +217,12 @@ class KeycloakManager:
         """
         self.project_manager = project_manager
 
-    async def create_resources_for_deployment(self, project_data: dict[str, Any], deployment: dict[str, Any]) -> None:
+    async def create_resources_for_deployment(
+        self,
+        project_data: dict[str, Any],
+        deployment: dict[str, Any],
+        rotate_client_secret: bool = False,
+    ) -> None:
         """
         Create Keycloak SSO resources for a deployment that has SSO service enabled.
 
@@ -193,6 +231,7 @@ class KeycloakManager:
         Args:
             project_data: The project configuration data
             deployment: The specific deployment configuration
+            rotate_client_secret: Let Keycloak issue a new client secret instead of reusing the stored one
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -233,6 +272,11 @@ class KeycloakManager:
         try:
             # Handle external keycloak (credentials from Kubernetes secret)
             if keycloak_config.get("type") == "external":
+                if rotate_client_secret:
+                    raise ValueError(
+                        f"Deployment {deployment_name} uses an external Keycloak; its client secret is managed "
+                        "outside ZAD and cannot be replaced from here"
+                    )
                 logger.info(f"Using external keycloak for deployment {deployment_name}")
                 await self._handle_external_keycloak(
                     project_name=project_name,
@@ -321,6 +365,7 @@ class KeycloakManager:
                 ingress_hosts=all_ingress_hosts,  # All hostnames from all components
                 cluster=cluster,
                 config=keycloak_config,  # Pass extracted Keycloak configuration
+                rotate_client_secret=rotate_client_secret,
             )
 
             if keycloak_credentials:
@@ -548,6 +593,8 @@ class KeycloakManager:
             "restrict_access": None,
             "account_link": None,  # None = keep Keycloak's stock first-broker-login flow (opt-in)
             "logout_path": None,  # None = the application clears its own session (opt-in)
+            "direct_access_grants": False,  # Password grant (ROPC), opt-in per project
+            "service_accounts": False,  # Client credentials, opt-in per project
         }
 
         project_services = project_data.get("services", [])
@@ -628,10 +675,8 @@ class KeycloakManager:
             additional_uris = user_config[redirect_uris_key]
             if not isinstance(additional_uris, list):
                 raise ValueError(f"additional_redirect_uris must be a list, got {type(additional_uris).__name__}")
-            # Validate all entries are strings
-            for uri in additional_uris:
-                if not isinstance(uri, str):
-                    raise TypeError(f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}")
+            # Dezelfde regel als in het configmodel en het formulier, via dezelfde functie.
+            validate_redirect_uris(additional_uris, "additional_redirect_uris")
             merged_config["additional_redirect_uris"] = additional_uris
             logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
 
@@ -674,10 +719,26 @@ class KeycloakManager:
             for i, client_config in enumerate(additional_clients):
                 if not isinstance(client_config, dict):
                     raise TypeError(f"additional-clients[{i}] must be a dict, got {type(client_config).__name__}")
-                if "name" not in client_config:
-                    raise ValueError(f"additional-clients[{i}].name is required")
+                # Guardrail through the model, net als restrict-access hierboven: de eis dat
+                # ``name`` en ``redirect-uris`` er zijn, en de regel voor een redirect URI,
+                # staan daar. ValidationError is een ValueError, dus aanroepers merken niets.
+                KeycloakClientEntry.model_validate(client_config)
             merged_config["additional_clients"] = additional_clients
             logger.info(f"Found {len(additional_clients)} additional clients to create")
+
+        # Extract the per-project flow opt-ins; the model names them and defaults them off.
+        # Beide schrijfwijzen, net als bij additional_redirect_uris: het configmodel
+        # accepteert ze allebei, dus een lezer die er maar een kent maakt de andere stil.
+        for config_key, yaml_keys in (
+            ("direct_access_grants", ("direct-access-grants", "direct_access_grants")),
+            ("service_accounts", ("service-accounts", "service_accounts")),
+        ):
+            yaml_key = next((key for key in yaml_keys if key in user_config), None)
+            if yaml_key is not None:
+                waarde = user_config[yaml_key]
+                if not isinstance(waarde, bool):
+                    raise ValueError(f"{yaml_key} must be a boolean, got {type(waarde).__name__}")
+                merged_config[config_key] = waarde
 
         # Extract and validate realm-roles
         if "realm-roles" in user_config:
@@ -963,6 +1024,18 @@ class KeycloakManager:
 
         return False
 
+    async def _regenerate_deployment_client_secret(self, keycloak_url: str, realm_name: str, client_id: str) -> str:
+        """Laat Keycloak een nieuw secret maken voor de client van deze deployment."""
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+        client = await keycloak.find_client_by_client_id(client_id, realm_name)
+        if not client:
+            raise ValueError(f"Keycloak client '{client_id}' not found in realm '{realm_name}'")
+        return await keycloak.regenerate_client_secret(client["id"], realm_name)
+
     async def _setup_sso_rijk_integration(
         self,
         project_name: str,
@@ -970,6 +1043,7 @@ class KeycloakManager:
         ingress_hosts: list[str],
         cluster: str,
         config: dict[str, Any],
+        rotate_client_secret: bool = False,
     ) -> dict[str, Any] | None:
         """
         Set up SSO-Rijk integration by adding a client to the project realm.
@@ -1080,6 +1154,12 @@ class KeycloakManager:
             if existing_credentials:
                 logger.info(f"Using existing Keycloak credentials for {project_name}/{deployment_name}")
 
+                client_secret = existing_credentials.client_secret
+                if rotate_client_secret:
+                    client_secret = await self._regenerate_deployment_client_secret(
+                        keycloak_url, realm_name, existing_credentials.client_id
+                    )
+
                 # Always check and apply access restriction even for existing clients
                 restrict_access = config.get("restrict_access")
                 if restrict_access and restrict_access.get("enabled", False):
@@ -1113,7 +1193,7 @@ class KeycloakManager:
                     # Update the stored secret so the new URLs get written
                     updated_secret = KeycloakSecret(
                         client_id=existing_credentials.client_id,
-                        client_secret=existing_credentials.client_secret,
+                        client_secret=client_secret,
                         public_client_id=existing_credentials.public_client_id,
                         discovery_url=discovery_url,
                         base_url=base_url,
@@ -1123,7 +1203,7 @@ class KeycloakManager:
 
                 return {
                     "client_id": existing_credentials.client_id,
-                    "client_secret": existing_credentials.client_secret,
+                    "client_secret": client_secret,
                     "discovery_url": discovery_url,
                     "base_url": base_url,
                     "realm": existing_credentials.realm,
@@ -1156,6 +1236,8 @@ class KeycloakManager:
                 support_http=support_http,
                 additional_redirect_uris=additional_redirect_uris or None,
                 logout_path=config.get("logout_path"),
+                direct_access_grants=config.get("direct_access_grants", False),
+                service_accounts=config.get("service_accounts", False),
             )
 
             # Apply access restriction if configured
@@ -1169,13 +1251,22 @@ class KeycloakManager:
                     template=config.get("template", SSO_ONLY_TEMPLATE),
                 )
 
+            # create_deployment_client is idempotent: een client die al bestaat komt terug met
+            # zijn huidige secret. Zonder deze slag blijft het oude secret dus geldig, precies
+            # wat de aanvraag wil voorkomen.
+            client_secret = client_info["client_secret"]
+            if rotate_client_secret:
+                client_secret = await self._regenerate_deployment_client_secret(
+                    keycloak_url, realm_name, client_info["client_id"]
+                )
+
             # Get cluster-specific discovery URL for the project realm
             cluster_discovery_url = get_keycloak_discovery_url(cluster)
             realm_discovery_url = f"{cluster_discovery_url}/realms/{realm_name}/.well-known/openid-configuration"
 
             credentials = {
                 "client_id": client_info["client_id"],
-                "client_secret": client_info["client_secret"],
+                "client_secret": client_secret,
                 "public_client_id": client_info.get("public_client_id", ""),
                 "discovery_url": realm_discovery_url,
                 "base_url": keycloak_url,
@@ -1185,7 +1276,7 @@ class KeycloakManager:
             # Store credentials in secrets map
             keycloak_secret = KeycloakSecret(
                 client_id=client_info["client_id"],
-                client_secret=client_info["client_secret"],
+                client_secret=client_secret,
                 public_client_id=client_info.get("public_client_id", ""),
                 discovery_url=realm_discovery_url,
                 base_url=keycloak_url,
@@ -1244,10 +1335,12 @@ class KeycloakManager:
             template: The project's realm blueprint. It decides whether the gate redirects to
                 SSO Rijk or shows Keycloak's login screen: the gate REPLACES the realm's
                 browser flow on this client, so without it the redirect of ``sso-only`` was
-                lost and the user got the login form (see ``_build_role_gate_flow``).
+                lost and the user got the login form (see ``_build_role_gate_flow``). For the
+                same reason, the gate carries the OTP requirement of ``sso-support-otp``.
         """
         error_message = restrict_access.get("error_message", "${accessDeniedNoPermission}")
         redirect_to_idp = PLATFORM_IDP_ALIAS if template == SSO_ONLY_TEMPLATE else None
+        require_otp = template == SSO_SUPPORT_OTP_TEMPLATE
         browser_flow_alias = role_gate_flow_alias(client_id)
         post_broker_flow_alias = f"post-broker-restricted-{client_id}"
 
@@ -1287,6 +1380,7 @@ class KeycloakManager:
                     role_name=role_name,
                     error_message=error_message,
                     redirect_to_idp=redirect_to_idp,
+                    require_otp=require_otp,
                 )
             else:
                 # Step 1: Create the client role
@@ -1307,6 +1401,7 @@ class KeycloakManager:
                     role_name=role_name,
                     error_message=error_message,
                     redirect_to_idp=redirect_to_idp,
+                    require_otp=require_otp,
                 )
 
             # Step 3: Set the browser flow as an authentication override on the client
@@ -1534,14 +1629,17 @@ class KeycloakManager:
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_authentication_flows(yaml_path, context)
 
-        # Converge the browser flow on what the template implies. Both templates already
-        # set it themselves (sso-only through setAsBrowserFlow, sso-support through its
+        # Converge the browser flow on what the template implies. Every template already
+        # sets it itself (sso-only through setAsBrowserFlow, the others through their
         # browserFlow key), so this is normally a no-op; it stays as the explicit
         # assertion for a realm that drifted, and for a template carrying neither signal.
-        # sso-only: External IDP Redirector flow (auto-redirect to IdP)
-        # sso-support: standard browser flow (shows login form with SSO button)
-        expected_browser_flow = "External IDP Redirector" if template_name == SSO_ONLY_TEMPLATE else "browser"
+        expected_browser_flow = BROWSER_FLOW_BY_TEMPLATE.get(template_name, DEFAULT_BROWSER_FLOW)
         await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
+
+        # Switching to sso-support-otp: set CONFIGURE_TOTP on existing accounts without OTP.
+        # SSO users and service accounts are unaffected.
+        if template_name == SSO_SUPPORT_OTP_TEMPLATE:
+            await keycloak.ensure_configure_totp_required(realm_name)
 
     async def _ensure_realm_clients(
         self,
@@ -1841,7 +1939,7 @@ class KeycloakManager:
         keycloak_url: str,
         config: dict[str, Any],
         ingress_hosts: list[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> None:
         """
         Set up project-level Keycloak infrastructure for a cluster using YAML configuration.
 
@@ -1862,12 +1960,6 @@ class KeycloakManager:
             keycloak_url: Base URL of the Keycloak server
             config: Keycloak configuration dict with template and variables
             ingress_hosts: Optional list of ingress hostnames for redirect URIs
-
-        Returns:
-            Dictionary with host, realm, username, password (plain text for immediate use).
-            When the realm and its admin user turn out to exist already and the project
-            file holds that admin's password, nothing is created and the existing entry is
-            returned as-is - the password then has the form the file stores it in.
 
         Raises:
             FileNotFoundError: If template file doesn't exist
@@ -1911,14 +2003,7 @@ class KeycloakManager:
                     f"the project file holds this admin's password - continuing with the existing realm "
                     f"instead of re-creating it"
                 )
-                return {
-                    "host": known_entry.get("host", keycloak_url),
-                    "realm": known_entry.get("realm", realm_name),
-                    "username": admin_username,
-                    # Stored form (AGE-encrypted or 'plain:'-prefixed): on this path the
-                    # plaintext is not ours to know, and we will not reset it to find out.
-                    "password": known_entry["password"],
-                }
+                return
 
             raise RuntimeError(
                 f"Refusing to re-create project Keycloak realm for {project_name}/{cluster}: "
@@ -2084,17 +2169,6 @@ class KeycloakManager:
         )
         logger.info(f"Stored and pushed Keycloak config in project file for cluster {cluster}")
 
-        result = {
-            "host": keycloak_url,
-            "realm": realm_name,
-            "username": admin_username,
-            "password": admin_password,  # Return plain password for immediate use
-        }
-        if totp_secret:
-            result["totp_secret"] = totp_secret  # Plain TOTP secret for immediate use
-            result["totp_otpauth_uri"] = build_otpauth_uri(totp_secret, admin_username, realm_name)
-        return result
-
     async def _ensure_admin_otp(
         self,
         project_name: str,
@@ -2190,7 +2264,7 @@ class KeycloakManager:
             keycloak_host: Base URL of the Keycloak server
             additional_clients: List of client configurations with:
                 - name: Client ID
-                - redirect-uris: List of allowed redirect URIs
+                - redirect-uris: List of allowed redirect URIs (required)
             cluster: Cluster name for determining protocol support
 
         Returns:
@@ -2210,7 +2284,9 @@ class KeycloakManager:
                 logger.warning("Additional client config missing 'name', skipping")
                 continue
 
-            redirect_uris = client_config.get("redirect-uris", ["*"])
+            # Geen ``["*"]``-default meer: zonder redirect URI's weigert de connector, en
+            # dat is de bedoeling. KeycloakClientEntry eist het veld al bij het inlezen.
+            redirect_uris = client_config.get("redirect-uris")
 
             logger.info(f"Creating additional client '{client_name}' in realm '{realm_name}'")
 
@@ -2220,6 +2296,8 @@ class KeycloakManager:
                 client_id=client_name,
                 client_name=client_name,
                 redirect_uris=redirect_uris,
+                direct_access_grants=client_config.get("direct-access-grants", False),
+                service_accounts=client_config.get("service-accounts", False),
             )
 
             client_secret = result.get("secret", "")

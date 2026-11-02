@@ -12,20 +12,43 @@ import os
 # tests en in CI en niet in de productie-image.
 os.environ.setdefault("LOTC_STRICT", "1")
 
+# ENVIRONMENT valt zonder instelling terug op "production", en dan registreert create_app
+# de proef- en testroutes niet. De tests meten die routes, dus hier expliciet "local".
+os.environ.setdefault("ENVIRONMENT", "local")
+
 import time
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from alembic.config import Config
+from alembic.runtime.environment import EnvironmentContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from opi.api.otp_step_up import OTP_CODE_HEADER
+from opi.core.db import Base
+from opi.services.user_otp_service import OtpStatus, OtpVerification
 from opi.utils.sops import generate_sops_key_pair
+from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
+
+
+def write_private_file(path: Path, content: str) -> Path:
+    """Write a key or token file the way ``age-keygen -o`` leaves one: owner-readable only.
+
+    ``require_private_file`` refuses anything wider, so a test that writes one with the
+    default umask is testing a file no tool here accepts.
+    """
+    path.write_text(f"{content}\n")
+    path.chmod(0o600)
+    return path
 
 
 @pytest.fixture(scope="session")
@@ -117,6 +140,9 @@ def mock_project_service() -> Any:
         def __init__(self, name: str, api_key: str = "test-api-key-12345") -> None:
             self.name = name
             self.api_key = api_key
+            # Leden en hun tokens (RC-322): het handhavingspunt zoekt hier eerst, en valt
+            # pas daarna terug op de oude projectsleutel hierboven.
+            self.users: list[Any] = []
             self.data = {
                 "deployments": [
                     {
@@ -175,14 +201,44 @@ def mock_settings() -> Any:
         # Real int, not a bare MagicMock: create_app() reads this to wire SessionMiddleware,
         # and numeric comparisons on it must work even when this mock is in effect.
         mock_settings.SESSION_MAX_AGE_SECONDS = 28800
-        # Om dezelfde reden een echte string. validate_master_api_key doet eerst
-        # `if not settings.MASTER_API_KEY` (een kale MagicMock is waar-achtig, dus daar komt
-        # hij doorheen) en daarna secrets.compare_digest, en die weigert een MagicMock met
-        # een TypeError. Het endpoint gaf dan 500 in plaats van 401, en de test die juist
-        # toetst dat een PROJECTsleutel geweigerd wordt viel om op de vorm van de weigering.
-        # De waarde is expres een andere dan de projectsleutels in de fixtures.
-        mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
+        # De body-limit (RC-367) rekent met deze twee bij elk verzoek op een uploadroute.
+        mock_settings.ATTACHMENT_BODY_LIMIT_FACTOR = 16
+        mock_settings.IMAGE_UPLOAD_MAX_SIZE_MB = 5120
+        # Een echte lege string: /health zet het proefdoel-token als responseheader zodra
+        # het waar-achtig is, en een kale MagicMock is dat. Starlette weigerde die header
+        # met een TypeError, waardoor /health onder deze fixture niet te meten was.
+        mock_settings.SECURITY_PROOF_TOKEN = ""
+        # Ook echte ints, om dezelfde reden: opi/api/rate_limiter.py rekent bij import met
+        # deze waarden om zijn emmers te bouwen, en retry_after_seconds vergelijkt met de
+        # max. Een kale MagicMock gaf een TypeError bij de import van de module, en dan
+        # viel elke test die create_app() bouwt om op de fixture.
+        mock_settings.AUTH_FAILURE_LIMIT_PER_MINUTE = 10
+        mock_settings.API_RATE_LIMIT_PER_MINUTE = 600
+        mock_settings.API_RATE_LIMIT_BURST = 120
+        mock_settings.RATE_LIMIT_RETRY_AFTER_MAX_SECONDS = 60
+        # Zelfde reden: opi/utils/client_ip.py vergelijkt TRUSTED_PROXY_HOPS met een int
+        # (`hops > 0`), en een kale MagicMock geeft daar dezelfde TypeError.
+        mock_settings.TRUSTED_PROXY_HOPS = 0
         yield mock_settings
+
+
+@pytest.fixture
+def clone_route_without_guard_and_encryption() -> Iterator[None]:
+    """Een kloonroute toetsen op haar payload, niet op de bron-guard en de versleuteling.
+
+    De guard doet een naamsopzoeking en de versleuteling vraagt de AGE-sleutel van het
+    cluster. Beide hebben hun eigen tests in ``test_external_clone_source.py``.
+    """
+
+    async def _unencrypted(secret: str) -> str:
+        return secret
+
+    with (
+        patch("opi.api.router.clone_source_refusal", AsyncMock(return_value=None)),
+        patch("opi.api.v2.router.clone_source_refusal", AsyncMock(return_value=None)),
+        patch("opi.api.router._encrypt_for_task", _unencrypted),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -286,6 +342,42 @@ def reset_readiness_state() -> Any:
     yield
     # Clean up after test
     readiness_module._state = None
+
+
+@pytest.fixture(autouse=True)
+def reset_actor_context() -> Any:
+    """Reset the actor contextvar between tests, so one test's set_actor call can never
+    leak into another test's assertions."""
+    from opi.core.actor import ACTOR_UNKNOWN, actor
+
+    token = actor.set(ACTOR_UNKNOWN)
+    yield
+    actor.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiters() -> Any:
+    """Leegt de emmers van de limiters tussen tests.
+
+    De faaltellers en de grove grens staan op moduleniveau, dus zonder dit telt een test
+    de mislukte authenticatiepogingen van de vorige mee en krijgt hij een 429 waar hij een
+    401 toetst. Het aantal tests dat met een foute sleutel klopt ligt boven de grens.
+    """
+    from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY
+
+    limiters = (AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY, API_FLOOD_LIMITER)
+
+    def leeg() -> None:
+        for limiter in limiters:
+            limiter._tokens.clear()
+            limiter._last_update.clear()
+            limiter._ip_tokens.clear()
+            limiter._ip_last_update.clear()
+            limiter._new_client_timestamps.clear()
+
+    leeg()
+    yield
+    leeg()
 
 
 # --- Real Postgres for ORM-backed repository tests (RC-5 persistence phase 2) --------
@@ -496,6 +588,75 @@ def _ruim_verweesde_databases_op() -> None:
             _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
 
 
+# --- Het harnas voor een migratietoets ------------------------------------------------
+#
+# Een migratie toets je op een LEGE database met ``alembic upgrade`` erover, en niet op de
+# database van ``orm_db``: die krijgt zijn tabellen uit de modellen en zou de migratie
+# juist overslaan. Dit staat hier omdat meer dan een migratietoets het nodig heeft.
+
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+
+
+def _alembic_config() -> Config:
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(ALEMBIC_INI.parent / "opi" / "migrations"))
+    return config
+
+
+def alembic_script_directory() -> ScriptDirectory:
+    """De migratieketen, los van een database. Voor een toets op de revisies zelf."""
+    return ScriptDirectory.from_config(_alembic_config())
+
+
+def _alembic_run(engine: Engine, destination: str, omhoog: bool) -> None:
+    """``alembic upgrade`` of ``downgrade`` op deze engine, zonder de URL uit env.py."""
+    config = _alembic_config()
+    script = ScriptDirectory.from_config(config)
+
+    def steps(rev, _context):
+        revs = script._upgrade_revs if omhoog else script._downgrade_revs
+        return revs(destination, rev)
+
+    with (
+        engine.connect() as connection,
+        EnvironmentContext(config, script, fn=steps, destination_rev=destination) as env,
+    ):
+        env.configure(connection=connection, target_metadata=Base.metadata)
+        with env.begin_transaction():
+            env.run_migrations()
+        connection.commit()
+
+
+def alembic_upgrade(engine: Engine, destination: str) -> None:
+    """``alembic upgrade <destination>``."""
+    _alembic_run(engine, destination, omhoog=True)
+
+
+def alembic_downgrade(engine: Engine, destination: str) -> None:
+    """``alembic downgrade <destination>``, bijvoorbeeld ``-1``."""
+    _alembic_run(engine, destination, omhoog=False)
+
+
+@pytest.fixture
+def migration_db(_orm_db_url: str) -> Iterator[str]:
+    """An EMPTY database next to the one of this run, as a sync (psycopg2) URL."""
+    server, _, _name = _orm_db_url.rpartition("/")
+    server = server.replace("postgresql+asyncpg", "postgresql+psycopg2")
+    # Eigen prefix: de weesopruimer hierboven leest een pid uit zad_test_<pid> en zou een
+    # naam met achtervoegsel als dood opruimen terwijl deze run hem gebruikt.
+    name = f"zad_mig_{os.getpid()}"
+    admin = create_engine(f"{server}/postgres", isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{name}"'))
+    try:
+        yield f"{server}/{name}"
+    finally:
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        admin.dispose()
+
+
 @pytest.fixture(scope="session")
 def _orm_db_url() -> Iterator[str]:
     """De verbinding naar de database van DEZE run, in de gedeelde server."""
@@ -591,3 +752,65 @@ def pytest_runtest_logreport(report: Any) -> None:
     )
     with open(_VOORTGANG_PAD, "a", encoding="utf-8") as bestand:
         bestand.write(regel)
+
+
+PLATFORMBEHEERDER_EMAIL = "beheerder@example.test"
+
+
+@pytest.fixture
+def platformbeheerder_token() -> Iterator[dict[str, Any]]:
+    """Laat ``validate_platform_admin_token`` een vast e-mailadres aannemen.
+
+    De tokenverificatie zelf staat in ``tests/test_user_token_auth.py``; een route achter
+    de decorator heeft alleen de uitkomst nodig. ``headers`` legitimeert een
+    platformbeheerder, ``headers_gewone_gebruiker`` een ingelogde niet-beheerder.
+    """
+    claims = {
+        "sub": "beheerder-1",
+        "email": PLATFORMBEHEERDER_EMAIL,
+        "email_verified": True,
+        "preferred_username": "beheerder",
+    }
+
+    def _claims_van(token: str) -> dict[str, Any]:
+        return claims if token == "beheerder-token" else {**claims, "email": "iemand@example.test"}
+
+    with (
+        patch("opi.api.user_token_auth.verify_user_token", AsyncMock(side_effect=_claims_van)),
+        patch("opi.api.user_token_auth.get_user_service") as get_service,
+    ):
+        get_service.return_value.is_email_allowed.return_value = True
+        get_service.return_value.is_platform_admin.side_effect = lambda email: email == PLATFORMBEHEERDER_EMAIL
+        yield {
+            "email": PLATFORMBEHEERDER_EMAIL,
+            "headers": {"Authorization": "Bearer beheerder-token"},
+            "headers_gewone_gebruiker": {"Authorization": "Bearer gewone-gebruiker-token"},
+        }
+
+
+#: De enige code die :func:`verse_otp` aanneemt, en maar een keer.
+OTP_CODE = "123456"
+
+
+@pytest.fixture
+def verse_otp() -> Iterator[dict[str, Any]]:
+    """Laat de step-up van de API een code eenmalig aannemen.
+
+    De OTP-dienst zelf staat in ``tests/test_user_otp_service.py``; een route achter
+    ``requires_step_up`` heeft alleen de uitkomst nodig. Een tweede aanroep met dezelfde
+    code is ongeldig, zoals bij een echte authenticator.
+    """
+    gebruikt: set[tuple[str, str]] = set()
+
+    async def _verify(email: str, code: str) -> OtpVerification:
+        if code != OTP_CODE or (email, code) in gebruikt:
+            return OtpVerification.INVALID
+        gebruikt.add((email, code))
+        return OtpVerification.OK
+
+    service = MagicMock(
+        verify=AsyncMock(side_effect=_verify),
+        status=AsyncMock(return_value=OtpStatus(registered=True)),
+    )
+    with patch("opi.api.otp_step_up.UserOtpService", return_value=service):
+        yield {"headers": {OTP_CODE_HEADER: OTP_CODE}, "code": OTP_CODE}

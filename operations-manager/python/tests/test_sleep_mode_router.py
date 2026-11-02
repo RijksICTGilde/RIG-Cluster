@@ -16,14 +16,18 @@ are replaced so each endpoint's contract can be exercised in isolation.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from opi.core.leden import LidSoort
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeResult
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
+from opi.services.project_leden import hash_van
+from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.web.router import sleep_deployment_web, wake_deployment_web
 
 PROJECT = "demo"
@@ -170,6 +174,88 @@ def test_de_spec_noemt_beide_manieren(path: str, verb: str) -> None:
     assert operation["security"] == [{"APIKeyHeader": []}]
 
 
+# --- API router: een ``zad_`` token loopt langs hetzelfde handhavingspunt ------------
+#
+# De slaapstand deed zijn eigen sleutelcontrole en is meeverhuisd naar ``handhaaf``, zodat
+# een token hier hetzelfde werkt als op de rest van de API. ``test_task_router.py`` heeft
+# dezelfde proef voor taken; dit is de sleep-mode-kant van die verhuizing.
+
+TOKEN_WAARDE = "zad_eentoken"
+
+
+def _store_met_token(rol: str) -> MagicMock:
+    project = ProjectSummary(
+        name=PROJECT,
+        filename=f"projects/{PROJECT}.yaml",
+        users=[
+            ProjectUser(
+                type=LidSoort.SERVICE_ACCOUNT,
+                name="bouwstraat",
+                role=rol,
+                tokens=[
+                    ProjectToken(
+                        name="pijplijn", expires=datetime.now(UTC) + timedelta(days=30), hash=hash_van(TOKEN_WAARDE)
+                    )
+                ],
+            )
+        ],
+    )
+    store = MagicMock()
+    store.get.return_value = project
+    return store
+
+
+def test_een_token_van_een_beheerder_kan_wekken(client: TestClient) -> None:
+    result = WakeResult(changed=True, state="waking")
+    with (
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("admin")),
+        patch.object(flow, "wake", AsyncMock(return_value=result)),
+    ):
+        resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": TOKEN_WAARDE})
+
+    assert resp.status_code == 202
+
+
+def test_een_token_van_een_developer_kan_de_status_lezen(client: TestClient) -> None:
+    """``sleep.read`` is een leeshandeling: een developer komt er wel doorheen."""
+    with (
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("developer")),
+        patch.object(flow, "status", AsyncMock(return_value={"state": "ready"})),
+    ):
+        resp = client.get(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/status", headers={"X-API-Key": TOKEN_WAARDE})
+
+    assert resp.status_code == 200
+
+
+def test_een_token_van_een_developer_kan_wekken_buiten_productie(client: TestClient) -> None:
+    """Sinds RC-392 is wekken operationeel: een developer mag het, buiten productie.
+
+    Tot deze taak kwam een developer via de API niet verder dan lezen, terwijl het
+    portaal hem job, databaseconsole en terugzetten wel liet doen. Het ontwerp trekt die
+    twee gelijk (paragraaf 4, rij 14).
+    """
+    result = WakeResult(changed=True, state="waking")
+    with (
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("developer")),
+        patch.object(flow, "wake", AsyncMock(return_value=result)),
+    ):
+        resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": TOKEN_WAARDE})
+
+    assert resp.status_code == 202
+
+
+def test_een_token_van_een_viewer_kan_niet_wekken(client: TestClient) -> None:
+    """Een viewer leest; wekken is een wijziging."""
+    with (
+        patch("opi.services.catalog.sleep_mode.router.get_project_store", return_value=_store_met_token("viewer")),
+        patch.object(flow, "wake", AsyncMock()) as wake_mock,
+    ):
+        resp = client.post(f"/api/sleep-mode/{PROJECT}/{DEPLOYMENT}/wake", headers={"X-API-Key": TOKEN_WAARDE})
+
+    assert resp.status_code == 403
+    wake_mock.assert_not_called()
+
+
 # --- API router: unknown project / deployment ----------------------------------------
 
 
@@ -213,7 +299,7 @@ def test_status_returns_flow_body(client: TestClient) -> None:
     assert resp.json() == {"state": "ready"}
 
 
-# --- Web router: admin/owner role gate -----------------------------------------------
+# --- Web router: de rolpoort op de route -----------------------------------------------
 
 
 def _request() -> object:
@@ -221,40 +307,41 @@ def _request() -> object:
     return object()
 
 
-@pytest.mark.parametrize("role", ["member", "developer", "viewer"])
-async def test_web_wake_non_privileged_role_forbidden(role: str) -> None:
-    with (
-        patch("opi.web.router.get_current_user", return_value={"email": "user@example.com"}),
-        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value=role),
-        patch.object(flow, "wake", AsyncMock()) as wake_mock,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
-    assert exc.value.status_code == 403
-    wake_mock.assert_not_called()
+@pytest.mark.parametrize(
+    ("rollen", "mag"),
+    [([], False), (["viewer"], False), (["developer"], True), (["ops"], True)],
+)
+def test_wekken_hangt_aan_het_recht_op_de_route(rollen: list[str], mag: bool) -> None:
+    """De rolpoort staat sinds RC-392 op de route en niet in de handler.
+
+    ``wake_deployment_web`` draagt ``sleep.wake``; de dependency op de web-router
+    beslist daarop voordat de handler draait. Wat hier vast moet staan is welk recht de
+    route noemt en wat dat opent: wie geen rol heeft of alleen leest niet, een developer
+    op een deployment die niet op productie staat wel.
+    """
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
+
+    assert action_of(wake_deployment_web) is Action.SLEEP_WAKE
+
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name="user@example.com",
+        project=PROJECT,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    resource = Resource(project=PROJECT, path=f"project/{PROJECT}/deployment/{DEPLOYMENT}", deployment=DEPLOYMENT)
+    assert decide(principal, Action.SLEEP_WAKE, resource, step_up_fresh=True).allowed is mag
 
 
-async def test_web_wake_unauthorized_project_forbidden() -> None:
-    with (
-        patch("opi.web.router.get_current_user", return_value={"email": "stranger@example.com"}),
-        patch("opi.web.router.is_user_authorized_for_project", return_value=False),
-        patch.object(flow, "wake", AsyncMock()) as wake_mock,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await wake_deployment_web(_request(), PROJECT, DEPLOYMENT)
-    assert exc.value.status_code == 403
-    wake_mock.assert_not_called()
-
-
-@pytest.mark.parametrize("role", ["admin", "owner"])
+@pytest.mark.parametrize("role", [["admin", "ops"], ["developer"]])
 async def test_web_wake_privileged_role_starts_a_task(role: str) -> None:
     """Not an inline call any more: waking commits to git and then reprocesses,
     ArgoCD sync included, so it runs as a task the page can follow."""
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch("opi.web.router.get_user_roles_for_project", return_value=role),
         patch("opi.web.router.get_project_store", return_value=_store_with_deployment()),
         patch("opi.web.router.create_task_and_render_progress", AsyncMock()) as start_task,
         patch.object(flow, "wake", AsyncMock()) as inline,
@@ -272,7 +359,7 @@ async def test_web_wake_unknown_deployment_404() -> None:
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+        patch("opi.web.router.get_user_roles_for_project", return_value=["admin", "ops"]),
         patch("opi.web.router.get_project_store", return_value=_store_with_deployment("iets-anders")),
         pytest.raises(HTTPException) as exc,
     ):
@@ -283,30 +370,25 @@ async def test_web_wake_unknown_deployment_404() -> None:
 # --- Web router: manual sleep (the other half of the toggle) --------------------------
 
 
-@pytest.mark.parametrize("role", ["member", "developer", "viewer"])
-async def test_web_sleep_non_privileged_role_forbidden(role: str) -> None:
-    with (
-        patch("opi.web.router.get_current_user", return_value={"email": "user@example.com"}),
-        patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value=role),
-        patch.object(flow, "sleep", AsyncMock()) as sleep_mock,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
-    assert exc.value.status_code == 403
-    sleep_mock.assert_not_called()
+@pytest.mark.parametrize(
+    ("rollen", "mag"),
+    [([], False), (["viewer"], False), (["developer"], True), (["ops"], True)],
+)
+def test_slapen_hangt_aan_hetzelfde_recht_als_wekken(rollen: list[str], mag: bool) -> None:
+    """Dezelfde action als wekken, dus dezelfde poort."""
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
 
+    assert action_of(sleep_deployment_web) is Action.SLEEP_WAKE
 
-async def test_web_sleep_unauthorized_project_forbidden() -> None:
-    with (
-        patch("opi.web.router.get_current_user", return_value={"email": "stranger@example.com"}),
-        patch("opi.web.router.is_user_authorized_for_project", return_value=False),
-        patch.object(flow, "sleep", AsyncMock()) as sleep_mock,
-        pytest.raises(HTTPException) as exc,
-    ):
-        await sleep_deployment_web(_request(), PROJECT, DEPLOYMENT)
-    assert exc.value.status_code == 403
-    sleep_mock.assert_not_called()
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name="user@example.com",
+        project=PROJECT,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    resource = Resource(project=PROJECT, path=f"project/{PROJECT}/deployment/{DEPLOYMENT}", deployment=DEPLOYMENT)
+    assert decide(principal, Action.SLEEP_WAKE, resource, step_up_fresh=True).allowed is mag
 
 
 def _store_with_deployment(name: str = DEPLOYMENT):
@@ -320,14 +402,14 @@ def _store_with_deployment(name: str = DEPLOYMENT):
     return store
 
 
-@pytest.mark.parametrize("role", ["admin", "owner"])
+@pytest.mark.parametrize("role", [["admin", "ops"], ["developer"]])
 async def test_web_sleep_privileged_role_starts_a_task(role: str) -> None:
     """Not an inline call any more: putting a deployment to sleep commits to git and then reprocesses,
     ArgoCD sync included, so it runs as a task the page can follow."""
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value=role),
+        patch("opi.web.router.get_user_roles_for_project", return_value=role),
         patch("opi.web.router.get_project_store", return_value=_store_with_deployment()),
         patch("opi.web.router.create_task_and_render_progress", AsyncMock()) as start_task,
         patch.object(flow, "sleep", AsyncMock()) as inline,
@@ -345,7 +427,7 @@ async def test_web_sleep_unknown_deployment_404() -> None:
     with (
         patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-        patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+        patch("opi.web.router.get_user_roles_for_project", return_value=["admin", "ops"]),
         patch("opi.web.router.get_project_store", return_value=_store_with_deployment("iets-anders")),
         pytest.raises(HTTPException) as exc,
     ):

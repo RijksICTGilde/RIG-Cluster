@@ -54,6 +54,7 @@ import logging
 import secrets
 from typing import Any
 
+from opi.core.authz.actions import Action
 from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPageContext, Service, config_path
 from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
@@ -61,6 +62,20 @@ from opi.services.services import ConfigAdvice, ServiceDefinition, service_entry
 from opi.services.services_enums import ServiceType, UIEvent
 
 logger = logging.getLogger(__name__)
+
+
+#: De ondergrens voor een ZELFGEKOZEN sleutel. De link is de enige barriere, dus een korte
+#: sleutel is te raden; een gegenereerde sleutel is er 22. Geldt alleen voor een sleutel die
+#: nog niet in het projectbestand stond: zie :meth:`InviteService.validate_project_change`.
+INVITE_KEY_MIN_LENGTH = 16
+
+
+def _invite_keys(project_data: dict[str, Any]) -> set[str]:
+    """De sleutels van de actieve uitnodigingen, via de ene lezer van dat veld."""
+    from opi.handlers.project_file_handler import ProjectFileHandler
+
+    invites = ProjectFileHandler().get_all_active_invites(project_data)
+    return {str(invite["key"]) for invite in invites if isinstance(invite, dict) and invite.get("key")}
 
 
 def _generate_invite_key() -> str:
@@ -218,6 +233,58 @@ class InviteService(Service):
             for stale in ("application-url", "application_url"):
                 entry.pop(stale, None)
 
+    def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
+        """Een NIEUWE uitnodigingssleutel is minstens ``INVITE_KEY_MIN_LENGTH`` tekens lang.
+
+        Alleen nieuw: een sleutel die al in de vorige versie stond blijft geldig. De vier
+        projectbestanden die ouder zijn dan deze dienst dragen zelfgekozen sleutels, en die
+        afkeuren zou hun bestand onopslaanbaar maken terwijl de eigenaar niet kan voldoen
+        (de sleutel verlengen maakt de link die al rondgaat ongeldig). Dezelfde valkuil als
+        het opslagplafond, zie ``STORED_CONTEXT_KEY``.
+
+        De sleutel zelf komt NIET in de melding: die gaat naar een gebruiker en een waarde
+        die iemand ergens vandaan plakte hoort niet teruggeciteerd te worden.
+        """
+        stored = _invite_keys(previous)
+        too_short = sum(
+            1 for key in _invite_keys(project_data) if key not in stored and len(key) < INVITE_KEY_MIN_LENGTH
+        )
+        if not too_short:
+            return []
+        return [
+            f"een nieuwe uitnodigingssleutel moet minstens {INVITE_KEY_MIN_LENGTH} tekens lang zijn "
+            f"({too_short} te kort). Laat de sleutel leeg om er een veilige te laten genereren"
+        ]
+
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """Geen uitnodiging met een lokaal account in een realm dat op e-mailadres koppelt.
+
+        Zo'n realm koppelt een SSO-identiteit aan elk account met hetzelfde adres, dus een
+        account dat hier met een zelf ingetypt adres ontstaat, neemt de identiteit over van
+        wie dat adres via SSO aanlevert. De uitnodigingsweg weigert ``local`` daar al
+        (``get_invite_auth_methods``); dit houdt de keuze ook uit het projectbestand, zodat
+        het bestand niet belooft wat de link niet doet.
+
+        Gelezen via de handler, dezelfde weg als de uitnodigingsweg: die kent naast de
+        dienstlocatie ook de oude ``invites:``-sectie en levert één schrijfwijze op.
+        """
+        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.catalog.keycloak.account_link import realm_account_link_mode
+
+        mode = realm_account_link_mode(project_data)
+        if mode is None:
+            return []
+
+        # De sleutel staat NIET in de melding: deze gaat als ProjectIntegrityError langs
+        # een logger.warning op de schrijfwegen, en de sleutel is een bearer-geheim.
+        return [
+            "een uitnodiging staat een lokaal account toe, maar het "
+            f"keycloak-realm van dit project koppelt automatisch op e-mailadres "
+            f"(account-link: {mode}); lokale accounts zijn daar niet toegestaan"
+            for invite in ProjectFileHandler().get_all_active_invites(project_data)
+            if "local" in (invite.get("auth_methods") or [])
+        ]
+
     # --- config field ownership -------------------------------------------------
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
@@ -272,8 +339,8 @@ class InviteService(Service):
     @on(UIEvent.PROJECT_SECTIONS)
     def invites_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # The link is the secret, so this is an authorization choice, not a display one:
-        # admin/owner only, like the keycloak realm block.
-        if ctx.user_role not in ("admin", "owner"):
+        # the same rule as the project key, read from the register.
+        if not ctx.can(Action.PROJECT_KEY_READ):
             return []
         from opi.handlers.project_file_handler import ProjectFileHandler
 

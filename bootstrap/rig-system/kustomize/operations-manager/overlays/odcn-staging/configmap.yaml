@@ -29,8 +29,20 @@ data:
     PROJECT_REPO_USERNAME=git
     PROJECT_REPO_BRANCH=main
 
+    # Van welke bronnen de renderketen een helmfile of helm chart mag klonen. Leeg betekent
+    # geen enkele, dus een nieuwe bron moet hier eerst bij. Gemeten in de projectrepo: de
+    # twee helmfile-projecten halen allebei hieruit.
+    RENDER_SOURCE_ALLOWLIST=https://github.com/MinBZK/mijn-bureau-infra.git
+
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
+
+    # SeaweedFS (seaweedfs-storage, RC-331). Beide adressen zijn nodig, `weed shell` hangt
+    # zonder masteradres. Dit zijn de HTTP-poorten: weed leidt de gRPC-poort er zelf uit af
+    # door 10000 op te tellen, en dat zijn de twee die de Service en de NetworkPolicy
+    # openzetten.
+    SEAWEEDFS_FILER_ADDRESS=seaweedfs.rig-staging-operations.svc.cluster.local:8888
+    SEAWEEDFS_MASTER_ADDRESS=seaweedfs.rig-staging-operations.svc.cluster.local:9333
 
     OWN_DOMAIN=zad.staging.rijksapp.dev
     ADDITIONAL_DOMAINS="operations-manager-staging.rig.prd1.gn2.quattro.rijksapps.nl"
@@ -51,21 +63,39 @@ data:
     PROMETHEUS_URL=http://prometheus.rig-staging-operations:9090
     PROMETHEUS_EXTERNAL_URL=https://prometheus-staging.rig.prd1.gn2.quattro.rijksapps.nl
 
-    ARGOCD_HOST=argocd-server
-    ARGOCD_PORT=80
+    # De volledige servicenaam (SAN in het certificaat)
+    ARGOCD_HOST=argocd-server.rig-staging-operations.svc
+    # TLS met service-CA-bundel
+    ARGOCD_PORT=443
+    ARGOCD_USE_TLS=true
+    ARGOCD_VERIFY_SSL=true
+    ARGOCD_CA_BUNDLE=/etc/ssl/argocd/service-ca.crt
 
+    # De OpenShift-router is hier de enige ingang en zet zijn waarde achter die van de
+    # client in X-Forwarded-For, dus de rechtse waarde is het echte client-IP. Zonder dit
+    # telt OPI op het peer-adres, en dat is bij elk verzoek de router.
+    TRUSTED_PROXY_HOPS=1
+
+    # INFO zoals in productie: de DEBUG-regels van OPI noemen per verzoek het e-mailadres
+    # van de gebruiker, en die stroom gaat naar Loki.
+    LOG_LEVEL=INFO
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    # Dezelfde lijsten als productie; wie er tijdens de pentest bij mag, is een keuze die
-    # nog gemaakt moet worden.
-    ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
-    ADMIN_EMAILS=robbert.bos@rijksoverheid.nl
+    # ALLOWED_EMAILS en ADMIN_EMAILS (persoonsgegevens) staan in de private repo
+    # zad-staging-secrets, in operations-manager/operations-manager-env-secrets.yaml;
+    # dat secret komt mee via envFrom in de base-Deployment.
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-staging-operations
 
-    # Geen GRAFANA_DATASOURCE_UID en geen REGISTRY_*: de Mimir-datasources tonen de
-    # metrics van productie, en de registry-organisatie rig/zad is die van productie.
-    # Zonder REGISTRY_URL staat de image-upload uit.
+    # Mimir van ODCN, net als productie: de eigen Prometheus in de tenant ziet geen
+    # cAdvisor of kube-state-metrics. De rig-staging-namespaces staan in mimir-staging, niet
+    # in mimir-prd (gemeten 30-10-2026). METRICS_BACKEND, GRAFANA_URL en een eigen
+    # GRAFANA_TOKEN staan in het env-secret in zad-staging-secrets.
+    GRAFANA_DATASOURCE_UID=mimir-staging
+    GRAFANA_BILLING_DATASOURCE_UID=mimir-billing
+
+    # Geen REGISTRY_*: de registry-organisatie rig/zad is die van productie. Zonder
+    # REGISTRY_URL staat de image-upload uit.
 
     SLEEP_MODE_WAKER_IMAGE=rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker:latest

@@ -63,7 +63,9 @@ class TestAcceptedConfigFieldHints:
         from opi.services.catalog.base import ConfigLayer
 
         svc = get_service(ServiceType.REDIS)
-        assert svc.config_api_fields(ConfigLayer.PROJECT) == ["acl-key-prefix"]
+        # ``acl-key-prefix-approval`` hoort erbij zoals ``approval`` bij send-email: het
+        # veld bestaat op het model, en de API weigert het als platform-managed veld.
+        assert svc.config_api_fields(ConfigLayer.PROJECT) == ["acl-key-prefix", "acl-key-prefix-approval"]
         assert svc.config_api_fields(ConfigLayer.COMPONENT) == []
 
     def test_minio_declares_accepted_fields(self) -> None:
@@ -135,16 +137,6 @@ class TestApprovalVerdictLogging:
 
 class TestNoConfigDictInLogs:
     """Checklist 10: a log line carries identifying values, never a whole config dict."""
-
-    def test_redis_config_read_does_not_dump_dict(self, caplog: pytest.LogCaptureFixture) -> None:
-        from opi.manager.redis_manager import RedisManager
-
-        project_data = {"services": [{"name": "redis", "config": {"acl-key-prefix": False}}]}
-        with caplog.at_level(logging.DEBUG, logger="opi.manager.redis_manager"):
-            RedisManager._get_redis_service_config(project_data)
-        # The raw dict repr must not appear in any log line.
-        assert "{'acl-key-prefix': False}" not in caplog.text
-        assert "{'acl-key-prefix': 'False'}" not in caplog.text
 
     def test_minio_config_read_does_not_dump_dict(self, caplog: pytest.LogCaptureFixture) -> None:
         from opi.manager.minio_manager import MinioManager

@@ -1,0 +1,39 @@
+# Wat OPI rechtstreeks op de ArgoCD-CR's doet, met het verb dat de aanroep vraagt
+# (RC-345). Wie hier schrijfrecht heeft gaat om de ArgoCD-RBAC heen, dus deze Role
+# draagt precies de verbs uit de inventaris en niets meer:
+#
+#   patch   remove_argocd_application_finalizers    merge-patch op metadata.finalizers
+#   patch   de lopende /operation weghalen          json-patch (vastgelopen sync)
+#   delete  delete application                      fallback als de parent-app niet synct
+#   get     get application (-o name/json/jsonpath) bestaat-hij, status, doel-namespace
+#   list    get applications                        de lijst per namespace
+#
+# `update` stond er wel en wordt nergens gebruikt: een merge- of json-patch vraagt
+# alleen patch. Voor appprojects doet delete_project_manager alleen een list en een
+# delete.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argo-application-manager
+  namespace: rig-system
+rules:
+  - apiGroups: [argoproj.io]
+    resources: [applications]
+    verbs: [get, list, patch, delete]
+  - apiGroups: [argoproj.io]
+    resources: [appprojects]
+    verbs: [get, list, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argo-application-manager
+  namespace: rig-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argo-application-manager
+subjects:
+  - kind: ServiceAccount
+    name: namespace-manager
+    namespace: rig-system

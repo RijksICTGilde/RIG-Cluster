@@ -6,6 +6,7 @@ import os
 import re
 from typing import Any
 
+from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.services import CloneFromType
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
 from opi.utils.naming import generate_deployment_manifest_path, generate_manifest_name, generate_pvc_manifest_type
@@ -278,7 +279,8 @@ class PVCManager:
                 source_deployment: str | None = None
 
                 if clone_type == CloneFromType.DEPLOYMENT.value:
-                    source_deployment = clone_from.get("reference")
+                    source_deployment = str(clone_from.get("reference") or "")
+                    resolve_clone_source_deployment(project_data, source_deployment, deployment_name)
                 elif clone_type == CloneFromType.REMOTE_SOURCE.value:
                     # PVC cannot clone from remote source (Kubernetes dataSource only works locally)
                     logger.warning(

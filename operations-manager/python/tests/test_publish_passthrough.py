@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from jinja2 import Environment, FileSystemLoader
+from opi.generation.manifests import render_template
 from opi.handlers.project_file_handler import ProjectFileHandler
-
-_ENV = Environment(loader=FileSystemLoader("manifests"))
 
 
 def _tls(project: dict, component: str, deployment: str | None = None) -> str:
@@ -185,7 +183,7 @@ def _render(**extra) -> str:
         "issuer_name": None,
         "cluster_issuer": None,
     }
-    return _ENV.get_template("ingress.yaml.jinja").render({**base, **extra})
+    return render_template("ingress.yaml.jinja", {**base, **extra})
 
 
 def test_passthrough_render_suppresses_cert() -> None:
@@ -251,7 +249,7 @@ def test_resolve_publish_certificate_gating() -> None:
 def test_standard_render_keeps_cert() -> None:
     h = _render(passthrough=False, cluster_issuer="kind-ca-issuer")
     assert "route.openshift.io/termination: passthrough" not in h
-    assert "cert-manager.io/cluster-issuer: kind-ca-issuer" in h
+    assert 'cert-manager.io/cluster-issuer: "kind-ca-issuer"' in h
     # Strong key material requested for platform-issued certs (no RSA-2048 default).
     assert "cert-manager.io/private-key-algorithm: ECDSA" in h
     assert 'cert-manager.io/private-key-size: "384"' in h

@@ -295,7 +295,7 @@ is dit de checklist voor de nieuwe overlay.
 
 Regel 12 is de image-pin (`rcr.rijksapps.nl/ghcr-rig/.../operations-manager:...`), regel 53 zet
 `cluster-api.apps.prd1.gn2.quattro.rijksapps.nl` als env-waarde. Dezelfde API-host staat ook in
-`bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml:71`,
+`bootstrap/rig-system/kustomize/components/cmp-odcn/kustomization.yaml:67`,
 `infrastructure/.../external-dns/controller/overlays/odcn/kustomization.yaml:33` en
 `infrastructure/.../prometheus/controller/overlays/odcn/kustomization.yaml:31`.
 
@@ -680,8 +680,10 @@ hub die vaker herstart dan een sandbox is optie B waarschijnlijk alsnog nodig. O
 
 Per peer een eigen API-key (`federation_config.py:16` `api_key` op `PeerConfig`; JSON in
 `FEDERATION_PEERS`). Dat is de goede vorm: één gecompromitteerde spoke-sleutel raakt de andere
-niet. De spoke valideert hem met zijn eigen `MASTER_API_KEY` (`opi/core/config.py:263`), via
-`validate_master_api_key` (`opi/api/federation_router.py:7`).
+niet. **De spoke heeft er sinds RC-386 geen tegenhanger meer voor**: hij valideerde de sleutel
+met zijn eigen `MASTER_API_KEY`, en die gedeelde sleutel is weg samen met `POST /api/tasks`.
+Voor een werkende federatie moet de spoke eerst een eigen herkenning per peer krijgen; zie
+`features/federation-routing.md`.
 
 Wat **niet** beschreven is:
 
@@ -690,10 +692,10 @@ Wat **niet** beschreven is:
   alleen via SOPS-velden zoals de git-wachtwoorden dat doen
   (`.../odcn-production/configmap.yaml:14`). Dit moet een `base64+age:`-waarde worden, of een
   aparte secret.
-- Hoe hij te roteren is. Er is geen procedure. Een rotatie betekent vandaag: nieuwe waarde in
-  de spoke-`MASTER_API_KEY`, nieuwe waarde in de hub-`FEDERATION_PEERS`, en beide OPI's
-  herstarten — met een venster waarin de hub de spoke niet bereikt. Een tweede geaccepteerde
-  sleutel op de spoke zou dat venster wegnemen; die bestaat niet.
+- Hoe hij te roteren is. Er is geen procedure. Een rotatie betekende: nieuwe waarde aan de
+  kant van de spoke, nieuwe waarde in de hub-`FEDERATION_PEERS`, en beide OPI's herstarten,
+  met een venster waarin de hub de spoke niet bereikt. Een tweede geaccepteerde sleutel op de
+  spoke zou dat venster wegnemen; die bestaat niet.
 
 **Aanbeveling:** `FEDERATION_PEERS` versleuteld opslaan zoals de git-wachtwoorden, en de
 rotatieprocedure opschrijven (ook als hij "korte onderbreking, buiten kantooruren" is). Beide

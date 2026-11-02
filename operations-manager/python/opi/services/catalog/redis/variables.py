@@ -16,28 +16,28 @@ class RedisVariables(Enum):
         name="REDIS_HOST",
         description="Redis server hostname",
         source="secret",
-        secret_key="host",
+        secret_key="host",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_REDIS_HOST"],
     )
     PORT = VariableDefinition(
         name="REDIS_PORT",
         description="Redis server port",
         source="secret",
-        secret_key="port",
+        secret_key="port",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_REDIS_PORT"],
     )
     USERNAME = VariableDefinition(
         name="REDIS_USERNAME",
         description="Redis ACL username",
         source="secret",
-        secret_key="username",
+        secret_key="username",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_REDIS_USERNAME"],
     )
     PASSWORD = VariableDefinition(
         name="REDIS_PASSWORD",
         description="Redis password",
         source="secret",
-        secret_key="password",
+        secret_key="password",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_REDIS_PASSWORD"],
     )
     PREFIX = VariableDefinition(
@@ -48,13 +48,13 @@ class RedisVariables(Enum):
             "tot sleutels en kanalen die met <prefix>: beginnen"
         ),
         source="secret",
-        secret_key="key_prefix",
+        secret_key="key_prefix",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_REDIS_PREFIX"],
     )
     URL = VariableDefinition(
         name="REDIS_URL",
         description="Full Redis connection URL",
         source="secret",
-        secret_key="url",
+        secret_key="url",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["APP_REDIS_URL"],
     )

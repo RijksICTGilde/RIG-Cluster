@@ -16,9 +16,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from keycloak.exceptions import KeycloakError
 from ruamel.yaml import YAML
 
-from opi.connectors.keycloak import create_keycloak_connector
+from opi.connectors.keycloak import REQUIRED_OTP_BROWSER_FLOW, create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_namespace
 from opi.core.config import settings
@@ -29,6 +30,9 @@ from opi.utils.naming import extract_domain_from_url
 logger = logging.getLogger(__name__)
 
 OPERATIONS_REALM_NAME = "operations-manager"
+
+#: Keycloak drukt eventsExpiration in seconden uit, de instelling in dagen.
+SECONDS_PER_DAY = 86400
 
 
 class KeycloakSetup:
@@ -64,6 +68,13 @@ class KeycloakSetup:
             # Step 0b: a human master admin that already has OTP, so a fresh cluster is
             # not left with one shared password-only account.
             await self.ensure_otp_master_admin()
+
+            # Step 0c: the master realm's own security stand. Keycloak creates that realm
+            # itself, so it never passes create_realm and gets nothing from a blueprint.
+            await self.ensure_master_realm_hardening()
+
+            # Step 0d: every password login in master requires an OTP.
+            await self.ensure_master_otp()
             self.kubectl = KubectlConnector()
 
             # Build context from settings
@@ -161,6 +172,48 @@ class KeycloakSetup:
         await keycloak.assign_realm_roles_to_user("master", user["id"], ["admin"])
         logger.info(f"Master admin '{username}' created with OTP; seed is in the cluster secret")
 
+    async def ensure_master_realm_hardening(self) -> None:
+        """Zet lockout, wachtwoordbeleid en events op de master-realm.
+
+        Zie features/opi-keycloak-service-account.md: De master-realm maakt Keycloak zelf,
+        dus hij krijgt deze bescherming niet via create_realm. Faalt dit, gaat de bootstrap door.
+        """
+        keycloak = self.keycloak or await create_keycloak_connector()
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / "master-realm.yaml"
+        context = {
+            "realm_name": "master",
+            "events_expiration_seconds": settings.KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS * SECONDS_PER_DAY,
+        }
+        try:
+            await KeycloakYamlHandler(keycloak).ensure_realm_hardening(yaml_path, context)
+        except KeycloakError as e:
+            logger.error(f"Kon de beveiligingsstand van de master-realm niet zetten: {e}")
+
+    async def ensure_master_otp(self) -> None:
+        """Require OTP for every password login in the master realm. Fails gracefully,
+        controlled by ``KEYCLOAK_ENFORCE_MASTER_OTP``.
+        """
+        if not settings.KEYCLOAK_ENFORCE_MASTER_OTP:
+            # The flag only skips this step; a flow bound on an earlier start stays bound, and
+            # unbinding it is a manual action in Keycloak.
+            logger.info("KEYCLOAK_ENFORCE_MASTER_OTP is off; skipping required OTP on master realm")
+            return
+
+        keycloak = self.keycloak or await create_keycloak_connector()
+        try:
+            await keycloak.ensure_required_otp_browser_flow("master", REQUIRED_OTP_BROWSER_FLOW)
+            await keycloak.ensure_browser_flow("master", REQUIRED_OTP_BROWSER_FLOW)
+            # Skip KEYCLOAK_ADMIN_USERNAME: an open required action blocks the password grant that
+            # OPI falls back to when KEYCLOAK_ADMIN_CLIENT_SECRET is absent.
+            gewijzigd = await keycloak.ensure_configure_totp_required(
+                "master", skip_usernames=frozenset({settings.KEYCLOAK_ADMIN_USERNAME})
+            )
+        except KeycloakError as e:
+            logger.error(f"Could not set required OTP on master realm: {e}")
+            return
+
+        logger.info(f"Required OTP on master realm set; {len(gewijzigd)} user(s) will configure on next login")
+
     async def ensure_master_admin_service_account(self) -> None:
         """First-boot self-bootstrap of OPI's client-credentials service account.
 
@@ -239,11 +292,28 @@ class KeycloakSetup:
         logger.info(f"Created OPI realm '{OPERATIONS_REALM_NAME}' using template '{template_name}'")
 
         # Create default users from project file (if defined)
-        users = keycloak_config.get("users", [])
-        if users:
-            variables = {**context, "project_realm_name": OPERATIONS_REALM_NAME}
-            await handler._process_users(users, variables)
-            logger.info(f"Created {len(users)} default user(s) in realm '{OPERATIONS_REALM_NAME}'")
+        for item in keycloak_config.get("users", []):
+            username = item["username"]
+            password = next(
+                (cred.get("value") for cred in item.get("credentials", []) if cred.get("type") == "password"), None
+            )
+            if not password:
+                msg = f"User '{username}' in realm '{OPERATIONS_REALM_NAME}' has no password credential"
+                raise ValueError(msg)
+
+            await keycloak.create_user(
+                # Letterlijke realm, de guard eist dat.
+                realm_name="operations-manager",
+                username=username,
+                password=password,
+                email=item.get("email"),
+                first_name=item.get("firstName"),
+                last_name=item.get("lastName"),
+                enabled=item.get("enabled", True),
+                # Adres bestaat niet als postbus; verificatie houdt hem tegen.
+                skip_email_verification=True,
+            )
+            logger.info(f"Created user '{username}' in realm '{OPERATIONS_REALM_NAME}'")
 
     def _extract_keycloak_service_config(self, project_data: dict) -> dict:
         """Extract keycloak config from project file services section.
@@ -313,6 +383,9 @@ class KeycloakSetup:
                 project_name=project_name,
                 ingress_hosts=ingress_hosts,
                 realm_name=target_realm,
+                # De OPI-login stuurt PKCE mee (opi/core/startup.py), dus Keycloak mag een
+                # authorization code zonder challenge weigeren.
+                require_pkce=True,
             )
 
             logger.info(f"Successfully created/retrieved client: {expected_client_id}")

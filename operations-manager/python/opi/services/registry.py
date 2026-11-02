@@ -13,6 +13,7 @@ postgresql-database, ...), NOT a connector/provider ("how OPI talks to a system"
 from __future__ import annotations
 
 import re
+from collections.abc import Callable  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.aliases import AliasesService
@@ -35,6 +36,7 @@ from opi.services.catalog.postgresql_database import PostgresqlDatabaseService
 from opi.services.catalog.publish_on_web import PublishOnWebService
 from opi.services.catalog.redis import RedisService
 from opi.services.catalog.resource_tuning import ResourceTuningService
+from opi.services.catalog.seaweedfs import SeaweedfsStorageService
 from opi.services.catalog.send_email import SendEmailService
 from opi.services.catalog.sleep_mode import SleepModeService
 from opi.services.catalog.temp_storage import TempStorageService
@@ -43,6 +45,7 @@ from opi.services.catalog.vlam import VlamService
 from opi.services.services_enums import ActionEvent, ServiceEvent, ServiceType, UIEvent
 
 if TYPE_CHECKING:
+    from opi.core.authz.actions import Action
     from opi.forms.editables.editable import Editable
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.services import DeploymentAction, ServiceDefinition
@@ -60,6 +63,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.POSTGRESQL_DATABASE: PostgresqlDatabaseService(),
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE: NamespacePostgresqlDatabaseService(),
     ServiceType.MINIO_STORAGE: MinioStorageService(),
+    ServiceType.SEAWEEDFS_STORAGE: SeaweedfsStorageService(),
     ServiceType.SEND_EMAIL: SendEmailService(),
     ServiceType.REDIS: RedisService(),
     ServiceType.NAMESPACE_REDIS: NamespaceRedisService(),
@@ -192,6 +196,11 @@ def project_validating_services() -> list[Service]:
     return [s for s in SERVICES.values() if type(s).validate_project is not Service.validate_project]
 
 
+def change_validating_services() -> list[Service]:
+    """Services that override ``validate_project_change``, in registry order."""
+    return [s for s in SERVICES.values() if type(s).validate_project_change is not Service.validate_project_change]
+
+
 def approval_services() -> list[Service]:
     """Services that declare at least one ApprovalSpec, in registry order (RC-5).
 
@@ -275,7 +284,7 @@ def find_deployment_action(project_data: dict, deployment_name: str, action_key:
     return None
 
 
-def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
+def collect_detail_page_sections(project_data: dict, can: Callable[[Action], bool]) -> list:
     """Read-only detail-page sections contributed by the services a project uses (WP2).
 
     Only services the project actually selects (project-level or referenced by a
@@ -285,7 +294,7 @@ def collect_detail_page_sections(project_data: dict, user_role: str) -> list:
     """
     from opi.services.catalog.base import DetailPageSection
 
-    payload = ProjectPageContext(project_data=project_data, user_role=user_role)
+    payload = ProjectPageContext(project_data=project_data, can=can)
     sections: list[DetailPageSection] = []
     for service in listeners(UIEvent.PROJECT_SECTIONS, project_data):
         sections.extend(service.handle_ui(UIEvent.PROJECT_SECTIONS, payload))

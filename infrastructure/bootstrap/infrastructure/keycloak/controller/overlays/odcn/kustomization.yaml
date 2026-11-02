@@ -7,6 +7,7 @@ resources:
 - issuer-letsencrypt.yaml
 # Legacy ingress for old hostname (transition period, can be removed later)
 - ingress-legacy.yaml
+- network-policies/keycloak-networkpolicy.yaml
 
 patches:
   - target:

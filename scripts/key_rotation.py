@@ -2,15 +2,17 @@
 
 The whole story, with the measurements, is in ``features/sops-sleutel-roteren.md``.
 
-There is a single operation under every place that is not a SOPS file, and it lives here once:
+There is a single operation under every place that is not a SOPS file, and it exists once:
 
     read field -> decrypt with A -> [keep value OR replace it] -> encrypt for B -> write
                                              ^              ^
                                           recrypt       new PAT
 
-``convert_value()`` is that loop. Without ``new_plaintext`` it is a recrypt to B; with one
-it is a replacement plus a recrypt. Two entry points sit on it: the key rotation
-(``rotate-project-keys.py``) and the PAT replacement (``replace-git-pat.py``).
+``convert_value()`` is that loop. It lives in ``opi.utils.key_rotation`` and is imported
+here, so the API route that replaces a single project key runs the same loop as these
+scripts. Without ``new_plaintext`` it is a recrypt to B; with one it is a replacement plus a
+recrypt. Two entry points sit on it: the key rotation (``rotate-project-keys.py``) and the
+PAT replacement (``replace-git-pat.py``).
 
 **Which of the two branches a field takes is decided on its PLAINTEXT.** The PAT round is
 given the token it replaces as well as the one it writes, and replaces only where the two
@@ -37,13 +39,12 @@ import base64
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import StrEnum
-from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +61,10 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+from opi.core.cluster_config import (  # noqa: E402  (after the sys.path bootstrap above)
+    CLUSTER_CONFIG,
+    get_cluster_config,
+)
 from opi.core.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
     find_plaintext_secret_violations,
     validate_project_schema,
@@ -67,11 +72,23 @@ from opi.core.project_schema import (  # noqa: E402  (after the sys.path bootstr
 from opi.manager.project_validation import validate_project_structure  # noqa: E402
 from opi.utils.age import (  # noqa: E402
     BASE64_AGE_PREFIX,
-    _encrypt_with_age_and_base64encode_as_prefixed_string,
-    decrypt_age_content,
-    encrypt_age_content,
     is_age_encrypted,
     parse_password_with_prefix,
+)
+
+# De lus zelf staat in OPI, zodat de API-route en deze scripts er één exemplaar van delen.
+# Drie namen worden hier niet gebruikt maar wel uit deze module geïmporteerd door de
+# rondes ernaast en door de toetsen: die kennen dit bestand als de ingang.
+from opi.utils.key_rotation import (  # noqa: E402
+    Conversion,  # noqa: F401
+    ConversionFailed,
+    Form,  # noqa: F401
+    convert_value,
+    decrypt_field,
+    form_of,
+    opens_with,
+    sha256_of,  # noqa: F401
+    to_age_block,
 )
 from opi.utils.sops import decrypt_sops_with_key  # noqa: E402
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
@@ -91,6 +108,48 @@ REPO = Path(__file__).resolve().parents[1]
 WORKTREE_DIR = ".claude"
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
+
+
+# KEK per cluster: zie features/sops-sleutel-roteren.md.
+def kek_file_for(cluster: str) -> Path:
+    """Het KEK-bestand van dit cluster."""
+    return REPO / "security" / f"project-kek-{cluster}.txt"
+
+
+def kek_fingerprint_for(cluster: str) -> Path:
+    """Het verslag van de KEK-ronde van dit cluster."""
+    return REPO / "security" / f"project-kek-fingerprint-{cluster}.json"
+
+
+def selected_cluster() -> str:
+    """Het gekozen cluster uit ``CLUSTER_TYPE``.
+
+    Alleen gezet binnen ``task``, dat ``.env-taskfile-current`` van ``task select-cluster``
+    zelf inleest. In een gewone shell is dit leeg en noemt de weigering ``--cluster``.
+    """
+    return os.environ.get("CLUSTER_TYPE", "").strip()
+
+
+def cluster_refusal(cluster: str) -> str | None:
+    """De foutregel als dit geen cluster uit ``CLUSTER_CONFIG`` is, anders None."""
+    if cluster in CLUSTER_CONFIG:
+        return None
+    known = ", ".join(sorted(CLUSTER_CONFIG))
+    return (
+        f"unknown cluster {cluster!r}; pass --cluster or run 'task select-cluster' so CLUSTER_TYPE "
+        f"is set. Known clusters: {known}"
+    )
+
+
+def opi_namespace_for(cluster: str) -> str:
+    """De platformnamespace waarin OPI op dit cluster draait, uit ``CLUSTER_CONFIG``.
+
+    Uit de configuratie en niet uit een clusterbrede zoekopdracht op de deploymentnaam: die
+    naam kiest een tenant, en staging en productie delen de API-server, dus een zoekopdracht
+    levert daar de namespaces van BEIDE omgevingen op.
+    """
+    return get_cluster_config(cluster)["namespace"]
+
 
 #: The GitHub token shapes, taken from the scanner's rule set rather than spelled out a second
 #: time here. What the PAT round decides with them is in ``is_github_token``.
@@ -128,32 +187,38 @@ _ARMOR = re.compile(
 )
 
 
-class Form(StrEnum):
-    """The storage form of an encrypted value. It has to survive the conversion.
-
-    ``BLOCK`` is the ASCII-armored AGE block: multi-line, a literal block scalar in YAML.
-    ``BASE64`` is that same block base64-encoded once more behind ``base64+age:``, a single
-    line, which is what lets it fit in a ``KEY=value`` env line. A field that switches form
-    is a content change, and a rotation must not make one.
-    """
-
-    BLOCK = "age-block"
-    BASE64 = "base64+age"
-
-
 class MissingKey(RuntimeError):
     """A key file is absent, or holds no AGE key. Always names the path."""
+
+
+class KeyFileTooOpen(MissingKey):
+    """Een sleutel- of tokenbestand is voor groep of anderen leesbaar of schrijfbaar.
+
+    Een subclass van ``MissingKey`` zodat foutmeldingen-entry's een sleutelprobleem in één regel rapporteren, niet in een traceback.
+    """
 
 
 class KeyExists(RuntimeError):
     """A new key was about to be written where a file already sits. Always names the path."""
 
 
-class ConversionFailed(RuntimeError):
-    """A field does not open with the old key, or does not open with the new one afterwards."""
-
-
 # keys
+
+
+def require_private_file(path: str | Path) -> None:
+    """Weigeren als een sleutel- of tokenbestand voor groep of anderen leesbaar is.
+
+    De regel die ssh op een privésleutel toepast: te ruim is een bevinding nu, niet een verrassing later.
+    """
+    path = Path(path)
+    if os.name != "posix":
+        print(f"(POSIX-rechten niet van toepassing op dit platform; {path} niet gecontroleerd)")
+        return
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+        raise KeyFileTooOpen(
+            f"{path} is leesbaar of schrijfbaar buiten de eigenaar (mode {mode:04o}): chmod 600 {path}"
+        )
 
 
 def read_key(path: str | Path) -> str:
@@ -166,6 +231,7 @@ def read_key(path: str | Path) -> str:
     path = Path(path)
     if not path.is_file():
         raise MissingKey(f"key file does not exist: {path}")
+    require_private_file(path)
     for line in path.read_text().splitlines():
         if line.strip().startswith(AGE_KEY_MARKER):
             return line.strip()
@@ -235,106 +301,6 @@ def ask_for_path(question: str, default: str | Path, *, reader: Any = input) -> 
     if not path.is_file():
         raise MissingKey(f"file does not exist: {path}")
     return path
-
-
-# the one loop
-
-
-def form_of(value: object) -> Form | None:
-    """The storage form of a value, or None when nothing encrypted is in it."""
-    if not isinstance(value, str) or not value:
-        return None
-    stripped = value.strip()
-    if stripped.startswith(BASE64_AGE_PREFIX):
-        return Form.BASE64
-    if is_age_encrypted(stripped):
-        return Form.BLOCK
-    return None
-
-
-def _to_block(value: str, form: Form) -> str:
-    """Peel the storage form back to the armored AGE block that ``age -d`` accepts."""
-    if form is Form.BASE64:
-        return base64.b64decode(value.strip()[len(BASE64_AGE_PREFIX) :]).decode()
-    return value.strip()
-
-
-def sha256_of(plaintext: str) -> str:
-    """The fingerprint of one field: sha256 of the plaintext, hex."""
-    return sha256(plaintext.encode()).hexdigest()
-
-
-@dataclass(frozen=True)
-class Conversion:
-    """The result of one conversion. Holds the new ciphertext, never the plaintext."""
-
-    new_value: str
-    sha256_before: str
-    sha256_after: str
-    replaced: bool
-
-    @property
-    def content_unchanged(self) -> bool:
-        """Whether the plaintext stayed the same. For a replacement this should be False."""
-        return self.sha256_before == self.sha256_after
-
-
-async def convert_value(
-    value: str,
-    old_private_key: str,
-    new_public_key: str,
-    *,
-    new_plaintext: str | None = None,
-) -> Conversion:
-    """THE loop: read, decrypt with A, keep or replace, encrypt for B, hand it back.
-
-    Without ``new_plaintext`` this is a recrypt: the plaintext stays the same and the hash
-    before and after is identical. With ``new_plaintext`` it is a replacement plus a
-    recrypt, and then the hash is supposed to differ -- at exactly those fields and nowhere
-    else.
-
-    The storage form carries over: a ``base64+age:`` value comes back as ``base64+age:``
-    and an armored block as an armored block. A field that switches form is itself a change.
-    """
-    form = form_of(value)
-    if form is None:
-        raise ConversionFailed("value is not encrypted and should not reach this loop")
-
-    plain_before = await decrypt_age_content(_to_block(value, form), old_private_key)
-    plain_after = new_plaintext if new_plaintext is not None else plain_before
-
-    if form is Form.BASE64:
-        new_value = await _encrypt_with_age_and_base64encode_as_prefixed_string(plain_after, new_public_key)
-    else:
-        new_value = await encrypt_age_content(plain_after, new_public_key)
-
-    return Conversion(
-        new_value=new_value,
-        sha256_before=sha256_of(plain_before),
-        sha256_after=sha256_of(plain_after),
-        replaced=new_plaintext is not None,
-    )
-
-
-async def decrypt_field(value: str, private_key: str) -> str | None:
-    """The plaintext of a field, or None when this key does not open it.
-
-    None rather than an exception: both outcomes are a normal answer here. The final check
-    specifically wants to KNOW that the old key fails, and a verification round has to be
-    able to name every closed field instead of aborting on the first one.
-    """
-    form = form_of(value)
-    if form is None:
-        return None
-    try:
-        return await decrypt_age_content(_to_block(value, form), private_key)
-    except Exception:  # age, base64 and the wrapper each raise their own type
-        return None
-
-
-async def opens_with(value: str, private_key: str) -> bool:
-    """Whether a field can be decrypted with this key. The core of the final check."""
-    return await decrypt_field(value, private_key) is not None
 
 
 # fingerprint
@@ -715,7 +681,7 @@ def is_real_ciphertext(value: str) -> bool:
     if form is None:
         return False
     try:
-        armored = _to_block(value, form)
+        armored = to_age_block(value, form)
     except (ValueError, UnicodeDecodeError):
         return False
     match = _ARMOR.search(armored)
@@ -914,6 +880,7 @@ async def rotate_project_file(
     new_public_key: str | None = None,
     current_pat: str | None = None,
     new_pat: str | None = None,
+    only_private_key: bool = False,
     dry_run: bool = True,
 ) -> ProjectRound:
     """Convert one project file's two platform fields, or explain why not.
@@ -927,7 +894,9 @@ async def rotate_project_file(
     A file with an unreadable value is skipped with a message and NOT half written.
 
     ``new_pat`` replaces ``repositories[].password``; ``config.age-private-key`` is always
-    only re-encrypted.
+    only re-encrypted. ``only_private_key`` narrows the worklist to that one field, which is
+    what the KEK round needs: there the repository password stays on the platform key, so
+    converting it too would move a field that is supposed to stay where it is.
 
     **The replacement is conditional, and that is not a nicety.** A password is replaced only
     when its plaintext IS ``current_pat``; anything else is only RE-ENCRYPTED, keeps its
@@ -952,6 +921,8 @@ async def rotate_project_file(
         return round_report
 
     fields = project_fields(data)
+    if only_private_key:
+        fields = [(name, value) for name, value in fields if name == PROJECT_FIELD_PRIVATE_KEY]
     if not fields:
         round_report.skipped = "no encrypted platform fields in this file"
         return round_report

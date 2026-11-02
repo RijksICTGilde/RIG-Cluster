@@ -1,0 +1,6 @@
+{
+  "$comment": "v2.16 -> 2.17 (RC-408) voegde het root-veld source-code toe: informatieve links naar de broncode van het project. Een 2.16-bestand kent dat veld niet, en omdat de root een gesloten object is wordt het daar geweigerd.",
+  "properties": {
+    "source-code": null
+  }
+}

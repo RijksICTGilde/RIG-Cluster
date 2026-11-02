@@ -26,8 +26,7 @@
   elkaar. tests/test_lotc_layout_rules.py bewaakt dat voor de kaarten.
 #}
 
-{% macro panel(title, icon='', gap='md', aside='', info_text='') %}
-<c-card outline padding="lg">
+{% macro _panel_inhoud(title, icon, gap, aside, info_text, body) %}
     <c-stack gap="{{ gap }}">
         {% if title %}
             {# GEEN kopicoon als er een knop in de kopregel staat. c-section-head zet
@@ -41,9 +40,22 @@
             {{ info(info_text) }}
         {%- endif %}
         {% endif %}
-        {{ caller() }}
+        {{ body }}
     </c-stack>
+{% endmacro %}
+
+{# card=false laat de kaart weg en houdt de kop en de afstanden; voor een pagina die leest
+   als een tekst, zoals de introductie. Een <c-card> die alleen voorwaardelijk opent en
+   sluit kan niet: LOTC zet hem om naar een eigen blok. #}
+{% macro panel(title, icon='', gap='md', aside='', info_text='', card=true) %}
+{% if card %}
+<c-card outline padding="lg">
+    {{ _panel_inhoud(title, icon, gap, aside, info_text, caller()) }}
 </c-card>
+{% else %}
+    {# Zonder kaart geen kopicoon: dat hangt dan los aan de rechterrand. #}
+    {{ _panel_inhoud(title, '', gap, aside, info_text, caller()) }}
+{% endif %}
 {% endmacro %}
 
 

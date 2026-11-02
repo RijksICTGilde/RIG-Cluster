@@ -108,9 +108,15 @@ tasks:
       - sh: command -v pwgen
         msg: |
           🚨 pwgen is not installed! Install with 'brew install pwgen' on MacOS or 'apt-get install pwgen' on Linux.
+      - sh: command -v rsync
+        msg: |
+          🚨 rsync is not installed! sandbox:sync needs it. Install with 'brew install rsync' on MacOS or 'apt-get install rsync' on Linux.
       - sh: command -v age-keygen
         msg: |
           🚨 age is not installed! Install with 'brew install age' on MacOS or 'apt-get install age' on Linux.
+      - sh: command -v gpg
+        msg: |
+          gpg is not installed! Install with 'brew install gnupg' on MacOS or 'apt-get install gnupg' on Linux.
       - sh: command -v yq
         msg: |
           🚨 yq is not installed! Install with 'brew install yq' on MacOS or 'apt-get install yq' on Linux.
@@ -233,6 +239,31 @@ tasks:
         echo "✅ ArgoCD operator preparation complete"
     silent: true
 
+  _check-key-file:
+    internal: true
+    # Dezelfde regel die ssh op een privesleutel toepast: een sleutelbestand dat voor groep
+    # of anderen leesbaar is, weigeren we hier in plaats van het later te ontdekken.
+    requires:
+      vars: [KEY_FILE]
+    preconditions:
+      - sh: |
+          # Linux en macOS hebben verschillende vlaggen; `00` als laatste tak houdt een
+          # ontbrekend bestand bij de aanroeper, die het zelf al meldt.
+          # -L volgt de symlink: sandbox-deploy zet de sleutel met opzet als link neer, en
+          # zonder -L leest stat de 777 van de LINK en wijst elke gelinkte sleutel af.
+          MODE=$(stat -Lc %a "{{.KEY_FILE}}" 2>/dev/null || stat -Lf %Lp "{{.KEY_FILE}}" 2>/dev/null || echo 00)
+          # Geen `$((0$MODE & 077))`: de shell van task leest een leidende nul niet als
+          # octaal, dus 0600 werd 600 decimaal en een goed bestand werd afgewezen. De
+          # laatste twee cijfers ZIJN de rechten voor groep en anderen.
+          case "$MODE" in
+            0|*00) ;;
+            *)
+              echo "mode van {{.KEY_FILE}} is $MODE" >&2
+              exit 1
+              ;;
+          esac
+        msg: "{{.KEY_FILE}} is leesbaar of schrijfbaar buiten de eigenaar. Herstel met: chmod 600 {{.KEY_FILE}}"
+
   generate-age-key:
     desc: "Generate the AGE key of the selected cluster (AGE_KEY_FILE), only if it doesn't exist"
     vars:
@@ -287,6 +318,9 @@ tasks:
       VALUE: '{{.VALUE | default ""}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -315,6 +349,9 @@ tasks:
       VALUE: '{{.VALUE | default ""}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -341,6 +378,9 @@ tasks:
       FILE: '{{.FILE | default ""}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -385,6 +425,9 @@ tasks:
     preconditions:
       - sh: '[ -n "{{.KEY}}" ]'
         msg: "Geen AGE-sleutel gekozen. Zet AGE_KEY_FILE in .env-taskfile-<cluster> en draai 'task select-cluster' opnieuw, of geef KEY=... mee."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY}}'}
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -405,6 +448,9 @@ tasks:
       KEEP_ORIGINAL: '{{.KEEP_ORIGINAL | default "false"}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -464,6 +510,88 @@ tasks:
     cmds:
       - uv run --project operations-manager/python python scripts/edit-secret.py {{.CLI_ARGS}}
 
+  cmp-sops-role-backfill:
+    desc: "Eenmalig: zet de Role die de CMP het sleutel-secret laat lezen in elke bestaande namespace die er een heeft"
+    summary: |
+      OPI zet de Role cmp-sops-key-reader voortaan naast elk sleutel-secret dat hij
+      plaatst, maar in namespaces waar dat secret al stond gebeurt dat niet: OPI schrijft
+      daar bij een verwerking niets. Deze taak haalt die achterstand in.
+
+      Draai hem op productie VOOR de bootstrap die de repo-server op de eigen
+      ServiceAccount zet: daarna leest die alleen nog wat deze Roles toestaan.
+
+      DRY_RUN=true telt alleen, en schrijft niets. Op de sandbox hoort
+      ARGO_NAMESPACE=rig-system erbij, anders wijst de RoleBinding naar
+      rig-prd-operations.
+    vars:
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+      ARGO_NAMESPACE: '{{default "rig-prd-operations" .ARGO_NAMESPACE}}'
+      SERVICE_ACCOUNT: '{{default "argocd-cmp" .SERVICE_ACCOUNT}}'
+      # De platformnamespaces houden de platformsleutel, en die leest de platform-sidecar
+      # uit zijn mount. De tenant-sidecar hoort daar niets te mogen.
+      SKIP_NAMESPACES: '{{default "rig-prd-operations rig-prd-ron rig-system rig-ron" .SKIP_NAMESPACES}}'
+    cmds:
+      - |
+        # Op naam zoeken gaat met een field-selector: 'get secret <naam> --all-namespaces' weigert kubectl.
+        NAMESPACES=$(kubectl get secret --all-namespaces --field-selector metadata.name=sops-age-key -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}')
+        if [ -z "$NAMESPACES" ]; then
+          echo "geen namespace met een sops-age-key gevonden"
+          exit 0
+        fi
+
+        for OVER in {{.SKIP_NAMESPACES}}; do
+          NAMESPACES=$(printf '%s\n' "$NAMESPACES" | grep -v "^${OVER}$" || true)
+        done
+        if [ -z "$NAMESPACES" ]; then
+          echo "geen projectnamespace met een sops-age-key gevonden"
+          exit 0
+        fi
+
+        AANTAL=$(printf '%s\n' "$NAMESPACES" | wc -l | tr -d ' ')
+        echo "$AANTAL projectnamespaces met een sops-age-key"
+
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          printf '%s\n' "$NAMESPACES"
+          echo "dry-run: niets geschreven"
+          exit 0
+        fi
+
+        for NS in $NAMESPACES; do
+          kubectl apply -f - <<EOF
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: cmp-sops-key-reader
+          namespace: $NS
+          labels:
+            created-by: operations-manager
+        rules:
+          - apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["sops-age-key"]
+            verbs: ["get"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: cmp-sops-key-reader
+          namespace: $NS
+          labels:
+            created-by: operations-manager
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: cmp-sops-key-reader
+        subjects:
+          - kind: ServiceAccount
+            name: {{.SERVICE_ACCOUNT}}
+            namespace: {{.ARGO_NAMESPACE}}
+        EOF
+        done
+
+        echo "Role en RoleBinding staan in $AANTAL namespaces"
+    silent: true
+
   bootstrap-argo-system:
     desc: "Apply minimal bootstrap (namespace + ArgoCD) to start the GitOps process"
     requires:
@@ -474,12 +602,22 @@ tasks:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      # Stap 1 van de uitrol van de AppProjects (features/argocd-appprojects.md): de
+      # dichte default uit git overslaan, zodat de Applications eerst kunnen omschakelen.
+      KEEP_DEFAULT_APPPROJECT: '{{default "false" .KEEP_DEFAULT_APPPROJECT}}'
+      # Het vangnet uit #238 bij een uitrol: prune uit op de Applications uit deze overlay.
+      # Met de hand uitzetten helpt niet, want deze apply zet prune: true uit git terug.
+      # Draai de taak daarna nog een keer zonder deze optie, dan staat prune weer aan.
+      PAUSE_PRUNE: '{{default "false" .PAUSE_PRUNE}}'
     preconditions:
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
       - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
         msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
 
@@ -493,7 +631,14 @@ tasks:
         fi
 
         # Build and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        RENDERED="$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone)"
+        if [[ "{{.KEEP_DEFAULT_APPPROJECT}}" == "true" ]]; then
+          RENDERED="$(printf '%s\n' "$RENDERED" | yq 'select(.kind != "AppProject" or .metadata.name != "default")')"
+        fi
+        if [[ "{{.PAUSE_PRUNE}}" == "true" ]]; then
+          RENDERED="$(printf '%s\n' "$RENDERED" | yq '(select(.kind == "Application" and .spec.syncPolicy.automated != null) | .spec.syncPolicy.automated.prune) = false')"
+        fi
+        printf '%s\n' "$RENDERED" | kubectl apply $KUBECTL_FLAGS -f -
 
         # De repo-credentials van ArgoCD uit de secrets-repo, na de overlay omdat die de
         # namespace aanmaakt. ArgoCD pakt een repository-secret op zodra het er staat.
@@ -508,6 +653,7 @@ tasks:
         # gaat er net als daar pas na het aanmaken op (Kyverno); op productie staat het al.
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           kubectl label namespace {{.RIG_NAMESPACE}} argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
+          task wait-namespace-rights NAMESPACE={{.RIG_NAMESPACE}}
           if kubectl get secret sops-age-key -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
             echo "secret sops-age-key staat al in {{.RIG_NAMESPACE}}, ongemoeid gelaten"
           else
@@ -530,24 +676,9 @@ tasks:
         if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
           RON_NAMESPACE="$(yq '.metadata.name' "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml")"
+          # Geen sleutelsecret: ron-infrastructure rendert op de platform-plugin sinds RC-351.
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
             kubectl label namespace "$RON_NAMESPACE" argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
-
-            # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
-            # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
-            # de mailrelay er niet. Alleen aanmaken als hij er nog niet is: een apply met
-            # de sleutel uit {{.KEY_FILE}} zou op een cluster dat al een andere
-            # platformsleutel draagt een rotatie zijn, en die loopt langs
-            # scripts/set-sops-key-secret.py (instructions/sops-sleutel-in-het-cluster.md).
-            if kubectl get secret sops-age-key -n "$RON_NAMESPACE" >/dev/null 2>&1; then
-              echo "secret sops-age-key staat al in $RON_NAMESPACE, ongemoeid gelaten"
-            else
-              kubectl create secret generic sops-age-key \
-                --from-file=key={{.KEY_FILE}} \
-                -n "$RON_NAMESPACE" \
-                --dry-run=client -o yaml | kubectl apply -f -
-              echo "secret sops-age-key aangemaakt in $RON_NAMESPACE"
-            fi
           fi
         fi
 
@@ -578,6 +709,10 @@ tasks:
         fi
 
         echo "✅ Bootstrap applied successfully!"
+      # Bootstrap herstelt signatureKeys naar git; deze taak zet de sleutel in het cluster.
+      - task: argocd:trust-git-signing-key
+        vars:
+          DRY_RUN: '{{.DRY_RUN}}'
     silent: true
 
   bootstrap-backup-destination:
@@ -592,6 +727,9 @@ tasks:
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
       - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
         msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
 
@@ -605,7 +743,14 @@ tasks:
         fi
 
         # Build (SOPS-decrypted) and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        MANIFEST="$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone)"
+        # Eerst de namespace en dan de rest: in een tenant komen de rechten erin pas een
+        # paar seconden na het aanmaken (zie wait-namespace-rights).
+        echo "$MANIFEST" | yq 'select(.kind == "Namespace")' | kubectl apply $KUBECTL_FLAGS -f -
+        if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          task wait-namespace-rights NAMESPACE="$(echo "$MANIFEST" | yq 'select(.kind == "Namespace") | .metadata.name')"
+        fi
+        echo "$MANIFEST" | kubectl apply $KUBECTL_FLAGS -f -
 
         # Met SECRETS_DIR staat het root-secret in de secrets-repo (task
         # generate-backup-destination-secret), na de overlay omdat die de namespace aanmaakt.
@@ -615,6 +760,78 @@ tasks:
 
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
+
+  dns:set:
+    desc: "Zet een DNS-record bij TransIP vanuit de OPI-pod van het geselecteerde cluster (achter de IP-whitelist, zonder sleutels op je laptop)"
+    silent: true
+    requires:
+      vars: [ZONE, NAME, TYPE, CONTENT]
+    cmds:
+      - |
+        # De scripts zitten niet in de image (.dockerignore), dus ze gaan naar /tmp in de
+        # pod, zoals in docs/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
+        # uit de omgeving van die pod.
+        POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
+        kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_set_dns.py "$POD:/tmp/transip_set_dns.py"
+        kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_set_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" --content "{{.CONTENT}}" --expire {{default "60" .EXPIRE}} {{.CLI_ARGS}}
+
+  dns:delete:
+    desc: "Verwijder een DNS-record bij TransIP vanuit de OPI-pod van het geselecteerde cluster (eerst met -- --dry-run kijken)"
+    silent: true
+    requires:
+      vars: [ZONE, NAME, TYPE]
+    cmds:
+      - |
+        POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
+        kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_delete_dns.py "$POD:/tmp/transip_delete_dns.py"
+        kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_delete_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" {{.CLI_ARGS}}
+
+  secrets-overview:
+    desc: "Schrijf de geheimen van het geselecteerde cluster leesbaar naar secrets-overview-<cluster>.yaml (gitignored); ruim het daarna op"
+    silent: true
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      OUT: '{{default (printf "secrets-overview-%s.yaml" .CLUSTER_TYPE) .OUT}}'
+    preconditions:
+      - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
+    cmds:
+      - |
+        # Uit de versleutelde bestanden zelf, dus ook als het overzicht van de generatie al
+        # weg is. Met SECRETS_DIR uit de secrets-repo, anders uit de overlays.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          FILES="$(find "{{.SECRETS_DIR}}" -path '*/.git' -prune -o \( -name '*.sops.yaml' -o -name 'operations-manager-env-secrets.yaml' \) -print | sort)"
+        else
+          FILES="$(ls infrastructure/bootstrap/infrastructure/secrets/config/overlays/{{.INFRASTRUCTURE_CLUSTER_FOLDER}}/*.sops.yaml bootstrap/rig-system/kustomize/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}/*.sops.yaml 2>/dev/null)"
+        fi
+        : > "{{.OUT}}" && chmod 600 "{{.OUT}}"
+        echo "# Geheimen van {{.CLUSTER_TYPE}}, $(date). Platte tekst: weggooien na gebruik." >> "{{.OUT}}"
+        export SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})"
+        for f in $FILES; do
+          echo "" >> "{{.OUT}}"
+          echo "# === $f ===" >> "{{.OUT}}"
+          sops --decrypt "$f" | yq '{"name": .metadata.name, "namespace": .metadata.namespace, "values": ((.stringData // {}) * ((.data // {}) | map_values(@base64d)))}' >> "{{.OUT}}"
+        done
+        echo "✅ {{.OUT}} geschreven ($(echo "$FILES" | wc -l | tr -d ' ') bestanden). Gooi het weg zodra je het niet meer nodig hebt."
+
+  wait-namespace-rights:
+    desc: "Wacht tot je in een (nieuwe) namespace secrets mag aanmaken, maximaal 60 s"
+    silent: true
+    requires:
+      vars: [NAMESPACE]
+    cmds:
+      - |
+        # Capsule zet de rolebindings van de tenant-eigenaren een paar seconden NA het
+        # aanmaken van een namespace (gemeten 19 oktober 2026: 2 s). Wie meteen iets in
+        # die namespace zet, krijgt Forbidden.
+        for i in $(seq 1 30); do
+          [ "$(kubectl auth can-i create secrets -n {{.NAMESPACE}} 2>/dev/null)" = "yes" ] && exit 0
+          sleep 2
+        done
+        echo "❌ na 60 s nog geen rechten in {{.NAMESPACE}}"
+        exit 1
 
   log-watch:
     desc: "One OPI prod-log triage cycle: Loki scan -> ignore-list -> Claude triage -> ntfy. Config in scripts/log_watch/config.py."
@@ -725,6 +942,9 @@ tasks:
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
       - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
         msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
@@ -806,7 +1026,10 @@ tasks:
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
-    deps: [generate-env-secrets-for-operations-manager]
+    deps:
+      - generate-env-secrets-for-operations-manager
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     preconditions:
       - *age_key_file_guard
     cmds:
@@ -1043,21 +1266,35 @@ tasks:
     silent: true
 
   publish-operations-manager:
-    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest)"
+    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest), and pin OVERLAY (default odcn-production)"
     deps: [requirements-check, generate-env-secrets-for-operations-manager]
     vars:
       IMAGE_VERSION:
         sh: scripts/calver-tag.sh operations-manager
     cmds:
+      # Allebei de controles voor version:generate en de bouw, zodat er niets ontstaat dat
+      # toch niet gepind mag worden.
       - |
         echo "Image version: {{.IMAGE_VERSION}}"
+
+        # Dezelfde weigering als de promote-taak van Keycloak: een -dirty-tag komt van bron
+        # die niet in git staat, dus op productie is niet na te gaan wat er draait en is de
+        # image ook niet opnieuw te maken.
         case "{{.IMAGE_VERSION}}" in
           *-dirty)
-            echo "⚠️  Working tree has uncommitted changes, so the commit hash in this tag"
-            echo "    does not describe what is being published. Commit first to get a"
-            echo "    tag you can trace back."
+            echo "{{.IMAGE_VERSION}} komt van ongecommitte bron en hoort niet op productie." >&2
+            echo "Commit de wijziging en bouw opnieuw." >&2
+            exit 1
             ;;
         esac
+
+        # Een commit die alleen hier staat kan niemand anders opzoeken, en na een rebase of
+        # een verse clone bestaat hij niet meer. De tag wijst dan naar niets.
+        if [ -z "$(git branch -r --contains HEAD)" ]; then
+          echo "De commit van deze tag staat op geen enkele remote." >&2
+          echo "Push hem eerst, anders wijst de tag naar bron die niemand kan opzoeken." >&2
+          exit 1
+        fi
       # Zie sandbox:build-operations-manager-image. Hier weegt het het zwaarst: dit is de
       # image die uitgerold wordt, en de CalVer-tag zou dan een andere commit noemen dan
       # de image over zichzelf meldt.
@@ -1075,9 +1312,82 @@ tasks:
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
           SKIP_VALIDATION: "true"
+      # Pint alleen de overlay die je noemt: een image bouwen voor staging mag de pin van
+      # productie niet meeschuiven.
       - task: pin-operations-manager-image
         vars:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          OVERLAY: '{{.OVERLAY | default "odcn-production"}}'
+
+  _pin-image-digest:
+    internal: true
+    desc: "Schrijf <image>:<tag>@<digest> in de bestanden die dit image pinnen"
+    summary: |
+      De digest komt uit de registry en niet uit een lokale bouw: gepind wordt wat daar
+      staat. Een tag in de registry is te overschrijven, een digest niet.
+
+      Het voorvoegsel dat een bestand al heeft blijft staan, dus de sandbox houdt ghcr.io
+      en productie de rcr-spiegel. Een pad VERHUIZEN doet deze taak niet.
+    requires:
+      vars: [IMAGE_NAME, REPO, IMAGE_TAG, PIN_FILES]
+    cmds:
+      - |
+        DIGEST="$(docker buildx imagetools inspect {{.REPO}}:{{.IMAGE_TAG}} | awk '/^Digest:/ {print $2; exit}')"
+        case "$DIGEST" in
+          sha256:*) ;;
+          *)
+            echo "{{.REPO}}:{{.IMAGE_TAG}} levert geen digest. Staat die tag in de registry?" >&2
+            exit 1
+            ;;
+        esac
+
+        for BESTAND in {{.PIN_FILES}}; do
+          sed -i.bak -E "s#^([[:space:]]*(image|value):[[:space:]]*)([A-Za-z0-9./_-]*{{.IMAGE_NAME}})(:[^@[:space:]]+)?(@sha256:[0-9a-f]{64})?[[:space:]]*\$#\1\3:{{.IMAGE_TAG}}@${DIGEST}#" "$BESTAND"
+          rm -f "$BESTAND.bak"
+          grep -q "@${DIGEST}" "$BESTAND" || {
+            echo "$BESTAND pint {{.IMAGE_NAME}} niet op een regel die deze taak kan lezen." >&2
+            exit 1
+          }
+          grep -nE "^[[:space:]]*(image|value):.*{{.IMAGE_NAME}}" "$BESTAND"
+        done
+    silent: true
+
+  pin-cmp-image:
+    desc: "Pin de SOPS-sidecar van ArgoCD op een gepubliceerde tag plus digest"
+    summary: |
+      publish-cmp-kustomize-sops roept dit aan met de tag die hij net gepusht heeft. Los
+      aanroepen kan ook, bijvoorbeeld om terug te rollen naar een eerdere tag.
+
+      Drie bestanden, want de sidecar staat drie keer in git: de component sops-plugin (die
+      de sandbox gebruikt), de component cmp-odcn (die op elk ODCN-cluster telt) en de
+      ArgoCD-CR zelf. Elk bestand houdt zijn eigen registrypad.
+
+      Dit is geen uitrol: de ArgoCD-CR gaat buiten ArgoCD om en is een handeling van een mens.
+    vars:
+      IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
+      PIN_FILES: >-
+        bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml
+        bootstrap/rig-system/kustomize/components/cmp-odcn/kustomization.yaml
+        bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
+    preconditions:
+      - sh: '[ -n "{{.IMAGE_TAG}}" ]'
+        msg: |
+          IMAGE_TAG is verplicht, bijvoorbeeld:
+            task pin-cmp-image IMAGE_TAG=2026.10.18.1432-7ccad61d
+    cmds:
+      - task: _pin-image-digest
+        vars:
+          IMAGE_NAME: rig-cmp-argo-kustomize-sops
+          REPO: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops
+          IMAGE_TAG: '{{.IMAGE_TAG}}'
+          PIN_FILES: '{{.PIN_FILES}}'
+      - |
+        echo ""
+        echo "Commit deze pin. De sandbox volgt via task sandbox:sync; de ArgoCD-CR op"
+        echo "productie rolt een mens uit met task bootstrap-argo-system."
+        echo ""
+        echo "Terugrollen: zoek een eerdere tag in de git-historie van deze bestanden."
+    silent: true
 
   pin-operations-manager-image:
     desc: "Pin an ODCN overlay (default odcn-production, or OVERLAY=odcn-staging) to a published operations-manager tag"
@@ -1092,10 +1402,20 @@ tasks:
         msg: |
           IMAGE_TAG is required, for example:
             task pin-operations-manager-image IMAGE_TAG=2026.07.22.1432-7ccad61d
+      # Ook voor een pin met de hand: publish-operations-manager weigert zo'n tag al, maar
+      # terugrollen en pinnen zijn losse aanroepen die deze taak rechtstreeks gebruiken.
+      - sh: 'case "{{.IMAGE_TAG}}" in *-dirty) exit 1 ;; esac'
+        msg: |
+          {{.IMAGE_TAG}} komt van ongecommitte bron en hoort niet op productie.
+          Commit de wijziging en bouw opnieuw.
     cmds:
+      - task: _pin-image-digest
+        vars:
+          IMAGE_NAME: operations-manager
+          REPO: ghcr.io/minbzk/base-images/operations-manager/operations-manager
+          IMAGE_TAG: '{{.IMAGE_TAG}}'
+          PIN_FILES: '{{.PATCH_FILE}}'
       - |
-        sed -i.bak -E 's|(image: rcr\.rijksapps\.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager):.*|\1:{{.IMAGE_TAG}}|' {{.PATCH_FILE}}
-        rm -f {{.PATCH_FILE}}.bak
         echo ""
         echo "✅ {{.OVERLAY}} pinned to {{.IMAGE_TAG}}"
         grep -n 'image:' {{.PATCH_FILE}}
@@ -1108,17 +1428,41 @@ tasks:
     silent: true
 
   publish-cmp-kustomize-sops:
-    desc: "Build and publish the cmp-kustomize-sops image to GitHub Container Registry"
+    desc: "Bouw de SOPS-sidecar, push hem naar GHCR (CalVer + latest) en pin hem"
+    summary: |
+      Dezelfde vorm als publish-operations-manager: een CalVer-tag, `latest` ernaast, en
+      daarna de pin in git.
+
+      Deze container leest bij het renderen de SOPS-sleutel, dus hier weegt een
+      onveranderlijke verwijzing het zwaarst: de pin draagt ook de digest.
     deps: [requirements-check]
+    vars:
+      IMAGE_VERSION:
+        sh: scripts/calver-tag.sh images/cmp-kustomize-sops
+    preconditions:
+      # Weigeren en niet waarschuwen zoals publish-operations-manager: deze tag wordt
+      # meteen in git gepind, en een pin die naar ongecommitte bron wijst is niet te
+      # herleiden en niet opnieuw te maken.
+      - sh: 'case "{{.IMAGE_VERSION}}" in *-dirty) exit 1 ;; esac'
+        msg: |
+          {{.IMAGE_VERSION}} komt van ongecommitte bron in images/cmp-kustomize-sops.
+          Commit de wijziging eerst, dan beschrijft de tag wat je publiceert.
     cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .
           DOCKERFILE_PATH: images/cmp-kustomize-sops/Dockerfile
           IMAGE_NAME: rig-cmp-argo-kustomize-sops
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
+      - task: pin-cmp-image
+        vars:
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
   publish-hello-world:
     desc: "Build and publish the hello-world image to GitHub Container Registry"
@@ -1179,6 +1523,54 @@ tasks:
     dir: operations-manager/python
     cmds:
       - uv run python ../../scripts/generate_probe_spec.py
+    silent: true
+
+  biv-overzicht:
+    desc: "Genereer architecture/biv-overzicht.md uit de BIV-inventaris"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.biv_render
+    silent: true
+
+  biv-check:
+    desc: "Toets de BIV-inventaris op gaten en het overzicht op drift"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.biv_render --check
+    silent: true
+
+  asvs-afvinklijst:
+    desc: "Genereer docs/asvs-zelfbeoordeling.md uit de ASVS-zelfbeoordeling"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.asvs_render
+    silent: true
+
+  asvs-check:
+    desc: "Toets of elke ASVS-eis een oordeel heeft en de genoemde toetsen bestaan"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.asvs_render --check
+    silent: true
+
+  schotten:kyverno:
+    desc: "Install Kyverno en zet de ZAD-policies in waarschuwmodus op het huidige cluster"
+    cmds:
+      - |
+        # De versie staat alleen in .github/workflows/aanvalsproef.yml, zodat de CI-toets en
+        # een handmatige uitrol dezelfde Kyverno draaien.
+        KYVERNO_VERSION=$(yq '.env.KYVERNO_VERSION' .github/workflows/aanvalsproef.yml)
+        kubectl apply -f "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/install.yaml"
+        kubectl -n kyverno rollout status deployment/kyverno-admission-controller --timeout=300s
+        kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base
+        kubectl get clusterpolicy
+    silent: true
+
+  schotten:falco:
+    desc: "Zet Falco met de ZAD-regels op het huidige cluster (runtime-detectie)"
+    cmds:
+      - kubectl apply -n rig-system -k infrastructure/bootstrap/infrastructure/falco/controller/base
+      - kubectl -n rig-system rollout status daemonset/falco --timeout=300s
     silent: true
 
   publish-e2e-allservices:
@@ -1244,15 +1636,31 @@ tasks:
     silent: true
 
   publish-backup-image:
-    desc: "Build and publish the rig-backup image to GitHub Container Registry"
+    desc: "Bouw de rig-backup-image en push hem naar GHCR (CalVer + latest)"
+    summary: |
+      Dezelfde vorm als publish-operations-manager, zonder de pin erachter: welke image de
+      back-uppods krijgen staat in de setting BACKUP_IMAGE (opi/core/config.py). Zet de
+      standaard daar op de tag die je hier publiceert.
     deps: [requirements-check]
+    vars:
+      IMAGE_VERSION:
+        sh: scripts/calver-tag.sh operations-manager/backup-image
+    preconditions:
+      - sh: 'case "{{.IMAGE_VERSION}}" in *-dirty) exit 1 ;; esac'
+        msg: |
+          {{.IMAGE_VERSION}} komt van ongecommitte bron in operations-manager/backup-image.
+          Commit de wijziging eerst, dan beschrijft de tag wat je publiceert.
     cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: operations-manager/backup-image
           DOCKERFILE_PATH: Dockerfile
           IMAGE_NAME: rig-backup
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images/
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
           PLATFORMS: linux/amd64,linux/arm64
           CACHE_IMAGE: ghcr.io/minbzk/base-images/rig-backup:cache
           BUILDER_NAME: rig-backup-builder
@@ -1262,6 +1670,84 @@ tasks:
     dir: operations-manager/python
     cmds:
       - uv run pip-audit --strict --desc
+
+  security-proof:
+    desc: "Aanvalsproef: zet een wegwerp-sandbox op, beproef hem, en schrijf het rapport"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m security_tests.proef
+
+  security-proof:up:
+    desc: "Breng de wegwerp-sandbox van de aanvalsproef omhoog op poort 8311"
+    dir: operations-manager/python
+    cmds:
+      - |
+        if curl -fsS http://127.0.0.1:8311/health >/dev/null 2>&1; then
+          echo "proefsandbox draait al op http://127.0.0.1:8311"
+          exit 0
+        fi
+        mkdir -p ../security-proof/.proef
+        nohup uv run python -m security_tests.sandbox > ../security-proof/.proef/sandbox.log 2>&1 &
+        timeout 300 bash -c 'until curl -fsS http://127.0.0.1:8311/health >/dev/null 2>&1; do sleep 1; done'
+        uv run python -m security_tests.doel
+
+  security-proof:down:
+    desc: "Breek de wegwerp-sandbox van de aanvalsproef af"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m security_tests.sandbox stop
+
+  security-proof:sandbox:
+    desc: "Maak de geclaimde sandbox het doel van de aanvalsproef (token in de pod, runbestand erbij)"
+    dir: operations-manager/python
+    vars:
+      DOELURL: '{{default "https://zad.sandbox.rijksapp.dev" .DOELURL}}'
+      KUBECTL: kubectl --context kind-rig-sandbox -n rig-system --request-timeout=60s
+    cmds:
+      # Het token gaat in het env-secret van OPI en niet in git: dat secret heeft geen
+      # ArgoCD-eigenaar, dus een patch blijft staan tot security-proof:sandbox-af hem leegt.
+      - |
+        TOKEN=$(uv run python -c 'import secrets; print(secrets.token_urlsafe(24))')
+        {{.KUBECTL}} patch secret operations-manager-env-secrets --type merge \
+          -p "{\"stringData\":{\"SECURITY_PROOF_TOKEN\":\"$TOKEN\"}}"
+        {{.KUBECTL}} rollout restart deployment/operations-manager
+        {{.KUBECTL}} rollout status deployment/operations-manager --timeout=300s
+        # Na de rollout kan de ingress nog even de oude pod (zonder token) bedienen: wacht
+        # tot /health het token vijf keer achter elkaar geeft.
+        GOED=0
+        for _ in $(seq 1 120); do
+          if curl -sk -D - -o /dev/null {{.DOELURL}}/health | tr -d '\r' | grep -qx "x-zad-proef: $TOKEN"; then
+            GOED=$((GOED + 1)); [ "$GOED" -ge 5 ] && break
+          else
+            GOED=0
+          fi
+          sleep 1
+        done
+        [ "$GOED" -ge 5 ] || { echo "het proeftoken komt niet stabiel terug op {{.DOELURL}}/health"; exit 1; }
+        # Proefprojecten met een sleutel, anders meet de proef niet of een project bij een ander kan.
+        E2E_BASE_URL={{.DOELURL}} uv run python -m security_tests.proefprojecten maak 2
+        ZAD_PROEF_TOKEN="$TOKEN" ZAD_PROEF_SLEUTELS="$(cat ../security-proof/.proef/proefprojecten.json)" \
+          uv run python -m security_tests.sandboxdoel {{.DOELURL}}
+
+  security-proof:sandbox-af:
+    desc: "Haal het proeftoken uit de sandbox en gooi het runbestand weg"
+    dir: operations-manager/python
+    vars:
+      KUBECTL: kubectl --context kind-rig-sandbox -n rig-system --request-timeout=60s
+    cmds:
+      - |
+        uv run python -m security_tests.proefprojecten ruim-op || echo "LET OP: niet alle proefprojecten zijn opgeruimd"
+        {{.KUBECTL}} patch secret operations-manager-env-secrets --type merge \
+          -p '{"stringData":{"SECURITY_PROOF_TOKEN":""}}'
+        {{.KUBECTL}} rollout restart deployment/operations-manager
+        {{.KUBECTL}} rollout status deployment/operations-manager --timeout=300s
+        rm -f ../security-proof/.proef/sandbox.json
+
+  security-proof:fuzzers:
+    desc: "Draai alleen de gerichte proeven tegen een al draaiende wegwerp-sandbox"
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest security_tests -q -p no:cacheprovider
 
   security-scan-image:
     desc: "Scan operations-manager Docker image for vulnerabilities with Trivy"
@@ -1283,6 +1769,9 @@ tasks:
       FIXED_PASSWORD: '{{default "" .FIXED_PASSWORD}}'  # If set, use this instead of random passwords (for sandbox/dev)
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
@@ -1319,8 +1808,12 @@ tasks:
         # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
         # dat roteert Keycloak, MinIO en PostgreSQL mee.
 
-        # Initialize overview file (overwrite if it exists from a previous incomplete run)
-        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        # Het overzicht gaat eerst naar een tijdelijk bestand en komt alleen in het echte
+        # overzicht als er een nieuw geheim is, en dan erachteraan. Vroeger begon elke run
+        # het overzicht leeg, dus een run zonder nieuwe geheimen wiste de wachtwoorden van
+        # de eerste.
+        OVERVIEW_TARGET="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        OVERVIEW_FILE="$(mktemp)"
 
         echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
         echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
@@ -1495,9 +1988,16 @@ tasks:
           echo "  ✅ Created kustomization.yaml"
         fi
 
+        if grep -q '^# === ' "$OVERVIEW_FILE"; then
+          cat "$OVERVIEW_FILE" >> "$OVERVIEW_TARGET"
+          chmod 600 "$OVERVIEW_TARGET"
+        fi
+        rm -f "$OVERVIEW_FILE"
+        OVERVIEW_FILE="$OVERVIEW_TARGET"
+
         echo ""
         echo "✅ {{.MODE | title}} secrets generated successfully!"
-        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
+        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore; alleen nieuwe geheimen komen erbij)"
         echo "🗂️  Encrypted secrets: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/"
         if [ "{{.MODE}}" = "infrastructure" ]; then
           echo "📝 Configuration files: kustomization.yaml, decrypt-sops.yaml"
@@ -1581,7 +2081,7 @@ tasks:
         echo "🔨 Building Keycloak custom mapper..."
         cd keycloak-migration/custom-mapper
         mvn clean package
-        echo "✅ JAR built: keycloak-migration/custom-mapper/target/keycloak-saml-nameid-mapper-1.1.0.jar"
+        echo "✅ JAR built: $(ls target/keycloak-saml-nameid-mapper-*.jar)"
     silent: false
 
   test-keycloak-custom-mapper:
@@ -1594,13 +2094,411 @@ tasks:
         mvn test
     silent: false
 
-  test-keycloak-custom-mapper-docker:
-    desc: "Test Keycloak custom mapper in standalone Docker container"
-    deps: [build-keycloak-custom-mapper]
+  test-keycloak-image:
+    desc: "Toets de providers van de eigen Keycloak-image in Docker, zoals de deployment hem start"
+    summary: |
+      Bouwt images/keycloak-zad/Dockerfile voor deze machine, start hem tegen een
+      wegwerp-PostgreSQL en toetst per provider dat hij geregistreerd EN bereikbaar is.
+
+      De startargumenten komen uit de basisdeployment en worden hier niet overgeschreven,
+      zodat deze toets niet stil kan afwijken van wat productie start. Een pod die opkomt
+      bewijst niets: met --optimized start Keycloak ook op een non-existent provider. Na
+      26.2 kunnen endpoints geladen zijn en toch 404 geven, dus de twee endpoints worden
+      ook getoetst. Twee SMTP-sinks op hetzelfde netwerk tonen dat de post door onze
+      mailprovider gaat en niet naar de smtpServer van de realm. Zie
+      features/keycloak-eigen-image.md en features/keycloak-mail.md.
+    deps: [requirements-check]
+    vars:
+      IMAGE: zad/keycloak-zad:toets
+      NETWORK: zad-keycloak-image-test
+      KC_CONTAINER: zad-keycloak-image-test
+      DB_CONTAINER: zad-keycloak-image-test-db
+      RELAY_SINK: zad-keycloak-image-test-relay-sink
+      LOKAAS_SINK: zad-keycloak-image-test-lokaas-sink
+      SINK_IMAGE: axllent/mailpit:v1.33.0
+      DEPLOYMENT: infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+      PORT: '{{.PORT | default "58081"}}'
+      RELAY_SINK_PORT: '{{.RELAY_SINK_PORT | default "58082"}}'
+      LOKAAS_SINK_PORT: '{{.LOKAAS_SINK_PORT | default "58083"}}'
+      # Per run verzonnen: deze containers bestaan alleen binnen deze taak, en zo staat er
+      # geen wachtwoordvorm in de repo.
+      ADMIN_PASSWORD:
+        sh: pwgen -s 24 1
+      DB_PASSWORD:
+        sh: pwgen -s 24 1
+      METRICS_TOKEN:
+        sh: pwgen -s 32 1
+    cmds:
+      - defer: |
+          docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} {{.RELAY_SINK}} {{.LOKAAS_SINK}} >/dev/null 2>&1
+          docker network rm {{.NETWORK}} >/dev/null 2>&1
+          exit 0
+      - |
+        echo "Bouwen van {{.IMAGE}} uit images/keycloak-zad/Dockerfile..."
+        docker build -f images/keycloak-zad/Dockerfile -t {{.IMAGE}} .
+      - |
+        docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} {{.RELAY_SINK}} {{.LOKAAS_SINK}} >/dev/null 2>&1
+        docker network create {{.NETWORK}} >/dev/null 2>&1
+        docker run -d --name {{.DB_CONTAINER}} --network {{.NETWORK}} \
+          -e POSTGRES_DB=keycloak \
+          -e POSTGRES_USER=keycloak \
+          -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
+          postgres:17-alpine >/dev/null
+        i=0
+        until docker exec {{.DB_CONTAINER}} pg_isready -q -U keycloak -d keycloak; do
+          i=$((i + 1))
+          if [ "$i" -gt 30 ]; then
+            echo "De wegwerp-PostgreSQL kwam niet op binnen 60 seconden:" >&2
+            docker logs --tail 40 {{.DB_CONTAINER}} >&2
+            exit 1
+          fi
+          sleep 2
+        done
+      - |
+        # Onze provider zet AUTH aan; mailpit weigert AUTH zonder INSECURE.
+        for sink in {{.RELAY_SINK}}:{{.RELAY_SINK_PORT}} {{.LOKAAS_SINK}}:{{.LOKAAS_SINK_PORT}}; do
+          docker run -d --name "${sink%%:*}" --network {{.NETWORK}} \
+            -p "${sink##*:}:8025" \
+            -e MP_SMTP_AUTH_ACCEPT_ANY=1 \
+            -e MP_SMTP_AUTH_ALLOW_INSECURE=1 \
+            {{.SINK_IMAGE}} >/dev/null
+        done
+        for poort in {{.RELAY_SINK_PORT}} {{.LOKAAS_SINK_PORT}}; do
+          i=0
+          until curl -sf -o /dev/null "http://localhost:$poort/api/v1/info"; do
+            i=$((i + 1))
+            if [ "$i" -gt 30 ]; then
+              echo "Een SMTP-sink kwam niet op binnen 60 seconden op poort $poort" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+        done
+      - |
+        # Woordsplitsing met opzet: de args komen een per regel uit het manifest. Een
+        # argument met witruimte zou hier stil in twee stukken vallen, dus dat weigert hij.
+        ARGS=""
+        while IFS= read -r arg; do
+          [ -n "$arg" ] || continue
+          case "$arg" in
+            *" "*|*"	"*)
+              echo "Een startargument in {{.DEPLOYMENT}} bevat witruimte: $arg" >&2
+              exit 1
+              ;;
+          esac
+          ARGS="$ARGS $arg"
+        done <<ARGSEOF
+        $(yq '.spec.template.spec.containers[0].args[]' {{.DEPLOYMENT}})
+        ARGSEOF
+        # Zonder deze grendel zou een mislukte yq een lege ARGS opleveren, en dan start
+        # Keycloak zonder --optimized en zonder de spi-vlaggen: een toets die niets meet.
+        case "$ARGS" in
+          *" start "*) ;;
+          *) echo "Geen startargumenten gelezen uit {{.DEPLOYMENT}}" >&2; exit 1 ;;
+        esac
+        echo "Starten met de argumenten van de deployment:$ARGS"
+        docker run -d --name {{.KC_CONTAINER}} --network {{.NETWORK}} \
+          -p {{.PORT}}:8080 \
+          -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
+          -e KC_BOOTSTRAP_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
+          -e KC_DB_URL="jdbc:postgresql://{{.DB_CONTAINER}}:5432/keycloak" \
+          -e KC_DB_USERNAME=keycloak \
+          -e KC_DB_PASSWORD='{{.DB_PASSWORD}}' \
+          -e KC_HTTP_ENABLED=true \
+          -e KC_HOSTNAME_STRICT=false \
+          -e RIG_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
+          -e ZAD_MAIL_RELAY_HOST={{.RELAY_SINK}} \
+          -e ZAD_MAIL_RELAY_PORT=1025 \
+          -e ZAD_MAIL_RELAY_USERNAME=zad-keycloak \
+          -e ZAD_MAIL_RELAY_FROM=noreply-rijksapp@rijksoverheid.nl \
+          -e ZAD_MAIL_RELAY_PASSWORD='{{.DB_PASSWORD}}' \
+          -e ZAD_MAIL_RELAY_STARTTLS=false \
+          {{.IMAGE}} $ARGS >/dev/null
+      - |
+        # Wachten op de toestand zelf; de teller is een vangnet en geen wachtmechanisme.
+        i=0
+        until curl -sf -o /dev/null "http://localhost:{{.PORT}}/realms/master"; do
+          i=$((i + 1))
+          if [ "$i" -gt 150 ]; then
+            echo "Keycloak kwam niet op binnen 300 seconden:" >&2
+            docker logs --tail 60 {{.KC_CONTAINER}} >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "Keycloak antwoordt op http://localhost:{{.PORT}}"
+      - |
+        cd operations-manager/python
+        KEYCLOAK_IMAGE_TEST_URL="http://localhost:{{.PORT}}" \
+        KEYCLOAK_IMAGE_TEST_ADMIN=admin \
+        KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
+        KEYCLOAK_IMAGE_TEST_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
+        KEYCLOAK_IMAGE_TEST_RELAY_SINK_URL="http://localhost:{{.RELAY_SINK_PORT}}" \
+        KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_URL="http://localhost:{{.LOKAAS_SINK_PORT}}" \
+        KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_SMTP="{{.LOKAAS_SINK}}:1025" \
+          uv run pytest tests/integration/test_keycloak_image_providers.py \
+            tests/integration/test_keycloak_image_mail.py \
+            tests/integration/test_keycloak_admin_api.py -m requires_infra -q
+    silent: false
+
+  keycloak-telling:
+    desc: "Tel wat er in de database keycloak staat: realms, clients, gebruikers, credentials per type"
+    summary: |
+      De telling waarmee een versiesprong "alle data behouden" kan aantonen. Draai hem voor
+      de migratie en na de start van de nieuwe versie; een verschil is een reden om terug
+      te vallen. Alleen AANTALLEN, geen persoonsgegevens.
+
+      Standaard de sandbox. Voor productie: task keycloak-telling CONTEXT=prd OUT=voor.txt
+
+      CLUSTER, DB en SECRET staan los, zodat keycloak-proefmigratie dezelfde telling op zijn
+      kopie kan draaien.
+    vars:
+      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
+      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
+      OUT: '{{.OUT | default ""}}'
+      CLUSTER: '{{.CLUSTER | default "rig-db"}}'
+      DB: '{{.DB | default "keycloak"}}'
+      SECRET: '{{.SECRET | default "keycloak-db-credentials"}}'
+      SQL_FILE: keycloak-migration/telling.sql
     cmds:
       - |
-        cd keycloak-migration/custom-mapper
-        ./test-local-docker.sh
+        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
+        # De primary via het label van CNPG en niet via een vaste podnaam: na een failover
+        # is rig-db-1 een replica, en een telling op een replica kan achterlopen.
+        POD="$($KUBECTL get pods -l cnpg.io/cluster={{.CLUSTER}},cnpg.io/instanceRole=primary \
+          -o jsonpath='{.items[0].metadata.name}')"
+        if [ -z "$POD" ]; then
+          echo "Geen primary van {{.CLUSTER}} gevonden in {{.NAMESPACE}} op {{.CONTEXT}}" >&2
+          exit 1
+        fi
+        ROLE="$($KUBECTL get secret {{.SECRET}} -o jsonpath='{.data.username}' | base64 -d)"
+        SQL="$(cat {{.SQL_FILE}})"
+        # Het wachtwoord gaat via stdin en nooit als argument: de argv van een pod is te
+        # lezen. `$(cat)` en niet `read -r`, want zonder afsluitende newline stopt read de
+        # keten stil. De SQL en de rol gaan als $0 en $1 mee, want stdin is al bezet door
+        # het wachtwoord; zo komt geen van beide in het script zelf terecht.
+        TELLING="$($KUBECTL get secret {{.SECRET}} -o jsonpath='{.data.password}' \
+          | base64 -d \
+          | $KUBECTL exec -i "$POD" -c postgres -- sh -c \
+              'PGPASSWORD=$(cat) exec psql -h localhost -U "$1" -d {{.DB}} \
+                 -v ON_ERROR_STOP=1 -A -F "|" -P footer=off -c "$0"' "$SQL" "$ROLE")"
+        printf '%s\n' "$TELLING"
+        if [ -n "{{.OUT}}" ]; then
+          printf '%s\n' "$TELLING" > "{{.OUT}}"
+          echo "Weggeschreven naar {{.OUT}}" >&2
+        fi
+    silent: false
+
+  keycloak-proefmigratie:
+    desc: "Migreer een KOPIE van de database keycloak naar de nieuwe image en vergelijk de telling"
+    summary: |
+      De proef die "alle data behouden" aantoonbaar maakt VOORDAT productie migreert.
+
+      Wat hij doet, in de namespace van rig-db:
+        1. een CNPG-cluster keycloak-proef met een pod-naar-pod import van de database
+           keycloak uit rig-db, met de eigen rol van Keycloak als bron;
+        2. task keycloak-telling op die kopie, VOOR de migratie;
+        3. een Deployment keycloak-proef met de nieuwe image en de args van de
+           basisdeployment, tegen die kopie; de pod is ready zodra de migratie klaar is;
+        4. dezelfde telling NA de migratie, en een diff die bij elk verschil faalt;
+        5. een direct grant via een port-forward, met de OTP-beheerder (wachtwoord plus
+           code) als die in het secret staat en anders met admin: dat bewijst dat een
+           wachtwoord-hash en een OTP-secret van de oude versie nog kloppen;
+        6. opruimen, ook bij een fout, en tonen dat er niets met keycloak-proef meer staat.
+
+      De kopie verlaat het cluster niet. Niets is van buiten bereikbaar: geen Ingress, de
+      Service is ClusterIP en er vertrekt geen mail.
+
+      Standaard de sandbox met de tag uit de sandbox-overlay. Voor productie hoort er een
+      besluit van de eigenaar bij: deze task zet tijdelijk resources in de
+      productienamespace met kubectl, en productie verandert normaal alleen via Git en
+      ArgoCD. Draaien kan dan zo:
+
+        task keycloak-proefmigratie CONTEXT=prd NAMESPACE=rig-prd-operations \
+          IMAGE=rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad:<tag> \
+          PG_IMAGE=rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11 \
+          STORAGE_CLASS=ocs-storagecluster-ceph-rbd \
+          PULL_SECRET=rig-robot-pull-secret,ghcr-rig-robot-pull-secret
+
+      PG_IMAGE en STORAGE_CLASS moeten op ODCN mee, want zonder het rcr-pad vervangt CNPG
+      zijn eigen pod in een lus (admission herschrijft imageName) en zonder de storageClass
+      komt er geen volume. PULL_SECRET gaat naar de Deployment EN naar de CNPG-cluster.
+
+      Het runbook voor het venster zelf staat in features/keycloak-26-upgrade.md.
+    vars:
+      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
+      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
+      MANIFESTEN: keycloak-migration/proefmigratie
+      IMAGE: '{{.IMAGE | default ""}}'
+      # Zonder IMAGE de tag uit de sandbox-overlay: dat is de image die op de sandbox heeft
+      # gedraaid. Als var en niet in een cmd, zodat een ontbrekende pin meteen faalt en niet
+      # pas na de import.
+      KC_IMAGE:
+        sh: |
+          IMAGE="{{.IMAGE}}"
+          if [ -z "$IMAGE" ]; then
+            TAG="$(yq '.images[] | select(.name == "ghcr.io/rijksictgilde/zad/keycloak-zad") | .newTag' \
+              infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/sandboxed-local/kustomization.yaml)"
+            case "$TAG" in
+              ""|null|bouw-eerst)
+                echo "De sandbox-overlay pint geen keycloak-zad-tag; geef IMAGE mee." >&2
+                exit 1
+                ;;
+            esac
+            IMAGE="ghcr.io/rijksictgilde/zad/keycloak-zad:$TAG"
+          fi
+          printf '%s' "$IMAGE"
+      # Komma-gescheiden; gaat naar Deployment EN CNPG-cluster.
+      PULL_SECRET: '{{.PULL_SECRET | default ""}}'
+      # Op ODCN met rcr-pad en ocs-storagecluster-ceph-rbd, om admission-herschrijving en
+      # volume-aanmaak te voorkomen.
+      PG_IMAGE: '{{.PG_IMAGE | default ""}}'
+      STORAGE_CLASS: '{{.STORAGE_CLASS | default ""}}'
+      STORAGE_SIZE: '{{.STORAGE_SIZE | default ""}}'
+      VOOR: '{{.VOOR | default "/tmp/keycloak-proef-voor.txt"}}'
+      NA: '{{.NA | default "/tmp/keycloak-proef-na.txt"}}'
+    cmds:
+      - defer: |
+          # ALTIJD opruimen, ook bij een fout: deze resources mogen niet blijven staan.
+          KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
+          echo "Opruimen van de proef..."
+          $KUBECTL delete deployment,service -l rig.nl/proefmigratie=keycloak --ignore-not-found >/dev/null 2>&1
+          $KUBECTL delete cluster.postgresql.cnpg.io keycloak-proef --ignore-not-found >/dev/null 2>&1
+          $KUBECTL delete pvc -l rig.nl/proefmigratie=keycloak --ignore-not-found >/dev/null 2>&1
+          # De secrets die CNPG zelf aanmaakt dragen het label van de proef niet.
+          $KUBECTL delete secret -l cnpg.io/cluster=keycloak-proef --ignore-not-found >/dev/null 2>&1
+          REST="$($KUBECTL get cluster.postgresql.cnpg.io,deployment,service,pod,pvc,secret \
+            -o name 2>/dev/null | grep keycloak-proef || true)"
+          if [ -n "$REST" ]; then
+            echo "LET OP: er staat nog iets met keycloak-proef in de naam:" >&2
+            printf '%s\n' "$REST" >&2
+            exit 1
+          fi
+          echo "Niets met keycloak-proef in de naam meer in {{.NAMESPACE}}."
+      - |
+        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
+        echo "Proefmigratie met {{.KC_IMAGE}} in {{.NAMESPACE}} op {{.CONTEXT}}"
+
+        # Een restant van een afgebroken ronde zou als een geslaagde import lezen.
+        if $KUBECTL get cluster.postgresql.cnpg.io keycloak-proef >/dev/null 2>&1; then
+          echo "keycloak-proef bestaat al in {{.NAMESPACE}}; ruim hem eerst op." >&2
+          exit 1
+        fi
+        # Het beeld, de opslag en de pull-secrets gaan er met yq in VOORDAT de cluster bestaat:
+        # imageName naderhand patchen laat CNPG zijn pod opnieuw aanmaken.
+        RENDER="$(mktemp)"
+        trap 'rm -f "$RENDER"' EXIT
+        PG_IMAGE='{{.PG_IMAGE}}' STORAGE_CLASS='{{.STORAGE_CLASS}}' STORAGE_SIZE='{{.STORAGE_SIZE}}' \
+          PULL_SECRET='{{.PULL_SECRET}}' yq '
+            with(select(strenv(PG_IMAGE) != ""); .spec.imageName = strenv(PG_IMAGE))
+            | with(select(strenv(STORAGE_SIZE) != ""); .spec.storage.size = strenv(STORAGE_SIZE))
+            | with(select(strenv(STORAGE_CLASS) != ""); .spec.storage.storageClass = strenv(STORAGE_CLASS))
+            | with(select(strenv(PULL_SECRET) != "");
+                .spec.imagePullSecrets = [strenv(PULL_SECRET) | split(",") | .[] | {"name": .}])
+          ' {{.MANIFESTEN}}/cluster.yaml > "$RENDER"
+        $KUBECTL apply -f "$RENDER"
+        echo "Wachten tot de kopie klaar is (de import loopt van pod naar pod)..."
+        $KUBECTL wait --for=condition=Ready cluster.postgresql.cnpg.io/keycloak-proef --timeout=900s
+      - task: keycloak-telling
+        vars:
+          CONTEXT: '{{.CONTEXT}}'
+          NAMESPACE: '{{.NAMESPACE}}'
+          CLUSTER: keycloak-proef
+          SECRET: keycloak-proef-app
+          OUT: '{{.VOOR}}'
+      - |
+        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
+        # De image gaat er met yq in VOORDAT de apply gebeurt: het manifest draagt een woord
+        # in plaats van een tag, dus een apply met daarna `set image` zou de pod eerst op een
+        # mislukte pull laten staan.
+        RENDER="$(mktemp)"
+        trap 'rm -f "$RENDER"' EXIT
+        KC_IMAGE='{{.KC_IMAGE}}' PULL_SECRET='{{.PULL_SECRET}}' yq '
+            with(select(.kind == "Deployment");
+              .spec.template.spec.containers[0].image = strenv(KC_IMAGE))
+            | with(select(.kind == "Deployment" and strenv(PULL_SECRET) != "");
+                .spec.template.spec.imagePullSecrets = [strenv(PULL_SECRET) | split(",") | .[] | {"name": .}])
+          ' {{.MANIFESTEN}}/deployment.yaml > "$RENDER"
+        $KUBECTL apply -f "$RENDER"
+        echo "Wachten tot de nieuwe Keycloak ready is; dan is de schemamigratie klaar..."
+        if ! $KUBECTL rollout status deployment/keycloak-proef --timeout=900s; then
+          $KUBECTL logs deployment/keycloak-proef --tail=80 >&2
+          exit 1
+        fi
+      - task: keycloak-telling
+        vars:
+          CONTEXT: '{{.CONTEXT}}'
+          NAMESPACE: '{{.NAMESPACE}}'
+          CLUSTER: keycloak-proef
+          SECRET: keycloak-proef-app
+          OUT: '{{.NA}}'
+      - |
+        echo "Telling voor en na de migratie:"
+        if ! diff -u {{.VOOR}} {{.NA}}; then
+          echo "De telling verschilt na de migratie. Dit is een reden om NIET te promoveren." >&2
+          exit 1
+        fi
+        echo "Geen verschil in de telling."
+      - |
+        # De inlogcontrole: een wachtwoord-hash en een OTP-secret uit de oude versie moeten op
+        # de nieuwe nog kloppen. Bij voorkeur met de OTP-beheerder, wachtwoord plus code: een
+        # direct grant zonder code geeft OOK "Invalid user credentials" zodra een gebruiker
+        # een OTP draagt, dus met alleen het wachtwoord van admin meet je dan niets.
+        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
+        PORT=58091
+        $KUBECTL port-forward service/keycloak-proef "$PORT:8080" >/dev/null 2>&1 &
+        FORWARD=$!
+        trap 'kill $FORWARD 2>/dev/null' EXIT
+        i=0
+        until curl -sf -o /dev/null "http://localhost:$PORT/realms/master"; do
+          i=$((i + 1))
+          if [ "$i" -gt 30 ]; then
+            echo "De port-forward naar keycloak-proef kwam niet op binnen 60 seconden" >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        veld() {
+          $KUBECTL get secret keycloak-admin-credentials -o jsonpath="{.data.$1}" | base64 -d
+        }
+        OTP_GEBRUIKER="$(veld KEYCLOAK_OTP_ADMIN_USERNAME)"
+        if [ -n "$OTP_GEBRUIKER" ]; then
+          GEBRUIKER="$OTP_GEBRUIKER"
+          WACHTWOORD_VELD=KEYCLOAK_OTP_ADMIN_PASSWORD
+          # De code staat wel in argv: hij geldt maar een periode van 30 seconden.
+          CODE="$(veld KEYCLOAK_OTP_ADMIN_TOTP_SECRET | (cd operations-manager/python \
+            && uv run -q python -c 'import sys; from opi.utils.totp import totp_now; print(totp_now(sys.stdin.read())[0])'))"
+          echo "Inlogcontrole met $GEBRUIKER: wachtwoord en OTP-code"
+        else
+          GEBRUIKER="$(veld KEYCLOAK_ADMIN)"
+          WACHTWOORD_VELD=KEYCLOAK_ADMIN_PASSWORD
+          CODE=""
+          echo "Inlogcontrole met $GEBRUIKER: alleen het wachtwoord (geen OTP-beheerder in het secret)"
+        fi
+        # Het wachtwoord gaat via stdin en nooit als argument, dezelfde norm als
+        # keycloak-telling: de argv van een lopend proces is te lezen via /proc.
+        ANTWOORD="$(veld "$WACHTWOORD_VELD" \
+          | curl -s "http://localhost:$PORT/realms/master/protocol/openid-connect/token" \
+              -d grant_type=password -d client_id=admin-cli \
+              --data-urlencode "username=$GEBRUIKER" \
+              ${CODE:+--data-urlencode "totp=$CODE"} \
+              --data-urlencode "password@/dev/stdin")"
+        case "$ANTWOORD" in
+          *access_token*)
+            echo "Inloggen op de kopie lukt: de credentials van de oude versie kloppen nog."
+            ;;
+          *Invalid*user*credentials*)
+            echo "$GEBRUIKER kan niet inloggen op de kopie. Ofwel klopt de hash niet meer, ofwel" >&2
+            echo "draagt de gebruiker een OTP die deze controle niet meegeeft, ofwel staat hij" >&2
+            echo "tijdelijk geblokkeerd door de brute-force-detectie. Zoek uit welke van de drie." >&2
+            exit 1
+            ;;
+          *)
+            echo "Geen token, maar ook geen afgewezen wachtwoord. Lees het antwoord:" >&2
+            printf '%s\n' "$ANTWOORD" >&2
+            exit 1
+            ;;
+        esac
     silent: false
 
   build-keycloak-relay-email-sender:
@@ -1610,7 +2508,7 @@ tasks:
         echo "🔨 Bouwen van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn clean package
-        echo "✅ JAR gebouwd: keycloak-migration/relay-email-sender/target/keycloak-relay-email-sender-1.0.0.jar"
+        echo "✅ JAR gebouwd: $(ls target/keycloak-relay-email-sender-*.jar)"
     silent: false
 
   publish-keycloak-image:
@@ -1652,6 +2550,8 @@ tasks:
             echo "        te zoeken is."
             ;;
         esac
+      # Voor de push: er gaat geen image naar ghcr die deze toets niet haalt.
+      - task: test-keycloak-image
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .
@@ -1959,7 +2859,7 @@ tasks:
         echo "  - PostgreSQL: localhost:5432 (opi/devpassword)"
         echo ""
         echo "To start the operations manager:"
-        echo "  cd operations-manager/python && uv run python -m opi"
+        echo "  cd operations-manager/python && ENVIRONMENT=local uv run python -m opi"
     silent: false
 
   dev-full:
@@ -2007,6 +2907,17 @@ tasks:
     cmds:
       - docker compose -f docker-compose.dev.yaml exec postgres psql -U opi -d opi
     silent: false
+
+  zad-map:build:
+    desc: "Bouw het kaartelement naar static/js/zad-map.js (met de hand, zoals codemirror-bundle.js)"
+    summary: |
+      Het resultaat staat in de repo: er is geen bouwstap in CI of in de Docker-build, en
+      de CSP van OPI laat geen externe host toe. Na het bouwen hoort het gewijzigde
+      static/js/zad-map.js mee in de commit.
+    dir: operations-manager/zad-map
+    cmds:
+      - npm install
+      - npm run build
 
   # ========================================
   # Testing Tasks
@@ -2339,6 +3250,83 @@ tasks:
   # Kind Cluster Management for Testing
   # ========================================
 
+  netpol:meet:
+    desc: "Meet de flowmatrix op een wegwerpcluster"
+    summary: |
+      Rolt het netwerkbeleid van odcn-production uit op een vers kind-cluster, zet
+      per endpoint een pod met de juiste labels neer, en probeert per regel een
+      TCP-verbinding. Draai dit bij elke wijziging aan een NetworkPolicy.
+
+      CNI=kindnet (standaard, en het handhaaft NetworkPolicies), CNI=calico als
+      tweede meting voor de regels in features/restrictive-network-policies.md.
+      Het cluster is een wegwerpcluster; je eigen kubectl-context blijft onaangeroerd.
+    vars:
+      CNI: '{{default "kindnet" .CNI}}'
+      NETPOL_CLUSTER: '{{default "rig-netpol-meting" .NETPOL_CLUSTER}}'
+      CALICO_VERSION: '{{default "v3.28.2" .CALICO_VERSION}}'
+    preconditions:
+      - sh: command -v envsubst
+        msg: |
+          envsubst ontbreekt. Het zit in gettext: 'brew install gettext' op MacOS of 'apt-get install gettext-base' op Linux. Zonder het wordt de kind-config leeg.
+    cmds:
+      - |
+        set -e
+        KUBECONFIG_FILE=$(mktemp -d)/kubeconfig
+        export KUBECONFIG="$KUBECONFIG_FILE"
+        export NETPOL_KIND_VERSION="{{.KIND_VERSION}}"
+        export NETPOL_CLUSTER="{{.NETPOL_CLUSTER}}"
+
+        if [ "{{.CNI}}" = "calico" ]; then
+          export NETPOL_DISABLE_DEFAULT_CNI=true
+          # Zonder default-CNI wordt de node pas Ready nadat Calico er staat, en dat
+          # gebeurt hierna. --wait zou dus altijd zijn timeout halen; de kubectl wait
+          # na de Calico-installatie dekt dezelfde conditie.
+          CREATE_WAIT=""
+        else
+          export NETPOL_DISABLE_DEFAULT_CNI=false
+          CREATE_WAIT="--wait 180s"
+        fi
+
+        # De trap hieronder verwijdert het cluster, ook als `kind create` afbreekt omdat
+        # de naam al bestaat. Zonder deze guard wist `NETPOL_CLUSTER=rig-sandbox` dus de
+        # sandbox van iemand anders.
+        if kind get clusters 2>/dev/null | grep -qx "{{.NETPOL_CLUSTER}}"; then
+          echo "WEIGERT: er bestaat al een kind-cluster {{.NETPOL_CLUSTER}}. Is dat een" >&2
+          echo "achtergebleven meetcluster, dan ruimt 'task netpol:meet-opruimen' het op;" >&2
+          echo "is het een ander cluster, kies dan een naam met NETPOL_CLUSTER=." >&2
+          exit 1
+        fi
+
+        cleanup() {
+          echo "Opruimen van cluster {{.NETPOL_CLUSTER}}..."
+          kind delete cluster --name "{{.NETPOL_CLUSTER}}" >/dev/null 2>&1 || true
+          rm -rf "$(dirname "$KUBECONFIG_FILE")"
+        }
+        trap cleanup EXIT
+
+        echo "Cluster {{.NETPOL_CLUSTER}} aanmaken (dual-stack, CNI={{.CNI}})..."
+        envsubst < operations-manager/python/tests/netpol/kind-config.yaml \
+          | kind create cluster --name "{{.NETPOL_CLUSTER}}" --config - $CREATE_WAIT
+
+        if [ "{{.CNI}}" = "calico" ]; then
+          echo "Calico {{.CALICO_VERSION}} installeren..."
+          kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/{{.CALICO_VERSION}}/manifests/calico.yaml"
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=300s
+        fi
+
+        kubectl wait --for=condition=Ready node --all --timeout=180s
+
+        cd operations-manager/python
+        uv run python -m tests.netpol.measure
+
+  netpol:meet-opruimen:
+    desc: "Verwijder een achtergebleven meetcluster van netpol:meet"
+    vars:
+      NETPOL_CLUSTER: '{{default "rig-netpol-meting" .NETPOL_CLUSTER}}'
+    cmds:
+      - kind delete cluster --name "{{.NETPOL_CLUSTER}}"
+    silent: true
+
   test-kind-create:
     desc: "Create Kind cluster for integration testing"
     cmds:
@@ -2448,7 +3436,9 @@ tasks:
       - task: sandbox:configure-coredns
       - task: sandbox:create-namespace
       - task: sandbox:import-wildcard-cert
+      - task: sandbox:generate-argocd-tls
       - task: sandbox:create-sops-age-secret
+      - task: sandbox:create-git-signing-key-secret
       # Phase 2: Bootstrap Forgejo (minimal direct deploys, just enough for git)
       - task: sandbox:deploy-postgresql-direct
       - task: sandbox:deploy-forgejo-direct
@@ -2465,6 +3455,10 @@ tasks:
       # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
       # Phase 5: Wait for everything to be deployed and ready
       - task: sandbox:wait-ready
+      # Het API-token waarmee OPI bij ArgoCD komt. Pas hier: het account opi bestaat zodra
+      # de operator de CR heeft gereconcilieerd, en OPI heeft het token nodig voor zijn
+      # eerste uitrol.
+      - task: sandbox:issue-argocd-opi-token
       - |
         kubectl config set-context --current --namespace=rig-system
       - |
@@ -2476,6 +3470,14 @@ tasks:
         cat docs/sandbox-reference.md
         echo ""
         echo "This reference card is saved at: docs/sandbox-reference.md"
+    silent: true
+
+  sandbox:issue-argocd-opi-token:
+    desc: "Geef OPI een ArgoCD-API-token (account opi) en zet het in opi-argocd-token"
+    cmds:
+      - |
+        uv run --project operations-manager/python python scripts/edit-secret.py \
+          --component argocd-opi-token --cluster sandboxed-local --apply --yes
     silent: true
 
   sandbox:create-cluster:
@@ -2601,6 +3603,9 @@ tasks:
 
   sandbox:decrypt-wildcard-cert:
     desc: "Decrypt AGE-encrypted wildcard TLS certificate using developer key"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/developer-key.txt'}
     cmds:
       - |
         CERT_DIR="security/tls/sandbox-wildcard"
@@ -2648,7 +3653,9 @@ tasks:
             echo "Invalid key format. Expected a key starting with AGE-SECRET-KEY-"
             exit 1
           fi
-          echo "$AGE_SECRET_KEY" > "$KEY_FILE"
+          # Een redirect maakt het bestand met de umask, dus leesbaar voor groep en
+          # anderen; de lezers hier weigeren dat.
+          (umask 077 && echo "$AGE_SECRET_KEY" > "$KEY_FILE")
           echo "Developer key saved to $KEY_FILE"
         fi
 
@@ -2660,6 +3667,9 @@ tasks:
 
   sandbox:encrypt-wildcard-cert:
     desc: "Re-encrypt the wildcard TLS cert PEMs to AGE after renewal"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/developer-key.txt'}
     cmds:
       - |
         CERT_DIR="security/tls/sandbox-wildcard"
@@ -2735,7 +3745,7 @@ tasks:
 
         # CMP sidecar in shared sops-plugin component: use local image + Never
         CMP_COMPONENT="bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml"
-        sed -i.bak 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
+        sed -i.bak -E 's|^( *)image: .*rig-cmp-argo-kustomize-sops.*$|\1image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
         sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
 
         # .bak-bestanden van de portable sed-aanroepen opruimen.
@@ -2794,6 +3804,50 @@ tasks:
         else
           echo "nginx default certificate already configured"
         fi
+    silent: true
+
+  sandbox:generate-argocd-tls:
+    desc: "Genereer de CA en het servercertificaat waarmee argocd-server TLS serveert"
+    cmds:
+      - |
+        # Kind heeft geen service-CA; de sandbox tekent zelf. keyUsage op de CA is
+        # verplicht: zonder keyCertSign weigert Python de certificaatketen.
+        CERT_DIR="security/tls/sandbox-argocd"
+        mkdir -p "$CERT_DIR"
+
+        if [ ! -f "$CERT_DIR/ca.crt" ] || [ ! -f "$CERT_DIR/ca.key" ]; then
+          echo "Generating ArgoCD CA..."
+          openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -keyout "$CERT_DIR/ca.key" -out "$CERT_DIR/ca.crt" \
+            -subj "/CN=sandbox-argocd-ca" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign"
+        fi
+
+        echo "Generating argocd-server certificate..."
+        SAN="DNS:argocd-server,DNS:argocd-server.rig-system,DNS:argocd-server.rig-system.svc,DNS:argocd-server.rig-system.svc.cluster.local,DNS:argo.sandbox.rijksapp.dev"
+        openssl req -newkey rsa:2048 -nodes \
+          -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.csr" \
+          -subj "/CN=argocd-server" -addext "subjectAltName=$SAN" \
+          -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+          -addext "extendedKeyUsage=serverAuth"
+        openssl x509 -req -in "$CERT_DIR/tls.csr" -days 825 \
+          -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+          -out "$CERT_DIR/tls.crt" -copy_extensions copyall
+        rm -f "$CERT_DIR/tls.csr"
+
+        # argocd-server leest zijn servercertificaat uit dit secret; zonder secret maakt
+        # hij er zelf een die niemand kan toetsen.
+        kubectl create secret tls argocd-server-tls \
+          --cert="$CERT_DIR/tls.crt" --key="$CERT_DIR/tls.key" \
+          -n rig-system --dry-run=client -o yaml | kubectl apply -f -
+
+        # De bundel die de operations-manager mount (ARGOCD_CA_BUNDLE).
+        kubectl create configmap argocd-ca-bundle \
+          --from-file=ca.crt="$CERT_DIR/ca.crt" \
+          -n rig-system --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "ArgoCD TLS material applied (argocd-server-tls, argocd-ca-bundle)"
     silent: true
 
   sandbox:generate-age-key:
@@ -2872,6 +3926,9 @@ tasks:
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local'
       SECRET_NAME: 'operations-manager-env-secrets'
       NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - |
         if [ ! -f "security/sandbox-key.txt" ]; then
@@ -2900,6 +3957,13 @@ tasks:
         stringData:
           OIDC_CLIENT_SECRET: ""
           KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: ""
+          # Dezelfde waarden als de defaults in opi/core/config.py, dus voor OPI
+          # verandert hier niets. Ze staan hier omdat de nachtelijke back-up van de
+          # platformdatabase (postgresql/database/base/platform-backup-cronjob.yaml) ze
+          # met secretKeyRef uit dit geheim leest, net als op productie.
+          BACKUP_S3_ENDPOINT: "minio.rig-backup-destination.svc:9000"
+          BACKUP_S3_ACCESS_KEY: "backup-admin"
+          BACKUP_S3_SECRET_KEY: "backup-secret-key-local"
         EOF
 
         # Overlay values from secrets file if it exists and has content
@@ -3071,6 +4135,9 @@ tasks:
 
   sandbox:create-sops-age-secret:
     desc: "Create sops-age-key Kubernetes secret from sandbox AGE key"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - |
         if [ ! -f "security/sandbox-key.txt" ]; then
@@ -3085,13 +4152,8 @@ tasks:
 
         echo "sops-age-key secret created in rig-system"
 
-        # De RON-namespace (mailrelay) krijgt hetzelfde geheim: de CMP-plugin die de
-        # ron-infrastructure-app rendert, controleert op de namespace en leest dit secret
-        # in de namespace van de app. De namespace zelf kan NIET via GitOps (de ArgoCD op
-        # dit clustertype draait in namespaced mode en weigert Namespace-resources), dus
-        # hij wordt hier handmatig aangemaakt, met het label dat de argocd-operator de
-        # beheer-RBAC voor de namespace laat aanmaken. Zonder deze twee blijft de app
-        # hangen op "Namespace 'rig-ron' does not exist" / "SOPS secret not found".
+        # RON-namespace kan niet via GitOps (namespaced ArgoCD), handmatig aangemaakt.
+        # Geen sops-age-key: ron-infrastructure rendert op de platform-plugin.
         kubectl apply -f - <<'EOF'
         apiVersion: v1
         kind: Namespace
@@ -3104,16 +4166,179 @@ tasks:
             argocd.argoproj.io/managed-by: rig-system
         EOF
 
-        kubectl create secret generic sops-age-key \
-          --from-file=key=security/sandbox-key.txt \
-          -n rig-ron \
+        echo "namespace rig-ron created"
+    silent: true
+
+  sandbox:create-git-signing-key-secret:
+    desc: "Generate the sandbox GPG signing key and store it as a secret for OPI"
+    cmds:
+      - |
+        KEY_FILE="security/sandbox-git-signing-key.asc"
+
+        if [ ! -f "$KEY_FILE" ]; then
+          echo "Generating sandbox GPG signing key: $KEY_FILE"
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          chmod 700 "$GNUPGHOME"
+          # In een trap: breekt gpg af, dan blijft de privesleutel niet in de keyring staan.
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+          # Zonder passphrase: OPI importeert de sleutel zelf en kan er geen invoeren.
+          gpg --batch --quiet --passphrase '' \
+            --quick-generate-key "Operations Manager <operations-manager@example.com>" ed25519 sign never
+          # umask om de redirect: zonder dat staat de privesleutel kort op 644.
+          (umask 077; gpg --batch --quiet --armor --export-secret-keys > "$KEY_FILE")
+        else
+          echo "Sandbox GPG signing key already exists: $KEY_FILE"
+        fi
+
+        kubectl create secret generic operations-manager-git-signing-key \
+          --from-file=signing-key.asc="$KEY_FILE" \
+          -n {{.RIG_NAMESPACE}} \
           --dry-run=client -o yaml | kubectl apply -f -
 
-        echo "namespace rig-ron en sops-age-key secret created"
+        echo "operations-manager-git-signing-key secret created in {{.RIG_NAMESPACE}}"
+    silent: true
+
+  git-signing-key:public:
+    desc: "Print the public key and fingerprint of OPI's git signing key (for ArgoCD signatureKeys)"
+    cmds:
+      - |
+        SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
+          --ignore-not-found -o jsonpath='{.data.signing-key\.asc}')
+        if [ -z "$SECRET" ]; then
+          echo "No operations-manager-git-signing-key secret in {{.RIG_NAMESPACE}}: this cluster signs nothing."
+          exit 1
+        fi
+
+        GNUPGHOME=$(mktemp -d)
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        # In een trap: breekt gpg af, dan blijft de privesleutel niet in de keyring staan.
+        trap 'rm -rf "$GNUPGHOME"' EXIT
+        echo "$SECRET" | base64 -d | gpg --batch --quiet --import
+
+        FINGERPRINT=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+        echo "fingerprint: $FINGERPRINT"
+        echo ""
+        gpg --batch --armor --export "$FINGERPRINT"
+    silent: true
+
+  argocd:trust-public-key:
+    desc: "Trust an armored GPG public key in ArgoCD and require it on the app-of-apps AppProject"
+    requires:
+      vars:
+        - KEY_FILE
+    vars:
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+    cmds:
+      - |
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          echo "🔍 Dry run: zou {{.KEY_FILE}} vertrouwen in argocd-gpg-keys-cm en in signatureKeys zetten"
+          exit 0
+        fi
+
+        if ! kubectl get appproject zad-app-of-apps -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
+          echo "Geen AppProject zad-app-of-apps in {{.RIG_NAMESPACE}}: draai eerst 'task bootstrap-argo-system'."
+          exit 1
+        fi
+
+        GNUPGHOME=$(mktemp -d)
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        # In een trap: breekt gpg af, dan blijft er geen keyring staan.
+        trap 'rm -rf "$GNUPGHOME"' EXIT
+        # Een mislukte import valt door naar de fingerprint-guard, die de melding geeft.
+        gpg --batch --quiet --import "{{.KEY_FILE}}" || true
+
+        FINGERPRINT=$(gpg --batch --list-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+        # Guard: onbruikbare KEY_FILE zou signatureKeys wissen met exitcode 0.
+        if [[ ! "$FINGERPRINT" =~ ^[0-9A-F]{40}$ ]]; then
+          echo "Geen bruikbare GPG-sleutel in {{.KEY_FILE}}: niets te vertrouwen."
+          exit 1
+        fi
+        # ArgoCD valideert keyID als key ID (8 of 16 hex) en weigert een hele fingerprint.
+        KEY_ID="${FINGERPRINT: -16}"
+        # Een armored sleutel bevat geen aanhalingsteken of backslash, dus escapen van de
+        # regeleindes volstaat voor de JSON-merge-patch hieronder.
+        ARMORED=$(gpg --batch --armor --export "$FINGERPRINT" | awk '{printf "%s\\n", $0}')
+
+        # ArgoCD leest vertrouwde sleutels uit deze ConfigMap; de operator laat hem staan.
+        kubectl get configmap argocd-gpg-keys-cm -n {{.RIG_NAMESPACE}} >/dev/null 2>&1 ||
+          kubectl create configmap argocd-gpg-keys-cm -n {{.RIG_NAMESPACE}}
+        kubectl patch configmap argocd-gpg-keys-cm -n {{.RIG_NAMESPACE}} --type merge \
+          -p "{\"data\":{\"$KEY_ID\":\"$ARMORED\"}}"
+
+        # Voeg toe zonder anderen weg te gooien (beheerderssleutel en OPI-sleutel samen).
+        # Lege CURRENT -> destructieve patch; stoppen in plaats van patchen.
+        if ! CURRENT=$(kubectl get appproject zad-app-of-apps -n {{.RIG_NAMESPACE}} \
+          -o jsonpath='{.spec.signatureKeys[*].keyID}'); then
+          echo "Kan de huidige signatureKeys van zad-app-of-apps niet lezen: niets gepatcht."
+          exit 1
+        fi
+        IDS=""
+        for ID in $CURRENT $KEY_ID; do
+          case " $IDS " in *" $ID "*) continue;; esac
+          IDS="${IDS:+$IDS }$ID"
+        done
+        ENTRIES=$(echo "$IDS" | tr ' ' '\n' | awk 'NF {printf "%s{\"keyID\":\"%s\"}", (n++ ? "," : ""), $0}')
+        kubectl patch appproject zad-app-of-apps -n {{.RIG_NAMESPACE}} --type merge \
+          -p "{\"spec\":{\"signatureKeys\":[$ENTRIES]}}"
+
+        echo "ArgoCD vertrouwt $KEY_ID en eist hem op AppProject zad-app-of-apps"
+    silent: true
+
+  argocd:trust-git-signing-key:
+    desc: "Trust OPI's own git signing key in ArgoCD (reads the secret in the cluster)"
+    vars:
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+    # Geen signing-key-secret: Task slaat de taak dan over. Via status, niet met exit 0: dat
+    # stopt alleen de eerste stap, en de tweede faalt dan op het ontbrekende sleutelbestand.
+    status:
+      - |
+        [ "{{.DRY_RUN}}" = "true" ] && exit 1
+        SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
+          --ignore-not-found -o jsonpath='{.data.signing-key\.asc}')
+        [ -z "$SECRET" ]
+    cmds:
+      - |
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          echo "🔍 Dry run: zou de sleutel uit secret operations-manager-git-signing-key vertrouwen"
+          exit 0
+        fi
+
+        # Het ontbrekende secret is de status hierboven; komt de taak toch hier (task --force),
+        # dan blijft FINGERPRINT leeg en kapt de guard daarop het af.
+        SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
+          --ignore-not-found -o jsonpath='{.data.signing-key\.asc}')
+
+        # security/ staat niet in git en bepaalt welke sleutel het cluster vertrouwt.
+        mkdir -p security
+        PUBLIC_FILE=security/opi-git-signing-public.asc
+
+        GNUPGHOME=$(mktemp -d)
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        # In een trap: breekt gpg af, dan blijft de privesleutel niet in de keyring staan.
+        trap 'rm -rf "$GNUPGHOME"' EXIT
+        # Zie de import in argocd:trust-public-key: de fingerprint-guard doet de melding.
+        echo "$SECRET" | base64 -d | gpg --batch --quiet --import || true
+        FINGERPRINT=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+        if [[ ! "$FINGERPRINT" =~ ^[0-9A-F]{40}$ ]]; then
+          echo "Het secret operations-manager-git-signing-key bevat geen bruikbare GPG-sleutel."
+          exit 1
+        fi
+        gpg --batch --armor --export "$FINGERPRINT" > "$PUBLIC_FILE"
+      - task: argocd:trust-public-key
+        vars:
+          KEY_FILE: security/opi-git-signing-public.asc
+          DRY_RUN: '{{.DRY_RUN}}'
     silent: true
 
   sandbox:deploy-postgresql-direct:
     desc: "Deploy minimal PostgreSQL directly (pre-ArgoCD, just enough for Forgejo)"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - |
         echo "Deploying minimal PostgreSQL cluster..."
@@ -3195,8 +4420,16 @@ tasks:
           echo "  Creating: $REPO"
           kubectl exec -n rig-system forgejo-0 -- wget -q -O- \
             --header="Content-Type: application/json" \
-            --post-data="{\"name\":\"$REPO\",\"private\":false,\"auto_init\":true,\"default_branch\":\"main\"}" \
+            --post-data="{\"name\":\"$REPO\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\"}" \
             "http://rig-admin:admin1234@localhost:3000/api/v1/user/repos" 2>/dev/null || echo "  $REPO may already exist"
+
+          # Bestaande repositories omzetten naar privé (busybox-wget kan geen PATCH doen)
+          echo "  Marking private: $REPO"
+          kubectl exec -n rig-system forgejo-0 -- curl -sf -X PATCH \
+            -H "Content-Type: application/json" \
+            -d '{"private":true}' \
+            "http://rig-admin:admin1234@localhost:3000/api/v1/repos/rig-admin/$REPO" \
+            >/dev/null 2>&1 || echo "  Could not mark $REPO private"
         done
 
         # Verify git repos exist on disk, manually init if auto_init failed
@@ -3534,6 +4767,9 @@ tasks:
 
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       # Idempotent; faalt vroeg als het cluster de containerd-patch mist.
       - task: sandbox:setup-registry
@@ -3583,6 +4819,9 @@ tasks:
 
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       # Skaffold pusht naar localhost:5001; staat die registry er niet, dan is de fout
       # een kale push-timeout. Idempotent, net als in sandbox:update-operations-manager.
@@ -3596,6 +4835,9 @@ tasks:
 
   sandbox:skaffold-debug:
     desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - task: sandbox:setup-registry
       - echo "Starting Skaffold in debug mode (sandboxed-local)..."
@@ -3723,6 +4965,9 @@ tasks:
     vars:
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER_TYPE}}.secrets'
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         set -euo pipefail
@@ -3779,16 +5024,21 @@ tasks:
           OPI_TOKEN="$(vraag STAGING_OPI_TOKEN 'PAT van de OPI (schrijven)')"
           KC_SECRET="$(vraag STAGING_KEYCLOAK_CLIENT_SECRET 'Client secret van zad-staging in de prod-Keycloak (leeg = geen SSO)')"
           BACKUP_PASSWORD="$(sops --decrypt "{{.SECRETS_DIR}}/backup-destination/minio-credentials-secret.yaml.sops.yaml" | yq '.stringData."root-password"')"
+          # De PAT versleuteld: de wizard neemt PROJECT_REPO_PASSWORD letterlijk over,
+          # dus plain: is een platte PAT in de repo. Niet encrypt-value-age-base64: dat staat in procestabel.
+          OPI_TOKEN_AGE="base64+age:$(printf '%s' "$OPI_TOKEN" | age -r "$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')" -a | base64 | tr -d '\n')"
           # Eerst leeg en alleen voor jou leesbaar, dan pas de tokens erin (geen umask in de
           # shell van Task).
           : > "{{.ENV_FILE}}" && chmod 600 "{{.ENV_FILE}}"
           {
             echo "SECRET_KEY=$(openssl rand -hex 32)"
             echo "DEBUG_MODE=false"
-            echo "GIT_PROJECTS_SERVER_PASSWORD=plain:$OPI_TOKEN"
-            echo "GIT_ARGO_APPLICATIONS_PASSWORD=plain:$OPI_TOKEN"
-            echo "PROJECT_REPO_PASSWORD=plain:$OPI_TOKEN"
-            echo "BACKUP_S3_ENDPOINT=http://minio.{{.BACKUP_NAMESPACE}}.svc.cluster.local:9000"
+            echo "GIT_PROJECTS_SERVER_PASSWORD=$OPI_TOKEN_AGE"
+            echo "GIT_ARGO_APPLICATIONS_PASSWORD=$OPI_TOKEN_AGE"
+            echo "PROJECT_REPO_PASSWORD=$OPI_TOKEN_AGE"
+            # host:port, zonder schema: kopia weigert een URL ("Endpoint url cannot have fully
+            # qualified paths") en de back-upjob zet het schema er zelf voor.
+            echo "BACKUP_S3_ENDPOINT=minio.{{.BACKUP_NAMESPACE}}.svc:9000"
             echo "BACKUP_S3_ACCESS_KEY=backup-admin"
             echo "BACKUP_S3_SECRET_KEY=$BACKUP_PASSWORD"
             if [ -n "$KC_SECRET" ]; then echo "KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=$KC_SECRET"; fi
@@ -3811,9 +5061,12 @@ tasks:
       - |
         cd "{{.SECRETS_DIR}}"
         if [ -z "$(git status --porcelain)" ]; then echo "secrets-repo: niets nieuws"; exit 0; fi
+        echo ""
+        echo "Secrets-repo: $(pwd)"
+        echo "Remote:       $(git remote get-url origin)"
         git status --short
         if [ "${STAGING_CONFIRM:-}" != "staging" ]; then
-          printf "Deze bestanden committen en naar GitHub pushen? [j/N] "
+          printf "Deze bestanden committen en naar $(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##') pushen? [j/N] "
           read -r ANTWOORD
           [ "$ANTWOORD" = "j" ] || { echo "Afgebroken: zonder push kan ArgoCD de geheimen niet lezen."; exit 1; }
         fi
@@ -3853,11 +5106,18 @@ tasks:
         EINDE=$(( $(date +%s) + {{.TIMEOUT}} ))
         while :; do
           STAAT="$(kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io -o custom-columns='NAAM:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' --no-headers 2>/dev/null)"
+          # user-applications vindt zijn map pas als de OPI het eerste project aanmaakt;
+          # tot dan is "app path does not exist" geen fout maar een lege omgeving.
+          if kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io user-applications -o jsonpath='{.status.conditions[*].message}' 2>/dev/null | grep -q 'app path does not exist'; then
+            STAAT="$(echo "$STAAT" | grep -v '^user-applications ')"
+            GEEN_PROJECTEN=1
+          fi
           if [ -n "$STAAT" ] && ! echo "$STAAT" | grep -vq 'Synced *Healthy'; then break; fi
           if [ "$(date +%s)" -gt "$EINDE" ]; then echo "❌ na {{.TIMEOUT}}s nog niet klaar:"; echo "$STAAT"; exit 1; fi
           sleep 15
         done
         echo "$STAAT"
+        if [ -n "${GEEN_PROJECTEN:-}" ]; then echo "user-applications: nog geen projecten (de OPI maakt de map bij het eerste project)"; fi
         echo ""
         echo "Tenant-eigenaren van rig-staging:"
         kubectl get tenants.capsule.clastix.io rig-staging -o jsonpath='{range .status.owners[*]}{.kind}{"  "}{.name}{"\n"}{end}'

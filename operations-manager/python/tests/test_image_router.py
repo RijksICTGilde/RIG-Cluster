@@ -139,7 +139,7 @@ class TestUpload:
             headers={"X-API-Key": "test-key"},
             files={"file": ("myapp.tar", b"data")},
         )
-        assert response.status_code == 501
+        assert response.status_code == 404
 
 
 class TestErrorHandling:

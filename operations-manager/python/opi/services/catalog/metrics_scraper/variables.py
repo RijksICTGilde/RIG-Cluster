@@ -16,6 +16,6 @@ class MetricsScraperVariables(Enum):
         name="METRICS_AUTH_TOKEN",
         description="Bearer token that Prometheus sends when scraping /metrics. Validate this to restrict access.",
         source="secret",
-        secret_key="token",
+        secret_key="token",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         aliases=["PROMETHEUS_METRICS_AUTH_TOKEN"],
     )

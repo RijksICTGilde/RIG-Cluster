@@ -46,6 +46,8 @@ class _FakePostgresServer:
         self.databases = {OLD_DATABASE}
         self.password_writes: list[str] = []
         self.connection_limits: dict[str, int] = {}
+        #: Per database de rollen die expliciet CONNECT kregen (RC-285).
+        self.afgesloten: dict[str, list[str]] = {}
 
     def authenticates(self, username: str, password: str, database: str) -> bool:
         return username == self.username and password == self.live_password and database in self.databases
@@ -80,6 +82,10 @@ class _FakePostgresConnector:
 
     async def create_schema(self, schema_name: str, database: str, owner: str) -> dict[str, str]:
         return {"status": "created"}
+
+    async def restrict_database_to_roles(self, database: str, roles: list[str]) -> dict[str, str]:
+        self.server.afgesloten[database] = list(roles)
+        return {"status": "restricted"}
 
     async def close(self) -> None:
         return None
@@ -120,7 +126,7 @@ def _project_data() -> dict[str, Any]:
     return {
         "schema-version": 2,
         "name": PROJECT,
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "components": [{"name": "web", "type": "single", "services": ["postgresql-database"]}],
         "deployments": [
@@ -221,6 +227,18 @@ class TestDeRestoreMaaktDeRolMetDeConnectielimiet:
         await _run_restore(project_data)
 
         assert server.connection_limits == {USERNAME: 80}
+
+
+class TestDeNieuweGeneratieIsDichtVoorPublic:
+    @pytest.mark.asyncio
+    async def test_de_nieuwe_database_wordt_afgesloten_voor_public(
+        self, server: _FakePostgresServer, restore_environment: Any
+    ) -> None:
+        """Een nieuwe generatie is een nieuwe database, en krijgt van PostgreSQL CONNECT
+        voor PUBLIC (RC-285). Alleen de eigenaar, die ook de restorepod is."""
+        await _run_restore()
+
+        assert server.afgesloten == {NEW_DATABASE: [USERNAME]}
 
 
 class TestWijzigingNaDeRestore:

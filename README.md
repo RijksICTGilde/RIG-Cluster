@@ -37,6 +37,7 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 | Type | Description |
 |------|-------------|
 | `sandboxed-local` | Self-contained Kind cluster with in-cluster Forgejo, real TLS (`*.sandbox.rijksapp.dev`) |
+| `odcn-staging` | Staging cluster in ODC-Noord, as a Capsule tenant for pentesting |
 | `odcn-production` | Production cluster in ODC-Noord |
 
 ## Services
@@ -55,6 +56,7 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 - [Getting Started](docs/getting-started.md) - local setup guide
 - [Keycloak Configuration](docs/keycloak.md) - Keycloak administration
 - [Keycloak YAML Configuration](docs/keycloak-yaml-configuration.md) - declarative Keycloak setup
+- [Beveiligingsbeleid](SECURITY.md) - hoe je een kwetsbaarheid meldt
 
 ### Feature Documentation
 

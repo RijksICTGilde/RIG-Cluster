@@ -28,6 +28,7 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from opi.core.actor import scheduler_actor, set_actor
 from opi.services.catalog.resource_tuning.config import resource_tuning_config
 from opi.services.project_store import get_project_store
 
@@ -78,6 +79,7 @@ class ResourceTuningScheduler:
 
     async def _run(self) -> None:
         """Sleep until the nightly hour, run a sweep, repeat."""
+        set_actor(scheduler_actor("resource-tuning"))
         while self._running:
             try:
                 delay = _seconds_until_next_run(resource_tuning_config().hour, datetime.now(_TZ))

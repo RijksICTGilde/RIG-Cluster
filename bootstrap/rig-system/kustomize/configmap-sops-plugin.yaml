@@ -4,6 +4,7 @@ metadata:
   name: cmp-plugin
   namespace: rig-system
 data:
+  # Twee plugins, hetzelfde script, ander argument (sleutelbron: namespace-secret vs mounted-file).
   plugin.yaml: |
     apiVersion: argoproj.io/v1alpha1
     kind: ConfigManagementPlugin
@@ -12,393 +13,603 @@ data:
     spec:
       version: v1.0
       generate:
-        command: ["/bin/bash"]
-        args:
-          - -c
-          - |
-            set -e  # Exit on any error
-            set -o pipefail
+        command: ["/bin/bash", "/home/argocd/cmp-server/config/render.sh"]
+        args: ["namespace-secret"]
+  plugin-platform.yaml: |
+    apiVersion: argoproj.io/v1alpha1
+    kind: ConfigManagementPlugin
+    metadata:
+      name: kustomize-sops-platform
+    spec:
+      version: v1.0
+      generate:
+        command: ["/bin/bash", "/home/argocd/cmp-server/config/render.sh"]
+        args: ["mounted-file"]
+  render.sh: |
+    set -e  # Exit on any error
+    set -o pipefail
 
-            # Source environment variables from .cmp-env if it exists
-            # This allows deployments to pass configuration to the CMP
-            # Use set -a to auto-export all variables for child processes (like helmfile)
-            if [ -f ".cmp-env" ]; then
-              # Do NOT dump the contents of .cmp-env: it holds configuration secrets that
-              # would otherwise end up in the repo-server logs. Log only that it was sourced.
-              echo "Sourcing environment variables from .cmp-env" >&2
-              set -a
-              source .cmp-env
-              set +a
-            fi
+    # A deployment passes configuration to the CMP as env-vars. The file comes from a
+    # tenant, so it is read as data: every line is one KEY=value pair and nothing in it
+    # is ever executed. 'source' would run it as a script in the very process that
+    # fetches the AGE key and reads ARGOCD_APP_NAMESPACE.
+    # The reserved list is the same one as CMP_ENV_RESERVED_* in
+    # operations-manager/python/opi/generation/manifests.py, which pins it with a test.
+    load_cmp_env() {
+      local file="$1" line key value lineno=0
 
-            SOPS_KEY_SECRET="${ARGOCD_ENV_SOPS_KEY_SECRET:-sops-age-key}"
-            KUSTOMIZE_FOLDERS="${ARGOCD_ENV_KUSTOMIZE_FOLDERS:-current}"
+      while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno + 1))
+        case "$line" in
+          ''|'#'*) continue ;;
+        esac
 
-            # Check if target namespace exists
-            if ! kubectl get namespace "${ARGOCD_APP_NAMESPACE}" >/dev/null 2>&1; then
-              echo "ERROR: Namespace '${ARGOCD_APP_NAMESPACE}' does not exist" >&2
-              exit 1
-            fi
+        key="${line%%=*}"
+        value="${line#*=}"
+        if [ "$key" = "$line" ]; then
+          echo "ERROR: env-vars line $lineno has no '=' separator" >&2
+          exit 1
+        fi
+        if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          echo "ERROR: env-vars line $lineno has an invalid variable name '$key'" >&2
+          exit 1
+        fi
+        case "$key" in
+          ARGOCD_*|SOPS_*|KUSTOMIZE_*|HELM_*|HELMFILE_*|KUBE*|BASH*|LD_*|GIT_*|PATH|HOME|IFS|ENV|SHELL|PS4|PROMPT_COMMAND)
+            echo "ERROR: env-vars may not set reserved variable '$key'" >&2
+            exit 1 ;;
+        esac
 
-            # Check if SOPS secret exists
-            if ! kubectl get secret "${SOPS_KEY_SECRET}" -n "${ARGOCD_APP_NAMESPACE}" >/dev/null 2>&1; then
-              echo "ERROR: SOPS secret '${SOPS_KEY_SECRET}' not found in namespace '${ARGOCD_APP_NAMESPACE}'" >&2
-              exit 1
-            fi
+        export "$key=$value"
+      done < "$file"
+    }
 
-            # Extract SOPS age key
-            echo "Extracting SOPS age key from secret '${SOPS_KEY_SECRET}'" >&2
-            SOPS_KEY_B64=$(kubectl get secret ${SOPS_KEY_SECRET} -n ${ARGOCD_APP_NAMESPACE} -o jsonpath='{.data.key}')
-            if [ -z "$SOPS_KEY_B64" ]; then
-              echo "ERROR: Could not extract key data from secret '${SOPS_KEY_SECRET}'. Check if the secret has a 'key' field." >&2
-              exit 1
-            fi
+    SOPS_KEY_SECRET="${ARGOCD_ENV_SOPS_KEY_SECRET:-sops-age-key}"
+    KUSTOMIZE_FOLDERS="${ARGOCD_ENV_KUSTOMIZE_FOLDERS:-current}"
 
-            SOPS_KEY_RAW=$(echo "$SOPS_KEY_B64" | base64 -d)
-            if [ $? -ne 0 ]; then
-              echo "ERROR: Failed to base64 decode the key data from secret '${SOPS_KEY_SECRET}'" >&2
-              exit 1
-            fi
+    # Waar de AGE-sleutel vandaan komt, meegegeven door de plugin die dit script draait:
+    # namespace-secret voor tenant-apps, mounted-file voor platform-apps. Een schakelaar en
+    # geen tweede script, zodat de twee plugins niet uit elkaar groeien.
+    SOPS_KEY_SOURCE="${1:-namespace-secret}"
 
-            SOPS_AGE_KEY=$(echo "$SOPS_KEY_RAW" | grep '^AGE-SECRET-KEY-')
-            if [ -z "$SOPS_AGE_KEY" ]; then
-              echo "ERROR: No valid AGE-SECRET-KEY found in secret '${SOPS_KEY_SECRET}'. Key must start with 'AGE-SECRET-KEY-'" >&2
-              exit 1
-            fi
+    # Geen aparte controle op het bestaan van de namespace: deze sidecar mag precies een
+    # Secret lezen en kan geen Namespace-object opvragen. Een ontbrekende namespace komt
+    # hier terug als dezelfde fout op het Secret.
+    read_key_from_namespace_secret() {
+      local encoded
+      if ! encoded=$(kubectl get secret "${SOPS_KEY_SECRET}" -n "${ARGOCD_APP_NAMESPACE}" -o jsonpath='{.data.key}' 2>/dev/null); then
+        echo "ERROR: cannot read secret '${SOPS_KEY_SECRET}' in namespace '${ARGOCD_APP_NAMESPACE}': the namespace or the secret does not exist, or the repo-server may not read it" >&2
+        return 1
+      fi
+      if [ -z "$encoded" ]; then
+        echo "ERROR: Could not extract key data from secret '${SOPS_KEY_SECRET}'. Check if the secret has a 'key' field." >&2
+        return 1
+      fi
+      if ! printf '%s' "$encoded" | base64 -d; then
+        echo "ERROR: Failed to base64 decode the key data from secret '${SOPS_KEY_SECRET}'" >&2
+        return 1
+      fi
+    }
 
-            # Function to build Helm chart dependencies
-            # Finds Chart.yaml files with dependencies and runs helm dependency build
-            build_helm_dependencies() {
-              local folder="$1"
-              local chart_file
-              local chart_dir
-              local dep_count
+    # De platform-sidecar krijgt de sleutel als gemount Secret en heeft geen token.
+    read_key_from_mounted_file() {
+      local path="/sops/${SOPS_KEY_SECRET}/key"
+      if [ ! -r "$path" ]; then
+        echo "ERROR: secret '${SOPS_KEY_SECRET}' is not mounted at '$path' in this sidecar" >&2
+        return 1
+      fi
+      cat "$path"
+    }
 
-              echo "DEBUG: Searching for Chart.yaml files in: $folder" >&2
+    echo "Extracting SOPS age key from secret '${SOPS_KEY_SECRET}' (source: ${SOPS_KEY_SOURCE})" >&2
+    case "$SOPS_KEY_SOURCE" in
+      namespace-secret) SOPS_KEY_RAW=$(read_key_from_namespace_secret) ;;
+      mounted-file) SOPS_KEY_RAW=$(read_key_from_mounted_file) ;;
+      *)
+        echo "ERROR: unknown SOPS key source '${SOPS_KEY_SOURCE}'" >&2
+        exit 1 ;;
+    esac
 
-              # Find all Chart.yaml files and build dependencies
-              while IFS= read -r chart_file; do
-                echo "DEBUG: Found Chart.yaml: $chart_file" >&2
-                chart_dir=$(dirname "$chart_file")
+    SOPS_AGE_KEY=$(echo "$SOPS_KEY_RAW" | grep '^AGE-SECRET-KEY-')
+    if [ -z "$SOPS_AGE_KEY" ]; then
+      echo "ERROR: No valid AGE-SECRET-KEY found in secret '${SOPS_KEY_SECRET}'. Key must start with 'AGE-SECRET-KEY-'" >&2
+      exit 1
+    fi
 
-                # Check if chart has dependencies
-                dep_count=$(yq eval '.dependencies // [] | length' "$chart_file")
-                echo "DEBUG: Chart $chart_file has $dep_count dependencies" >&2
+    # cmp-env.sops.yaml (encrypted) replaces .cmp-env. Keep plaintext fallback for old
+    # deployments; remove once all are rewritten.
+    CMP_ENV_PLAIN=""
+    trap 'rm -f ${CMP_ENV_PLAIN:-} ${TEMP_OUTPUT:-}' EXIT
 
-                if [ "$dep_count" -gt 0 ] 2>/dev/null; then
-                  echo "Updating Helm dependencies for: $chart_dir" >&2
-                  # Use 'helm dependency update' to handle out-of-sync Chart.lock files
-                  if ! helm dependency update "$chart_dir" 2>&1 | sed 's/^/  /' >&2; then
-                    echo "ERROR: helm dependency update failed for $chart_dir" >&2
-                  fi
-                fi
-              done < <(find "$folder" -name "Chart.yaml" -type f -not -path "*/template/*" -not -path "*/templates/*" 2>/dev/null)
+    if [ -f "cmp-env.sops.yaml" ]; then
+      # Do NOT dump the contents: they hold configuration secrets that would
+      # otherwise end up in the repo-server logs. Log only that they were read.
+      echo "Reading environment variables from cmp-env.sops.yaml" >&2
+      CMP_ENV_PLAIN=$(mktemp /tmp/cmp_env.XXXXXX)
+      SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "cmp-env.sops.yaml" \
+        | yq eval -r 'to_entries | .[] | .key + "=" + (.value | tostring)' - > "$CMP_ENV_PLAIN"
+      load_cmp_env "$CMP_ENV_PLAIN"
+    elif [ -f ".cmp-env" ]; then
+      echo "Reading environment variables from .cmp-env" >&2
+      load_cmp_env .cmp-env
+    fi
 
-              echo "DEBUG: Finished building Helm dependencies" >&2
-            }
+    # Function to build Helm chart dependencies
+    # Finds Chart.yaml files with dependencies and runs helm dependency build
+    build_helm_dependencies() {
+      local folder="$1"
+      local chart_file
+      local chart_dir
+      local dep_count
 
-            # Function to decrypt SOPS-encrypted Helm values files
-            # Files matching *-helm-values.sops.yaml are decrypted to *-helm-values.yaml
-            decrypt_helm_values() {
-              local folder="$1"
+      echo "DEBUG: Searching for Chart.yaml files in: $folder" >&2
 
-              # Find all helm values files matching the naming convention
-              for sops_file in "$folder"/*-helm-values.sops.yaml; do
-                if [ -f "$sops_file" ]; then
-                  local decrypted_file="${sops_file%.sops.yaml}.yaml"
-                  echo "Decrypting Helm values: $(basename "$sops_file") -> $(basename "$decrypted_file")" >&2
+      # Find all Chart.yaml files and build dependencies
+      while IFS= read -r chart_file; do
+        echo "DEBUG: Found Chart.yaml: $chart_file" >&2
+        chart_dir=$(dirname "$chart_file")
 
-                  # Decrypt to plain file
-                  SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --decrypt "$sops_file" > "$decrypted_file"
+        # Check if chart has dependencies
+        dep_count=$(yq eval '.dependencies // [] | length' "$chart_file")
+        echo "DEBUG: Chart $chart_file has $dep_count dependencies" >&2
 
-                  # Update kustomization.yaml to reference decrypted file
-                  local kust_file=""
-                  if [ -f "$folder/kustomization.yaml" ]; then
-                    kust_file="$folder/kustomization.yaml"
-                  elif [ -f "$folder/kustomization.yml" ]; then
-                    kust_file="$folder/kustomization.yml"
-                  fi
+        if [ "$dep_count" -gt 0 ] 2>/dev/null; then
+          echo "Updating Helm dependencies for: $chart_dir" >&2
+          # Use 'helm dependency update' to handle out-of-sync Chart.lock files
+          if ! helm dependency update "$chart_dir" 2>&1 | sed 's/^/  /' >&2; then
+            echo "ERROR: helm dependency update failed for $chart_dir" >&2
+          fi
+        fi
+      done < <(find "$folder" -name "Chart.yaml" -type f -not -path "*/template/*" -not -path "*/templates/*" 2>/dev/null)
 
-                  if [ -n "$kust_file" ]; then
-                    local sops_basename=$(basename "$sops_file")
-                    local decrypted_basename=$(basename "$decrypted_file")
-                    # Replace the encrypted filename with decrypted filename in valuesFile references
-                    yq eval -i "(.helmCharts[].valuesFile | select(. == \"$sops_basename\")) = \"$decrypted_basename\"" "$kust_file"
-                  fi
-                fi
-              done
-            }
+      echo "DEBUG: Finished building Helm dependencies" >&2
+    }
 
-            # Function to decrypt SOPS-encrypted helmfile values
-            # Files matching values.sops.yaml or *-values.sops.yaml are decrypted
-            decrypt_helmfile_values() {
-              local folder="$1"
+    # Function to decrypt SOPS-encrypted Helm values files
+    # Files matching *-helm-values.sops.yaml are decrypted to *-helm-values.yaml
+    decrypt_helm_values() {
+      local folder="$1"
 
-              # Decrypt values.sops.yaml if it exists
-              # Use --config /dev/null to ignore any .sops.yaml from cloned repos
-              if [ -f "$folder/values.sops.yaml" ]; then
-                echo "Decrypting helmfile values: values.sops.yaml -> values.yaml" >&2
-                SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$folder/values.sops.yaml" > "$folder/values.yaml"
-              fi
+      # Find all helm values files matching the naming convention
+      for sops_file in "$folder"/*-helm-values.sops.yaml; do
+        if [ -f "$sops_file" ]; then
+          local decrypted_file="${sops_file%.sops.yaml}.yaml"
+          echo "Decrypting Helm values: $(basename "$sops_file") -> $(basename "$decrypted_file")" >&2
 
-              # Also decrypt any *-values.sops.yaml files
-              for sops_file in "$folder"/*-values.sops.yaml; do
-                if [ -f "$sops_file" ]; then
-                  local decrypted_file="${sops_file%.sops.yaml}.yaml"
-                  echo "Decrypting helmfile values: $(basename "$sops_file") -> $(basename "$decrypted_file")" >&2
-                  SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$sops_file" > "$decrypted_file"
-                fi
-              done
-            }
+          # Decrypt to plain file
+          SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --decrypt "$sops_file" > "$decrypted_file"
 
-            # Function to process a helmfile folder
-            process_helmfile_folder() {
-              local folder="$1"
-              local output_file="$2"
-              local helmfile_path="$3"
+          # Update kustomization.yaml to reference decrypted file
+          local kust_file=""
+          if [ -f "$folder/kustomization.yaml" ]; then
+            kust_file="$folder/kustomization.yaml"
+          elif [ -f "$folder/kustomization.yml" ]; then
+            kust_file="$folder/kustomization.yml"
+          fi
 
-              echo "Processing helmfile: $folder/$helmfile_path" >&2
+          if [ -n "$kust_file" ]; then
+            local sops_basename=$(basename "$sops_file")
+            local decrypted_basename=$(basename "$decrypted_file")
+            # Replace the encrypted filename with decrypted filename in valuesFile references
+            yq eval -i "(.helmCharts[].valuesFile | select(. == \"$sops_basename\")) = \"$decrypted_basename\"" "$kust_file"
+          fi
+        fi
+      done
+    }
 
-              # Get absolute paths before changing directories
-              local abs_folder=$(cd "$folder" && pwd)
-              local helmfile_dir=$(dirname "$helmfile_path")
-              local helmfile_name=$(basename "$helmfile_path")
+    # Pad naar het kustomization-bestand van een map, leeg als er geen is.
+    find_kustomization() {
+      local folder="$1"
+      if [ -f "$folder/kustomization.yaml" ]; then
+        echo "$folder/kustomization.yaml"
+      elif [ -f "$folder/kustomization.yml" ]; then
+        echo "$folder/kustomization.yml"
+      fi
+    }
 
-              # Decrypt SOPS-encrypted values files (in the root folder)
-              decrypt_helmfile_values "$folder"
+    # Mappen waarvan de ksops-generators al zijn ingelijfd.
+    KSOPS_VISITED=""
 
-              # Build optional helmfile arguments
-              local helmfile_args=""
+    # Vervangt elke ksops-generator door ontsleutelde bestanden als resources.
+    # Geen files-lijst geeft een fout: secrets zouden stil wegvallen.
+    inline_ksops_in_kustomization() {
+      local kust="$1" dir="$2"
+      local count i gen kind files_type files sops_file out n=0 saw_ksops=false
+      local remaining=()
 
-              # Only add environment flag if ENVIRONMENT is explicitly set
-              # This allows simpler helmfile projects without environments to work
-              if [ -n "${ENVIRONMENT:-}" ]; then
-                helmfile_args="$helmfile_args -e $ENVIRONMENT"
-                echo "DEBUG: Using helmfile environment: $ENVIRONMENT" >&2
-              else
-                echo "DEBUG: No ENVIRONMENT set, using helmfile default" >&2
-              fi
+      count=$(yq eval '.generators // [] | length' "$kust" 2>/dev/null || echo 0)
+      [ "$count" -gt 0 ] 2>/dev/null || return 0
 
-              # Only add state values file if values.yaml exists
-              # Use --state-values-file for .gotmpl template values (not --values which is for helm charts)
-              # Path must be absolute since helmfile resolves relative to helmfile location, not cwd
-              if [ -f "$folder/values.yaml" ]; then
-                helmfile_args="$helmfile_args --state-values-file $abs_folder/values.yaml"
-                echo "DEBUG: Using state values file: $abs_folder/values.yaml" >&2
-              fi
+      for i in $(seq 0 $((count - 1))); do
+        gen=$(yq eval ".generators[$i]" "$kust")
+        kind=""
+        [ -f "$dir/$gen" ] && kind=$(yq eval '.kind // ""' "$dir/$gen" 2>/dev/null || echo "")
+        if [ "$kind" != "ksops" ]; then
+          remaining+=("$gen")
+          continue
+        fi
+        saw_ksops=true
 
-              # Run helmfile template
-              echo "---" >> "$output_file"
+        files_type=$(yq eval '.files | type' "$dir/$gen" 2>/dev/null || echo "")
+        if [ "$files_type" != "!!seq" ]; then
+          echo "ERROR: ksops generator '$gen' in $dir has no files list" >&2
+          exit 1
+        fi
+        files=$(yq eval '.files[]' "$dir/$gen")
 
-              # CD into the helmfile's directory so relative chart paths work correctly
-              # e.g., if helmfile is apps/docs/helmfile-child.yaml.gotmpl with chart: ../common/charts/nginx
-              # we need to be in apps/docs/ for ../common to resolve correctly
-              local work_dir="$abs_folder"
-              if [ "$helmfile_dir" != "." ]; then
-                work_dir="$abs_folder/$helmfile_dir"
-                echo "DEBUG: Changing to helmfile directory: $work_dir" >&2
-              fi
-              cd "$work_dir"
+        while IFS= read -r sops_file; do
+          [ -z "$sops_file" ] && continue
+          n=$((n + 1))
+          out="zz-ksops-$n.yaml"
+          echo "Decrypting ksops file: $sops_file -> $out (in $dir)" >&2
+          # In de eigen map, zodat de standaard load-restrictor van kustomize hem accepteert:
+          # een generator mag naar buiten verwijzen, een resource niet.
+          if ! SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$dir/$sops_file" > "$dir/$out"; then
+            echo "ERROR: could not decrypt '$sops_file' from ksops generator '$gen' in $dir" >&2
+            exit 1
+          fi
+          KSOPS_OUT="$out" yq eval -i '.resources = ((.resources // []) + [strenv(KSOPS_OUT)])' "$kust"
+        done <<< "$files"
+      done
 
-              # Set namespace for helmfile
-              export HELMFILE_NAMESPACE="${ARGOCD_APP_NAMESPACE}"
+      [ "$saw_ksops" = true ] || return 0
 
-              # Ensure HELM_DATA_HOME is set (plugins are pre-installed in the image)
-              export HELM_DATA_HOME="${HELM_DATA_HOME:-/home/argocd/.local/share/helm}"
+      yq eval -i 'del(.generators)' "$kust"
+      for gen in "${remaining[@]}"; do
+        # Via de omgeving, want een naam uit een kustomization mag geen yq-expressie worden.
+        KSOPS_GEN="$gen" yq eval -i '.generators = ((.generators // []) + [strenv(KSOPS_GEN)])' "$kust"
+      done
+    }
 
-              # Only run helmfile init if helm-diff plugin is not installed
-              # The plugin should be pre-installed in the Docker image
-              if ! helm plugin list | grep -q "^diff"; then
-                echo "Running helmfile init (helm-diff not found)..." >&2
-                helmfile init --force 2>&2
-              else
-                echo "DEBUG: helm-diff plugin already installed, skipping helmfile init" >&2
-              fi
+    # Lijft de ksops-generators van een map en van al zijn bases in. De platform-overlays
+    # halen hun generators uit submappen, dus de graaf wordt gevolgd via resources en
+    # components.
+    inline_ksops_generators() {
+      local folder="$1"
+      local abs kust entry target
 
-              # Run helmfile template with conditional arguments
-              # Use just the filename since we're now in the helmfile's directory
-              echo "DEBUG: Running helmfile from $(pwd) with file $helmfile_name" >&2
-              helmfile --file "$helmfile_name" $helmfile_args template --include-crds 2>&2 >> "$output_file"
+      abs=$(cd "$folder" 2>/dev/null && pwd) || return 0
+      case " $KSOPS_VISITED " in
+        *" $abs "*) return 0 ;;
+      esac
+      KSOPS_VISITED="$KSOPS_VISITED $abs"
 
-              cd - > /dev/null
-            }
+      kust=$(find_kustomization "$abs")
+      [ -z "$kust" ] && return 0
 
-            # Function to find helmfile in a folder (checks .helmfile-entry FIRST, then root)
-            # .helmfile-entry takes priority to allow selecting a specific sub-helmfile
-            find_helmfile_path() {
-              local folder="$1"
-              local entry_file="$folder/.helmfile-entry"
-              local entry_path=""
+      while IFS= read -r entry; do
+        [ -z "$entry" ] && continue
+        case "$entry" in
+          /*) target="$entry" ;;
+          *) target="$abs/$entry" ;;
+        esac
+        [ -d "$target" ] && inline_ksops_generators "$target"
+      done < <(yq eval '((.resources // []) + (.components // []))[]' "$kust" 2>/dev/null)
 
-              # Check .helmfile-entry FIRST - this takes priority over root helmfile
-              if [ -f "$entry_file" ]; then
-                entry_path=$(cat "$entry_file")
-                echo "DEBUG: Found .helmfile-entry config: $entry_path" >&2
+      inline_ksops_in_kustomization "$kust" "$abs"
+    }
 
-                local search_folder="$folder/$entry_path"
+    # Function to decrypt SOPS-encrypted helmfile values
+    # Files matching values.sops.yaml or *-values.sops.yaml are decrypted
+    decrypt_helmfile_values() {
+      local folder="$1"
 
-                # Search for helmfile in entry subfolder
-                if [ -f "$search_folder/helmfile.yaml" ]; then
-                  echo "$entry_path/helmfile.yaml"
-                  return
-                elif [ -f "$search_folder/helmfile.yaml.gotmpl" ]; then
-                  echo "$entry_path/helmfile.yaml.gotmpl"
-                  return
-                elif [ -f "$search_folder/helmfile-child.yaml.gotmpl" ]; then
-                  echo "$entry_path/helmfile-child.yaml.gotmpl"
-                  return
-                fi
-              fi
+      # Decrypt values.sops.yaml if it exists
+      # Use --config /dev/null to ignore any .sops.yaml from cloned repos
+      if [ -f "$folder/values.sops.yaml" ]; then
+        echo "Decrypting helmfile values: values.sops.yaml -> values.yaml" >&2
+        SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$folder/values.sops.yaml" > "$folder/values.yaml"
+      fi
 
-              # Fall back to root level helmfile if no .helmfile-entry or entry path not found
-              if [ -f "$folder/helmfile.yaml" ]; then
-                echo "helmfile.yaml"
-                return
-              elif [ -f "$folder/helmfile.yaml.gotmpl" ]; then
-                echo "helmfile.yaml.gotmpl"
-                return
-              fi
+      # Also decrypt any *-values.sops.yaml files
+      for sops_file in "$folder"/*-values.sops.yaml; do
+        if [ -f "$sops_file" ]; then
+          local decrypted_file="${sops_file%.sops.yaml}.yaml"
+          echo "Decrypting helmfile values: $(basename "$sops_file") -> $(basename "$decrypted_file")" >&2
+          SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "$sops_file" > "$decrypted_file"
+        fi
+      done
+    }
 
-              echo ""
-            }
+    # postRenderer laat helm een programma starten en valt onder geen enkele
+    # HELMFILE_DISABLE_*-vlag van helmfile v1.7.1, dus een state die hem noemt weigeren we.
+    # Zie features/helmfile-single-app-deployment.md voor waarom we de gerenderde state wegen.
+    reject_post_renderer_in_state() {
+      local state_file="$1"
+      local hit
 
-            # Function to process a single folder
-            process_folder() {
-              local folder="$1"
-              local output_file="$2"
+      if ! hit=$(yq eval-all '.. | select(tag == "!!map") | keys | .[] | select(. == "postRenderer" or . == "postRendererArgs")' "$state_file" 2>/dev/null); then
+        echo "ERROR: the rendered helmfile state is not parsable YAML, refusing to render" >&2
+        return 1
+      fi
 
-              echo "Processing folder: $folder" >&2
+      hit=$(printf '%s\n' "$hit" | grep -m1 . || true)
+      if [ -n "$hit" ]; then
+        echo "ERROR: the helmfile state uses $hit, which starts an external program" >&2
+        return 1
+      fi
+    }
 
-              # Inject namespace into kustomization.yaml
-              if [ -f "$folder/kustomization.yaml" ]; then
-              yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yaml"
-              elif [ -f "$folder/kustomization.yml" ]; then
-              yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yml"
-              fi
+    # Rendert de state met dezelfde bestanden, environment en state-values als de
+    # template-stap, zodat de guard weegt wat helmfile straks echt leest.
+    reject_post_renderer() {
+      local helmfile_name="$1"
+      local state_file
+      shift
 
-              # Build Helm chart dependencies before kustomize build (only if kustomization has helmCharts)
-              local kustomize_file="$folder/kustomization.yaml"
-              [ ! -f "$kustomize_file" ] && kustomize_file="$folder/kustomization.yml"
-              local helm_chart_count=$(yq eval '.helmCharts // [] | length' "$kustomize_file" 2>/dev/null || echo "0")
-              if [ "$helm_chart_count" -gt 0 ]; then
-                echo "DEBUG: Kustomization has $helm_chart_count helmCharts, building dependencies" >&2
-                build_helm_dependencies "$folder"
-              else
-                echo "DEBUG: Kustomization has no helmCharts, skipping dependency build" >&2
-              fi
+      state_file=$(mktemp)
+      if ! helmfile --file "$helmfile_name" "$@" build > "$state_file" 2>&2; then
+        rm -f "$state_file"
+        echo "ERROR: helmfile build failed for '$helmfile_name', refusing to render" >&2
+        exit 1
+      fi
 
-              # Decrypt SOPS-encrypted Helm values files before kustomize/helmfile build
-              decrypt_helm_values "$folder"
+      # De state bevat ontsleutelde waarden en wordt verwijderd. Return in plaats van exit,
+      # zodat EXIT-traps in TEMP_OUTPUT niet overschreven worden.
+      if ! reject_post_renderer_in_state "$state_file"; then
+        rm -f "$state_file"
+        exit 1
+      fi
+      rm -f "$state_file"
+    }
 
-              # Generate manifests for this folder (with Helm support).
-              # Capture kustomize's stderr so that on failure we can emit ONE clear, final
-              # stderr line: ArgoCD truncates long plugin errors and this script writes a lot
-              # of DEBUG noise, so without this the real kustomize error can drown or be cut
-              # off. On success stdout is appended to the output file as before; kustomize's
-              # own stderr (normally empty) is dropped to keep the log clean.
-              echo "---" >> "$output_file"
-              local kustomize_stderr kustomize_rc=0
-              kustomize_stderr=$(SOPS_AGE_KEY="$SOPS_AGE_KEY" kustomize build --enable-alpha-plugins --enable-exec --enable-helm "$folder" 2>&1 1>>"$output_file") || kustomize_rc=$?
-              if [ "$kustomize_rc" -ne 0 ]; then
-                echo "KUSTOMIZE BUILD FAILED in $folder: $kustomize_stderr" >&2
-                exit "$kustomize_rc"
-              fi
-            }
+    process_helmfile_folder() {
+      local folder="$1"
+      local output_file="$2"
+      local helmfile_path="$3"
 
-            # Determine folders to process
-            FOLDERS=()
-            case "$KUSTOMIZE_FOLDERS" in
-              "current")
-                FOLDERS=(".")
-                ;;
-              "subfolders")
-                # Find all subfolders with kustomization files (recursive)
-                while IFS= read -r -d '' dir; do
-                  FOLDERS+=("$dir")
-                done < <(find . -mindepth 2 -type f \( -name "kustomization.yaml" -o -name "kustomization.yml" \) -exec dirname {} \; | sort -u | tr '\n' '\0')
-                ;;
-              "all")
-                # Current folder first
-                FOLDERS=(".")
-                # Then subfolders
-                for dir in */; do
-                  if [ -d "$dir" ] && ([ -f "$dir/kustomization.yaml" ] || [ -f "$dir/kustomization.yml" ]); then
-                    FOLDERS+=("${dir%/}")
-                  fi
-                done
-                ;;
-              *)
-                echo "ERROR: Invalid KUSTOMIZE_FOLDERS value: $KUSTOMIZE_FOLDERS. Use 'current', 'subfolders', or 'all'" >&2
-                exit 1
-                ;;
-            esac
+      echo "Processing helmfile: $folder/$helmfile_path" >&2
 
-            # Create unique temporary file
-            TEMP_OUTPUT=$(mktemp /tmp/kustomize_output.XXXXXX)
-            trap "rm -f $TEMP_OUTPUT" EXIT
+      # Get absolute paths before changing directories
+      local abs_folder=$(cd "$folder" && pwd)
+      local helmfile_dir=$(dirname "$helmfile_path")
+      local helmfile_name=$(basename "$helmfile_path")
 
-            # Process all folders
-            > "$TEMP_OUTPUT"  # Clear output file
-            PROCESSED_FOLDERS=""
+      # Decrypt SOPS-encrypted values files (in the root folder)
+      decrypt_helmfile_values "$folder"
 
-            for folder in "${FOLDERS[@]}"; do
-              echo "DEBUG: Checking folder: '$folder'" >&2
-              FOUND_SOMETHING=false
+      # Build optional helmfile arguments. An array, not a string: ENVIRONMENT comes
+      # from .cmp-env and so from a tenant, and an unquoted string would word-split
+      # that value into extra arguments of its own choosing on the helmfile command
+      # line. Reading .cmp-env as data only helps if the value stays one argument.
+      local helmfile_args=()
 
-              # Check for kustomization first (for Issuer, NetworkPolicy, etc.)
-              # This runs BEFORE helmfile so additional resources are included
-              if [ -f "$folder/kustomization.yaml" ] || [ -f "$folder/kustomization.yml" ]; then
-                echo "DEBUG: Found kustomization file in folder: '$folder'" >&2
-                echo "DEBUG: Calling process_folder with folder: '$folder'" >&2
-                process_folder "$folder" "$TEMP_OUTPUT"
-                PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder(kustomize)"
-                FOUND_SOMETHING=true
-              fi
+      # Only add environment flag if ENVIRONMENT is explicitly set
+      # This allows simpler helmfile projects without environments to work
+      if [ -n "${ENVIRONMENT:-}" ]; then
+        helmfile_args+=(-e "$ENVIRONMENT")
+        echo "DEBUG: Using helmfile environment: $ENVIRONMENT" >&2
+      else
+        echo "DEBUG: No ENVIRONMENT set, using helmfile default" >&2
+      fi
 
-              # Also check for helmfile (can run alongside kustomization)
-              # Uses find_helmfile_path which checks .helmfile-entry config and standard locations
-              helmfile_path=$(find_helmfile_path "$folder")
+      # Only add state values file if values.yaml exists
+      # Use --state-values-file for .gotmpl template values (not --values which is for helm charts)
+      # Path must be absolute since helmfile resolves relative to helmfile location, not cwd
+      if [ -f "$folder/values.yaml" ]; then
+        helmfile_args+=(--state-values-file "$abs_folder/values.yaml")
+        echo "DEBUG: Using state values file: $abs_folder/values.yaml" >&2
+      fi
 
-              if [ -n "$helmfile_path" ]; then
-                echo "DEBUG: Found helmfile at: '$folder/$helmfile_path'" >&2
-                process_helmfile_folder "$folder" "$TEMP_OUTPUT" "$helmfile_path"
-                PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder(helmfile)"
-                FOUND_SOMETHING=true
-              fi
+      echo "---" >> "$output_file"
 
-              if [ "$FOUND_SOMETHING" = false ]; then
-                echo "WARNING: No helmfile or kustomization file found in folder: $folder" >&2
-              fi
-            done
+      # CD into the helmfile's directory so relative chart paths work correctly
+      # e.g., if helmfile is apps/docs/helmfile-child.yaml.gotmpl with chart: ../common/charts/nginx
+      # we need to be in apps/docs/ for ../common to resolve correctly
+      local work_dir="$abs_folder"
+      if [ "$helmfile_dir" != "." ]; then
+        work_dir="$abs_folder/$helmfile_dir"
+        echo "DEBUG: Changing to helmfile directory: $work_dir" >&2
+      fi
+      cd "$work_dir"
 
-            # Calculate hash of all Secrets and ConfigMaps to trigger pod restarts on config changes
-            # This hash is injected into workload pod templates as an annotation.
-            #
-            # Resources labelled zad.rig/config-hash=ignore are left OUT: they hold config
-            # that no application pod reads, so counting them makes the hash say "your
-            # configuration changed" when it did not. Sleep-mode's waker token Secret is
-            # the case that forced this -- it exists only while a deployment sleeps, so
-            # pruning it on wake restarted the application a second time, right after it
-            # had come back up.
-            CONFIG_HASH=$(yq eval-all '
-              select(
-                (.kind == "Secret" or .kind == "ConfigMap")
-                and (.metadata.labels["zad.rig/config-hash"] // "") != "ignore"
-              )' "$TEMP_OUTPUT" 2>/dev/null | sha256sum | cut -d' ' -f1)
-            CONFIG_HASH="${CONFIG_HASH:0:16}"  # Truncate to 16 chars for readability
-            echo "DEBUG: Config hash (Secrets+ConfigMaps): $CONFIG_HASH" >&2
+      export HELMFILE_NAMESPACE="${ARGOCD_APP_NAMESPACE}"
 
-            # Inject config hash annotation into all Deployments, StatefulSets, and DaemonSets
-            # This causes pods to restart when any Secret or ConfigMap in the app changes
-            #
-            # strenv, niet env: env() raadt het type, en zestien hex-tekens lezen zo nu en dan
-            # als getal (allemaal cijfers, of e-notatie). Gemeten over 200.000 hashes: 1 op
-            # ~1400. Kubernetes weigert dan het manifest, en opnieuw uitrollen geeft dezelfde hash:
-            #   json: cannot unmarshal number into Go struct field ObjectMeta.spec.template.metadata.annotations
-            # Gezien op wies/pr-672, hash 3048182736028951.
-            export CONFIG_HASH
-            yq eval-all '
-              with(select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet");
-                .spec.template.metadata.annotations["checksum/config"] = strenv(CONFIG_HASH)
-              )
-            ' "$TEMP_OUTPUT"
+      # Ensure HELM_DATA_HOME is set (plugins are pre-installed in the image)
+      export HELM_DATA_HOME="${HELM_DATA_HOME:-/home/argocd/.local/share/helm}"
+
+      # Geen exec, envExec, readFile of readDir in een helmfile-template, en geen hooks.
+      # Namen uit pkg/envvar/const.go van helmfile v1.7.1.
+      export HELMFILE_DISABLE_INSECURE_FEATURES=true
+      export HELMFILE_DISABLE_HOOKS=true
+
+      # Only run helmfile init if helm-diff plugin is not installed
+      # The plugin should be pre-installed in the Docker image
+      if ! helm plugin list | grep -q "^diff"; then
+        echo "Running helmfile init (helm-diff not found)..." >&2
+        helmfile init --force 2>&2
+      else
+        echo "DEBUG: helm-diff plugin already installed, skipping helmfile init" >&2
+      fi
+
+      reject_post_renderer "$helmfile_name" "${helmfile_args[@]}"
+
+      # Run helmfile template with conditional arguments
+      echo "DEBUG: Running helmfile from $(pwd) with file $helmfile_name" >&2
+      helmfile --file "$helmfile_name" "${helmfile_args[@]}" template --include-crds 2>&2 >> "$output_file"
+
+      cd - > /dev/null
+    }
+
+    # Finds helmfile in folder; .helmfile-entry takes priority.
+    find_helmfile_path() {
+      local folder="$1"
+      local entry_file="$folder/.helmfile-entry"
+      local entry_path=""
+
+      if [ -f "$entry_file" ]; then
+        entry_path=$(cat "$entry_file")
+        echo "DEBUG: Found .helmfile-entry config: $entry_path" >&2
+
+        local search_folder="$folder/$entry_path"
+
+        if [ -f "$search_folder/helmfile.yaml" ]; then
+          echo "$entry_path/helmfile.yaml"
+          return
+        elif [ -f "$search_folder/helmfile.yaml.gotmpl" ]; then
+          echo "$entry_path/helmfile.yaml.gotmpl"
+          return
+        elif [ -f "$search_folder/helmfile-child.yaml.gotmpl" ]; then
+          echo "$entry_path/helmfile-child.yaml.gotmpl"
+          return
+        fi
+      fi
+
+      if [ -f "$folder/helmfile.yaml" ]; then
+        echo "helmfile.yaml"
+        return
+      elif [ -f "$folder/helmfile.yaml.gotmpl" ]; then
+        echo "helmfile.yaml.gotmpl"
+        return
+      fi
+
+      echo ""
+    }
+
+    process_folder() {
+      local folder="$1"
+      local output_file="$2"
+
+      echo "Processing folder: $folder" >&2
+
+      if [ -f "$folder/kustomization.yaml" ]; then
+      yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yaml"
+      elif [ -f "$folder/kustomization.yml" ]; then
+      yq eval ".namespace = \"${ARGOCD_APP_NAMESPACE}\"" -i "$folder/kustomization.yml"
+      fi
+
+      # Build Helm chart dependencies before kustomize build (only if kustomization has helmCharts)
+      local kustomize_file="$folder/kustomization.yaml"
+      [ ! -f "$kustomize_file" ] && kustomize_file="$folder/kustomization.yml"
+      local helm_chart_count=$(yq eval '.helmCharts // [] | length' "$kustomize_file" 2>/dev/null || echo "0")
+      if [ "$helm_chart_count" -gt 0 ]; then
+        echo "DEBUG: Kustomization has $helm_chart_count helmCharts, building dependencies" >&2
+        build_helm_dependencies "$folder"
+      else
+        echo "DEBUG: Kustomization has no helmCharts, skipping dependency build" >&2
+      fi
+
+      decrypt_helm_values "$folder"
+
+      # Ksops-generators inlijven: daarna heeft de build geen --enable-exec meer nodig.
+      inline_ksops_generators "$folder"
+
+      # Generate manifests for this folder (with Helm support).
+      # Capture kustomize's stderr so that on failure we can emit ONE clear, final
+      # stderr line: ArgoCD truncates long plugin errors and this script writes a lot
+      # of DEBUG noise, so without this the real kustomize error can drown or be cut
+      # off. On success stdout is appended to the output file as before; kustomize's
+      # own stderr (normally empty) is dropped to keep the log clean.
+      echo "---" >> "$output_file"
+      local kustomize_stderr kustomize_rc=0
+      kustomize_stderr=$(SOPS_AGE_KEY="$SOPS_AGE_KEY" kustomize build --enable-helm "$folder" 2>&1 1>>"$output_file") || kustomize_rc=$?
+      if [ "$kustomize_rc" -ne 0 ]; then
+        # Noemt de stderr een ontsleuteld bestand, dan alleen de naam: kustomize citeert de
+        # regel waarop hij struikelde, en die inhoud is geheim.
+        local decrypted
+        decrypted=$(printf '%s' "$kustomize_stderr" | grep -oE '[A-Za-z0-9_.-]*(zz-ksops-[0-9]+|-helm-values)\.yaml' | head -1 || true)
+        if [ -n "$decrypted" ]; then
+          echo "KUSTOMIZE BUILD FAILED in $folder: fout in ontsleuteld bestand $decrypted" >&2
+        else
+          echo "KUSTOMIZE BUILD FAILED in $folder: $kustomize_stderr" >&2
+        fi
+        exit "$kustomize_rc"
+      fi
+    }
+
+    # Determine folders to process
+    FOLDERS=()
+    case "$KUSTOMIZE_FOLDERS" in
+      "current")
+        FOLDERS=(".")
+        ;;
+      "subfolders")
+        # Find all subfolders with kustomization files (recursive)
+        while IFS= read -r -d '' dir; do
+          FOLDERS+=("$dir")
+        done < <(find . -mindepth 2 -type f \( -name "kustomization.yaml" -o -name "kustomization.yml" \) -exec dirname {} \; | sort -u | tr '\n' '\0')
+        ;;
+      "all")
+        # Current folder first
+        FOLDERS=(".")
+        # Then subfolders
+        for dir in */; do
+          if [ -d "$dir" ] && ([ -f "$dir/kustomization.yaml" ] || [ -f "$dir/kustomization.yml" ]); then
+            FOLDERS+=("${dir%/}")
+          fi
+        done
+        ;;
+      *)
+        echo "ERROR: Invalid KUSTOMIZE_FOLDERS value: $KUSTOMIZE_FOLDERS. Use 'current', 'subfolders', or 'all'" >&2
+        exit 1
+        ;;
+    esac
+
+    # Create unique temporary file
+    TEMP_OUTPUT=$(mktemp /tmp/kustomize_output.XXXXXX)
+
+    # Process all folders
+    > "$TEMP_OUTPUT"  # Clear output file
+    PROCESSED_FOLDERS=""
+
+    for folder in "${FOLDERS[@]}"; do
+      echo "DEBUG: Checking folder: '$folder'" >&2
+      FOUND_SOMETHING=false
+
+      # Check for kustomization first (for Issuer, NetworkPolicy, etc.)
+      # This runs BEFORE helmfile so additional resources are included
+      if [ -f "$folder/kustomization.yaml" ] || [ -f "$folder/kustomization.yml" ]; then
+        echo "DEBUG: Found kustomization file in folder: '$folder'" >&2
+        echo "DEBUG: Calling process_folder with folder: '$folder'" >&2
+        process_folder "$folder" "$TEMP_OUTPUT"
+        PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder(kustomize)"
+        FOUND_SOMETHING=true
+      fi
+
+      # Also check for helmfile (can run alongside kustomization)
+      # Uses find_helmfile_path which checks .helmfile-entry config and standard locations
+      helmfile_path=$(find_helmfile_path "$folder")
+
+      if [ -n "$helmfile_path" ]; then
+        echo "DEBUG: Found helmfile at: '$folder/$helmfile_path'" >&2
+        process_helmfile_folder "$folder" "$TEMP_OUTPUT" "$helmfile_path"
+        PROCESSED_FOLDERS="$PROCESSED_FOLDERS $folder(helmfile)"
+        FOUND_SOMETHING=true
+      fi
+
+      if [ "$FOUND_SOMETHING" = false ]; then
+        echo "WARNING: No helmfile or kustomization file found in folder: $folder" >&2
+      fi
+    done
+
+    # Calculate hash of all Secrets and ConfigMaps to trigger pod restarts on config changes
+    # This hash is injected into workload pod templates as an annotation.
+    #
+    # Resources labelled zad.rig/config-hash=ignore are left OUT: they hold config
+    # that no application pod reads, so counting them makes the hash say "your
+    # configuration changed" when it did not. Sleep-mode's waker token Secret is
+    # the case that forced this -- it exists only while a deployment sleeps, so
+    # pruning it on wake restarted the application a second time, right after it
+    # had come back up.
+    CONFIG_HASH=$(yq eval-all '
+      select(
+        (.kind == "Secret" or .kind == "ConfigMap")
+        and (.metadata.labels["zad.rig/config-hash"] // "") != "ignore"
+      )' "$TEMP_OUTPUT" 2>/dev/null | sha256sum | cut -d' ' -f1)
+    CONFIG_HASH="${CONFIG_HASH:0:16}"  # Truncate to 16 chars for readability
+    echo "DEBUG: Config hash (Secrets+ConfigMaps): $CONFIG_HASH" >&2
+
+    # Inject config hash annotation into all Deployments, StatefulSets, and DaemonSets
+    # This causes pods to restart when any Secret or ConfigMap in the app changes
+    #
+    # strenv, niet env: env() raadt het type, en zestien hex-tekens lezen zo nu en dan
+    # als getal (allemaal cijfers, of e-notatie). Gemeten over 200.000 hashes: 1 op
+    # ~1400. Kubernetes weigert dan het manifest, en opnieuw uitrollen geeft dezelfde hash:
+    #   json: cannot unmarshal number into Go struct field ObjectMeta.spec.template.metadata.annotations
+    # Gezien op wies/pr-672, hash 3048182736028951.
+    export CONFIG_HASH
+    yq eval-all '
+      with(select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet");
+        .spec.template.metadata.annotations["checksum/config"] = strenv(CONFIG_HASH)
+      )
+    ' "$TEMP_OUTPUT"

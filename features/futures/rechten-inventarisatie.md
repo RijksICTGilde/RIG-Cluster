@@ -10,7 +10,7 @@ De routetellingen komen uit een AST-analyse van `operations-manager/python/opi/`
 
 Er is precies één route die zo niet gevonden wordt, omdat hij niet via een decorator maar via `web_router.add_api_route("/subdomains/check", ...)` wordt geregistreerd (`opi/web/router.py:120`, handler in `opi/web/router_self_service.py:49`). Handmatig toegevoegd komt het totaal op **158 routes**. Dat dit maar met de hand te vinden was, is zelf een bevinding: elke inventaris die op decorators steunt, mist per definitie wat buiten die conventie wordt geregistreerd, en een inventaris die per functie telt in plaats van per decorator mist bovendien de tweede en volgende route van een gestapelde decorator, zoals `/health` hierboven.
 
-Drie routes zitten niet in die 158 omdat FastAPI ze zelf toevoegt: `/docs`, `/redoc` en `/openapi.json` (`opi/server.py:320-322`).
+Drie routes zitten niet in die 158 omdat FastAPI ze zelf toevoegt of OPI afbijt: `/docs`, `/redoc` en `/openapi.json`. Sinds RC-321 zijn `/docs` en `/redoc` niet meer standaard routes; ze worden door `opi/server.py` met een `@requires_sso` guard geregistreerd. `/openapi.json` blijft publiek (vereist door `zad-cli`).
 
 Waar dit document een gedragsclaim doet die niet uit lezen alleen volgt, is die claim uitgevoerd. Dat staat er dan bij.
 
@@ -46,7 +46,7 @@ Zes manieren om een handeling uitgevoerd te krijgen. Vier ervan zijn een decorat
 | `ADMIN_API_KEY`, `@validate_admin_api_key` | `opi/api/endpoint_util.py:82` | 6 | de aanroeper kent een gedeeld platformgeheim uit de omgeving | niemand |
 | `MASTER_API_KEY`, `@validate_master_api_key` | `opi/api/endpoint_util.py:123` | 3 | idem, een tweede gedeeld geheim | niemand |
 | Handgeschreven projectsleutelcontrole | `opi/api/task_router.py:56` en `:159-165` | 3 | hetzelfde als de decorator, apart uitgeschreven | niemand |
-| Handgeschreven sessiecontrole in een websocket | `opi/api/logs_websocket_router.py:299-360` | 1 | Origin-header, sessiecookie, allowlist en projectlidmaatschap, allemaal met de hand | een mens |
+| Handgeschreven sessiecontrole in een websocket | `opi/api/logs_websocket_router.py:299-360` | 1 | Origin-header, allowlist en projectlidmaatschap met de hand; de sessie zelf levert de sessiemiddleware (server-side, RC-390) | een mens |
 
 De middleware doet er nog iets bovenop dat makkelijk over het hoofd wordt gezien. `AuthorizationMiddleware.dispatch` (`opi/middleware/authorization.py:82-116`) slaat elke padcontrole over voor `/metrics` en voor alles onder `/health`, `/ready`, `/version` en `/static/`, en laat elk pad dat met `/api/` begint zonder sessiecontrole door omdat die routes hun eigen sleutelcontrole doen. Voor alle overige paden bepaalt `_route_requires_sso` (`:126-156`) of de gevonden endpointfunctie het attribuut `_requires_sso` draagt. **Staat dat attribuut er niet op, dan is de route publiek.** Alleen wanneer er helemaal geen route matcht valt de middleware terug op "wel SSO vereist", en dat geval bereikt de handler per definitie nooit.
 
@@ -60,13 +60,13 @@ Geen bearer-token-pad. Geen mTLS. Geen tokenintrospectie. Geen enkele poort die 
 
 ### 3.1 Globale allowlist van e-mailadressen
 
-`UserService._allowed_emails` (`opi/services/user_service.py:24`), een `set` in het procesgeheugen. Gevuld bij startup uit drie bronnen (`opi/core/startup.py:469-492`): een hardgecodeerde lijst, de env-variabele `ALLOWED_EMAILS` (komma-gescheiden, `opi/core/config.py:178`) en alle rijen uit de `users`-tabel. Beantwoordt precies één vraag: mag dit e-mailadres überhaupt naar binnen. De middleware stuurt wie er niet op staat naar `/permission-denied` (`opi/middleware/authorization.py:116-119`).
+`UserService._allowed_emails` (`opi/services/user_service.py:24`), een `set` in het procesgeheugen. Gevuld bij startup uit twee bronnen: de env-variabele `ALLOWED_EMAILS` (komma-gescheiden, `opi/core/config.py:178`) en alle rijen uit de `users`-tabel. De hardgecodeerde lijst die er als derde bron stond is in RC-272 verwijderd. Beantwoordt precies één vraag: mag dit e-mailadres überhaupt naar binnen. De middleware stuurt wie er niet op staat naar `/permission-denied` (`opi/middleware/authorization.py:116-119`).
 
-Het laden uit de database staat in een `try/except Exception` die alleen een `logger.warning` schrijft (`opi/core/startup.py:493-494`). Valt de database bij startup weg, dan start OPI met een allowlist die alleen de hardgecodeerde en de env-adressen bevat, zonder dat iets die toestand zichtbaar maakt.
+Het laden uit de database staat in een `try/except Exception` die alleen een `logger.warning` schrijft (`opi/core/startup.py:493-494`). Valt de database bij startup weg, dan start OPI met een allowlist die alleen de env-adressen bevat, zonder dat iets die toestand zichtbaar maakt.
 
 ### 3.2 Platformbeheerders
 
-`UserService._platform_admin_emails` (`opi/services/user_service.py:28`), eveneens in het geheugen, gevuld uit een hardgecodeerde lijst en de env-variabele `ADMIN_EMAILS` (`opi/core/startup.py:496-504`, `opi/core/config.py:179`). Niet uit de database: een rij in de `users`-tabel maakt iemand wél toegelaten, nooit beheerder.
+`UserService._platform_admin_emails` (`opi/services/user_service.py:28`), eveneens in het geheugen, gevuld uit de env-variabele `ADMIN_EMAILS` (`opi/core/config.py:179`). Niet uit de database: een rij in de `users`-tabel maakt iemand wél toegelaten, nooit beheerder.
 
 Een platformbeheerder is lid van elk project met rol `admin`, want `is_user_authorized_for_project` en `get_user_role_for_project` geven hem voorrang vóór ze het projectbestand raadplegen (`opi/services/project_authorization.py:36-38` en `:56-57`).
 
@@ -148,7 +148,7 @@ Optelling ter controle: 12 + 4 + 8 + 6 + 6 + 6 + 3 + 8 + 21 + 38 + 46 = 158. De 
 | 1 | Prometheus-metingen van OPI zelf ophalen | `GET /metrics` | geen | - | `opi/api/prometheus_router.py:23` |
 | 4 | Landingspagina, uitleg, architectuur, weigeringspagina lezen | `GET /`, `/about`, `/architecture`, `/permission-denied` | geen | - | `opi/web/router.py:65, 2598, 2610, 76` |
 | 1 | Doorverwijzing naar de wizard volgen | `GET /projects/new` | geen | - | `opi/web/router.py:114` |
-| 3 | De volledige API-beschrijving lezen | `GET /docs`, `/redoc`, `/openapi.json` | geen | - | `opi/server.py:320-322` |
+| 3 | De volledige API-beschrijving lezen | `GET /docs` (SSO), `/redoc` (SSO), `/openapi.json` (publiek) | geen (SSO gebruiken sessiecookie, niet aparte poort) | - | `opi/server.py`: `/docs` en `/redoc` zijn met `@requires_sso` beveiligd sinds RC-321; `/openapi.json` is niet van routing, blijft publiek |
 
 ### 6.2 Object: sessie en identiteit
 
@@ -279,7 +279,7 @@ Er is geen enkele handeling met de betekenis "een recht toekennen", "een recht i
 | `ADMIN_API_KEY` | omgeving, `opi/core/config.py:226` | vrije string, standaard `None` | geen | geen | geen | geen |
 | `MASTER_API_KEY` | omgeving, `opi/core/config.py:225` | vrije string, standaard `None` | geen | geen | geen | geen |
 | Peer-sleutels voor federatie | `FEDERATION_PEERS`, `opi/core/config.py:386` | JSON-string in een omgevingsvariabele, met de `MASTER_API_KEY` van elke peer in platte tekst | geen | geen | geen | geen |
-| SSO-sessiecookie | Starlette-sessie, ondertekend met `SECRET_KEY` | cookie | sessieduur | - | uitloggen | e-mailadres in het log van de handler |
+| SSO-sessiecookie | ondertekend sessie-id met `SECRET_KEY`, inhoud in de tabel `sessions` (server-side, RC-390) | cookie | sessieduur | - | uitloggen | e-mailadres in het log van de handler |
 | Uitnodigingssleutel | projectbestand, `invites.active[].key` | door de beheerder gekozen string in de URL | optioneel `expires_at` | handmatig | sleutel verwijderen uit het bestand | geen |
 | Projectsleutelpaar (AGE) | `config.age-public-key` / `age-private-key` | AGE | geen | geen | geen | - |
 
@@ -289,7 +289,7 @@ Aanvullende feiten:
 - `ADMIN_API_KEY` en `MASTER_API_KEY` worden nergens in `bootstrap/` of `infrastructure/` gezet. Zonder waarde antwoorden de bijbehorende 9 routes met 501 (`opi/api/endpoint_util.py:106-111` en `:147-152`). Waar ze in productie vandaan komen is buiten deze repository geregeld en is hier niet vastgesteld.
 - Een mislukte sleutelpoging levert één `logger.warning` met de routenaam en verder niets: geen aanroeper, geen adres, geen teller (`opi/api/endpoint_util.py:36, 49, 114, 155`). Een geslaagde poging levert een `logger.debug`.
 - De projectsleutel is leesbaar op de projectdetailpagina, achter een rolcontrole in de template (`opi/templates/project-details/section-config.html.j2:2` en `:38`). De handler ontsleutelt hem echter voor elk lid, ongeacht rol (`opi/web/router.py:1010-1015`), samen met de private AGE-sleutel van het project en de Keycloak-beheerderswachtwoorden.
-- Er is één bestaand, declaratief autorisatieobject dat ZAD zelf uitrolt: de ArgoCD `AppProject` per project (`operations-manager/python/manifests/argocd-appproject.yaml.jinja`). Die pint de bestemming op één namespace en één cluster, laat cluster-scoped resources helemaal niet toe, en laat namespaced resources onbeperkt toe binnen die namespace. `sourceRepos` staat op `'*'`.
+- Er is één bestaand, declaratief autorisatieobject dat ZAD zelf uitrolt: de ArgoCD `AppProject` per project (`operations-manager/python/manifests/argocd-appproject.yaml.jinja`). Die pint de bestemming op één namespace en één cluster, laat cluster-scoped resources helemaal niet toe, en laat namespaced resources onbeperkt toe binnen die namespace. `sourceRepos` draagt sinds RC-301 de repo-URL's van het project zelf in plaats van `'*'` (`features/argocd-appprojects.md`).
 
 ## 8. De gaten
 
@@ -352,7 +352,9 @@ Omgekeerd is er geen enkele API-route die *minder* mag dan de sleutel. Er bestaa
 
 ### 8.8 Een persoon in de broncode
 
-`opi/core/startup.py:470` en `:497` zetten hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder. Dat is een met naam genoemde superuser in de broncode van een productieplatform, actief in elke omgeving, ongeacht configuratie, en niet uit te schakelen zonder de code te wijzigen. Hij is bovendien onzichtbaar voor iedereen die alleen naar de env-variabelen of de `users`-tabel kijkt.
+**Gesloten in RC-272.** `opi/core/startup.py` zette hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder: een met naam genoemde superuser in de broncode van een productieplatform, actief in elke omgeving, ongeacht configuratie, en niet uit te schakelen zonder de code te wijzigen. Het adres staat nu in `ALLOWED_EMAILS` en `ADMIN_EMAILS` van het productie-SOPS-secret, en de lijsten in de broncode zijn weg.
+
+Wat ermee verviel is de garantie dat er altijd één platformbeheerder is. De opstartcontrole die dat afdwingt staat nog open (plan van aanpak 4.4, stap 3).
 
 ### 8.9 `/metrics` staat op de publieke ingress
 

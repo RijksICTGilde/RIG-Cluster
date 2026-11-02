@@ -10,28 +10,94 @@ on:
     paths:
       - 'operations-manager/Dockerfile'
       - 'operations-manager/python/**'
+  # Laag A van de patchstrategie (SECURITY.md): een herbouw zonder laagcache haalt de
+  # Debian-security-updates op zonder dat iemand iets hoeft te mergen. Zo'n run publiceert
+  # op een nightly-tag en zet geen git-tag, want CalVer hoort bij een merge. De dispatch is
+  # dezelfde herbouw met de hand, zodat je hem kunt toetsen zonder een release te verbruiken.
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write  # needed to push the CalVer git tag
-  packages: write
+  contents: read
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/rijksictgilde/zad/operations-manager
+  # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
+  # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
+  # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.github.com:443
+    archive.ubuntu.com:80
+    astral.sh:443
+    auth.docker.io:443
+    azure.archive.ubuntu.com:80
+    cdn01.quay.io:443
+    cdn02.quay.io:443
+    cdn03.quay.io:443
+    codeload.github.com:443
+    deb.debian.org:443
+    deb.debian.org:80
+    esm.ubuntu.com:443
+    files.pythonhosted.org:443
+    fulcio.sigstore.dev:443
+    ghcr.io:443
+    github.com:443
+    index.docker.io:443
+    mirror.gcr.io:443
+    motd.ubuntu.com:443
+    objects.githubusercontent.com:443
+    pkg-containers.githubusercontent.com:443
+    pkgs.k8s.io:443
+    production.cloudflare.docker.com:443
+    pypi.org:443
+    quay.io:443
+    raw.githubusercontent.com:443
+    registry-1.docker.io:443
+    registry.k8s.io:443
+    rekor.sigstore.dev:443
+    timestamp.sigstore.dev:443
+    release-assets.githubusercontent.com:443
+    results-receiver.actions.githubusercontent.com:443
+    security.debian.org:80
+    security.ubuntu.com:80
+    tuf-repo-cdn.sigstore.dev:443
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Een herbouw is de nachtelijke run of een dispatch: zonder laagcache en op een
+      # nightly-tag, nooit op een CalVer-nummer.
+      HERBOUW: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    # Geen id-token: op een PR zou dat een extra stap toestaan een willekeurige image
+    # te tekenen op naam van deze repo. Tekenen zit in publish, die alleen op main draait.
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      calver_tag: ${{ steps.calver.outputs.tag }}
+      tags: ${{ steps.tags.outputs.tags }}
+      digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0  # needed for CalVer tag calculation
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -41,6 +107,10 @@ jobs:
         id: calver
         if: github.ref == 'refs/heads/main'
         run: |
+          if [[ "${HERBOUW}" == "true" ]]; then
+            echo "tag=nightly-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           PREFIX="$(date -u +%Y.%-m)"
           PATCH=$(git tag -l "${PREFIX}.*" | sed "s/${PREFIX}\.//" | sort -n | tail -1)
           NEXT_PATCH=$(( ${PATCH:-0} + 1 ))
@@ -48,41 +118,121 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "CalVer tag: ${TAG}"
 
+      # Een herbouw zet latest mee: dezelfde bron, maar met de verse OS-pakketten, hoort
+      # te zijn waar latest naar wijst. De CalVer-tag is dan de nightly-tag.
       - name: Generate image tags
         id: tags
         run: |
-          SHA_SHORT="${GITHUB_SHA::7}"
           TAGS="${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA}"
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:${{ steps.calver.outputs.tag }}"
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:latest"
-          else
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            TAGS="${TAGS},${{ env.IMAGE_NAME }}:pr-${PR_NUMBER}-sha-${SHA_SHORT}"
           fi
 
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
+      # De poort staat VOOR de push: hij bouwt amd64 lokaal en weigert op een oplosbare
+      # HIGH of CRITICAL en op misconfiguratie in de Dockerfile. Een pull request komt tot
+      # hier en niet verder, net als voorheen.
+      - name: Poort voor de push
+        uses: ./.github/actions/image-gate
+        with:
+          name: operations-manager
+          context: .
+          file: operations-manager/Dockerfile
+          target: application
+          cache-scope: operations-manager
+          no-cache: ${{ env.HERBOUW }}
+
+      # Op digest, niet op tag: publish hangt de tags er pas na het tekenen aan.
+      # Alleen op main, dezelfde guard als publish.
+      - name: Push de digest
+        id: push
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: operations-manager/Dockerfile
           target: application
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.tags.outputs.tags }}
-          provenance: false
-          sbom: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          # Ook hier zonder cache: de poort bouwt alleen amd64, dus arm64 zou anders uit
+          # een oude laag komen en de verse OS-pakketten van de herbouw missen.
+          no-cache: ${{ env.HERBOUW }}
+          cache-from: type=gha,scope=operations-manager
+          cache-to: type=gha,scope=operations-manager,mode=max
+
+  # Een eigen job, omdat alleen hier een OIDC-token nodig is. Door hem op main te hangen
+  # kan een pull-request-run geen certificaat op naam van deze repo laten uitgeven, ook
+  # niet voor een afnemer die het recept in SECURITY.md niet leest.
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless tekenen en de provenance-attestatie: cosign en attest-build-provenance
+      # halen hun OIDC-token hier, er is geen sleutel in beheer.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Teken en attesteer
+        uses: ./.github/actions/image-sign
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          digest: ${{ needs.build.outputs.digest }}
+
+      # Pas na het tekenen: zo draagt niets een naam voordat de handtekening er staat.
+      - name: Promoveer de tags naar de digest
+        env:
+          TAGS: ${{ needs.build.outputs.tags }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          ARGS=""
+          for TAG in ${TAGS//,/ }; do
+            ARGS="${ARGS} -t ${TAG}"
+          done
+          # shellcheck disable=SC2086
+          docker buildx imagetools create ${ARGS} "${IMAGE_NAME}@${DIGEST}"
+
+  # Een eigen job, omdat alleen het zetten van de git-tag contents: write nodig heeft.
+  tag:
+    needs: [build, publish]
+    # Herbouw publiceert nightly-tag, geen git-tag: CalVer hoort bij een merge.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Create CalVer git tag
-        if: github.ref == 'refs/heads/main'
+        env:
+          CALVER_TAG: ${{ needs.build.outputs.calver_tag }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git tag "${{ steps.calver.outputs.tag }}"
-          git push origin "${{ steps.calver.outputs.tag }}"
+          git tag "${CALVER_TAG}"
+          git push origin "${CALVER_TAG}"

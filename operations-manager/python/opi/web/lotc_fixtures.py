@@ -34,8 +34,11 @@ from opi.services.catalog.approval import SERVICE_USE_SUBJECT
 from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
+from opi.services.user_otp_service import OtpStatus
+from opi.utils.qr import qr_svg
 from opi.web.lotc_switch import PROJECT_TABS
 from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
+from opi.web.security_policy import security_policy_html
 
 FIXTURES_DIR = Path(__file__).parent / "lotc_fixtures"
 
@@ -78,8 +81,15 @@ def build_project_details(project_data: dict[str, Any]) -> dict[str, Any]:
         "name": project_name,
         "display_name": project_data.get("display-name", project_name),
         "description": project_data.get("description", "Geen beschrijving beschikbaar"),
+        "source_code": project_data.get("source-code", []),
         "users": project_data.get("users", []),
-        "user_role": "admin",
+        "user_roles": ["admin", "ops"],
+        # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
+        # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
+        "can": lambda *_a, **_k: True,
+        # De voorbeeldbeheerder is platformbeheerder, zodat het blok Configuratie & Secrets
+        # ook in de galerij staat.
+        "is_platform_admin": True,
         "services": services_with_info,
         "clusters": project_data.get("clusters", []),
         "components": project_data.get("components", []),
@@ -116,7 +126,10 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "title": f"Project Details - {project_data.get('display-name', name)}",
         "project": build_project_details(project_data),
         "user": {"email": "beheerder@voorbeeld.nl", "name": "Voorbeeldbeheerder"},
-        "user_role": "admin",
+        "user_roles": ["admin", "ops"],
+        # De componentengalerij heeft geen projectbestand en dus geen rolpoort om te
+        # lezen; can() zegt hier ja, zodat de knoppen op de voorbeeldpagina staan.
+        "can": lambda *_a, **_k: True,
         "ServiceAdapter": ServiceAdapter,
         "service_selection_labels": {},
         "service_config_hint": {},
@@ -143,7 +156,7 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         # lijstje hier. Ze stonden leeg, en daardoor toonde de proefopstelling juist de
         # secties niet die het langst met roos-HTML in de LOTC-pagina stonden (RC-64) -
         # precies het soort gat dat een screenshot niet verraadt.
-        "service_detail_sections": collect_detail_page_sections(project_data, "admin"),
+        "service_detail_sections": collect_detail_page_sections(project_data, lambda _handeling: True),
     }
 
 
@@ -171,6 +184,17 @@ def all_projects() -> list[dict[str, Any]]:
     return projects
 
 
+#: Een zichtbaar verzonnen seed voor de registratiepagina. Geen echt geheim: de pagina
+#: toont wat de generator ervan maakt, en deze proefopstelling heeft geen tweede factor.
+VOORBEELD_BASE32_SEED = "VOORBEELDWAARDEGEENECHTGEHEIM234"
+VOORBEELD_OTPAUTH_URI = f"otpauth://totp/ZAD:voorbeeld@rijksapp.dev?secret={VOORBEELD_BASE32_SEED}&issuer=ZAD"
+
+
+def _voorbeeld_otp_status() -> OtpStatus:
+    """Een bevestigde, niet geblokkeerde tweede factor voor de accountpagina's."""
+    return OtpStatus(registered=True, confirmed_at=datetime(2026, 9, 4, 10, 12, tzinfo=UTC))
+
+
 def page_data(slug: str) -> dict[str, Any]:
     """De gegevens die een herontworpen pagina nodig heeft.
 
@@ -190,8 +214,29 @@ def page_data(slug: str) -> dict[str, Any]:
                 "name": "Voorbeeld Gebruiker",
                 "email": "voorbeeld@rijksapp.dev",
                 "organisatie": "Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie",
-            }
+            },
+            "otp_status": _voorbeeld_otp_status(),
         }
+
+    if slug == "account-otp":
+        # De stand van een bevestigde factor: dat is de rijkste van de twee takken, met de
+        # datum en het formulier dat de factor vervangt.
+        return {"status": _voorbeeld_otp_status()}
+
+    if slug == "account-otp-registreren":
+        # Een lopende registratie: de QR komt uit de echte generator, met een otpauth-URI
+        # die zichtbaar verzonnen is.
+        return {
+            "qr_svg": qr_svg(VOORBEELD_OTPAUTH_URI),
+            "base32_secret": VOORBEELD_BASE32_SEED,
+            "pending": "VOORBEELDWAARDE-geen-echt-geheim",
+            "pending_field": "pending",
+        }
+
+    if slug == "security":
+        # Het ECHTE beleid, zoals introductie de echte catalogus toont: een verzonnen tekst
+        # zou de proefopstelling laten kloppen terwijl de pagina scheef staat.
+        return {"security_policy_html": security_policy_html()}
 
     if slug == "invite-landing":
         # Beide aanmeldkeuzes aan, zodat de pagina de keuze laat zien die hij uitlegt.
@@ -286,9 +331,8 @@ def page_data(slug: str) -> dict[str, Any]:
         return {
             "flow_title": "Nieuw project",
             "flow_description": "Vul de gegevens in. Je kunt tussentijds terug zonder iets kwijt te raken.",
-            "current_step": 2,
             "steps": [
-                # "past", niet "complete": de enum van step-indicator-item is
+                # "past", niet "complete": de enum van step-bar-item is
                 # past/current/future. "complete" rendert zonder klacht (ook onder
                 # LOTC_STRICT, want dat leest geen :expr-waarde) en levert dan geen
                 # afgeronde stap op. Gevonden met de sweep van stap 8.
@@ -545,9 +589,38 @@ def page_data(slug: str) -> dict[str, Any]:
         # die een echte instantie doorgeeft als Prometheus niet bereikbaar is.
         context["usage"] = None
         context["usage_error"] = "Prometheus is niet verbonden in de proefopstelling."
+        # Het audittabblad leest zijn rijen uit de database; de proefopstelling heeft er
+        # geen, dus staan ze hier als twee voorbeelden in dezelfde vorm.
+        context["audit_rijen"] = _audit_voorbeelden()
         return context
 
     return {}
+
+
+def _audit_voorbeelden() -> list[dict[str, Any]]:
+    """Twee auditrijen in de vorm die ``build_lotc_audit`` oplevert: een actie en een weigering."""
+    return [
+        {
+            "time": datetime(2026, 10, 28, 9, 14, tzinfo=UTC),
+            "actor": "beheerder@sandbox.rijksapp.dev",
+            "actor_kind": "user",
+            "action": "deployment.write",
+            "subject": "demo/productie",
+            "allowed": True,
+            "cause": "",
+            "commits": [{"sha": "9f1c2ab7d4", "short": "9f1c2ab7", "url": ""}],
+        },
+        {
+            "time": datetime(2026, 10, 28, 8, 2, tzinfo=UTC),
+            "actor": "demo/pijplijn",
+            "actor_kind": "service-account",
+            "action": "deployment.image-replace",
+            "subject": "demo/productie",
+            "allowed": False,
+            "cause": "insufficient-role",
+            "commits": [],
+        },
+    ]
 
 
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:

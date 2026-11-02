@@ -17,8 +17,9 @@ Een tweede ZAD-installatie op dezelfde OpenShift-cluster als productie, in de Ca
 | repos | `rig-cluster-projects`, `argo-applications`, `rig-cluster-application-test` | `zad-staging-projects`, `zad-staging-argo-applications`, `zad-staging-deployments` |
 | geheimen | SOPS-bestanden in de overlays van RIG-Cluster | SOPS-bestanden in de private repo `zad-staging-secrets` |
 | AGE-sleutel | `security/key.txt` | `security/odcn-staging-key.txt` |
+| project-KEK (RC-334) | `security/project-kek-odcn-production.txt` | `security/project-kek-odcn-staging.txt` |
 
-Alles wat de cluster zelf bepaalt is gelijk aan productie: router-shard `rig`, storage classes, de Quay-proxycaches van de klant `rig`, Capsule. Het logboek van de opzet staat in `docs/logboek-zad-staging.md`.
+Alles wat de cluster zelf bepaalt is gelijk aan productie: router-shard `rig`, storage classes, de Quay-proxycaches van de klant `rig`, Capsule. SeaweedFS draait hier als objectopslag-dienst naast MinIO (5Gi, image via de rcr-proxy), sinds de uitrol van RC-381; de details staan in `features/seaweedfs-objectopslag.md`. Het logboek van de opzet staat in `docs/logboek-zad-staging.md`.
 
 ## Waarom de geheimen in een eigen repo staan
 
@@ -43,7 +44,7 @@ De Taskfile kiest dit pad met `SECRETS_DIR` in `.env-taskfile-odcn-staging`. Zon
 
 ### Wat er moet zijn voordat je begint
 
-Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) promoveren we zelf met het label `owner.projectcapsule.dev/promote: "true"`. ODC-Noord biedt dat als self-service voor een serviceaccount binnen één tenant; alleen eigenaarschap over al je tenants tegelijk gaat via een TopDesk-aanvraag. De labels staan in de staging-overlays. Gemeten op 19 oktober 2026: de gepromoveerde `namespace-manager` komt in `status.owners` met `capsule-namespace-provisioner`, `capsule-namespace-deleter` en `admin`, en mag `rig-staging-*` aanmaken maar geen `rig-prd-*`. Alleen een eigenaar mag het label zetten, dus de bootstrap past het met jouw account toe.
+Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) moeten via ODC-Noord TenantOwner worden, zoals in productie. Het aanvraagbestand is `docs/odcn-aanvraag-staging-tenantowners.yaml`. Promotie met het label `owner.projectcapsule.dev/promote` (staat in de overlays) maakt ze wel eigenaar binnen de tenant, maar geen Capsule-gebruiker: via capsule-proxy krijgen ze Forbidden op clusterbrede lijsten (gemeten 19 oktober 2026). Dat breekt external-dns (ingresses), de OPI (namespaces) en de discovery van Prometheus. ArgoCD zelf werkt wel met alleen promotie.
 
 Zelf:
 
@@ -73,7 +74,7 @@ Zonder vragen: zet `STAGING_CONFIRM=staging`, `STAGING_ARGOCD_TOKEN`, `STAGING_O
 
 Wat hij bewust niet doet: het OPI-image bouwen (`task publish-operations-manager`, dan `task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>`), de ArgoCD-operator installeren (die is op ODCN van het platform; `prepare-argocd-operator` weigert daar), en de client `zad-staging` in de prod-Keycloak aanmaken (dat doe je vooraf met de hand).
 
-DNS doet external-dns, net als op productie: hij maakt de records aan zodra er een ingress is, met het TransIP-account van productie maar alleen voor `staging.rijksapp.dev` en met owner-id `zad-staging`. De OPI krijgt op staging geen TransIP: zijn CAA- en no-mail-records in `rijks.app`, `rijksapp.nl` en `rijksapp.dev` beheert productie al, en een tweede schrijver daarop hoort niet in de pentestomgeving.
+DNS doet external-dns, net als op productie: hij maakt de records aan zodra er een ingress is, met het TransIP-account van productie maar alleen voor `staging.rijksapp.dev` en met owner-id `zad-staging`. De OPI krijgt hetzelfde TransIP-account, net als productie: zijn reconcilers schrijven dezelfde CAA- en no-mail-records als productie, en zo kun je met `task dns:set` en `task dns:delete` records zetten vanuit de OPI-pod. De sleutel werkt alleen vanaf de IP's van de cluster, dus vanaf je laptop krijg je 401. Tot de fix van Capsule er is (zie het logboek) staat er een wildcard `*.staging.rijksapp.dev`; die gaat weg zodra external-dns zijn eigen records maakt.
 
 Ruim na afloop de `secrets-overview-*.yaml` in de root van RIG-Cluster op: daar staan de gegenereerde wachtwoorden in platte tekst. Ze staan bewust daar (gitignored) en niet in de secrets-repo. Het env-bestand `operations-manager/python/.env.odcn-staging.secrets` (gitignored, alleen voor jou leesbaar) bevat de PAT's en is de bron voor het env-secret.
 
@@ -98,13 +99,26 @@ Lokaal is alles gebouwd en gerenderd; dit kan alleen op de cluster:
 ## Open beslissingen
 
 - **TransIP.** Besloten: external-dns op staging gebruikt het TransIP-account van productie, met eigen filter en owner-id. TransIP kent geen sleutels per zone, dus wie staging overneemt kan met die sleutel ook `rijksapp.nl` en `rijks.app` wijzigen; een eigen TransIP-sleutel (in te trekken zonder productie te raken) is het minimum om later te regelen.
-- **`emergency-restore-allow-all`.** Productie draagt een allow-all-netpol in `rig-prd-operations` sinds de storing van 10 juni; staging heeft hem overgenomen om gelijk aan productie te zijn. Voor de pentest is dat een bewuste keuze: met de policy toets je wat productie heeft, zonder toets je wat productie zou moeten hebben.
+- **`emergency-restore-allow-all`.** Productie draagt een allow-all-netpol in `rig-prd-operations` sinds de storing van 10 juni; staging heeft hem overgenomen om gelijk aan productie te zijn. Sinds RC-335 krimpt hij per component, en staging volgt dat: dezelfde uitsluitlijst en dezelfde netpols per component (OPI, Keycloak, Prometheus, kube-state-metrics, external-dns, de ACME-solver). Voor de pentest is dat een bewuste keuze: je toetst wat productie heeft.
 - **Wie er bij mag.** `ALLOWED_EMAILS` en `ADMIN_EMAILS` zijn die van productie.
 - **De kubecontext.** Staging en productie bereik je met dezelfde context. Het fundament pinde `KUBE_CONTEXT` per cluster en controleerde hem voor elke taak; hier is dat nog niet gebouwd. De overlays van staging noemen hun namespaces expliciet, maar een verkeerd geselecteerd cluster past de overlays van productie toe.
 
+## Een release eerst op staging
+
+Productie volgt RIG-Cluster `main`, staging volgt de branch `staging`. Dat geldt voor de twee Applications die uit RIG-Cluster lezen: `staging-infrastructure` en `ron-infrastructure`. De Applications op `zad-staging-secrets` en `zad-staging-argo-applications` blijven op `main` van hun eigen repo.
+
+Op `staging` komt nooit een eigen commit. Hij schuift alleen fast-forward naar een commit die daarna ongewijzigd naar `main` gaat, meestal de tip van de release-PR:
+
+```bash
+git push https://github.com/RijksICTGilde/RIG-Cluster.git <commit>:refs/heads/staging
+```
+
+Weigert GitHub die push omdat hij geen fast-forward is, dan is de release herschreven of loopt `staging` voor op wat er naar `main` gaat. Zoek dan eerst uit waarom; forceer niet. Zo loopt `staging` nooit uit elkaar met `main`: hij staat er gelijk mee of loopt een release voor.
+
+Een wijziging aan de bootstrap-laag zelf (deze Applications, de AppProjects) gaat niet via de branch maar met `task bootstrap-argo-system`, net als op productie.
+
 ## Bekende verschillen die blijven
 
-- Staging en productie volgen allebei RIG-Cluster `main`. Een wijziging in een gedeelde base raakt beide tegelijk; promotie via een branch is een latere stap.
 - Grafana en de registry-upload staan uit op staging: de Mimir-datasources tonen productie, en de registry-organisatie `rig/zad` is die van productie.
 - De mailsink krijgt een zelfondertekend certificaat met de naam `rig-ron` in plaats van `rig-staging-ron`; de relay accepteert dat certificaat met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS`, net als in de sandbox.
 

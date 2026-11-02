@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from opi.api.router import IPRateLimiter
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.invite_manager import (
@@ -27,11 +28,60 @@ from opi.manager.invite_manager import (
 )
 from opi.services.catalog.invite.destination import resolve_invite_url
 from opi.services.project_store import get_project_store
+from opi.utils.logging_redact import fingerprint_for_log, redact_invite_key_in_path
 from opi.utils.naming import generate_project_realm_name
 from opi.web.lotc_switch import render
 from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
+
+
+def _hourly_limiter(per_hour: int) -> IPRateLimiter:
+    """Een emmer die per UUR vult, met de hele uurgrens als burst."""
+    return IPRateLimiter(requests_per_minute=per_hour / 60, burst=per_hour)
+
+
+# Een bearer-geheim zonder begrenzing is een accountfabriek; hergebruikt IPRateLimiter.
+# Elke route die een sleutel opzoekt (ook succes/fout) zit achter de leesgrens.
+_READ_LIMITER = IPRateLimiter(requests_per_minute=30, burst=10)
+_REGISTER_PER_MINUTE = IPRateLimiter(requests_per_minute=5, burst=5)
+_REGISTER_PER_HOUR = _hourly_limiter(20)
+# Per sleutel, niet per client (IPRateLimiter is spoofbaar; zie #195).
+_REGISTER_PER_KEY_PER_HOUR = _hourly_limiter(20)
+
+
+def _read_rate_limited(request: Request) -> bool:
+    """Of dit leesverzoek over de grens is."""
+    return not _READ_LIMITER.is_allowed(IPRateLimiter.get_client_identifier(request))
+
+
+def _register_rate_limited(request: Request, key: str) -> bool:
+    """Of deze registratiepoging over een van de drie grenzen is (per minuut, per uur, per sleutel)."""
+    client_id = IPRateLimiter.get_client_identifier(request)
+    return not (
+        _REGISTER_PER_MINUTE.is_allowed(client_id)
+        and _REGISTER_PER_HOUR.is_allowed(client_id)
+        and _REGISTER_PER_KEY_PER_HOUR.is_allowed(fingerprint_for_log(key))
+    )
+
+
+def _too_many_requests(request: Request) -> Response:
+    """De uitnodigingsfoutpagina als 429.
+
+    De taal staat op nl, zoals op het pad "uitnodiging niet gevonden": de grens wordt
+    beoordeeld voordat het project is opgezocht, dus er is geen projecttaal om te lezen.
+    """
+    return render(
+        request,
+        template="bg/invite-error.html.j2",
+        context={
+            "request": request,
+            "error_title": "Te veel verzoeken",
+            "error_message": "Je hebt te veel verzoeken gedaan. Wacht even en probeer het opnieuw.",
+            "language": "nl",
+        },
+        status_code=429,
+    )
 
 
 def _generate_pkce_pair() -> tuple[str, str]:
@@ -216,10 +266,12 @@ async def _find_project_by_invite_key(key: str) -> tuple[str, dict[str, Any], di
                     cluster_value: Any = first_deployment.get("cluster", "local")
                     cluster = str(cluster_value) if cluster_value else "local"
 
-            logger.debug(f"Found invite key '{key}' in project '{project_name}' (cluster: {cluster})")
+            logger.debug(
+                f"Found invite key {fingerprint_for_log(key)} in project '{project_name}' (cluster: {cluster})"
+            )
             return project_name, project_data, invite, cluster
 
-    logger.debug(f"Invite key '{key}' not found in any project")
+    logger.debug(f"Invite key {fingerprint_for_log(key)} not found in any project")
     return None
 
 
@@ -326,6 +378,9 @@ async def invite_landing(request: Request, key: str) -> Response:
     Returns:
         HTML response with landing page
     """
+    if _read_rate_limited(request):
+        return _too_many_requests(request)
+
     # Find project and invite
     result = await _find_project_by_invite_key(key)
     if not result:
@@ -399,6 +454,9 @@ async def invite_sso_start(request: Request, key: str) -> Response:
     Returns:
         Redirect to project realm's Keycloak authorization endpoint
     """
+    if _read_rate_limited(request):
+        return _too_many_requests(request)
+
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
@@ -446,7 +504,11 @@ async def invite_sso_start(request: Request, key: str) -> Response:
         code_challenge=code_challenge,
     )
 
-    logger.info(f"Starting invite SSO flow for key '{key}', realm: {realm_name}, callback: {callback_url}")
+    # De callback-URL draagt de sleutel in zijn pad, dus ook die gaat door de omzetting.
+    logger.info(
+        f"Starting invite SSO flow for key {fingerprint_for_log(key)}, realm: {realm_name}, "
+        f"callback: {redact_invite_key_in_path(callback_url)}"
+    )
 
     return RedirectResponse(url=auth_url, status_code=302)
 
@@ -467,6 +529,9 @@ async def invite_idp_start(request: Request, key: str, idp_alias: str) -> Respon
     Returns:
         Redirect to project realm's Keycloak authorization endpoint with IDP hint
     """
+    if _read_rate_limited(request):
+        return _too_many_requests(request)
+
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
@@ -487,7 +552,7 @@ async def invite_idp_start(request: Request, key: str, idp_alias: str) -> Respon
 
     valid_aliases = [idp["alias"] for idp in identity_providers]
     if idp_alias not in valid_aliases:
-        logger.warning(f"Invalid IDP alias '{idp_alias}' for invite '{key}'. Valid: {valid_aliases}")
+        logger.warning(f"Invalid IDP alias '{idp_alias}' for invite {fingerprint_for_log(key)}. Valid: {valid_aliases}")
         raise HTTPException(status_code=404, detail=f"Identity provider '{idp_alias}' not found")
 
     # Generate PKCE pair for secure public client flow
@@ -524,7 +589,7 @@ async def invite_idp_start(request: Request, key: str, idp_alias: str) -> Respon
         idp_hint=idp_alias,
     )
 
-    logger.info(f"Starting invite IDP flow for key '{key}', realm: {realm_name}, idp: {idp_alias}")
+    logger.info(f"Starting invite IDP flow for key {fingerprint_for_log(key)}, realm: {realm_name}, idp: {idp_alias}")
 
     return RedirectResponse(url=auth_url, status_code=302)
 
@@ -547,26 +612,26 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
     # Verify session state
     invite_flow = request.session.get("invite_flow")
     if not invite_flow or invite_flow.get("key") != key:
-        logger.warning(f"SSO callback session mismatch for key '{key}'")
+        logger.warning(f"SSO callback session mismatch for key {fingerprint_for_log(key)}")
         return RedirectResponse(url=f"/invite/{key}/error?code=session_error", status_code=302)
 
     # Verify state parameter (CSRF protection)
     state_param = request.query_params.get("state")
     if state_param != invite_flow.get("state"):
-        logger.warning(f"SSO callback state mismatch for key '{key}'")
+        logger.warning(f"SSO callback state mismatch for key {fingerprint_for_log(key)}")
         return RedirectResponse(url=f"/invite/{key}/error?code=session_error", status_code=302)
 
     # Check for error from Keycloak
     error = request.query_params.get("error")
     if error:
         error_description = request.query_params.get("error_description", error)
-        logger.warning(f"SSO callback error for key '{key}': {error} - {error_description}")
+        logger.warning(f"SSO callback error for key {fingerprint_for_log(key)}: {error} - {error_description}")
         return RedirectResponse(url=f"/invite/{key}/error?code=sso_error", status_code=302)
 
     # Get authorization code
     code = request.query_params.get("code")
     if not code:
-        logger.warning(f"SSO callback missing code for key '{key}'")
+        logger.warning(f"SSO callback missing code for key {fingerprint_for_log(key)}")
         return RedirectResponse(url=f"/invite/{key}/error?code=missing_code", status_code=302)
 
     # Find project and invite
@@ -602,7 +667,7 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
         if not user_info or not user_info.get("email"):
             raise InviteError("Failed to retrieve user information", "no_user_info")
 
-        logger.info(f"SSO callback for invite '{key}', user: {user_info.get('email', 'unknown')}")
+        logger.info(f"SSO callback for invite {fingerprint_for_log(key)}, user: {user_info.get('email', 'unknown')}")
 
         # Complete invite flow - user is already authenticated in the project realm
         # We just need to assign the invite's roles and groups
@@ -634,7 +699,7 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
         return RedirectResponse(url=f"/invite/{key}/success", status_code=302)
 
     except httpx.HTTPStatusError as e:
-        logger.exception(f"HTTP error in SSO callback for invite '{key}': {e}")
+        logger.exception(f"HTTP error in SSO callback for invite {fingerprint_for_log(key)}: {e}")
         return RedirectResponse(url=f"/invite/{key}/error?code=token_error", status_code=302)
     except InviteDomainError as e:
         error_url = f"/invite/{key}/error?code=domain_mismatch&domain={e.required_domain}"
@@ -642,7 +707,7 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
     except InviteError as e:
         return RedirectResponse(url=f"/invite/{key}/error?code={e.error_code}", status_code=302)
     except Exception:
-        logger.exception(f"Error in SSO callback for invite '{key}'")
+        logger.exception(f"Error in SSO callback for invite {fingerprint_for_log(key)}")
         return RedirectResponse(url=f"/invite/{key}/error?code=generic_error", status_code=302)
 
 
@@ -658,6 +723,9 @@ async def invite_register_form(request: Request, key: str) -> Response:
     Returns:
         HTML response with registration form
     """
+    if _read_rate_limited(request):
+        return _too_many_requests(request)
+
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
@@ -730,6 +798,9 @@ async def invite_register_submit(request: Request, key: str) -> Response:
     Returns:
         Redirect to success page or re-render form with errors
     """
+    if _register_rate_limited(request, key):
+        return _too_many_requests(request)
+
     # Find and validate invite
     result = await _find_project_by_invite_key(key)
     if not result:
@@ -908,7 +979,7 @@ async def invite_register_submit(request: Request, key: str) -> Response:
             },
         )
     except Exception:
-        logger.exception(f"Error creating local account for invite '{key}'")
+        logger.exception(f"Error creating local account for invite {fingerprint_for_log(key)}")
         display_name = invite_manager.project_file_handler.get_invite_title(
             invite, project_name, project_data, language
         )
@@ -941,6 +1012,9 @@ async def invite_success(request: Request, key: str) -> Response:
     Returns:
         HTML response with success page
     """
+    if _read_rate_limited(request):
+        return _too_many_requests(request)
+
     # Find project and invite
     result = await _find_project_by_invite_key(key)
     if not result:
@@ -1005,6 +1079,9 @@ async def invite_error(request: Request, key: str) -> Response:
     Returns:
         HTML response with error page
     """
+    if _read_rate_limited(request):
+        return _too_many_requests(request)
+
     # Try to find project for language detection
     result = await _find_project_by_invite_key(key)
     invite: dict[str, Any] = {}

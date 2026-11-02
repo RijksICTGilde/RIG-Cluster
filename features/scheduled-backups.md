@@ -109,6 +109,80 @@ The frequency select triggers an HTMX re-render (`data-rerender="true"`) to show
 | `BACKUP_SCHEDULER_INTERVAL` | `600` | Seconds between scheduler ticks. Ticks are anchored to wall-clock boundaries (e.g. 600 → HH:00, HH:10, HH:20…). Maximum firing latency after the configured time equals this value. |
 | `BACKUP_SCHEDULE_CATCH_UP_SECONDS` | `14400` | Catch-up window after the configured `BYHOUR:BYMINUTE`. Backups missed inside this window fire late; missed outside it wait for the next target day. Default 4 hours. |
 | `BACKUP_MAX_CONCURRENT` | `2` | Max backup/restore tasks running simultaneously |
+| `BACKUP_OVERDUE_LOG_INTERVAL_HOURS` | `24` | How often one deployment whose scheduled backup is not happening may produce an ERROR line. See Monitoring below. |
+
+## Monitoring: a backup that does not happen
+
+A backup that FAILS leaves a `failed` task row and an ERROR line. A backup that never
+starts used to leave almost nothing. Every tick now records what it saw, so both a missing
+backup and a Kopia that cannot be reached become visible.
+
+### Two metrics
+
+Every tick, for each deployment with a schedule on this cluster, the scheduler records
+the last scheduled snapshot it found. `/metrics` exports that table:
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `opi_backup_last_scheduled_success_timestamp_seconds` | `project`, `deployment` | Unix timestamp of the last successful scheduled backup. `0` while no scheduled snapshot has ever been seen. |
+| `opi_backup_schedule_unknown` | `project`, `deployment` | `1` when the last tick could not ask Kopia about this deployment. |
+
+A deployment whose schedule is removed, or that is deleted, disappears from both series on
+the next tick. Manual backups are not counted, for the same reason the due check ignores
+them: a user-triggered run does not prove the schedule works.
+
+The table is process-local and starts empty, so after an OPI restart the first tick
+refills it from Kopia.
+
+This is not free. The due check only lists Kopia inside the catch-up window. Recording
+outside that window costs one Kopia listing per namespace per tick: 144 per day at 600s
+interval. That cost buys a series that says "backup missing all day", not just "missing
+inside the window". The immediate check after saving a schedule (`trigger_check`) skips
+recording for that reason, so a form save keeps its latency and the next tick picks it up.
+
+### One ERROR per day
+
+After each tick the scheduler logs one ERROR per deployment whose scheduled backup is
+overdue, which is what the [log watcher](log-watcher.md) turns into a notification:
+
+- the last successful scheduled backup is older than the schedule's period plus
+  `BACKUP_SCHEDULE_CATCH_UP_SECONDS` (DAILY counts as 1 day, WEEKLY as 7, MONTHLY as 31
+  so a monthly backup is never reported a day early); or
+- Kopia could not be queried for two consecutive ticks. One failed query is a transient,
+  two in a row means nobody can tell whether the backups are happening.
+
+"Could not be queried" only arrives here because the scheduler reads the snapshot listing
+through `PVCBackupManager.list_snapshots_or_raise`. Its sibling `list_snapshots` returns an
+empty list on any failure, which is what the backup and restore screens expect but reads as
+"this deployment has no backups". A storage that holds no repository yet stays an empty list
+in both: a project that has never been backed up is not a malfunction.
+
+The failed listing itself is logged as a WARNING, once per namespace per tick, and stays
+below the ERROR level the log watcher reads. An unreachable destination would otherwise
+report itself 144 times a day next to the one ERROR this check keeps to once per 24 hours
+per deployment, so the escalation runs through the overdue line alone.
+
+Check at rollout that the log watcher is actually running on the target cluster:
+`LOGWATCHER_ENABLED` is opt-in and defaults to `False` (`opi/core/config.py`), and its
+value per cluster is only readable from the encrypted `operations-manager-env-secrets.yaml`.
+With the watcher off, the ERROR line reaches nobody and the two metrics above are the only
+signal left.
+
+A schedule with no snapshot counts from its first tick, so freshly configured schedules get
+one full period before alerting. On restart that reference resets: the process has no way
+to know the schedule's age.
+
+Each deployment is logged at most once per `BACKUP_OVERDUE_LOG_INTERVAL_HOURS` (default
+24), because the scheduler sees the same overdue backup on every tick until it is fixed.
+
+The log line reads:
+
+```
+Scheduled backup overdue for <project>/<deployment> (schedule <rrule>): last successful scheduled backup was <n> hours ago
+```
+
+Known limitation: the log watcher's dedup collapses overdue deployments with hyphenated
+names into one alert. The metrics above keep them apart.
 
 ## Concurrency Control
 
@@ -131,6 +205,7 @@ Legacy tasks created before the `trigger` field existed are treated as `schedule
 | File | Purpose |
 |------|---------|
 | `opi/core/backup_scheduler.py` | Background scheduler |
+| `opi/services/backup_schedule_report.py` | Per-deployment age of the last scheduled backup |
 | `opi/core/task_handlers_backup.py` | Backup execution handler |
 | `opi/core/async_task_service.py` | Task queue (PostgreSQL) |
 | `opi/forms/editables/fields/deployments.py` | Editable definitions (schedule + resource_types) |
@@ -141,5 +216,6 @@ Legacy tasks created before the `trigger` field existed are treated as `schedule
 | `opi/utils/rrule_utils.py` | Shared RRULE parsing and formatting |
 | `static/js/wizard.js` | `data-rerender` JS listener |
 | `tests/test_backup_pipeline.py` | Pipeline tests |
+| `tests/test_backup_schema_bewaking.py` | Metrics and overdue-ERROR tests |
 | `tests/forms/test_backup_schedule_flow.py` | Form/converter unit tests |
 | `tests/e2e/test_backup.py` | E2E browser tests |

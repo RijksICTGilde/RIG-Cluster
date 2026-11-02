@@ -7,9 +7,10 @@ en iets moet controleren dat die keuze binnen de perken blijft. Dat mechanisme b
 niet -- een grens stond als los getal in een pydantic-model, hardgecodeerd in een
 connector, of nergens.
 
-Hier wordt het mechanisme gemeten, en niet een dienst die het gebruikt: er is er nog
-geen. De eerste test is dan ook de belangrijkste: de hele catalogus declareert niets, dus
-er verandert vandaag niets aan het gedrag van welke dienst dan ook. De rest meet de vier
+Hier wordt het mechanisme gemeten, en niet een dienst die het gebruikt. De eerste test
+houdt bij WELKE diensten iets declareren, zodat een declaratie erbij niet onopgemerkt het
+gedrag van een dienst verandert; wat die declaraties doen, wordt bij de dienst zelf
+gemeten. De rest meet de vier
 beloften -- een grens op precies een plek, specifieker wint, buiten de speelruimte is een
 leesbare fout bij het INLEZEN, en wat een dienst niet declareert is niet instelbaar --
 met declaraties die alleen in deze tests bestaan.
@@ -50,6 +51,8 @@ from opi.services.catalog.config_settings import (
     resolve_setting,
 )
 from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
+from opi.services.catalog.shared.noncurrent_versions import MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS
+from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import SERVICES, get_service
@@ -174,7 +177,7 @@ def _project(config: dict[str, Any], **extra: Any) -> dict[str, Any]:
         "name": "demo",
         "display-name": "Demo",
         "description": "test project",
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "services": [{"name": _DATABASE.value, "config": {"scope": "project", **config}}],
         "components": [{"name": "backend", "type": "single", "services": [_DATABASE.value]}],
@@ -186,7 +189,7 @@ def _project(config: dict[str, Any], **extra: Any) -> dict[str, Any]:
                 "components": [{"reference": "backend"}],
             }
         ],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
     data.update(extra)
     return data
@@ -207,15 +210,23 @@ def declaring(monkeypatch: pytest.MonkeyPatch) -> Any:
 # --- 1. er verandert vandaag niets ------------------------------------------------
 
 
-def test_alleen_de_connectielimiet_is_in_de_catalogus_gedeclareerd() -> None:
+def test_wie_in_de_catalogus_een_speelruimte_declareert() -> None:
     """De regressietoets over de hele catalogus.
 
     Declareert een dienst hier iets bij, dan is er gedrag veranderd dat niemand heeft
     gevraagd -- en dan hoort daar een test bij die dat gedrag meet, niet deze. De
-    connectielimiet (RC-201) is gemeten in ``test_connection_limit.py``.
+    connectielimiet (RC-201) is gemeten in ``test_connection_limit.py``; de velden van een
+    eigen PostgreSQL-cluster (RC-327) staan in ``shared/postgres_settings.py``; de grens op
+    oude versies in een bucket (RC-380) in ``shared/noncurrent_versions.py``, gedeeld door de
+    twee object-opslagdiensten.
     """
     declarerend = {name: provider.config_settings() for name, provider in SERVICES.items()}
-    assert {name: settings for name, settings in declarerend.items() if settings} == {_DATABASE: (CONNECTION_LIMIT,)}
+    assert {name: settings for name, settings in declarerend.items() if settings} == {
+        _DATABASE: (CONNECTION_LIMIT, *DEDICATED_POSTGRES_SETTINGS),
+        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: DEDICATED_POSTGRES_SETTINGS,
+        ServiceType.MINIO_STORAGE: (MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS),
+        ServiceType.SEAWEEDFS_STORAGE: (MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS),
+    }
 
 
 def test_elke_laag_die_een_setting_openzet_telt_mee() -> None:
@@ -325,6 +336,20 @@ def test_een_waarde_buiten_de_toegestane_verzameling() -> None:
 def test_een_standaardwaarde_buiten_zijn_eigen_speelruimte_is_een_fout_in_de_declaratie() -> None:
     with pytest.raises(ValueError, match="valt buiten zijn eigen speelruimte"):
         IntegerSetting(path="x", layers=(ConfigLayer.PROJECT,), default=500, minimum=1, maximum=100, label="X")
+
+
+def test_default_none_wordt_niet_tegen_de_grenzen_gehouden() -> None:
+    """RC-380: ``default=None`` is "niet gezet", geen waarde in de speelruimte, dus 0 (buiten
+    een reeks die bij 1 begint) blokkeert de declaratie niet."""
+    setting = IntegerSetting(path="x", layers=(ConfigLayer.PROJECT,), default=None, minimum=1, maximum=100, label="X")
+    assert setting.default is None
+    assert setting.latitude() == "Een geheel getal van 1 tot en met 100. Standaard niet gezet."
+
+
+def test_default_sentence_noemt_de_waarde_als_die_er_is() -> None:
+    assert CONNECTION_LIMIT.default_sentence == "Standaard 20."
+    assert MAX_NONCURRENT_VERSIONS.default_sentence == "Standaard 30."
+    assert NONCURRENT_EXPIRE_DAYS.default_sentence == "Standaard niet gezet."
 
 
 def test_een_ondergrens_boven_de_bovengrens() -> None:
@@ -718,12 +743,12 @@ def _redis_project(dep_config: dict[str, Any] | None, *, in_deployment: bool = T
         "name": "demo",
         "display-name": "Demo",
         "description": "test project",
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "services": [_REDIS.value],
         "components": [{"name": "backend", "type": "single", "services": [_REDIS.value]}],
         "deployments": [deployment],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
 
 
@@ -775,7 +800,7 @@ def _mount_project(mounts: dict[str, str] | None) -> dict[str, Any]:
         "name": "demo",
         "display-name": "Demo",
         "description": "test project",
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "services": [_REDIS.value],
         "components": [{"name": "backend", "type": "single", "services": [_REDIS.value]}],
@@ -787,7 +812,7 @@ def _mount_project(mounts: dict[str, str] | None) -> dict[str, Any]:
                 "components": [component],
             }
         ],
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
 
 

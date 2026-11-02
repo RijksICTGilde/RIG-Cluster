@@ -17,7 +17,7 @@ dus een reset wist ze. Hij blijft waar hij voor is, images van projecten; zie
 
 ## Wat het script doet
 
-1. Start de container `kind-registry` (`registry:2`) op `127.0.0.1:5001`, met
+1. Start de container `kind-registry` (`registry:2.8.3`) op `127.0.0.1:5001`, met
    `--restart=always` en `REGISTRY_STORAGE_DELETE_ENABLED=true`, als hij nog niet draait.
    Poort 5001 en niet 5000: op de gedeelde dev-server bindt `claude-dashboard` al op
    `127.0.0.1:5000`. Staat er een container zonder die variabele (neergezet voor het

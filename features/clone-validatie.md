@@ -1,7 +1,6 @@
 # Kloon vooraf controleren (`:validate-clone`)
 
-Een kloon schrijft in een levende database of bucket. Daarom is er een controle die niets
-kloont en alleen zegt of het zou kunnen: `POST /api/projects/{project}/deployments/{deployment}/:validate-clone`.
+Controleer of een kloon kan draaien zonder hem werkelijk uit te voeren: `POST /api/projects/{project}/deployments/{deployment}/:validate-clone`.
 
 ## Gebruik
 
@@ -41,16 +40,41 @@ een pure functie daarover (`opi/manager/clone_validation.py`): geen git, geen cl
 | `clone_pending` | `mode: once` die al gedraaid heeft | nooit - dit is een melding, geen fout (een nieuwe kloon vraagt om force-clone) |
 | `source_deployment_exists` | `type: deployment` | de bron staat niet in het project, of is de deployment zelf |
 | `remote_source_exists` / `chisel_configuration` / `services_configuration` | `type: remote-source` | de remote-source ontbreekt, heeft geen chisel `server-url`, of configureert geen diensten |
-| `backup_items` | `type: backup` | er zijn geen items, of een item mist `resource_type` of `snapshot_id` |
+| `backup_run` | `type: backup` | er is geen `run`, of de `reference` is geen deployment van dit project |
 | `clone_type` | onbekend type | het type is geen `deployment`/`remote-source`/`backup` |
 
 Bereikbaarheid van een externe bron wordt bewust **niet** getoetst: dat vraagt een tunnel en
-credentials, en dan is het geen droge controle meer.
+credentials, en dan is het geen droge controle meer. Om dezelfde reden toetst `backup_run`
+alleen de verwijzing: welke snapshots een run draagt is runtime-staat bij Kopia. Een run die
+niet meer bestaat komt pas boven bij het terugzetten, uit `backup_run_items`.
 
-## Geschiedenis
+## Dezelfde toets in het provisioningpad
 
-Het endpoint riep `project_manager._clone_manager` aan. `clone_manager.py` is in december 2025
-verwijderd; het endpoint bleef achter en gaf sindsdien
-`'ProjectManager' object has no attribute '_clone_manager'` als 500. De twee tests erop mockten
-juist dat attribuut en bleven daardoor groen. Sinds RC-77 draaien die tests tegen de echte controle
-(`tests/test_clone_validation.py` en `tests/integration/test_project_api.py::TestValidateCloneEndpoint`).
+Beide doelen (validatie-endpoint en provisioning-managers) gebruiken dezelfde functie,
+`resolve_clone_source_deployment` in `opi/manager/clone_validation.py`. Dit voorkomt dat
+een reference die validatie passeert later toch faalt, en dat een reference op twee
+verschillende manieren wordt opgelost.
+
+De functie weigert een reference die leeg is, naar de deployment zelf wijst, of geen
+deployment van dit project is. Drie provisioningpaden roepen hem aan voordat ze een
+bronnaam samenstellen:
+
+| Pad | Waar |
+|---|---|
+| database | `database_manager._ensure_database_state` |
+| buckets | `minio_manager.clone_minio_from_deployment` |
+| volumes | `pvc_manager` |
+| back-up | `backup.runs.clone_backup_items`, voor elk van de drie |
+
+De schrijfkant gebruikt dezelfde functie: `upsert_deployment` zet een `clone-from` met
+`force_clone` alleen neer als de reference een deployment van dit project is, en weigert
+het verzoek anders met `success: false`.
+
+Dezelfde module houdt ook de botsing tegen die niet over klonen gaat: een samengestelde
+resourcenaam die bij een ander project uitkomt. Zie
+[samengestelde-naambotsing.md](samengestelde-naambotsing.md).
+
+Een afgeronde kloon (`mode: once`, `completed`) skipt klonen al eerder. Een projectbestand
+dat naar een verwijderde bron verwijst blijft uitrollen; alleen een kloon die echt zou
+lopen, en niet kan, faalt nu.
+

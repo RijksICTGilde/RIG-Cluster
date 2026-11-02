@@ -58,7 +58,7 @@ def is_afgeleid_id(waarde: str) -> bool:
 
 
 #: Webcomponenten die een echt formulierveld ZIJN, naast de ``*-field``-familie. Op "elke
-#: nldd-tag met een name" gaat het mis: ``<nldd-icon name="envelope">`` draagt daar de
+#: nldd-tag met een name" gaat het mis: ``<nldd-icon icon="envelope">`` draagt daar de
 #: ICOONNAAM, en dan telt elk icoon als een veld.
 BESTURING = {"nldd-select", "nldd-textarea", "nldd-checkbox", "nldd-radio", "nldd-switch", "nldd-combo-box"}
 

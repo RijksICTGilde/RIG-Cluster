@@ -10,9 +10,11 @@ Covers:
 """
 
 import pytest
-from opi.services.catalog.base import ConfigLayer
+from opi.core.project_schema import ProjectSchemaError, parse_schema_version
+from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.config_schema import (
+    fragment_filename,
     fragment_path,
     layer_fragment_paths,
     render_model_schema,
@@ -182,6 +184,18 @@ class TestMetricsScraperConfigModel:
         with pytest.raises(ValidationError):
             self._provider().validate_config({"port": "not-a-number"})
 
+    @pytest.mark.parametrize("path", ["/actuator/prometheus", "/metrics/v2"])
+    def test_other_safe_paths_validate(self, path: str) -> None:
+        model = self._provider().validate_config({"path": path})
+        assert model.path == path
+
+    @pytest.mark.parametrize("path", ['/metrics"', "/met rics", "/metrics\n"])
+    def test_an_unsafe_path_is_rejected(self, path: str) -> None:
+        # Same charset as a component match/rewrite path (RC-327 stap 6): a quote, a
+        # space or a trailing newline could escape the ServiceMonitor scrape config.
+        with pytest.raises(ValidationError):
+            self._provider().validate_config({"path": path})
+
 
 class TestKeycloakConfigModel:
     """Keycloak is polymorphic (internal template vs external connection) with
@@ -207,8 +221,7 @@ class TestKeycloakConfigModel:
         assert model.restrict_access is not None
         assert model.restrict_access.realm_role == "allowed-user"
         assert model.additional_clients[0].name == "mb-grist-helmfile-production"
-        # advanced pass-through preserved (the hard 10% left hand-authored)
-        assert model.additional_clients[0].model_extra["redirect-uris"] == ["https://grist.rijksapp.nl/*"]
+        assert model.additional_clients[0].redirect_uris == ["https://grist.rijksapp.nl/*"]
 
     def test_external_polymorphic_config_is_accepted(self) -> None:
         # mb-grist-helmfile.yaml type: external -> different key set must not be rejected.
@@ -312,3 +325,83 @@ class TestConfigModelAndVersionArePaired:
     def test_a_service_without_a_model_declares_no_version(self) -> None:
         stray = [t.value for t, s in SERVICES.items() if s.config_model is None and s.config_schema_version]
         assert not stray, f"config_schema_version without a config_model: {stray}"
+
+
+class TestConfigVersionsCompareAsVersions:
+    """A service config version is MAJOR.MINOR, so 1.10 is newer than 1.9 (RC-364).
+
+    As text or as a float 1.10 lands BEFORE 1.9, which would run a migration step
+    backwards and pick 1.9 as the newest version. Every comparison therefore goes through
+    ``SchemaVersion`` from ``opi/core/project_schema.py``, the same type the project
+    schema version uses.
+    """
+
+    @staticmethod
+    def _service_at_1_10() -> type[Service]:
+        class _Stepped(Service):
+            config_schema_version = "1.10"
+            config_migration_steps = (
+                ("1.9", lambda config: {**config, "steps": [*config.get("steps", []), "1.9"]}),
+                ("1.10", lambda config: {**config, "steps": [*config.get("steps", []), "1.10"]}),
+            )
+
+        return _Stepped
+
+    def test_the_newest_declared_version_is_the_current_one(self) -> None:
+        provider = self._service_at_1_10()
+        versions = [parse_schema_version(version) for version, _ in provider.config_migration_steps]
+
+        assert max(versions) == parse_schema_version(provider.config_schema_version)
+
+    def test_a_config_at_1_9_only_runs_the_1_10_step(self) -> None:
+        migrated = self._service_at_1_10()().migrate_config({}, "1.9")
+
+        assert migrated == {"steps": ["1.10"]}
+
+    def test_a_config_at_1_8_runs_both_steps_in_order(self) -> None:
+        migrated = self._service_at_1_10()().migrate_config({}, "1.8")
+
+        assert migrated == {"steps": ["1.9", "1.10"]}
+
+    def test_a_config_already_at_the_current_version_is_left_alone(self) -> None:
+        migrated = self._service_at_1_10()().migrate_config({"instances": 3}, "1.10")
+
+        assert migrated == {"instances": 3}
+
+    def test_steps_in_the_wrong_version_order_are_rejected_at_class_definition(self) -> None:
+        with pytest.raises(TypeError, match="ascending version order"):
+
+            class _Backwards(Service):
+                config_schema_version = "1.10"
+                config_migration_steps = (("1.10", lambda config: config), ("1.9", lambda config: config))
+
+    def test_the_last_step_must_land_on_the_current_version(self) -> None:
+        with pytest.raises(TypeError, match="config_schema_version"):
+
+            class _Short(Service):
+                config_schema_version = "1.10"
+                config_migration_steps = (("1.9", lambda config: config),)
+
+    def test_an_unreadable_step_stamp_is_rejected_at_class_definition(self) -> None:
+        with pytest.raises(ProjectSchemaError, match="MAJOR"):
+
+            class _Unreadable(Service):
+                config_schema_version = "1.10"
+                config_migration_steps = (("one-ten", lambda config: config),)
+
+    def test_a_fragment_keeps_the_declared_version_in_its_name(self) -> None:
+        # 1.10 and 1.9 are two versions, so two files; version_key() is not used here
+        # because it would rename every committed "1.0" fragment to "1".
+        assert fragment_filename("svc", "1.10") != fragment_filename("svc", "1.9")
+        assert fragment_filename("svc", "1.10") == "svc.v1.10.json"
+
+    def test_every_declared_service_version_reads_as_a_schema_version(self) -> None:
+        """The guard: no service may carry a version the shared comparison cannot read."""
+        versions = {
+            service.service_type.value: service.config_schema_version
+            for service in SERVICES.values()
+            if service.config_schema_version is not None
+        }
+        assert versions, "expected at least one service with a config schema version"
+        for name, version in versions.items():
+            assert parse_schema_version(version), f"'{name}' declares an unreadable config version {version!r}"

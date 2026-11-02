@@ -14,3 +14,8 @@ patches:
     target:
       kind: Deployment
       name: operations-manager
+  # De debug-poort bestaat alleen hier, niet in de base-Service.
+  - path: ../sandboxed-local/patches/enable-debug-service.yaml
+    target:
+      kind: Service
+      name: operations-manager

@@ -41,7 +41,7 @@ def _project_file() -> dict[str, Any]:
     return {
         "schema-version": 2,
         "name": PROJECT,
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "services": ["postgresql-database", "minio-storage"],
         "components": [
@@ -116,6 +116,7 @@ def postgres_connector() -> Any:
     connector.create_user = AsyncMock(return_value={"status": "created"})
     connector.update_user_password = AsyncMock(return_value={"status": "updated"})
     connector.create_database = AsyncMock(return_value={"status": "created"})
+    connector.restrict_database_to_roles = AsyncMock(return_value={"status": "restricted"})
     connector.create_schema = AsyncMock(return_value={"status": "created"})
     connector.database_has_user_data = AsyncMock(return_value=False)
     connector.close = AsyncMock()

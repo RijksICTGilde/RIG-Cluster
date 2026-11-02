@@ -2,7 +2,7 @@
 
 Backups are not a service of their own: a project can back something up exactly when it
 uses a service that declares a ``backup_label`` (persistent-storage, both PostgreSQL
-services, minio-storage). So the block is owned jointly -- every such service mixes in
+services, minio-storage, seaweedfs-storage). So the block is owned jointly -- every such service mixes in
 ``BackupsPageMixin`` -- and the collector renders the section once and mounts the router
 once, because all owners hand back the same template and the same router object.
 
@@ -42,6 +42,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.services.catalog.base import DeploymentPageContext, DetailPageSection
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,7 @@ def _snapshot_to_dict(snapshot: Any) -> dict[str, Any]:
 
 
 @backups_router.get("/projects/details/{project_name}/backups", response_class=HTMLResponse)
+@action(Action.BACKUP_READ)
 @requires_sso
 async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     """Backup snapshots for the WHOLE project, in one HTMX lazy-load.
@@ -166,6 +168,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     from opi.manager.backup import BackupManager
     from opi.services.project_authorization import is_user_authorized_for_project
     from opi.services.project_store import get_project_store
+    from opi.web.authz import may
     from opi.web.lotc_switch import render
 
     user = get_current_user(request) or {}
@@ -224,5 +227,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
             "deployments": deployments,
             "backups_by_deployment": backups_by_deployment,
             "backups_error": error,
+            # De herstelknop volgt de rolpoort van de restore-stroom (RC-323).
+            "mag_terugzetten": may(request, action=Action.RESTORE_RUN, project_name=project_name),
         },
     )

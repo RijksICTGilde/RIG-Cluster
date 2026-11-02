@@ -19,6 +19,7 @@ from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
 
 from opi.core.config import BUILD_DATE, VERSION
+from opi.core.project_environment import environment_label
 from opi.core.template_helpers import (
     CATALOG_DIR,
     format_dutch_date,
@@ -30,10 +31,12 @@ from opi.core.template_helpers import (
 )
 from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, field_attrs
+from opi.middleware.security_headers import csp_nonce
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
 from opi.services.registry import deployment_action_key
+from opi.web.authz import template_can as _template_can
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +105,15 @@ templates_lotc.env.globals["group_component_failures"] = group_component_failure
 # opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.
 templates_lotc.env.globals["field_attrs"] = field_attrs
 
+# De CSP-nonce van het huidige verzoek, voor nonce="{{ csp_nonce }}" op elk eigen
+# <script>. Als context_processor en niet als global: de waarde is per verzoek anders.
+templates_lotc.context_processors.append(lambda request: {"csp_nonce": csp_nonce(request)})
+
+# can(action, project=..., deployment=...) voor de sjablonen: dezelfde regels als de poort
+# achter de knop. Een global met de context erbij, zodat ook een los gerenderd fragment
+# hem heeft; hij leest het verzoek uit de context.
+templates_lotc.env.globals["can"] = _template_can
+
 
 # Hier stonden twee overgangsdingen. render_roos() rendeerde een dienstblok zonder
 # tegenhanger in de ROOS-omgeving en zette het resultaat hier als HTML neer; daarna kwam
@@ -147,6 +159,10 @@ templates_lotc.env.filters["korte_digest"] = shorten_image_digest
 # anders niet bij. Een uitzondering voor dit ene sjabloon in die route zou de volgende
 # hulptekst met gegevens weer een uitzondering kosten.
 templates_lotc.env.globals["alias_variabelen"] = alias_variabelen
+# De OTAP-markering als label: per deployment de zijne, op projectniveau de hoogste van
+# zijn deployments. Als GLOBAL en niet per pagina in de context, zodat de standaard en de
+# afleiding op EEN plek staan (opi/core/project_environment.py).
+templates_lotc.env.globals["environment_label"] = environment_label
 
 templates_lotc.env.add_extension("jinja2.ext.i18n")
 
@@ -183,7 +199,7 @@ def process_components_lotc(html: object) -> markupsafe.Markup:
     plaats van de lege uitvoer die overal elders de gewoonte is.
     """
     rendered = templates_lotc.env.from_string(str(html)).render()
-    return markupsafe.Markup(rendered)  # noqa: S704
+    return markupsafe.Markup(rendered)  # noqa: S704  # de bron is een constante uit de componentlaag, geen invoer
 
 
 templates_lotc.env.filters["process_components"] = process_components_lotc

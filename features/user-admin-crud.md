@@ -20,6 +20,14 @@ Only admin users (as determined by `project_service.is_admin(email)`) can access
 | GET | `/admin/users/{id}/edit` | Show edit form |
 | POST | `/admin/users/{id}/edit` | Submit edit form |
 | POST | `/admin/users/{id}/delete` | Delete user (with JS confirm) |
+| POST | `/admin/users/{id}/revoke-sessions` | Beëindig alle portaalsessies van deze gebruiker (with JS confirm) |
+
+## Step-up
+
+Every POST on `/admin/users/*` needs a fresh OTP (RC-409), the same rule the API
+counterparts carry. The read routes (the list and the two forms) do not. How the dialog
+reaches the admin is described in `features/platformbeheer-via-de-api.md`; the table of
+actions that ask for one is in `features/otp-op-de-zad-gebruiker.md`.
 
 ## Database
 
@@ -32,9 +40,11 @@ Table `users` with columns: `id` (UUID), `email` (unique), `full_name`, `created
 - `opi/services/user_admin_service.py` - CRUD service
 - `opi/forms/editables/user_editables.py` - Form field definitions
 - `opi/web/router_user_admin.py` - Web routes
-- `opi/templates/admin/users.html.j2` - List page template
-- `opi/templates/admin/user-form.html.j2` - Create/edit form template
+- `opi/templates_lotc/bg/admin-users.html.j2` - List page template
+- `opi/templates_lotc/bg/admin-user-form.html.j2` - Create/edit page template
+- `opi/templates_lotc/bg/_admin-user-form.html.j2` - The form itself, also rendered on its own into the step-up dialog
 - `opi/web/menu.py` - Menu item (admin-only)
+- `features/portaalsessie-levensduur.md` - wat "Sessies beëindigen" doet
 
 ## Validation
 

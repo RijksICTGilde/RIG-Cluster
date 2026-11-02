@@ -1,0 +1,64 @@
+# Het AppProject van de vier platform-apps van staging (`staging-infrastructure`,
+# `ron-infrastructure`, `infrastructure-secrets` en `ron-secrets`): alleen de twee
+# platformnamespaces als bestemming, en als bron alleen deze repo plus de private
+# secrets-repo.
+#
+# Waarom de secrets-apps hier en niet in een eigen AppProject: ze rollen dezelfde
+# platform-infrastructuur uit naar dezelfde twee namespaces, alleen staat hun inhoud op
+# staging in een private repo omdat RIG-Cluster publiek is (features/zad-staging.md). Op
+# productie zitten die geheimen in de secrets-overlay van deze repo en dus al in
+# zad-platform. Een derde AppProject zou de grens die RC-301 trekt (per tenant, per
+# bestemming) niet scherper maken, want beide repo's zijn van het platform zelf en gaan
+# naar dezelfde namespaces.
+#
+# De soortenlijst is gemeten op de render van main (kustomize build op
+# infrastructure/bootstrap/clusters/odcn-staging en op de mail-overlay odcn-staging) en
+# is gelijk aan die van odcn-production. Secret komt uit de twee secrets-apps.
+# Cluster-scoped blijft leeg: de ArgoCD op ODCN draait namespaced.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: zad-platform
+  namespace: rig-system
+spec:
+  description: De platform-infrastructuur van staging
+  sourceRepos:
+    - https://github.com/RijksICTGilde/RIG-Cluster.git
+    - https://secrets@github.com/RijksICTGilde/zad-staging-secrets.git
+  destinations:
+    - namespace: rig-staging-operations
+      server: https://kubernetes.default.svc
+    - namespace: rig-staging-ron
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ''
+      kind: ConfigMap
+    - group: ''
+      kind: PersistentVolumeClaim
+    - group: ''
+      kind: Secret
+    - group: ''
+      kind: Service
+    - group: ''
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: batch
+      kind: CronJob
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: cert-manager.io
+      kind: Issuer
+    - group: monitoring.coreos.com
+      kind: PodMonitor
+    - group: postgresql.cnpg.io
+      kind: Cluster
+    - group: postgresql.cnpg.io
+      kind: Database

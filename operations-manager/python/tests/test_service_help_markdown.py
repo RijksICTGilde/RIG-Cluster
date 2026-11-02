@@ -50,7 +50,7 @@ def _icoonnamen(html: str) -> list[str]:
     systeem lost zijn eigen aliassen op (``database`` wordt ``cylinder-split``), dus een
     vergelijking met onze naam zou daar vals alarm geven.
     """
-    return re.findall(r'<nldd-icon[^>]*\bname="([^"]+)"', html)
+    return re.findall(r'<nldd-icon[^>]*\bicon="([^"]+)"', html)
 
 
 def _visible(html: str) -> str:
@@ -123,6 +123,21 @@ def test_paragraphs_and_bullets_become_their_components() -> None:
     assert 'data-lotc-component="list-item"' not in rendered
     assert rendered.count("<li>") == 2
     assert "Eerste regel van een alinea." in rendered, "wrapped lines are one paragraph"
+
+
+def test_a_wrapped_bullet_stays_one_item() -> None:
+    rendered = _render("- Een bullet die\n  over twee regels loopt.\n- een volgende")
+
+    assert rendered.count("<li>") == 2
+    assert "Een bullet die over twee regels loopt." in rendered
+    assert rendered.count('data-lotc-component="paragraph"') == 0, "geen wees-paragraaf onder de lijst"
+
+
+def test_a_paragraph_after_bullets_ends_the_list() -> None:
+    rendered = _render("- een\n\nNiet ingesprongen, dus een nieuwe alinea.")
+
+    assert rendered.count("<li>") == 1
+    assert 'data-lotc-component="paragraph"' in rendered
 
 
 def test_bold_becomes_strong() -> None:
@@ -397,13 +412,12 @@ def test_a_guide_renders_as_a_help_page_with_the_service_icon(service: ServiceTy
 
 
 def test_the_guide_carries_no_approval_banner() -> None:
-    """publish-on-web declares approval_specs, so its POPUP gets the banner.
+    """The banner is about turning a service on, and turning publish-on-web on is no request.
 
-    The guide explains per scenario what is a request and what is not (a subdomain on a
-    domain of your own needs none), and the blanket banner above it would claim more than
-    is true.
+    Only a custom domain or a guarded subdomain is, per deployment; the popup and the guide
+    say when, and the blanket banner would claim more than is true.
     """
-    assert "Vereist goedkeuring" in render_service_help("publish_on_web/help.md")
+    assert "Vereist goedkeuring" not in render_service_help("publish_on_web/help.md")
     assert "Vereist goedkeuring" not in render_service_help("publish_on_web/guide.md")
 
 

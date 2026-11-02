@@ -101,6 +101,10 @@ first-broker-login-flow: de stap die loopt als een gebrokerde gebruiker een e-ma
 meebrengt dat al bij een lokaal account hoort. De grendel is `isEmpty()` en niet "is deze
 configuratie bruikbaar", dus één sleutel is genoeg en de inhoud doet er niet toe (gemeten).
 
+Op **26.8.1 is die grendel ongewijzigd**: `IdpEmailVerificationAuthenticator` toetst daar nog
+steeds `realm.getSmtpConfig().isEmpty()` (gelezen in de bron van 26.8.1, RC-412). Die ene
+sleutel blijft dus doen wat hij deed, en er verandert niets aan wat OPI op een realm schrijft.
+
 Het is daarom de ene sleutel die **geen bestemming noemt**. Dat is niet cosmetisch:
 
 > **Het faalt dicht, zolang geen enkele realm een `host` draagt.** Zou de eigen verzender ooit
@@ -333,10 +337,19 @@ bevestigd was.
 - **Wel geraakt:** elke nieuw aangemaakte gebruiker met een adres, en, via `verifyEmail`,
   iedereen die zijn adres wijzigt op een realm die verifieert.
 
-**Eén uitzondering, en die staat zichtbaar bij de aanroeper**: de realm-admins in de
-master-realm (`keycloak_manager.py`, `keycloak_setup.py`) geven `skip_email_verification=True`
-mee. Hun adres is `{admin}@local.invalid` of `{username}@localhost` en bestaat niet, dus
-verificatie afdwingen sluit elke projectbeheerder buiten zijn eigen realm.
+**De uitzonderingen staan zichtbaar bij de aanroeper** en geven `skip_email_verification=True`
+mee. Het zijn accounts van het platform zelf, met een adres dat geen postbus is:
+
+- de realm-admins in de master-realm (`keycloak_manager.py`, `keycloak_setup.py`), met
+  `{admin}@local.invalid` of `{username}@localhost`. Verificatie afdwingen zou elke
+  projectbeheerder buiten zijn eigen realm sluiten.
+- de sandbox-beheerder in de realm `operations-manager` (`setup_operations_realm`), met
+  `admin@sandbox.rijksapp.dev`. Verificatie afdwingen zou hem op een verse sandbox bij de
+  eerste login tegenhouden.
+
+Dat het er precies deze zijn, meet
+`tests/test_keycloak_master_admins_slaan_verificatie_over.py` als AST-sweep over alle
+`create_user`-aanroepen in `opi/`.
 
 Wat dat voor de uitnodigingsweg betekent staat in `features/invites.md`.
 
@@ -423,9 +436,47 @@ KC-SERVICES0047: zad-relay (nl.minbzk.rig.keycloak.email.RelayEmailSenderProvide
   is implementing the internal SPI emailSender.
 ```
 
-Een interne SPI mag zonder aankondiging veranderen. **De geplande upgrade naar Keycloak 26
-vraagt een hertoets van dit hele mechanisme**; dat staat genoteerd in
-`features/keycloak-26-upgrade.md`.
+Een interne SPI mag zonder aankondiging veranderen. Bij de sprong naar 26.8.1 (RC-412) is dat
+ook gebeurd, en wel aan de interface zelf:
+
+- `EmailSenderProvider` heeft een verplichte `validate(Map<String, String> config)` gekregen.
+  Keycloak roept die aan bij **elke** realm-create en -update die een `smtpServer` meestuurt
+  (`SMTPUtil.checkSMTPConfiguration`). Onze verzender keurt alles goed, en dat is een
+  beslissing: hij gebruikt geen enkel veld uit die map, en gooien zou elke realmwijziging van
+  OPI laten falen op een configuratie die daarna toch genegeerd wordt.
+- `EmailException(Exception)` bestaat niet meer; een `EmailException` draagt nu altijd een
+  tekst, en die komt in de beheerconsole terecht. Daarom staat er geen host, adres of
+  foutdetail in.
+- Op de **standaardverzender** van 26.8.1 is `starttls` strenger: met STARTTLS aan in de
+  realmconfig zet Keycloak ook `mail.smtp.starttls.required`, en dan weigert hij te versturen
+  als de upgrade niet lukt. Ons pad raakt dat niet, want de verzender leest de realmconfig
+  niet; `task test-keycloak-image` meet dat met `starttls: "true"` in de proefrealm.
+
+De vier metingen uit `docs/rc158-emailsender-spi-meting.md` zijn sinds RC-412 een toets:
+`operations-manager/python/tests/integration/test_keycloak_image_mail.py`, gedraaid door
+`task test-keycloak-image` tegen twee SMTP-sinks op hetzelfde Docker-netwerk.
+
+### De tegenproef, want een lege sink zegt niets
+
+De toets bewijst dat de sink die de realm als `smtpServer.host` noemt leeg blijft. Dat is
+alleen een bewijs als dezelfde opstelling met de standaardverzender ROOD wordt.
+Draai die tegenproef met de hand, en verwacht dat de mailtoetsen dan ROOD worden:
+
+```bash
+# Dezelfde taak, maar met de standaardverzender. Zet tijdelijk deze args in de
+# basisdeployment, draai `task test-keycloak-image`, en zet de regel daarna terug:
+#   ["start", "--db=postgres", "--features=admin-api",
+#    "--spi-theme-welcome-theme=nl-design-system", "--spi-email-sender--provider=default"]
+```
+
+Alleen de vlag uit de args halen is GEEN tegenproef: `kc.sh build` bakt `zad-relay` in de
+image, dus zonder runtimevlag verstuurt nog steeds onze provider en blijft alles groen.
+Daarom start de tegenproef zonder `--optimized`, zodat Keycloak opnieuw bouwt met
+`default`. Gemeten op 26.8.1: `test_elke_provider_is_geregistreerd[emailSender-zad-relay]`
+wordt rood, en het versturen faalt met een 500 omdat de standaardverzender met `starttls:
+"true"` niet zonder TLS-upgrade verstuurt.
+
+Zonder die tegenproef meet een lege sink net zo goed "er is helemaal niets verstuurd".
 
 ## Bounces verdwijnen stil
 
@@ -444,5 +495,6 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |
 | Het account op de relay | `MailManager.ensure_keycloak_account()` |
 | De minimale `smtpServer` en `verifyEmail` | `KeycloakYamlHandler._apply_realm_self_service()` |
-| Elke nieuwe gebruiker met een adres bevestigt het (master-admins uitgezonderd) | `KeycloakConnector.create_user()` |
+| Elke nieuwe gebruiker met een adres bevestigt het (de platformbeheerders uitgezonderd) | `KeycloakConnector.create_user()` |
 | De meting waaruit dit alles volgt | `docs/rc158-emailsender-spi-meting.md` |
+| De vier metingen als toets | `operations-manager/python/tests/integration/test_keycloak_image_mail.py` |

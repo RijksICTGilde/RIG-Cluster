@@ -1,0 +1,17 @@
+{# ReDoc, in plaats van FastAPI's get_redoc_html; zelfde reden als api-docs-swagger.html.j2.
+   Zonder Google Fonts: font-src in de CSP staat alleen 'self' toe. #}
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<title>{{ titel }}</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="shortcut icon" href="/favicon.ico">
+<link type="text/css" rel="stylesheet" href="{{ static_url('css/api-docs.css') }}">
+</head>
+<body>
+<noscript>ReDoc heeft JavaScript nodig om de API-documentatie te tonen.</noscript>
+<redoc spec-url="{{ openapi_url }}"></redoc>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('redoc/redoc.standalone.js') }}"></script>
+</body>
+</html>

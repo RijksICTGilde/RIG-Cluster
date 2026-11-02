@@ -24,6 +24,7 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from opi.core.auth_decorators import get_current_user
 from opi.core.config import settings
 from opi.forms.wizard.state import WizardState
 
@@ -241,11 +242,45 @@ def clear_modal_state_by_token(token: str | None) -> None:
         path.unlink()
 
 
+def load_modal_state_for_user(request: Request, token: str | None) -> WizardState | None:
+    """The state behind this token, but only for the user who started it.
+
+    A token on its own is no proof of access: shared, copied or guessed it would
+    otherwise open someone else's wizard. A state without an owner (written before the
+    field existed) counts as expired.
+    """
+    state = get_modal_state_by_token(token)
+    if state is None:
+        return None
+
+    user_email = (get_current_user(request) or {}).get("email", "").lower()
+    if not state.owner_email or state.owner_email != user_email:
+        logger.warning("Wizard state rejected: not started by this user")
+        return None
+    return state
+
+
+def load_modal_state_for(request: Request, token: str | None, project_name: str) -> WizardState | None:
+    """Like ``load_modal_state_for_user``, and only under the project it was started for.
+
+    The routes that carry a project in their path use this one. The attachment routes
+    have no project in their path and check the flow instead.
+    """
+    state = load_modal_state_for_user(request, token)
+    if state is None:
+        return None
+    if state.project_name != project_name:
+        logger.warning("Wizard state of project %s rejected under %s", state.project_name, project_name)
+        return None
+    return state
+
+
 def init_modal_state_tokenized(
     flow_id: str,
     first_step: str,
     active_sections: list[str],
     project_name: str,
+    owner_email: str,
 ) -> tuple[str, WizardState]:
     """Create a new modal wizard state and return (token, state).
 
@@ -259,6 +294,7 @@ def init_modal_state_tokenized(
         current_step=first_step,
         active_sections=active_sections,
         project_name=project_name,
+        owner_email=owner_email.lower(),
     )
     save_modal_state_by_token(token, state)
     return token, state

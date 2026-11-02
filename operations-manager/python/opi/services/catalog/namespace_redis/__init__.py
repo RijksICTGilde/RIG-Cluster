@@ -17,7 +17,7 @@ class NamespaceRedisService(Service):
         icon="zandloper",
         color="rood",
         shared_per_deployment=True,
-        secret_class="RedisSecret",
+        secret_class="RedisSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in RedisVariables],
         hidden=True,
         cleanup_strategy=CleanupStrategy.IMMEDIATE,

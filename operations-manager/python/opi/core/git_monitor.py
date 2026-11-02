@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, Any
 
 from opi.connectors.git import start_monitoring_task
 from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connector
-from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
+from opi.core.cluster_config import (
+    get_argo_namespace,
+    get_pod_security_labels,
+    get_prefixed_namespace,
+    namespace_labels,
+)
 from opi.core.config import settings
 from opi.core.project_schema import ProjectSchemaError, validate_declared_project_schema
 from opi.manager.project_manager import enforce_namespace_pin
@@ -88,7 +93,11 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
                 manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
 
                 # Template variables
-                variables = {"namespace": namespace, "manager": get_argo_namespace(configured_cluster)}
+                variables = {
+                    "namespace": namespace,
+                    "manager": get_argo_namespace(configured_cluster),
+                    "pod_security_labels": get_pod_security_labels(configured_cluster),
+                }
 
                 try:
                     await kubectl.apply_manifest(manifest_path, variables)
@@ -98,18 +107,16 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
                     all_succeeded = False
                     continue
 
-            # Always ensure ArgoCD managed-by label exists (idempotent)
-            manager_value = get_argo_namespace(configured_cluster)
-            label_result = await kubectl.apply_label_to_resource(
+            # Always ensure the managed-by and Pod Security labels exist (idempotent)
+            label_result = await kubectl.apply_labels_to_resource(
                 resource_type="namespace",
                 resource_name=namespace,
-                label_key="argocd.argoproj.io/managed-by",
-                label_value=manager_value,
+                labels=namespace_labels(configured_cluster),
             )
             if label_result:
-                logger.info(f"Ensured ArgoCD managed-by label on namespace: {namespace}")
+                logger.info(f"Ensured ArgoCD managed-by and Pod Security labels on namespace: {namespace}")
             else:
-                logger.error(f"Failed to apply ArgoCD managed-by label to namespace: {namespace}")
+                logger.error(f"Failed to apply the managed-by and Pod Security labels to namespace: {namespace}")
                 all_succeeded = False
 
         return all_succeeded

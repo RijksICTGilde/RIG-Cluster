@@ -44,7 +44,13 @@ from typing import Any
 import jsonschema
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
-from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync
+from opi.utils.age import (
+    decrypt_age_content_sync,
+    encrypt_age_content_sync,
+    project_key_candidates_for,
+    unwrap_project_key_sync,
+    wrap_project_key_sync,
+)
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
 from ruamel.yaml.scalarstring import LiteralScalarString
 
@@ -234,6 +240,9 @@ def migrate(
     base_domain: str,
     admins: list[str],
     extra_env: dict[str, str],
+    *,
+    sandbox_kek_private: str | None = None,
+    prod_kek_public: str | None = None,
 ) -> dict[str, Any]:
     project = deepcopy(data)
     name = project.get("name", "unknown")
@@ -250,11 +259,18 @@ def migrate(
     encrypted_private = config.get("age-private-key")
     if not encrypted_private:
         raise RuntimeError(f"No age-private-key in {name}")
-    project_private_key = decrypt_age_content_sync(str(encrypted_private).strip(), sandbox_private_key)
-    if project_private_key is None:
-        raise RuntimeError(f"Could not decrypt age-private-key of {name} with the sandbox key")
-    config["age-private-key"] = LiteralScalarString(encrypt_age_content_sync(project_private_key, prod_public_key))
-    logger.info("  [%s] age-private-key re-encrypted for the production cluster key", name)
+    try:
+        project_private_key = unwrap_project_key_sync(
+            str(encrypted_private).strip(),
+            project_key_candidates_for(sandbox_private_key, sandbox_kek_private),
+        )
+    except ValueError as e:
+        raise RuntimeError(f"Could not unwrap age-private-key of {name} with the sandbox keys: {e}") from e
+    config["age-private-key"] = LiteralScalarString(
+        wrap_project_key_sync(project_private_key, prod_kek_public or prod_public_key)
+    )
+    target = "project-KEK" if prod_kek_public else "platform key"
+    logger.info("  [%s] age-private-key wrapped with the production %s", name, target)
 
     config["api-key"] = LiteralScalarString(encrypt_age_content_sync(secrets.token_urlsafe(32), project_public_key))
     logger.info("  [%s] new api-key generated", name)
@@ -332,6 +348,8 @@ def main() -> None:
     parser.add_argument("source", help="Source project YAML")
     parser.add_argument("--sandbox-key", default="../../security/sandbox-key.txt")
     parser.add_argument("--prod-key", default="../../security/key.txt")
+    parser.add_argument("--sandbox-kek", help="sandbox project-KEK, tried before the sandbox platform key")
+    parser.add_argument("--prod-kek", help="production project-KEK; without it the platform key is used")
     parser.add_argument("--output")
     parser.add_argument("--base-domain", default=DEFAULT_BASE_DOMAIN)
     parser.add_argument("--admin", action="append", default=[])
@@ -342,6 +360,10 @@ def main() -> None:
     prod_public_key, _ = read_age_key_file(args.prod_key)
     if not prod_public_key:
         raise SystemExit(f"No '# public key:' line in {args.prod_key}")
+    sandbox_kek_private = read_age_key_file(args.sandbox_kek)[1] if args.sandbox_kek else None
+    prod_kek_public = read_age_key_file(args.prod_kek)[0] if args.prod_kek else None
+    if args.prod_kek and not prod_kek_public:
+        raise SystemExit(f"No '# public key:' line in {args.prod_kek}")
 
     extra_env = dict(item.split("=", 1) for item in args.extra)
 
@@ -349,7 +371,16 @@ def main() -> None:
     data = load_yaml_from_path(str(source))
     logger.info("Migrating %s", source)
 
-    result = migrate(data, sandbox_private_key, prod_public_key, args.base_domain, args.admin, extra_env)
+    result = migrate(
+        data,
+        sandbox_private_key,
+        prod_public_key,
+        args.base_domain,
+        args.admin,
+        extra_env,
+        sandbox_kek_private=sandbox_kek_private,
+        prod_kek_public=prod_kek_public,
+    )
 
     # Validate the uniform-record form against project_v2.json BEFORE downgrading. The
     # downgrade rewrites entries to the legacy shape the pre-RC-5 production OPI reads,
