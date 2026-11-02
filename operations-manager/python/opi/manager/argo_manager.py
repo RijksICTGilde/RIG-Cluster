@@ -1262,6 +1262,7 @@ class ArgoManager:
         poll_interval: int = POLL_INTERVAL_SECONDEN,
         refreshed_after: str | None = None,
         on_progressing: Callable[[int], Awaitable[None]] | None = None,
+        on_poll: Callable[[int, dict[str, Any], bool], Awaitable[None]] | None = None,
     ) -> bool:
         """
         Wait for an ArgoCD application to be synced and healthy.
@@ -1283,6 +1284,10 @@ class ArgoManager:
                 when health is ``Progressing`` and the status is fresh.
                 Receives the elapsed time in seconds.  If the callback raises,
                 the exception propagates to the caller.
+            on_poll: Optional async callback invoked each poll iteration that read a
+                status and is still waiting, whatever the sync and health say. Receives
+                the elapsed time, the application status and whether that status is
+                fresh. Runs before ``on_progressing``.
 
         Returns:
             True if application is synced and healthy
@@ -1409,6 +1414,7 @@ class ArgoManager:
                 # Progressing phase).  Runs before the terminal Degraded
                 # check so that per-component details are available.
                 call_on_progressing = on_progressing is not None and health_status in ("Progressing", "Degraded")
+                poll_status = (status_data, status_is_fresh)
 
                 # Check for terminal health failure (only if no callback
                 # will run — the callback provides richer per-component
@@ -1448,8 +1454,10 @@ class ArgoManager:
                 elapsed_time = _verstreken_sinds(start)
                 continue
 
-            # Invoke on_progressing callback outside try/except so its
+            # Invoke the callbacks outside try/except so their
             # exceptions propagate directly to the caller.
+            if on_poll is not None:
+                await on_poll(int(elapsed_time), *poll_status)
             if call_on_progressing:
                 await on_progressing(int(elapsed_time))  # type: ignore[misc]
 

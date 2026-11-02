@@ -111,7 +111,11 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
-from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS, terminate_stuck_operation
+from opi.services.argocd_operation import (
+    STUCK_OPERATION_THRESHOLD_SECONDS,
+    describe_sync_waiting,
+    terminate_stuck_operation,
+)
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -3610,15 +3614,26 @@ class ProjectManager:
                     # (De OOM-callback verderop throttlet zichzelf al, via last_check_at.)
                     describe_next: dict[str, int] = {"at": 0}
 
-                    async def _on_progressing(elapsed: int) -> None:
-                        if app_subtask and namespace and component_names and elapsed >= describe_next["at"]:
+                    async def _on_poll(elapsed: int, status: dict[str, Any], fresh: bool) -> None:
+                        if not (progress_manager and app_subtask):
+                            return
+                        # Wat ArgoCD zelf nog doet gaat voor de pods: zolang de sync niet rond
+                        # is, zegt de stand van de pods niets over waar de uitrol op wacht.
+                        argo_reason = describe_sync_waiting(status, fresh=fresh)
+                        statuses: list[tuple[str, str]] = []
+                        if argo_reason:
+                            detail = argo_reason
+                        else:
+                            if elapsed < describe_next["at"]:
+                                return
                             describe_next["at"] = elapsed + 5
-                            try:
-                                statuses = await describe_components_waiting(
-                                    namespace, component_names, component_refs, deployment_state
-                                )
-                            except Exception:
-                                statuses = []
+                            if namespace and component_names:
+                                try:
+                                    statuses = await describe_components_waiting(
+                                        namespace, component_names, component_refs, deployment_state
+                                    )
+                                except Exception:
+                                    statuses = []
                             # Componenten met dezelfde reden op één regel. Twee componenten
                             # die op hetzelfde image wachten zijn één ding dat misgaat, geen
                             # twee, en zo is ook te zien welke reden bij welke componenten hoort.
@@ -3633,23 +3648,21 @@ class ProjectManager:
                             else:
                                 detail = "wachten tot componenten gereed zijn"
 
-                            if detail != stall["line"]:
-                                stall["line"] = detail
-                                stall["since"] = elapsed
-                            waited = elapsed - stall["since"]
-                            if waited >= STALL_NOTICE_SECONDS and statuses:
-                                detail = f"{detail} (al {waited}s onveranderd, bekijk de logs)"
-                            # De deploymentnaam is de titel van de regel, de reden staat
-                            # eronder. Beide in de titel proppen gaf één onleesbare regel.
-                            progress_manager.update_task(app_subtask, dep_name, subject=detail)
+                        if detail != stall["line"]:
+                            stall["line"] = detail
+                            stall["since"] = elapsed
+                        waited = elapsed - stall["since"]
+                        if waited >= STALL_NOTICE_SECONDS and (argo_reason or statuses):
+                            detail = f"{detail} (al {waited}s onveranderd, bekijk de logs)"
+                        # De deploymentnaam is de titel van de regel, de reden staat
+                        # eronder. Beide in de titel proppen gaf één onleesbare regel.
+                        progress_manager.update_task(app_subtask, dep_name, subject=detail)
 
-                        # Failure detection (OOM / ImagePull / CrashLoop) runs after
-                        # reporting so the user still sees the live status before a
-                        # DeploymentHealthError aborts the wait.
-                        if oom_callback:
-                            await oom_callback(elapsed)
-
-                    on_progressing = _on_progressing if (app_subtask or oom_callback) else None
+                    # Failure detection (OOM / ImagePull / CrashLoop) runs after on_poll,
+                    # so the user still sees the live status before a DeploymentHealthError
+                    # aborts the wait.
+                    on_poll = _on_poll if app_subtask else None
+                    on_progressing = oom_callback
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
@@ -3691,11 +3704,12 @@ class ProjectManager:
                             timeout=300,
                             # 2s: de status-GET is een goedkope live read; het oude 5s-rooster
                             # betekende gemiddeld 2,5s extra wachten nadat de app al groen was.
-                            # De zwaardere componenten-inspectie in on_progressing zit op zijn
+                            # De zwaardere componenten-inspectie in on_poll zit op zijn
                             # eigen 5s-throttle en versnelt hierdoor niet mee.
                             poll_interval=2,
                             refreshed_after=reconciled_at,
                             on_progressing=on_progressing,
+                            on_poll=on_poll,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
                         if app_subtask:

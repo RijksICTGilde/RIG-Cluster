@@ -78,6 +78,26 @@ def read_sync_operation(application: dict[str, Any] | None) -> SyncOperation:
     )
 
 
+def describe_sync_waiting(application: dict[str, Any], *, fresh: bool) -> str | None:
+    """Waarop ArgoCD zelf nog bezig is, in gewone taal, of ``None`` als de sync rond is.
+
+    ``None`` betekent: de manifests staan erop, wat nog ontbreekt zit in de pods. De
+    voortgangsregel liet alleen dat laatste zien, dus een sync die op een hook of een
+    lopende operation hing las als "redis: readiness slaagt nog niet".
+    """
+    if not fresh:
+        return "ArgoCD heeft de wijziging nog niet verwerkt"
+    operation = read_sync_operation(application)
+    if operation.phase == "Terminating":
+        return "ArgoCD breekt de lopende sync af"
+    if operation.ongoing:
+        return f"ArgoCD synchroniseert: {operation.message}" if operation.message else "ArgoCD synchroniseert"
+    sync_status = ((application.get("status") or {}).get("sync") or {}).get("status")
+    if sync_status != "Synced":
+        return f"ArgoCD heeft nog niet gesynchroniseerd ({sync_status or 'Unknown'})"
+    return None
+
+
 def operation_age_seconds(operation: SyncOperation, *, now: datetime | None = None) -> int | None:
     """Hoe lang de operation al loopt, of ``None`` als `startedAt` ontbreekt of onleesbaar is."""
     if not operation.started_at:
