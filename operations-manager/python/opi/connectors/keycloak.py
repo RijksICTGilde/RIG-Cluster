@@ -4017,6 +4017,8 @@ class KeycloakConnector:
                 self.admin.change_current_realm("master")
                 return False
 
+            # get_user_by_username switches back to master, so the delete would land there.
+            self.admin.change_current_realm(realm_name)
             user_id = user["id"]
             self.admin.delete_user(user_id=user_id)
 

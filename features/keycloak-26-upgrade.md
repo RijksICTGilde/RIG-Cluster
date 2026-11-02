@@ -52,7 +52,7 @@ herbouw levert een ander artefact op en dan is het bewijs van de sandbox niets w
 
 | Stap | Wie | Groen is |
 |---|---|---|
-| `task test-keycloak-image` | bouwer of beheerder, lokaal met Docker | alle providertoetsen, de mailtoets en de thematoets slagen op de te promoveren tag |
+| `task test-keycloak-image` | bouwer of beheerder, lokaal met Docker | providers-, mail-, thema-, en admin-API-toetsen groen op de te promoveren tag. Admin-API (`tests/integration/test_keycloak_admin_api.py`, RC-413): de enige meting van de API waar OPI elk project-realm mee inricht. Moet bij elke versiesprong groen zijn voor promotie. |
 | de tegenproef van de mailtoets | dezelfde | zonder de vlag landt het bericht WEL op de lokaas-sink; zie `features/keycloak-mail.md` |
 | `uv run pytest tests/e2e/test_keycloak_logout_harness.py -m keycloak_harness` | bouwer of beheerder, lokaal met Docker en Maven | de negen toetsen van de uitlogketen slagen; dat harnas start zelf een Keycloak 26.8.1 met de shim |
 | `task keycloak-proefmigratie IMAGE=<de te promoveren tag>` op de sandbox | beheerder | `diff` van de telling is leeg, en de beheerder kan op de kopie inloggen. Dit is de ENIGE meting van de 25-naar-26 schemamigratie: `task test-keycloak-image` draait op een lege database en zegt daar niets over. Zonder `IMAGE` pakt de task de tag uit de sandbox-overlay, en die kan nog 25.0.6 zijn |
