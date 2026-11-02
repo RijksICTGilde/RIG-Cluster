@@ -47,9 +47,11 @@ spec:
           seccompProfile:
             type: RuntimeDefault
         resources:
+          # Working set sat at 0.95-0.97Gi of the old 1Gi limit, mostly page cache,
+          # and 16% of the CFS periods were throttled at 500m (02-11-2026).
           limits:
-            memory: 1Gi
-            cpu: 500m
+            memory: 2Gi
+            cpu: "1"
             ephemeral-storage: "1Gi"
           requests:
             cpu: 50m
@@ -76,12 +78,20 @@ spec:
             port: 9000
           initialDelaySeconds: 30
           periodSeconds: 30
+          # The k8s defaults (timeoutSeconds 1, failureThreshold 3) SIGKILLed this pod
+          # every one to three days (exit 137, never OOMKilled) when MinIO could not
+          # answer within 1s during a Ceph-RBD I/O spike. Same values as
+          # backup-destination, where this fix ended the restarts.
+          timeoutSeconds: 5
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /minio/health/ready
             port: 9000
           initialDelaySeconds: 10
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
       volumes:
       - name: minio-storage
         persistentVolumeClaim:
