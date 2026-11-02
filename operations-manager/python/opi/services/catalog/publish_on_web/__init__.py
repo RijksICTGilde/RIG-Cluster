@@ -404,6 +404,9 @@ class PublishOnWebService(Service):
         # before ingress is generated for it. The rule (status_of) reuses the existing
         # pure predicates; the state lives under this service's config
         # (services/[publish-on-web]/config/domains, resolved by connectors/subdomain.py).
+        # Turning the service on is never a request: only a custom domain or a chosen
+        # subdomain on a guarded platform domain is, per deployment. Without
+        # requires_approval_for the card and the help would say every use needs approval.
         if layer is not ConfigLayer.DEPLOYMENT:
             return []
         return [
@@ -415,6 +418,7 @@ class PublishOnWebService(Service):
                 list_items=_domain_items,
                 record=_domain_record,
                 notices_for=_domain_notices,
+                requires_approval_for=lambda _config: False,
             ),
             ApprovalSpec(
                 key="subdomain",
@@ -424,6 +428,7 @@ class PublishOnWebService(Service):
                 list_items=_subdomain_items,
                 record=_subdomain_record,
                 notices_for=_subdomain_notices,
+                requires_approval_for=lambda _config: False,
             ),
         ]
 

@@ -37,6 +37,7 @@ from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.naming import generate_argocd_repository_secret_name, get_output_filename_from_template
 from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files_or_fail, generate_sops_key_pair
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
+from tests.conftest import write_private_file
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -82,7 +83,7 @@ display-name: {name}
 description: Project for the argo round test
 users:
   - email: someone@rijksoverheid.nl
-    role: admin
+    roles: [admin, ops]
 clusters:
   - {cluster}
 repositories:
@@ -992,10 +993,10 @@ async def a_round_to_run(
     )
     loose = tmp_path / "config.py"
     loose.write_text(f'PROJECT_REPO_PASSWORD = "{await _encrypted(in_all_three, old_public)}"\n')
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text(f"{NEW_TOKEN}\n")
-    (tmp_path / "pat-current.txt").write_text(f"{OLD_TOKEN}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
+    write_private_file(tmp_path / "key.txt", new_private)
+    write_private_file(tmp_path / "pat.txt", NEW_TOKEN)
+    write_private_file(tmp_path / "pat-current.txt", OLD_TOKEN)
     record = Fingerprint()
     record.set(f"{loose}#PROJECT_REPO_PASSWORD", sha256_of(in_all_three))
     record.save(tmp_path / "repo-fingerprint.json")
@@ -1114,17 +1115,13 @@ async def test_an_argo_clone_that_is_not_there_is_refused_before_anything_is_wri
 
 @needs_sops
 @pytest.mark.asyncio
-async def test_a_repository_without_credentials_renders_a_secret_the_round_leaves_alone(
+async def test_a_repository_without_credentials_renders_an_empty_password_the_round_brings_in_step(
     tmp_path: Path, platform_keys: tuple[str, str]
 ) -> None:
-    """Measured, because ``RepositorySecret.password`` makes a claim about this exact shape.
+    """Measured because ``RepositorySecret.password`` makes a claim about this exact shape.
 
-    ``prepare_repository_variables`` hands ``password: ""`` to the HTTPS template, which writes
-    ``password:`` with nothing behind it -- and YAML reads that back as None, not as an empty
-    string. So this secret is indistinguishable here from the SSH form and the round leaves it
-    untouched, even though its project file does carry a password on the platform key. Pinning
-    what the templates really produce rather than what the docstring expects them to: if OPI
-    starts quoting that field, this test is where it turns up.
+    The empty password must render as a quoted empty string so the round tool can distinguish
+    HTTPS repositories from SSH repositories.
     """
     platform_private, platform_public = platform_keys
     projects = tmp_path / "zad-projects" / "projects"
@@ -1137,16 +1134,17 @@ async def test_a_repository_without_credentials_renders_a_secret_the_round_leave
         platform_private,
         platform_public,
     )
-    assert decrypted(secret, platform_private)["stringData"]["password"] is None
-    before = raw_hashes(clone)
+    assert decrypted(secret, platform_private)["stringData"]["password"] == ""
 
     plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
 
-    assert [s.credential_form for s in plan.pairing.ssh_form] == ["no credentials"]
-    assert (plan.pairing.pairs, converted, plan.closed) == ([], [], [])
-    assert raw_hashes(clone) == before
+    assert plan.pairing.ssh_form == []
+    assert [s.credential_form for s, _ in plan.pairing.pairs] == ["https password"]
+    assert len(converted) == 1
+    assert plan.closed == []
+    assert decrypted(secret, platform_private)["stringData"]["password"] == NEW_TOKEN
 
 
 @needs_sops

@@ -6,7 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
+from opi.core.backup_constants import (
+    BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
+    RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+)
 from opi.core.config import settings
 from opi.manager.backup.base import (
     BackupConfig,
@@ -15,6 +18,7 @@ from opi.manager.backup.base import (
     RestoreResult,
     SnapshotInfo,
     kopia_backup_identity,
+    pod_credentials_secret_name,
     utc_now,
 )
 from opi.utils.naming import generate_backup_prefix, generate_database_name
@@ -192,6 +196,7 @@ class DatabaseBackupManager(BaseBackupManager):
             if not success:
                 logs = await self._get_pod_logs(namespace, pod_name)
                 logger.error(f"Database backup pod {pod_name} failed. Full logs:\n{logs}")
+                error = await self._backup_pod_failure_error(namespace, pod_name, logs)
                 return DatabaseBackupResult(
                     namespace=namespace,
                     pvc_name=reference_name,  # Use reference_name for compatibility
@@ -199,7 +204,7 @@ class DatabaseBackupManager(BaseBackupManager):
                     database_name=database_name,
                     reference_name=reference_name,
                     source_type=source_type,
-                    error=f"Backup pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
+                    error=error,
                     duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
@@ -285,19 +290,17 @@ class DatabaseBackupManager(BaseBackupManager):
                 "db_port": database_port,
                 "db_name": database_name,
                 "db_user": database_user,
-                "db_password": database_password,
                 "reference_name": reference_name,
                 "source_type": source_type,
                 "timestamp": timestamp,
                 "s3_endpoint": self.config.s3_endpoint,
                 "s3_bucket": bucket_name,
-                "s3_access_key": self.config.s3_access_key,
-                "s3_secret_key": self.config.s3_secret_key,
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
-                "kopia_password": kopia_password,
                 "kopia_hostname": kopia_hostname,
                 "kopia_source": kopia_source,
+                "credentials_secret": pod_credentials_secret_name(pod_name),
+                "repository_unusable_exit_code": BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
                 "timeout_seconds": self.config.timeout_seconds,
                 "retention_keep_latest": self.config.retention_keep_latest,
                 "retention_keep_daily": self.config.retention_keep_daily,
@@ -314,11 +317,13 @@ class DatabaseBackupManager(BaseBackupManager):
             },
         )
 
-        args = ["apply", "-f", "-"]
-        _, stderr, code = await self.kubectl.run_command(args, stdin_input=manifest)
-
-        if code != 0:
-            raise RuntimeError(f"Failed to create database backup pod: {stderr}")
+        await self._apply_pod_with_credentials(
+            namespace=namespace,
+            pod_name=pod_name,
+            manifest=manifest,
+            credentials=self._kopia_credentials(kopia_password, bucket_name) | {"DB_PASSWORD": database_password},
+            what="database backup",
+        )
 
     # =========================================================================
     # Restore Methods
@@ -360,6 +365,9 @@ class DatabaseBackupManager(BaseBackupManager):
         Returns:
             DatabaseRestoreResult with operation details
         """
+        # Ensure the bucket and its scoped S3 account exist before the restore pod needs them
+        await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
+
         async with self.lock:
             await self.lock.update_progress(namespace, f"restore-database:{reference_name}")
             return await self._restore_database(
@@ -613,26 +621,26 @@ class DatabaseBackupManager(BaseBackupManager):
                 "target_db_port": target_database_port,
                 "target_db_name": target_database_name,
                 "target_db_user": target_database_user,
-                "target_db_password": target_database_password,
                 "s3_endpoint": self.config.s3_endpoint,
                 "s3_bucket": bucket_name,
-                "s3_access_key": self.config.s3_access_key,
-                "s3_secret_key": self.config.s3_secret_key,
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
-                "kopia_password": kopia_password,
                 "snapshot_id": snapshot_id or "",
+                "credentials_secret": pod_credentials_secret_name(pod_name),
                 "timeout_seconds": self.config.timeout_seconds,
                 "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
                 "source_schema": source_schema or "",
             },
         )
 
-        args = ["apply", "-f", "-"]
-        _, stderr, code = await self.kubectl.run_command(args, stdin_input=manifest)
-
-        if code != 0:
-            raise RuntimeError(f"Failed to create database restore pod: {stderr}")
+        await self._apply_pod_with_credentials(
+            namespace=namespace,
+            pod_name=pod_name,
+            manifest=manifest,
+            credentials=self._kopia_credentials(kopia_password, bucket_name)
+            | {"TARGET_DB_PASSWORD": target_database_password},
+            what="database restore",
+        )
 
     # =========================================================================
     # List Snapshots

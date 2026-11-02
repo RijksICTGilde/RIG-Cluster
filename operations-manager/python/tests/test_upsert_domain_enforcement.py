@@ -179,6 +179,59 @@ class TestEnforceDomainConfig:
             error = await pm._enforce_domain_config(data, "pr797")
         assert error is None
 
+    async def test_dotted_subdomain_on_dash_only_domain_is_rejected(self):
+        """RC-362: a dotted subdomain still needs an explicit per-domain allowance.
+
+        Regression for the fix itself: before it, the dots check on the subdomain was
+        skipped entirely (RC-327 required single-label form at the model level), so this
+        case never reached the enforcer. The format here uses ``{subdomain}``, so the
+        value is actually used and must be checked.
+        """
+        pm = _make_manager()
+        data = _project("subdomain", "rijksapps.nl")
+        data["deployments"][0]["subdomain"] = "amt.bzk"
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
+        ):
+            error = await pm._enforce_domain_config(data, "productie")
+        assert error is not None
+        assert "punten in het subdomein" in error.lower()
+
+    async def test_dotted_subdomain_on_dots_capable_domain_is_allowed(self):
+        pm = _make_manager()
+        data = _project("subdomain", "rijksapp.nl")
+        data["deployments"][0]["subdomain"] = "amt.bzk"
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=True),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.nl"}),
+            patch("opi.forms.editables.enforcers.is_subdomain_allowed_for_project", return_value=(True, None)),
+            patch(
+                "opi.forms.editables.enforcers.DomainConfigEnforcer._check_subdomain_availability",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            error = await pm._enforce_domain_config(data, "productie")
+        assert error is None
+
+    async def test_leftover_dotted_subdomain_is_ignored_without_the_placeholder(self):
+        """A format without ``{subdomain}`` never uses the value, so a leftover dotted
+        subdomain from a previous format choice must not block it.
+
+        Regression for '20b88f3df Een restsubdomein met punten blokkeert niets': the dots
+        check on the subdomain used to fire whenever the value had a dot, even for a
+        format that never reads it.
+        """
+        pm = _make_manager()
+        data = _project("deployment-project", "rijksapps.nl")
+        data["deployments"][0]["subdomain"] = "amt.bzk"
+        with (
+            patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
+        ):
+            error = await pm._enforce_domain_config(data, "productie")
+        assert error is None
+
     async def test_explicit_restricted_domain_subdomain_still_requires_approval(self):
         """The subdomain-approval gate still fires for an EXPLICITLY chosen restricted domain.
 

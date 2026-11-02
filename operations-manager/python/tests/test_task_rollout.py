@@ -57,7 +57,7 @@ class TestRolloutFlag:
         assert processing["reason"] == SKIPPED_REASON
 
     def test_every_task_type_is_classified_exactly_once(self):
-        """Each of the seventeen v2 task types either may defer or says why it may not.
+        """Each of the eighteen v2 task types either may defer or says why it may not.
 
         A new task type that is neither is a task type whose ``rollout=false`` would be
         silently ignored, which is the thing this feature must not do.
@@ -72,6 +72,7 @@ class TestRolloutFlag:
             "clone_database",
             "clone_bucket",
             "refresh_deployment",
+            "rotate_credentials",
             "add_component",
             "update_component",
             "add_component_to_deployment",
@@ -142,6 +143,17 @@ class TestAddComponentRollout:
         assert result["processing"]["reason"] == SKIPPED_REASON
 
     @pytest.mark.asyncio
+    async def test_description_is_forwarded(self, payload):
+        from opi.core.task_handlers_components import handle_add_component
+
+        pm = self._pm()
+        progress = _make_progress()
+        with patch(PM_PATH, return_value=pm):
+            await handle_add_component({**payload, "description": "Wat dit component doet"}, progress)
+
+        assert pm.add_component.call_args[1]["description"] == "Wat dit component doet"
+
+    @pytest.mark.asyncio
     async def test_rollout_false_replaces_the_processing_step(self, payload):
         from opi.core.task_handlers_components import handle_add_component
 
@@ -209,6 +221,31 @@ class TestComponentHandlersRollout:
         assert call_kwargs["add_services"] == ["redis"]
         assert call_kwargs["remove_services"] == ["attachments"]
         assert call_kwargs["services"] is None
+
+    @pytest.mark.asyncio
+    async def test_update_component_forwards_description(self):
+        from opi.core.task_handlers_components import handle_update_component
+
+        pm = AsyncMock()
+        pm.update_component = AsyncMock(return_value={"success": True})
+        pm.process_project_from_git = AsyncMock(return_value=True)
+        pm.get_processing_error = MagicMock(return_value=None)
+        pm.get_component_failures = MagicMock(return_value=None)
+        pm.close = AsyncMock()
+
+        progress = _make_progress()
+        with patch(PM_PATH, return_value=pm):
+            await handle_update_component(
+                {
+                    "project_name": "test-project",
+                    "name": "web",
+                    "description": "Nieuwe omschrijving",
+                    "rollout": False,
+                },
+                progress,
+            )
+
+        assert pm.update_component.call_args[1]["description"] == "Nieuwe omschrijving"
 
     @pytest.mark.asyncio
     async def test_add_component_to_deployment_defers(self):
@@ -381,6 +418,8 @@ class TestUpsertDeploymentRollout:
                     "deployment_name": "dev",
                     "components": [{"reference": "web", "image": "web:v1"}],
                     "rollout": False,
+                    "environment": "productie",
+                    "actor": "iemand@example.org",
                 },
                 progress,
             )
@@ -391,6 +430,11 @@ class TestUpsertDeploymentRollout:
         assert result["processing"]["reason"] == SKIPPED_REASON
         # No OOM watcher and no web addresses: nothing ran.
         progress.update_component_web_address.assert_not_called()
+        # De waarden uit de taakpayload moeten de manager bereiken, niet alleen
+        # bestaan in de payload.
+        upsert_kwargs = pm.upsert_deployment.call_args.kwargs
+        assert upsert_kwargs["environment"] == "productie"
+        assert upsert_kwargs["actor"] == "iemand@example.org"
 
 
 # ---------------------------------------------------------------------------

@@ -77,6 +77,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
 
         result = await project_manager.add_component(
             name=component_name,
+            description=payload.get("description"),
             component_type=payload.get("type", "single"),
             image=payload["image"],
             deployment_names=deployment_names,
@@ -225,6 +226,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
 
         result = await project_manager.update_component(
             name=component_name,
+            description=payload.get("description"),
             image=payload.get("image"),
             port=payload.get("port"),
             ports=payload.get("ports"),

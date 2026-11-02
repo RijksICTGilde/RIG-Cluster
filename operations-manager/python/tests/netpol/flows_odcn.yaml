@@ -1,0 +1,862 @@
+# Welke verbindingen het netwerkbeleid van odcn-production vandaag toelaat.
+#
+# Dit bestand legt de HUIDIGE toestand vast, niet de gewenste. Elke PR die een
+# NetworkPolicy aanraakt zet hier de regels om die hij bedoelt te veranderen, en ziet
+# in de diff welke verbindingen hij verder dicht of open zet.
+#
+# Twee kolommen per regel:
+#   verwacht            de uitkomst met alle policies die op productie staan, dus MET
+#                       emergency-restore-allow-all.
+#   zonder_allow_all    de uitkomst zonder dat bestand, dus de eindtoestand waar de
+#                       uitsluitlijst in die policy naartoe krimpt. Weggelaten betekent:
+#                       gelijk aan `verwacht`.
+#
+# `verwacht: dicht` betekent niet dat het beleid klaar is: de egress van de
+# tenant-baseline staat bewust ruim open (poort 80 en 443 naar elk adres buiten de
+# cluster-CIDRs), en emergency-restore-allow-all maakt de pods in rig-prd-operations die
+# nog geen eigen beleid dragen in beide richtingen open. Beide staan hier als open regels
+# in, zodat het omzetten ervan een zichtbare wijziging is.
+#
+# `waarom` noemt waar de verbinding vandaan komt: een configmap, een env-variabele, een
+# scrape-job of een policy. Zonder die bron is een regel een aanname.
+
+endpoints:
+  tenant-app:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: web, project: demo}
+
+  tenant-andere-deployment:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: api, project: demo}
+
+  # Een pod zonder het deployment-label, zoals een helm- of helmfile-workload in een
+  # projectnamespace. De default-deny van de namespace selecteert hem, en de baseline
+  # zonder label geeft hem dezelfde rechten als een deployment. De acme-http-policy dekt
+  # hem niet: die selecteert sinds RC-336 alleen de solverpod.
+  tenant-helm-pod:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+
+  # Een chart-pod die zelf een deployment-label zet met een waarde die geen deployment
+  # van dit project is. Beide baselines missen hem: de per-deployment baseline selecteert
+  # op de echte naam, de baseline zonder label op het ONTBREKEN van het label. Alleen de
+  # default-deny houdt hem dicht, en een tenant kiest dit label zelf in zijn chart.
+  tenant-vreemd-label-pod:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: nietbestaand}
+
+  # Een pod in een namespace die het tenant-label NIET draagt, zoals de
+  # operations-namespace zelf (zie de reden in
+  # bootstrap/rig-system/kustomize/overlays/odcn-production/namespace.yaml). Geen enkele
+  # tenant-regel laat hem toe.
+  vreemde-pod:
+    namespace: rig-prd-vreemd
+
+  # Dezelfde soort pod in de namespace van een ANDER project, met dus zijn eigen
+  # namespace-brede policies.
+  vreemde-helm-pod:
+    namespace: rig-prd-ander
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+
+  # Een restorepod, met de labels uit manifests/restore-database-pod.yaml.jinja. Ook
+  # een pod zonder deployment-label, dus de baseline zonder label is zijn beleid.
+  restore-pod:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels:
+      app.kubernetes.io/name: database-restore
+      app.kubernetes.io/component: restore-job
+
+  # Het toegewijde PostgreSQL-cluster van het project, in de projectnamespace.
+  project-db:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {cnpg.io/cluster: demo-db}
+
+  # De CNPG-operator, die de instance-status van dat cluster ophaalt.
+  cnpg-operator:
+    namespace: cnpg-system
+    labels: {app.kubernetes.io/name: cloudnative-pg}
+
+  rig-db:
+    namespace: rig-prd-operations
+    labels: {cnpg.io/cluster: rig-db}
+
+  redis:
+    namespace: rig-prd-operations
+    labels: {app: rig-redis}
+
+  minio:
+    namespace: rig-prd-operations
+    labels: {app: minio}
+
+  seaweedfs:
+    namespace: rig-prd-operations
+    labels: {app: seaweedfs}
+
+  # De pod van de lifecycle-CronJob van het seaweedfs-component (RC-381). Eigen label,
+  # zodat allow-seaweedfs-access hem precies de beheerpoorten geeft die de ronde nodig
+  # heeft en geen andere pod in de namespace die meekrijgt.
+  seaweedfs-lifecycle:
+    namespace: rig-prd-operations
+    labels: {app: seaweedfs-lifecycle}
+
+  backup-minio:
+    namespace: rig-prd-backup
+    labels: {app.kubernetes.io/name: minio}
+
+  rig-db-platform-backup:
+    namespace: rig-prd-operations
+    labels: {app.kubernetes.io/name: rig-db-platform-backup}
+
+  opi:
+    namespace: rig-prd-operations
+    labels: {app: operations-manager}
+
+  keycloak:
+    namespace: rig-prd-operations
+    labels: {app: keycloak}
+
+  prometheus:
+    namespace: rig-prd-operations
+    labels: {app: prometheus}
+
+  kube-state-metrics:
+    namespace: rig-prd-operations
+    labels: {app: kube-state-metrics}
+
+  external-dns:
+    namespace: rig-prd-operations
+    labels: {app: external-dns}
+
+  argocd:
+    namespace: rig-prd-operations
+    labels: {app.kubernetes.io/part-of: argocd}
+
+  # Een solverpod van cert-manager voor een http01-challenge, zoals de eigen issuers die
+  # laten maken. Bestaat alleen tijdens een uitgifte.
+  acme-solver:
+    namespace: rig-prd-operations
+    labels: {acme.cert-manager.io/http01-solver: "true"}
+
+  # Dezelfde soort solverpod, maar voor een certificaat van een tenant: die landt in de
+  # projectnamespace en valt onder de acme-http-policy die OPI daar wegschrijft.
+  tenant-acme-solver:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {acme.cert-manager.io/http01-solver: "true"}
+
+  # Een afnemer van VLAM: een tenant-pod met de egressregel van de dienst vlam erbij.
+  vlam-afnemer:
+    namespace: rig-prd-afnemer
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: prod, app: prod-app, project: afnemer}
+
+  # De interne VLAM-proxy, in de projectnamespace van het vlam-project. Zijn poorten
+  # staan open voor elke bron via een inbound-regel van cross-domain-access.
+  vlam-proxy:
+    namespace: rig-prd-vlam-wt8
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: productie, app: productie-vlam-proxy-intern, project: vlam-wt8}
+
+  # Een tenant-pod met de dienst send-email erbij.
+  mail-afnemer:
+    namespace: rig-prd-mailer
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: prod, app: prod-app}
+
+  mail-relay:
+    namespace: rig-prd-ron
+    labels: {app: rig-mail-relay}
+
+  kube-dns:
+    namespace: kube-system
+    labels: {k8s-app: kube-dns}
+
+  router:
+    namespace: openshift-ingress
+    labels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig}
+
+  # Twee adressen die ook echt antwoorden: `task netpol:meet` legt er een TCP-verbinding
+  # naartoe. Het oude meetadres (93.184.216.34, example.com) antwoordt nergens meer, ook
+  # zonder beleid niet, en liet de internetregels daarom altijd afwijken.
+  internet-v4:
+    ip: 1.1.1.1
+
+  internet-v6:
+    ip: "2606:4700:4700::1111"
+
+flows:
+  # ---------------------------------------------------------------- tenant naar platform
+  - van: tenant-app
+    naar: rig-db
+    poort: 5432
+    verwacht: open
+    waarom: de gedeelde PostgreSQL; allow-postgres-access laat tenant-namespaces toe op created-by
+
+  - van: tenant-app
+    naar: redis
+    poort: 6379
+    verwacht: open
+    waarom: de gedeelde Redis voor cache en sessions
+
+  - van: tenant-app
+    naar: minio
+    poort: 9000
+    verwacht: open
+    waarom: de S3-API; de console op 9001 is alleen voor de platform-namespace
+
+  # Sinds RC-381 draait SeaweedFS ook op odcn. De ops-egress van de tenant-baseline noemt
+  # hem alleen op 8333 (SEAWEEDFS_OPS_EGRESS, afgeleid van seaweedfs_host), en
+  # allow-seaweedfs-access laat tenant-namespaces ook alleen daar binnen.
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 8333
+    verwacht: open
+    waarom: de S3-API van seaweedfs-storage; de enige poort die een tenant nodig heeft
+
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 18333
+    verwacht: dicht
+    waarom: de gRPC-poort van de S3-gateway is beheer; alleen de lifecycle-pod mag erbij
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 18888
+    verwacht: dicht
+    waarom: de filer-gRPC is beheer; allow-seaweedfs-access laat die alleen de OPI-pod
+
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 19333
+    verwacht: dicht
+    waarom: de master-gRPC is beheer; allow-seaweedfs-access laat die alleen de OPI-pod
+
+  - van: tenant-app
+    naar: seaweedfs
+    poort: 9327
+    verwacht: dicht
+    waarom: de metrics-poort is voor Prometheus in de eigen namespace, niet voor een tenant
+
+  # Tot RC-336 stond deze op open: de ingress van MinIO liet de console alleen voor de
+  # platform-namespace toe, maar emergency-restore-allow-all maskeerde dat. De egress
+  # van de tenant is nu de grens die wel houdt, ongeacht wat er aan de andere kant ligt.
+  - van: tenant-app
+    naar: minio
+    poort: 9001
+    verwacht: dicht
+    waarom: de ops-egress van de baseline noemt MinIO alleen op 9000, dus de console valt erbuiten
+
+  # task bootstrap-backup-destination applied deze overlay buiten ArgoCD om; allow-minio-
+  # access in rig-prd-backup laat alleen de Capsule-tenant rig-prd en de platform-backup-
+  # pod toe. Zonder deze regel bleef dat ongetoetst (RC-304).
+  - van: tenant-app
+    naar: backup-minio
+    poort: 9000
+    verwacht: open
+    waarom: tenant-backups schrijven hun S3-object via de Capsule-tenantnamespace-selector
+
+  - van: tenant-app
+    naar: backup-minio
+    poort: 9001
+    verwacht: dicht
+    waarom: allow-minio-access in rig-prd-backup heeft geen regel voor de console
+
+  - van: rig-db-platform-backup
+    naar: backup-minio
+    poort: 9000
+    verwacht: open
+    waarom: de nachtelijke back-up van de platformdatabase draait in rig-prd-operations, smal op het podlabel
+
+  - van: rig-db
+    naar: backup-minio
+    poort: 9000
+    verwacht: dicht
+    waarom: allow-minio-access selecteert alleen pods met het rig-db-platform-backup-label
+
+  - van: tenant-app
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: tenant-apps mogen externe APIs aanroepen
+
+  - van: tenant-app
+    naar: internet-v6
+    poort: 443
+    verwacht: open
+    waarom: het cluster is dual-stack, dus de regel moet ook ::/0 dekken
+
+  - van: tenant-app
+    naar: internet-v4
+    poort: 25
+    verwacht: dicht
+    waarom: SMTP gaat via de mailrelay, niet rechtstreeks naar buiten
+
+  - van: tenant-app
+    naar: internet-v6
+    poort: 25
+    verwacht: dicht
+    waarom: dezelfde grens op de andere adresfamilie
+
+  - van: router
+    naar: tenant-app
+    poort: 8000
+    verwacht: open
+    waarom: gepubliceerde webapps blijven bereikbaar van buiten
+
+  - van: tenant-andere-deployment
+    naar: tenant-app
+    poort: 8000
+    verwacht: dicht
+    waarom: twee deployments in dezelfde namespace blijven van elkaar gescheiden
+
+  # Tot RC-343 stond deze op open: de egress kwam langs de internetregel (een ipBlock
+  # op 0.0.0.0/0 zonder except dekt ook elk pod-IP) en aan de andere kant selecteerde
+  # geen policy de helm-pod. Sinds odcn zijn cluster_cidrs kreeg is die egress-kant niet
+  # te beoordelen (dit model kent geen pod-IP), maar de ingress van de baseline zonder
+  # label beslist de regel wel. De berekening van de except staat in
+  # TestDeExceptSluitHetClusterUit.
+  - van: tenant-app
+    naar: tenant-helm-pod
+    poort: 443
+    verwacht: dicht
+    waarom: de baseline zonder label laat alleen pods zonder dat label, de router en de platformnamespaces toe
+
+  # -------------------------------------------------------------------- OPI, uitgaand
+  - van: opi
+    naar: rig-db
+    poort: 5432
+    verwacht: open
+    waarom: DATABASE_HOST=rig-db-rw in de configmap, database_server in cluster_config.py
+
+  - van: opi
+    naar: redis
+    poort: 6379
+    verwacht: open
+    waarom: redis_server in opi/core/cluster_config.py
+
+  - van: opi
+    naar: minio
+    poort: 9000
+    verwacht: open
+    waarom: MINIO_HOST=minio:9000 in de configmap
+
+  - van: opi
+    naar: seaweedfs
+    poort: 8333
+    verwacht: open
+    waarom: de S3-poort voor de bucketkopie van een kloon, met het admin-sleutelpaar
+
+  - van: opi
+    naar: seaweedfs
+    poort: 18888
+    verwacht: open
+    waarom: SEAWEEDFS_FILER_ADDRESS in de configmap; weed shell telt 10000 bij 8888 op
+
+  - van: opi
+    naar: seaweedfs
+    poort: 19333
+    verwacht: open
+    waarom: SEAWEEDFS_MASTER_ADDRESS in de configmap; zonder master hangt weed shell
+
+  # De lifecycle-ronde: `weed shell s3.lifecycle.run-shard -shards 0-15 -s3 seaweedfs:18333`.
+  # 18888 en 19333 zijn wat `weed shell` nodig heeft om op te starten; 18333 is het adres
+  # dat het commando meekrijgt. Met 18333 dicht deed de ronde op de sandbox nog steeds zijn
+  # werk, dus die poort staat open voor de aanroep en niet omdat hij een voorwaarde is.
+  - van: seaweedfs-lifecycle
+    naar: seaweedfs
+    poort: 18333
+    verwacht: open
+    waarom: het adres uit de -s3-vlag van s3.lifecycle.run-shard
+
+  - van: seaweedfs-lifecycle
+    naar: seaweedfs
+    poort: 18888
+    verwacht: open
+    waarom: de filer-gRPC die weed shell met -filer aanroept
+
+  - van: seaweedfs-lifecycle
+    naar: seaweedfs
+    poort: 19333
+    verwacht: open
+    waarom: de master-gRPC die weed shell met -master aanroept; zonder master hangt hij
+
+  - van: opi
+    naar: argocd
+    poort: 8080
+    verwacht: open
+    waarom: ARGOCD_HOST/ARGOCD_PORT=443 in de configmap, en de Service wijst 443 naar podpoort 8080
+
+  - van: opi
+    naar: prometheus
+    poort: 9090
+    verwacht: open
+    waarom: PROMETHEUS_URL=http://prometheus.rig-prd-operations:9090 in de configmap
+
+  - van: opi
+    naar: mail-relay
+    poort: 2525
+    verwacht: open
+    waarom: post aanbieden op submission; 2525 is de podpoort, de Service vertaalt 587
+
+  - van: opi
+    naar: mail-relay
+    poort: 8080
+    verwacht: open
+    waarom: de management-API van de relay, voor accounts per project
+
+  # De egress van OPI laat rig-prd-backup:9000 toe, maar allow-minio-access in die
+  # namespace laat alleen de Capsule-tenants en de rig-db-platform-backup-pod binnen. Geen
+  # code in OPI verbindt met de backup-MinIO (backup_namespace uit cluster_config.py gaat
+  # alleen in de tenant-baseline), dus die egress-regel is ruim en ongebruikt, niet kapot.
+  - van: opi
+    naar: backup-minio
+    poort: 9000
+    verwacht: dicht
+    waarom: de ingress-kant in rig-prd-backup noemt OPI niet, alleen de tenants en de platform-backup-pod
+
+  - van: opi
+    naar: kube-dns
+    poort: 53
+    verwacht: open
+    waarom: DNS
+
+  - van: opi
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: de Capsule-Proxy kube-API, Keycloak op zijn publieke hostnaam, git en de registry
+
+  - van: opi
+    naar: keycloak
+    poort: 8080
+    verwacht: open
+    zonder_allow_all: dicht
+    waarom: KEYCLOAK_URL is de publieke hostnaam, dus OPI bereikt Keycloak op 443 via de router en niet op 8080
+
+  - van: opi
+    naar: kube-state-metrics
+    poort: 8080
+    verwacht: dicht
+    waarom: alleen Prometheus mag kube-state-metrics binnen, en die staat al buiten de allow-all
+
+  # -------------------------------------------------------------------- OPI, inkomend
+  - van: router
+    naar: opi
+    poort: 8000
+    verwacht: open
+    waarom: de drie publieke hostnamen van ZAD (ingress.yaml, ingress-rijksapp.yaml, ingress-router.yaml)
+
+  - van: prometheus
+    naar: opi
+    poort: 8000
+    verwacht: open
+    waarom: de pod draagt prometheus.io/scrape met poort 8000
+
+  - van: tenant-app
+    naar: opi
+    poort: 8000
+    verwacht: open
+    waarom: het waker-endpoint van sleep-mode; ZAD_API_URL uit ops_api_url()
+
+  - van: tenant-app
+    naar: opi
+    poort: 5678
+    verwacht: dicht
+    waarom: de ops-egress noemt OPI alleen op 8000, dus de debugpy-poort valt erbuiten
+
+  - van: vreemde-pod
+    naar: opi
+    poort: 8000
+    verwacht: open
+    zonder_allow_all: dicht
+    waarom: een namespace zonder created-by valt buiten de tenant-regel; dit is de versmalling van issue #195
+
+  # -------------------------------------------------------------------- Keycloak
+  - van: router
+    naar: keycloak
+    poort: 8080
+    verwacht: open
+    waarom: de publieke OIDC-flow over keycloak.rijksapp.nl
+
+  # De except van de internetregel sluit het cluster uit, inclusief de router zelf, dus
+  # de baseline heeft een eigen egressregel naar de ingress-controller.
+  - van: tenant-app
+    naar: router
+    poort: 443
+    verwacht: open
+    waarom: een tenant-pod bereikt Keycloak op de publieke hostnaam (keycloak_discovery_url), dus via de router
+
+  - van: tenant-app
+    naar: router
+    poort: 8443
+    verwacht: dicht
+    waarom: de routerregel noemt alleen 80 en 443
+
+  - van: tenant-app
+    naar: keycloak
+    poort: 8080
+    verwacht: dicht
+    waarom: de ops-egress noemt Keycloak niet; een app bereikt hem op zijn publieke hostnaam, dus via de router
+
+  - van: vreemde-pod
+    naar: keycloak
+    poort: 8080
+    verwacht: open
+    zonder_allow_all: dicht
+    waarom: issue #105; een pod uit een andere namespace komt er niet bij
+
+  - van: prometheus
+    naar: keycloak
+    poort: 8080
+    verwacht: open
+    waarom: de job keycloak-rig-metrics scrapet /realms/master/rig-metrics op 8080
+
+  - van: prometheus
+    naar: keycloak
+    poort: 9000
+    verwacht: open
+    waarom: de pod draagt prometheus.io/port 9000, dus de kubernetes-pods-job scrapet de management-poort
+
+  - van: tenant-app
+    naar: argocd
+    poort: 8080
+    verwacht: dicht
+    waarom: ArgoCD staat in dezelfde namespace maar is geen bestemming voor een tenant
+
+  - van: argocd
+    naar: keycloak
+    poort: 8080
+    verwacht: open
+    zonder_allow_all: dicht
+    waarom: ArgoCD gebruikt op productie Dex met openShiftOAuth (argocd-deployment.yaml), dus het belt Keycloak niet
+
+  - van: keycloak
+    naar: rig-db
+    poort: 5432
+    verwacht: open
+    waarom: KC_DB_URL in de base-deployment van Keycloak
+
+  - van: keycloak
+    naar: mail-relay
+    poort: 2525
+    verwacht: open
+    waarom: ZAD_MAIL_RELAY_HOST/PORT; 2525 is de podpoort van de submission-listener
+
+  - van: keycloak
+    naar: kube-dns
+    poort: 53
+    verwacht: open
+    waarom: DNS
+
+  - van: keycloak
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: de identity provider SSO-Rijk
+
+  - van: keycloak
+    naar: internet-v6
+    poort: 443
+    verwacht: open
+    zonder_allow_all: dicht
+    waarom: bekend en buiten dit plan; egress op ODCN werkt IPv4-only, dus de eigen policy dekt alleen 0.0.0.0/0
+
+  - van: keycloak
+    naar: internet-v4
+    poort: 25
+    verwacht: open
+    zonder_allow_all: dicht
+    waarom: Keycloak verstuurt post via de relay, niet rechtstreeks naar een mailserver
+
+  # -------------------------------------------------------------------- Prometheus
+  - van: router
+    naar: prometheus
+    poort: 9090
+    verwacht: open
+    waarom: prometheus.rig.prd1.gn2.quattro.rijksapps.nl, met ip_whitelist 147.181.0.0/16
+
+  - van: tenant-app
+    naar: prometheus
+    poort: 9090
+    verwacht: dicht
+    waarom: de ops-egress noemt vier services, en Prometheus hoort daar niet bij
+
+  - van: prometheus
+    naar: rig-db
+    poort: 9187
+    verwacht: open
+    waarom: de job cloudnative-pg scrapet de CNPG-pods op 9187
+
+  - van: prometheus
+    naar: minio
+    poort: 9000
+    verwacht: open
+    waarom: de job minio scrapet /minio/v2/metrics/cluster op 9000
+
+  - van: prometheus
+    naar: seaweedfs
+    poort: 9327
+    verwacht: open
+    waarom: de job seaweedfs scrapet /metrics op 9327
+
+  - van: prometheus
+    naar: kube-state-metrics
+    poort: 8080
+    verwacht: open
+    waarom: de metrics-poort van kube-state-metrics; deze pod staat buiten de allow-all
+
+  - van: prometheus
+    naar: kube-state-metrics
+    poort: 8081
+    verwacht: dicht
+    waarom: >-
+      de ingress-regel van kube-state-metrics laat 8081 binnen, maar de egress van
+      prometheus (configmap-patch.yaml van prometheus) kent geen scrape-job voor die poort.
+      Sinds RC-409 staat prometheus buiten de allow-all, dus die uitgaande kant stokt nu
+      echt. Opzettelijk: niemand scrapet hem vandaag.
+
+  - van: prometheus
+    naar: tenant-app
+    poort: 8000
+    verwacht: open
+    waarom: de job kubernetes-pods scrapet elke pod met prometheus.io/scrape, op een poort die het project kiest
+
+  - van: prometheus
+    naar: kube-dns
+    poort: 53
+    verwacht: open
+    waarom: DNS
+
+  - van: prometheus
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: KUBERNETES_SERVICE_HOST wijst naar de Capsule-Proxy kube-API
+
+  # ------------------------------------------------------ de workloads buiten de allow-all
+  - van: kube-state-metrics
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: de kube-API
+
+  - van: kube-state-metrics
+    naar: kube-dns
+    poort: 53
+    verwacht: open
+    waarom: DNS
+
+  - van: tenant-app
+    naar: kube-state-metrics
+    poort: 8080
+    verwacht: dicht
+    waarom: alleen Prometheus mag erbij, en de allow-all selecteert deze pod niet meer
+
+  - van: external-dns
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: de TransIP-API en de Capsule-Proxy kube-API
+
+  - van: external-dns
+    naar: kube-dns
+    poort: 53
+    verwacht: open
+    waarom: DNS
+
+  - van: opi
+    naar: external-dns
+    poort: 7979
+    verwacht: dicht
+    waarom: external-dns heeft geen ingress nodig, en de allow-all selecteert deze pod niet meer
+
+  # ------------------------------------------------- de dienst-eigen policies van tenants
+  # Ze lopen niet via de ops-egress maar via een policy van hun eigen dienst, en die
+  # blijft ongemoeid.
+  - van: vlam-afnemer
+    naar: vlam-proxy
+    poort: 8082
+    verwacht: open
+    waarom: de dienst vlam draagt per component een egressregel bij naar de proxy
+
+  - van: vlam-afnemer
+    naar: vlam-proxy
+    poort: 8443
+    verwacht: open
+    waarom: het doorlus-pad zit op een tweede poort van dezelfde pod
+
+  - van: vlam-afnemer
+    naar: vlam-proxy
+    poort: 8081
+    verwacht: dicht
+    waarom: VlamEndpoint.ports geeft alleen port en passthrough_port, en 8081 is geen van beide
+
+  # De inbound-regel van de proxy staat open voor elke bron, maar een willekeurige
+  # tenant komt er niet: zijn eigen baseline laat die egress niet toe.
+  - van: tenant-app
+    naar: vlam-proxy
+    poort: 8082
+    verwacht: dicht
+    waarom: zonder de dienst vlam heeft de tenant geen egressregel naar die namespace
+
+  - van: mail-afnemer
+    naar: mail-relay
+    poort: 2525
+    verwacht: open
+    waarom: de podpoort van de relay; de Service vertaalt 587 hierheen
+
+  - van: mail-afnemer
+    naar: mail-relay
+    poort: 587
+    verwacht: dicht
+    waarom: een NetworkPolicy kijkt naar de poort van de pod, en dat is 2525
+
+  - van: tenant-app
+    naar: mail-relay
+    poort: 2525
+    verwacht: dicht
+    waarom: zonder de dienst send-email heeft de tenant geen egressregel naar rig-prd-ron
+
+  - van: mail-afnemer
+    naar: tenant-app
+    poort: 80
+    verwacht: dicht
+    waarom: poort 80 van een app-pod staat alleen open voor de router, niet voor een andere tenant
+
+  # -------------------------------------------------------------------- cert-manager-solver
+  - van: router
+    naar: acme-solver
+    poort: 8089
+    verwacht: open
+    waarom: Let's Encrypt valideert de http01-challenge over de publieke hostnaam
+
+  - van: tenant-app
+    naar: acme-solver
+    poort: 8089
+    verwacht: dicht
+    waarom: de ops-egress noemt de solverpod niet, dus de tenant komt er aan de uitgaande kant niet uit
+
+  # De HTTP-01-solver in de projectnamespace draagt geen deployment-label, dus naast de
+  # acme-http-policy selecteren sinds RC-343 ook de default-deny en de baseline zonder
+  # label hem. Beide laten de router toe, dus de challenge blijft open.
+  - van: router
+    naar: tenant-acme-solver
+    poort: 8089
+    verwacht: open
+    waarom: de router stuurt de challenge naar poort 8089 van de solverpod
+
+  - van: tenant-andere-deployment
+    naar: tenant-acme-solver
+    poort: 8089
+    verwacht: dicht
+    waarom: de acme-http-policy laat alleen de router toe, en de bron mag er ook niet uit
+
+  # Het gat dat RC-336 openliet en RC-343 sluit. Tot RC-336 selecteerde de
+  # acme-http-policy elke pod in een namespace met een Let's Encrypt-issuer
+  # (podSelector {}, ingress 80 en 8089), en beperkte daarmee ook de pods zonder
+  # deployment-label. Nu die policy alleen de solver selecteert, viel zo'n pod terug op
+  # default-allow; de default-deny per projectnamespace sluit dat.
+  - van: vreemde-helm-pod
+    naar: tenant-helm-pod
+    poort: 5432
+    verwacht: dicht
+    waarom: de default-deny van zijn eigen namespace laat deze egress niet toe, en de ingress aan de andere kant ook niet
+
+  - van: vreemde-helm-pod
+    naar: tenant-app
+    poort: 5432
+    verwacht: dicht
+    waarom: een pod MET het deployment-label heeft zijn baseline, en die laat deze bron niet toe
+
+  # De rechten van een pod zonder deployment-label: dezelfde als die van een deployment.
+  # De default-deny als enige beleid: een pod met een deployment-label dat geen
+  # deployment is valt buiten beide baselines. Zonder de default-deny staat hij op
+  # Kubernetes' default-allow en bereikt hij het platform.
+  - van: tenant-vreemd-label-pod
+    naar: opi
+    poort: 8000
+    verwacht: dicht
+    waarom: geen baseline selecteert hem, dus alleen de default-deny van de namespace geldt
+
+  - van: tenant-vreemd-label-pod
+    naar: rig-db
+    poort: 5432
+    verwacht: dicht
+    waarom: idem; de ops-egress hangt aan de baselines en die selecteren hem niet
+
+  - van: tenant-vreemd-label-pod
+    naar: internet-v4
+    poort: 443
+    verwacht: dicht
+    waarom: idem; de internetregel staat in de baselines
+
+  - van: router
+    naar: tenant-vreemd-label-pod
+    poort: 8080
+    verwacht: dicht
+    waarom: de default-deny sluit ook de ingress, dus zo'n pod is niet van buiten te publiceren
+
+  - van: tenant-helm-pod
+    naar: rig-db
+    poort: 5432
+    verwacht: open
+    waarom: de baseline zonder label erft dezelfde ops-egress als die van een deployment
+
+  - van: tenant-helm-pod
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: een helm-workload roept externe APIs aan, net als een deployment
+
+  - van: router
+    naar: tenant-helm-pod
+    poort: 8080
+    verwacht: open
+    waarom: een chart die zelf een ingress rendert blijft van buiten bereikbaar
+
+  - van: tenant-helm-pod
+    naar: tenant-app
+    poort: 8000
+    verwacht: dicht
+    waarom: een helm-pod en een deployment in dezelfde namespace blijven van elkaar gescheiden
+
+  - van: restore-pod
+    naar: tenant-helm-pod
+    poort: 8080
+    verwacht: open
+    waarom: twee pods zonder deployment-label in dezelfde namespace blijven elkaar bereiken, net als een deployment zijn eigen pods
+
+  - van: restore-pod
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: een restore naar een externe bestemming houdt 80 en 443, een bewuste keuze
+
+  # Het toegewijde databasecluster: bereikbaar voor de eigen namespace en de operator.
+  - van: tenant-app
+    naar: project-db
+    poort: 5432
+    verwacht: open
+    waarom: de enige uitzondering op de scheiding, een deployment bereikt zijn eigen database
+
+  - van: tenant-helm-pod
+    naar: project-db
+    poort: 5432
+    verwacht: open
+    waarom: een helmfile-deployment gebruikt diezelfde database
+
+  - van: vreemde-helm-pod
+    naar: project-db
+    poort: 5432
+    verwacht: dicht
+    waarom: de database is van dit project, niet van de buren
+
+  - van: cnpg-operator
+    naar: project-db
+    poort: 8000
+    verwacht: open
+    waarom: zonder de operator erbij komt het cluster nooit Ready

@@ -1,4 +1,4 @@
-i# Redis ACL Persistence
+# Redis ACL Persistence
 
 ## Problem
 

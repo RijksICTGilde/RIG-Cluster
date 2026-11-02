@@ -13,6 +13,7 @@ from typing import Any
 
 from opi.handlers.project_file_handler import image_is_confirmed_absent
 from opi.services.catalog.image_registries.resolution import display_image
+from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -771,6 +772,33 @@ _COMPARISON_ERROR_PATTERNS: list[tuple[re.Pattern[str], str, str, EventSeverity]
     ),
 ]
 
+# --- Een commit die ArgoCD niet wil syncen omdat de handtekening ontbreekt -----------
+#
+# Alleen op het "GIT/GPG"-voorvoegsel matchen, de vorm die op de sandbox gemeten is
+# (19-10-2026). Een kaal "signature verification failed" staat ook in een Helm-chart die
+# zijn provenance niet kan verifiëren, en dat is een andere fout met een andere route.
+_UNSIGNED_COMMIT_RE = re.compile(r"GIT/GPG", re.IGNORECASE)
+
+_UNSIGNED_COMMIT_LABEL = "Commit niet ondertekend"
+
+_UNSIGNED_COMMIT_SUGGESTION = (
+    "De commit is niet ondertekend met de sleutel van het platform. Laat het project opnieuw verwerken "
+    "(volgende OPI-commit is ondertekend) of haal de commit van de branch. `key_id=` zonder waarde "
+    "betekent: helemaal niet ondertekend."
+)
+
+
+def _unsigned_commit_translation() -> tuple[str, str, EventSeverity]:
+    """Label, uitleg en ernst voor een sync die op de commit-handtekening faalt.
+
+    Noemt de sleutel die ArgoCD verwacht: dezelfde key ID die in signatureKeys op het
+    AppProject staat, dus zichtbaar is of de commit met de verkeerde sleutel ondertekend is.
+    """
+    signing = get_git_signing_identity()
+    verwacht = f" ArgoCD accepteert hier alleen een handtekening van sleutel {signing.key_id}." if signing else ""
+    return _UNSIGNED_COMMIT_LABEL, _UNSIGNED_COMMIT_SUGGESTION + verwacht, EventSeverity.ACTIONABLE
+
+
 _COMPARISON_ERROR_DEFAULT = (
     "Configuratiefout (kustomize CMP)",
     "De manifesten konden niet worden gegenereerd of vergeleken. Vaak staan er twee "
@@ -785,6 +813,9 @@ def _comparison_error_translation(message: str) -> tuple[str, str, EventSeverity
     Returns:
         (resource-label, suggestie, ernst)
     """
+    if _UNSIGNED_COMMIT_RE.search(message):
+        return _unsigned_commit_translation()
+
     for pattern, label, suggestion, severity in _COMPARISON_ERROR_PATTERNS:
         if pattern.search(message):
             return label, suggestion, severity

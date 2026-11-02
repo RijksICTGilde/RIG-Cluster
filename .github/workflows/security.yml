@@ -6,10 +6,70 @@ on:
   pull_request:
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC - catch newly disclosed CVEs
+  workflow_dispatch:
 
 permissions:
   contents: read
   security-events: write
+
+env:
+  # De versie waarmee .trivyignore.yaml is gemeten. De default van de gepinde action loopt
+  # achter, en dan onderbouwt de meting in de kop van die lijst de gate niet.
+  TRIVY_SCANNER_VERSION: 'v0.76.0'
+  # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
+  # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
+  # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.adoptium.net:443
+    api.github.com:443
+    api.osv.dev:443
+    archive.ubuntu.com:80
+    astral.sh:443
+    auth.docker.io:443
+    azure.archive.ubuntu.com:80
+    cdn01.quay.io:443
+    cdn02.quay.io:443
+    cdn03.quay.io:443
+    codeload.github.com:443
+    deb.debian.org:443
+    deb.debian.org:80
+    esm.ubuntu.com:443
+    files.pythonhosted.org:443
+    ghcr.io:443
+    github.com:443
+    index.docker.io:443
+    mirror.gcr.io:443
+    motd.ubuntu.com:443
+    objects.githubusercontent.com:443
+    pkg-containers.githubusercontent.com:443
+    pkgs.k8s.io:443
+    production.cloudflare.docker.com:443
+    pypi.org:443
+    quay.io:443
+    raw.githubusercontent.com:443
+    registry-1.docker.io:443
+    registry.k8s.io:443
+    release-assets.githubusercontent.com:443
+    repo.maven.apache.org:443
+    repo1.maven.org:443
+    results-receiver.actions.githubusercontent.com:443
+    security.debian.org:80
+    security.ubuntu.com:80
+    semgrep.dev:443
+  # De scanners die als binary of als pakket worden opgehaald. Renovate houdt deze pins bij
+  # via de custom manager in renovate.json; de meting waarop de uitzonderingslijsten rusten
+  # hoort bij deze versies.
+  # renovate: datasource=github-releases depName=gitleaks/gitleaks
+  GITLEAKS_VERSION: 8.30.1
+  # renovate: datasource=pypi depName=semgrep
+  SEMGREP_VERSION: 1.182.0
+  # renovate: datasource=github-releases depName=stackrox/kube-linter
+  KUBE_LINTER_VERSION: 0.7.1
+  # renovate: datasource=pypi depName=checkov
+  CHECKOV_VERSION: 3.3.30
 
 jobs:
   dependency-audit:
@@ -19,13 +79,17 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           version: "latest"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.14"
 
@@ -39,18 +103,49 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # De scan roept age-keygen aan om een sleutelvormige string op geldigheid te toetsen.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.14"
 
       - name: Scan the branch tree for committed secrets
         run: python scripts/scan-secrets.py
+
+  secret-scan-history:
+    name: Secret scan - history
+    # Alleen wekelijks en op aanvraag: de sweep leest elke blob die ooit bestond en duurt
+    # minuten, en de historie verandert niet per pull request.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0  # een shallow clone heeft geen historie om te scannen
+
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      # De uitvoer gaat niet als artefact mee: een lijst van plekken waar geheimen zitten is een
+      # routekaart naar wat nog niet is ingetrokken. Zie scripts/scan-secrets.py.
+      - name: Scan the whole git history for committed secrets
+        run: python scripts/scan-secrets.py --history
 
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
@@ -79,14 +174,25 @@ jobs:
             dockerfile: images/keycloak-zad/Dockerfile
             context: .
             target: ""
+          # Geen Dockerfile: upstream plus patches via images/argocd-rig/Taskfile.yaml.
+          # Gescand wordt wat productie draait; versie uit overlay zodat hij niet dubbel staat.
+          - name: argocd-rig
+            registry: ghcr.io/minbzk/base-images/argocd-rig
+            pin: bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        if: ${{ !matrix.image.pin }}
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build image for scanning
-        uses: docker/build-push-action@v6
+        if: ${{ !matrix.image.pin }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.image.context }}
           file: ${{ matrix.image.dockerfile }}
@@ -95,34 +201,345 @@ jobs:
           tags: ${{ matrix.image.name }}:scan
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
+      - name: Resolve the image to scan
+        id: scan
+        env:
+          PIN: ${{ matrix.image.pin }}
+          REGISTRY: ${{ matrix.image.registry }}
+          NAME: ${{ matrix.image.name }}
+        run: |
+          if [ -n "$PIN" ]; then
+            echo "ref=${REGISTRY}:$(yq '.spec.version' "$PIN")" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${NAME}:scan" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: '${{ matrix.image.name }}:scan'
+          image-ref: ${{ steps.scan.outputs.ref }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
           format: 'sarif'
           output: 'trivy-${{ matrix.image.name }}.sarif'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
 
+      # Scant hetzelfde image als de SARIF, maar faalt op oplosbare HIGH/CRITICAL die niet in
+      # .trivyignore.yaml staan. SARIF-upload staat op if: always() zodat het Security-tabblad gevuld blijft.
+      - name: Fail on fixable HIGH or CRITICAL
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ steps.scan.outputs.ref }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: '.trivyignore.yaml'
+
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
         if: always()
         with:
           sarif_file: 'trivy-${{ matrix.image.name }}.sarif'
           category: 'trivy-${{ matrix.image.name }}'
+
+      # De configuratie van de Dockerfile naast de CVE's van de image: een container die als
+      # root draait of een pakket binnenhaalt dat niemand nodig heeft is een misconfiguratie
+      # die de CVE-scan niet ziet. argocd-rig valt af, die heeft geen Dockerfile.
+      - name: Scan de Dockerfile op misconfiguratie
+        if: ${{ !matrix.image.pin }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.image.dockerfile }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'sarif'
+          output: 'trivy-config-${{ matrix.image.name }}.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Fail on Dockerfile misconfiguration
+        if: ${{ !matrix.image.pin }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.image.dockerfile }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          trivyignores: '.trivyignore.yaml'
+
+      - name: Upload Trivy config results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: ${{ always() && !matrix.image.pin }}
+        with:
+          sarif_file: 'trivy-config-${{ matrix.image.name }}.sarif'
+          category: 'trivy-config-${{ matrix.image.name }}'
+
+  # De Kubernetes-manifesten die het platform zelf uitrolt. Deze job RAPPORTEERT en gatet
+  # niet: de 65 bevindingen die hier nu uit komen zijn platformbesluiten (OPI beheert
+  # secrets en namespaces, dat is zijn taak) en readOnlyRootFilesystem per component. Elk
+  # daarvan afwegen is een eigen taak; ze tegenhouden zou de poort met 65 uitzonderingen
+  # moeten openzetten, en dan meet hij niets meer.
+  manifest-scan:
+    name: Manifest config scan - ${{ matrix.map }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [bootstrap, infrastructure]
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Scan ${{ matrix.map }} op misconfiguratie
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.map }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'sarif'
+          output: 'trivy-config-${{ matrix.map }}.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy config results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: always()
+        with:
+          sarif_file: 'trivy-config-${{ matrix.map }}.sarif'
+          category: 'trivy-config-${{ matrix.map }}'
+
+  gitleaks:
+    name: Gitleaks - branch tree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      # Staat naast scripts/scan-secrets.py: die kent de vormen van dit platform, gitleaks
+      # brengt de entropie- en vendorregels mee. De uitvoer blijft in het joblog, om dezelfde
+      # reden als bij de eigen scan: een lijst van vindplaatsen is een routekaart.
+      - name: Scan the branch tree with the vendor rules
+        run: gitleaks dir . --config aanvalsproef/gitleaks.toml --redact --no-banner
+
+  gitleaks-history:
+    name: Gitleaks - history
+    # Alleen wekelijks en op aanvraag, net als secret-scan-history: de historie verandert
+    # niet per pull request en de sweep leest elke blob die ooit bestond.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0  # een shallow clone heeft geen historie om te scannen
+
+      - name: Install gitleaks
+        run: |
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Scan the whole git history with the vendor rules
+        run: gitleaks git . --config aanvalsproef/gitleaks.toml --redact --no-banner
+
+  sast-semgrep:
+    name: SAST - Semgrep
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Install semgrep
+        run: uv tool install "semgrep==${SEMGREP_VERSION}"
+
+      # De twee registry-sets plus de eigen regels in aanvalsproef/semgrep-zad.yaml. Die
+      # eigen regels dekken wat ruff niet kan zien: een webroute zonder @requires_sso, en een
+      # extern programma dat buiten een connector of via een shell wordt aangeroepen
+      # (ruff S603/S607 staan voor opi/ uit, zie pyproject.toml).
+      - name: Run semgrep
+        run: |
+          uv tool run semgrep scan --metrics=off --config p/python --config p/owasp-top-ten \
+            --config ../../aanvalsproef/semgrep-zad.yaml \
+            --sarif-output "$GITHUB_WORKSPACE/semgrep.sarif" \
+            --json-output "$GITHUB_WORKSPACE/semgrep.json" \
+            --quiet opi/
+
+      - name: Gate op nieuwe bevindingen
+        run: uv run python -m opi.tools.aanvalsproef semgrep "$GITHUB_WORKSPACE/semgrep.json"
+
+      # Een regel die niets meer vangt is een gate die groen staat zonder te kijken. De
+      # voorbeelden staan buiten de python-boom (ruff en pyright zien ze niet) en worden hier
+      # tijdelijk naar opi/web/ gekopieerd, omdat de regels een paths-filter hebben.
+      - name: De eigen regels vuren op de voorbeelden
+        run: |
+          cp ../../aanvalsproef/semgrep-voorbeelden.py opi/web/_semgrep_voorbeeld.py
+          uv tool run semgrep scan --metrics=off --config ../../aanvalsproef/semgrep-zad.yaml \
+            --json-output "$GITHUB_WORKSPACE/semgrep-voorbeelden.json" --quiet opi/web/_semgrep_voorbeeld.py
+          rm opi/web/_semgrep_voorbeeld.py
+          python3 -c "
+          import json, collections
+          treffers = json.load(open('$GITHUB_WORKSPACE/semgrep-voorbeelden.json'))['results']
+          per_regel = collections.Counter(t['check_id'].split('.')[-1] for t in treffers)
+          print(dict(per_regel))
+          assert per_regel['zad-webroute-zonder-sso'] == 1, 'de SSO-regel vuurt niet precies een keer'
+          assert per_regel['zad-subprocess-via-een-shell'] == 1, 'de shell-regel vuurt niet'
+          assert per_regel['zad-subprocess-buiten-connector'] == 2, 'de connector-regel vuurt niet'
+          "
+
+      - name: Upload semgrep results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  sast-codeql:
+    name: SAST - CodeQL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      # security-extended omdat de taint-analyse het scherpst is op het pad dat hier het
+      # meest kan kosten: een veld uit een projectbestand dat in de argumentenlijst van
+      # kubectl, git, sops of mc belandt.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        with:
+          languages: python
+          queries: security-extended
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        with:
+          category: codeql-python
+
+  manifest-posture:
+    name: Manifest posture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      - name: Install kube-linter
+        run: |
+          curl -sSL "https://github.com/stackrox/kube-linter/releases/download/v${KUBE_LINTER_VERSION}/kube-linter-linux.tar.gz" \
+            | sudo tar xz -C /usr/local/bin kube-linter
+          kube-linter version
+
+      # Gescand wordt wat ZAD voor elke tenant genereert: de golden-snapshots van de
+      # manifests. De selectie van checks staat in aanvalsproef/kube-linter.yaml.
+      - name: Run kube-linter
+        run: |
+          kube-linter lint --config aanvalsproef/kube-linter.yaml --format json \
+            operations-manager/python/tests/golden/manifests > kube-linter.json || true
+          kube-linter lint --config aanvalsproef/kube-linter.yaml --format sarif \
+            operations-manager/python/tests/golden/manifests > kube-linter.sarif || true
+
+      - name: Gate op nieuwe kube-linter-bevindingen
+        working-directory: operations-manager/python
+        run: uv run python -m opi.tools.aanvalsproef kube-linter "$GITHUB_WORKSPACE/kube-linter.json"
+
+      - name: Upload kube-linter results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: always()
+        with:
+          sarif_file: kube-linter.sarif
+          category: kube-linter
+
+      - name: Install checkov
+        run: uv tool install "checkov==${CHECKOV_VERSION}"
+
+      - name: Run checkov
+        run: |
+          uv tool run checkov --config-file aanvalsproef/checkov.yaml -o json \
+            --output-file-path "$GITHUB_WORKSPACE" || true
+          uv tool run checkov --config-file aanvalsproef/checkov.yaml -o sarif \
+            --output-file-path "$GITHUB_WORKSPACE" || true
+
+      - name: Gate op nieuwe checkov-bevindingen
+        working-directory: operations-manager/python
+        run: uv run python -m opi.tools.aanvalsproef checkov "$GITHUB_WORKSPACE/results_json.json"
+
+      - name: Upload checkov results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: always()
+        with:
+          sarif_file: results_sarif.sarif
+          category: checkov
 
   sbom:
     name: Generate SBOM
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build image for SBOM
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: operations-manager/Dockerfile
@@ -132,14 +549,14 @@ jobs:
           cache-from: type=gha,scope=operations-manager
 
       - name: Generate SBOM with Trivy
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: 'operations-manager:sbom'
           format: 'cyclonedx'
           output: 'sbom-operations-manager.json'
 
       - name: Upload SBOM as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-operations-manager
           path: sbom-operations-manager.json

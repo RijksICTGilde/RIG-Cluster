@@ -275,33 +275,21 @@ tasks:
       - |
         cat <<'EOF'
         # ⚠️  De sops-plugin component doet `op: replace` op /spec/repo. Alles wat je onder
-        #     spec.repo in argocd-deployment.yaml zet wordt daardoor STIL weggegooid. De
-        #     repo-pin moet dus als patch in kustomization.yaml, ná de component.
+        #     spec.repo in argocd-deployment.yaml zet wordt daardoor STIL weggegooid. Wat je
+        #     daar nodig hebt, hoort als patch in kustomization.yaml, ná de component.
 
-        # --- 1. argocd-deployment.yaml (beide overlays) ---
+        # --- argocd-deployment.yaml (beide overlays) ---
         spec:
           image: <IMAGE>
           version: {{.IMAGE_TAG}}
         #   sandboxed-local : <IMAGE> = {{.IMAGE_NAME}}        (lokaal op de kind node)
         #   odcn-production : <IMAGE> = {{.REGISTRY_IMAGE}}
-
-        # --- 2. kustomization.yaml van dezelfde overlay, onder `patches:` ---
-        patches:
-          - target:
-              kind: ArgoCD
-              name: argocd
-            patch: |-
-              - op: add
-                path: /spec/repo/image
-                value: registry.redhat.io/openshift-gitops-1/argocd-rhel9
-              - op: add
-                path: /spec/repo/version
-                value: sha256:5058a825f70f1599cf0a4b96d7557445bd54681c3c81a25dde80106caec4e4f1
-        #   (in de sandbox staat hier quay.io/argoproj/argocd + v3.3.10)
         EOF
         echo ""
-        echo "controller + server + applicationset volgen spec.image; repo pinnen we terug"
-        echo "op de vendor-build. De cmp-sidecar heeft een eigen image en blijft ongemoeid."
+        echo "Alle componenten volgen spec.image, inclusief de repo-server: pin die niet terug"
+        echo "op een vendor-build, want met een andere ArgoCD-versie dan de controller dwingt"
+        echo "ArgoCD de handtekening-eis op de AppProjects stil niet af (RC-352)."
+        echo "De cmp-sidecar heeft een eigen image en blijft ongemoeid."
         echo ""
         echo "Controleer de render vóór het uitrollen:"
         echo "  kustomize build <overlay> | grep -A2 '^  repo:'"

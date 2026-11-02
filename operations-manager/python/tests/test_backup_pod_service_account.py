@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined
+from opi.core.config import settings
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.manager.backup.bucket_backup import BucketBackupManager
 from opi.manager.backup.database_backup import DatabaseBackupManager
@@ -39,18 +41,29 @@ _BUCKET_TARGET = {
 _COMMON = {"namespace": "rig-amt", "pod_name": "pod", "kopia_password": "kp", "backup_prefix": "local/rig-amt"}
 
 
+def _strict_render(content: str, variables: dict[str, Any]) -> str:
+    """Render zoals de connector doet, maar stuit op een ontbrekende variabele."""
+    env = Environment(undefined=StrictUndefined)
+    env.filters.update(MANIFEST_FILTERS)
+    return env.from_string(content).render(**variables)
+
+
 def _manager[M: BaseBackupManager](cls: type[M]) -> M:
     kubectl = MagicMock()
     kubectl.run_command = AsyncMock(return_value=("", "", 0))
-    kubectl.template_manifest = lambda content, variables: (
-        Environment(undefined=StrictUndefined).from_string(content).render(**variables)
-    )
+    kubectl.template_manifest = _strict_render
     with patch("opi.manager.backup.base.KubectlConnector", return_value=kubectl):
         return cls(BackupConfig(s3_endpoint="http://minio:9000", s3_bucket="b", s3_access_key="a", s3_secret_key="s"))
 
 
 def _applied_pod(manager: BaseBackupManager) -> dict[str, Any]:
-    return yaml.safe_load(manager.kubectl.run_command.await_args.kwargs["stdin_input"])
+    """Het Pod-document uit de toegepaste manifesten; het credentials-Secret gaat eerst."""
+    docs = [
+        yaml.safe_load(call.kwargs["stdin_input"])
+        for call in manager.kubectl.run_command.await_args_list
+        if call.kwargs.get("stdin_input")
+    ]
+    return next(doc for doc in docs if doc["kind"] == "Pod")
 
 
 type PodCreator = Callable[[Any, str | None], Awaitable[None]]
@@ -148,6 +161,20 @@ async def test_without_a_project_no_pod_is_applied(kind: str) -> None:
         await create(manager, None)
 
     manager.kubectl.run_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", POD_CREATORS)
+async def test_the_applied_pod_takes_its_image_from_the_setting(kind: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hard in het sjabloon kon een cluster de image niet zetten, en de sandbox moet dat."""
+    monkeypatch.setattr(settings, "BACKUP_IMAGE", "ghcr.io/minbzk/base-images/rig-backup:toets")
+    cls, create = POD_CREATORS[kind]
+    manager = _manager(cls)
+
+    await create(manager, PROJECT)
+
+    containers = _applied_pod(manager)["spec"]["containers"]
+    assert [container["image"] for container in containers] == ["ghcr.io/minbzk/base-images/rig-backup:toets"]
 
 
 @pytest.mark.asyncio

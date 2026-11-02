@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.invite_routes import _realm_roles_unassigned
+from opi.core.authz.actions import Action
 from opi.forms.editables.enforcers import FieldError, UniqueInviteKeyEnforcer
 from opi.forms.editables.validators import InviteKeyValidator
 from opi.forms.visualizers.providers import InviteRealmRoleOptionsProvider
@@ -294,25 +295,30 @@ class TestInviteRealmRoleOptionsProvider:
 
 class TestDetailPageSections:
     @staticmethod
-    def _sections(project: dict[str, Any], user_role: str) -> list:
+    def _sections(project: dict[str, Any], *, mag_sleutel_lezen: bool) -> list:
         return InviteService().handle_ui(
-            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=project, user_role=user_role)
+            UIEvent.PROJECT_SECTIONS,
+            ProjectPageContext(
+                project_data=project,
+                can=lambda handeling: mag_sleutel_lezen and handeling is Action.PROJECT_KEY_READ,
+            ),
         )
 
     def test_admin_sees_the_block(self) -> None:
         project = _invite_service_project([_production_invite_config_entry()])
-        sections = self._sections(project, "admin")
+        sections = self._sections(project, mag_sleutel_lezen=True)
         assert len(sections) == 1
         assert sections[0].template == "invite/section-detail.html.j2"
         assert sections[0].context["invites"][0]["key"] == "invulhulpen"
         assert "allowed-user" in sections[0].context["invites"][0]["realm_roles"]
 
-    def test_developer_sees_nothing(self) -> None:
+    def test_wie_de_projectsleutel_niet_mag_lezen_ziet_niets(self) -> None:
+        """De link IS het geheim, dus het blok hangt aan ``project-key.read``."""
         project = _invite_service_project([_production_invite_config_entry()])
-        assert self._sections(project, "developer") == []
+        assert self._sections(project, mag_sleutel_lezen=False) == []
 
     def test_no_invites_gives_nothing(self) -> None:
-        assert self._sections(_invite_service_project([]), "admin") == []
+        assert self._sections(_invite_service_project([]), mag_sleutel_lezen=True) == []
 
 
 def _production_invite_config_entry() -> dict[str, Any]:

@@ -13,8 +13,8 @@ SAMPLE_YAML = {
     "display-name": "Test Project",
     "description": "Een test project",
     "users": [
-        {"email": "admin@test.nl", "role": "admin"},
-        {"email": "dev@test.nl", "role": "developer"},
+        {"email": "admin@test.nl", "roles": ["admin", "ops"]},
+        {"email": "dev@test.nl", "roles": ["developer"]},
     ],
     "components": [
         {
@@ -215,8 +215,8 @@ class TestApplyToYaml:
         )
         submitted = {
             "users": [
-                {"email": "new-admin@test.nl", "role": "admin"},
-                {"email": "new-dev@test.nl", "role": "developer"},
+                {"email": "new-admin@test.nl", "roles": ["admin", "ops"]},
+                {"email": "new-dev@test.nl", "roles": ["developer"]},
             ]
         }
         result, _ = await processor.process_json_submission(submitted, [seq_vis], SAMPLE_YAML)

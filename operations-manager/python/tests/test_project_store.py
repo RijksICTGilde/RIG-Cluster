@@ -24,6 +24,7 @@ import hashlib
 from typing import Any
 
 import pytest
+from opi.core.audit_trail import begin_trail, trail
 from opi.core.project_schema import ProjectSchemaError
 from opi.services.project_service import get_project_service
 from opi.services.project_store import (
@@ -44,13 +45,12 @@ def _project(deployments: list[dict[str, Any]] | None = None, **extra: Any) -> d
         "name": PROJECT_NAME,
         "display-name": "Demo",
         "description": "test project",
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["odcn-production"],
         "services": [],
         "components": [],
         "deployments": deployments if deployments is not None else [],
-        # The schema requires an AGE-encrypted (or base64+age) api-key.
-        "config": {"api-key": "base64+age:dGVzdC1hcGkta2V5"},
+        "config": {"age-public-key": "age1nepnepnep"},
     }
     data.update(extra)
     return data
@@ -183,7 +183,13 @@ class FakeGitConnector:
             return dict(self._built[ref][0])
         return next((dict(c["files"]) for c in self.remote.commits if c["ref"] == ref), {})
 
-    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+    async def build_commit(
+        self,
+        changes: dict[str, str | None],
+        message: str,
+        parent: str | None = None,
+        actor: object | None = None,
+    ) -> str | None:
         # Built from the PARENT COMMIT's tree, never from self.tree. Real plumbing
         # does read-tree <parent> into a private index and applies only the named
         # paths, so a dirty working copy cannot leak into the commit. Deriving this
@@ -327,6 +333,29 @@ async def test_mutate_applies_and_commits(harness: StoreHarness) -> None:
     assert result.before["deployments"] == []
 
 
+async def test_mutate_accepts_a_callable_message_resolved_after_the_change_ran(harness: StoreHarness) -> None:
+    """A commit message can name what the change actually did, not what it was asked to do.
+
+    Called after ``change`` so it can read what landed (here: how many deployments exist
+    afterwards) instead of a count fixed before the mutation ran.
+    """
+    seen: list[int] = []
+
+    def change(data: dict[str, Any]) -> dict[str, Any]:
+        data.setdefault("deployments", []).append(
+            {"name": "dep-1", "cluster": "odcn-production", "namespace": "demo", "components": []}
+        )
+        seen.append(len(data["deployments"]))
+        return data
+
+    def message() -> str:
+        return f"{seen[-1]} deployments na de wijziging"
+
+    await harness.store.mutate(PROJECT_NAME, change, message=message, actor="tester")
+
+    assert harness.remote.commits[-1]["message"] == "1 deployments na de wijziging"
+
+
 async def test_mutations_are_mutually_exclusive(harness: StoreHarness) -> None:
     """The lock guarantee: two mutations never run their read-modify-write concurrently.
 
@@ -447,6 +476,42 @@ async def test_enforce_validation_false_still_persists(harness: StoreHarness) ->
     )
 
     assert result.committed is True
+
+
+async def test_a_forbidden_character_never_commits(harness: StoreHarness) -> None:
+    """The backstop (RC-327) runs for every string value, not only fields with a pattern."""
+    commits_before = len(harness.remote.commits)
+
+    def add_control_char(data: dict[str, Any]) -> dict[str, Any]:
+        data["display-name"] = "demo\x00evil"
+        return data
+
+    with pytest.raises(ProjectSchemaError, match="display-name"):
+        await harness.store.mutate(PROJECT_NAME, add_control_char, message="inject", actor="tester")
+
+    assert len(harness.remote.commits) == commits_before
+    assert "\x00" not in _current(harness)["display-name"]
+
+
+async def test_a_forbidden_character_with_enforce_false_still_persists_but_is_logged(
+    harness: StoreHarness, caplog
+) -> None:
+    """Non-enforcing writers tolerate it like any other pre-existing drift, but log it."""
+    import logging
+
+    def add_control_char(data: dict[str, Any]) -> dict[str, Any]:
+        data["display-name"] = "demo\x00evil"
+        return data
+
+    with caplog.at_level(logging.WARNING, logger="opi.services.project_store"):
+        result = await harness.store.mutate(
+            PROJECT_NAME, add_control_char, message="recovery write", actor="auto-tune", enforce_validation=False
+        )
+
+    assert result.committed is True
+    assert _current(harness)["display-name"] == "demo\x00evil"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("display-name" in m for m in messages), messages
 
 
 # ----------------------------------------------------------------------------
@@ -860,3 +925,53 @@ async def test_persist_reports_a_write_that_changed_nothing(harness: StoreHarnes
     messages = [r.getMessage() for r in caplog.records]
     assert any(m.startswith("store-persist") and "no change" in m for m in messages), messages
     assert not any(m.startswith("store-push") for m in messages), messages
+
+
+# ----------------------------------------------------------------------------
+# het spoor voor de audit: welke commits maakte DIT verzoek
+# ----------------------------------------------------------------------------
+
+
+async def test_elke_commit_komt_in_het_spoor_van_het_verzoek(harness: StoreHarness) -> None:
+    """Twee keer opslaan binnen een verzoek levert twee SHA's voor de auditrij."""
+    begin_trail()
+    eerste = await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add dep-1", actor="tester")
+    tweede = await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-2"), message="add dep-2", actor="tester")
+
+    assert trail().commit_shas == [eerste.ref, tweede.ref]
+
+
+async def test_een_idempotente_opslag_voegt_geen_sha_toe(harness: StoreHarness) -> None:
+    begin_trail()
+    await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add", actor="tester")
+    na_eerste = list(trail().commit_shas)
+
+    result = await harness.store.mutate(PROJECT_NAME, _add_deployment("dep-1"), message="add again", actor="tester")
+
+    assert result.committed is False
+    assert trail().commit_shas == na_eerste
+
+
+async def test_een_ander_verzoek_ziet_de_shas_niet(harness: StoreHarness) -> None:
+    """Een verzoek draait in zijn eigen context, dus het spoor lekt er niet uit."""
+
+    async def verzoek(naam: str) -> list[str]:
+        begin_trail()
+        await harness.store.mutate(PROJECT_NAME, _add_deployment(naam), message=f"add {naam}", actor="tester")
+        return trail().commit_shas
+
+    eerste = await asyncio.create_task(verzoek("dep-1"))
+    tweede = await asyncio.create_task(verzoek("dep-2"))
+
+    assert len(eerste) == 1
+    assert len(tweede) == 1
+    assert eerste != tweede
+    assert trail().commit_shas == [], "deze aanroeper sloeg zelf niets op"
+
+
+async def test_een_commit_buiten_een_verzoek_groeit_niet_aan(harness: StoreHarness) -> None:
+    """De nachtelijke tuner commit in EEN langlevende taak; zonder spoor blijft dat leeg."""
+    for ronde in ("sweep-1", "sweep-2"):
+        await harness.store.mutate(PROJECT_NAME, _add_deployment(ronde), message=f"add {ronde}", actor="tuner")
+
+    assert trail().commit_shas == []

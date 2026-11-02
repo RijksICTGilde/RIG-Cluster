@@ -1,18 +1,18 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "{{ pod_name }}"
-  namespace: "{{ namespace }}"
+  name: {{ pod_name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
     app.kubernetes.io/name: pvc-restore
     app.kubernetes.io/component: restore-job
     app.kubernetes.io/managed-by: opi-backup
-    backup.rig.nl/pvc: "{{ pvc_name }}"
-    backup.rig.nl/target-pvc: "{{ target_pvc_name }}"
+    backup.rig.nl/pvc: {{ pvc_name | yaml_scalar }}
+    backup.rig.nl/target-pvc: {{ target_pvc_name | yaml_scalar }}
 spec:
-  serviceAccountName: "{{ service_account_name }}"
+  serviceAccountName: {{ service_account_name | yaml_scalar }}
   restartPolicy: Never
-  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) | int }}
   securityContext:
     {% if cluster in ['local', 'sandboxed-local'] %}
     runAsUser: 1001
@@ -23,7 +23,7 @@ spec:
     {% endif %}
   containers:
     - name: kopia
-      image: ghcr.io/minbzk/base-images/rig-backup:latest
+      image: {{ backup_image }}
       imagePullPolicy: IfNotPresent
       command:
         - /bin/sh
@@ -31,9 +31,9 @@ spec:
         - |
           set -e
 
-          echo "Starting restore for PVC: {{ pvc_name }}"
-          echo "Target PVC: {{ target_pvc_name }}"
-          echo "Namespace: {{ namespace }}"
+          echo "Starting restore for PVC: ${PVC_NAME}"
+          echo "Target PVC: ${TARGET_PVC_NAME}"
+          echo "Namespace: ${NAMESPACE}"
           echo "S3 Endpoint: ${S3_ENDPOINT}"
           echo "S3 Bucket: ${S3_BUCKET}"
           echo "Backup Prefix: ${BACKUP_PREFIX}"
@@ -47,13 +47,12 @@ spec:
 
           # Connect to repository
           echo "Connecting to Kopia repository..."
+          # Kopia takes the repository password from KOPIA_PASSWORD and the S3 keys from
+          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, so they stay out of argv.
           kopia repository connect s3 \
             --bucket="${S3_BUCKET}" \
             --prefix="${BACKUP_PREFIX}/" \
             --endpoint="${S3_ENDPOINT}" \
-            --access-key="${S3_ACCESS_KEY}" \
-            --secret-access-key="${S3_SECRET_KEY}" \
-            --password="${KOPIA_PASSWORD}" \
             ${TLS_FLAG}
 
           echo "Repository connected successfully"
@@ -62,13 +61,13 @@ spec:
           SNAPSHOT_ID="${RESTORE_SNAPSHOT_ID}"
 
           if [ -z "$SNAPSHOT_ID" ]; then
-            echo "No snapshot ID specified, finding latest snapshot for PVC {{ pvc_name }}..."
+            echo "No snapshot ID specified, finding latest snapshot for PVC ${PVC_NAME}..."
             # Get latest snapshot with matching PVC tag
-            SNAPSHOT_ID=$(kopia snapshot list --tags="pvc:{{ pvc_name }}" --json 2>/dev/null | \
+            SNAPSHOT_ID=$(kopia snapshot list --tags="pvc:${PVC_NAME}" --json 2>/dev/null | \
               jq -r 'sort_by(.startTime) | reverse | .[0].id // empty')
 
             if [ -z "$SNAPSHOT_ID" ]; then
-              echo "ERROR: No snapshots found for PVC {{ pvc_name }}"
+              echo "ERROR: No snapshots found for PVC ${PVC_NAME}"
               exit 1
             fi
             echo "Found latest snapshot: $SNAPSHOT_ID"
@@ -91,24 +90,41 @@ spec:
           echo "Verifying restore..."
           ls -la /data || true
 
-          echo "Restore completed successfully for {{ pvc_name }} -> {{ target_pvc_name }}"
+          echo "Restore completed successfully for ${PVC_NAME} -> ${TARGET_PVC_NAME}"
       env:
+        # De namen die het script print en als tag meegeeft, komen via env binnen en
+        # niet in het script zelf: YAML-quoting is geen shell-quoting.
+        - name: NAMESPACE
+          value: {{ namespace | yaml_scalar }}
+        - name: PVC_NAME
+          value: {{ pvc_name | yaml_scalar }}
+        - name: TARGET_PVC_NAME
+          value: {{ target_pvc_name | yaml_scalar }}
         - name: S3_ENDPOINT
-          value: "{{ s3_endpoint }}"
+          value: {{ s3_endpoint | yaml_scalar }}
         - name: S3_BUCKET
-          value: "{{ s3_bucket }}"
-        - name: S3_ACCESS_KEY
-          value: "{{ s3_access_key }}"
-        - name: S3_SECRET_KEY
-          value: "{{ s3_secret_key }}"
+          value: {{ s3_bucket | yaml_scalar }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: AWS_SECRET_ACCESS_KEY
         - name: S3_DISABLE_TLS
-          value: "{{ s3_disable_tls | lower }}"
+          value: {{ s3_disable_tls | lower | yaml_scalar }}
         - name: BACKUP_PREFIX
-          value: "{{ backup_prefix }}"
+          value: {{ backup_prefix | yaml_scalar }}
         - name: KOPIA_PASSWORD
-          value: "{{ kopia_password }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: KOPIA_PASSWORD
         - name: RESTORE_SNAPSHOT_ID
-          value: "{{ snapshot_id }}"
+          value: {{ snapshot_id | yaml_scalar }}
         # Use /tmp for Kopia paths (HOME may not be writable)
         - name: KOPIA_CONFIG_PATH
           value: "/tmp/kopia-repository.config"
@@ -129,4 +145,4 @@ spec:
   volumes:
     - name: data
       persistentVolumeClaim:
-        claimName: "{{ target_pvc_name }}"
+        claimName: {{ target_pvc_name | yaml_scalar }}

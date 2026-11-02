@@ -1,0 +1,24 @@
+{#
+  De regels die geen projectrecht zijn. Ze staan op de pagina omdat hun afwezigheid zou
+  lezen als "die routes zijn vrij".
+#}
+{% from "bg/_patterns.html.j2" import panel %}
+{% for naam, regels in andere_regels %}
+    {% call panel(naam) %}
+        <c-paragraph>
+            Deze routes werken niet op een project, dus er is geen projectrol die ze opent.
+        </c-paragraph>
+        <nldd-table columns="2fr 1.4fr" accessible-label="{{ naam }}">
+            <nldd-table-row slot="header">
+                <nldd-text-cell text="**Handeling**"></nldd-text-cell>
+                <nldd-text-cell text="**Action**"></nldd-text-cell>
+            </nldd-table-row>
+            {% for regel in regels %}
+                <nldd-table-row>
+                    <nldd-text-cell text="{{ regel.label }}"></nldd-text-cell>
+                    <nldd-text-cell text="{{ regel.action.value }}"></nldd-text-cell>
+                </nldd-table-row>
+            {% endfor %}
+        </nldd-table>
+    {% endcall %}
+{% endfor %}

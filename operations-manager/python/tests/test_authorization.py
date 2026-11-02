@@ -4,9 +4,11 @@ Tests for opi.middleware.authorization module.
 Tests get_user, _route_requires_sso, and AuthorizationMiddleware.dispatch.
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core.actor import ACTOR_UNKNOWN, get_actor, user_actor
 from opi.middleware.authorization import AuthorizationMiddleware, get_user
 from starlette.requests import Request
 from starlette.responses import Response
@@ -19,11 +21,12 @@ class TestGetUser:
     def test_returns_user_from_session(self):
         """Should return user dict when present in session."""
         mock_request = MagicMock(spec=Request)
-        mock_request.session = {"user": {"email": "test@example.com", "name": "Test"}}
+        user = {"email": "test@example.com", "name": "Test", "login_at": time.time()}
+        mock_request.session = {"user": user}
 
         result = get_user(mock_request)
 
-        assert result == {"email": "test@example.com", "name": "Test"}
+        assert result == user
 
     def test_returns_none_when_no_user_in_session(self):
         """Should return None when session has no user."""
@@ -157,7 +160,7 @@ class TestAuthorizationMiddlewareDispatch:
     async def test_authenticated_user_passes(self):
         """Should pass through when user is authenticated."""
         middleware = self._make_middleware()
-        user = {"email": "test@example.com"}
+        user = {"email": "test@example.com", "login_at": time.time()}
         request = self._make_request("/dashboard", session={"user": user})
         expected_response = Response(content="ok")
         call_next = AsyncMock(return_value=expected_response)
@@ -173,12 +176,44 @@ class TestAuthorizationMiddlewareDispatch:
 
         assert result is expected_response
         assert request.state.user == user
+        assert get_actor() == user_actor("test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_api_routes_skip_sso_laat_de_actor_onbekend(self):
+        """Geen ingang zette een actor, dus hij blijft op de vaste standaardwaarde staan."""
+        middleware = self._make_middleware()
+        request = self._make_request("/api/v1/projects")
+        call_next = AsyncMock(return_value=Response(content="ok"))
+
+        with patch.object(middleware, "_route_requires_sso", return_value=False):
+            await middleware.dispatch(request, call_next)
+
+        assert get_actor() == ACTOR_UNKNOWN
+
+    @pytest.mark.asyncio
+    async def test_gebruiker_zonder_email_zet_geen_actor(self):
+        """``user.get('email')`` ontbreekt: niets om als actor te zetten."""
+        middleware = self._make_middleware()
+        user = {"name": "Zonder e-mail"}
+        request = self._make_request("/dashboard", session={"user": user})
+        call_next = AsyncMock(return_value=Response(content="ok"))
+
+        mock_user_service = MagicMock()
+        mock_user_service.is_email_allowed.return_value = True
+
+        with (
+            patch.object(middleware, "_route_requires_sso", return_value=True),
+            patch("opi.middleware.authorization.get_user_service", return_value=mock_user_service),
+        ):
+            await middleware.dispatch(request, call_next)
+
+        assert get_actor() == ACTOR_UNKNOWN
 
     @pytest.mark.asyncio
     async def test_unauthorized_email_redirected(self):
         """Should redirect to permission-denied when email not in allowlist."""
         middleware = self._make_middleware()
-        user = {"email": "blocked@example.com"}
+        user = {"email": "blocked@example.com", "login_at": time.time()}
         request = self._make_request("/dashboard", session={"user": user})
         call_next = AsyncMock()
 

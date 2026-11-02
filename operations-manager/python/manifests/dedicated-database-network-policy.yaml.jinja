@@ -1,0 +1,32 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
+spec:
+  # Een toegewijd PostgreSQL-cluster in de projectnamespace. Die pods dragen geen
+  # deployment-label, dus zonder deze policy houdt de default-deny ze dicht voor de
+  # deployment die er zijn data in heeft staan.
+  podSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: Exists
+  policyTypes:
+    - Ingress
+  ingress:
+    # Elke pod in deze namespace op 5432: de deployments, de helm-workloads, de
+    # backup- en restorepods, en de instances onderling voor hun replicatie. Een
+    # opsomming per soort zou dezelfde verzameling zijn, want verder woont hier niets.
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+    # De CNPG-operator haalt de instance-status op. Zonder poort, net als de regel
+    # voor de operator in de baseline van de infrastructuurnamespace: de poort staat
+    # in geen enkele policy in deze repo, en hem hier verzinnen zet het cluster vast
+    # op Unknown zodra hij niet klopt.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ database_operator_namespace }}"

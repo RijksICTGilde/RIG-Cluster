@@ -9,9 +9,9 @@ twee talen achter.
 Gekozen is daarom voor vertalen bij de WEERGAVE. Deze test legt die keuze vast aan beide
 kanten: de weergave is Nederlands, en de opgeslagen waarde verandert niet.
 
-Dezelfde behandeling krijgen de drie andere Engelse stapregels die de
-voortgangsschrijvers wegschrijven (``Starting...``, ``Done``, ``Failed: <fout>``). Die
-stonden niet in de opdracht maar staan op precies hetzelfde scherm.
+Dezelfde behandeling krijgen de andere Engelse stapregels die de voortgangsschrijvers
+wegschrijven (``Starting...``, ``Done``, ``Failed``, en het oudere ``Failed: <fout>``).
+Die stonden niet in de opdracht maar staan op precies hetzelfde scherm.
 """
 
 from __future__ import annotations
@@ -29,6 +29,10 @@ class TestDeVertaling:
     def test_de_andere_vaste_regels_ook(self) -> None:
         assert stap_label("Starting...") == "Wordt gestart..."
         assert stap_label("Done") == "Klaar"
+
+    def test_een_mislukking_is_nederlands(self) -> None:
+        """Sinds RC-282 schrijft ``fail_project`` alleen deze kop weg."""
+        assert stap_label("Failed") == "Mislukt"
 
     def test_een_mislukking_houdt_zijn_fouttekst(self) -> None:
         """Alleen de kop vertaalt; wat erachter staat is de melding zelf."""

@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ name }}
-  namespace: {{ namespace }}
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
 spec:
 {% if pod_selector %}
   podSelector:
@@ -12,7 +12,20 @@ spec:
   podSelector: {}
 {% endif %}
   ingress:
-    - ports:
+    # from_selector is verplicht: een policy zonder from-blok laat elke bron in het
+    # cluster toe, en dat is nooit de bedoeling van een aanroeper die hem vergeet.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: "{{ from_selector.namespace }}"
+{% if from_selector.pod_labels %}
+          podSelector:
+            matchLabels:
+{% for label_key, label_value in from_selector.pod_labels.items() %}
+              {{ label_key }}: "{{ label_value }}"
+{% endfor %}
+{% endif %}
+      ports:
 {% for port in ports %}
         - port: {{ port }}
           protocol: TCP

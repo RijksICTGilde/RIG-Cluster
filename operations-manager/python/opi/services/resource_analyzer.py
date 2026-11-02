@@ -8,8 +8,17 @@ import logging
 import math
 import re
 from dataclasses import dataclass
+from typing import Final
 
 logger = logging.getLogger(__name__)
+
+#: De vorm van een Kubernetes-hoeveelheid in een projectbestand: precies de achtervoegsels
+#: die de twee parsers hieronder aankunnen, geen enkel teken meer. Staat hier omdat dit de
+#: module is die een hoeveelheid in een getal omzet; ``$defs/k8s-quantity`` in
+#: project_v2.json neemt deze tekst over en test_project_schema_validation houdt de twee
+#: gelijk. Grenzen horen hier niet: die liggen per cluster (cluster_config) of per dienst
+#: (``QuantitySetting``).
+K8S_QUANTITY_PATTERN: Final[str] = r"^[0-9]+(\.[0-9]+)?([munk]|Ki|[MGTP]i?)?\Z"
 
 
 @dataclass

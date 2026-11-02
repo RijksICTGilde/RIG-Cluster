@@ -15,7 +15,9 @@ spec:
       labels:
         app: prometheus
     spec:
-      serviceAccountName: namespace-manager
+      serviceAccountName: prometheus
+      # Service discovery praat met de kube-API, dus het token moet mee.
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         fsGroup: 65534
@@ -23,12 +25,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: prometheus
-          image: prom/prometheus:v2.54.1
+          image: prom/prometheus:v2.55.1
           args:
             - '--config.file=/etc/prometheus/prometheus.yml'
             - '--storage.tsdb.path=/prometheus'
             - '--storage.tsdb.retention.time=7d'
-            - '--web.enable-lifecycle'
           ports:
             - containerPort: 9090
               name: http

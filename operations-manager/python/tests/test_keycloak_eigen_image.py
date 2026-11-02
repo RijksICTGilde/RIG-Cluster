@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.programma import echt_programma
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -291,11 +292,8 @@ class TestDePodBouwtDeImageNietOpnieuwOm:
             assert not any(a == f"--{optie}" or a.startswith(f"--{optie}=") for a in args), optie
 
     def test_geen_bouwoptie_staat_in_de_omgeving(self) -> None:
-        """Daar is hij stil: met --optimized waarschuwt Keycloak en doet hij niets.
-
-        Zo bleef KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED wel staan: een spi-optie wordt
-        niet ingebakken, dus die MOET bij de pod staan om iets te doen.
-        """
+        """Daar breekt hij de start: Keycloak 26 stopt met --optimized op elke bouwoptie die
+        afwijkt van de ingebakken waarde (gemeten op 26.8.1 met KC_HEALTH_ENABLED=false)."""
         namen = _env_namen(_basis_container())
         for optie in BOUWOPTIES:
             assert _omgevingsnaam(optie) not in namen, optie
@@ -874,16 +872,19 @@ def _kopie(tmp_path: Path) -> Path:
     return repo
 
 
-def _rendered_pod(wortel: Path, overlay: str) -> dict:
-    """De podspec die kustomize voor deze overlay oplevert, niet wat de manifesten zeggen."""
+def _rendered_deployment(wortel: Path, overlay: str) -> dict:
+    """De deployment die kustomize voor deze overlay oplevert, niet wat de manifesten zeggen."""
     proc = subprocess.run(
         ["kustomize", "build", str(wortel / KEYCLOAK.relative_to(REPO_ROOT) / "overlays" / overlay)],
         capture_output=True,
         text=True,
     )
     assert proc.returncode == 0, proc.stderr
-    deployment = next(d for d in yaml.safe_load_all(proc.stdout) if d and d["kind"] == "Deployment")
-    return deployment["spec"]["template"]["spec"]
+    return next(d for d in yaml.safe_load_all(proc.stdout) if d and d["kind"] == "Deployment")
+
+
+def _rendered_pod(wortel: Path, overlay: str) -> dict:
+    return _rendered_deployment(wortel, overlay)["spec"]["template"]["spec"]
 
 
 def _rendered_container(wortel: Path, overlay: str) -> dict:
@@ -912,13 +913,14 @@ def _draai(tmp_path: Path, taak: str, *extra: str, **env_extra: str) -> Run:
     (tmp_path / "calls.log").write_text("")
 
     proc = subprocess.run(
-        ["task", taak, *extra],
+        # De echte binary en niet de naam: een shim van asdf of mise zoekt zijn versie in
+        # de WERKMAP, en die is hier een tijdelijke map zonder .tool-versions.
+        [echt_programma("task"), taak, *extra],
         cwd=repo,
         capture_output=True,
         text=True,
         timeout=120,
-        # De stubs ervoor en niet in plaats van het PATH: `task` is hier een mise-shim en
-        # git, awk en kustomize moeten gewoon te vinden blijven.
+        # Stubs toevoegen, niet PATH vervangen: git, awk en kustomize moeten bereikbaar zijn.
         env=os.environ
         | {"PATH": f"{bindir}:{os.environ['PATH']}", "STUB_LOG": str(tmp_path / "calls.log")}
         | env_extra,
@@ -942,10 +944,8 @@ PROEFTAG = "2026.09.26.1432-abcdef12"
 
 @pytest.fixture
 def task_aanwezig() -> None:
-    if shutil.which("task") is None:
-        pytest.skip("task niet gevonden op PATH")
-    if shutil.which("bash") is None:
-        pytest.skip("bash niet gevonden op PATH")
+    echt_programma("task")
+    echt_programma("bash")
 
 
 @pytest.mark.usefixtures("task_aanwezig")

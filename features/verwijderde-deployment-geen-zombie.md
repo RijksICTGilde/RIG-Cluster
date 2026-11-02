@@ -1,5 +1,7 @@
 # Een verwijderde deployment komt niet terug als zombie
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 Een deployment verwijderen kon een zombie opleveren: de deployment stond niet meer in het
 projectbestand, maar zijn ArgoCD Application en manifestmap stonden nog in git, en ArgoCD
 hield hem draaiend. Er wees niets meer naar, dus niemand ruimde hem op. In productie
@@ -76,6 +78,19 @@ steeds geschreven, en de deployment blijft in het projectbestand staan, dus beid
 vragen nog om dezelfde stand en een retry kan het afmaken. Een mislukte git-bewerking blijft
 een andere zaak: die laat een map achter die niemand meer kent. Het gedrag van force-mode
 verandert hier niet.
+
+## De keerzijde: de entry die blijft staan
+
+Een entry die stap 8 laat staan houdt de delete herhaalbaar, en dat is de bedoeling. Maar voor
+de VOLGENDE verwijdering was diezelfde entry een gewone, levende deployment, en daarmee hield
+ze het AppProject en de namespace tegen (invariant I2). Bij een project met twee deployments in
+een namespace was dat de normale uitkomst: drie van de vijf projecten in de teardown van
+23 oktober 2026 hielden zo hun namespace, met het secret `sops-age-key` erin.
+
+Sinds RC-385 vraagt die grendel naar een deployment die BLIJFT: pad 1 geeft de namen van de
+deployments die deze ronde weggaan mee, en ruimt na de lus zelf de namespaces op waar geen
+deployment meer naar wijst. De entry blijft dus staan, en houdt niets meer tegen. Zie geval 5
+van [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
 
 ## Waar het staat
 

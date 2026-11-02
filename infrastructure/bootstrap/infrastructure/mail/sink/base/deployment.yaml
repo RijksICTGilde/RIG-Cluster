@@ -100,7 +100,7 @@ spec:
               ephemeral-storage: "128Mi"
       containers:
         - name: mailpit
-          image: axllent/mailpit:v1.30.7
+          image: axllent/mailpit:v1.31.6
           env:
             # Geen MP_DATABASE, dus alles blijft in het geheugen. Een sink hoort niets te
             # bewaren: een herstart is de manier om schoon te beginnen, en er is geen PVC

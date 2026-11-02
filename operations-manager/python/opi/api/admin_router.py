@@ -1,7 +1,9 @@
 """Admin API router for cleanup, reconciliation, and maintenance operations.
 
 Provides endpoints for managing resource lifecycle operations that are
-separate from the normal project API. Authenticated via ADMIN_API_KEY.
+separate from the normal project API. Authenticated with the bearer token of a
+platform admin, and every route that CHANGES something also wants a fresh code in
+``X-ZAD-OTP``; see ``features/platformbeheer-via-de-api.md``.
 
 Endpoints:
     GET  /api/v2/admin/marked-for-deletion          - List marked resources
@@ -15,10 +17,14 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_admin_api_key
+from opi.api.user_token_auth import validate_platform_admin_token
+from opi.core.auth_decorators import requires_step_up
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
+from opi.core.step_up import StepUpAction
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.services.project_store import get_project_store
+from opi.services.step_up_conditions import vraagt_altijd_step_up
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +32,8 @@ admin_router: APIRouter = APIRouter(
     prefix="/api/v2/admin",
     tags=["admin"],
     responses={
-        401: {"description": "Unauthorized - invalid or missing ADMIN_API_KEY"},
-        501: {"description": "ADMIN_API_KEY not configured"},
+        401: {"description": "Unauthorized - no valid Authorization: Bearer token"},
+        403: {"description": "Forbidden - the caller is not a platform admin"},
         500: {"description": "Internal server error"},
     },
     default_response_class=JSONResponse,
@@ -40,7 +46,8 @@ def _get_marked_for_deletion_service() -> MarkedForDeletionService:
 
 
 @admin_router.get("/marked-for-deletion")
-@validate_admin_api_key
+@action(Action.PLATFORM_CLEANUP)
+@validate_platform_admin_token
 async def list_marked_for_deletion(
     request: Request,
     project_name: str | None = Query(None, description="Filter by project name"),
@@ -53,7 +60,7 @@ async def list_marked_for_deletion(
 
     Example:
         curl -X GET "http://localhost:9595/api/v2/admin/marked-for-deletion?project_name=my-project" \\
-          -H "X-API-Key: your-admin-api-key"
+          -H "Authorization: Bearer $ZAD_TOKEN"
     """
     service = _get_marked_for_deletion_service()
 
@@ -73,7 +80,9 @@ async def list_marked_for_deletion(
 
 
 @admin_router.post("/cleanup/trigger")
-@validate_admin_api_key
+@action(Action.PLATFORM_CLEANUP)
+@validate_platform_admin_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.CLEANUP_START)
 async def trigger_cleanup(
     request: Request,
     project_name: str = Query(..., description="Project name to clean up (required)"),
@@ -90,7 +99,7 @@ async def trigger_cleanup(
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/cleanup/trigger?project_name=my-project&dry_run=false" \\
-          -H "X-API-Key: your-admin-api-key"
+          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
     """
     from opi.jobs.reconciliation import cleanup_project
 
@@ -107,7 +116,9 @@ async def trigger_cleanup(
 
 
 @admin_router.post("/reconciliation/trigger")
-@validate_admin_api_key
+@action(Action.PLATFORM_RECONCILE)
+@validate_platform_admin_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.RECONCILIATION_START)
 async def trigger_reconciliation(
     request: Request,
     dry_run: bool = Query(True, description="Preview actions without executing (default: true)"),
@@ -126,7 +137,7 @@ async def trigger_reconciliation(
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/reconciliation/trigger?dry_run=false" \\
-          -H "X-API-Key: your-admin-api-key"
+          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
     """
     from opi.jobs.reconciliation import reconcile
 
@@ -153,7 +164,9 @@ async def trigger_reconciliation(
 
 
 @admin_router.delete("/marked-for-deletion/{mark_id}")
-@validate_admin_api_key
+@action(Action.PLATFORM_CLEANUP)
+@validate_platform_admin_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.MARKING_REVOKE)
 async def delete_mark(
     request: Request,
     mark_id: str,
@@ -165,7 +178,7 @@ async def delete_mark(
 
     Example:
         curl -X DELETE "http://localhost:9595/api/v2/admin/marked-for-deletion/some-uuid" \\
-          -H "X-API-Key: your-admin-api-key"
+          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
     """
     service = _get_marked_for_deletion_service()
 
@@ -183,7 +196,8 @@ async def delete_mark(
 
 
 @admin_router.get("/orphans/report")
-@validate_admin_api_key
+@action(Action.PLATFORM_CLEANUP)
+@validate_platform_admin_token
 async def orphan_sweep_report(request: Request) -> JSONResponse:
     """Run the read-only service-orphan sweep and return the report.
 
@@ -194,7 +208,7 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
 
     Example:
         curl -X GET "http://localhost:9595/api/v2/admin/orphans/report" \\
-          -H "X-API-Key: your-admin-api-key"
+          -H "Authorization: Bearer $ZAD_TOKEN"
     """
     from opi.jobs.service_orphan_sweep import sweep
 
@@ -206,7 +220,9 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
 
 
 @admin_router.post("/orphans/confirm")
-@validate_admin_api_key
+@action(Action.PLATFORM_CLEANUP)
+@validate_platform_admin_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.ORPHANS_CONFIRM)
 async def confirm_orphans(request: Request) -> JSONResponse:
     """Mark confirmed orphan candidates for grace-period deletion.
 
@@ -222,7 +238,8 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/orphans/confirm" \\
-          -H "X-API-Key: your-admin-api-key" -H "Content-Type: application/json" \\
+          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456" \\
+          -H "Content-Type: application/json" \\
           -d '{"items": [{"type": "postgresql_database", "name": "regel_k4c_pr104"}]}'
     """
     from opi.jobs.service_orphan_sweep import CONFIRMABLE, sweep
@@ -293,7 +310,9 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 
 
 @admin_router.post("/projects/:reconcile")
-@validate_admin_api_key
+@action(Action.PLATFORM_RECONCILE)
+@validate_platform_admin_token
+@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.PROJECTS_RELOAD)
 async def reconcile_projects(request: Request) -> JSONResponse:
     """Pull the projects repo into the store now, instead of waiting for the poll.
 
@@ -307,7 +326,7 @@ async def reconcile_projects(request: Request) -> JSONResponse:
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/projects/:reconcile" \\
-          -H "X-API-Key: your-admin-api-key"
+          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
     """
     store = get_project_store()
 

@@ -1,16 +1,16 @@
 """API router for PVC, database, and bucket backup operations."""
 
-import base64
-import hashlib
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token, validate_master_api_key
+from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import DeploymentNamePath, ProjectNamePath
+from opi.api.user_token_auth import validate_platform_admin_token
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
+from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -23,11 +23,12 @@ from opi.manager.backup import (
     create_bucket_backup_manager,
     create_database_backup_manager,
 )
+from opi.manager.backup.base import derive_backup_password
 from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_backup_run_id
-from opi.utils.secrets import DatabaseSecret, MinIOSecret
+from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -304,7 +305,8 @@ def _bucket_result_to_model(result: BucketBackupResult) -> BucketBackupResultMod
 
 
 @backup_router.get("/status", response_model=BackupStatusResponse)
-@validate_master_api_key
+@action(Action.PLATFORM_BACKUP)
+@validate_platform_admin_token
 async def get_backup_status(request: Request) -> BackupStatusResponse:
     """
     Get current backup status.
@@ -313,14 +315,13 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
     which namespace/PVC is being backed up, and lock details.
 
     The lock is one per cluster, not one per project, so there is no project to check a
-    project key against -- and ``validate_api_token`` needs one, which is why this endpoint
-    answered 401 to every caller. It takes the master key, like the other operations
-    without a project context.
+    project key against. Reading it is platform maintenance, so a platform admin signs in
+    with their own token and lands in the actor trail as themselves.
 
     Example:
     ```bash
     curl -X GET "http://localhost:9595/api/v1/backup/status" \\
-      -H "X-API-Key: your-master-api-key"
+      -H "Authorization: Bearer <token van een platformbeheerder>"
     ```
     """
     try:
@@ -343,6 +344,7 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
 
 
 @backup_router.post("/project/{project_name}/deployment/{deployment_name}", response_model=DeploymentBackupResponse)
+@action(Action.BACKUP_CREATE)
 @validate_api_token
 async def backup_project_deployment(
     request: Request,
@@ -528,20 +530,21 @@ async def backup_project_deployment(
             except Exception as e:
                 logger.warning(f"Failed to backup database for deployment {deployment_name}: {e}")
 
-        # Backup MinIO buckets if requested and deployment uses MinIO service
-        minio_service_types = [ServiceType.MINIO_STORAGE.value]
+        # Backup buckets if requested and the deployment uses an object-storage service
+        # (minio-storage or seaweedfs-storage; both carry the backup_label "minio").
+        minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
         if "minio" in resource_types and project_file_handler.deployment_uses_service(
             project.data, deployment_name, minio_service_types
         ):
-            logger.info("Deployment uses MinIO service, attempting bucket backup")
+            logger.info("Deployment uses an object-storage service, attempting bucket backup")
             try:
-                # Get components using minio service
+                # Get components using the object-storage service
                 minio_components = project_file_handler.get_components_using_service(
                     project.data, deployment_name, minio_service_types
                 )
 
-                # Get MinIO credentials from secret
-                minio_secret = await MinIOSecret.get_data(
+                # Get the bucket credentials from the deployment's secret
+                minio_secret = await get_object_storage_secret(
                     kubectl_connector=kubectl,
                     namespace=app_namespace,
                     prefix=deployment_name,
@@ -652,6 +655,7 @@ async def backup_project_deployment(
 
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
+@action(Action.BACKUP_READ)
 @validate_api_token
 async def list_backup_runs(request: Request, project_name: ProjectNamePath, deployment_name: str) -> BackupRunsResponse:
     """
@@ -795,6 +799,7 @@ class DeleteSnapshotResponse(BaseModel):
     "/snapshot/{project_name}/{deployment_name}/{snapshot_id}",
     response_model=DeleteSnapshotResponse,
 )
+@action(Action.BACKUP_DELETE, audit_fields=("snapshot_id",))
 @validate_api_token
 async def delete_snapshot(
     request: Request,
@@ -866,7 +871,6 @@ async def delete_snapshot(
         k8s_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
 
         # Get SOPS key for this namespace and derive Kopia password
-        # (Same approach as BaseBackupManager._derive_backup_key)
         kubectl = create_kubectl_connector()
         age_key = await kubectl.get_sops_secret_from_namespace(k8s_namespace)
 
@@ -874,10 +878,7 @@ async def delete_snapshot(
             logger.warning(f"No SOPS key found in namespace {k8s_namespace}, using namespace-based key")
             age_key = f"fallback-key-{k8s_namespace}"
 
-        # Derive backup-specific password (same as BaseBackupManager)
-        material = f"kopia-backup-{k8s_namespace}-{age_key}".encode()
-        derived = hashlib.sha256(material).digest()
-        kopia_password = base64.b64encode(derived).decode()[:32]
+        kopia_password = derive_backup_password(k8s_namespace, age_key)
 
         # Build Kopia repository config
         backup_config = create_backup_manager().config

@@ -114,9 +114,14 @@ For paths into a service's config use `smart_get_value` / `smart_set_value`
 `config_model` is a Pydantic model and doubles as the guardrail and the schema source.
 
 - `config_schema_version` is a quoted `major.minor` string, stored next to `config` in the
-  file. `migrate_config(config, from_version)` is forward-only: an old file is migrated to
-  the current version before validation, because ZAD only ever reads a possibly-old file and
-  writes the current one.
+  file. MINOR counts up as a whole number, so the version after `1.9` is `1.10`, and every
+  comparison runs through `SchemaVersion` (`opi/core/project_schema.py`): as text or as a
+  float `1.10` would land before `1.9`.
+- `migrate_config(config, from_version)` is forward-only: an old file is migrated to the
+  current version before validation, because ZAD only ever reads a possibly-old file and
+  writes the current one. Declare the steps in `config_migration_steps`, in order, each
+  stamped with the version it brings the config TO; the base class applies the ones the
+  stored version has not had yet and `__init_subclass__` rejects a wrong order.
 - The global `opi/schemas/project_v2.json` validates only the entry envelope
   (`{name|reference, schema-version?, config?}`). Per-service config is validated against the
   model, and the committed fragment `catalog/<name>/<name>.v<version>.json` is drift-locked by
@@ -875,8 +880,10 @@ Every hook a service may implement, so a new service knows what it can own:
 | `config_approvals(layer)` | values that need approval before taking effect |
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
 | `available_on_cluster(cluster)` | whether a cluster can deliver this service at all; read by the wizard's card list AND by `validate_service_availability` at save time |
+| `replaced_by` / `replaced_on_cluster(cluster)` | whether this service has a SUCCESSOR on that cluster. Same two readers as `available_on_cluster`, with a softer verdict: the card goes only for a project that does not have the service yet, and the save is refused only for a deployment that would GET it. See `features/dienst-vervangen-door-een-opvolger.md` |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `validate_project(project_data)` | this service's rules on a WHOLE project, as messages, for what `validate_config` cannot judge from one config block. `validate_project_structure` refuses the write when any service returns one. Runs for EVERY project, also one that does not declare the service |
+| `validate_project_change(previous, project_data)` | the sibling of `validate_project` for a rule that needs the version the save REPLACES: a stricter bound on a NEW value, where a value already in the project file has to keep validating (the invite key's minimum length). `previous` is `{}` on a create. For a scalar with a numeric bound, `ConfigSetting`'s `grow_only` already covers it |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
 | `contribute_project_manifests(ctx)` | project-wide manifests, written once per project into `<cluster>/<project>/_project/` in the deployments repo (e.g. a registry pull-secret, a ServiceAccount). The filename MUST start with the service name, so the symmetric prune removes it again when the service goes away. See `features/image-registries.md` |
@@ -1046,6 +1053,16 @@ takes it from the previous ciphertext (auth-wall's cookie secret, see
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
 
+**Elke waarde uit het projectbestand of een service-config gaat door `| yaml_scalar`**
+(`opi/generation/manifests.py`) of `| tojson`: zonder dit kunnen regeleinden en aanhalingstekens
+een sleutel of een tweede YAML-document injecteren. `tests/test_template_injection_sweep.py`
+dwingt dit af; een nieuw sjabloon dat niet in die test staat faalt. Waarden die OPI zelf
+genereert hoeven dit niet.
+
+`yaml_scalar` weigert non-string-waarden. Een optionele waarde hoort dus altijd achter
+`{% if %}` (bijvoorbeeld `source_pvc_name` in `pvc.yaml.jinja`), anders geeft `None` een
+`TypeError` in plaats van `!!null`.
+
 ### Deployment-wide manifests
 
 `contribute_manifest_context` runs once per component. For a resource that belongs to the
@@ -1089,11 +1106,27 @@ knowledge: publish-on-web writes the sentence itself, because only it knows that
 unapproved domain does not block the deployment but moves it to the cluster address
 (`apply_domain_approval_fallback` in `opi/utils/naming.py`).
 
+**Een besluit komt alleen van de goedkeuringsroute.** De store weigert elke opslag die een
+status van je spec op `approved` of `denied` zet of laat ontstaan
+(`validate_approval_decisions` in `opi/manager/project_validation.py`), tenzij de opslag
+zich als besluit meldt met `save_and_commit_project(..., approval_decision=True)`. Die
+markering staat op precies een plek, `opi/web/router_approvals.py`, en hoort daar te
+blijven. Je service hoeft er niets voor te doen: de regel leest je `list_items`, dus hij
+geldt voor je spec zodra je hem declareert. Een aanvraag (`requested`) mag elke schrijfweg
+vastleggen, en dat is wat `ensure_approval_requests` doet.
+
 Alongside the spec, the service itself answers one more question:
 
 | Method | Question | Consumed by |
 |---|---|---|
 | `ensure_approval_requests(project_data)` | What does this project ask for that nobody has judged yet? | `opi/services/approvals.ensure_approval_requests`, called after a write that can introduce such a value |
+
+Elke formulier-schrijfweg draait hem, en dat is de voorwaarde om aan te sluiten: de
+bewerkwizard (`_save_existing_project`), het aanmaken (`_start_project_creation`), het
+opslaan van een bewerkdialoog (`_process_and_save_modal_edit`) en de API-configschrijf
+(`project_manager`). Sluit een nieuwe schrijfweg erop aan, anders ziet de beheerder een
+aanvraag die daar wordt gezet nooit, en blijft een oud besluit staan voor een stand die
+intussen veranderde.
 
 It sits on the service and not on the spec because one pass over the project can produce
 several kinds of request at once (publish-on-web reads a deployment's domain and its
@@ -1132,6 +1165,49 @@ that is switched on and silently does nothing is the fault this shape exists to 
 Note the split between blocking and enforcing: a user picking a rejected domain is stopped
 at the form field, but the save gate accepts the state, otherwise an approver could not
 record a revocation on a domain that is already in use. Enforcement happens at publication.
+
+### "May this project set this value?"
+
+De tweede vorm, `config_value_approval()` in hetzelfde bestand. Het besluit gaat niet over
+de dienst maar over een WAARDE in zijn projectconfig, en een goedkeuring geldt voor de
+waarde die is goedgekeurd: verandert die, dan ontstaat een nieuwe aanvraag. De toestand
+staat onder de dienst, op `services/[<dienst>]/config/<veld>-approval`, met `status`, de
+goedgekeurde `value` en `history`.
+
+```python
+APPROVAL = config_value_approval(
+    ServiceType.REDIS,
+    field="acl-key-prefix",
+    label="Redis zonder sleutelprefix",
+    activity="Redis gebruiken zonder sleutelprefix",
+    consequence="De Redis-gebruiker houdt het prefix {deployment}-{project}: zolang er geen goedkeuring is.",
+    required_when=lambda config: config.get("acl-key-prefix", True) is False,
+)
+```
+
+Hij geeft dezelfde drie dingen terug als `service_use_approval`, en `is_approved` is ook
+hier DE POORT: hij zegt of het veld in een stand staat die een besluit vraagt EN dat
+besluit er is. Drie dingen horen erbij:
+
+* zet het goedkeuringsveld op `PLATFORM_MANAGED` in je configmodel. Een project dat zijn
+  eigen status mag schrijven heeft geen goedkeuring;
+* `required_when` is ook wat de impliciete aanmelding leest (`requires_approval`), dus een
+  dienst met deze vorm mag zich nog aanmelden zolang zijn standaardconfig de smalle stand
+  is. Zie `features/impliciete-dienstselectie.md`;
+* de dienstkaart in de wizard en de banner boven de popup-uitleg vragen
+  `Service.enabling_needs_approval()`, niet of er een spec is: ze gaan over het AANZETTEN
+  van de dienst, en een besluit over een configwaarde geldt pas bij die waarde. Een dienst
+  met alleen deze vorm draagt dus geen "vereist goedkeuring" op zijn kaart.
+
+Gaat het veld terug naar een stand die geen besluit vraagt, dan ruimt `ensure_requested`
+het blok op. Een oordeel geldt alleen voor de stand waarvoor het gold: bleef het staan, dan
+gold een oude goedkeuring opnieuw zodra het veld terugkwam, en weigerde
+`validate_approval_decisions` daarna het opslaan omdat een `approved` die in de vorige
+versie niet bestond niet van de goedkeuringsroute kan komen.
+
+Bestaande bestanden die de waarde al droegen zijn een migratiestap, geen uitzondering in de
+code: `approve_existing_acl_key_prefix_optout` (schemaversie 2.10) neemt zo'n stand over als
+goedgekeurd, met `by: schema-migration` in de history.
 
 ## Adding a service
 
@@ -1187,6 +1263,13 @@ its four wiring points are listed under "Forms and wizard screens".
   out, and `validate_service_availability` (`opi/manager/project_validation.py`) refuses
   the save. The API and a hand-written project file never pass a card at all. vlam is the
   first inhabitant.
+- **A replaced service is not an unavailable one.** `available_on_cluster` is all-or-nothing
+  and refuses a project that already exists; a service that is merely SUPERSEDED declares
+  `replaced_by` instead, and then the two readers above are softer: the card goes only for a
+  project that does not have it yet, and the refusal hits only a deployment that is getting
+  it new (measured against `previous`). `minio-storage` to `seaweedfs-storage` is the first
+  inhabitant. Do not reach for `superseded_by_component_details` for this: that is a fact on
+  the deployment card about a component, not about the catalog.
 - **A registered service has no UI.** The registry drives behaviour, not screens. A service
   without form hooks is invisible in the wizard, and `hidden=True` removes even its card.
   Neither is reported by any test, because "no UI" is a valid configuration for some services.

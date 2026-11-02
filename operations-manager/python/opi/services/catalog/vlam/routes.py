@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.services.catalog.vlam.endpoint import CA_BUNDLE_URL, vlam_endpoint
 
@@ -32,6 +33,7 @@ PEM_MEDIA_TYPE = "application/x-pem-file"
 
 
 @vlam_router.get(CA_BUNDLE_URL)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def vlam_ca_bundle(request: Request) -> Response:
     """The CA bundle this cluster mounts, byte for byte.

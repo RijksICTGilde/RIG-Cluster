@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: seaweedfs-data
+  namespace: rig-system
+  annotations:
+    # Niet automatisch opruimen: deze opslag gaat alleen met de hand weg, zoals bij
+    # minio-storage-versioned.
+    argocd.argoproj.io/sync-options: Prune=false
+  labels:
+    backup.rig.nl/enabled: "true"
+spec:
+  storageClassName: csi-hostpath-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

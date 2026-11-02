@@ -1,5 +1,4 @@
-# podSelector + policyTypes maakt postgres-pods automatisch deny-by-default;
-# alleen verkeer dat hieronder expliciet allowed wordt komt door.
+# podSelector + policyTypes maakt deny-by-default.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -72,6 +71,19 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9187
+    # Onze eigen Prometheus in de platform-namespace: de job cloudnative-pg scrapet de
+    # CNPG-pods op 9187 (prometheus/controller/overlays/odcn/configmap-patch.yaml). Zonder
+    # deze regel was die scrape dood zodra de allow-all over de namespace weg is.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+          podSelector:
+            matchLabels:
+              app: prometheus
       ports:
         - protocol: TCP
           port: 9187

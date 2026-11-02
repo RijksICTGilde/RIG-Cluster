@@ -1,0 +1,725 @@
+{
+ "clusters": {
+  "odcn": "Productie (ODCN)",
+  "odcn-staging": "Staging (ODCN)",
+  "sandboxed-local": "Sandbox"
+ },
+ "systems": [
+  {
+   "id": "kubernetes",
+   "title": "Kubernetes API",
+   "group": "platform",
+   "layer": "odcn",
+   "what": "Het cluster zelf: namespaces, workloads, netwerkbeleid en opslag.",
+   "clusters": {
+    "odcn": "extern",
+    "odcn-staging": "extern",
+    "sandboxed-local": "extern"
+   },
+   "connectors": [
+    {
+     "name": "kubectl",
+     "file": "opi/connectors/kubectl.py",
+     "uses": 38
+    }
+   ],
+   "services": [
+    {
+     "name": "namespace-postgresql-database",
+     "title": "Namespace PostgreSQL Database"
+    },
+    {
+     "name": "namespace-redis",
+     "title": "Namespace Redis Cache"
+    },
+    {
+     "name": "persistent-storage",
+     "title": "Permanente opslag"
+    },
+    {
+     "name": "temp-storage",
+     "title": "Tijdelijke schijfruimte"
+    },
+    {
+     "name": "sleep-mode",
+     "title": "Slaapstand"
+    },
+    {
+     "name": "attachments",
+     "title": "Bijlagen"
+    },
+    {
+     "name": "cross-domain-access",
+     "title": "Cross-domain toegang"
+    }
+   ],
+   "docs": []
+  },
+  {
+   "id": "argocd",
+   "title": "ArgoCD",
+   "group": "gitops",
+   "layer": "gitops",
+   "what": "Rolt uit wat ZAD in de deployments-repo zet, per project een Application.",
+   "clusters": {
+    "odcn": "extern",
+    "odcn-staging": "extern",
+    "sandboxed-local": "extern"
+   },
+   "connectors": [
+    {
+     "name": "argo",
+     "file": "opi/connectors/argo.py",
+     "uses": 13
+    }
+   ],
+   "services": [],
+   "docs": [
+    {
+     "file": "features/argocd-appprojects.md",
+     "title": "AppProjects: wat een Application mag uitrollen"
+    },
+    {
+     "file": "features/argocd-least-privilege.md",
+     "title": "ArgoCD-rollen op least privilege, en ZAD op een eigen account"
+    },
+    {
+     "file": "features/argocd-refresh-performance.md",
+     "title": "ArgoCD Refresh Performance Issue"
+    },
+    {
+     "file": "features/argocd-render-error-surfacing.md",
+     "title": "ArgoCD Render/Compare Error Surfacing"
+    },
+    {
+     "file": "features/argocd-sjablonen-codering.md",
+     "title": "De ArgoCD-sjablonen coderen elke waarde als YAML-scalar"
+    },
+    {
+     "file": "features/argocd-sync-wait.md",
+     "title": "Wachten op ArgoCD, en wat daarbij een fout is"
+    },
+    {
+     "file": "features/argocd-tls.md",
+     "title": "ZAD praat met ArgoCD over TLS"
+    },
+    {
+     "file": "features/argocd-token-cache.md",
+     "title": "ArgoCD token-cache"
+    }
+   ]
+  },
+  {
+   "id": "git",
+   "title": "Git-repo's",
+   "group": "gitops",
+   "layer": "gitops",
+   "what": "De drie repo's die ZAD beheert: projects, argo-applications en deployments.",
+   "clusters": {
+    "odcn": "extern",
+    "odcn-staging": "extern",
+    "sandboxed-local": "extern"
+   },
+   "connectors": [
+    {
+     "name": "git",
+     "file": "opi/connectors/git.py",
+     "uses": 6
+    }
+   ],
+   "services": [],
+   "docs": [
+    {
+     "file": "features/git-push-serialization.md",
+     "title": "Git push-serialisatie per repo"
+    }
+   ]
+  },
+  {
+   "id": "forgejo",
+   "title": "Forgejo",
+   "group": "gitops",
+   "layer": "gitops",
+   "what": "Eigen Git-server in de sandbox; in productie staan de repo's op GitHub.",
+   "clusters": {
+    "odcn": "afwezig",
+    "odcn-staging": "afwezig",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": [
+    {
+     "file": "features/forgejo-repositories-prive.md",
+     "title": "Forgejo-repositories op de sandbox zijn privé"
+    }
+   ]
+  },
+  {
+   "id": "keycloak",
+   "title": "Keycloak",
+   "group": "identity",
+   "layer": "services",
+   "what": "Inloggen: een realm per project, en het platform-realm voor ZAD zelf.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [
+    {
+     "name": "keycloak",
+     "file": "opi/connectors/keycloak.py",
+     "uses": 12
+    }
+   ],
+   "services": [
+    {
+     "name": "keycloak",
+     "title": "Keycloak Authentication"
+    },
+    {
+     "name": "authorization-wall",
+     "title": "Authorization Wall"
+    },
+    {
+     "name": "invite",
+     "title": "Uitnodiging"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/keycloak-26-upgrade.md",
+     "title": "Keycloak 26 Upgrade (25.0.6 to 26.7.0)"
+    },
+    {
+     "file": "features/keycloak-additional-clients.md",
+     "title": "Additional Keycloak Clients"
+    },
+    {
+     "file": "features/keycloak-always-clear-session-logout.md",
+     "title": "Keycloak Always-Clear-Session Logout"
+    },
+    {
+     "file": "features/keycloak-auto-link.md",
+     "title": "Keycloak auto-link of pre-created users to their SSO identity"
+    },
+    {
+     "file": "features/keycloak-domain-migration.md",
+     "title": "Keycloak Domain Migration"
+    },
+    {
+     "file": "features/keycloak-eigen-image.md",
+     "title": "Een eigen Keycloak-image"
+    },
+    {
+     "file": "features/keycloak-external-provider.md",
+     "title": "External Keycloak Provider"
+    },
+    {
+     "file": "features/keycloak-logout-path.md",
+     "title": "Keycloak logout-pad per component"
+    }
+   ]
+  },
+  {
+   "id": "postgresql",
+   "title": "PostgreSQL",
+   "group": "data",
+   "layer": "services",
+   "what": "De gedeelde databaseserver voor projecten en voor ZAD zelf.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [
+    {
+     "name": "postgres",
+     "file": "opi/connectors/postgres.py",
+     "uses": 5
+    }
+   ],
+   "services": [
+    {
+     "name": "postgresql-database",
+     "title": "PostgreSQL Database"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/namespace-postgresql-database.md",
+     "title": "Namespace PostgreSQL Database Service"
+    },
+    {
+     "file": "features/postgresql-connection-limits.md",
+     "title": "PostgreSQL Connection Limits and Pool Resilience"
+    },
+    {
+     "file": "features/postgresql-scope-and-schemas.md",
+     "title": "PostgreSQL: scope-keuze en meerdere schema's"
+    },
+    {
+     "file": "features/postgresql-tls.md",
+     "title": "TLS naar de gedeelde PostgreSQL"
+    }
+   ]
+  },
+  {
+   "id": "redis",
+   "title": "Redis",
+   "group": "data",
+   "layer": "services",
+   "what": "Gedeelde cache voor projecten.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [],
+   "services": [
+    {
+     "name": "redis",
+     "title": "Redis Cache"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/redis-acl-persistence.md",
+     "title": "Redis ACL Persistence"
+    },
+    {
+     "file": "features/redis-cloning-consideration.md",
+     "title": "Redis Cloning - Consideration"
+    },
+    {
+     "file": "features/redis-sleutelprefix-op-aanvraag.md",
+     "title": "Redis zonder sleutelprefix is een aanvraag"
+    }
+   ]
+  },
+  {
+   "id": "minio",
+   "title": "MinIO",
+   "group": "data",
+   "layer": "services",
+   "what": "Objectopslag (S3) voor projecten en backups.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [
+    {
+     "name": "minio_mc",
+     "file": "opi/connectors/minio_mc.py",
+     "uses": 8
+    }
+   ],
+   "services": [
+    {
+     "name": "minio-storage",
+     "title": "MinIO Object Storage"
+    }
+   ],
+   "docs": []
+  },
+  {
+   "id": "seaweedfs",
+   "title": "SeaweedFS",
+   "group": "data",
+   "layer": "services",
+   "what": "Objectopslag (S3), opvolger-kandidaat naast MinIO.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [
+    {
+     "name": "seaweedfs_shell",
+     "file": "opi/connectors/seaweedfs_shell.py",
+     "uses": 2
+    }
+   ],
+   "services": [
+    {
+     "name": "seaweedfs-storage",
+     "title": "SeaweedFS Object Storage"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/seaweedfs-objectopslag.md",
+     "title": "SeaweedFS-objectopslag"
+    }
+   ]
+  },
+  {
+   "id": "backup-destination",
+   "title": "Backups (Kopia)",
+   "group": "data",
+   "layer": "services",
+   "what": "Kopia-repository waar backups van volumes en databases landen.",
+   "clusters": {
+    "odcn": "elders",
+    "odcn-staging": "elders",
+    "sandboxed-local": "elders"
+   },
+   "connectors": [
+    {
+     "name": "kopia",
+     "file": "opi/connectors/kopia.py",
+     "uses": 9
+    }
+   ],
+   "services": [],
+   "docs": [
+    {
+     "file": "features/backup-kopia-incremental-deduplication.md",
+     "title": "Backup: Kopia Incremental & Deduplication Investigation"
+    },
+    {
+     "file": "features/backup-restore-wizard.md",
+     "title": "Backup & Restore Wizard"
+    },
+    {
+     "file": "features/backup-retention-sweep.md",
+     "title": "Backup Retention Sweep"
+    },
+    {
+     "file": "features/backup-system.md",
+     "title": "Backup System"
+    },
+    {
+     "file": "features/backups-tabblad.md",
+     "title": "Backups: een eigen tabblad"
+    }
+   ]
+  },
+  {
+   "id": "mail",
+   "title": "Mailrelay",
+   "group": "link",
+   "layer": "services",
+   "what": "Uitgaande mail voor projecten en Keycloak.",
+   "clusters": {
+    "odcn": "elders",
+    "odcn-staging": "elders",
+    "sandboxed-local": "elders"
+   },
+   "connectors": [
+    {
+     "name": "mail",
+     "file": "opi/connectors/mail.py",
+     "uses": 5
+    }
+   ],
+   "services": [
+    {
+     "name": "send-email",
+     "title": "E-mail versturen"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/keycloak-mail.md",
+     "title": "De mailketen van Keycloak"
+    },
+    {
+     "file": "features/no-mail-dns-records.md",
+     "title": "No-mail-records op onze eigen DNS-namen"
+    },
+    {
+     "file": "features/send-email.md",
+     "title": "E-mail versturen (send-email)"
+    }
+   ]
+  },
+  {
+   "id": "external-dns",
+   "title": "External DNS",
+   "group": "network",
+   "layer": "network",
+   "what": "Zet DNS-records voor eigen domeinen.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "afwezig"
+   },
+   "connectors": [],
+   "services": [
+    {
+     "name": "publish-on-web",
+     "title": "Publiceren op het web"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/domain-configuration.md",
+     "title": "Domain Configuration"
+    },
+    {
+     "file": "features/domain-restrictions.md",
+     "title": "Domain Restrictions"
+    },
+    {
+     "file": "features/external-domains-letsencrypt.md",
+     "title": "External Domains with Let's Encrypt"
+    }
+   ]
+  },
+  {
+   "id": "transip",
+   "title": "TransIP",
+   "group": "network",
+   "layer": "network",
+   "what": "DNS-provider achter de rijksapp-domeinen.",
+   "clusters": {
+    "odcn": "extern",
+    "odcn-staging": "extern",
+    "sandboxed-local": "extern"
+   },
+   "connectors": [
+    {
+     "name": "transip",
+     "file": "opi/connectors/transip.py",
+     "uses": 2
+    }
+   ],
+   "services": [],
+   "docs": []
+  },
+  {
+   "id": "chisel",
+   "title": "Chisel",
+   "group": "network",
+   "layer": "network",
+   "what": "Tunnel naar diensten buiten het cluster.",
+   "clusters": {
+    "odcn": "cluster",
+    "odcn-staging": "cluster",
+    "sandboxed-local": "cluster"
+   },
+   "connectors": [
+    {
+     "name": "chisel_connector",
+     "file": "opi/connectors/chisel_connector.py",
+     "uses": 1
+    }
+   ],
+   "services": [],
+   "docs": []
+  },
+  {
+   "id": "registries",
+   "title": "Container registries",
+   "group": "platform",
+   "layer": "odcn",
+   "what": "Images ophalen en controleren (Skopeo), ook eigen registries.",
+   "clusters": {
+    "odcn": "extern",
+    "odcn-staging": "extern",
+    "sandboxed-local": "extern"
+   },
+   "connectors": [
+    {
+     "name": "skopeo",
+     "file": "opi/connectors/skopeo.py",
+     "uses": 3
+    }
+   ],
+   "services": [
+    {
+     "name": "image-registries",
+     "title": "Eigen container registries"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/image-registries.md",
+     "title": "Eigen container registries (`image-registries`)"
+    }
+   ]
+  },
+  {
+   "id": "registry",
+   "title": "Lokale registry",
+   "group": "platform",
+   "layer": "odcn",
+   "what": "Eigen container registry in de sandbox.",
+   "clusters": {
+    "odcn": "afwezig",
+    "odcn-staging": "afwezig",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": []
+  },
+  {
+   "id": "prometheus",
+   "title": "Prometheus / Mimir",
+   "group": "ops",
+   "layer": "odcn",
+   "what": "Metrics: resource tuning, gezondheid en dashboards.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "aan",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [
+    {
+     "name": "grafana_prometheus",
+     "file": "opi/connectors/grafana_prometheus.py",
+     "uses": 1
+    },
+    {
+     "name": "prometheus",
+     "file": "opi/connectors/prometheus.py",
+     "uses": 11
+    }
+   ],
+   "services": [
+    {
+     "name": "metrics-scraper",
+     "title": "Prometheus Metrics Scraper"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/capsule-proxy-prometheus-discovery.md",
+     "title": "Capsule Proxy Prometheus Discovery"
+    },
+    {
+     "file": "features/metrics-endpoint-security.md",
+     "title": "Metrics Endpoint Security"
+    },
+    {
+     "file": "features/metrics-scraper.md",
+     "title": "Metrics Scraper Service"
+    },
+    {
+     "file": "features/prometheus-monitoring.md",
+     "title": "Prometheus Monitoring"
+    }
+   ]
+  },
+  {
+   "id": "vpa",
+   "title": "VPA",
+   "group": "ops",
+   "layer": "odcn",
+   "what": "Vertical Pod Autoscaler-aanbevelingen voor resource tuning.",
+   "clusters": {
+    "odcn": "extern",
+    "odcn-staging": "extern",
+    "sandboxed-local": "extern"
+   },
+   "connectors": [
+    {
+     "name": "vpa",
+     "file": "opi/connectors/vpa.py",
+     "uses": 2
+    }
+   ],
+   "services": [
+    {
+     "name": "resource-tuning",
+     "title": "Resource tuning"
+    }
+   ],
+   "docs": [
+    {
+     "file": "features/auto-resource-tuning.md",
+     "title": "Auto Resource Tuning"
+    }
+   ]
+  },
+  {
+   "id": "secrets",
+   "title": "Secrets (SOPS)",
+   "group": "platform",
+   "layer": "zad",
+   "what": "Platformgeheimen, versleuteld met SOPS en AGE.",
+   "clusters": {
+    "odcn": "aan",
+    "odcn-staging": "afwezig",
+    "sandboxed-local": "aan"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": []
+  },
+  {
+   "id": "vault",
+   "title": "Vault",
+   "group": "platform",
+   "layer": "zad",
+   "what": "Geheimenbeheer; staat in productie uit.",
+   "clusters": {
+    "odcn": "uit",
+    "odcn-staging": "afwezig",
+    "sandboxed-local": "afwezig"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": []
+  },
+  {
+   "id": "pgadmin",
+   "title": "pgAdmin",
+   "group": "ops",
+   "layer": "zad",
+   "what": "Beheer-UI voor PostgreSQL; staat in productie uit.",
+   "clusters": {
+    "odcn": "uit",
+    "odcn-staging": "afwezig",
+    "sandboxed-local": "afwezig"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": []
+  },
+  {
+   "id": "falco",
+   "title": "Falco",
+   "group": "ops",
+   "layer": "odcn",
+   "what": "Runtime-detectie van verdacht gedrag in containers.",
+   "clusters": {
+    "odcn": "cluster",
+    "odcn-staging": "cluster",
+    "sandboxed-local": "cluster"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": [
+    {
+     "file": "features/falco-runtime-detectie.md",
+     "title": "Schot 2: runtime-detectie met Falco"
+    }
+   ]
+  },
+  {
+   "id": "kyverno",
+   "title": "Kyverno",
+   "group": "platform",
+   "layer": "odcn",
+   "what": "Admission-beleid op het cluster.",
+   "clusters": {
+    "odcn": "cluster",
+    "odcn-staging": "cluster",
+    "sandboxed-local": "cluster"
+   },
+   "connectors": [],
+   "services": [],
+   "docs": [
+    {
+     "file": "features/kyverno-admission-audit.md",
+     "title": "Schot 1: admission control in waarschuwmodus"
+    }
+   ]
+  }
+ ]
+}

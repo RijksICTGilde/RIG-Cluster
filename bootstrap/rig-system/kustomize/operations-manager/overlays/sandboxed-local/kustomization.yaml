@@ -8,6 +8,7 @@ resources:
   - ../../base
   - cluster-binding.yaml
   - cluster-role.yaml
+  - prometheus-cluster-role.yaml
   - ingress.yaml
   - configmap.yaml
   - pvc.yaml
@@ -26,4 +27,8 @@ patches:
   # - path: patches/enable-debug.yaml
   #   target:
   #     kind: Deployment
+  #     name: operations-manager
+  # - path: patches/enable-debug-service.yaml
+  #   target:
+  #     kind: Service
   #     name: operations-manager

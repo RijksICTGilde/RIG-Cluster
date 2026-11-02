@@ -53,7 +53,11 @@ def _walk(editables: list[Any]) -> list[Any]:
     return found
 
 
-def offered_selection_values(editables: list[Any], yaml_path: str) -> set[str] | None:
+def offered_selection_values(
+    editables: list[Any],
+    yaml_path: str,
+    context: dict[str, Any] | None = None,
+) -> set[str] | None:
     """The values the section OFFERS for the selection at *yaml_path*.
 
     Returns None when the section carries no such field at all -- then the
@@ -61,7 +65,11 @@ def offered_selection_values(editables: list[Any], yaml_path: str) -> set[str] |
     from it.
 
     Resolved from the editable's ``values_provider``, the same source the
-    renderer draws the options from, so "offered" means what the user saw.
+    renderer draws the options from, so "offered" means what the user saw. Which is
+    why *context* has to be the same too: a provider that answers differently per
+    project (a replaced service keeps its card only where the project already has it)
+    would otherwise report that card as never shown, and rule 1 below would put the
+    unticked service straight back.
     """
     for vis in _walk(editables):
         editable = getattr(vis, "editable", None)
@@ -71,7 +79,7 @@ def offered_selection_values(editables: list[Any], yaml_path: str) -> set[str] |
             # A selection without a provider offers whatever it renders, which we
             # cannot know here. Treat it as "offers nothing" rather than guess.
             return set()
-        options = resolve_options_for_editable(vis, None)
+        options = resolve_options_for_editable(vis, context)
         return {str(option["value"]) for option in options if option.get("value")}
     return None
 
@@ -147,7 +155,8 @@ def apply_services_mutation(
     edit add a service to the project, which is the mirror image of the bug this
     module exists for: it is still a step speaking about something it never showed.
     """
-    offered = offered_selection_values(editables, SERVICES_PATH)
+    base_names = ServiceAdapter.extract_service_names_from_project_services(base_data.get(SERVICES_PATH) or [])
+    offered = offered_selection_values(editables, SERVICES_PATH, {"project_services": base_names})
     if offered is None:
         return
 

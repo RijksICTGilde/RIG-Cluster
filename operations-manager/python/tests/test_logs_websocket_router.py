@@ -13,12 +13,12 @@ This module provides comprehensive unit tests for:
 
 import asyncio
 import json
+import time
 import unittest
 from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from itsdangerous import BadSignature, SignatureExpired
 
 
 class TestSendMessage(unittest.IsolatedAsyncioTestCase):
@@ -74,129 +74,78 @@ class TestSendMessage(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSessionExtraction(unittest.TestCase):
-    """Test cases for session extraction from cookies."""
+    """Session extraction from the scope (RC-390).
 
-    @patch("opi.api.logs_websocket_router.settings")
-    def test_get_session_no_cookie(self, mock_settings):
-        """Test when no session cookie is present."""
-        from opi.api.logs_websocket_router import _get_session_from_cookie
+    De ServerSideSessionMiddleware laadt de sessie (de cookie draagt alleen een
+    ondertekend id); de websocket-handshake leest het resultaat terug.
+    """
+
+    def test_get_session_no_session_in_scope(self):
+        """Zonder sessie in de scope (middleware ontbrak of cookie ongeldig) is er geen."""
+        from opi.api.logs_websocket_router import _get_session_from_scope
 
         mock_websocket = MagicMock()
-        mock_websocket.cookies = {}
+        mock_websocket.scope = {}
 
-        result = _get_session_from_cookie(mock_websocket)
+        result = _get_session_from_scope(mock_websocket)
 
         self.assertIsNone(result)
 
-    @patch("opi.api.logs_websocket_router.settings")
-    def test_get_session_no_secret_key(self, mock_settings):
-        """Test when SECRET_KEY is not configured."""
-        from opi.api.logs_websocket_router import _get_session_from_cookie
+    def test_get_session_empty_session_is_none(self):
+        """Een lege sessie is geen sessie, zoals een ontbrekende cookie dat was."""
+        from opi.api.logs_websocket_router import _get_session_from_scope
 
-        mock_settings.SECRET_KEY = None
         mock_websocket = MagicMock()
-        mock_websocket.cookies = {"session": "some_cookie"}
+        mock_websocket.scope = {"session": {}}
 
-        result = _get_session_from_cookie(mock_websocket)
+        result = _get_session_from_scope(mock_websocket)
 
         self.assertIsNone(result)
 
-    @patch("opi.api.logs_websocket_router.settings")
-    @patch("opi.api.logs_websocket_router.TimestampSigner")
-    def test_get_session_valid_cookie(self, mock_signer_class, mock_settings):
-        """Test extraction of valid session cookie."""
-        import base64
-        import json as json_mod
-
-        from opi.api.logs_websocket_router import _get_session_from_cookie
-
-        mock_settings.SECRET_KEY = "test_secret"
-
-        # TimestampSigner.unsign returns base64-encoded JSON bytes
-        session_data = {"user": {"email": "test@example.com"}}
-        encoded = base64.b64encode(json_mod.dumps(session_data).encode())
-
-        mock_signer = MagicMock()
-        mock_signer.unsign.return_value = encoded
-        mock_signer_class.return_value = mock_signer
+    def test_get_session_from_scope_returns_session(self):
+        """De geladen sessie komt door, inhoud en al."""
+        from opi.api.logs_websocket_router import _get_session_from_scope
 
         mock_websocket = MagicMock()
-        mock_websocket.cookies = {"session": "valid_cookie"}
+        mock_websocket.scope = {"session": {"user": {"email": "test@example.com"}}}
 
-        result = _get_session_from_cookie(mock_websocket)
+        result = _get_session_from_scope(mock_websocket)
 
         self.assertIsNotNone(result)
         self.assertEqual(result["user"]["email"], "test@example.com")
 
-        # Verify unsign was called with max_age
-        mock_signer.unsign.assert_called_once()
-        call_kwargs = mock_signer.unsign.call_args[1]
-        self.assertIn("max_age", call_kwargs)
-
-    @patch("opi.api.logs_websocket_router.settings")
-    @patch("opi.api.logs_websocket_router.TimestampSigner")
-    def test_get_session_invalid_cookie(self, mock_signer_class, mock_settings):
-        """Test handling of invalid/tampered session cookie (BadSignature)."""
-        from opi.api.logs_websocket_router import _get_session_from_cookie
-
-        mock_settings.SECRET_KEY = "test_secret"
-        mock_signer = MagicMock()
-        mock_signer.unsign.side_effect = BadSignature("Invalid signature")
-        mock_signer_class.return_value = mock_signer
-
-        mock_websocket = MagicMock()
-        mock_websocket.cookies = {"session": "tampered_cookie"}
-
-        result = _get_session_from_cookie(mock_websocket)
-
-        self.assertIsNone(result)
-
-    @patch("opi.api.logs_websocket_router.settings")
-    @patch("opi.api.logs_websocket_router.TimestampSigner")
-    def test_get_session_expired_cookie(self, mock_signer_class, mock_settings):
-        """Test handling of expired session cookie (SignatureExpired)."""
-        from opi.api.logs_websocket_router import _get_session_from_cookie
-
-        mock_settings.SECRET_KEY = "test_secret"
-        mock_signer = MagicMock()
-        mock_signer.unsign.side_effect = SignatureExpired("Signature has expired")
-        mock_signer_class.return_value = mock_signer
-
-        mock_websocket = MagicMock()
-        mock_websocket.cookies = {"session": "expired_cookie"}
-
-        result = _get_session_from_cookie(mock_websocket)
-
-        self.assertIsNone(result)
-
 
 class TestUserExtraction(unittest.TestCase):
-    """Test cases for user extraction from session."""
+    """Test cases for user extraction from session.
+
+    De handshake leest de sessie via ``valid_session_user``, dezelfde functie als de
+    HTTP-middleware, dus een sessie zonder geldig inlogtijdstip komt er niet door.
+    """
 
     def test_get_user_from_session_valid(self):
         """Test user extraction from valid session."""
-        from opi.api.logs_websocket_router import _get_user_from_session
+        from opi.core.session_guard import valid_session_user
 
-        session = {"user": {"email": "test@example.com", "name": "Test User"}}
-        result = _get_user_from_session(session)
+        session = {"user": {"email": "test@example.com", "name": "Test User", "login_at": time.time()}}
+        result = valid_session_user(session)
 
         self.assertIsNotNone(result)
         self.assertEqual(result["email"], "test@example.com")
 
     def test_get_user_from_session_no_user(self):
         """Test user extraction when no user in session."""
-        from opi.api.logs_websocket_router import _get_user_from_session
+        from opi.core.session_guard import valid_session_user
 
         session = {"other_data": "value"}
-        result = _get_user_from_session(session)
+        result = valid_session_user(session)
 
         self.assertIsNone(result)
 
     def test_get_user_from_session_none(self):
         """Test user extraction from None session."""
-        from opi.api.logs_websocket_router import _get_user_from_session
+        from opi.core.session_guard import valid_session_user
 
-        result = _get_user_from_session(None)
+        result = valid_session_user(None)
 
         self.assertIsNone(result)
 
@@ -624,7 +573,7 @@ class TestSecurityIntegration(unittest.TestCase):
         establish a connection even if auth fails.
         """
         # This is a code review test - verify in the source that:
-        # 1. _get_session_from_cookie is called
+        # 1. _get_session_from_scope is called
         # 2. User validation happens
         # 3. websocket.accept() is only called after auth passes
         import inspect
@@ -634,7 +583,7 @@ class TestSecurityIntegration(unittest.TestCase):
         source = inspect.getsource(stream_logs)
 
         # Find positions of key operations
-        auth_pos = source.find("_get_session_from_cookie")
+        auth_pos = source.find("_get_session_from_scope")
         accept_pos = source.find("await websocket.accept()")
 
         self.assertGreater(auth_pos, 0, "Authentication check not found")
@@ -708,13 +657,12 @@ class TestSecurityIntegration(unittest.TestCase):
 
         self.assertIn("heartbeat", source, "Heartbeat mechanism not found")
 
-    def test_session_max_age_constant(self):
-        """Verify that session max age is defined."""
-        from opi.api.logs_websocket_router import SESSION_MAX_AGE_SECONDS
+    def test_session_max_age_setting(self):
+        """De inactiviteitsgrens leeft in de settings; de middleware handhaaft hem."""
+        from opi.core.config import settings
 
-        # Session should expire in reasonable time (24 hours or less)
-        self.assertGreater(SESSION_MAX_AGE_SECONDS, 0)
-        self.assertLessEqual(SESSION_MAX_AGE_SECONDS, 86400)  # 24 hours
+        self.assertGreater(settings.SESSION_MAX_AGE_SECONDS, 0)
+        self.assertLessEqual(settings.SESSION_MAX_AGE_SECONDS, 86400)  # 24 hours
 
     def test_process_lock_exists(self):
         """Verify that process access is protected by a lock."""

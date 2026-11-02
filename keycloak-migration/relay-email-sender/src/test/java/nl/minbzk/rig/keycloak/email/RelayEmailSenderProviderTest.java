@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 import org.junit.Test;
+import org.keycloak.email.EmailException;
 
 /**
  * Toetst de EEN eigenschap waar deze provider om draait: de bestemming komt uit de omgeving
@@ -142,6 +143,26 @@ public class RelayEmailSenderProviderTest {
         env.remove(RelayMailConfig.ENV_PORT);
 
         assertEquals("587", RelayMailConfig.fromEnvironment(env).getPort());
+    }
+
+    /**
+     * Keycloak 26 roept {@code validate} aan bij elke realmwijziging ({@code
+     * SMTPUtil.checkSMTPConfiguration}). Deze provider gebruikt geen enkel veld van
+     * {@code smtpServer}, dus elke configuratie moet hier doorheen, ook de lege en de
+     * vijandige: gooit hij hier, dan faalt elke realmwijziging van OPI op een
+     * configuratie die de verzending zelf toch negeert.
+     */
+    @Test
+    public void validateKeurtElkeConfiguratieGoed() {
+        RelayEmailSenderProvider provider = new RelayEmailSenderProvider(RelayMailConfig.fromEnvironment(omgeving()));
+
+        try {
+            provider.validate(null);
+            provider.validate(new HashMap<>());
+            provider.validate(realmSmtpVanDeAanvaller());
+        } catch (EmailException fout) {
+            throw new AssertionError("validate() gooide waar hij elke smtpServer moet goedkeuren", fout);
+        }
     }
 
     @Test

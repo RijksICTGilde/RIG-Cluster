@@ -35,9 +35,10 @@ from tests.e2e.helpers.lifecycle import (  # noqa: E402
     RUNNABLE_IMAGE,
     assert_aanmaak_geslaagd,
     naam_van_de_voortgangspagina,
+    projecttoken_met_retry,
     walk_create_wizard_with_services,
 )
-from tests.e2e.helpers.sandbox_api import delete_project_via_api, read_api_key  # noqa: E402
+from tests.e2e.helpers.sandbox_api import delete_project_via_api  # noqa: E402
 from tests.e2e.helpers.wizard import unique_project_name  # noqa: E402
 
 BASIS = os.environ.get("ZAD_SANDBOX_URL", "https://zad.sandbox.rijksapp.dev")
@@ -169,7 +170,7 @@ def main() -> int:
         # volgende keer een voller cluster.
         if a.opruimen:
             print(f"[doorloop] opruimen: {naam}")
-            delete_project_via_api(BASIS, naam, read_api_key(page, BASIS, naam), verify_ssl=VERIFIEER)
+            delete_project_via_api(BASIS, naam, projecttoken_met_retry(BASIS, naam), verify_ssl=VERIFIEER)
 
         print(f"PROJECT={naam}")
         browser.close()

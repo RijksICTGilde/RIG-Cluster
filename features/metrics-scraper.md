@@ -45,7 +45,7 @@ components:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `port` | Application port | The port where metrics are exposed |
-| `path` | `/metrics` | The HTTP path where metrics endpoint is available |
+| `path` | `/metrics` | The HTTP path where metrics endpoint is available. Must start with `/` and hold only letters, digits and `- . _ ~ /`: the value ends up in generated scrape config |
 
 ## What Gets Created
 

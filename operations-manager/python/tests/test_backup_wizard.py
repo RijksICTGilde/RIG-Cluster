@@ -73,6 +73,12 @@ class TestServiceTypesForBackupLabel:
         result = ServiceAdapter.get_service_types_for_backup_label("minio")
         assert ServiceType.MINIO_STORAGE.value in result
 
+    def test_minio_label_dekt_ook_seaweedfs(self) -> None:
+        # RC-381: seaweedfs-storage draagt met opzet hetzelfde label als minio-storage,
+        # want het is dezelfde back-uphandeling (een bucket achter een S3-API).
+        result = ServiceAdapter.get_service_types_for_backup_label("minio")
+        assert ServiceType.SEAWEEDFS_STORAGE.value in result
+
     def test_unknown_label_returns_empty(self) -> None:
         result = ServiceAdapter.get_service_types_for_backup_label("nonexistent")
         assert result == []
@@ -95,6 +101,10 @@ class TestBackupLabelOnDefinitions:
 
     def test_minio_is_backupable(self) -> None:
         defn = ServiceAdapter.get_service_definition(ServiceType.MINIO_STORAGE)
+        assert defn.backup_label == "minio"
+
+    def test_seaweedfs_is_backupable_onder_het_minio_label(self) -> None:
+        defn = ServiceAdapter.get_service_definition(ServiceType.SEAWEEDFS_STORAGE)
         assert defn.backup_label == "minio"
 
     def test_redis_not_backupable(self) -> None:

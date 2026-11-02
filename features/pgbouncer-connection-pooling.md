@@ -370,3 +370,6 @@ PGBOUNCER_MAX_CLIENT_CONN: int = 500
 - `opi/core/cluster_config.py` - database endpoint resolution
 - `opi/manager/database_manager.py` - admin database operations
 - `features/postgresql-connection-limits.md` - related connection limit changes
+- `features/postgresql-tls.md` - TLS to the shared database. The pooler needs
+  `client_tls_sslmode` for the client leg; the section "Een pooler in de weg" states what to
+  set and why the server-side metric does not cover that leg

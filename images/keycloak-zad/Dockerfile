@@ -5,7 +5,7 @@
 
 # BUILDPLATFORM, want jars zijn architectuuronafhankelijk: zonder dit draait deze hele fase
 # per doelarchitectuur opnieuw, en de tweede keer onder emulatie.
-FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS providers
+FROM --platform=$BUILDPLATFORM maven:3.10.0-eclipse-temurin-21 AS providers
 
 WORKDIR /bouw
 COPY keycloak-migration/relay-email-sender relay-email-sender
@@ -22,7 +22,7 @@ RUN curl -fsSL -o keycloak-nl-design-system.jar \
  && echo "3adab8c9223127cf3aeb5b566fd9a08bab43bc79d9a0a92ff8a2ea1d2ecb9d35  keycloak-nl-design-system.jar" \
     | sha256sum -c -
 
-FROM quay.io/keycloak/keycloak:25.0.6
+FROM quay.io/keycloak/keycloak:26.8.1
 
 # Met een jokerteken en niet met de versie erin: de versie staat in de pom van de module en
 # hoort niet ook hier te staan. Vindt het jokerteken niets, dan faalt de bouw.
@@ -38,3 +38,7 @@ RUN /opt/keycloak/bin/kc.sh build \
       --metrics-enabled=true \
       --features=admin-api \
       --spi-email-sender-provider=zad-relay
+
+# De base zet deze uid zelf al; expliciet hier omdat de config-scan alleen de Dockerfile
+# leest en een image zonder USER-regel als root-image beoordeelt (DS-0002).
+USER 1000

@@ -121,6 +121,20 @@
                     <c-tag label="Vereist goedkeuring door een beheerder" class="service-card__hint" />
                 </c-cluster>
                 {% endif %}
+                {% if card.replaced_by %}
+                {# VERVANGEN DOOR EEN ANDERE DIENST. De kaart staat er alleen nog voor een
+                   project dat deze dienst al heeft; een nieuw project ziet hem niet meer.
+                   Altijd zichtbaar en niet pas na het aanvinken, want het is informatie
+                   die je nodig hebt VOORDAT je hem uitzet: terugzetten kan daarna niet.
+
+                   TWEE KORTE PILLEN, en de dienstnaam en niet de weergavenaam. Een <c-tag>
+                   is een regel die niet afbreekt. De dienstnaam is wat je in het projectbestand
+                   of de API invult. De naam van de opvolger komt uit de dienst zelf. #}
+                <c-cluster>
+                    <c-tag label="Vervangen door {{ card.replaced_by|e }}" class="service-card__hint" />
+                    <c-tag label="Uitzetten kan niet terug" class="service-card__hint" />
+                </c-cluster>
+                {% endif %}
                 {% if card.config_hint %}
                 {# EEN TAG EN GEEN ALINEA. Dit is geen lopende tekst maar een aanduiding van
                    WAAR je de dienst instelt ("per component"), en die stond er als gewone

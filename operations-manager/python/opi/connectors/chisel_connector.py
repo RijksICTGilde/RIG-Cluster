@@ -12,6 +12,8 @@ import time
 from contextlib import contextmanager
 from typing import TypedDict
 
+from opi.utils.subprocess_env import child_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,8 +104,6 @@ class ChiselConnector:
         cmd = [
             "chisel",
             "client",
-            "--auth",
-            self.auth,
             self.server_url,
             tunnel_spec,
         ]
@@ -113,11 +113,14 @@ class ChiselConnector:
             f"local=localhost:{local_port} -> remote={remote_host}:{remote_port}"
         )
 
-        self.process = subprocess.Popen(
+        # AUTH in plaats van --auth: een commandoregel is leesbaar voor elk proces in
+        # de container via /proc/<pid>/cmdline.
+        self.process = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=child_env({"AUTH": self.auth}),
         )
 
         # Wait for tunnel to be ready

@@ -7,7 +7,8 @@ Tim kon iemand niet aan zijn project toevoegen omdat er een spatie voor het e-ma
 Hetzelfde patroon zit op meer plekken:
 
 - `COMPONENT_IMAGE` heeft een `ContainerImageConverter` die strip en lowercase doet, maar `ContainerImageValidator` draait ervoor en weigert de spatie al. De converter komt nooit aan de beurt.
-- `DOMAIN_CUSTOM_BASE_DOMAIN`: `CustomDomainValidator` strip en lowercase alleen voor zijn eigen toets. `_resolve_deferrals` kopieert daarna de ruwe waarde naar `base-domain`. `" Voorbeeld.nl "` gaat dus door en wordt zo opgeslagen.
+- `DOMAIN_CUSTOM_BASE_DOMAIN`: `CustomDomainValidator` strip en lowercase alleen voor zijn eigen toets. `_resolve_deferrals` kopieert daarna de ruwe waarde naar `base-domain`. `" Voorbeeld.nl "` gaat dus door en wordt zo opgeslagen. Sinds RC-327 weigert het configmodel van publish-on-web zo'n waarde bij het opslaan (`DOMAIN_PATTERN`), dus hij wordt niet meer stil opgeslagen maar afgekeurd nadat het formulier hem goedkeurde; de trim uit dit plan is wat het veld weer bruikbaar maakt.
+- `DOMAIN_SUBDOMAIN`: `validate_subdomain` lowercase alleen voor zijn eigen toets, en niets zet de waarde daarna om. `"MijnApp"` gaat dus door en wordt met hoofdletters opgeslagen. Sinds RC-327 weigert het configmodel van publish-on-web zo'n waarde bij het opslaan (`SUBDOMAIN_PATTERN`), want een opgeslagen subdomein moet kleine letters zijn om bij de goedkeuring en de manifest-hostname te passen; de normalisatie uit dit plan is wat het veld weer bruikbaar maakt.
 - De processor toetst required met `not value`, dus `"   "` telt als ingevuld. De API toetst met `RequiredValidator`, die eerst strip. Dezelfde editable geeft dus via formulier en API een ander antwoord.
 - De API valideert een kopie (`model_dump()`) en schrijft daarna het eigen Pydantic-model weg. Converters draaien op de API nooit: geen enkele aanroeper geeft `convert=True` mee aan `validate_api_payload`.
 
@@ -124,7 +125,7 @@ Bidi-controls zijn U+202A t/m U+202E en U+2066 t/m U+2069. U+200E/U+200F (LRM/RL
 
 De gedeelde required-regel: `None`, een lege string na sanitize, een lege lijst en `False` zijn ontbrekend.
 
-`DOMAIN_CUSTOM_BASE_DOMAIN` krijgt een converter die `normalize_base_domain` aanroept, zodat `_resolve_deferrals` een genormaliseerde waarde kopieert. Schrijf geen nieuwe normalisatie.
+`DOMAIN_CUSTOM_BASE_DOMAIN` krijgt een converter die `normalize_base_domain` aanroept, zodat `_resolve_deferrals` een genormaliseerde waarde kopieert. Schrijf geen nieuwe normalisatie. `DOMAIN_SUBDOMAIN` krijgt dezelfde behandeling met de lowercase die `validate_subdomain` al doet.
 
 → verify:
 
@@ -132,6 +133,7 @@ De gedeelde required-regel: `None`, een lege string na sanitize, een lege lijst 
 - `" nginx:1.27 "` als component-image wordt geaccepteerd en als `nginx:1.27` opgeslagen.
 - `"   "` op een verplicht veld geeft "Dit veld is verplicht", zowel via `process_json_submission` als via `validate_field`.
 - `" Voorbeeld.nl "` als eigen domein landt als `voorbeeld.nl` in `base-domain`.
+- `"MijnApp"` als subdomein landt als `mijnapp` in `subdomain`.
 - De bestaande suites `tests/forms/` en `tests/test_detail_edit.py` blijven groen.
 
 ### 3. De uitzonderingen expliciet maken, met een guard die ze bewaakt
@@ -192,7 +194,7 @@ Gaten uit de inventaris. Gebruik steeds wat er al is:
 
 Toets elke nieuwe validator eerst tegen de waarden in de projects-repo, zodat hij geen bestaand project onbewerkbaar maakt.
 
-**Backstop in `GitProjectStore._validate`:** weiger in elke stringwaarde van het projectbestand NUL, de overige Cc-tekens behalve `\t` en `\n`, en de bidi-controls. Geen trim, geen lengte, niets dat iets verandert. Het vangt de schrijfwegen die geen editable kennen: approvals (ruwe JSON-body), service-config PUT/PATCH en programmatisch schrijven. Volgens de meting staat geen van deze tekens nu in productie.
+**Backstop in `GitProjectStore._validate`: gebouwd in RC-327** als `find_forbidden_characters` in `opi/utils/forbidden_characters.py`, aangeroepen vanuit `_validate`. Er komt geen tweede generieke toets; wat hieronder staat is de beschrijving van wat er nu staat. Weiger in elke stringwaarde van het projectbestand NUL, de overige Cc-tekens behalve `\t` en `\n`, en de bidi-controls. Geen trim, geen lengte, niets dat iets verandert. Het vangt de schrijfwegen die geen editable kennen: approvals (ruwe JSON-body), service-config PUT/PATCH en programmatisch schrijven. Volgens de meting staat geen van deze tekens nu in productie.
 
 → verify: unit-test op de backstop met een NUL en een U+202E in een geneste waarde; de bestaande store-tests blijven groen.
 

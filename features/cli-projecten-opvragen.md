@@ -41,7 +41,7 @@ curl "https://zad.rijksapps.nl/api/v2/projects" \
 | `name` | De technische projectnaam, waarmee je de andere endpoints aanroept. |
 | `description` | Waar het project voor is. |
 | `role` | De rol van de aanroeper in dit project: `admin` of `developer`. |
-| `api_key` | **Geheim.** De projectsleutel, voor de `X-API-Key`-header op elke volgende aanroep. Alleen gevuld bij de rollen `admin` en `owner`; `null` voor een `developer`. |
+| `api_key` | **Geheim.** De projectsleutel, voor de `X-API-Key`-header op elke volgende aanroep. Alleen gevuld bij de rollen `admin` en `owner`; `null` voor een `developer`. **Deprecated**, zie hieronder. |
 
 Het antwoord kan een geheim dragen en gaat daarom met `Cache-Control: no-store` de deur uit.
 
@@ -121,6 +121,48 @@ veranderd.
   `get_user_role_for_project`
 - De projectstore, die de sleutel al ontsleuteld in de cache heeft staan
 
+## Eén sleutel opvragen: `GET /api/v2/projects/{naam}/api-key`
+
+De lijst geeft de sleutels in bulk: een platformbeheerder krijgt in één aanroep de sleutel
+van elk project. Een CLI die van project wisselt heeft er precies één nodig. Daarom is er
+een smallere weg, met dezelfde rolpoort:
+
+```bash
+curl "https://zad.rijksapps.nl/api/v2/projects/mijn-project/api-key" \
+  -H "Authorization: Bearer $ZAD_TOKEN"
+```
+
+```json
+{ "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ" }
+```
+
+Antwoordcodes: `200` met de sleutel, `401` geen geldig token, `403` je rol in dit project is
+geen `admin` of `owner`, `404` het project bestaat niet of je bent er geen lid van. Die twee
+gevallen geven hetzelfde antwoord, want anders is deze route een manier om te ontdekken
+welke projecten er zijn. Het antwoord draagt `Cache-Control: no-store`.
+
+De route doet geen `store.reconcile()`: je kent de projectnaam al, dus hij komt uit de
+ProjectStore zoals bij elke andere v2-leesroute. De autorisatie gebruikt dezelfde twee
+functies als de lijst en de web UI, dus een platformbeheerder bereikt elk project (zie
+"Wie welk project ziet" hierboven).
+
+Elke uitgegeven sleutel levert een INFO-regel op met het e-mailadres van de aanroeper en de
+projectnaam, nooit de sleutel zelf. Zo is terug te zien wie welke sleutel ophaalde. Komt de
+gebeurtenissentabel er (`features/futures/gebeurtenissen-plan-van-aanpak.md`), dan wordt dit
+daar een gebeurtenis.
+
+## Het afbouwpad van `api_key` in de lijst
+
+Het veld `api_key` in de lijst is `deprecated` in het OpenAPI-document, met een
+verwijzing naar de route hierboven. Het staat er nog, want de CLI (`zad-cli`,
+`src/zad_cli/credentials.py`) leest hem bij `zadctl project use`.
+
+De volgorde van afbouwen:
+
+1. Deze route bestaat en is gedocumenteerd. (nu)
+2. De CLI haalt de sleutel via deze route op. Dat is een wijziging in `zad-cli`.
+3. Zodra een CLI-release met stap 2 uit is, verdwijnt het veld uit de lijst.
+
 ## Tests
 
 `tests/test_list_projects_api.py`:
@@ -135,4 +177,5 @@ veranderd.
   wél en de sleutel `null` -- en die sleutel komt dan ook nergens anders in het antwoord voor;
 - de beheerder: ziet elk project, met elke sleutel, overal als `admin`;
 - de documentatie: de omschrijving noemt het geheim, de beheerder én dat een `developer`
-  geen sleutel krijgt, en het veld `api_key` is als geheim gemarkeerd.
+  geen sleutel krijgt, het veld `api_key` is als geheim gemarkeerd, en het staat als
+  `deprecated` in het document met de route die hem vervangt in de omschrijving.

@@ -1,4 +1,4 @@
-"""scripts/prune-kind-registry.sh tegen een echte registry:2-container.
+"""scripts/prune-kind-registry.sh tegen een echte registry:2.8.3-container.
 
 De beloftes hangen aan wat `registry garbage-collect` echt doet met gedeelde lagen en
 met een index van buildx, dus een stub bewijst ze niet. De images worden via de
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.requires_infra
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = REPO_ROOT / "scripts" / "prune-kind-registry.sh"
-REGISTRY_IMAGE = "registry:2"
+REGISTRY_IMAGE = "registry:2.8.3"
 REPO = "operations-manager"
 
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"

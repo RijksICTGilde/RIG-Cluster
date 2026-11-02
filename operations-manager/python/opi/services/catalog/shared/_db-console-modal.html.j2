@@ -52,7 +52,9 @@
             <c-paragraph>Verloopt om {{ session.expires_at.strftime("%H:%M") }} UTC (max {{ (ttl_seconds // 60) }} min).</c-paragraph>
             <c-cluster gap="md">
                 <c-link href="{{ session.url }}" target="_blank" label="Console openen" />
+                {% if mag_uitvoeren %}
                 <c-button type="warning" size="sm" label="Nu stoppen" :attrs="stoppen_attrs" />
+                {% endif %}
             </c-cluster>
         </c-stack>
     </c-card>
@@ -62,6 +64,16 @@
         <c-stack gap="sm">
             <c-heading type="h5" label="Console wordt opgestart..." />
             <c-paragraph>Even geduld, de databaseconsole start op. Dit kan een halve minuut duren.</c-paragraph>
+        </c-stack>
+    </c-card>
+
+{% elif not mag_uitvoeren %}
+    {# De leesrol member mag geen console starten (RC-323): de console geeft interactieve
+       toegang tot de database van de deployment. #}
+    <c-card outline padding="lg">
+        <c-stack gap="md">
+            <c-heading type="h5" label="Geen databaseconsole" />
+            <c-paragraph>Je rol in dit project is alleen-lezen. Een databaseconsole starten kan met de rol developer, owner of administrator.</c-paragraph>
         </c-stack>
     </c-card>
 

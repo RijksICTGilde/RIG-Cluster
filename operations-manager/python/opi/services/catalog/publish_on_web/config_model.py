@@ -28,12 +28,14 @@ two are OPI-written and validated shape-first (see
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId
 from opi.services.config_managed import PLATFORM_MANAGED
+from opi.utils.patterns import DNS1123_SUBDOMAIN
 
 #: ``standard`` = platform certificate (Let's Encrypt); ``passthrough`` = the pod presents
 #: its own certificate; ``provided`` = own certificate terminated on the ingress.
@@ -141,8 +143,10 @@ class PublishOnWebDeploymentConfig(BaseModel):
         description=(
             "The subdomain under the base domain, for the hostname formats that use one. On a "
             "platform-managed domain it is a request an administrator approves, so two projects cannot "
-            "claim the same name; on a domain of your own no approval is involved -- which names exist "
-            "there is your organisation's business."
+            "claim the same name; on a domain of your own no approval is involved; which names exist "
+            "there is your organisation's business. One or more DNS labels separated by dots: lowercase "
+            "letters, digits and hyphens, at most 63 characters per label. Dots only on a domain whose "
+            "'supports-dots' says so; a wildcard certificate covers one level only."
         ),
     )
     domain_format: DomainFormatId | None = Field(
@@ -178,6 +182,33 @@ class PublishOnWebDeploymentConfig(BaseModel):
             "subdomain format + subdomain. False/absent for none, which is the normal case."
         ),
     )
+
+    @field_validator("subdomain")
+    @classmethod
+    def _subdomain_form(cls, value: str | None) -> str | None:
+        # Punten horen hier thuis: of ze op een domein mogen, beslist de regel per domein
+        # (``supports-dots``). Niet validate_subdomain: dat lowercaset en eist één label.
+        from opi.connectors.subdomain import DOTTED_SUBDOMAIN_FORMAT_MESSAGE, SUBDOMAIN_MAX_LENGTH
+
+        if value is None:
+            return value
+        # fullmatch, want ``$`` in DNS1123_SUBDOMAIN laat een afsluitende newline door;
+        # de labellengte staat niet in het patroon.
+        too_long = any(len(label) > SUBDOMAIN_MAX_LENGTH for label in value.split("."))
+        if too_long or not re.fullmatch(DNS1123_SUBDOMAIN, value):
+            raise ValueError(DOTTED_SUBDOMAIN_FORMAT_MESSAGE)
+        return value
+
+    @field_validator("base_domain")
+    @classmethod
+    def _base_domain_form(cls, value: str | None) -> str | None:
+        # Don't normalize: adjusting a value after validation would differ from approval.
+        # Local import: subdomain imports this package back.
+        from opi.connectors.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
+
+        if value is not None and not DOMAIN_PATTERN.match(value):
+            raise ValueError(DOMAIN_FORMAT_MESSAGE)
+        return value
 
 
 class PublishOnWebComponentConfig(BaseModel):

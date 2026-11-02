@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from opi.forms.editables.fields.components import (
+    COMPONENT_DESCRIPTION_EDITABLE,
     COMPONENT_IMAGE_EDITABLE,
     COMPONENT_NAME_EDITABLE,
     COMPONENT_PATH_MATCH_EDITABLE,
@@ -60,6 +61,7 @@ def _optional(editable: Editable) -> Editable:
 
 ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
     "name": COMPONENT_NAME_EDITABLE,
+    "description": COMPONENT_DESCRIPTION_EDITABLE,
     "image": COMPONENT_IMAGE_EDITABLE,
     "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
     "rewrite": COMPONENT_PATH_REWRITE_EDITABLE,
@@ -81,6 +83,7 @@ ADD_COMPONENT_VALIDATORS: dict[str, Editable] = {
 #: tuner leaves it alone, so that second line is gone and this profile is the only place
 #: the ceiling still gets checked on this route.
 UPDATE_COMPONENT_VALIDATORS: dict[str, Editable] = {
+    "description": COMPONENT_DESCRIPTION_EDITABLE,
     "path": _optional(COMPONENT_PATH_MATCH_EDITABLE),
     "rewrite": COMPONENT_PATH_REWRITE_EDITABLE,
     "cpu_limit": COMPONENT_RESOURCES_CPU_LIMIT_EDITABLE,

@@ -34,7 +34,7 @@ spec:
     spec:
       # De eigen serviceaccount van het project, zonder pull-secrets; deze pod draagt
       # hieronder alleen wat hij zelf nodig heeft.
-      serviceAccountName: myproject-sa
+      serviceAccountName: "myproject-sa"
       # Pod-level security context (OpenShift compatible)
       securityContext:
         # For OpenShift, let SCCs assign user/group IDs automatically.
@@ -46,7 +46,7 @@ spec:
       containers:
         - name: app
           image: "ghcr.io/org/web:1.2.3"
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: "IfNotPresent"
           ports:
             - containerPort: 8080
               name: http
@@ -69,17 +69,17 @@ spec:
               value: "production"
           envFrom:
             - secretRef:
-                name: prod-database
+                name: "prod-database"
             - secretRef:
-                name: prod-minio
+                name: "prod-minio"
             - secretRef:
-                name: prod-keycloak
+                name: "prod-keycloak"
             - secretRef:
-                name: prod-redis
+                name: "prod-redis"
             - secretRef:
-                name: prod-web-platform
+                name: "prod-web-platform"
             - secretRef:
-                name: prod-web-user
+                name: "prod-web-user"
           volumeMounts:
             - name: "data"
               mountPath: "/data"

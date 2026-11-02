@@ -1,8 +1,26 @@
 # Federation Routing (Cross-Cluster Task Delegation)
 
-**Status**: Implemented
+**Status**: Niet in gebruik, en de ontvangkant staat dicht sinds RC-386 (24-10-2026)
 **Date**: 2026-03-01
 **Depends on**: [Async Task System](./async-task-system.md)
+
+## Stand van zaken (RC-386)
+
+De federatie staat nergens aan: `FEDERATION_ROLE` en `FEDERATION_PEERS` worden in geen
+enkele overlay gezet, dus elke instantie draait `standalone`. De ontvangkant liep op
+`MASTER_API_KEY`, een sleutel die iedere houder het platform maakte, en die is weg. Daarmee
+geldt:
+
+- **`POST /api/tasks` bestaat niet meer.** Een peer die taken aanlevert heeft geen eigen
+  identiteit, en zonder identiteit mag niemand deze route. Doorzetten naar een peer
+  (`OpiConnector.create_task`) krijgt daar dus een 405: `GET` op dat pad bestaat nog.
+- **`GET /api/federation/peers` en `GET /api/federation/health`** vragen het token van een
+  platformbeheerder, en geven 404 als de federatie op deze instantie uit staat.
+
+Voordat de federatie aan kan, moet de ontvangkant eerst een eigen herkenning per peer
+krijgen (voorstel: `validate_federation_peer`, met een token per peer als hash in een
+SOPS-secret en `federation:<peer>` in het actorspoor). Een gedeelde sleutel komt niet
+terug.
 
 ## Problem
 
@@ -102,7 +120,7 @@ The master does NOT forward:
 class PeerConfig(BaseModel):
     cluster: str        # Must match remote OPI's CLUSTER_MANAGER
     url: str            # e.g., "https://zad.rijksapp.nl"
-    api_key: str        # Remote OPI's MASTER_API_KEY
+    api_key: str        # het bewijsmiddel van de peer (geen tegenhanger na RC-386)
     verify_tls: bool = True
     timeout: int = 30
 
@@ -123,14 +141,14 @@ FEDERATION_REQUEST_TIMEOUT: int = 30
 ```
 
 - **standalone** (default): no peers, everything local, no overhead
-- **slave**: serves API, task creation authorized by MASTER_API_KEY
+- **slave**: serves API; POST /api/tasks is weg sinds RC-386
 - **master**: full frontend, routes to slaves via HTTP
 
 ### 2. OPI Connector
 
 **File**: `opi/connectors/opi.py` (new)
 
-Uses the existing `HttpConnector` pattern. Sends `X-API-Key` header (matches the existing `validate_master_api_key` decorator on the slave).
+Uses the existing `HttpConnector` pattern. Sends an `X-API-Key` header; since RC-386 geen route leest het meer.
 
 ```python
 class OpiConnector:
@@ -225,7 +243,7 @@ Health checks can be periodic (every 30s ping `/health` on each peer) or on-dema
 
 ## Security
 
-- **Master -> Slave auth**: `X-API-Key` header with the slave's `MASTER_API_KEY` (reuses existing decorator)
+- **Master -> Slave auth**: was `MASTER_API_KEY`; weg sinds RC-386
 - **Communication is unidirectional**: master calls slaves, slaves never call master
 - **TLS mandatory** for inter-cluster (`verify_tls=True` default)
 - **Per-peer API keys**: compromising one slave's key does not affect others

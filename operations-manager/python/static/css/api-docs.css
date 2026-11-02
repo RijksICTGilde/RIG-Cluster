@@ -1,0 +1,6 @@
+/* /docs en /redoc: ReDoc vult het hele venster, dus de standaardmarge van body eraf.
+   Als bestand en niet als <style> in het sjabloon; zie tests/test_template_structure.py. */
+body {
+    margin: 0;
+    padding: 0;
+}

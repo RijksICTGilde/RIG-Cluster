@@ -1,0 +1,47 @@
+{
+  "additionalProperties": false,
+  "description": "Bucketinstellingen van de dienst.",
+  "properties": {
+    "enable-versioning": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keep previous versions of an object in the bucket instead of overwriting it.",
+      "title": "Enable-Versioning"
+    },
+    "max-noncurrent-versions": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How many noncurrent versions of one object the bucket keeps; older ones are expired. Only has effect on a bucket with versioning. Absent means the project's value. Between 1 and 1000, platform default 30.",
+      "title": "Max-Noncurrent-Versions"
+    },
+    "noncurrent-expire-days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How many days a noncurrent version is kept, on top of the count limit. Absent means the project's value, and no age limit at all when neither layer sets one. Between 1 and 3650, no platform default.",
+      "title": "Noncurrent-Expire-Days"
+    }
+  },
+  "title": "SeaweedfsStorageConfig",
+  "type": "object"
+}

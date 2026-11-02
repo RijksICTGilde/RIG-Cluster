@@ -12,6 +12,7 @@ import functools
 import glob
 import logging
 import os
+import re
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -34,10 +35,46 @@ from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 CONFIG_HASH_IGNORE_LABEL_KEY = "zad.rig/config-hash"
 CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
 
+#: Variabelen die de CMP-plugin zelf leest of zet. Een helmfile-deployment mag ze niet via
+#: .cmp-env meegeven: daarmee stuurt het de namespace, het sleutelpad of de render van de
+#: plugin. Dezelfde lijst staat als case-patroon in het pluginscript in
+#: bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml, dat shell is en niets kan
+#: importeren -- ``tests/test_cmp_env_contract.py`` pint de twee tegen elkaar.
+CMP_ENV_RESERVED_PREFIXES = ("ARGOCD_", "SOPS_", "KUSTOMIZE_", "HELM_", "HELMFILE_", "KUBE", "BASH", "LD_", "GIT_")
+CMP_ENV_RESERVED_NAMES = frozenset({"PATH", "HOME", "IFS", "ENV", "SHELL", "PS4", "PROMPT_COMMAND"})
+
+#: De env-vars van een helmfile-deployment gaan versleuteld naar git: OPI schrijft
+#: ``cmp-env.to-sops.yaml``, SOPS maakt er ``cmp-env.sops.yaml`` van en de plugin
+#: ontsleutelt dat na het ophalen van de projectsleutel (RC-333).
+CMP_ENV_NAME = "cmp-env"
+
+#: Het platte bestand van voor RC-333. OPI ruimt het op waar het nog staat, en de
+#: git-guard weigert een nieuw of gewijzigd exemplaar.
+CMP_ENV_PLAINTEXT_FILENAME = ".cmp-env"
+
+#: Dezelfde sleutelvorm als component-env-vars in opi/schemas/project_v2.json.
+CMP_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
 logger = logging.getLogger(__name__)
 
 
-def yaml_scalar(value: str) -> str:
+def cmp_env_rejection(key: str, value: str) -> str | None:
+    """Waarom dit paar niet in ``.cmp-env`` mag, of ``None`` als het mag.
+
+    Weigert precies wat de parser in het pluginscript weigert, zodat een fout bij het
+    opslaan opvalt en niet pas bij de render. De melding noemt nooit de waarde: die is
+    configuratie van de tenant en kan een secret zijn.
+    """
+    if not CMP_ENV_KEY_PATTERN.match(key):
+        return f"'{key}' is not a valid environment variable name"
+    if key in CMP_ENV_RESERVED_NAMES or key.startswith(CMP_ENV_RESERVED_PREFIXES):
+        return f"'{key}' is reserved by the CMP plugin"
+    if any(character in value for character in "\r\n\0"):
+        return f"the value of '{key}' contains a newline or NUL byte"
+    return None
+
+
+def yaml_scalar(value: object) -> str:
     """Render ``value`` as a YAML double-quoted scalar that survives a round-trip.
 
     Tenant values reach a Secret manifest verbatim, so the quoting has to hold for
@@ -47,7 +84,17 @@ def yaml_scalar(value: str) -> str:
     fixes the backslash but writes an astral character as a surrogate pair, which
     SOPS rejects with "found invalid Unicode character escape code". Letting the
     YAML emitter do it escapes exactly what YAML requires and nothing else.
+
+    Alleen een ``str``. Een niet-string hier is een sjabloonfout: elke optionele waarde
+    staat in een ``{% if %}``, dus een ``None`` of een ontbrekende variabele betekent dat
+    die guard mist. De emitter maakt er anders ``!!null "null"`` of ``!!int "5"`` van, en
+    dat belandt ongemerkt in een manifest.
     """
+    if not isinstance(value, str):
+        raise TypeError(
+            f"yaml_scalar verwacht een str, kreeg {type(value).__name__}. Een ontbrekende of "
+            "optionele sjabloonvariabele hoort achter een if-blok, niet door dit filter."
+        )
     emitter = YAML(typ="safe", pure=True)
     emitter.default_style = '"'
     emitter.allow_unicode = True
@@ -57,6 +104,12 @@ def yaml_scalar(value: str) -> str:
     buffer = StringIO()
     emitter.dump(value, buffer)
     return buffer.getvalue().rstrip("\n")
+
+
+#: De filters die elk manifestsjabloon mag gebruiken. Een tweede omgeving (een test die
+#: ``StrictUndefined`` wil) registreert ze hiermee, in plaats van ze over te typen en er
+#: een te vergeten.
+MANIFEST_FILTERS: dict[str, Any] = {"yaml_scalar": yaml_scalar}
 
 
 @functools.cache
@@ -72,9 +125,9 @@ def _omgeving() -> Environment:
         lstrip_blocks=True,
         # Houdt de slotnewline van een ingesloten partial, anders plakt de volgende regel eraan vast.
         keep_trailing_newline=True,
-        autoescape=False,
+        autoescape=False,  # noqa: S701  # uitvoer is YAML, escaping via yaml_scalar
     )
-    env.filters["yaml_scalar"] = yaml_scalar
+    env.filters.update(MANIFEST_FILTERS)
     return env
 
 
@@ -87,6 +140,16 @@ def _gecompileerd(bron: str) -> Template:
     schijf levert een andere tekst op en dus een nieuwe compilatie.
     """
     return _omgeving().from_string(bron)
+
+
+def render_template_source(bron: str, variables: dict[str, Any]) -> str:
+    """Render manifestbron via de gedeelde omgeving.
+
+    Het enige renderpunt voor een sjabloon dat als TEKST binnenkomt in plaats van als
+    bestandsnaam. Een eigen ``Environment()`` ernaast betekent twee plekken om een filter
+    of een instelling te vergeten (RC-339).
+    """
+    return _gecompileerd(bron).render(**variables)
 
 
 def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
@@ -212,7 +275,7 @@ class ManifestGenerator:
         logger.debug(f"Templating manifest with Jinja2 variables: {variables.keys()}")
 
         try:
-            result = _gecompileerd(manifest_content).render(**variables)
+            result = render_template_source(manifest_content, variables)
 
             logger.debug("Successfully templated manifest with Jinja2")
             return result

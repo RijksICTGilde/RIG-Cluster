@@ -1328,48 +1328,75 @@ class ServiceAdapter:
         return service.component_selection_follows_config
 
     @classmethod
-    def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:
-        """The platform-written fields present in ``config``, or an empty dict."""
-        if not isinstance(config, dict):
-            return {}
+    def _platform_managed_keys(cls, service_name: str, layer: ConfigLayer) -> frozenset[str]:
+        """The config keys the platform writes at ``layer``, empty for an unknown service."""
         # Lazy: the registry imports this module, so it cannot be imported at load time.
         from opi.services.registry import get_service
 
         try:
             service = get_service(ServiceType(service_name))
         except ValueError:
+            return frozenset()
+        return service.platform_managed_fields(layer)
+
+    @classmethod
+    def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:
+        """The platform-written fields present in ``config``, or an empty dict."""
+        if not isinstance(config, dict):
             return {}
-        return {key: config[key] for key in service.platform_managed_fields(layer) if key in config}
+        return {key: config[key] for key in cls._platform_managed_keys(service_name, layer) if key in config}
 
     @classmethod
     def _keep_platform_fields(
         cls, service_name: str, layer: ConfigLayer, config: dict[str, Any] | list[Any], stored: Any
     ) -> dict[str, Any] | list[Any]:
-        """Carry the platform-written fields of the stored config into its replacement.
+        """Preserve platform-written fields; drop unstored ones being written.
 
-        This method replaces the whole block, so a field the caller never mentioned would
-        simply disappear. For a user setting that is the intended "reset to default"; for
-        ``keycloak.realms`` it destroyed the only copy of the realm-admin password.
-
-        The API refuses a write that CARRIES such a field (422, in the route), so this is
-        the guarantee for the other half: a write that leaves it out cannot lose it. The
-        stored value is passed through untouched -- not re-validated and not re-dumped --
-        so it keeps exactly the bytes it had, and it stays the safety net for any future
-        write path that does not go through a route.
+        Prevents forged approvals when the platform had not yet written one (RC-286).
         """
-        kept = cls._platform_fields_of(service_name, layer, stored)
-        if not kept or not isinstance(config, dict):
+        if not isinstance(config, dict):
             return config
-        overwritten = sorted(key for key, value in kept.items() if key in config and config[key] != value)
-        if overwritten:
+        managed = cls._platform_managed_keys(service_name, layer)
+        if not managed:
+            return config
+        kept = cls._platform_fields_of(service_name, layer, stored)
+        refused = sorted(key for key in managed & config.keys() if config[key] != kept.get(key))
+        if refused:
             logger.warning(
                 "Ignored a write to platform-managed field(s) %s of service '%s' at the %s layer; "
-                "the stored value is kept",
-                ", ".join(overwritten),
+                "what the platform itself wrote stands",
+                ", ".join(refused),
                 service_name,
                 layer.value,
             )
-        return {**config, **kept}
+        return {key: value for key, value in config.items() if key not in managed} | kept
+
+    @classmethod
+    def enforce_platform_managed_fields(cls, project_data: dict[str, Any], stored: dict[str, Any]) -> None:
+        """Apply _keep_platform_fields to all service configs in a project file.
+
+        Guards the form path like set_service_config guards the API path. Mutates in place.
+        """
+        # Lazy: project_validation imports this module.
+        from opi.manager.project_validation import iter_service_config_blocks
+
+        stored_blocks = {
+            (block.location, block.name, block.owned_property): block.config
+            for block in iter_service_config_blocks(stored)
+        }
+        for block in iter_service_config_blocks(project_data):
+            if not isinstance(block.config, dict):
+                continue
+            guarded = cls._keep_platform_fields(
+                block.name,
+                block.layer,
+                block.config,
+                stored_blocks.get((block.location, block.name, block.owned_property)),
+            )
+            if isinstance(guarded, dict) and guarded != block.config:
+                # In place: the walk yields the live config dict, not a path to write back to.
+                block.config.clear()
+                block.config.update(guarded)
 
     @classmethod
     def patch_service_config_list(

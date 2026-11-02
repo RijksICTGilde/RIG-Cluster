@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "columns": [{ "id": "c0" }, { "id": "c1" }, { "id": "c2" }, { "id": "c3" }, { "id": "c4" }],
+  "groups": [
+    { "id": "deps", "title": "Deployments", "column": "c3", "pack": "grid" },
+    { "id": "ext:mwt-ked", "title": "mwt-ked", "eyebrow": "ander project", "column": "c4", "pack": "elk", "style": "external" },
+    { "id": "base", "title": "Geleverd door ODCN", "subtitle": "het fundament onder alles", "band": true, "pack": "row" }
+  ],
+  "nodes": [
+    {
+      "id": "project", "column": "c0", "shape": "card", "color": "project",
+      "eyebrow": "Project", "title": "Voorbeeldproject", "subtitle": "voorbeeld",
+      "click": "info",
+      "info": {
+        "eyebrow": "Project", "title": "Voorbeeldproject", "subtitle": "voorbeeld",
+        "sections": [{ "heading": "Omschrijving", "items": [{ "text": "Een graaf om het element los te draaien." }] }]
+      }
+    },
+    {
+      "id": "team", "column": "c0", "shape": "stack", "color": "team",
+      "eyebrow": "Team", "title": "2 leden", "click": "expand",
+      "children": [
+        { "id": "m:0", "shape": "card", "color": "team", "title": "Ada", "subtitle": "admin" },
+        { "id": "m:1", "shape": "card", "color": "team", "title": "Bob", "subtitle": "developer" }
+      ]
+    },
+    {
+      "id": "c:editor", "column": "c1", "shape": "card", "color": "component",
+      "eyebrow": "single", "title": "editor",
+      "rows": [
+        { "bar": "mem", "req": 121, "lim": 1442, "max": 1640, "text": "1442Mi" },
+        { "bar": "cpu", "req": 50, "lim": 500, "max": 500, "text": "500m" },
+        { "icon": "health", "text": "/healthz" }
+      ],
+      "click": "focus",
+      "info": { "eyebrow": "Component", "title": "editor", "sections": [{ "heading": "Services", "items": [{ "text": "Keycloak Authentication" }] }] }
+    },
+    {
+      "id": "c:democonsole", "column": "c1", "shape": "card", "color": "component",
+      "eyebrow": "frontend", "title": "democonsole",
+      "rows": [{ "icon": "metrics", "text": "/metrics" }],
+      "click": "focus"
+    },
+    {
+      "id": "s:keycloak", "column": "c2", "shape": "pill", "color": "identity",
+      "title": "Keycloak Authentication", "subtitle": "keycloak", "click": "focus",
+      "info": { "eyebrow": "Service", "title": "Keycloak Authentication", "sections": [{ "heading": "Gebruikt door", "items": [{ "text": "editor" }] }] }
+    },
+    {
+      "id": "d:upload", "group": "deps", "shape": "card", "color": "deployment",
+      "title": "upload", "subtitle": "odcn-production", "click": "expand",
+      "related": ["c:editor"],
+      "children": [
+        {
+          "id": "di:upload:editor", "shape": "card", "title": "editor",
+          "rows": [
+            { "icon": "box", "text": "regelrecht-editor:latest" },
+            { "icon": "globe", "text": "editor-upload-voorbeeld.example.nl", "href": "https://example.nl" }
+          ]
+        }
+      ]
+    },
+    { "id": "xc:mwt-ked:redis", "group": "ext:mwt-ked", "shape": "card", "color": "external", "title": "redis" },
+    { "id": "sys:kubernetes", "group": "base", "shape": "card", "color": "platform", "title": "Kubernetes API", "state": "extern" }
+  ],
+  "edges": [
+    { "from": "c:editor", "to": "s:keycloak", "color": "identity" },
+    { "from": "c:democonsole", "to": "xc:mwt-ked:redis", "color": "link", "label": ":6379" }
+  ]
+}

@@ -24,7 +24,7 @@ class PersistentStorageService(BackupsPageMixin, Service):
         description="Gegevens blijven bewaard tijdens de levenscyclus van de applicatie",
         help_template="persistent_storage/help.md",
         icon="server",
-        color="grijs-600",
+        color="bruin",
         backup_label="pvc",
         # Gelijk aan temp-storage: een startwaarde, geen inschatting. Een PVC kan wel
         # groeien en niet krimpen, dus te ruim beginnen is duurder dan te krap beginnen.

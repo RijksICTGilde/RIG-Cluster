@@ -20,6 +20,12 @@
    wizard.js zoekt er niet naar - dat doet hij met data-index en de id van de lijst, en
    die blijven dus staan. #}
 <div data-index="{{ index }}">
+    {# De sleutel van deze rij, zodat de server weet WELKE rij dit is. Een readonly
+       sleutelveld rendert als disabled en komt dus niet mee; zonder dit paarde de
+       verwerker op index, en schoof elke rij achter een verwijderde rij een plek op.
+       Zie opi/forms/editables/sequence_identity.py. #}
+    {% for veld in identiteitsvelden|default([]) %}<input type="hidden" name="{{ veld.name|e }}" value="{{ veld.value|e }}">
+    {% endfor %}
 <c-card outline padding="md">
     {% if not fixed_size and field.add_remove %}
     {# KOP MET ACTIE, uit het thema, in plaats van met de hand rechts uitgelijnd.

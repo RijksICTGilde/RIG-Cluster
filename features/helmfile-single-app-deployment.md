@@ -161,6 +161,52 @@ The ArgoCD CMP plugin was updated to support running **both** kustomize and helm
 
 The CMP script detects both and runs them sequentially, combining the output.
 
+### Wat de renderketen niet meer doet
+
+De CMP start geen programma's die in een kustomization of een helmfile staan. Dat betekent
+concreet:
+
+- `kustomize build` draait zonder `--enable-exec` en zonder `--enable-alpha-plugins`. De
+  `decrypt-sops.yaml` blijft staan en wordt nog steeds geschreven, maar de plugin
+  ontsleutelt de bestanden die hij noemt nu zelf (met de sleutel die hij al had) en zet ze
+  als `resources` in de kustomization voordat hij bouwt. De uitvoer is dezelfde; wat
+  verdwijnt is de mogelijkheid om via een eigen exec-functie een binary te laten draaien.
+  Lokaal werkt `kustomize build --enable-exec` nog gewoon, met ksops.
+- Helmfile draait met `HELMFILE_DISABLE_INSECURE_FEATURES=true` en
+  `HELMFILE_DISABLE_HOOKS=true`. De templatefuncties `exec`, `envExec`, `readFile`,
+  `readDir` en `readDirEntries` geven een fout in plaats van een resultaat, en een state met
+  `hooks` rendert niet.
+- `postRenderer` valt onder geen van die vlaggen (het laat helm een programma starten), dus
+  de plugin weigert een helmfile-state die hem noemt. De melding noemt alleen de sleutel,
+  niet de waarden.
+- Een fout IN een ontsleuteld bestand meldt alleen de bestandsnaam. De stderr van kustomize
+  citeert de regel waarop hij struikelde, en die inhoud is geheim.
+
+### Allowlist voor bronnen
+
+OPI kloont een helmfile- of chartbron alleen als de URL onder `RENDER_SOURCE_ALLOWLIST`
+valt: een komma-gescheiden lijst URL-prefixen per cluster, in de configmap van de
+OPI-overlay (`bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/configmap.yaml`,
+voor `odcn-production`, `odcn-staging` en `sandboxed-local`). De vergelijking kijkt naar
+schema, host en pad (zonder userinfo of `.git`, met het pad opgelost omdat git
+`/toegestaan/../../elders` als `/elders` opvraagt), en vereist een padgrens: een prefix mag
+eronder liggen (`https://github.com/MinBZK/mijn-bureau-infra/sub`) maar niet ernaast
+(`.../mijn-bureau-infra-ander`). Een bron buiten de lijst geeft een fout. Leeg betekent:
+geen enkele bron toegestaan.
+
+`chart-path`, `helmfile[].path`, `helmfile[].entry` en een `file://`-dependency uit de
+`Chart.yaml` van een gekloonde chart worden binnen de clone opgelost: een absoluut pad, een
+`..` of een symlink die eruit wijst geeft een fout, zodat er geen inhoud van de container in
+de deploymentmap belandt.
+
+### Gereserveerde bestandsnamen
+
+`helmfile[].files` mag geen bestandsnaam gebruiken die de renderketen zelf kent:
+`kustomization.yaml`, `kustomization.yml`, `decrypt-sops.yaml`, `.cmp-env`,
+`cmp-env.to-sops.yaml`, `cmp-env.sops.yaml`, `.helmfile-entry`, `values.to-sops.yaml` en
+`values.sops.yaml`, op elk niveau van het pad. Zo'n naam geeft een fout bij de gebruiker,
+in plaats van een waarschuwing in de logs.
+
 ### Services Integration
 
 The docs application uses RIG platform services:
@@ -213,12 +259,34 @@ Migrating an existing record to the new target is a separate, manual step, descr
 
 ### Environment Variables for CMP
 
-The `.cmp-env` file passes environment-specific configuration to helmfile:
+OPI writes the environment-specific configuration for helmfile as `cmp-env.sops.yaml`, a
+map of `KEY: value` encrypted with SOPS on the project key:
 
-```bash
-ENVIRONMENT=production
-MIJNBUREAU_MASTER_PASSWORD=<encrypted>
+```yaml
+ENVIRONMENT: production
+MIJNBUREAU_MASTER_PASSWORD: <encrypted on the project key>
 ```
+
+The plugin fetches the project key from the `sops-age-key` secret in the target namespace,
+decrypts the file, turns the map into `KEY=value` lines and parses those line by line
+instead of sourcing them: shell syntax in a value stays a literal value. Blank lines and
+`#` comments are skipped; anything else stops the render.
+
+A deployment that has not been reprocessed since RC-333 may still carry a plain-text
+`.cmp-env`; the plugin keeps reading that as a fallback, and OPI removes it as soon as it
+rewrites the deployment. A new or changed `.cmp-env` is refused by the git connector, so
+no plain-text env-var reaches `zad-deployments` again.
+
+- A key is a shell variable name (`^[A-Za-z_][A-Za-z0-9_]*$`), the same form the schema
+  demands of component `env-vars`.
+- A value is one line. An AGE-encrypted value may span lines in the project file; OPI
+  decrypts it before encrypting the map with SOPS, and the decrypted value must be
+  single-line too.
+- Variables starting with `ARGOCD_`, `SOPS_`, `KUSTOMIZE_`, `HELM_`, `HELMFILE_`, `KUBE`,
+  `BASH`, `LD_` or `GIT_` are reserved and refused, as are `PATH`, `HOME`, `IFS`, `ENV`,
+  `SHELL`, `PS4` and `PROMPT_COMMAND`.
+- `ENVIRONMENT` is the one variable the plugin uses: it becomes `helmfile -e <value>`, as
+  a single argument.
 
 ### Deployment Flow
 
@@ -272,7 +340,7 @@ Compared to full mijn-bureau deployment which would include 10+ additional appli
 | `values.sops.yaml` | Encrypted values including service credentials |
 | `kustomization.yaml` | Kustomize config for additional resources |
 | `decrypt-sops.yaml` | KSOPS generator referencing secret files |
-| `.cmp-env` | Environment variables for helmfile |
+| `cmp-env.sops.yaml` | Environment variables for helmfile, encrypted on the project key |
 | `.helmfile-entry` | Points CMP to helmfile location (if in subfolder) |
 
 ### Related Documentation

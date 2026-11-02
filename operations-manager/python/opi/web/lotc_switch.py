@@ -13,9 +13,18 @@ de hertekende pagina leest - plus de weergavekeuze licht/donker onderaan.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+import uuid
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
+from zoneinfo import ZoneInfo
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from opi.core.config import settings
+from opi.core.step_up import step_up_until
+from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, AuditCursor, list_actions
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -24,13 +33,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def render(request: Request, *, template: str, context: dict[str, Any]) -> Response:
+def render(request: Request, *, template: str, context: dict[str, Any], status_code: int = 200) -> Response:
     """Render ``context`` met ``template`` uit ``opi/templates_lotc/``.
 
     Args:
         request: het binnenkomende verzoek.
         template: de template, in ``opi/templates_lotc/``.
         context: de gegevens.
+        status_code: de HTTP-status, voor een pagina die een weigering IS (429).
 
     De import staat binnenin en niet bovenaan om een kringloop te vermijden: de
     templateomgeving leunt op de formulierlaag, en die wordt door de routes geimporteerd
@@ -38,7 +48,11 @@ def render(request: Request, *, template: str, context: dict[str, Any]) -> Respo
     """
     from opi.core.templates_lotc import templates_lotc
 
-    return templates_lotc.TemplateResponse(request, template, context)
+    # Voor het accountmenu: een pagina zonder sessie (een foutpagina) heeft geen step-up.
+    verhoogd_tot = step_up_until(request) if "session" in request.scope else None
+    return templates_lotc.TemplateResponse(
+        request, template, {"verhoogd_tot": verhoogd_tot, **context}, status_code=status_code
+    )
 
 
 def render_fragment(request: Request, *, template: str, context: dict[str, Any]) -> str:
@@ -53,12 +67,13 @@ def render_fragment(request: Request, *, template: str, context: dict[str, Any])
     is door de formulierlaag al afgerenderd. Een tweede Jinja-render zou de ingevulde
     waarden alsnog als sjabloon uitvoeren; dat is in deze codebase eerder een lek geweest.
 
-    ``request`` wordt niet gebruikt en staat er omdat elke aanroeper hem heeft: het houdt
-    deze functie gelijkvormig aan :func:`render`.
+    ``request`` levert de CSP-nonce; een TemplateResponse krijgt die uit de
+    context_processor, een losse render niet.
     """
     from opi.core.templates_lotc import templates_lotc
+    from opi.middleware.security_headers import csp_nonce
 
-    return templates_lotc.env.get_template(template).render(context)
+    return templates_lotc.env.get_template(template).render({**context, "csp_nonce": csp_nonce(request)})
 
 
 def build_lotc_services(
@@ -87,6 +102,9 @@ def build_lotc_services(
             "icon": to_nldd_icon(definition.icon),
             "color": definition.color,
             "help_template": getattr(definition, "help_template", None),
+            # The deprecation marker from the caller (services_router computes it against
+            # the managing cluster); None where the service is current.
+            "replaced_by": entry.get("replaced_by"),
             # De omgevingsvariabelen die deze service levert, met hun aliassen en hun
             # uitleg. De bestaande pagina toont die per kaart; ze stonden hier alleen
             # geTELD op een chip ("3 variabelen"), en dat is precies het soort
@@ -131,6 +149,10 @@ def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
       mee": resource-tuning hoogt geheugen op na een OOM, deployment-health beoordeelt wat
       de waargenomen toestand van een deployment betekent.
 
+    Een dienst die op dit cluster vervangen is (``replaced_on_cluster``, dezelfde vraag als de
+    dienstenkiezer stelt) blijft er ook af: die bestaat nog voor projecten die hem al hebben,
+    maar is geen keuze meer voor wie hier begint.
+
     Diensten met ``hidden=True`` blijven eraf. Anders dan op het dienstenoverzicht - dat
     toont ze bewust, want ze leveren omgevingsvariabelen die je moet kunnen opzoeken - valt
     hier niets op te zoeken: het zijn varianten die OPI zelf toekent, en op een pagina die
@@ -140,14 +162,14 @@ def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
     de pagina iets anders belooft dan de dienst zelf zegt, en dat is precies de fout die
     deze functie moet voorkomen.
     """
-    from opi.services.registry import SERVICE_DEFINITIONS
+    from opi.services.registry import SERVICE_DEFINITIONS, get_service
     from opi.services.services_enums import ServiceKind
     from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
     zelf: list[dict[str, str]] = []
     achtergrond: list[dict[str, str]] = []
     for service_type, definition in SERVICE_DEFINITIONS.items():
-        if definition.hidden:
+        if definition.hidden or get_service(service_type).replaced_on_cluster(settings.CLUSTER_MANAGER):
             continue
         kaart = {
             "name": service_type.value,
@@ -599,19 +621,24 @@ def build_deployment_status_column(
 #: zelfstandige naamwoorden, en bijlagen sluit je nergens op aan). Zie
 #: features/services-info-tabblad.md voor de afweging.
 PROJECT_TABS = {
-    "project": {"label": "Overzicht", "path": "details"},
-    "team": {"label": "Team", "path": "team"},
-    "componenten": {"label": "Componenten", "path": "componenten"},
-    "services": {"label": "Services", "path": "services"},
+    "project": {"label": "Overzicht", "path": "details", "icon": "house"},
+    "team": {"label": "Team", "path": "team", "icon": "person-2"},
+    "componenten": {"label": "Componenten", "path": "componenten", "icon": "blocks-9"},
+    "services": {"label": "Services", "path": "services", "icon": "puzzle-piece"},
     # "Services info" en niet "Toegang": dit tabblad draagt de blokken die DIENSTEN zelf
     # leveren via detail_page_sections, en dat is de haak en niet het onderwerp. "Toegang"
     # beschreef wat de eerste drie diensten toevallig tonen (een adres, een wachtwoord,
     # een code), en dat gaat scheef zodra een dienst iets anders levert.
-    "services-info": {"label": "Services info", "path": "services-info"},
-    "deployments": {"label": "Deployments", "path": "deployments"},
-    "metrics": {"label": "Metrics", "path": "metrics"},
-    "backups": {"label": "Backups", "path": "backups"},
-    "taken": {"label": "Taken", "path": "taken"},
+    "services-info": {"label": "Services info", "path": "services-info", "icon": "info-circle"},
+    "deployments": {"label": "Deployments", "path": "deployments", "icon": "globe-rack-server"},
+    "metrics": {"label": "Metrics", "path": "metrics", "icon": "chart-x-y-axis-line"},
+    "backups": {"label": "Backups", "path": "backups", "icon": "backup-in-cloud"},
+    "taken": {"label": "Taken", "path": "taken", "icon": "check-list"},
+    # De kaart van dit project: componenten, services, deployments en koppelingen. Het
+    # tabblad draagt alleen het element; de plaat komt van /projects/<naam>/kaart.json.
+    "kaart": {"label": "Kaart", "path": "kaart", "icon": "centralized-network"},
+    # Achter Action.AUDIT_READ, dus niet voor elk lid in de balk; de route bepaalt dat.
+    "audit": {"label": "Audit", "path": "audit", "icon": "clock-arrow-counter-clockwise"},
 }
 
 #: Het tabblad waar een onbekend (of ontbrekend) tabblad op uitkomt.
@@ -742,6 +769,241 @@ def build_lotc_project_details(
         "project": project,
         **filter_lotc_deployments(request, project.get("deployments") or [], deployment_open),
     }
+
+
+#: Achtervoegsels van een hostnaam die alleen BINNEN het cluster bestaat. Een link
+#: daarheen opent in geen enkele browser, dus dan toont de pagina de SHA als tekst.
+_INTERNE_HOSTS = (".svc.cluster.local", ".cluster.local")
+
+
+def commit_adres(sha: str) -> str:
+    """Het webadres van een commit in de projecten-repo, of leeg als het er geen is.
+
+    ``GIT_PROJECTS_WEB_URL`` gaat voor: de kloon-URL is in de sandbox een clusteradres.
+    Zonder die instelling blijft de afleiding uit de kloon-URL, want op GitHub en Forgejo
+    is dat hetzelfde adres met ``/commit/<sha>`` erachter. Een ``git://``- of ``ssh://``-URL
+    heeft geen pagina om naartoe te wijzen.
+    """
+    web = settings.GIT_PROJECTS_WEB_URL.strip()
+    basis = web or settings.GIT_PROJECTS_SERVER_URL
+    if not basis.startswith(("http://", "https://")):
+        return ""
+    if not web and (urlparse(basis).hostname or "").endswith(_INTERNE_HOSTS):
+        return ""
+    return f"{basis.removesuffix('.git').rstrip('/')}/commit/{quote(sha, safe='')}"
+
+
+def audit_limit(request: Request) -> int:
+    """Hoeveel auditrijen deze pagina opvraagt: ``?limit=``, met een plafond.
+
+    Een te grote waarde levert het plafond en geen fout: het is een pagina en niet een
+    contract, en 200 rijen zijn een antwoord op "geef me een miljoen".
+    """
+    gevraagd = request.query_params.get("limit")
+    try:
+        aantal = int(gevraagd) if gevraagd else LIST_DEFAULT_LIMIT
+    except ValueError:
+        return LIST_DEFAULT_LIMIT
+    return max(1, min(aantal, LIST_MAX_LIMIT))
+
+
+#: De zone waarin de audit rekent en toont. Een eigen constante per module, zoals de
+#: schedulers het al doen: er is geen gedeelde zoneconstante in deze codebase.
+AUDIT_TZ = ZoneInfo("Europe/Amsterdam")
+
+#: Hoeveel tekens van de zoekterm de database ziet. Een langere term vindt niets dat een
+#: kortere niet ook vindt, en hoort niet in een ILIKE-patroon of in de adresbalk.
+AUDIT_QUERY_MAX = 200
+
+
+@dataclass(frozen=True, slots=True)
+class AuditFilters:
+    """Wat ``?q=``, ``?from=``, ``?until=``, ``?before=``, ``?after=`` en ``?limit=`` zeggen.
+
+    De ``_text``-velden zijn de waarden zoals ze terug de pagina in gaan: het zoekveld,
+    de datumvelden en elke bladerlink dragen ze ongewijzigd verder. Een onleesbare waarde
+    staat er niet in, zoals :func:`audit_limit` ook geen fout geeft maar terugvalt.
+    """
+
+    query: str = ""
+    since: datetime | None = None
+    until: datetime | None = None
+    before: AuditCursor | None = None
+    after: AuditCursor | None = None
+    since_text: str = ""
+    until_text: str = ""
+    limit_text: str = ""
+
+    @property
+    def actief(self) -> bool:
+        """Of er iets gefilterd wordt; bladeren is geen filter."""
+        return bool(self.query or self.since or self.until)
+
+
+def _audit_dagbegin(waarde: str, *, volgende_dag: bool = False) -> tuple[datetime, str] | None:
+    """``yyyy-mm-dd`` als het begin van die dag (of de dag erna) in Europe/Amsterdam."""
+    try:
+        dag = date.fromisoformat(waarde)
+        grens = dag + timedelta(days=1) if volgende_dag else dag
+    except ValueError, OverflowError:
+        # OverflowError: ``9999-12-31`` leest wel, maar de dag erna bestaat niet.
+        return None
+    return datetime.combine(grens, time.min, tzinfo=AUDIT_TZ), dag.isoformat()
+
+
+def _audit_cursor(waarde: str) -> AuditCursor | None:
+    """``<iso-tijd>_<uuid>`` terug naar een cursor; onleesbaar is geen cursor."""
+    tijd, _, sleutel = waarde.rpartition("_")
+    if not tijd:
+        return None
+    try:
+        moment = datetime.fromisoformat(tijd)
+        rij = uuid.UUID(sleutel)
+    except ValueError:
+        return None
+    # Een naïef tijdstip komt niet van ons: de cursor wordt uit een timestamptz gemaakt.
+    return None if moment.tzinfo is None else AuditCursor(time=moment, id=rij)
+
+
+def audit_filters(request: Request) -> AuditFilters:
+    """De auditfilters uit de querystring, zonder ooit een fout te geven.
+
+    Een onleesbare datum of cursor VALT WEG in plaats van een 400 of een 500 op te
+    leveren, dezelfde keuze als bij :func:`audit_limit`: dit is een pagina en geen
+    contract, en een filter dat niet werkt hoort er dan ook niet te staan.
+
+    ``from`` na ``until`` wordt niet omgedraaid: dat levert in de query een leeg antwoord,
+    en dat is precies wat de vraag zegt.
+
+    ``before`` en ``after`` samen is voor :func:`~opi.services.audit.list_actions` een
+    programmeerfout. Een querystring kan beide dragen, dus ``before`` gaat hier voor en
+    ``after`` valt weg: Ouder is de richting waarin je door een geschiedenis leest.
+    """
+    parameters = request.query_params
+    van = _audit_dagbegin(parameters.get("from") or "")
+    tot = _audit_dagbegin(parameters.get("until") or "", volgende_dag=True)
+    before = _audit_cursor(parameters.get("before") or "")
+    after = None if before else _audit_cursor(parameters.get("after") or "")
+    return AuditFilters(
+        query=(parameters.get("q") or "").strip()[:AUDIT_QUERY_MAX],
+        since=van[0] if van else None,
+        until=tot[0] if tot else None,
+        before=before,
+        after=after,
+        since_text=van[1] if van else "",
+        until_text=tot[1] if tot else "",
+        limit_text=parameters.get("limit") or "",
+    )
+
+
+def audit_cursor_text(rij: Any) -> str:
+    """De cursor van een rij, zoals hij in een bladerlink staat."""
+    return f"{rij.time.isoformat()}_{rij.id}"
+
+
+def audit_url(basis: str, filters: AuditFilters, *, before: str = "", after: str = "") -> str:
+    """Het auditblad met de actieve filters, en hoogstens één cursor.
+
+    Bladeren houdt de zoekterm, de periode en ``limit`` vast; een nieuwe zoekopdracht of
+    periode komt uit het formulier en draagt dus geen cursor meer.
+    """
+    waarden = [
+        ("q", filters.query),
+        ("from", filters.since_text),
+        ("until", filters.until_text),
+        ("limit", filters.limit_text),
+        ("before", before),
+        ("after", after),
+    ]
+    querystring = urlencode([(naam, waarde) for naam, waarde in waarden if waarde])
+    return f"{basis}?{querystring}" if querystring else basis
+
+
+def build_lotc_audit(rijen: list[Any]) -> list[dict[str, Any]]:
+    """De auditrijen van een project in de vorm die het tabblad leest.
+
+    ``origin`` komt er NIET in: die kolom is volgens het gebeurtenissenontwerp voor
+    platformbeheerders, en die lezen hem in de database.
+    """
+    getoond = []
+    for rij in rijen:
+        gegevens = rij.data or {}
+        getoond.append(
+            {
+                # In Nederlandse tijd, want de periodefilter rekent in die zone: een
+                # handeling om 00:30 hier stond als UTC op de dag ervoor in de tabel.
+                "time": rij.time.astimezone(AUDIT_TZ) if rij.time.tzinfo else rij.time,
+                "actor": rij.actor or "",
+                "actor_kind": rij.actor_kind,
+                "action": gegevens.get("action", ""),
+                "subject": rij.subject or "",
+                "allowed": bool(gegevens.get("allowed")),
+                "cause": gegevens.get("cause") or "",
+                "commits": [
+                    {"sha": sha, "short": sha[:8], "url": commit_adres(sha)}
+                    for sha in gegevens.get("commit_shas") or []
+                ],
+            }
+        )
+    return getoond
+
+
+async def audit_pagina(request: Request, project_name: str) -> dict[str, Any]:
+    """De auditrijen van dit project plus het zoekveld, de periode en de bladerlinks.
+
+    ``project_name`` komt uit het PAD, dezelfde naam waarover de routepoort besliste:
+    ``list_actions`` controleert zelf niets, dus een naam uit de querystring zou de poort
+    en de lezing over twee verschillende projecten laten gaan.
+    """
+    filters = audit_filters(request)
+    grens = audit_limit(request)
+    basis = project_tab_url(project_name, "audit")
+    context: dict[str, Any] = {
+        "audit_rijen": [],
+        "audit_fout": False,
+        "audit_url": basis,
+        "audit_query": filters.query,
+        "audit_van": filters.since_text,
+        "audit_tot": filters.until_text,
+        "audit_limit_text": filters.limit_text,
+        "audit_filter_actief": filters.actief,
+        "audit_wis_url": audit_url(basis, AuditFilters(limit_text=filters.limit_text)),
+        "audit_ouder_url": "",
+        "audit_nieuwer_url": "",
+    }
+    try:
+        # Eén rij meer dan de pagina toont: die verklapt of er nog een pagina is.
+        gelezen = await list_actions(
+            project_name,
+            limit=grens + 1,
+            query=filters.query or None,
+            since=filters.since,
+            until=filters.until,
+            before=filters.before,
+            after=filters.after,
+        )
+    except SQLAlchemyError, OSError:
+        # Zelfde keuze als bij de uitrolmelding op de projectpagina: een database die niet
+        # antwoordt mag de pagina niet meenemen. Wel met een melding op het tabblad, want
+        # "geen rijen" zou hier een onwaar antwoord zijn.
+        logger.exception("De audit van project %s kon niet worden gelezen", project_name)
+        context["audit_fout"] = True
+        return context
+
+    extra = len(gelezen) > grens
+    # Oplopend gelezen bij ``after``, dus de extra rij is daar de NIEUWERE. Die valt weg,
+    # anders ligt er een gat tussen deze pagina en de pagina die je verliet.
+    gelezen = gelezen[-grens:] if filters.after is not None else gelezen[:grens]
+    context["audit_rijen"] = build_lotc_audit(gelezen)
+    if gelezen:
+        # Ouder bestaat als er nog oudere rijen zijn; na een stap naar nieuwer is dat de
+        # pagina waar je vandaan komt. Nieuwer staat er zodra je niet op de nieuwste
+        # pagina begon, ook als die stap niets meer oplevert.
+        if extra or filters.after is not None:
+            context["audit_ouder_url"] = audit_url(basis, filters, before=audit_cursor_text(gelezen[-1]))
+        if filters.before is not None or filters.after is not None:
+            context["audit_nieuwer_url"] = audit_url(basis, filters, after=audit_cursor_text(gelezen[0]))
+    return context
 
 
 #: Het koekje waarin de weergavekeuze (licht/donker) bewaard blijft.

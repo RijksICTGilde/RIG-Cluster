@@ -29,7 +29,7 @@
 #}
 {% from "bg/_patterns.html.j2" import panel, approval_alerts %}
 
-{% macro deployment_panel(deployment, project, approval_notices={}, user_role='') %}
+{% macro deployment_panel(deployment, project, approval_notices={}) %}
 {% call panel("Deployment: " ~ deployment.name, "arrow-up-arrow-down") %}
     {# ---- De stand van deze deployment ------------------------------------------
 
@@ -53,8 +53,11 @@
        Het cluster stond in de kop van de weggevallen kaart en hoort bij de stand: het
        zegt WAAR dit draait, en de kaart hieronder meldt alleen iets als dat het cluster
        van deze instantie is. #}
+    {# De OTAP-markering staat naast het cluster, want het is dezelfde soort uitspraak over
+       waar dit draait. #}
     <c-cluster gap="sm" align="center">
         <c-tag type="default" label="{{ deployment.cluster }}" />
+        <c-tag type="default" label="{{ environment_label(deployment) }}" />
     </c-cluster>
 
     {% if argocd_available | default(false) %}
@@ -88,16 +91,15 @@
         <c-heading type="h4" size="5" label="Componenten" />
         <c-stack gap="sm">
             {% for component in deployment.components | sort(attribute='reference') %}
-                {# De rij droeg een chevron maar deed niets: een pijl die nergens heen wijst
-                   belooft iets dat er niet is. Hij opent nu het bewerkscherm van DEZE
-                   deployment, want daar staan sinds RC-78 de instellingen per component
-                   binnen deze deployment (het certificaat, de bijlage). Een eigen scherm
-                   voor alleen dit component binnen deze deployment bestaat nog niet; de
-                   titel zegt daarom waar je terechtkomt in plaats van iets anders te
-                   beloven. Alleen klikbaar voor wie mag bewerken. #}
-                {% if user_role in ['admin', 'owner'] %}
+                {# Een klik opent het bewerkscherm van DEZE deployment, want daar staan sinds
+                   RC-78 de instellingen per component binnen deze deployment (het certificaat,
+                   de bijlage). Met de selectie (RC-378) toont dat scherm alleen het component
+                   dat je aanklikte; de andere componenten van de deployment staan niet in het
+                   formulier en blijven bij het opslaan onaangeroerd. Alleen klikbaar voor wie
+                   mag bewerken. #}
+                {% if can('component.update', deployment=deployment.name) %}
                     {% set comp_index = project.deployments.index(deployment) %}
-                    {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ " (" ~ component.reference ~ ")')" %}
+                    {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', '" ~ component.reference ~ " in " ~ deployment.name ~ "', {components: '" ~ component.reference ~ "'})" %}
                     <c-layer
                         icon="puzzle-piece"
                         title="{{ component.reference }}"
@@ -169,46 +171,31 @@
     {# De configuratievariabelen van de deployment zelf staan hier bewust niet; dat besluit
        (hoe geheimen getoond worden) staat nog open, net als op de bestaande pagina. #}
 
-    {# Alleen wat DEZE deployment zelf zet, niet wat het component al draagt.
+    {# De overschrijvingen per component: nooit een waarde, naam of aantal op de pagina
+       (RC-388). Alles zit achter een verse step-up, in het venster dat de knop opent -
+       ook als deze deployment in ontwikkeling staat.
 
-       Hier stond `project_component['user-env-vars']`: de variabelen van het PROJECT-
-       component, opgezocht via de referentie. Daardoor toonde dit blok de standaardwaarden
-       onder een kop die zegt dat het om deze deployment gaat, en stond elke variabele twee
-       keer op de pagina - een keer bij Componenten en een keer hier, met dezelfde waarde.
-
-       De deployment-componentregel draagt zijn eigen `user-env-vars`; dat zijn de
-       overschrijvingen, en dat is wat hier hoort. #}
-    {% set deployment_components = deployment.components | sort(attribute='reference') if deployment.components else [] %}
-    {% set eigen_vars = [] %}
-    {% for component in deployment_components %}
-        {% if component.get('user-env-vars') %}
-            {% set _ = eigen_vars.append((component.reference, component['user-env-vars'])) %}
-        {% endif %}
-    {% endfor %}
-
-    {% if eigen_vars %}
-        {# Heet hetzelfde als op het tabblad Componenten, want het IS hetzelfde: de
-           omgevingsvariabelen van een component. Hier stond "Gebruikers configuratie", en
-           twee namen voor een ding laten de lezer zoeken naar het verschil. Het onderscheid
-           zit in de uitleg eronder, niet in de kop. #}
+       De knop staat bij ELKE componentregel en niet alleen waar al een overschrijving
+       is: dit venster is sinds RC-388 ook de enige weg om er een te maken. #}
+    {% if deployment.components %}
         <c-heading type="h4" size="5" label="Omgevingsvariabelen" />
         <c-paragraph size="sm">Wat deze deployment anders instelt dan het component. De standaardwaarden staan bij Componenten.</c-paragraph>
-        <c-stack gap="md">
-            {% for reference, variabelen in eigen_vars %}
-                <c-card outline padding="md">
-                    <c-stack gap="sm">
+        <c-stack gap="sm">
+            {% for component in deployment.components | sort(attribute='reference') %}
+                {% set env_vars_url = "/projects/" ~ project.name ~ "/deployments/" ~ (deployment.name | urlencode) ~ "/componenten/" ~ (component.reference | urlencode) ~ "/env-vars" %}
+                <c-card outline padding="sm">
+                    <c-cluster gap="sm" align="center" justify="between">
                         <c-cluster gap="sm" align="center">
                             <c-icon icon="puzzle-piece" size="sm" />
-                            <c-heading type="h5" size="6" label="Component: {{ reference }}" />
+                            <c-span>{{ component.reference }}</c-span>
                         </c-cluster>
-                        {% for key, value in variabelen.items() %}
-                            <c-cluster gap="sm" align="center">
-                                <c-icon icon="lock-closed" size="sm" />
-                                <c-span>{{ key }}</c-span>
-                            </c-cluster>
-                            <c-secret-field value="{{ value }}" />
-                        {% endfor %}
-                    </c-stack>
+                        {# htmx, geen JS: het antwoord vraagt zelf om de step-up of opent
+                           het venster; de haak in edit_modal.js opent de modal. #}
+                        {% if can('env-vars.manage', deployment=deployment.name, component=component.reference) %}
+                            <c-button type="tertiary" size="sm" label="Bekijken en bewerken" icon="pencil-on-square" show-icon="before"
+                                      hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
+                        {% endif %}
+                    </c-cluster>
                 </c-card>
             {% endfor %}
         </c-stack>
@@ -222,7 +209,7 @@
     {% if project.deployments %}
         <c-stack gap="md">
             {% for deployment in project.deployments | sort(attribute='name') %}
-                {{ deployment_panel(deployment, project, approval_notices | default({}), user_role | default('')) }}
+                {{ deployment_panel(deployment, project, approval_notices | default({})) }}
             {% endfor %}
         </c-stack>
     {% else %}

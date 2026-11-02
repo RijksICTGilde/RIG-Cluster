@@ -6,7 +6,7 @@ provisioned in the cluster (database, cache, object storage, auth, ...).
 The other sandbox suites create service-less projects, so nothing exercises the
 full provisioning path end to end. This suite ticks all 10 create-wizard services
 (publish-on-web, keycloak, authorization-wall, metrics-scraper, persistent-storage,
-temp-storage, postgresql-database, minio-storage, redis, attachments), and then, on
+temp-storage, postgresql-database, seaweedfs-storage, redis, attachments), and then, on
 a separate minimal project, adds the two hidden namespace variants
 (namespace-postgresql-database, namespace-redis) via the v2 API - they have no
 wizard/edit card - so every ServiceType is covered.
@@ -170,7 +170,7 @@ def test_all_services_provisioned_in_cluster(
     Proves the services were *processed* (not just declared): after the async
     create pipeline finishes, the project namespace must carry each service's
     provisioned output - the per-deployment credential secrets (database, keycloak,
-    minio, redis, metrics), the auth-wall sidecar + cookie secret, the
+    seaweedfs, redis, metrics), the auth-wall sidecar + cookie secret, the
     persistent-storage PVC, the publish-on-web ingress, and the metrics annotations.
 
     Skips when kubectl cannot reach a cluster (these checks only run on the machine
@@ -199,7 +199,7 @@ def test_all_services_provisioned_in_cluster(
     expected_secrets = {
         "postgresql-database": f"{dep}-database",
         "keycloak": f"{dep}-keycloak",
-        "minio-storage": f"{dep}-minio",
+        "seaweedfs-storage": f"{dep}-seaweedfs",
         "redis": f"{dep}-redis",
         "metrics-scraper": f"{dep}-metrics-auth",
         "authorization-wall": f"{dep}-web-oauth2-cookie",
@@ -243,7 +243,9 @@ _STATUS_TARGETS = {
     "persistent-storage": "storage-data",
     "temp-storage": "storage-temp",
     "postgresql-database": "postgres",
-    "minio-storage": "minio",
+    # Het /status-doel heet "minio" voor beide objectopslagdiensten: probe_spec.json van
+    # de e2e-allservices-image bindt ze aan hetzelfde S3-doel.
+    "seaweedfs-storage": "minio",
     "redis": "redis",
 }
 
@@ -278,7 +280,7 @@ def test_all_services_status_reports_every_binding_ok(
 
     'Pod Healthy' only proves the process started and passed the TCP probe. This
     asserts the app could really connect to and round-trip each platform resource
-    (database incl. schemas + RO role, redis, minio, oidc, PVCs), reported at
+    (database incl. schemas + RO role, redis, object storage, oidc, PVCs), reported at
     /status as bound + ok. Skips when kubectl cannot reach the sandbox host.
     """
     if not cluster.kubectl_available():

@@ -19,5 +19,5 @@
 {% endblock %}
 
 {% block additional_scripts %}
-<script src="{{ static_url('js/wizard.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/wizard.js') }}"></script>
 {% endblock %}

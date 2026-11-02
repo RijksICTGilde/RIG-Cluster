@@ -1,21 +1,21 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "{{ pod_name }}"
-  namespace: "{{ namespace }}"
+  name: {{ pod_name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
     app.kubernetes.io/name: database-restore
     app.kubernetes.io/component: restore-job
     app.kubernetes.io/managed-by: opi-backup
-    backup.rig.nl/database: "{{ reference_name }}"
-    backup.rig.nl/target-database: "{{ target_db_name }}"
+    backup.rig.nl/database: {{ reference_name | yaml_scalar }}
+    backup.rig.nl/target-database: {{ target_db_name | yaml_scalar }}
 spec:
-  serviceAccountName: "{{ service_account_name }}"
+  serviceAccountName: {{ service_account_name | yaml_scalar }}
   restartPolicy: Never
-  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) | int }}
   containers:
     - name: restore
-      image: ghcr.io/minbzk/base-images/rig-backup:latest
+      image: {{ backup_image }}
       imagePullPolicy: IfNotPresent
       command:
         - /bin/sh
@@ -23,12 +23,12 @@ spec:
         - |
           set -e
 
-          echo "Starting database restore for: {{ reference_name }}"
+          echo "Starting database restore for: ${REFERENCE_NAME}"
           echo "Target Database Host: ${TARGET_DB_HOST}"
           echo "Target Database Port: ${TARGET_DB_PORT}"
           echo "Target Database Name: ${TARGET_DB_NAME}"
           echo "Target Database User: ${TARGET_DB_USER}"
-          echo "Namespace: {{ namespace }}"
+          echo "Namespace: ${NAMESPACE}"
           echo "S3 Endpoint: ${S3_ENDPOINT}"
           echo "S3 Bucket: ${S3_BUCKET}"
           echo "Backup Prefix: ${BACKUP_PREFIX}"
@@ -42,13 +42,12 @@ spec:
 
           # Connect to repository
           echo "Connecting to Kopia repository..."
+          # Kopia takes the repository password from KOPIA_PASSWORD and the S3 keys from
+          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, so they stay out of argv.
           kopia repository connect s3 \
             --bucket="${S3_BUCKET}" \
             --prefix="${BACKUP_PREFIX}/" \
             --endpoint="${S3_ENDPOINT}" \
-            --access-key="${S3_ACCESS_KEY}" \
-            --secret-access-key="${S3_SECRET_KEY}" \
-            --password="${KOPIA_PASSWORD}" \
             ${TLS_FLAG}
 
           echo "Repository connected successfully"
@@ -57,13 +56,13 @@ spec:
           SNAPSHOT_ID="${RESTORE_SNAPSHOT_ID}"
 
           if [ -z "$SNAPSHOT_ID" ]; then
-            echo "No snapshot ID specified, finding latest database snapshot for {{ reference_name }}..."
+            echo "No snapshot ID specified, finding latest database snapshot for ${REFERENCE_NAME}..."
             # Get latest snapshot with matching database tag
-            SNAPSHOT_ID=$(kopia snapshot list --tags="database:{{ reference_name }}" --tags="resource_type:database" --json 2>/dev/null | \
+            SNAPSHOT_ID=$(kopia snapshot list --tags="database:${REFERENCE_NAME}" --tags="resource_type:database" --json 2>/dev/null | \
               jq -r 'sort_by(.startTime) | reverse | .[0].id // empty')
 
             if [ -z "$SNAPSHOT_ID" ]; then
-              echo "ERROR: No database snapshots found for {{ reference_name }}"
+              echo "ERROR: No database snapshots found for ${REFERENCE_NAME}"
               exit 1
             fi
             echo "Found latest snapshot: $SNAPSHOT_ID"
@@ -84,7 +83,7 @@ spec:
             -h "${TARGET_DB_HOST}" -p "${TARGET_DB_PORT}" -U "${TARGET_DB_USER}" -d "${TARGET_DB_NAME}" \
             -c "SELECT 1" > /dev/null; then
             echo "ERROR: target database is not usable (host, port, database name, user or password rejected)"
-            exit {{ target_unusable_exit_code }}
+            exit {{ target_unusable_exit_code | int }}
           fi
 
           echo "Target database connection successful"
@@ -96,7 +95,7 @@ spec:
             jq -r '.rootEntry.name // empty')
 
           if [ -z "$DUMP_FILE" ]; then
-            DUMP_FILE="database-{{ reference_name }}.dump"
+            DUMP_FILE="database-${REFERENCE_NAME}.dump"
           fi
           echo "Dump file: $DUMP_FILE"
 
@@ -233,38 +232,56 @@ spec:
           echo "Schemas in ${TARGET_DB_NAME} after restore:"
           run_sql "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname <> 'information_schema' ORDER BY nspname"
 
-          echo "Database restore completed successfully for {{ reference_name }} -> {{ target_db_name }}"
+          echo "Database restore completed successfully for ${REFERENCE_NAME} -> ${TARGET_DB_NAME}"
       env:
+        # De namen die het script print en als tag meegeeft, komen via env binnen en
+        # niet in het script zelf: YAML-quoting is geen shell-quoting.
+        - name: NAMESPACE
+          value: {{ namespace | yaml_scalar }}
+        - name: REFERENCE_NAME
+          value: {{ reference_name | yaml_scalar }}
         - name: TARGET_DB_HOST
-          value: "{{ target_db_host }}"
+          value: {{ target_db_host | yaml_scalar }}
         - name: TARGET_DB_PORT
-          value: "{{ target_db_port | default(5432) }}"
+          value: "{{ target_db_port | default(5432) | int }}"
         - name: TARGET_DB_NAME
-          value: "{{ target_db_name }}"
+          value: {{ target_db_name | yaml_scalar }}
         - name: TARGET_DB_USER
-          value: "{{ target_db_user }}"
+          value: {{ target_db_user | yaml_scalar }}
         # The default schema of the database the dump was taken from. Validated
         # against the platform naming rule before this manifest is rendered.
         - name: SOURCE_SCHEMA
-          value: "{{ source_schema }}"
+          value: {{ source_schema | yaml_scalar }}
         - name: TARGET_DB_PASSWORD
-          value: "{{ target_db_password }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: TARGET_DB_PASSWORD
         - name: S3_ENDPOINT
-          value: "{{ s3_endpoint }}"
+          value: {{ s3_endpoint | yaml_scalar }}
         - name: S3_BUCKET
-          value: "{{ s3_bucket }}"
-        - name: S3_ACCESS_KEY
-          value: "{{ s3_access_key }}"
-        - name: S3_SECRET_KEY
-          value: "{{ s3_secret_key }}"
+          value: {{ s3_bucket | yaml_scalar }}
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: AWS_SECRET_ACCESS_KEY
         - name: S3_DISABLE_TLS
-          value: "{{ s3_disable_tls | lower }}"
+          value: {{ s3_disable_tls | lower | yaml_scalar }}
         - name: BACKUP_PREFIX
-          value: "{{ backup_prefix }}"
+          value: {{ backup_prefix | yaml_scalar }}
         - name: KOPIA_PASSWORD
-          value: "{{ kopia_password }}"
+          valueFrom:
+            secretKeyRef:
+              name: {{ credentials_secret | yaml_scalar }}
+              key: KOPIA_PASSWORD
         - name: RESTORE_SNAPSHOT_ID
-          value: "{{ snapshot_id }}"
+          value: {{ snapshot_id | yaml_scalar }}
         # Use /tmp for Kopia cache (container filesystem is read-only)
         - name: KOPIA_CACHE_DIRECTORY
           value: "/tmp/kopia-cache"

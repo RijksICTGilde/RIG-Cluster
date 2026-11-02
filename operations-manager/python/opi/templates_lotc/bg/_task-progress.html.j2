@@ -73,6 +73,14 @@
             {% endwith %}
         {% endif %}
 
+        {# Alleen hier en niet in het gedeelde partial: dat toont een taak die LOOPT, en
+           de werkgegevens worden pas een uur na afloop leeggemaakt. #}
+        {% if details_purged is defined and details_purged %}
+            <c-alert type="info" heading="De details van deze taak zijn niet meer beschikbaar">
+                Stappen en logboek worden kort na afloop opgeruimd.
+            </c-alert>
+        {% endif %}
+
         {{ progress_task_list(tasks) }}
 
         {% if status in ("completed", "failed") and on_complete is defined and on_complete and project_name %}

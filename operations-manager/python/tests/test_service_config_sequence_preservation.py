@@ -65,7 +65,7 @@ def _project() -> dict[str, Any]:
                 }
             },
         ],
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
     }
 
 

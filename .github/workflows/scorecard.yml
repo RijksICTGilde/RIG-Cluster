@@ -1,0 +1,73 @@
+name: OpenSSF Scorecard
+
+# De checks waar RC-341 zich op beriep (Pinned-Dependencies, Token-Permissions) nu ook
+# gemeten in plaats van alleen als motivatie aangehaald. publish_results zet de uitslag op
+# de publieke Scorecard-API, zodat de score van buiten te zien is.
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '0 5 * * 1'  # Maandag 5:00 UTC, voor security.yml en renovate.yml
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+env:
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.deps.dev:443
+    api.github.com:443
+    api.osv.dev:443
+    api.scorecard.dev:443
+    api.securityscorecards.dev:443
+    bestpractices.coreinfrastructure.org:443
+    codeload.github.com:443
+    fulcio.sigstore.dev:443
+    github.com:443
+    index.docker.io:443
+    objects.githubusercontent.com:443
+    oss-fuzz-build-logs.storage.googleapis.com:443
+    raw.githubusercontent.com:443
+    rekor.sigstore.dev:443
+    timestamp.sigstore.dev:443
+    release-assets.githubusercontent.com:443
+    results-receiver.actions.githubusercontent.com:443
+    sigstore-tuf-root.storage.googleapis.com:443
+    tuf-repo-cdn.sigstore.dev:443
+    www.bestpractices.dev:443
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # de SARIF naar het Security-tabblad
+      id-token: write         # publish_results tekent de uitslag keyless
+      contents: read
+      actions: read
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        with:
+          sarif_file: results.sarif
+          category: scorecard

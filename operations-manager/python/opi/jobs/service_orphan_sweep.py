@@ -1,8 +1,8 @@
 """Report-first sweep for orphaned service resources.
 
 Inventories actual service resources (PostgreSQL databases/users, Keycloak
-clients, MinIO buckets) and classifies them against the expected set derived
-from all project YAML files - the same truth source the delete API uses.
+clients, MinIO buckets, mail accounts) and classifies them against the expected set
+derived from all project YAML files - the same truth source the delete API uses.
 
 This sweep NEVER mutates anything. It produces a report; deletion happens
 only via the confirm endpoint, which marks confirmed orphans for the normal
@@ -27,15 +27,19 @@ from typing import Any
 
 from opi.connectors.git import create_git_connector_for_argocd
 from opi.connectors.keycloak import create_keycloak_connector
+from opi.connectors.mail import MailRelayNotConfiguredError, create_mail_connector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.connectors.postgres import create_postgres_connector
 from opi.core.config import settings
 from opi.jobs.reconciliation import _build_expected_resources
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.utils.naming import (
+    MAIL_PROJECT_ACCOUNT_PREFIX,
     _sanitize_for_identifier,
     _sanitize_for_lowercase,
+    generate_deployment_mail_account_name,
     generate_keycloak_client_id,
+    generate_mail_account_name,
     generate_project_platform_client_id,
     generate_project_realm_name,
 )
@@ -125,6 +129,36 @@ def _classify_project_realm_client(
     return "unknown", "does not match project deployment naming"
 
 
+def _classify_mail_account(account: str, projects: dict[str, list[str]]) -> tuple[str, str]:
+    """Classify an SMTP account on the relay. Returns (classification, reason).
+
+    The relay has ONE flat account namespace, so the platform's own accounts stand next to
+    the project accounts; they are classified as system and never confirmable. Everything
+    without the project prefix is unknown rather than orphaned -- an account an
+    administrator made by hand is not ours to propose for deletion.
+
+    Since RC-401 an account belongs to a DEPLOYMENT, so the expected set is one name per
+    live deployment. The one-per-project account of before it is an orphan candidate the
+    moment no deployment is using it any more, which is also the backstop under the
+    cleanup in ``MailManager._remove_legacy_project_account``.
+    """
+    if account in (settings.MAIL_PLATFORM_ACCOUNT, settings.MAIL_KEYCLOAK_ACCOUNT):
+        return "system", "platform mail account"
+    if not account.startswith(MAIL_PROJECT_ACCOUNT_PREFIX):
+        return "unknown", "does not match the project account naming convention"
+
+    for project_name, deployments in projects.items():
+        if account in {generate_deployment_mail_account_name(project_name, dep) for dep in deployments}:
+            return "expected", "belongs to a live deployment"
+    for project_name in projects:
+        if account == generate_mail_account_name(project_name):
+            return (
+                "orphan_candidate",
+                f"the pre-RC-401 project account of '{project_name}'; every deployment has its own now",
+            )
+    return "orphan_candidate", "project account naming but no live deployment claims it"
+
+
 async def sweep(
     project_yamls: list[dict[str, Any]],
     cluster: str,
@@ -145,6 +179,7 @@ async def sweep(
         "keycloak_realms": [],
         "keycloak_clients": [],
         "minio_buckets": [],
+        "mail_accounts": [],
         "gitops_folders": [],
         "stale_marks": [],
         "errors": [],
@@ -273,10 +308,13 @@ async def sweep(
 
         minio = create_minio_connector()
         alias = "orphan-sweep"
-        minio_url = (
-            f"{'https' if settings.MINIO_USE_TLS else 'http'}://{get_minio_host(cluster)}:{get_minio_port(cluster)}"
+        await minio.configure_alias(
+            alias,
+            f"{get_minio_host(cluster)}:{get_minio_port(cluster)}",
+            settings.MINIO_ADMIN_ACCESS_KEY,
+            settings.MINIO_ADMIN_SECRET_KEY,
+            secure=settings.MINIO_USE_TLS,
         )
-        await minio.configure_alias(alias, minio_url, settings.MINIO_ADMIN_ACCESS_KEY, settings.MINIO_ADMIN_SECRET_KEY)
 
         for bucket in await minio.list_buckets(alias):
             bucket_name = bucket.get("name", "") if isinstance(bucket, dict) else str(bucket)
@@ -298,6 +336,23 @@ async def sweep(
     except Exception as e:
         logger.exception("Orphan sweep: MinIO inventory failed")
         report["errors"].append(f"minio inventory failed: {e}")
+
+    # --- Mail accounts on the relay ---
+    #
+    # Deze categorie ontbrak, en sinds RC-401 is zij ook de enige plek waar een mailaccount
+    # nog opduikt: het projectbestand draagt geen accountgegevens meer, dus wat de relay
+    # houdt is alleen tegen de VERWACHTE namen te leggen. Een mislukte inventarisatie wordt
+    # als fout gemeld en niet als lege lijst: leeg zou elk account een wees laten lijken.
+    try:
+        mail = await create_mail_connector()
+        for account in await mail.list_principals():
+            classification, reason = _classify_mail_account(account, projects)
+            report["mail_accounts"].append({"name": account, "classification": classification, "reason": reason})
+    except MailRelayNotConfiguredError:
+        logger.info("Orphan sweep: geen mailrelay op dit cluster, geen mailaccounts te inventariseren")
+    except Exception as e:
+        logger.exception("Orphan sweep: mail inventory failed")
+        report["errors"].append(f"mail inventory failed: {e}")
 
     # --- ArgoCD GitOps folders ---
     #
@@ -382,7 +437,7 @@ async def sweep(
 def _summarize(report: dict[str, Any]) -> dict[str, int]:
     """Count classifications across all sections."""
     counts: dict[str, int] = {}
-    for section in ("databases", "keycloak_realms", "keycloak_clients", "minio_buckets"):
+    for section in ("databases", "keycloak_realms", "keycloak_clients", "minio_buckets", "mail_accounts"):
         for entry in report[section]:
             key = entry["classification"]
             counts[key] = counts.get(key, 0) + 1

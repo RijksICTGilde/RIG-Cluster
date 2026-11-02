@@ -34,13 +34,38 @@ Bestanden herschrijven zichzelf namelijk pas bij verwerking (`project_manager` s
 Na deze wijziging: alle 47 valideren tegen hun eigen versie, en nog steeds alle 47 tegen het
 nieuwste schema ná migratie.
 
+## Het formaat: MAJOR.MINOR, geen getal
+
+Een schemaversie is `MAJOR.MINOR` en wordt per deel vergeleken: **2.10 is nieuwer dan 2.9**. De
+minor loopt dus door: na 2.9 komt 2.10 en daarna 2.11, niet 3.0. Een nieuwe major is voor een
+echte breuk, niet voor de tiende kleine toevoeging.
+
+Als getal zou dat niet werken: `2.10` is als float gelijk aan `2.1`, en dus kleiner dan `2.9`.
+Daarom:
+
+- `SchemaVersion` in `opi/core/project_schema.py` is het ene versietype. Het leest `2`, `2.9`,
+  `"2.9"` en `"2.10"` als `(major, minor)` en vergelijkt daarop. `parse_schema_version` leest een
+  waarde, `version_key` geeft de canonieke tekstvorm (`"2"`, `"2.9"`, `"2.10"`), en dat is ook de
+  naam van het patchbestand.
+- Een float wordt via zijn tekstvorm gelezen, zodat er geen verwarring kan ontstaan: de float
+  `2.1` is altijd `(2, 1)`, en alleen de string `"2.10"` is `(2, 10)`.
+- OPI schrijft een versie als **string** weg (`schema-version: "2.10"`), want als getal zou YAML
+  er weer 2.1 van maken. Het schema accepteert allebei: bestaande bestanden met `2.9`, `2.2` of
+  `2` blijven ongewijzigd geldig en worden niet herschreven om hun type. De eerstvolgende
+  migratie van zo'n bestand zet het nieuwe versienummer, als string.
+- Een met de hand getypte versie zonder aanhalingstekens, zoals `schema-version: 2.10`, is voor
+  YAML het getal 2.1. `parse_schema_version` leest daarom de breedte die ruamel van het getal
+  onthoudt, zodat het weer 2.10 is en niet 2.1. Zonder die stap zou de git-poort het bestand als
+  2.1 doorlaten en de migratieketen er opnieuw overheen draaien. OPI schrijft de versie zelf
+  altijd als string.
+
 ## Hoe het werkt
 
 `project_v2.json` beschrijft alleen de **nieuwste** versie. Het draagt één annotatie die zegt
 welke dat is:
 
 ```json
-"x-zad-schema-version": 2.6
+"x-zad-schema-version": "2.17"
 ```
 
 Een oudere versie wordt samengesteld uit dat schema plus een keten van patches. Elke patch is
@@ -48,14 +73,24 @@ een [RFC 7386 JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386) die van 
 de eerstvolgende versie dat van die versie maakt:
 
 ```
-project_v2.json                 (2.6)
-  + project_legacy/v2.5.json -> 2.5   (root `invites:` terug)
-  + project_legacy/v2.4.json -> 2.4   (root `domains:` terug)
-  + project_legacy/v2.3.json -> 2.3   (leeg: die migratie versmalde de vorm niet)
-  + project_legacy/v2.2.json -> 2.2   (`config.keycloak` terug)
-  + project_legacy/v2.1.json -> 2.1   (`path` als string, `rewrite-path`, `paths`)
-  + project_legacy/v2.json   -> 2     (component-`root: true`)
-  + project_legacy/v1.json   -> 1     (`uses-services`, `storage`, v0 `publish-on-web`)
+project_v2.json                 (2.17)
+  + project_legacy/v2.16.json -> 2.16  (`source-code`: 2.17 voegt het root-veld toe voor broncodelinks)
+  + project_legacy/v2.15.json -> 2.15  (`clone-from.run`: 2.16 voegt het veld toe voor backup-restore)
+  + project_legacy/v2.14.json -> 2.14  (component-`description`: 2.15 voegde het veld toe)
+  + project_legacy/v2.13.json -> 2.13  (`accounts` in send-email: 2.14 haalt het blok weg)
+  + project_legacy/v2.12.json -> 2.12  (`users[].role` in plaats van `users[].roles`: 2.13 maakte het een lijst)
+  + project_legacy/v2.11.json -> 2.11  (`api-key` op root: 2.12 verhuisde het naar `users[...].service-account`)
+  + project_legacy/v2.9.json  -> 2.9   (geen `environment` op een deployment: 2.11 voegde hem toe)
+  + project_legacy/v2.8.json  -> 2.8   (registries op root)
+  + project_legacy/v2.7.json  -> 2.7   (leeg: die migratie versmalde de vorm niet)
+  + project_legacy/v2.6.json  -> 2.6   (webadresvelden op de deployment terug)
+  + project_legacy/v2.5.json  -> 2.5   (root `invites:` terug)
+  + project_legacy/v2.4.json  -> 2.4   (root `domains:` terug)
+  + project_legacy/v2.3.json  -> 2.3   (leeg: die migratie versmalde de vorm niet)
+  + project_legacy/v2.2.json  -> 2.2   (`config.keycloak` terug)
+  + project_legacy/v2.1.json  -> 2.1   (`path` als string, `rewrite-path`, `paths`)
+  + project_legacy/v2.json    -> 2     (component-`root: true`)
+  + project_legacy/v1.json    -> 1     (`uses-services`, `storage`, v0 `publish-on-web`)
 ```
 
 Een patch is daarmee de schemakant van precies één migratie. `null` als waarde verwijdert een
@@ -76,8 +111,11 @@ teruggeschreven.
 ## Een migratie toevoegen
 
 1. Voeg de migratiestap toe aan `MIGRATION_STEPS` in `opi/services/schema_migration.py` en de
-   nieuwe versie aan `SCHEMA_VERSIONS`.
-2. Pas `project_v2.json` aan naar de nieuwe vorm en zet `x-zad-schema-version` op de nieuwe versie.
+   nieuwe versie aan `SCHEMA_VERSIONS`. De minor loopt door: na 2.9 komt `2.10`, daarna `2.11`.
+   De keten hoeft niet aansluitend te zijn: claimt een ander plan hetzelfde nummer, dan neemt
+   wie als tweede merget het volgende.
+2. Pas `project_v2.json` aan naar de nieuwe vorm en zet `x-zad-schema-version` op de nieuwe versie,
+   als string.
 3. Voeg `opi/schemas/project_legacy/v<vorige versie>.json` toe met een patch die de oude vorm
    terugzet. Is er niets versmald, dan is een patch met alleen een `$comment` het juiste antwoord.
 
@@ -97,8 +135,11 @@ De versiedeclaratie komt uit hetzelfde onvertrouwde bestand als de rest, en word
 behandeld:
 
 - ontbrekende `schema-version` → weigeren
-- niet-numeriek (`"2.6"`, `true`) → weigeren
+- een waarde die geen `MAJOR` of `MAJOR.MINOR` is (`"2.x"`, `true`, `-1`) → weigeren
 - onbekende versie (99) → weigeren
+
+Een getal (`2.9`) en de tekstvorm (`"2.9"`) zijn hier dezelfde versie: de tekstvorm is de vorm
+waarin OPI zelf schrijft.
 
 Er is geen terugval op "dan maar het nieuwste" (dan zou een oud bestand afgerekend worden op regels
 die het nooit had) en geen op "dan maar het soepelste" (dan komt alles binnen door versie 1 te

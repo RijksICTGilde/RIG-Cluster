@@ -26,8 +26,9 @@ class TestHetIdKomtMee:
         """Het id is een FEIT over de rij; of er een link van komt beslist de tabel.
 
         Hier stond dat juist een mislukte taak een link verdiende, want daar staat wat er
-        misging. Dat gaat alleen op zolang de taak er nog is, en afgeronde taken worden
-        opgeruimd -- zie test_alleen_een_lopende_taak_wordt_een_link.
+        misging. Dat gaat alleen op zolang die gegevens er nog zijn, en de werkgegevens van
+        een afgeronde taak worden na een uur leeggemaakt -- zie
+        test_een_afgeronde_taak_zonder_details_blijft_tekst.
         """
         rij = _normalize_task({"task_id": "abc-123", "task_type": "refresh_project", "status": "failed"})
         assert rij["task_id"] == "abc-123"
@@ -51,11 +52,19 @@ class TestDeTabel:
         html = self._render([_normalize_task({"task_id": "abc-123", "task_type": "backup", "status": "running"})])
         assert "/projects/progress/abc-123" in html
 
-    def test_alleen_een_lopende_taak_wordt_een_link(self) -> None:
-        """Een afgeronde taak wordt opgeruimd, dus de link zou naar "Taak niet
-        beschikbaar" wijzen: een dode link die er levend uitziet."""
+    def test_een_afgeronde_taak_zonder_details_blijft_tekst(self) -> None:
+        """De werkgegevens van een afgeronde taak zijn na een uur leeggemaakt (RC-282), dus
+        de voortgangspagina heeft dan geen stappen en geen logboek meer te tonen. Zolang ze
+        er nog zijn, is de rij wel een link: zie test_opgeruimde_taakdetails.py."""
         for status in ("completed", "failed", "cancelled"):
-            rij = _normalize_task({"task_id": "abc-123", "task_type": "backup", "status": status})
+            rij = _normalize_task(
+                {
+                    "task_id": "abc-123",
+                    "task_type": "backup",
+                    "status": status,
+                    "details_purged_at": "2026-10-30T12:00:00+00:00",
+                }
+            )
             html = self._render([rij])
             assert "/projects/progress/abc-123" not in html, status
             # De rij blijft er wel staan, met zijn soort als gewone tekst. Het label komt

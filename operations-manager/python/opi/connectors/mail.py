@@ -85,6 +85,15 @@ MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 #: into the same script.
 MAIL_SENDER_ADDRESS_PREFIX = "zad.afzender.adres"
 
+#: Settings prefix under which each account's PROJECT is stored, one key per account.
+#:
+#: Since RC-401 an account belongs to a DEPLOYMENT and its name carries a hash, so the
+#: project is no longer readable from it -- and the relay cannot look anything up per
+#: account while a message is being accepted. So OPI writes it here, and the identity rules
+#: read it to compose the ``X-ZAD-Project`` header. An account without a key gets no header,
+#: which is exactly right for the platform accounts: they send on nobody's behalf.
+MAIL_ACCOUNT_PROJECT_PREFIX = "zad.project"
+
 #: Settings prefix for each account's own rate limiter. ``queue.limiter.*`` is not a
 #: local key, so the API can write it and ``/api/reload`` makes it take effect.
 MAIL_LIMITER_PREFIX = "queue.limiter.inbound.zad"
@@ -119,6 +128,10 @@ _ACCOUNT_PATROON = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
 #: read a variable instead of being text -- which is why it belongs in both lists, and why
 #: ``TestDeWeergavenaamWordtGetoetst`` runs its refused names past this layer too.
 _NAAM_VERBODEN = re.compile(r'[@<>"\\$\x00-\x1F\x7F]')
+
+
+#: How many accounts one page of the principal listing asks for.
+_PRINCIPAL_PAGE = 100
 
 
 #: Serialises the read-modify-write of the generated table.
@@ -240,6 +253,36 @@ class MailConnector:
         data = result.get("data") if isinstance(result, dict) else None
         return data if isinstance(data, dict) else result
 
+    async def list_principals(self) -> list[str]:
+        """Every individual account the relay holds, by name.
+
+        What the orphan sweep needs: it compares the relay's inventory with the accounts the
+        project files ask for, and an inventory it cannot read must be reported as
+        INCOMPLETE and never as empty -- an empty answer would make every account look like
+        an orphan. So a failure raises (``MailRelayError``) rather than returning nothing.
+
+        Paged, because the management API answers a page at a time and a cluster has one
+        account per deployment plus the platform's own.
+        """
+        namen: list[str] = []
+        page = 1
+        while True:
+            result = await self._request("GET", f"/api/principal?types=individual&page={page}&limit={_PRINCIPAL_PAGE}")
+            data = (result or {}).get("data") or {}
+            items = data.get("items") if isinstance(data, dict) else data
+            if not isinstance(items, list):
+                raise MailRelayError(f"De relay gaf geen lijst accounts terug op pagina {page}: {str(data)[:200]}")
+            for item in items:
+                # Stalwart answers a list of principal objects; older builds answer a list
+                # of plain names. Both are read, because an inventory that silently skips
+                # every entry reads as "no accounts" and that is the one wrong answer here.
+                naam = item.get("name") if isinstance(item, dict) else item
+                if isinstance(naam, str) and naam:
+                    namen.append(naam)
+            if len(items) < _PRINCIPAL_PAGE:
+                return namen
+            page += 1
+
     async def create_principal(
         self,
         name: str,
@@ -308,22 +351,35 @@ class MailConnector:
         """
         return await self._get_sender_keys(MAIL_SENDER_ADDRESS_PREFIX)
 
+    async def get_account_projects(self) -> dict[str, str]:
+        """Which project each account belongs to, as the relay currently holds it.
+
+        The whole table in one call, for the same reason as the names and addresses: the
+        generated script is rendered from ALL of them.
+        """
+        return await self._get_sender_keys(MAIL_ACCOUNT_PROJECT_PREFIX)
+
     async def _get_sender_keys(self, prefix: str) -> dict[str, str]:
         """One settings series, keyed by account name with the prefix stripped."""
         result = await self._request("GET", f"/api/settings/list?prefix={prefix}.")
         items = ((result or {}).get("data") or {}).get("items") or {}
         return {account: waarde for account, waarde in items.items() if waarde}
 
-    async def set_sender(self, account: str, display_name: str, from_address: str = "") -> bool:
+    async def set_sender(self, account: str, display_name: str, from_address: str = "", project: str = "") -> bool:
         """Give this account the sender recipients see. Returns whether anything changed.
 
-        Both halves in ONE call, and one lock around them, because both are rendered into
-        the same generated script: writing them separately would render that script twice,
-        reload twice, and let two concurrent writers drop each other's value.
+        Three halves in ONE call, and one lock around them, because all three are rendered
+        into the same generated script: writing them separately would render that script
+        three times, reload three times, and let two concurrent writers drop each other's
+        value.
 
         Idempotent by comparison and not by luck: a project is processed again on every
         change it makes, and every write here drags a rebuild of the relay's whole
         configuration behind it.
+
+        ``project`` is which project this account sends for, for the ``X-ZAD-Project``
+        header; since RC-401 the account name no longer says so. Empty for a platform
+        account, which sends on nobody's behalf and gets no header.
 
         An empty value is a REMOVAL, not an empty value stored: no display name is a valid
         outcome (the message then leaves with the account's address and nothing in front of
@@ -334,14 +390,21 @@ class MailConnector:
         """
         _controleer_naam(account, display_name)
         _controleer_adres(account, from_address)
+        _controleer_project(account, project)
         async with _TABEL_SLOT:
             namen = await self.get_sender_names()
             adressen = await self.get_sender_addresses()
-            if namen.get(account, "") == display_name and adressen.get(account, "") == from_address:
+            projecten = await self.get_account_projects()
+            if (
+                namen.get(account, "") == display_name
+                and adressen.get(account, "") == from_address
+                and projecten.get(account, "") == project
+            ):
                 return False
             self._zet_of_verwijder(namen, account, display_name)
             self._zet_of_verwijder(adressen, account, from_address)
-            await self._write_sender_keys(account, display_name, from_address, namen, adressen)
+            self._zet_of_verwijder(projecten, account, project)
+            await self._write_sender_keys(account, display_name, from_address, project, namen, adressen, projecten)
             return True
 
     async def set_sender_name(self, account: str, display_name: str) -> bool:
@@ -353,8 +416,8 @@ class MailConnector:
         return await self.set_sender(account, display_name, "")
 
     async def delete_sender_name(self, account: str) -> None:
-        """Forget this account's display name AND address. Replay-safe: missing keys are fine."""
-        await self.set_sender(account, "", "")
+        """Forget this account's display name, address AND project. Replay-safe: missing keys are fine."""
+        await self.set_sender(account, "", "", "")
 
     @staticmethod
     def _zet_of_verwijder(waarden: dict[str, str], account: str, waarde: str) -> None:
@@ -369,8 +432,10 @@ class MailConnector:
         account: str,
         display_name: str,
         from_address: str,
+        project: str,
         namen: dict[str, str],
         adressen: dict[str, str],
+        projecten: dict[str, str],
     ) -> None:
         """The keys and the generated script in ONE request, then a reload.
 
@@ -379,7 +444,11 @@ class MailConnector:
         what OPI thinks it wrote.
         """
         wijzigingen: list[dict[str, Any]] = []
-        for prefix, waarde in ((MAIL_SENDER_NAME_PREFIX, display_name), (MAIL_SENDER_ADDRESS_PREFIX, from_address)):
+        for prefix, waarde in (
+            (MAIL_SENDER_NAME_PREFIX, display_name),
+            (MAIL_SENDER_ADDRESS_PREFIX, from_address),
+            (MAIL_ACCOUNT_PROJECT_PREFIX, project),
+        ):
             sleutel = f"{prefix}.{account}"
             if waarde:
                 wijzigingen.append({"type": "insert", "values": [[sleutel, waarde]], "assert_empty": False})
@@ -388,14 +457,15 @@ class MailConnector:
         wijzigingen.append(
             {
                 "type": "insert",
-                "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen, adressen)]],
+                "values": [[MAIL_SENDER_TABLE_KEY, render_sender_table(namen, adressen, projecten)]],
                 "assert_empty": False,
             }
         )
         await self._request("POST", "/api/settings", payload=wijzigingen)
         await self.reload()
         logger.info(
-            f"Afzender van mailaccount {account} bijgewerkt op de relay: naam {display_name!r}, adres {from_address!r}"
+            f"Afzender van mailaccount {account} bijgewerkt op de relay: naam {display_name!r}, "
+            f"adres {from_address!r}, project {project!r}"
         )
 
     # Elk account krijgt zijn eigen limiter, zodat het getal uit het projectbestand ook
@@ -536,7 +606,31 @@ def _controleer_adres(account: str, adres: str) -> None:
         raise MailSenderNameError(f"Afzenderadres {adres!r} voor {account!r}: {fout}")
 
 
-def render_sender_table(namen: dict[str, str], adressen: dict[str, str] | None = None) -> str:
+def _controleer_project(account: str, project: str) -> None:
+    """Refuse a project name that would not be text inside the generated sieve script.
+
+    The name goes into a sieve string literal and from there into the ``X-ZAD-Project``
+    header, so the same characters are refused as in a display name. A project name is
+    computed nowhere -- it comes straight out of the project file -- which is exactly why
+    this layer has to hold.
+
+    Raises:
+        MailSenderNameError: The account or the project name carries a character that would
+            end the string it is written into.
+    """
+    _controleer_account(account)
+    if _NAAM_VERBODEN.search(project):
+        raise MailSenderNameError(
+            f"Projectnaam {project!r} bevat een teken dat niet in een mailheader hoort "
+            "(regeleinde, @, punthaak, aanhalingsteken, backslash of dollarteken)"
+        )
+
+
+def render_sender_table(
+    namen: dict[str, str],
+    adressen: dict[str, str] | None = None,
+    projecten: dict[str, str] | None = None,
+) -> str:
     """The sieve script the identity rules include, rendered from the stored names and addresses.
 
     Deliberately dull: one ``if`` per account, no expressions, no data structures. It is
@@ -551,31 +645,43 @@ def render_sender_table(namen: dict[str, str], adressen: dict[str, str] | None =
     the including script, and a key here exists only for an account that has to send under
     a different one; setting ``afzender`` is what makes the including script skip its own
     derivation. An account with an address but no name is a normal outcome and gets a rule
-    of its own, which is why the two maps are walked together instead of nested.
+    of its own, which is why the maps are walked together instead of nested.
+
+    ``projecten`` holds which project an account sends for, and since RC-401 that is the
+    only place it can come from: an account belongs to a DEPLOYMENT and its name carries a
+    hash, so the including script can no longer cut the project off it. An account without
+    an entry gets no ``project`` and therefore no ``X-ZAD-Project`` header, which is what
+    the platform accounts need.
     """
     adressen = adressen or {}
+    projecten = projecten or {}
     regels = [
-        "# Gegenereerd door ZAD (RC-145/RC-159). Niet met de hand bewerken: elke wijziging van",
-        f"# een project schrijft dit script opnieuw, uit de sleutels onder {MAIL_SENDER_NAME_PREFIX}.",
-        f"# en {MAIL_SENDER_ADDRESS_PREFIX}.",
+        "# Gegenereerd door ZAD (RC-145/RC-159/RC-401). Niet met de hand bewerken: elke wijziging",
+        f"# van een project schrijft dit script opnieuw, uit de sleutels onder {MAIL_SENDER_NAME_PREFIX}.",
+        f"# {MAIL_SENDER_ADDRESS_PREFIX}. en {MAIL_ACCOUNT_PROJECT_PREFIX}.",
         'require ["variables"];',
         'global "naam";',
         'global "afzender";',
+        'global "project";',
     ]
-    for account in sorted(set(namen) | set(adressen)):
+    for account in sorted(set(namen) | set(adressen) | set(projecten)):
         naam = namen.get(account, "")
         adres = adressen.get(account, "")
-        if not naam and not adres:
-            # Geen naam en geen adres is geen regel: een leeg item zou een regel opleveren
-            # die niets doet.
+        project = projecten.get(account, "")
+        if not naam and not adres and not project:
+            # Niets om te zetten is geen regel: een leeg item zou een regel opleveren die
+            # niets doet.
             continue
         _controleer_naam(account, naam)
         _controleer_adres(account, adres)
+        _controleer_project(account, project)
         toekenningen = []
         if naam:
             toekenningen.append(f'set "naam" "{naam}";')
         if adres:
             toekenningen.append(f'set "afzender" "{adres}";')
+        if project:
+            toekenningen.append(f'set "project" "{project}";')
         regels.append(f'if string :is "${{env.authenticated_as}}" "{account}" {{ {" ".join(toekenningen)} }}')
     return "\n".join(regels) + "\n"
 

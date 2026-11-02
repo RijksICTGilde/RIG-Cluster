@@ -1,170 +1,144 @@
-# Keycloak 26 Upgrade (25.0.6 to 26.7.0)
+# Keycloak 26.8.1: het runbook voor de versiesprong
 
-Migration plan for upgrading the shared Keycloak from 25.0.6 to 26.7.0. Written 2026-07-20;
-version numbers refer to that date (26.7.0 is the only Keycloak version receiving security
-fixes, 25.0 has been out of support since October 2024).
+De gedeelde Keycloak van het platform gaat van 25.0.6 naar **26.8.1** (13 oktober 2026).
+Keycloak onderhoudt alleen de laatste minor, dus 25.0 krijgt sinds oktober 2024 geen fixes
+meer en ook de 26.7-lijn niet.
 
-## Why
+De eis is **behoud van alle data**. Realms, clients, gebruikers, wachtwoord-hashes,
+OTP-secrets en gekoppelde identiteiten staan alleen in de database `keycloak` op `rig-db`, en
+de schemamigratie van Keycloak is eenrichtingsverkeer. Dit document is de weg daarnaartoe:
+wat er in de code klaarstaat, wat vooraf groen moet zijn, wat er in het venster gebeurt, en
+wanneer en hoe er teruggevallen wordt.
 
-- Keycloak only maintains the latest minor release. We are roughly two years of security
-  fixes behind.
-- 26.x brings persistent user sessions by default (sessions survive pod restarts, which we
-  hit regularly through apiserver-hiccup liveness kills).
-- 26.x properly supports admin event expiration, which we need for the audit-event
-  retention introduced after the user-impersonation post-mortem
-  (`docs/post-mortems/user-impersonation-oidc-email-claim.md`).
+## Wat er in git staat (RC-212, RC-411, RC-412)
 
-## Current state
+- een eigen image met de providers en het thema erin, gestart met `--optimized`
+  (`features/keycloak-eigen-image.md`);
+- `strategy: Recreate`, dus de schemamigratie loopt nooit met twee pods;
+- de basisversie op `26.8.1` in `images/keycloak-zad/Dockerfile`, met `keycloak.version` in
+  beide poms gelijk daaraan (een toets pint dat);
+- de opstartbeheerder heet `KC_BOOTSTRAP_ADMIN_USERNAME` / `KC_BOOTSTRAP_ADMIN_PASSWORD`;
+- `task test-keycloak-image` toetst per provider registratie EN bereikbaarheid, plus de
+  mailketen tegen twee SMTP-sinks, de idp-telling en de inlogpagina met het thema;
+- `task keycloak-telling` geeft de aantallen waarmee behoud van data te bewijzen is;
+- `task keycloak-proefmigratie` migreert een KOPIE van de database en vergelijkt die telling
+  voor en na.
 
-| Piece | Where | Now |
+## Wat er op de API van 26.8.1 brak, en hoe het is opgelost
+
+Gemeten door beide modules tegen `org.keycloak:*:26.8.1` te bouwen (RC-412).
+
+| Wat | Hoe het nu staat |
+|---|---|
+| `EmailSenderProvider.validate(Map)` is verplicht geworden | Onze verzender keurt alles goed. Keycloak roept hem bij elke realm-create en -update aan (`SMTPUtil.checkSMTPConfiguration`); gooien zou elke realmwijziging van OPI laten falen op een configuratie die daarna toch genegeerd wordt. |
+| `EmailException(Exception)` is weg | Een `EmailException` draagt nu een tekst, en die komt in de beheerconsole; dus zonder host, adres of foutdetail. |
+| De `@Provider`-workaround op de twee endpoints | Weg. In de bron van 26.8.1 draagt die annotatie alleen ROOT-resources (`RealmsResource`, `AdminRoot`); een klasse die uit een sub-resource locator komt heeft hem niet, zoals Keycloaks eigen `DeviceEndpoint`. |
+| `FederatedIdentityEntity` (private JPA-API) | Entiteit en velden heten in 26.8.1 nog hetzelfde. Gemeten, niet aangenomen: `test_rig_metrics_telt_een_gekoppelde_gebruiker_per_idp` maakt een echte koppeling en leest de telling terug. |
+| `IdpEmailVerificationAuthenticator` | Grendelt nog op `realm.getSmtpConfig().isEmpty()`. De minimale `smtpServer` op elke realm blijft dus doen wat hij deed; zie `features/keycloak-mail.md`. |
+| `--features=admin-api` | `ADMIN_API` bestaat nog als default-feature. |
+| De enkele-streep spi-vorm (`--spi-email-sender-provider=`, `--spi-theme-welcome-theme=`) | Werkt nog. 26 kent een nieuwe vorm met een dubbele streep, maar de oude wordt nog gelezen: `PropertyMappers.isSpiBuildTimeProperty` doet dat met opzet niet strikt ("we can't require the new property format until we're ok with a breaking change"), en `MicroProfileScope.getValue` leest beide namen. De args blijven daarom staan zoals ze staan. |
+| STARTTLS op de standaardverzender | Strenger in 26.8.1: met `starttls` aan zet Keycloak ook `starttls.required`. Ons pad raakt dat niet, en `task test-keycloak-image` meet dat met `starttls: "true"` in de proefrealm. |
+
+De mail-SPI is een **interne** SPI en draagt een veiligheidseigenschap: zolang `zad-relay`
+verstuurt, leest Keycloak de `smtpServer` van geen realm en kan een projectbeheerder de post
+niet omleiden. Valt die provider stil weg, dan verstuurt de standaardprovider **zonder
+foutmelding**. Daarom zijn de vier metingen uit `docs/rc158-emailsender-spi-meting.md` nu een
+toets, met een tegenproef die in `features/keycloak-mail.md` staat.
+
+## Vooraf, en dit moet groen zijn
+
+Alles hieronder gaat over de tag die gepromoveerd gaat worden, niet over een herbouw: een
+herbouw levert een ander artefact op en dan is het bewijs van de sandbox niets waard.
+
+| Stap | Wie | Groen is |
 |---|---|---|
-| Image pin (per environment) | `images/keycloak-zad/Dockerfile` (base version) + `controller/base/deployment.yaml` (tag) | `quay.io/keycloak/keycloak:25.0.6` in de Dockerfile |
-| Custom provider JAR | built from `keycloak-migration/custom-mapper/` into `images/keycloak-zad/` | `keycloak-saml-nameid-mapper-1.1.0.jar`, pom pins `keycloak.version` 25.0.6 |
-| Relay email sender JAR | built from `keycloak-migration/relay-email-sender/` into `images/keycloak-zad/` | `keycloak-relay-email-sender-1.0.0.jar`, pom pins `keycloak.version` 25.0.6 |
-| Login theme | MinBZK release, opgehaald tijdens de imagebouw | `keycloak-nl-design-system.jar` v1.4.2 |
-| OPI admin client | `operations-manager/python` | `python-keycloak>=5.3.0`, compatible with 26.x, no change needed |
-| Database | CNPG `rig-db`, database `keycloak` | no backups configured (relevant for rollback) |
+| `task test-keycloak-image` | bouwer of beheerder, lokaal met Docker | alle providertoetsen, de mailtoets en de thematoets slagen op de te promoveren tag |
+| de tegenproef van de mailtoets | dezelfde | zonder de vlag landt het bericht WEL op de lokaas-sink; zie `features/keycloak-mail.md` |
+| `uv run pytest tests/e2e/test_keycloak_logout_harness.py -m keycloak_harness` | bouwer of beheerder, lokaal met Docker en Maven | de negen toetsen van de uitlogketen slagen; dat harnas start zelf een Keycloak 26.8.1 met de shim |
+| `task keycloak-proefmigratie IMAGE=<de te promoveren tag>` op de sandbox | beheerder | `diff` van de telling is leeg, en de beheerder kan op de kopie inloggen. Dit is de ENIGE meting van de 25-naar-26 schemamigratie: `task test-keycloak-image` draait op een lege database en zegt daar niets over. Zonder `IMAGE` pakt de task de tag uit de sandbox-overlay, en die kan nog 25.0.6 zijn |
+| de sandbox zelf | beheerder | de checklist hieronder |
+| `task keycloak-proefmigratie` op productie | **besluit van de eigenaar** | zie "Buiten dit runbook" voor het besluit en de variabelen die ODCN nodig heeft |
 
-The custom JAR ships four SPIs, all of which must survive the upgrade:
+### De checklist op de sandbox
 
-1. `saml-unrestricted-xpath-idp-mapper` (SSO-Rijk NameID extraction; login breaks without it)
-2. `always-clear-session-logout` endpoint (eager logout shim towards BZK)
-3. `RequireClientRoleAuthenticator` (client access restriction feature)
-4. `rig-metrics-listener` + `/rig-metrics` endpoint (Prometheus realm metrics)
+- SSO Rijk-login op `rig-platform` (de XPath-mapper en de FORCE-attribuutmappers);
+- logout via `always-clear-session-logout`;
+- `GET /realms/master/rig-metrics` met het token: metrieken, en de foutgauge op `0`;
+- client access restriction (`RequireClientRoleAuthenticator`);
+- de inlog- en accountpagina's renderen met `nl-design-system`;
+- de opstartbootstrap van OPI loopt schoon (realm create/update, met de audit-instellingen);
+- de invite-flow en een realm uit de wizard;
+- de vier mailmetingen, met de tegenproef. Een bevestigingsmail die aankomt is NIET genoeg:
+  kijk of het merkteken `X-ZAD-Email-Sender` erop staat.
 
-The pom depends on private Keycloak APIs (`keycloak-services`, `keycloak-model-jpa`,
-`keycloak-server-spi-private`). These have no compatibility guarantee between minors and are
-the most likely thing to break.
+## Het venster
 
-### En een vijfde SPI, in een tweede jar, die een HERTOETS vraagt en niet alleen een hercompilatie
+1. **De nulmeting.** `task keycloak-telling CONTEXT=prd NAMESPACE=rig-prd-operations OUT=voor.txt`.
+   Dat zijn realms, clients, gebruikers, credentials per type en gekoppelde identiteiten.
+   Realmconfiguratie kan OPI hergenereren, gebruikers en koppelingen niet.
+2. **Een verse dump, die in het cluster blijft.** De nachtelijke platform-back-up van RC-278
+   (`rig-db-platform-backup`), of een handmatige run daarvan. Dit is de terugvalweg, want de
+   schemamigratie is niet omkeerbaar.
+3. **Promoveren.** `task pin-keycloak-image TARGET=base`: dat verplaatst precies de tag die op
+   de sandbox heeft gedraaid naar de basis, waar ODCN hem uit erft. Commit, en laat ArgoCD
+   syncen.
+4. **Wachten tot de pod ready is.** `strategy: Recreate`, dus de oude pod is uit voordat de
+   nieuwe begint: een korte onderbreking, en nooit twee pods op hetzelfde schema. De
+   schemamigratie loopt in de opstartlog van de nieuwe pod.
+5. **De controlemeting.** `task keycloak-telling ... OUT=na.txt` en `diff voor.txt na.txt`.
+6. **De drie controles op de werkende voorziening:** een SSO Rijk-login op `rig-platform`, het
+   logout-endpoint, en `/realms/master/rig-metrics` met de foutgauge op `0`.
 
-`keycloak-relay-email-sender` implementeert `emailSender`, en dat is een **INTERNE** SPI.
-Keycloak zegt dat zelf bij elke start: `KC-SERVICES0047 ... is implementing the internal SPI
-emailSender`. Een interne SPI mag zonder aankondiging veranderen, en deze draagt een
-veiligheidseigenschap: zolang hij draait, leest Keycloak de `smtpServer` van geen enkele realm
-en is er nergens een bestemming die een projectbeheerder kan verzetten. Zie
-`features/keycloak-mail.md`.
+## Terugvallen
 
-Wat er bij deze upgrade dus **gemeten** moet worden, niet aangenomen (de meetopstelling en de
-verwachte uitkomsten staan in `docs/rc158-emailsender-spi-meting.md`):
+**Wanneer:** elk verschil in de telling, of een login die faalt. Dat zijn geen details.
 
-1. **Wordt de provider in 26.7 in PRODUCTIEMODUS daadwerkelijk gebruikt?** Het merkteken
-   `X-ZAD-Email-Sender` op een bericht in de sink is het bewijs; de terugval uit
-   [keycloak#14522](https://github.com/keycloak/keycloak/issues/14522) is precies waarop dit
-   kan stukgaan, en die faalt STIL.
-2. **Is de vlagvorm nog `--spi-email-sender-provider=`?** De camelCase-vorm wordt genegeerd
-   zonder waarschuwing. `RelayEmailSenderProviderFactoryTest` leidt de vorm af uit
-   `EmailSenderSpi.getName()`, dus die toets valt vanzelf om als de naam verandert - maar
-   alleen als de pom naar 26.7 is gezet.
-3. **Grendelt `IdpEmailVerificationAuthenticator` nog op `realm.getSmtpConfig().isEmpty()`?**
-   Zo niet, dan is de minimale `smtpServer` op elke realm overbodig of juist onvoldoende.
-4. **De aanvalsproef opnieuw:** een testrealm met `smtpServer.host` naar een eigen luisteraar,
-   een bevestigingsmail eroverheen, en de log van die luisteraar leeg. Mét de tegenproef
-   (zonder de vlag lukt de aanval wel), want zonder tegenproef zegt een lege log niets.
+**Wie beslist:** de eigenaar van het platform. De beheerder die het venster draait meldt het
+verschil en valt niet op eigen initiatief terug.
 
-Gaat (1) of (2) stuk, dan verstuurt de standaardprovider en is de omleidingsvector terug
-**zonder dat er ergens een foutmelding verschijnt**. Dat is de reden dat dit een eigen
-paragraaf heeft en geen regel in een checklist.
+**Hoe:** de vorige tag terugzetten in de basis EN de dump terugzetten in een LEGE database
+`keycloak`. Beide, niet een van de twee: de oude versie kan niet op het nieuwe schema. Met
+`strategy: Recreate` draait er bij die terugval nooit een oude pod op het nieuwe schema.
 
-## Phase 0: retarget the extensions
+## Na afloop
 
-0. In `keycloak-migration/relay-email-sender/pom.xml` set `keycloak.version` to `26.7.0` and
-   bump the artifact version. Die versie staat op twee plekken: de pom en
-   `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk). Bouwen en toetsen met
-   `task build-keycloak-relay-email-sender` / `task test-keycloak-relay-email-sender`.
-1. In `keycloak-migration/custom-mapper/pom.xml` set `keycloak.version` to `26.7.0`, bump the
-   artifact version to `1.2.0`, build via `task build-keycloak-custom-mapper` (plus
-   `task test-keycloak-custom-mapper` / `test-keycloak-custom-mapper-docker`) and fix what
-   breaks. Highest risk: the metrics code (JPA user counts) and the logout endpoint. The
-   build task echoes the versioned JAR path, so bump the version there too.
-2. Zet de basisversie in `images/keycloak-zad/Dockerfile` op dezelfde `26.7.0`. Een toets
-   pint die gelijk aan `keycloak.version` in allebei de poms, dus dit kan niet vergeten
-   worden. Er wordt geen jar meer als release gepubliceerd: de image bouwt ze uit de bron
-   (`features/keycloak-eigen-image.md`).
-3. Validate the MinBZK theme v1.4.2 against 26.7 in the sandbox. It dates from January 2026
-   so it is probably built against 26.x, but its release notes state no compatibility. If it
-   breaks, raise an issue at MinBZK/keycloak-theme.
+- `adminEventsExpiration` toevoegen aan de realm-blauwdrukken
+  (`operations-manager/python/opi/configs/keycloak/*.yaml`) en aan het `create_realm`-pad van
+  de connector, zoals `eventsExpiration` al gaat. 25 had geen ondersteunde verloopdatum voor
+  adminevents, 26 wel, en OPI maakt er bij elke reconcile.
+- Een paar weken later de omvang van `admin_event_entity` en `event_entity` nakijken en de
+  bewaartermijn daarop zetten.
+- Persistente gebruikerssessies zijn vanaf 26 de standaard: sessies overleven een podherstart,
+  ten koste van groei in de sessietabellen.
 
-## Die overweging is beslist: een eigen image
+## Buiten dit runbook
 
-Dit doc stelde de vraag of de providers anders geleverd moesten worden, met drie opties. Het
-is de derde geworden: `images/keycloak-zad/` bundelt beide jars plus het thema, en de
-initContainer is weg. De afweging en de gevolgen staan in
-`features/keycloak-eigen-image.md`.
+- **De productiewissel zelf** is het venster hierboven, met een mens erbij.
+- **`task keycloak-proefmigratie` op productie draaien** vraagt een besluit van de eigenaar:
+  die task zet tijdelijk resources in de productienamespace met `kubectl apply`, en productie
+  verandert normaal alleen via Git en ArgoCD. De task maakt het mogelijk, hij beslist het niet.
+  Valt dat besluit ja, dan moet ODCN zijn eigen beeld, opslag en pull-secrets mee krijgen:
 
-Wat dat voor deze upgrade betekent: de basisversie staat op één plek (de Dockerfile), een
-toets houdt hem gelijk aan `keycloak.version` in beide poms, en er hoeft geen jar meer met de
-hand als release gepubliceerd te worden. Het versiewerk uit fase 0 is daarmee twee poms en
-een regel in de Dockerfile.
+  ```bash
+  task keycloak-proefmigratie CONTEXT=prd NAMESPACE=rig-prd-operations \
+    IMAGE=rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad:<tag> \
+    PG_IMAGE=rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11 \
+    STORAGE_CLASS=ocs-storagecluster-ceph-rbd \
+    PULL_SECRET=rig-robot-pull-secret,ghcr-rig-robot-pull-secret
+  ```
 
-## Phase 1: modernize the deployment manifest
+  Zonder `PG_IMAGE` op het rcr-pad herschrijft admission `imageName` en vervangt CNPG zijn
+  eigen pod in een lus (gemeten op 1 september bij `rig-db`), zonder `STORAGE_CLASS` komt er
+  geen volume, en zonder de pull-secrets faalt de pull op de rcr-proxy.
+- **Een nieuw NLDD-thema** (#189), **inloggen via e-mail** (#262).
+- **Back-ups van `rig-db` in productie** (#203) zijn een voorwaarde voor het venster, geen
+  onderdeel van deze sprong.
 
-All changes in `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`:
+## Afhankelijkheden
 
-4. Base image to `quay.io/keycloak/keycloak:26.7.0` in `images/keycloak-zad/Dockerfile`,
-   then build and pin a new tag (see `features/keycloak-eigen-image.md`).
-5. Rename bootstrap admin variables (old names are deprecated in 26):
-   `KEYCLOAK_ADMIN` to `KC_BOOTSTRAP_ADMIN_USERNAME`,
-   `KEYCLOAK_ADMIN_PASSWORD` to `KC_BOOTSTRAP_ADMIN_PASSWORD`.
-6. Remove dead or removed options:
-   - `KC_HOSTNAME_PORT` (hostname v1 option, gone in 26; hostname v2 is already active,
-     the odcn overlay sets `KC_HOSTNAME` to a full URL which is the v2 style)
-   - `KC_PROXY_ADDRESS_FORWARDING` (legacy Wildfly-era variable, already inert)
-7. Done in RC-212: `KC_PROXY_HEADERS=xforwarded` in the env is the only proxy config left; the
-   `--proxy-headers=forwarded` argument that won over it is gone.
-8. SPI option format: `--spi-theme-welcome-theme` becomes `--spi-theme--welcome-theme`
-   (single-dash format is deprecated in 26). Same for
-   `KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED` if kept. Both must stay where they are: a
-   `spi-` option is not baked into the image, so it only takes effect at start.
-9. Optional: move the readiness probe from `/realms/master:8080` to `/health/ready:9000`
-   (health is baked into the image as a build option; 9000 is the management interface and the
-   intended path in 26).
-
-## Phase 2: sandbox validation
-
-10. Roll the sandbox (`task sandbox:setup` or image bump plus sync). The schema migration
-    from 25 to 26.7 runs automatically on first boot; a direct jump is supported.
-11. Test checklist:
-    - SSO-Rijk login on rig-platform (exercises the XPath mapper and FORCE attribute mappers)
-    - eager logout via `always-clear-session-logout`
-    - `GET /realms/master/rig-metrics` returns realm metrics
-    - client access restriction (RequireClientRoleAuthenticator)
-    - login and account theme pages render (nl-design-system)
-    - OPI startup bootstrap replays cleanly (realm create/update path, including the
-      audit-event settings from the realm blueprints)
-    - invite flow and wizard-driven realm provisioning
-    - **de vier metingen van de emailSender-SPI hierboven**, met de aanvalsproef en de
-      tegenproef. Een bevestigingsmail die aankomt is NIET genoeg: kijk of het merkteken
-      `X-ZAD-Email-Sender` erop staat, want zonder dat merkteken heeft de standaardprovider
-      hem verstuurd en is de omleidingsvector terug.
-
-## Phase 3: production
-
-12. Take a `pg_dump` of the `keycloak` database on rig-db first. There are no automated
-    backups of this database and the schema migration is not reversible; the dump plus the
-    old image is the rollback path.
-13. Commit and let ArgoCD sync. Single replica, so a short outage during the migration is
-    expected; no rolling-upgrade concerns.
-14. Watch startup logs for the migration, then verify SSO-Rijk login, an OPI reprocess of
-    one project, and the rig-metrics endpoint.
-15. Note: persistent user sessions become the default. Sessions survive restarts from now
-    on, at the cost of some database growth (session tables).
-
-## Phase 4: after the upgrade
-
-16. Add `adminEventsExpiration` to the realm blueprints
-    (`operations-manager/python/opi/configs/keycloak/*.yaml`) and the
-    `create_realm` connector path, mirroring how `eventsExpiration` is applied. Keycloak 25
-    had no supported admin event expiration; 26 does. This closes the "admin events grow
-    unbounded" caveat from the audit-event rollout, worth doing soon because OPI generates
-    admin events on every reconcile.
-17. Check the size of `admin_event_entity` and `event_entity` a few weeks after enabling
-    audit events and set retention accordingly.
-
-## Dependencies
-
-- `keycloak-migration/custom-mapper/` (JAR source, Maven)
-- MinBZK/keycloak-theme (login theme)
-- OPI realm blueprints: `operations-manager/python/opi/configs/keycloak/*.yaml`
-- OPI connector: `operations-manager/python/opi/connectors/keycloak.py` (`create_realm`)
-- Kustomize overlays: `infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/`
+- `keycloak-migration/custom-mapper/` en `keycloak-migration/relay-email-sender/` (de jars)
+- `keycloak-migration/proefmigratie/` (de manifesten van de proef)
+- MinBZK/keycloak-theme (het loginthema, v1.4.2)
+- de realm-blauwdrukken: `operations-manager/python/opi/configs/keycloak/*.yaml`
+- de connector: `operations-manager/python/opi/connectors/keycloak.py` (`create_realm`)
+- de overlays: `infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/`

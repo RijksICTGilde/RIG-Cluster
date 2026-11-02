@@ -72,19 +72,19 @@ Handige overrides: `ARGOCD_REPO`, `ARGOCD_SRC`, `BRANCH`, `BASE_TAG`, `IMAGE_TAG
 
 - **sandboxed-local** (kind): `spec.image: argocd-rig`, `spec.version: v3.3.12-rig1` — image staat
   na `task load-kind` lokaal op de node, tag is niet `latest` dus de pull policy is `IfNotPresent`.
-  Al uitgerold: controller, server en applicationset draaien `argocd-rig:v3.3.12-rig1`,
-  repo-server bleef op `quay.io/argoproj/argocd:v3.3.10`.
-- **odcn-production**: `spec.image: ghcr.io/minbzk/base-images/argocd-rig`, `spec.version: v3.3.12-rig1`, en
-  repo-server teruggepind op de Red Hat build.
+- **odcn-production**: `spec.image: ghcr.io/minbzk/base-images/argocd-rig`, `spec.version: v3.3.12-rig1`.
 
-Controller, server en applicationset volgen `spec.image`; de repo-server pinnen we terug op de
-vendor-image. De cmp-sidecar heeft een eigen image en blijft ongemoeid.
+Alle componenten volgen `spec.image`, inclusief de repo-server: die terugpinnen op een
+vendor-build laat de handtekening-eis op de AppProjects stil niet afdwingen, want de
+repo-server oordeelt dan met een andere ArgoCD-versie dan de controller (RC-352,
+`operations-manager/python/tests/test_argocd_repo_server_volgt_de_controller.py` houdt dat
+weg). De cmp-sidecar heeft een eigen image en blijft ongemoeid.
 
 > [!WARNING]
 > De `sops-plugin` component doet `op: replace` op `/spec/repo`. Alles wat je onder `spec.repo`
-> in `argocd-deployment.yaml` zet, wordt daardoor **stil weggegooid**. De repo-pin hoort als
-> patch in de `kustomization.yaml` van de overlay, ná de component — zoals de
-> odcn-production overlay dat al doet voor `spec.repo.env` (met dezelfde waarschuwing erbij).
+> in `argocd-deployment.yaml` zet, wordt daardoor **stil weggegooid**. Wat je onder `spec.repo`
+> nodig hebt, hoort als patch in de `kustomization.yaml` van de overlay, ná de component, zoals
+> de odcn-production overlay dat al doet voor `spec.repo.env` (met dezelfde waarschuwing erbij).
 > Verifieer altijd met `kustomize build <overlay> | grep -A2 '^  repo:'` vóór het uitrollen.
 >
 > Bij deze uitrol bleek de sandbox daar al langer last van te hebben: de repo-server env vars

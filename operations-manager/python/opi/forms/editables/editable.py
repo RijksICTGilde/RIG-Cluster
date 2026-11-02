@@ -204,7 +204,7 @@ class WidgetType(StrEnum):
     """Enumeration of available widget types - no magic strings."""
 
     TEXT = "text"
-    PASSWORD = "password"
+    PASSWORD = "password"  # noqa: S105  # naam van het widgettype, geen secret
     TEXTAREA = "textarea"
     SELECT = "select"
     CHECKBOX = "checkbox"

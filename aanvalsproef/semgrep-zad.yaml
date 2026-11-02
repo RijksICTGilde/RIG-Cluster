@@ -1,0 +1,80 @@
+# De paden beginnen met "**/" omdat semgrep een include op het pad van het bestand legt
+# zoals het de scan binnenkomt: relatief aan de git-root voor getrackte bestanden, relatief
+# aan de scan-root voor een bestand dat je zelf aanwijst. Het voorvoegsel dekt beide vormen,
+# zodat de regels ook vanuit operations-manager/python vuren (de werkmap van sast-semgrep).
+rules:
+  # Een webroute zonder @requires_sso is open voor iedereen die de URL kent. De bewuste
+  # uitzonderingen in opi/web/ zeggen dat zelf met "BEWUST ZONDER" in hun docstring.
+  - id: zad-webroute-zonder-sso
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Webroute zonder @requires_sso. Zet de decorator erop, of leg in de docstring met
+      "BEWUST ZONDER @requires_sso" vast waarom deze route open staat.
+    paths:
+      include:
+        - "**/opi/web/"
+      exclude:
+        # De LOTC-proefopstelling is als geheel publiek, en de modulestring van lotc_router
+        # legt dat vast: opi/server.py registreert hem alleen op local en sandboxed-local, en
+        # de pagina's daar dragen verzonnen waarden. Per route een marker zou die ene
+        # beslissing vier keer herhalen.
+        - "**/opi/web/lotc_router.py"
+    patterns:
+      - pattern: |
+          @$ROUTER.$METHOD(...)
+          def $NAAM(...):
+            ...
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(get|post|put|patch|delete)$
+      - pattern-not: |
+          @$ROUTER.$METHOD(...)
+          @requires_sso
+          def $NAAM(...):
+            ...
+      - pattern-not-regex: BEWUST ZONDER
+
+  # De connector-afspraak uit CLAUDE.md: elke aanroep van een extern programma loopt via
+  # opi/connectors/, zodat de argumentenlijst op een plek wordt opgebouwd en bewaakt.
+  - id: zad-subprocess-buiten-connector
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Aanroep van een extern programma buiten opi/connectors/. Zet hem in een connector,
+      zodat de argumentenlijst op een plek wordt opgebouwd en niet per aanroepsite.
+    paths:
+      include:
+        - "**/opi/"
+      exclude:
+        - "**/opi/connectors/"
+        # De vier bestaande crypto- en CLI-helpers: ze roepen sops, age, gpg en openssl aan
+        # met een vaste argumentenlijst en zijn ouder dan de connector-afspraak. De regel is
+        # er voor NIEUWE aanroepsites; deze vier verplaatsen is een eigen wijziging.
+        - "**/opi/utils/sops.py"
+        - "**/opi/utils/git_signing.py"
+        - "**/opi/handlers/sops.py"
+        - "**/opi/core/cluster_config.py"
+    pattern-either:
+      - pattern: subprocess.$F(...)
+      - pattern: asyncio.create_subprocess_exec(...)
+      - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+
+  # Een shell tussen ons en het programma maakt van elk veld uit een projectbestand een
+  # mogelijk commando. De connectors geven daarom altijd een argumentenlijst mee.
+  - id: zad-subprocess-via-een-shell
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Een extern programma via een shell: elk veld dat in de regel belandt kan dan een
+      commando worden. Geef een argumentenlijst mee in plaats van een shell-regel.
+    paths:
+      include:
+        - "**/opi/"
+    pattern-either:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)

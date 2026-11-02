@@ -22,6 +22,7 @@ from opi.services.catalog.postgresql_database.connection_limit import CONNECTION
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
+from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
@@ -43,7 +44,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         icon="database",
         color="donkerblauw",
         shared_per_deployment=True,
-        secret_class="DatabaseSecret",
+        secret_class="DatabaseSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in DatabaseVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="database",
@@ -81,7 +82,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         return None
 
     def config_settings(self) -> tuple[ConfigSetting, ...]:
-        return (CONNECTION_LIMIT,)
+        # De CNPG-velden gelden alleen voor scope: project; op een shared database staan ze
+        # niet in de config en worden ze dus niet getoetst.
+        return (CONNECTION_LIMIT, *DEDICATED_POSTGRES_SETTINGS)
 
     def _config_selected(self, project_data: dict) -> bool:
         """Section visibility: shown when the project uses this service."""
@@ -184,7 +187,11 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         # database_manager handles both the shared and namespace postgres variants in
         # one call, so only this service provisions (namespace-postgres does not).
         await ctx.database_manager.create_resources_for_deployment(
-            ctx.project_data, ctx.deployment, ctx.force_clone, clone_interrupted=ctx.clone_interrupted
+            ctx.project_data,
+            ctx.deployment,
+            ctx.force_clone,
+            clone_interrupted=ctx.clone_interrupted,
+            rotate_password=self.service_type.value in ctx.rotate_credentials,
         )
 
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
@@ -206,7 +213,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             SecretFileSpec(
                 secret_name=DatabaseSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="database",
+                secret_type="database",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
                 resolve_aliases=True,
                 register_secret=secret,
             )

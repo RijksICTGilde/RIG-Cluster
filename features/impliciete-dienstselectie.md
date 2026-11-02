@@ -32,7 +32,7 @@ class MijnService(Service):
 | De basisklasse, met een projectlaag (de dienst zegt niets) | `None` - eerst op projectniveau aanzetten |
 | `allows_implicit_project_selection = True`, geen configuratie | `"mijn-dienst"` (kale selectie) |
 | ... met een standaardconfiguratie | `{"name": "mijn-dienst", "config": {...}}` |
-| De dienst declareert goedkeuringen (`config_approvals`) én heeft een projectlaag | `None`, wat hij verder ook verklaart |
+| Een goedkeuring van de dienst vraagt een aanvraag voor de configuratie waarmee hij zich aanmeldt | `None`, wat hij verder ook verklaart |
 | Ja gezegd, maar de standaardconfiguratie valideert niet | `TypeError` - luid, bij de eerste aanroep |
 
 Drie regels staan hier in plaats van in elke dienst:
@@ -43,11 +43,17 @@ Drie regels staan hier in plaats van in elke dienst:
   regel gaat vóór de twee hieronder, want die beschermen allebei een projectbesluit - en
   dat is er dan niet. Dit is wat `publish-on-web` blokkeerde: drie schrijfwegen weigerden op
   een eis waaraan niet te voldoen was.
-* **Een goedkeuring wint altijd.** Een dienst met een projectlaag die zichzelf aanmeldt en
-  daarmee een goedkeuring van een beheerder omzeilt, is een gat. `config_approvals`
-  blokkeert de impliciete selectie, ongeacht de vlag. Een kale selectie op een dienst
-  zónder projectlaag draagt geen goed te keuren inhoud: de domeinen van `publish-on-web`
-  zijn een deployment-besluit en houden hun eigen goedkeuring.
+* **Een dienst meldt zich nooit aan in een toestand die goedkeuring vraagt.** Een dienst
+  met een projectlaag die zichzelf aanmeldt en daarmee een goedkeuring van een beheerder
+  omzeilt, is een gat. Niet de aanwezigheid van een `ApprovalSpec` weigert, maar de spec
+  zelf: `ApprovalSpec.requires_approval(config)` krijgt de configuratie waarmee de dienst
+  zich zou aanmelden. Een goedkeuring over de dienst ZELF (`service_use_approval`) zegt
+  altijd ja en blokkeert dus altijd; een goedkeuring over een WAARDE
+  (`config_value_approval`) zegt alleen ja voor de waarde die zijn predicaat aanwijst, dus
+  `redis` meldt zich nog aan met zijn smalle standaard en zou dat niet doen met
+  `acl-key-prefix: false` (RC-338). Een kale selectie op een dienst zónder projectlaag
+  draagt geen goed te keuren inhoud: de domeinen van `publish-on-web` zijn een
+  deployment-besluit en houden hun eigen goedkeuring.
 * **Ja zeggen verplicht tot een geldig item.** Voldoet de standaardconfiguratie niet aan het
   eigen projectlaag-model van de dienst, dan is dat een programmeerfout in die dienst; die
   faalt hier hard in plaats van een projectbestand te schrijven dat de opslagpoort afkeurt.
@@ -110,7 +116,8 @@ bewaakt dat.
 | `postgresql-database` | ja | Zonder configuratie is het een shared-scope database - precies wat een project krijgt dat de dienst met de hand aanzet. Project-scope of extra schema's blijft een expliciete daad. |
 | `namespace-postgresql-database` | ja | Elk veld van de projectconfiguratie reproduceert `DatabaseManager.DEFAULT_CONFIG`; een lege configuratie geeft hetzelfde cluster als de wizard. |
 | `minio-storage` | ja | Een bucket vraagt geen keuze op projectniveau. `enable-versioning` valt terug op de platformstandaard; de rest van het model is kloonstatus die het platform zelf schrijft. |
-| `redis` | ja | Het enige projectveld (`acl-key-prefix`) staat standaard op de smalle, veilige waarde. |
+| `seaweedfs-storage` | ja | Dezelfde reden als `minio-storage`: een bucket vraagt geen keuze op projectniveau, en `enable-versioning` staat uit zolang niemand hem aanvinkt. |
+| `redis` | ja | Het projectveld `acl-key-prefix` staat standaard op de smalle, veilige waarde, en de goedkeuring die eraan hangt vraagt alleen een aanvraag voor de brede waarde. |
 | `namespace-redis` | ja | Draagt helemaal geen projectconfiguratie; een expliciete selectie zou een besluit vastleggen dat niemand nam. |
 | `persistent-storage` | ja | De mounts staan op het component; de projectlaag bevat geen opslagbesluit. |
 | `temp-storage` | ja | Idem. |

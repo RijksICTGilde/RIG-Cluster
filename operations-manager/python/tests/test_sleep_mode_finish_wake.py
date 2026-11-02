@@ -14,6 +14,7 @@ gezondheid wachten, en de sweeper blijft het vangnet.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -294,6 +295,11 @@ async def test_een_deployment_die_niet_meer_waking_is_wordt_niet_afgerond(
 # --- 5. De API-route wacht de afronding niet af ---------------------------------------
 
 
+def _verzoek() -> Any:
+    """Een kaal verzoek. ``wake`` leest het alleen door voor de step-up en de actor."""
+    return SimpleNamespace(state=SimpleNamespace(user=None), session={}, path_params={}, headers={})
+
+
 @pytest.mark.asyncio
 async def test_de_api_route_plant_de_afronding_in_na_het_antwoord() -> None:
     from fastapi import BackgroundTasks
@@ -304,7 +310,7 @@ async def test_de_api_route_plant_de_afronding_in_na_het_antwoord() -> None:
         patch.object(flow, "wake", AsyncMock(return_value=flow.WakeResult(changed=True, state="waking"))),
         patch.object(flow, "finish_wake", AsyncMock()) as finish,
     ):
-        response = await wake(PROJECT, DEPLOYMENT, background, x_wake_token="geheim")
+        response = await wake(_verzoek(), PROJECT, DEPLOYMENT, background, x_wake_token="geheim")
 
     assert response.status_code == 202
     # De wekkerpod wacht hier niet op: de afronding staat ingepland, niet afgewacht.
@@ -321,7 +327,7 @@ async def test_een_noop_plant_geen_afronding_in() -> None:
 
     background = BackgroundTasks()
     with patch.object(flow, "wake", AsyncMock(return_value=flow.WakeResult(changed=False, state="awake"))):
-        response = await wake(PROJECT, DEPLOYMENT, background, x_wake_token="geheim")
+        response = await wake(_verzoek(), PROJECT, DEPLOYMENT, background, x_wake_token="geheim")
 
     assert response.status_code == 200
     assert background.tasks == []

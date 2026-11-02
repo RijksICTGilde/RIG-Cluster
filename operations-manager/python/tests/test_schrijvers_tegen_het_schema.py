@@ -60,7 +60,7 @@ def _basis_project() -> dict[str, Any]:
         "name": "schrijvers",
         "description": "Basisproject voor de schrijverstests",
         "clusters": ["odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",
@@ -266,6 +266,32 @@ def test_het_verwijderen_van_verwijzingen_blijft_geldig() -> None:
     poorten(project)
 
 
+def test_een_component_verwijderen_laat_een_geldig_bestand_achter() -> None:
+    """``remove_component`` (RC-378) haalt de definitie EN elke verwijzing weg.
+
+    Blijft er een verwijzing staan naar een component dat niet meer bestaat, dan is het
+    bestand ongeldig, en dat is precies wat deze poort meet.
+    """
+    from opi.handlers.project_file_handler import remove_component
+
+    project = _basis_project()
+    project["components"].append(
+        {
+            "name": "worker",
+            "type": "single",
+            "ports": {"inbound": [8080], "outbound": [443]},
+            "uses-components": [],
+        }
+    )
+    project["deployments"][0]["components"].append({"reference": "worker", "image": "nginx:1.25"})
+    poorten(project)
+
+    remove_component(project, "worker", confirm_in_use=True)
+
+    assert [c["name"] for c in project["components"]] == ["api"]
+    poorten(project)
+
+
 # ---------------------------------------------------------------------------
 # De back-up- en herstelpaden: generatienummers en kloonstatus
 # ---------------------------------------------------------------------------
@@ -336,6 +362,7 @@ def test_de_hele_slaapcyclus_blijft_geldig() -> None:
     poorten(project)
 
     assert sleep_service.to_awake(project, "productie", nu, timedelta(hours=1))
+    assert sleep_state.read(project, "productie").wake_token, "het token blijft bij de deployment"
     poorten(project)
 
 
@@ -519,43 +546,121 @@ def test_de_migratie_van_een_oud_bestand_levert_iets_geldigs_op() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Omgevingsvariabelen: wat het step-up-venster (RC-388) wegschrijft
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("met_deployment", [False, True], ids=["component", "deployment-override"])
+async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> None:
+    """De route uit RC-388 is een schrijver naar het projectbestand.
+
+    De echte route, niet een handgeschreven blok: de converter versleutelt daar met de
+    projectsleutel uit het bestand, en juist die blokstring met zijn patroonregel is wat
+    het schema kent. Zowel de component- als de deployment-override-houder wordt gemeten,
+    want dat zijn twee definities in het schema.
+    """
+    from types import SimpleNamespace
+
+    from opi.core.step_up import STEP_UP_SESSION_KEY
+    from opi.web.router_env_vars import save_env_vars
+
+    project = _basis_project()
+    verzoek = SimpleNamespace(
+        state=SimpleNamespace(user={"email": "admin@rijksoverheid.nl"}, csrf_token="csrf"),
+        session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
+        url=SimpleNamespace(path="/projects/schrijvers/componenten/api/env-vars"),
+        method="POST",
+        headers={"HX-Request": "true"},
+        form=AsyncMock(return_value={"vars": "API_TOKEN=bewijsbaar\nTWEEDE=twee"}),
+    )
+    manager = SimpleNamespace(
+        get_contents=AsyncMock(return_value=project),
+        save_and_commit_project=AsyncMock(),
+        close=AsyncMock(),
+    )
+    with (
+        patch.multiple(
+            "opi.web.authz",
+            get_project_store=lambda: SimpleNamespace(
+                get=lambda naam: SimpleNamespace(name=naam, data=project, users=[])
+            ),
+            get_user_service=lambda: SimpleNamespace(is_platform_admin=lambda _e: True),
+        ),
+        patch("opi.web.router_env_vars.ProjectManager", lambda **_: manager),
+        patch("opi.web.router_env_vars.create_task_and_render_progress", AsyncMock()),
+    ):
+        await save_env_vars(verzoek, "schrijvers", "api", "productie" if met_deployment else None)
+
+    aangeboden = _aangeboden(manager.save_and_commit_project)
+    if met_deployment:
+        blok = aangeboden["deployments"][0]["components"][0]["user-env-vars"]
+    else:
+        blok = aangeboden["components"][0]["user-env-vars"]
+    assert "BEGIN AGE ENCRYPTED FILE" in blok, "zonder echt AGE-blok raakt deze test de patroonregel niet"
+    poorten(aangeboden)
+
+
+# ---------------------------------------------------------------------------
 # Mailaccounts: wat de mailmanager onder de dienst send-email wegschrijft
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_een_mailaccount_blijft_geldig() -> None:
-    """``mail_manager`` schrijft per cluster een account onder ``send-email``.
+async def test_de_mailmanager_schrijft_niets_in_het_projectbestand() -> None:
+    """Sinds RC-401 is de mailmanager GEEN schrijver van het projectbestand meer.
 
-    De echte schrijver, niet een met de hand nagebouwd item: het wachtwoord gaat
-    AGE-versleuteld het bestand in, en juist die vorm (een blokstring met een patroonregel)
-    is wat een zelfverzonnen voorbeeld niet zou raken. Precies de klasse fout waar dit
-    bestand voor bestaat.
+    Dit was ``test_een_mailaccount_blijft_geldig``, dat het accountblok van
+    ``_store_account`` tegen het schema legde. Dat blok is weg (schema 2.14) en het
+    wachtwoord staat in het secret van de deployment, dus wat er nog te bewaken valt is het
+    omgekeerde: een verwerking laat het bestand ongemoeid en dus geldig. Zou er hier ooit
+    weer iets worden weggeschreven, dan valt deze test om en gaat het blok langs de poorten.
     """
-    from opi.connectors.mail import MailAccount
     from opi.manager.mail_manager import MailManager
-    from opi.services.project import Project
+    from opi.utils.secrets import SendEmailSecret
 
     project = _basis_project()
-    project["services"].append({"name": ServiceType.SEND_EMAIL.value, "config": {"from-name": "Schrijvers"}})
-    poorten(project)
-
-    # Envelope en From: zijn sinds RC-145 hetzelfde adres, en het draagt de PROJECTnaam
-    # (niet de accountnaam, die het voorvoegsel project- draagt).
-    afzender = bounce = MailManager._sender_address("odcn-production", "schrijvers")
-    manager = MailManager(MagicMock(save_and_commit_project=AsyncMock()))
-    await manager._store_account(
-        Project(project),
-        project,
-        "schrijvers",
-        "odcn-production",
-        MailAccount(
-            username="project-schrijvers",
-            from_address=afzender,
-            bounce_address=bounce,
-            messages_per_day=500,
-        ),
-        "een-wachtwoord-dat-versleuteld-wordt",
+    project["services"].append(
+        {
+            "name": ServiceType.SEND_EMAIL.value,
+            "config": {"from-name": "Schrijvers", "approval": {"status": "approved", "history": []}},
+        }
     )
+    project["components"][0]["services"].append(ServiceType.SEND_EMAIL.value)
+    poorten(project)
+    voor = copy.deepcopy(project)
+
+    async def get_name() -> str:
+        return "schrijvers"
+
+    bestaand = SendEmailSecret(
+        host="relay",
+        port=587,
+        username="project-schrijvers-productie-oud",
+        password="geheim",
+        from_address="noreply-rijksapp+schrijvers@rijksoverheid.nl",
+    )
+    connector = AsyncMock()
+    # Het account staat er al, en het oude projectaccount van voor RC-401 is al opgeruimd:
+    # de eerste vraag levert het bestaande account op, de tweede (de legacy-naam) niets.
+    connector.get_principal = AsyncMock(side_effect=[{"name": bestaand.username}, None])
+    connector.set_sender = AsyncMock(return_value=False)
+    connector.set_rate_limit = AsyncMock(return_value=False)
+    manager = MailManager(
+        MagicMock(
+            _project_file_handler=ProjectFileHandler(),
+            _kubectl_connector=MagicMock(
+                get_secret=AsyncMock(return_value=bestaand.to_k8s_secret_data()),
+                secret_exists=AsyncMock(return_value=True),
+            ),
+            get_name=get_name,
+            save_and_commit_project=AsyncMock(),
+            _add_secret_to_create=MagicMock(),
+        )
+    )
+    with patch("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector)):
+        await manager.create_resources_for_deployment(project, project["deployments"][0])
 
     poorten(project)
+    assert project == voor, "een mailaccount is geen reden om het projectbestand te wijzigen"
+    manager.project_manager.save_and_commit_project.assert_not_awaited()

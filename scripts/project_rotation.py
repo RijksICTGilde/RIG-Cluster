@@ -44,25 +44,33 @@ from argo_rotation import (  # type: ignore[reportMissingImports]
     write_repository_secret,
 )
 from key_rotation import (  # type: ignore[reportMissingImports]
+    PROJECT_FIELD_PRIVATE_KEY,
+    ConversionFailed,
     Fingerprint,
     LooseValue,
     MissingKey,
     ProjectRound,
     all_loose_values,
     ask_for_path,
+    cluster_refusal,
     convert_value,
     decrypt_field,
     files_with_ciphertext,
     is_github_token,
+    kek_file_for,
+    kek_fingerprint_for,
     load_yaml_from_path,
     loose_fingerprint_key,
     loose_paths,
+    opens_with,
     project_fields,
     project_files,
     public_key_of,
     read_key,
     replace_record,
+    require_private_file,
     rotate_project_file,
+    selected_cluster,
     sha256_of,
     update_record,
     write_loose_value,
@@ -165,6 +173,8 @@ async def run_round(
     *,
     current_pat: str | None = None,
     new_pat: str | None = None,
+    only_private_key: bool = False,
+    commit_what: str | None = None,
     dry_run: bool = True,
     commit: bool = True,
 ) -> RoundResult:
@@ -186,6 +196,7 @@ async def run_round(
             new_public_key=new_public,
             current_pat=current_pat,
             new_pat=new_pat,
+            only_private_key=only_private_key,
             dry_run=dry_run,
         )
         # Both lists are filled on a skipped file too: a password left alone is a finding
@@ -204,7 +215,7 @@ async def run_round(
         if report.rewritten and repo_root is not None:
             # The commits land in zad-projects next to OPI's own ("auto-tune: adjust
             # resources ..."), so they follow that wording rather than this repo's.
-            what = "sops key and git password" if new_pat is not None else "sops key"
+            what = commit_what or ("sops key and git password" if new_pat is not None else "sops key")
             message = f"key-rotation: update {what} for {path.stem}"
             if git_commit_one(repo_root, path.relative_to(repo_root), message):
                 result.committed.append(display(path, directory))
@@ -730,6 +741,7 @@ def read_pat(path: str | Path) -> str:
     A file and not a prompt, and never an argument, for the reason ``ask_for_path`` gives: the
     two PATs are answered the way ``old_key.txt`` and ``key.txt`` are.
     """
+    require_private_file(path)
     value = Path(path).read_text().strip()
     if not value:
         raise MissingKey(f"no PAT in {path}")
@@ -919,4 +931,302 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     print(f"  --projects {directory} --argo-applications {argo}")
     print(f"  --pat-current-file {arguments.pat_current_file} --pat-new-file {arguments.pat_new_file}")
     print("The current-PAT half of that check is the one that says the old token is dead.")
+    return 0
+
+
+# entry point 3: the KEK round, which moves the project keys off the platform key (RC-334)
+
+
+#: Where OPI keeps a back-up of a project key in the deployments repo
+#: (``store_project_sops_key_in_gitops``). Those carry the same wrapped key, so a round that
+#: converted only the project files would leave the platform key able to open every one of them.
+BACKUP_GLOB = "projects/*/age-key.txt.age"
+
+
+def backup_files(clone: Path) -> list[Path]:
+    """Every project-key back-up in a clone of the deployments repo."""
+    return sorted(clone.glob(BACKUP_GLOB))
+
+
+@dataclass
+class BackupRound:
+    """What happened to the back-ups: one line per file, in the three groups that matter."""
+
+    converted: list[str] = field(default_factory=list)
+    already: list[str] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)
+    committed: list[str] = field(default_factory=list)
+    fingerprint_before: Fingerprint = field(default_factory=Fingerprint)
+    fingerprint_after: Fingerprint = field(default_factory=Fingerprint)
+
+
+async def run_backup_round(
+    clone: Path, platform_private: str, kek_private: str, kek_public: str, *, dry_run: bool, commit: bool
+) -> BackupRound:
+    """Move every ``age-key.txt.age`` in the deployments clone from platform key to KEK.
+
+    Unreadable files are reported; others are still processed.
+    """
+    result = BackupRound()
+    repo_root = find_repo_root(clone) if commit and not dry_run else None
+
+    for path in backup_files(clone):
+        content = path.read_text()
+        name = f"{path}#age-key.txt.age"
+        plaintext = await decrypt_field(content, platform_private)
+        if plaintext is None:
+            if await decrypt_field(content, kek_private) is not None:
+                result.already.append(display(path, clone))
+            else:
+                result.unreadable.append(name)
+            continue
+        try:
+            conversion = await convert_value(content, platform_private, kek_public)
+        except ConversionFailed as e:
+            result.unreadable.append(f"{name}: {e}")
+            continue
+        result.fingerprint_before.set(name, conversion.sha256_before)
+        result.fingerprint_after.set(name, conversion.sha256_after)
+        result.converted.append(display(path, clone))
+        if not dry_run:
+            path.write_text(conversion.new_value + ("\n" if content.endswith("\n") else ""))
+            if repo_root is not None and git_commit_one(
+                repo_root,
+                path.relative_to(repo_root),
+                f"key-rotation: wrap the sops key of {path.parent.name} with the project-KEK",
+            ):
+                result.committed.append(display(path, clone))
+    return result
+
+
+def report_backups(result: BackupRound, clone: Path, *, dry_run: bool) -> None:
+    """Print the back-up half, including the statement that there are none."""
+    verb = "would convert" if dry_run else "converted"
+    print(f"\n{len(result.converted)} project-key back-ups {verb} in {clone}:")
+    for line in result.converted:
+        print(f"  {line}")
+    if not result.converted and not result.already and not result.unreadable:
+        print(f"  none: no file matches {BACKUP_GLOB}, so there is no back-up to convert")
+    for line in result.already:
+        print(f"  already on the KEK: {line}")
+    for line in result.unreadable:
+        print(f"  FAIL opens with neither key: {line}")
+    if result.committed:
+        print(f"\n{len(result.committed)} commits made in the deployments clone. Nothing pushed.")
+    objections = result.fingerprint_before.compare(result.fingerprint_after)
+    if objections:
+        print("\nFAIL the content check on the back-ups found deviations:")
+        for objection in objections:
+            print(f"  {objection}")
+
+
+async def platform_key_still_opens(directory: Path, clone: Path | None, platform_private: str) -> list[str]:
+    """Every project key and back-up the platform key can still open. Empty is the goal.
+
+    This is the end of the round and the reason it exists: as long as one of these opens with
+    the platform key, whoever holds that key still opens that project's secrets, and the
+    separation is a statement rather than a fact.
+    """
+    open_with_platform: list[str] = []
+    for path in project_files(directory):
+        data = load_yaml_from_path(str(path))
+        if not isinstance(data, dict):
+            continue
+        for field_name, value in project_fields(data):
+            if field_name != PROJECT_FIELD_PRIVATE_KEY:
+                continue
+            if await opens_with(value, platform_private):
+                open_with_platform.append(f"{path}#{field_name}")
+    open_with_platform.extend(
+        [
+            f"{path}#age-key.txt.age"
+            for path in (backup_files(clone) if clone is not None else [])
+            if await opens_with(path.read_text(), platform_private)
+        ]
+    )
+    return open_with_platform
+
+
+REWRAP_DESCRIPTION = """Move config.age-private-key from the platform key to the project-KEK.
+
+The platform key opens SOPS files and sits in the ArgoCD repo-server's CMP, rig-prd-ron, local
+clusters, and security/key.txt on workstations. Everyone holding it opens every project key and
+every project secret. This round takes the project keys off it.
+
+Two places hold a wrapped project key, and both go in one round:
+
+  project files   config.age-private-key, in a clone of the projects repo. repositories[].password
+                  stays on the platform key: ArgoCD's repo secrets are derived from it, and OPI
+                  keeps the platform key for exactly that
+  deployments     projects/<project>/age-key.txt.age, the back-up OPI once wrote there. Pass
+                  --deployments; without it the round states that half was not walked
+
+The KEK is per cluster a different key, so this round wants to know which cluster: --cluster, or
+CLUSTER_TYPE as 'task select-cluster' sets it. Without --kek it takes
+security/project-kek-<cluster>.txt, and the record of the round goes into its own file per cluster.
+
+Place the KEK in the cluster FIRST (set-sops-key-secret.py --target project-kek): a project file
+wrapped with a KEK that is not in the pod cannot be read by OPI. The fallback in
+unwrap_project_key keeps the unconverted files readable while the round runs, so the order
+within the round does not matter, only that the KEK is live before the first push.
+
+Writes and commits in the clones and pushes nothing, the same as the platform-key round.
+
+Rotating the KEK itself runs the same round with the PREVIOUS KEK as --platform-key: the end
+check then states that the previous KEK opens nothing any more. The fallback in
+unwrap_project_key is the platform key and not a second KEK, so between placing the new KEK and
+pushing the converted files OPI does not open a project key that still sits on the old one. See
+features/sops-sleutel-roteren.md.
+"""
+
+
+def build_rewrap_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=REWRAP_DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--projects", required=True, help="directory holding the project .yaml files")
+    parser.add_argument(
+        "--deployments",
+        help="clone of zad-deployments, holding projects/<project>/age-key.txt.age",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="say what would happen and stop")
+    parser.add_argument("--ja", action="store_true", help="take every default and skip the confirmation")
+    parser.add_argument("--no-commit", action="store_true", help="write the files but make no commits")
+    parser.add_argument(
+        "--platform-key",
+        default=str(CANONICAL_NEW),
+        help="the key the project keys sit on now; the previous KEK when rotating the KEK itself",
+    )
+    parser.add_argument(
+        "--cluster",
+        default=selected_cluster(),
+        help="the cluster whose KEK the project keys move to; default CLUSTER_TYPE",
+    )
+    parser.add_argument("--kek", help="the project-KEK the project keys move to; default per cluster")
+    # Het verslag staat per cluster in zijn eigen bestand, en niet in KEY_FINGERPRINT: die
+    # houdt elk platformveld vast, waaronder de repository-wachtwoorden die deze ronde juist
+    # niet aanraakt, dus de smallere meting zou daar lezen als verdwenen velden.
+    parser.add_argument("--fingerprint", help="the record of this round; default per cluster")
+    return parser
+
+
+async def main_rewrap_project_keys(argv: list[str] | None = None) -> int:
+    """The KEK entry point: one field per project file, plus the back-ups, plus the end check."""
+    arguments = build_rewrap_parser().parse_args(argv)
+    # Het cluster is alleen nodig voor de defaults: het KEK-bestand en het verslag staan per
+    # cluster apart, want de KEK is per cluster een ANDERE sleutel.
+    kek_path = arguments.kek
+    fingerprint_path = arguments.fingerprint
+    if not (kek_path and fingerprint_path):
+        cluster = arguments.cluster.strip()
+        refusal = cluster_refusal(cluster)
+        if refusal:
+            print(f"FAIL {refusal}", file=sys.stderr)
+            return 2
+        kek_path = kek_path or str(kek_file_for(cluster))
+        fingerprint_path = fingerprint_path or str(kek_fingerprint_for(cluster))
+    directory = Path(arguments.projects).resolve()
+    if not directory.is_dir():
+        print(f"FAIL not a directory: {directory}", file=sys.stderr)
+        return 2
+    clone: Path | None = None
+    if arguments.deployments:
+        clone = Path(arguments.deployments).resolve()
+        if not clone.is_dir():
+            print(f"FAIL not a directory: {clone}", file=sys.stderr)
+            return 2
+
+    reader = (lambda _question: "") if arguments.ja else input
+    try:
+        platform_private = read_key(ask_for_path("platform key", arguments.platform_key, reader=reader))
+        kek_private = read_key(ask_for_path("project-KEK", kek_path, reader=reader))
+    except MissingKey as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+    kek_public = public_key_of(kek_private)
+    if public_key_of(platform_private) == kek_public:
+        print("FAIL the platform key and the project-KEK are the same key", file=sys.stderr)
+        return 2
+
+    found, refusal = worklist(directory)
+    if refusal:
+        return refusal
+    print(f"\n{len(found)} project files in {directory}")
+    print(f"Project-KEK (public): {kek_public}")
+    print("Only config.age-private-key moves; repositories[].password stays on the platform key.")
+    if clone is None:
+        print("\nNo --deployments given, so the age-key.txt.age back-ups are NOT walked and the")
+        print("end check cannot say the platform key is dead for them.")
+
+    preview = await run_round(
+        directory, platform_private, kek_private, only_private_key=True, dry_run=True, commit=False
+    )
+    report(preview, directory, dry_run=True)
+    backup_preview = (
+        await run_backup_round(clone, platform_private, kek_private, kek_public, dry_run=True, commit=False)
+        if clone is not None
+        else BackupRound()
+    )
+    if clone is not None:
+        report_backups(backup_preview, clone, dry_run=True)
+
+    blocking = broken(preview) or backup_preview.unreadable
+    if arguments.dry_run:
+        print("\nDry run: nothing was changed.")
+        return 1 if blocking else 0
+    if blocking:
+        print("\nSTOPPED fields open with neither key; nothing was written.", file=sys.stderr)
+        return 1
+
+    if not arguments.ja and input("\nRun this? [no]: ").strip().lower() not in YES_WORDS:
+        print("Nothing changed.")
+        return 0
+
+    commit = not arguments.no_commit
+    result = await run_round(
+        directory,
+        platform_private,
+        kek_private,
+        only_private_key=True,
+        commit_what="sops key wrapping",
+        dry_run=False,
+        commit=commit,
+    )
+    report(result, directory, dry_run=False)
+    backups = (
+        await run_backup_round(clone, platform_private, kek_private, kek_public, dry_run=False, commit=commit)
+        if clone is not None
+        else BackupRound()
+    )
+    if clone is not None:
+        report_backups(backups, clone, dry_run=False)
+
+    # No ``replaced``: this round re-wraps and changes no plaintext, so every moved hash is a
+    # finding. Both keys go in, so a second run measures the whole collection either way.
+    drifted = await save_fingerprint(directory, fingerprint_path, platform_private, kek_private)
+
+    left = await platform_key_still_opens(directory, clone, platform_private)
+    if left:
+        print(f"\nFAIL {len(left)} project keys still open with the source key:", file=sys.stderr)
+        for name in left:
+            print(f"  {name}", file=sys.stderr)
+    else:
+        # "source key" en niet "platform key": bij een KEK-rotatie is de bron de vorige KEK.
+        print("\nEnd check: no project key and no back-up opens with the source key any more.")
+
+    problems = broken(result)
+    if problems:
+        print(f"\nFAIL {len(problems)} project files were skipped with a real problem.", file=sys.stderr)
+        return 1
+    if drifted or left or backups.unreadable:
+        return 1
+    if result.fingerprint_before.compare(result.fingerprint_after):
+        return 1
+    if backups.fingerprint_before.compare(backups.fingerprint_after):
+        return 1
+
+    print("\nDone. Check `git log --oneline` and `git diff --stat` in both clones, then push.")
+    print("The KEK has to be live in the pod before the push; set-sops-key-secret.py --target")
+    print("project-kek places it. The fallback on the platform key may only be removed once this")
+    print("round reports a clean end check on production, and that is a separate step.")
     return 0

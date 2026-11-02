@@ -1,0 +1,47 @@
+{# De stand van een BEVESTIGDE factor, plus het formulier dat hem vervangt. #}
+{% from "bg/_patterns.html.j2" import panel %}
+{% call panel("Ingericht", "lock-closed") %}
+    <nldd-rich-text><dl>
+        <dt>Bevestigd op</dt><dd>{{ status.confirmed_at | dutch_date }}</dd>
+    </dl></nldd-rich-text>
+
+    {% if status.locked %}
+        <c-alert type="warning" heading="Tijdelijk geblokkeerd">
+            Na te veel mislukte codes is je factor geblokkeerd tot
+            {{ status.locked_until | dutch_date }}. Wacht die tijd af, of vraag een
+            platformbeheerder om je factor te resetten.
+        </c-alert>
+    {% endif %}
+
+    <c-paragraph size="sm">
+        Een nieuwe telefoon? Richt je factor opnieuw in. Dat vervangt het oude geheim,
+        maar pas als de nieuwe bevestigd is.
+    </c-paragraph>
+{% endcall %}
+
+{% call panel("Opnieuw inrichten", "arrow-clockwise") %}
+    {% if herlogin_vers %}
+        {# novalidate: de server valideert dit veld. Zie FORMULIEREN_MET_SERVERVALIDATIE
+           in tests/test_template_structure.py. #}
+        <form autocomplete="off" method="post" action="/account/otp/start" novalidate>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+            <c-stack gap="md">
+                <c-text-input-field
+                    id="huidige_code"
+                    name="otp"
+                    label="Code uit je huidige app"
+                    type="text"
+                    autocomplete="one-time-code"
+                    :error="code_fout or none"
+                    help="Zonder deze code kan iemand die je sessie overneemt ook je 2-factor overnemen. Ben je je telefoon kwijt, vraag dan een platformbeheerder om je factor te resetten."
+                    required="true" />
+                <c-action-group align="start">
+                    <c-button type="primary" label="Opnieuw inrichten" html-type="submit" />
+                    <c-button type="secondary" label="Terug naar account" href="/account" />
+                </c-action-group>
+            </c-stack>
+        </form>
+    {% else %}
+        {% include "bg/_otp-herlogin.html.j2" %}
+    {% endif %}
+{% endcall %}

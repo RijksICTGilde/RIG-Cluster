@@ -46,10 +46,12 @@ spec:
   owner: mailrelay
 
 ---
-# OPI connects as the postgres admin user (DATABASE_ADMIN_NAME=postgres),
-# so the application database is owned by postgres. Pre-created here so the
-# operations-manager entrypoint's `alembic upgrade head` doesn't crash on a
-# fresh cluster (it would otherwise fail before OPI's own ensure-DB code runs).
+# OPI opent zijn eigen database met de rol operations_manager (DATABASE_APP_USER), niet
+# met de superuser, dus die rol is ook de eigenaar (RC-410). De rol zelf staat als managed
+# role in cluster.yaml. Hier voorgemaakt zodat `alembic upgrade head` in de entrypoint van
+# operations-manager niet omvalt op een vers cluster, voordat OPI's eigen ensure-DB draait.
+# Een bestaande database verhuist mee: de operator past een gewijzigde owner toe met
+# ALTER DATABASE, en de objecten erin gaan met opi/core/app_database_owner.py.
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
@@ -62,7 +64,7 @@ spec:
   cluster:
     name: rig-db
   name: operations_manager
-  owner: postgres
+  owner: operations_manager
 
 ---
 #apiVersion: postgresql.cnpg.io/v1

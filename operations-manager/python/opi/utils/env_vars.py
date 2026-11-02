@@ -8,11 +8,34 @@ configuration variables.
 
 import logging
 import re
+from typing import Final
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
 
 logger = logging.getLogger(__name__)
+
+#: De vorm van een omgevingsvariabelenaam, zoals de shell en Kubernetes hem accepteren.
+#: Eén constante voor alle drie de vormen die deze module uitpakt (KEY=value, YAML en een
+#: mapping), en ``$defs/env-var-map`` in project_v2.json neemt de tekst over.
+ENV_VAR_NAME_PATTERN: Final[str] = r"^[A-Za-z_][A-Za-z0-9_]*\Z"
+
+_ENV_VAR_NAME: Final = re.compile(ENV_VAR_NAME_PATTERN)
+
+
+def _check_env_var_name(key: object, where: str) -> None:
+    """Weiger een sleutel die geen variabelenaam is.
+
+    Raises:
+        TypeError: als de sleutel geen string is.
+        ValueError: als hij niet de vorm van een variabelenaam heeft.
+    """
+    if not isinstance(key, str):
+        raise TypeError(f"{where}Environment variable key must be a string, got {type(key).__name__}")
+    if not _ENV_VAR_NAME.match(key):
+        raise ValueError(
+            f"{where}Invalid key format '{key}'. Keys must start with A-Z, a-z, or _, contain only A-Z, a-z, 0-9, _"
+        )
 
 
 def _detect_env_var_format(text: str) -> str:
@@ -102,14 +125,7 @@ def _parse_yaml_env_vars(yaml_text: str) -> dict[str, str]:
 
         if isinstance(data, dict):
             for key, value in data.items():
-                if not isinstance(key, str):
-                    raise TypeError(f"Environment variable key must be a string, got {type(key).__name__}: {key}")
-
-                # Validate key format
-                if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
-                    raise ValueError(
-                        f"Invalid key format '{key}'. Keys must start with A-Z, a-z, or _, contain only A-Z, a-z, 0-9, _"
-                    )
+                _check_env_var_name(key, "")
 
                 # Convert value to string
                 if value is None:
@@ -166,8 +182,11 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
     if not env_vars_text:
         return {}
 
-    # Handle legacy CommentedMap (dict variant) - return as is
+    # De mapping-vorm (legacy CommentedMap) ging ongetoetst door, terwijl de twee
+    # tekstvormen hieronder de sleutel wel toetsen. Zelfde regel, dezelfde constante.
     if isinstance(env_vars_text, CommentedMap):
+        for key in env_vars_text:
+            _check_env_var_name(key, "")
         return dict(env_vars_text)
 
     # Auto-detect format
@@ -210,11 +229,7 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
         if not key:
             raise ValueError(f"Line {line_num}: Environment variable key cannot be empty")
 
-        # Validate key format (letters, numbers, underscore)
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
-            raise ValueError(
-                f"Line {line_num}: Invalid key format '{key}'. Keys must start with A-Z, a-z, or _, contain only A-Z, a-z, 0-9, _"
-            )
+        _check_env_var_name(key, f"Line {line_num}: ")
 
         env_vars[key] = value
 

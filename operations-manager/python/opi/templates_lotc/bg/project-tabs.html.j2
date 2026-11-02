@@ -59,24 +59,30 @@
        verbergen. Dat is weg: de server rendert er nog maar EEN (die uit het pad), dus er
        valt niets meer te verbergen. #}
     <link rel="stylesheet" href="{{ static_url('css/base.css') }}">
-    <script src="{{ static_url('js/json-enc.js') }}"></script>
-    <script src="{{ static_url('js/edit_modal.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/json-enc.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/edit_modal.js') }}"></script>
     {# copyToClipboard(): de kopieerknoppen van de DIENSTBLOKKEN (keycloak, invite, de
        OTP-code). Onder "Configuratie & Secrets" hangt hij niet meer: die waarden staan in
        een <c-secret-field>, dat zijn eigen kopieerknop meebrengt. Stond inline op de
        bestaande pagina; sinds deze omzetting in een eigen bestand. #}
-    <script src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
-    {# De uitklappende rijen in een componentkaart (omgevingsvariabelen, aliassen).
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/copy_to_clipboard.js') }}"></script>
+    {# De uitklappende rijen in een componentkaart (services, aliassen).
        <nldd-list-item> tekent het uitklappen, dit zet alleen de stand om. #}
-    <script src="{{ static_url('js/uitklap.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/uitklap.js') }}"></script>
     {# De key-value editors (omgevingsvariabelen, aliassen) in de bewerkdialoog. De
        bestaande pagina laadt deze twee ook; hier ontbraken ze, en dan blijft er in de
        dialoog een kale textarea staan die zich niet gedraagt als de rest van het
        formulier. De haak die ze na een htmx-swap opzet staat in kv_editor_hook.js -
        nodig omdat de wizardstap pas NA het openen van de dialoog binnenkomt. #}
-    <script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
-    <script src="{{ static_url('js/codemirror-kv.js') }}"></script>
-    <script src="{{ static_url('js/kv_editor_hook.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-kv.js') }}"></script>
+    <script nonce="{{ csp_nonce }}" src="{{ static_url('js/kv_editor_hook.js') }}"></script>
+    {# Het kaartelement, alleen op het tabblad dat het tekent: het is de grootste bundel
+       die deze pagina kent, en de andere tabbladen doen er niets mee. #}
+    {% if active_tab == 'kaart' %}
+        <link rel="stylesheet" href="{{ static_url('css/zad-map.css') }}">
+        <script nonce="{{ csp_nonce }}" src="{{ static_url('js/zad-map.js') }}"></script>
+    {% endif %}
 {% endblock %}
 
 {% block page_title %}{{ project.display_name }} - {{ tabs[active_tab].label }}{% endblock %}
@@ -100,7 +106,7 @@
     <c-stack gap="xs">
         <c-cluster gap="sm" align="center">
             <c-heading type="h1" size="3" label="{{ project.display_name }}" />
-            {% if user_role in ["admin", "owner"] %}
+            {% if can('project.edit') %}
                 {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
                 <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"
                           @click="{{ identiteit_bewerken }}" />
@@ -109,15 +115,27 @@
         {% if project.description %}
             <c-paragraph>{{ project.description }}</c-paragraph>
         {% endif %}
+        {% if project.source_code %}
+            <c-rich-text><ul>
+                {% for link in project.source_code %}
+                    <li><c-link :href="link.url" target="_blank" :attrs="{'rel': 'noopener noreferrer'}"
+                                :label="link.name or link.url" /></li>
+                {% endfor %}
+            </ul></c-rich-text>
+        {% endif %}
     </c-stack>
 
     {% include "bg/_pending-rollout.html.j2" %}
 
-    <c-tabs aria-label="Aanzichten van dit project">
+    {# Plain nldd markup instead of <c-tabs>: under the NLDD theme <c-tab> falls back to the
+       RVO <li> with an RVO active class that nldd-tab-bar does not style, so the active tab
+       was not visible. The pinned nldd-tab-bar-item takes `current` and an `icon` attribute;
+       `selected` and the icon slot from the newer NLDD docs do nothing in this version. #}
+    <nldd-tab-bar navigation accessible-label="Aanzichten van dit project">
         {% for key, tab in tabs.items() %}
-            <c-tab label="{{ tab.label }}" href="{{ tab.url }}" :active="key == active_tab" />
+            <nldd-tab-bar-item text="{{ tab.label }}" href="{{ tab.url }}" icon="{{ tab.icon | nldd_icon }}"{% if key == active_tab %} current{% endif %}></nldd-tab-bar-item>
         {% endfor %}
-    </c-tabs>
+    </nldd-tab-bar>
 
     {# De inhoud van het tabblad in een wikkel met dezelfde id als op de bestaande pagina
        (#tab-project, #tab-deployments, #tab-taken). Daar staan alle tabbladen in EEN
@@ -140,7 +158,7 @@
            zonder een vraag te beantwoorden. Weg op verzoek. #}
 
         {# ---- Acties (project-details/section-actions.html.j2) ---------------- #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Acties", "gear") %}
                 <c-action-group align="start">
                     <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
@@ -150,60 +168,6 @@
                        gelezen wordt. #}
                     <c-button type="secondary" size="sm" label="Project herverwerken" icon="refresh" show-icon="before" @click="{{ project_herverwerken }}" />
                 </c-action-group>
-            {% endcall %}
-        {% endif %}
-
-        {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
-        {# Elke waarde staat in een <c-secret-field>, dat zijn eigen kopieerknop meebrengt.
-           Hier stond een losse knop met een inline copyToClipboard() erop, die vanaf de
-           knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
-           daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
-           nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
-           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js. #}
-        {% if user_role in ["admin", "owner"] %}
-            {% call panel("Configuratie & Secrets", "lock-closed", info_text="Project configuratie en gevoelige informatie") %}
-                    <c-stack gap="xs">
-                        <c-heading type="h3" size="6" label="Project Naam" />
-                        {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
-                           en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
-                           dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
-                        <c-secret-field value="{{ project.name }}" revealed show-copy />
-                    </c-stack>
-
-                {% if project.config %}
-                    {% if project.config.get('api-key') %}
-                        <c-stack gap="xs">
-                            <c-heading type="h3" size="6" label="API Key" />
-                            <c-secret-field value="{{ project.config['api-key'] }}" show-copy="true" />
-                        </c-stack>
-                    {% endif %}
-
-                    {% if project.config.get('age-public-key') %}
-                            <c-stack gap="xs">
-                                <c-heading type="h3" size="6" label="Age Public Key" />
-                                {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
-                                   en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
-                                   dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
-                                <c-secret-field value="{{ project.config['age-public-key'] }}" revealed show-copy />
-                            </c-stack>
-                    {% endif %}
-
-                    {% if project.config.get('age-private-key') %}
-                        <c-stack gap="xs">
-                            <c-heading type="h3" size="6" label="Age Private Key" />
-                            <c-secret-field value="{{ project.config['age-private-key'] }}" show-copy="true" />
-                        </c-stack>
-                    {% endif %}
-                {% else %}
-                    <c-paragraph>Geen configuratie beschikbaar</c-paragraph>
-                {% endif %}
-
-                {# Het cluster staat niet in de bestaande sectie, maar wel al op deze
-                   pagina sinds de eerste omzetting. Weghalen zou gegevens laten
-                   verdwijnen die er nu staan, dus hij blijft. #}
-                <c-detail-list>
-                    <c-detail-item label="Cluster" value="{{ project.clusters | join(', ') }}" />
-                </c-detail-list>
             {% endcall %}
         {% endif %}
 
@@ -343,8 +307,69 @@
         {# DE BLOKKEN DIE DE DIENSTEN LEVEREN STAAN HIER NIET MEER. Ze hebben een eigen
            tabblad gekregen (Toegang, hieronder): zie de toelichting daar. #}
 
+        {# ---- Configuratie & Secrets (section-config.html.j2) ----------------- #}
+        {# Elke waarde staat in een <c-secret-field>, dat zijn eigen kopieerknop meebrengt.
+           Hier stond een losse knop met een inline copyToClipboard() erop, die vanaf de
+           knop de dichtstbijzijnde .config-item zocht en daarbinnen de .config-code;
+           daarom moesten die twee klassen letterlijk overgenomen worden. Dat is niet meer
+           nodig - de knop en de klassen zijn weg, het kopieren zit in het veld. De functie
+           zelf blijft bestaan voor de dienstblokken, in /static/js/copy_to_clipboard.js.
+
+           Alleen voor platformbeheerders, niet meer voor iedereen met project.edit: de
+           sleutels hieronder zijn beheerinformatie, en de oude API key draagt de rollen van
+           een platformbeheerder. Een lid maakt zijn eigen token onder Leden en tokens. #}
+        {% if project.is_platform_admin %}
+            {% call panel("Configuratie & Secrets", "lock-closed") %}
+                    <c-alert type="info" heading="Alleen voor platformbeheerders">
+                        <c-paragraph>Je ziet dit blok omdat je platformbeheerder bent. Projectleden zien het niet.</c-paragraph>
+                    </c-alert>
+                    <c-stack gap="xs">
+                        <c-heading type="h3" size="6" label="Project Naam" />
+                        {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                           en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                           dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                        <c-secret-field value="{{ project.name }}" revealed show-copy />
+                    </c-stack>
+
+                {% if project.config %}
+                    {% if project.config.get('api-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="API Key" />
+                            <c-secret-field value="{{ project.config['api-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-public-key') %}
+                            <c-stack gap="xs">
+                                <c-heading type="h3" size="6" label="Age Public Key" />
+                                {# Niet geheim, dus geen onthul-oogje; wel kopieerbaar. `revealed` toont de waarde
+                                   en laat het oogje weg, `show-copy` zet het klembord IN het veld - precies
+                                   dezelfde opmaak als de geheime velden hieronder. Sinds LOTC 5215b95. #}
+                                <c-secret-field value="{{ project.config['age-public-key'] }}" revealed show-copy />
+                            </c-stack>
+                    {% endif %}
+
+                    {% if project.config.get('age-private-key') %}
+                        <c-stack gap="xs">
+                            <c-heading type="h3" size="6" label="Age Private Key" />
+                            <c-secret-field value="{{ project.config['age-private-key'] }}" show-copy="true" />
+                        </c-stack>
+                    {% endif %}
+                {% else %}
+                    <c-paragraph>Geen configuratie beschikbaar</c-paragraph>
+                {% endif %}
+
+                {# Het cluster staat niet in de bestaande sectie, maar wel al op deze
+                   pagina sinds de eerste omzetting. Weghalen zou gegevens laten
+                   verdwijnen die er nu staan, dus hij blijft. #}
+                <nldd-rich-text><dl>
+                    <dt>Cluster</dt><dd>{{ project.clusters | join(', ') }}</dd>
+                </dl></nldd-rich-text>
+            {% endcall %}
+        {% endif %}
+
         {# ---- Danger zone (section-danger-zone.html.j2) ----------------------- #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Gevarenzone", "exclamation-triangle", info_text="Verwijderen kan niet ongedaan worden gemaakt: deployments, database en opslag gaan mee.") %}
                 {# De aanroep wordt hierboven opgebouwd en niet in de tag zelf: een
                    genest aanhalingsteken binnen :attrs leest de voorbewerker als het einde
@@ -377,21 +402,30 @@
            titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
            knop. Een van de twee moet daar weg, en het is niet de knop. #}
         {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
-        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ team_bewerken }}" />{% endif %}{% endset %}
-        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
+        {% set team_bewerken_knop %}{% if can('member.manage') %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ team_bewerken }}" />{% endif %}{% endset %}
+        {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een lid kan meer dan een rol hebben. Wat elke rol opent staat op de pagina Rollen en rechten.") %}
             <c-table columns="2fr 1fr">
                 <c-table-head>
                     <c-th>E-mailadres</c-th>
-                    <c-th>Rol</c-th>
+                    <c-th>Rollen</c-th>
                 </c-table-head>
                 {% for member in project.users | sort(attribute='email') %}
                     <c-table-row>
                         <c-td>{{ member.email }}</c-td>
-                        <c-td><c-tag type="default" label="{{ member.role }}" /></c-td>
+                        <c-td>{{ member.rol_labels | join(', ') }}</c-td>
                     </c-table-row>
                 {% endfor %}
             </c-table>
+            {% if project.is_platform_admin %}
+                <c-paragraph>
+                    <c-link href="/rollen" label="Bekijk wat elke rol precies mag" />
+                </c-paragraph>
+            {% endif %}
         {% endcall %}
+
+        {# Tokens en service accounts horen bij hetzelfde onderwerp als de ledenlijst
+           hierboven: wie mag wat in dit project. Zie bg/_tokens.html.j2. #}
+        {% include "bg/_tokens.html.j2" %}
 
     </c-stack>
 
@@ -402,7 +436,7 @@
            Componenten zelf, boven de lijst, en las daar als iets dat bij het eerste
            component hoorde. De uitleg erbij is weg: wat een component is hoort in de
            hulptekst en niet boven elke lijst. #}
-        {% if user_role in ["admin", "owner"] %}
+        {% if can('project.edit') %}
             {% call panel("Acties", "gear") %}
                 {% set component_toevoegen = "openEditModal('modal-edit-component-" ~ (project.components | length) ~ "', 'Component toevoegen')" %}
                 <c-cluster gap="sm">
@@ -449,13 +483,34 @@
                                         <c-heading type="h3" size="4" label="{{ component.name }}" />
                                         <c-paragraph size="sm">{{ component.type | title }}</c-paragraph>
                                     </c-stack>
-                                    {% if user_role in ["admin", "owner"] %}
+                                    {# De env-vars-knop heeft zijn EIGEN poort, niet die van de kaart: de route
+                                       erachter vraagt env-vars.manage, en die opent een component dat op productie
+                                       staat alleen voor ops. Een component kan in meerdere deployments zitten, dus
+                                       de scope weegt het component (COMPONENT_IN_PRODUCTION), niet een deployment. #}
+                                    {% set mag_bewerken = can('project.edit') %}
+                                    {% set mag_env_vars = can('env-vars.manage', component=component.name) %}
+                                    {% if mag_bewerken or mag_env_vars %}
+                                        {# Omgevingsvariabelen staan nergens op de pagina (RC-388): de knop opent het
+                                           venster dat eerst een verse step-up vraagt. htmx, geen JS: het antwoord
+                                           opent de modal zelf via de haak in edit_modal.js. #}
+                                        {% set env_vars_url = "/projects/" ~ project.name ~ "/componenten/" ~ (component.name | urlencode) ~ "/env-vars" %}
                                         <c-action-group align="end">
-                                            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ component_bewerken }}" />
-                                            <c-button type="warning" size="sm" label="Verwijderen" @click="{{ component_verwijderen }}" />
+                                            {% if mag_bewerken %}
+                                                <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ component_bewerken }}" />
+                                            {% endif %}
+                                            {% if mag_env_vars %}
+                                                <c-button type="secondary" size="sm" label="Omgevingsvariabelen bewerken" icon="key" show-icon="before"
+                                                          hx-get="{{ env_vars_url }}" hx-target="#edit-section-inner" hx-swap="innerHTML" />
+                                            {% endif %}
+                                            {% if mag_bewerken %}
+                                                <c-button type="warning" size="sm" label="Verwijderen" @click="{{ component_verwijderen }}" />
+                                            {% endif %}
                                         </c-action-group>
                                     {% endif %}
                                 </c-cluster>
+                                {% if component.description %}
+                                    <c-paragraph size="sm">{{ component.description }}</c-paragraph>
+                                {% endif %}
                                 {# HET ADRES EERST. Dit is waar iemand voor komt: een component
                                    opzoeken om er daarna heen te gaan. Het stond onder de poorten,
                                    de resources en de diensten, dus je scrolde er elke keer
@@ -547,7 +602,7 @@
                                        Gemeld als "wel mooi vormgegeven maar veel te veel ruimte".
                                        Zelfde uitklaprij als hieronder, dus een component leest nu
                                        als drie regels met een aantal erachter. #}
-                                    <c-list variant="simple" dividers="never" accessible-label="Services van {{ component.name }}">
+                                    <c-list appearance="simple" dividers="never" accessible-label="Services van {{ component.name }}">
                                         <c-list-item button :attrs="{'data-uitklap': 'true'}">
                                             <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
                                             <c-spacer-cell size="8" />
@@ -577,58 +632,6 @@
                                     </c-list>
                                 {% endif %}
 
-                                {# De variabelen ZELF, in de kaart van het component waar ze bij
-                                   horen. Hier stond een regel die naar een aparte sectie verwees
-                                   ("zie Omgevingsvariabelen sectie"), en die sectie stond op een
-                                   ander tabblad; je moest dus wegklikken om te zien wat er stond.
-                                   De waarden zijn afgeschermd, want het zijn gebruikerswaarden en
-                                   er kan van alles in staan. #}
-                                {# INGEKLAPT, want deze lijst heeft geen bovengrens. Een component
-                                   met dertig variabelen duwde alles eronder - de aliassen en het
-                                   volgende component - buiten beeld, en dan is de componentenlijst
-                                   niet meer te overzien. Gemeld: "die zijn soms veel te lang".
-
-                                   Uitgeklapt met <c-list-item>, niet met een eigen <details>.
-                                   nldd-list-item draagt zelf een `expanded` en een slot
-                                   "children" dat het thema verbergt en toont, plus een
-                                   <c-icon-cell disclosure> die meedraait. <c-accordion> is
-                                   bewust NIET gebruikt: dat is de RVO-versie, met een pijltje uit
-                                   een rvo-icon-klasse, en deze pagina laadt de RVO-stylesheet niet
-                                   - daar zou een onzichtbaar pijltje van komen.
-
-                                   Het omklappen zelf doet static/js/uitklap.js: het component
-                                   levert de stand en de opmaak, de consument bepaalt wanneer hij
-                                   verspringt.
-
-                                   Het AANTAL staat in de kop, zodat je weet of het de moeite is
-                                   om open te klappen. #}
-                                {% if component.get('user-env-vars') and component['user-env-vars'] is mapping and component['user-env-vars'] | length > 0 %}
-                                    <c-list variant="simple" dividers="never">
-                                        <c-list-item button :attrs="{'data-uitklap': 'true'}">
-                                            {# disclosure via :attrs, want c-icon-cell kent het attribuut niet als
-                                               eigen eigenschap; het thema selecteert erop
-                                               (::slotted(nldd-icon-cell[disclosure])) en draait de cel dan mee
-                                               met de stand van de rij. #}
-                                            <c-icon-cell icon="chevron-right" size="20" :attrs="{'disclosure': 'true'}" />
-                                            <c-spacer-cell size="8" />
-                                            <c-text-cell text="Omgevingsvariabelen ({{ component['user-env-vars'] | length }})" />
-                                            {# ELKE VARIABELE EEN EIGEN RIJ, en dat is geen keuze maar de vorm die
-                                               het component kent: <nldd-list-item> filtert zijn slot "children"
-                                               op geneste <nldd-list-item> (_updateChildren in de themabundel).
-                                               Een los blok in dat slot wordt weggefilterd en dan klapt de rij
-                                               nergens open. Gemeten in de browser, niet beredeneerd. #}
-                                            {% for sleutel, waarde in component['user-env-vars'].items() | sort %}
-                                                <c-list-item slot="children">
-                                                    <c-icon-cell icon="lock-closed" size="16" />
-                                                    <c-spacer-cell size="8" />
-                                                    <c-text-cell text="{{ sleutel }}" />
-                                                    <c-cell><c-secret-field value="{{ waarde }}" show-copy /></c-cell>
-                                                </c-list-item>
-                                            {% endfor %}
-                                        </c-list-item>
-                                    </c-list>
-                                {% endif %}
-
                                 {# De ALIASSEN, naast de omgevingsvariabelen en in dezelfde
                                    kaart. Ze zijn hier nooit eerder getoond: je kon ze wel
                                    invullen (via Bewerken op deze kaart, het aliassenveld) maar
@@ -646,7 +649,7 @@
                                    AliasesService.owned_value_is_secret en komt hier binnen als
                                    het filter is_verwijzing, zodat er niet twee regels ontstaan. #}
                                 {% if component.get('aliases') and component['aliases'] is mapping and component['aliases'] | length > 0 %}
-                                    <c-list variant="simple" dividers="never">
+                                    <c-list appearance="simple" dividers="never">
                                         <c-list-item button :attrs="{'data-uitklap': 'true'}">
                                             {# disclosure via :attrs, want c-icon-cell kent het attribuut niet als eigen
                                                    eigenschap; het thema selecteert erop
@@ -708,14 +711,14 @@
                                 {% if helm_chart.get('git-url') %}
                                     <c-paragraph size="sm">{{ helm_chart['git-url'] }}</c-paragraph>
                                 {% endif %}
-                                <c-detail-list>
+                                <nldd-rich-text><dl>
                                     {% if helm_chart.get('chart-path') %}
-                                        <c-detail-item label="Chart" value="{{ helm_chart['chart-path'] }}" />
+                                        <dt>Chart</dt><dd>{{ helm_chart['chart-path'] }}</dd>
                                     {% endif %}
                                     {% if helm_chart.get('git-ref') %}
-                                        <c-detail-item label="Versie" value="{{ helm_chart['git-ref'] }}" />
+                                        <dt>Versie</dt><dd>{{ helm_chart['git-ref'] }}</dd>
                                     {% endif %}
-                                </c-detail-list>
+                                </dl></nldd-rich-text>
                                 {% if helm_chart.get('helm-values') and helm_chart['helm-values'] is mapping and helm_chart['helm-values'] | length > 0 %}
                                     <c-divider />
                                     <c-cluster gap="sm" align="center">
@@ -742,20 +745,20 @@
                                 {% if helmfile.get('url') %}
                                     <c-paragraph size="sm">{{ helmfile.url }}</c-paragraph>
                                 {% endif %}
-                                <c-detail-list>
+                                <nldd-rich-text><dl>
                                     {% if helmfile.get('path') %}
-                                        <c-detail-item label="Pad" value="{{ helmfile.path }}" />
+                                        <dt>Pad</dt><dd>{{ helmfile.path }}</dd>
                                     {% endif %}
                                     {% if helmfile.get('ref') %}
-                                        <c-detail-item label="Ref" value="{{ helmfile.ref }}" />
+                                        <dt>Ref</dt><dd>{{ helmfile.ref }}</dd>
                                     {% endif %}
                                     {% if helmfile.get('files') %}
-                                        <c-detail-item label="Eigen bestanden" value="{{ helmfile.files | join(', ') }}" />
+                                        <dt>Eigen bestanden</dt><dd>{{ helmfile.files | join(', ') }}</dd>
                                     {% endif %}
                                     {% if helmfile.get('services') %}
-                                        <c-detail-item label="Diensten" value="{{ helmfile.services | map('service_name') | join(', ') }}" />
+                                        <dt>Diensten</dt><dd>{{ helmfile.services | map('service_name') | join(', ') }}</dd>
                                     {% endif %}
-                                </c-detail-list>
+                                </dl></nldd-rich-text>
                                 {% if helmfile.get('helm-values') and helmfile['helm-values'] is mapping and helmfile['helm-values'] | length > 0 %}
                                     <c-divider />
                                     <c-cluster gap="sm" align="center">
@@ -786,7 +789,7 @@
            titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
            knop. Een van de twee moet daar weg, en het is niet de knop. #}
         {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
-        {% set diensten_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ diensten_bewerken }}" />{% endif %}{% endset %}
+        {% set diensten_bewerken_knop %}{% if can('project.edit') %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ diensten_bewerken }}" />{% endif %}{% endset %}
         {% call panel("Services & Integraties", "cylinder-split", aside=diensten_bewerken_knop, info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
             {% if project.services %}
                 <c-auto-grid min="280px" gap="md">
@@ -823,7 +826,7 @@
                                 {% if config_hint %}
                                     <c-paragraph size="sm">{{ config_hint }}</c-paragraph>
                                 {% endif %}
-                                {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
+                                {% if can('project.edit') and service.value in service_config_sections %}
                                     {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
                                     <c-action-group align="start">
                                         <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" @click="{{ configureer }}" />
@@ -899,7 +902,7 @@
         {# Alleen zonder deployments. Zodra er een is staat deze knop in de Acties-kaart,
            naast "Images bewerken"; die kaart rendert niet op een leeg project, en dan zou
            er geen enkele weg naar een eerste deployment zijn. #}
-        {% if user_role in ["admin", "owner"] and not project.deployments %}
+        {% if can('deployment.write') and not project.deployments %}
             <c-action-group align="start">
                 <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
             </c-action-group>
@@ -931,7 +934,7 @@
                    blok. Het komt uit _section-deployments; deployment-card is de klasse
                    die het paneel afbakent (zie static/css/project-details.css). #}
                 <div class="deployment-card" id="deployment-{{ deployment_geopend.name }}">
-                    {{ deployment_panel(deployment_geopend, project, approval_notices | default({}), user_role | default('')) }}
+                    {{ deployment_panel(deployment_geopend, project, approval_notices | default({})) }}
                 </div>
             {% else %}
                 <c-alert type="info" heading="Nog geen deployments">
@@ -994,7 +997,7 @@
                     </div>
                 {% endcall %}
             </div>
-            <script>
+            <script nonce="{{ csp_nonce }}">
             (function () {
                 var TUSSENPOOS = 60000;
 
@@ -1073,6 +1076,135 @@
         <div hx-get="/projects/{{ project.name }}/tasks" hx-trigger="load" hx-swap="innerHTML">
             <c-paragraph>Taken worden opgehaald...</c-paragraph>
         </div>
+
+    {% elif active_tab == 'kaart' %}
+    {# De kaart van dit project. De pagina draagt alleen het element; de plaat komt van
+       /projects/<naam>/kaart.json, achter dezelfde poort als dit tabblad. #}
+    <div class="zad-map-frame">
+        <zad-map src="/projects/{{ project.name }}/kaart.json"></zad-map>
+    </div>
+
+    {% elif active_tab == 'audit' %}
+    {# Wie deed wat op dit project, en of het mocht. Alleen voor audit.read, dus staat dit
+       tabblad niet in de balk van een lid dat hem niet mag lezen.
+
+       De oorsprong (het client-IP) staat NIET in de tabel: die kolom is volgens het
+       gebeurtenissenontwerp voor platformbeheerders, en die lezen hem in de database. #}
+    {# No panel around it: the tab is the page, a card only adds a frame and a second title. #}
+    <c-stack gap="lg">
+            <c-paragraph>Elke schrijfactie en elke weigering op dit project. Een wijziging in het projectbestand draagt de commit waarin ze landde. Zoeken op een persoon vindt de laatste 90 dagen: daarna is die kolom leeg (bewaartermijn).</c-paragraph>
+            {# EEN gebied: het zoekveld, de periode, de rijen en de bladerknoppen samen.
+               Zelfde keuze als op de projectenlijst (bg/projects.html.j2): de werkbalk
+               buiten de swap houden laat je zoekterm terugspringen, want het veld blijft
+               dan uit de oude render staan.
+
+               htmx haalt de PAGINA op en pakt daar dit gebied uit (hx-select) in plaats
+               van een apart fragmentadres: dan staat er na het zoeken
+               /projects/<naam>/audit?q=... in de adresbalk en is er geen tweede adres met
+               dezelfde gegevens dat kan gaan afwijken. #}
+            <c-stack id="audit-zoekgebied" gap="lg">
+            <form autocomplete="off" method="get" action="{{ audit_url }}"
+                  hx-get="{{ audit_url }}"
+                  hx-select="#audit-zoekgebied"
+                  hx-target="#audit-zoekgebied"
+                  hx-swap="outerHTML"
+                  hx-trigger="input delay:300ms, search, submit"
+                  hx-push-url="true">
+                {% if audit_limit_text %}<input type="hidden" name="limit" value="{{ audit_limit_text }}">{% endif %}
+                {# GEEN <nldd-toolbar> zoals op de projecten- en de deploymentlijst, en
+                   dat is gemeten: die balk duwt alles in slot="end" in een overloopmenu
+                   (de datumvelden verdwenen achter een "..."), en in slot="start" legt
+                   hij de labels over de velden heen. Hij gaat over knoppen, niet over
+                   invoervelden met een label. Een <c-cluster> breekt netjes af. #}
+                <c-cluster gap="md" align="end">
+                    {# De id is nodig voor het focusherstel in htmx-formgedrag.js: dat
+                       onthoudt bij een swap welk veld de focus had en geeft hem daarna
+                       terug, met de cursorpositie erbij. #}
+                    <c-search-field name="q"
+                                    :attrs="{'id': 'audit-zoekveld'}"
+                                    value="{{ audit_query }}"
+                                    placeholder="Zoek op persoon, actie, deployment of commit"
+                                    accessible-label="Zoek in de audit"
+                                    show-search-button
+                                    width="20rem" />
+                    {# De datumvelden in een <c-form-field>: dat zet het zichtbare label en
+                       geeft het veld zijn toegankelijke naam. Zonder wikkel staat er een
+                       datumvak zonder te zeggen of het de begin- of de einddatum is. #}
+                    <c-form-field label="Van" :attrs="{'style': 'width: 12rem'}">
+                        <c-date-field name="from" value="{{ audit_van }}" />
+                    </c-form-field>
+                    <c-form-field label="Tot en met" :attrs="{'style': 'width: 12rem'}">
+                        <c-date-field name="until" value="{{ audit_tot }}" />
+                    </c-form-field>
+                </c-cluster>
+            </form>
+
+            {% if audit_fout %}
+                <c-alert type="warning" heading="De audit kon niet worden opgehaald">
+                    De gebeurtenissen staan in de database, en die antwoordde niet. Probeer het
+                    over een minuut opnieuw.
+                </c-alert>
+            {% elif audit_rijen %}
+                <c-table class="lange-waarden-breken" columns="1fr 1.8fr 1.5fr 1.3fr 1.4fr 1.1fr">
+                    <c-table-head>
+                        <c-th>Tijd</c-th>
+                        <c-th>Wie</c-th>
+                        <c-th>Wat</c-th>
+                        <c-th>Waarop</c-th>
+                        <c-th>Uitkomst</c-th>
+                        <c-th>Wijziging</c-th>
+                    </c-table-head>
+                    {% for rij in audit_rijen %}
+                        <c-table-row>
+                            <c-td>{{ rij.time.strftime('%d-%m-%Y %H:%M') }}</c-td>
+                            <c-td>{{ rij.actor or rij.actor_kind }}</c-td>
+                            <c-td>{{ rij.action }}</c-td>
+                            <c-td>{{ rij.subject }}</c-td>
+                            <c-td>
+                                {% if rij.allowed %}
+                                    <c-tag type="success" label="Toegestaan" />
+                                {% else %}
+                                    <c-tag type="warning" label="Geweigerd{% if rij.cause %}: {{ rij.cause }}{% endif %}" />
+                                {% endif %}
+                            </c-td>
+                            <c-td>
+                                {% for commit in rij.commits %}
+                                    {% if commit.url %}
+                                        <c-link href="{{ commit.url }}" label="{{ commit.short }}" />
+                                    {% else %}
+                                        {{ commit.short }}
+                                    {% endif %}
+                                {% endfor %}
+                            </c-td>
+                        </c-table-row>
+                    {% endfor %}
+                </c-table>
+            {% elif audit_filter_actief %}
+                <c-alert type="info" heading="Geen gebeurtenissen gevonden voor deze zoekopdracht">
+                    <c-link href="{{ audit_wis_url }}" label="Wis de filters" />
+                </c-alert>
+            {% else %}
+                <c-alert type="info" heading="Nog niets vastgelegd">
+                    Zodra er iemand iets wijzigt in dit project, of een poging wordt geweigerd,
+                    komt die handeling hier te staan.
+                </c-alert>
+            {% endif %}
+
+            {# Bladeren met een gewone href en een querystring, dus het werkt ook zonder
+               JavaScript. Geen attribuut-JSON op <c-button>: die route is op de kaart al
+               op de preprocessor gestrand. #}
+            {% if audit_nieuwer_url or audit_ouder_url %}
+                <c-cluster gap="md">
+                    {% if audit_nieuwer_url %}
+                        <c-button type="secondary" label="Nieuwer" icon="chevron-left" show-icon="before" href="{{ audit_nieuwer_url }}" />
+                    {% endif %}
+                    {% if audit_ouder_url %}
+                        <c-button type="secondary" label="Ouder" icon="chevron-right" show-icon="after" href="{{ audit_ouder_url }}" />
+                    {% endif %}
+                </c-cluster>
+            {% endif %}
+            </c-stack>
+    </c-stack>
     {% endif %}
 
     </c-stack>

@@ -1,0 +1,9 @@
+{# De bevestigingsdialoog. Annuleren staat VOOR de knop om de focus op de veilige keuze. #}
+<c-modal-dialog variant="destructive"
+                icon="exclamation-triangle"
+                id="bevestiging-dialoog"
+                accessible-label="Bevestig deze actie">
+    <c-button slot="actions" type="secondary" label="Annuleren" id="bevestiging-annuleren" />
+    <c-button slot="actions" type="warning" label="Doorgaan" id="bevestiging-doorgaan" />
+</c-modal-dialog>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/bevestiging.js') }}"></script>

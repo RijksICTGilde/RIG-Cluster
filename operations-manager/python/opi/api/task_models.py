@@ -236,11 +236,45 @@ class RefreshProjectResult(BaseModel):
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
+class RotateProjectKeyResult(BaseModel):
+    """Result of a rotate_project_key task. Paths, never values."""
+
+    status: str
+    message: str = ""
+    project: ProjectInfo | None = None
+    public_key: str | None = None
+    rotated_fields: list[str] = Field(default_factory=list)
+    skipped_fields: list[str] = Field(default_factory=list)
+    backup_namespaces: list[str] = Field(default_factory=list)
+    processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
 class RefreshDeploymentResult(BaseModel):
     """Result of a refresh_deployment task."""
 
     status: str
     message: str = ""
+    project: ProjectInfo | None = None
+    urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
+    processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
+class RotateCredentialsResult(BaseModel):
+    """Result of a rotate_credentials task.
+
+    ``rotated`` names the services whose credential was replaced; the task fails as a
+    whole if one of them could not be replaced, so there is no per-service failure list.
+    """
+
+    status: str
+    message: str = ""
+    rotated: list[str] = Field(default_factory=list)
     project: ProjectInfo | None = None
     urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
     processing: ProcessingStatus | None = None
@@ -414,7 +448,9 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.CLONE_DATABASE: CloneDatabaseResult,
     TaskType.CLONE_BUCKET: CloneBucketResult,
     TaskType.REFRESH_PROJECT: RefreshProjectResult,
+    TaskType.ROTATE_PROJECT_KEY: RotateProjectKeyResult,
     TaskType.REFRESH_DEPLOYMENT: RefreshDeploymentResult,
+    TaskType.ROTATE_CREDENTIALS: RotateCredentialsResult,
     TaskType.ADD_COMPONENT: AddComponentResult,
     TaskType.UPDATE_COMPONENT: AddComponentResult,
     TaskType.ADD_COMPONENT_TO_DEPLOYMENT: AddComponentToDeploymentResult,
@@ -585,7 +621,7 @@ def task_response_from_dict(task: dict) -> dict:
         "task_type": task.get("task_type", ""),
         "status": task.get("status", ""),
         "progress_percent": task.get("progress_percent", 0),
-        "current_step": _waiting_step(waiting_for) or task.get("current_step", ""),
+        "current_step": _waiting_step(waiting_for) or task.get("current_step") or "",
         "subtasks": task.get("subtasks"),
         "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),

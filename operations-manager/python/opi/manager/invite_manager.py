@@ -6,7 +6,12 @@ from typing import Any, cast
 
 from keycloak.exceptions import KeycloakError
 
-from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
+from opi.connectors.keycloak import (
+    DEFAULT_BROWSER_FLOW,
+    PASSWORD_FORM_BROWSER_FLOWS,
+    KeycloakConnector,
+    create_keycloak_connector,
+)
 from opi.handlers.project_file_handler import ProjectFileHandler
 
 logger = logging.getLogger(__name__)
@@ -552,21 +557,15 @@ class InviteManager:
             # Get realm configuration to check local auth settings
             realm_config = await keycloak.get_realm(realm_name)
 
-            # Local auth is available if the browser flow supports username/password login.
+            # Local auth is available if the browser flow shows a username/password form.
             # We create users via Admin API (not self-registration), so registrationAllowed
-            # doesn't matter. What matters is: can users log in with username/password?
-            #
-            # - If browserFlow is "browser" (default), username/password login is shown
-            # - If browserFlow is a custom SSO-redirect flow, users are auto-redirected to IdP
+            # doesn't matter. PASSWORD_FORM_BROWSER_FLOWS is the shared rule: it also covers
+            # the required-OTP flow of sso-support-otp, where a local account is still a way
+            # in (it just adds a factor).
             local_available = False
             if realm_config:
-                browser_flow = realm_config.get("browserFlow", "browser")
-
-                # Standard browser flow supports username/password login
-                # Custom flows like "External IDP Redirector" auto-redirect to SSO
-                # We consider local available if using the standard browser flow
-                is_standard_browser_flow = browser_flow == "browser"
-                local_available = is_standard_browser_flow
+                browser_flow = realm_config.get("browserFlow", DEFAULT_BROWSER_FLOW)
+                local_available = browser_flow in PASSWORD_FORM_BROWSER_FLOWS
 
                 # If there are no identity providers, local must be available
                 # (otherwise users couldn't login at all)

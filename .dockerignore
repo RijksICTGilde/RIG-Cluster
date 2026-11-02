@@ -5,6 +5,8 @@
 
 # Documentation
 *.md
+# De pagina /security toont dit bestand (opi/web/security_policy.py).
+!SECURITY.md
 docs/
 README*
 

@@ -4,7 +4,7 @@ Status: ontwerpnotitie, 4 augustus 2026. Niet gebouwd. Aanleiding is een gesprek
 
 ## Waar het om begon
 
-RC-16 gaf OPI een eigen service-account in Keycloak, zodat het menselijke `admin`-account op OTP kan zonder de automatisering buiten te sluiten. Terechte vraag daarbij: als die client vervolgens de volledige `admin`-rol op de master-realm heeft, wat schiet je er dan mee op? Wie die secret bemachtigt kan alsnog alles, zonder tweede factor.
+RC-16 gaf OPI een eigen service-account in Keycloak, zodat het menselijke `admin`-account op OTP kan zonder de automatisering buiten te sluiten. Terechte vraag daarbij: als die client vervolgens de volledige `admin`-rol op de master-realm heeft, wat schiet je er dan mee op? Wie die secret bemachtigt kan alsnog alles, zonder 2-factor.
 
 Dat klopt, en het is geen detail. Gemeten in `ensure_master_service_account_client`: de service-account krijgt `admin` op master, oftewel multi-realm admin over heel Keycloak. En gemeten in `keycloak_manager.py`: OPI gebruikt die almachtige identiteit ook voor werk dat maar één realm raakt, terwijl er per project al een realm-scoped account in het projectbestand staat dat het nooit gebruikt.
 
@@ -35,7 +35,7 @@ Overdragen sluit de master-realm-admin niet buiten, en dat kan ook niet. Wie mas
 
 Het onderscheid dat overblijft is wel het onderscheid dat telt. Een identiteit met alléén `create-realm` kan geen gebruikers aanmaken in master en geen rollen toekennen, want daar is `manage-users` voor nodig. Die kan dus realms maken en niet terugkomen in wat hij heeft overgedragen. Dat is precies OPI's dagelijkse identiteit, en daar werkt de compartimentering.
 
-Wat niet in te perken valt is het menselijke `admin`-account, want dat moet break-glass blijven. En juist omdat dat de enige sleutel is die je niet kleiner kunt maken, is het de enige waar een tweede factor echt telt. OTP daarop en compartimentering doen dus verschillend werk: het een beschermt de onherleidbare superuser, het ander alles daaromheen. Geen van beide maakt de ander overbodig, en geen van beide moet verkocht worden als een totale oplossing.
+Wat niet in te perken valt is het menselijke `admin`-account, want dat moet break-glass blijven. En juist omdat dat de enige sleutel is die je niet kleiner kunt maken, is het de enige waar een 2-factor echt telt. OTP daarop en compartimentering doen dus verschillend werk: het een beschermt de onherleidbare superuser, het ander alles daaromheen. Geen van beide maakt de ander overbodig, en geen van beide moet verkocht worden als een totale oplossing.
 
 ## Wat dit wel en niet oplost
 

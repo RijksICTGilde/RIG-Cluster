@@ -10,8 +10,9 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import requires_sso
+from opi.core.authz.actions import Action, action
 from opi.handlers.project_file_handler import extract_attachment_catalog
-from opi.web.project_edit_security import require_project_edit_access
+from opi.web.authz import authorized_project
 from opi.web.task_progress import create_task_and_render_progress
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ attachments_router = APIRouter(prefix="/projects", tags=["attachments"])
 
 
 @attachments_router.post("/{project_name}/attachments/{attachment_id}/delete", response_class=HTMLResponse)
+@action(Action.ATTACHMENT_MANAGE)
 @requires_sso
 async def delete_attachment(request: Request, project_name: str, attachment_id: str) -> HTMLResponse:
     """Remove an attachment from the catalog, as a task the confirmation can follow.
@@ -32,7 +34,7 @@ async def delete_attachment(request: Request, project_name: str, attachment_id: 
     not have is a 404 here rather than a task that fails a moment later, and it keeps
     a made-up id out of the task text the progress fragment renders.
     """
-    project, _ = require_project_edit_access(request, project_name)
+    project = authorized_project(request)
 
     if attachment_id not in extract_attachment_catalog(project.data or {}):
         raise HTTPException(status_code=404, detail=f"Bijlage '{attachment_id}' niet gevonden in {project_name}")

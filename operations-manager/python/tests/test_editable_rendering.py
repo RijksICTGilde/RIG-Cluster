@@ -15,8 +15,8 @@ SAMPLE_YAML = {
     "description": "Een test project",
     "clusters": ["local"],
     "users": [
-        {"email": "admin@test.nl", "role": "admin"},
-        {"email": "dev@test.nl", "role": "developer"},
+        {"email": "admin@test.nl", "roles": ["admin", "ops"]},
+        {"email": "dev@test.nl", "roles": ["developer"]},
     ],
     "services": ["publish-on-web", "keycloak"],
     "components": [
@@ -159,10 +159,10 @@ class TestSequenceRendering:
         users_field = fields["users"]
         first_item = users_field.children[0]
         assert first_item.widget_type == "sequence_item"
-        assert len(first_item.children) == 2  # email + role
+        assert len(first_item.children) == 2  # email + roles
         child_names = [c.name for c in first_item.children]
         assert "users[0]/email" in child_names
-        assert "users[0]/role" in child_names
+        assert "users[0]/roles" in child_names
 
     def test_components_sequence_field(self):
         renderer = _create_renderer()
@@ -189,7 +189,8 @@ class TestSequenceRendering:
         # (component enables publish-on-web), and the optional start command. The registry
         # picker is not among them: this project has no registries, so there is nothing to
         # pick and the component form stays exactly as it was (RC-187) -- which is the
-        # state of 47 of the 49 projects.
+        # state of 47 of the 49 projects. user-env-vars excluded since RC-388 (step-up
+        # section), and description field added.
         assert len(first_item.children) == 14
 
     def test_components_item_gains_the_registry_picker_with_a_registry(self):
@@ -232,7 +233,8 @@ class TestSequenceRendering:
         first_item = comp_field.children[0]
         # 15 children: storage sequence visible (persistent-storage enabled),
         # path (with nested match/rewrite) always visible, the publish-on-web TLS field
-        # (component enables publish-on-web), and the optional start command.
+        # (component enables publish-on-web), and the optional start command. user-env-vars
+        # excluded since RC-388 (step-up section), and description field added.
         assert len(first_item.children) == 15
 
 
@@ -277,12 +279,13 @@ class TestNestedSequenceRendering:
         nested_seq = nested_seqs[0]
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
-        # reference, image, pullPolicy, user-env-vars, the publish-on-web TLS override
-        # (RC-78) and the per-deployment attachments sequence. The certificate picker next
-        # to the TLS override is not here: its show_when only admits it for 'provided'.
-        # Neither is the image-registries override: this project has no registries, so its
-        # own list has nothing to offer and the field is not drawn (RC-187).
-        assert len(first_comp.children) == 6
+        # reference, image, pullPolicy, the publish-on-web TLS override (RC-78) and the
+        # per-deployment attachments sequence. The certificate picker next to the TLS
+        # override is not here: its show_when only admits it for 'provided'. Neither is
+        # the image-registries override: this project has no registries, so its own list
+        # has nothing to offer and the field is not drawn (RC-187). user-env-vars telt
+        # sinds RC-388 niet meer mee: die overschrijving gaat via het step-up-venster.
+        assert len(first_comp.children) == 5
 
     def test_nested_sequence_item_gains_the_registry_override_with_a_registry(self):
         """De tegenproef bij de telling hierboven: de lijst IS de zichtbaarheid."""
@@ -301,7 +304,7 @@ class TestNestedSequenceRendering:
         fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
         first_dep = fields["deployments"].children[0]
         nested_seq = next(c for c in first_dep.children if c.widget_type == "sequence")
-        assert len(nested_seq.children[0].children) == 7
+        assert len(nested_seq.children[0].children) == 6
 
 
 class TestDisplayCardRendering:
@@ -312,10 +315,10 @@ class TestDisplayCardRendering:
             editables=editables,
             yaml_data=SAMPLE_YAML,
         )
-        api_key_field = fields["config/api-key"]
-        assert api_key_field.widget_type == "display_card"
-        assert api_key_field.readonly is True
-        assert "Versleuteld" in str(api_key_field.value)
+        age_private_field = fields["config/age-private-key"]
+        assert age_private_field.widget_type == "display_card"
+        assert age_private_field.readonly is True
+        assert "Versleuteld" in str(age_private_field.value)
 
     def test_truncated_field_shows_ellipsis(self):
         renderer = _create_renderer()

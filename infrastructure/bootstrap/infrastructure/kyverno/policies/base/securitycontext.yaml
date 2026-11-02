@@ -1,0 +1,50 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: zad-securitycontext
+  annotations:
+    policies.kyverno.io/title: Pods draaien niet als root en kunnen niet escaleren
+    policies.kyverno.io/category: Pod Security
+    policies.kyverno.io/description: >-
+      Dezelfde drie eisen die de posture-gate op de gegenereerde manifests stelt, nu bij
+      admission: niet als root, geen privilege-escalatie, en een read-only rootfs waar dat
+      kan. De Pod Security-labels (features/pod-security-labels.md) dekken de eerste twee
+      per namespace; deze policy maakt per workload zichtbaar wie afwijkt.
+spec:
+  background: true
+  rules:
+    - name: niet-als-root-en-geen-escalatie
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        failureAction: Audit
+        message: "zet runAsNonRoot: true en allowPrivilegeEscalation: false op de container of de pod"
+        anyPattern:
+          - spec:
+              securityContext:
+                runAsNonRoot: true
+              containers:
+                - securityContext:
+                    allowPrivilegeEscalation: false
+          - spec:
+              containers:
+                - securityContext:
+                    runAsNonRoot: true
+                    allowPrivilegeEscalation: false
+    - name: read-only-rootfs
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        failureAction: Audit
+        message: "zet readOnlyRootFilesystem: true, of leg vast waarom deze workload naar zijn rootfs schrijft"
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  readOnlyRootFilesystem: true

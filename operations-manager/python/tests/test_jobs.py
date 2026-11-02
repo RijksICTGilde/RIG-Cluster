@@ -226,6 +226,9 @@ def _fake_request():
 
 def _render_modal(**ctx) -> str:
     tmpl = templates_lotc.get_template("shared/_job-modal.html.j2")
+    # Een job starten of stoppen vraagt een operationele rol (RC-323). Deze renders
+    # meten het aanzicht van wie dat mag; de leesrol heeft zijn eigen test.
+    ctx.setdefault("mag_uitvoeren", True)
     return tmpl.render(request=_fake_request(), **ctx)
 
 
@@ -305,6 +308,49 @@ def test_job_modal_running_renders_with_logs_and_stop():
     assert "/projects/proj/jobs/dep/status" in html  # self-polls while running
 
 
+def test_job_modal_running_hides_stop_for_the_read_role():
+    """A job keeps running regardless of who is looking, but member may not stop it."""
+    job = JobRun(
+        session_id="ab12",
+        name="job-proj-dep-ab12",
+        namespace="rig-proj",
+        project="proj",
+        deployment="dep",
+        image="img:1",
+        command="alembic upgrade head",
+        opened_by="u@x.nl",
+        expires_at=datetime(2026, 6, 27, 22, 0, tzinfo=UTC),
+        state="running",
+    )
+    html = _render_modal(
+        project_name="proj",
+        deployment_name="dep",
+        job=job,
+        state="running",
+        error=None,
+        ttl_seconds=3600,
+        enabled=True,
+        mag_uitvoeren=False,
+    )
+    assert "Logs bekijken" in html  # viewing logs is membership-level, still shown
+    assert "/projects/proj/jobs/ab12/stop" not in html
+
+
+def test_job_modal_new_shows_explanation_for_the_read_role():
+    html = _render_modal(
+        project_name="proj",
+        deployment_name="dep",
+        job=None,
+        state="none",
+        error=None,
+        ttl_seconds=3600,
+        enabled=True,
+        mag_uitvoeren=False,
+    )
+    assert "Je rol in dit project is alleen-lezen" in html
+    assert "/projects/proj/jobs" not in html  # no start form
+
+
 def test_job_modal_succeeded_renders():
     job = JobRun(
         session_id="ab12",
@@ -328,6 +374,121 @@ def test_job_modal_succeeded_renders():
         enabled=True,
     )
     assert "voltooid" in html.lower()
+
+
+# ----------------------------------------------------- role gate on start/stop (RC-323)
+#
+# Jobs run code with the deployment's database credentials, so starting/stopping one
+# needs an operational role (developer/owner/admin), not plain project membership.
+
+PROJECT_NAME = "job-role-target"
+MEMBER_EMAIL = "member@example.com"
+DEVELOPER_EMAIL = "developer@example.com"
+
+
+@pytest.fixture
+def project_with_roles():
+    from opi.services.project_service import ProjectUser, get_project_service
+    from opi.services.user_service import get_user_service
+
+    service = get_project_service()
+    saved_projects = dict(service._projects)
+    service._projects.clear()
+    service.register(
+        project_name=PROJECT_NAME,
+        api_key="k",
+        filename=f"{PROJECT_NAME}.yaml",
+        users=[
+            ProjectUser(email=MEMBER_EMAIL, role="member"),
+            ProjectUser(email=DEVELOPER_EMAIL, role="developer"),
+        ],
+    )
+    yield service
+    service._projects.clear()
+    service._projects.update(saved_projects)
+    get_user_service()._platform_admin_emails.discard(MEMBER_EMAIL)
+
+
+def _role_request(email: str, form: dict[str, str]):
+    return SimpleNamespace(
+        state=SimpleNamespace(csrf_token="tok", user={"email": email}),
+        scope={"type": "http"},
+        headers={},
+        form=AsyncMock(return_value=form),
+    )
+
+
+@pytest.mark.parametrize(("rollen", "mag"), [(["viewer"], False), (["developer"], True), (["ops"], True)])
+def test_een_job_starten_hangt_aan_job_run(rollen: list[str], mag: bool) -> None:
+    """De rolpoort staat sinds RC-392 op de route en niet in de handler.
+
+    ``job_start`` draagt ``job.run``; de dependency op de web-router beslist daarop
+    voordat de handler draait. Wat hier vast moet staan is welk recht de route noemt en
+    wat dat opent: een viewer niet, een developer buiten productie wel.
+    """
+    from opi.core.authz.actions import Action, action_of
+    from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide
+    from opi.services.catalog.shared.jobs import job_start, job_stop
+
+    assert action_of(job_start) is Action.JOB_RUN
+    assert action_of(job_stop) is Action.JOB_RUN
+
+    principal = Principal(
+        kind=PrincipalKind.HUMAN,
+        name=MEMBER_EMAIL,
+        project=PROJECT_NAME,
+        roles=frozenset(Role(rol) for rol in rollen),
+    )
+    resource = Resource(project=PROJECT_NAME, path=f"project/{PROJECT_NAME}/deployment/dep1", deployment="dep1")
+    assert decide(principal, Action.JOB_RUN, resource, step_up_fresh=True).allowed is mag
+
+
+@pytest.mark.asyncio
+async def test_job_start_allows_developer(project_with_roles) -> None:
+    from opi.services.catalog.shared.jobs import job_start
+
+    manager = MagicMock()
+    manager.begin = AsyncMock(return_value=SimpleNamespace(session_id="run1"))
+
+    with (
+        patch("opi.services.catalog.shared.jobs.get_job_manager", return_value=manager),
+        patch("opi.services.catalog.shared.jobs.spawn", lambda coro: coro.close()),
+        patch("opi.services.catalog.shared.jobs._render", new=AsyncMock(return_value="rendered")),
+    ):
+        result = await job_start(
+            request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1", "image": "img", "command": "echo hi"}),
+            project_name=PROJECT_NAME,
+        )
+
+    manager.begin.assert_called_once_with(
+        project_name=PROJECT_NAME,
+        deployment_name="dep1",
+        image="img",
+        command="echo hi",
+        started_by=DEVELOPER_EMAIL,
+    )
+    assert result == "rendered"
+
+
+@pytest.mark.asyncio
+async def test_job_stop_allows_developer(project_with_roles) -> None:
+    from opi.services.catalog.shared.jobs import job_stop
+
+    manager = MagicMock()
+    manager.teardown_session = AsyncMock(return_value="dep1")
+
+    with (
+        patch("opi.services.catalog.shared.jobs.get_job_manager", return_value=manager),
+        patch("opi.services.catalog.shared.jobs._render", new=AsyncMock(return_value="rendered")),
+    ):
+        result = await job_stop(
+            request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1"}),
+            project_name=PROJECT_NAME,
+            session_id="run1",
+        )
+
+    manager.teardown_session.assert_called_once_with(PROJECT_NAME, "run1", ended_by=DEVELOPER_EMAIL)
+    assert result == "rendered"
 
 
 class TestDeJobImageIsGeenVrijeKeuze:

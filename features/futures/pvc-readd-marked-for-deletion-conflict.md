@@ -1,5 +1,7 @@
 # PVC-conflict: hertoevoegen van storage maakt de delete-markering niet ongedaan
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](verwijderpaden-in-kaart.md).
+
 ## Status
 
 Gepland, **bewust uitgesteld tot na de services-ombouw**. De persistent-storage- en

@@ -46,6 +46,7 @@ from urllib.parse import urlparse
 import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, SnapshotInfo
 from opi.manager.backup.database_backup import DatabaseBackupManager
 
@@ -58,6 +59,7 @@ _TEMPLATE = "restore-database-pod.yaml.jinja"
 _SCHEMA_SECTION_MARKER = "# Which schema in the dump holds"
 
 _RENDER_CONTEXT: dict[str, Any] = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "db-restore-test",
     "namespace": "rig-amt",
     "service_account_name": "amt-sa",
@@ -77,12 +79,21 @@ _RENDER_CONTEXT: dict[str, Any] = {
     "snapshot_id": "",
     "timeout_seconds": 3600,
     "target_unusable_exit_code": 42,
+    "credentials_secret": "db-restore-test-credentials",
     "source_schema": "amt_prod_v2",
 }
 
 
+def _strict_render(content: str, variables: dict[str, Any]) -> str:
+    """Render zoals de connector doet, maar stuit op een ontbrekende variabele."""
+    env = Environment(undefined=StrictUndefined)
+    env.filters.update(MANIFEST_FILTERS)
+    return env.from_string(content).render(**variables)
+
+
 def _render(**overrides: Any) -> dict[str, Any]:
     env = Environment(loader=FileSystemLoader(str(_MANIFESTS_DIR)), undefined=StrictUndefined)
+    env.filters.update(MANIFEST_FILTERS)
     rendered = env.get_template(_TEMPLATE).render(**{**_RENDER_CONTEXT, **overrides})
     return yaml.safe_load(rendered)
 
@@ -188,9 +199,7 @@ def _manager() -> DatabaseBackupManager:
     kubectl = MagicMock()
     kubectl.run_command = AsyncMock(return_value=("", "", 0))
     # The one piece of the connector the restore path really uses: Jinja rendering.
-    kubectl.template_manifest = lambda content, variables: (
-        Environment(undefined=StrictUndefined).from_string(content).render(**variables)
-    )
+    kubectl.template_manifest = _strict_render
 
     with patch("opi.manager.backup.base.KubectlConnector", return_value=kubectl):
         manager = DatabaseBackupManager(
@@ -212,8 +221,13 @@ def _manager() -> DatabaseBackupManager:
 
 
 def _applied_pod(manager: DatabaseBackupManager) -> dict[str, Any]:
-    call = manager.kubectl.run_command.await_args
-    return yaml.safe_load(call.kwargs["stdin_input"])
+    """Het Pod-document uit de toegepaste manifesten; het credentials-Secret gaat eerst."""
+    docs = [
+        yaml.safe_load(call.kwargs["stdin_input"])
+        for call in manager.kubectl.run_command.await_args_list
+        if call.kwargs.get("stdin_input")
+    ]
+    return next(doc for doc in docs if doc["kind"] == "Pod")
 
 
 _SNAPSHOT = SnapshotInfo(
@@ -362,6 +376,7 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
         postgres = MagicMock()
         postgres.create_user = AsyncMock(return_value={"status": "exists"})
         postgres.create_database = AsyncMock(return_value={"status": "created"})
+        postgres.restrict_database_to_roles = AsyncMock(return_value={"status": "restricted"})
         postgres.create_schema = AsyncMock(return_value={"status": "created"})
         postgres.close = AsyncMock()
 

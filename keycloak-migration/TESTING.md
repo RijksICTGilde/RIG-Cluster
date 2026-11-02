@@ -10,15 +10,15 @@ The easiest way to verify the custom mapper is loaded by Keycloak:
 # Build the JAR and run tests
 task test-keycloak-custom-mapper
 
-# Start Keycloak in Docker with the custom mapper
-task test-keycloak-custom-mapper-docker
+# Build our own image and check its providers in Docker
+task test-keycloak-image
 ```
 
-This will:
-- Build the JAR file
-- Start Keycloak 26.0.0 in Docker
-- Mount the JAR into `/opt/keycloak/providers/`
-- Wait for Keycloak to start
+`test-keycloak-image` builds `images/keycloak-zad/Dockerfile`, starts it with the start
+arguments of the base deployment against a throwaway PostgreSQL, and checks per provider
+that it is registered and reachable. It replaced `test-local-docker.sh`, which mounted a
+JAR path that no longer existed on a bare Keycloak 26.0.0 and never failed. See
+`features/keycloak-eigen-image.md`.
 
 ### 2. Verify in Keycloak UI
 

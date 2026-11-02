@@ -8,22 +8,40 @@ for populating select/radio fields with dynamic data from OPI's domain.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar, Final, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol
 
+from opi.core.authz.actions import Action
+from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
+from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS, Omgeving
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
+from opi.services.catalog.keycloak.account_link import account_link_mode
+from opi.services.catalog.keycloak.templates import allows_local_accounts
 from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT,
     CONNECTION_LIMIT_STEPS,
     project_connection_limit,
 )
+from opi.services.catalog.shared.noncurrent_versions import (
+    MAX_NONCURRENT_VERSIONS,
+    MAX_NONCURRENT_VERSIONS_STEPS,
+    NONCURRENT_EXPIRE_DAYS,
+    NONCURRENT_EXPIRE_DAYS_STEPS,
+    project_max_noncurrent_versions,
+    project_noncurrent_expire_days,
+)
 from opi.services.catalog.shared.storage import STORAGE_SIZES
+from opi.services.project_roles import actor_may_set
+from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
+
+if TYPE_CHECKING:
+    from opi.services.catalog.config_settings import IntegerSetting
 
 logger = logging.getLogger(__name__)
 
@@ -166,14 +184,18 @@ class ServiceOptionsProvider:
     services that can be enabled for projects.
     """
 
-    def __init__(self, include_empty: bool = False) -> None:
+    def __init__(self, include_empty: bool = False, project_services: list[str] | None = None) -> None:
         """
         Initialize the service options provider.
 
         Args:
             include_empty: Whether to include an empty "select" option
+            project_services: The services the project ALREADY has, from the project
+                file. Only a replaced service reads it: its card stays for a project
+                that has it and is left out for one that has not.
         """
         self.include_empty = include_empty
+        self.project_services = project_services or []
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
@@ -201,7 +223,15 @@ class ServiceOptionsProvider:
             # is presentation only: the refusal that counts is at save time, in
             # validate_service_availability, since the API and a hand-written project
             # file never see a card.
-            if not get_service(service_type).available_on_cluster(settings.CLUSTER_MANAGER):
+            service = get_service(service_type)
+            if not service.available_on_cluster(settings.CLUSTER_MANAGER):
+                continue
+
+            # Een vervangen dienst is geen kaart meer voor wie hem nog niet heeft, maar
+            # blijft staan voor een project dat hem al draait: dat moet te bewerken en uit
+            # te zetten blijven. De weigering die telt staat in validate_service_availability.
+            replaced = service.replaced_on_cluster(settings.CLUSTER_MANAGER)
+            if replaced and service_type.value not in self.project_services:
                 continue
 
             option: dict[str, Any] = {
@@ -218,15 +248,22 @@ class ServiceOptionsProvider:
             if definition.help_template:
                 option["help_template"] = definition.help_template
 
-            # Uit de declaratie van de dienst zelf (approval_specs), niet uit een
-            # lijstje hier: een dienst die goedkeuring gaat vereisen draagt de
-            # waarschuwing dan vanzelf, op de kaart en in de uitleg allebei. De import
-            # staat binnenin: de registry laadt de dienstpakketten en die trekken langs
-            # de formulierlaag deze module weer binnen.
+            # Uit de declaratie van de dienst zelf, niet uit een lijstje hier: een dienst
+            # die goedkeuring gaat vereisen draagt de waarschuwing dan vanzelf, op de kaart
+            # en in de uitleg allebei. De vraag is of het AANZETTEN een aanvraag is, niet of
+            # de dienst goedkeuringen heeft: een besluit over een configwaarde (redis zonder
+            # sleutelprefix) geldt pas bij die waarde. De import staat binnenin: de registry
+            # laadt de dienstpakketten en die trekken langs de formulierlaag deze module
+            # weer binnen.
             from opi.services.registry import get_service
 
-            if get_service(service_type).approval_specs():
+            if get_service(service_type).enabling_needs_approval():
                 option["requires_approval"] = True
+
+            if replaced and service.replaced_by is not None:
+                # De dienstNAAM en niet de weergavenaam: de melding op de kaart is een korte
+                # pil, en dit is ook wat je in het projectbestand of de API invult.
+                option["replaced_by"] = service.replaced_by.value
 
             options.append(option)
 
@@ -270,39 +307,24 @@ class ComponentTypeOptionsProvider:
 
 
 class UserRoleOptionsProvider:
-    """Provides user role options for project access."""
+    """De rollen die een lid kan hebben, uit het rechtenregister.
+
+    Geen eigen lijst: label en omschrijving komen uit ``ROLE_LABELS`` en
+    ``ROLE_DESCRIPTIONS`` (B13), zodat een andere naam op het scherm een wijziging op een
+    plek is en de keuzelijst nooit een rol kan tonen die geen regels heeft.
+    """
 
     def __init__(self, include_empty: bool = False) -> None:
         self.include_empty = include_empty
 
     def get_options(self) -> list[dict[str, Any]]:
-        """Get available user role options."""
-        options: list[dict[str, Any]] = []
-
+        opties: list[dict[str, Any]] = []
         if self.include_empty:
-            options.append({"value": "", "label": "Selecteer rol"})
-
-        options.extend(
-            [
-                {
-                    "value": "admin",
-                    "label": "Administrator",
-                    "description": "Volledige toegang tot alle resources en instellingen",
-                },
-                {
-                    "value": "developer",
-                    "label": "Developer",
-                    "description": "Kan applicaties deployen en logs bekijken",
-                },
-                {
-                    "value": "operator",
-                    "label": "Operator",
-                    "description": "Alleen-lezen toegang voor monitoring",
-                },
-            ]
+            opties.append({"value": "", "label": "Selecteer rol"})
+        opties.extend(
+            {"value": rol.value, "label": role_label(rol), "description": ROLE_DESCRIPTIONS[rol]} for rol in Role
         )
-
-        return options
+        return opties
 
 
 class CpuRequestOptionsProvider:
@@ -454,29 +476,69 @@ class StorageSizeOptionsProvider:
         return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
 
 
-class ConnectionLimitOptionsProvider:
-    """The connection-limit steps, plus the stored value when it is not one of them.
-    The empty choice stores nothing."""
+class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
+    """De maten van het platform, plus de opgeslagen waarde als die er niet bij staat.
+
+    Een eigen PostgreSQL-cluster mag tot 20Gi (``POSTGRES_STORAGE``) en zijn volume mag niet
+    krimpen, dus zonder de opgeslagen waarde bood de select een project op 2Gi alleen krimp
+    aan en weigerde het opslaan daarna zijn eigen voorstel. Een eigen klasse en niet de ouder
+    zelf, want bij persistent-storage en temp-storage topt ``check_storage_size`` wel op 1Gi af.
+    """
+
+    def __init__(self, current_value: str | None = None) -> None:
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options = super().get_options()
+        stored = (self.current_value or "").strip()
+        if not stored or any(option["value"] == stored for option in options):
+            return options
+        options.append({"value": stored, "label": f"{stored} (eigen waarde)"})
+        try:
+            return sorted(options, key=lambda option: parse_k8s_memory_to_mi(str(option["value"])))
+        except ValueError:
+            # Een onleesbare opgeslagen maat kan niet op zijn plek in de reeks, maar hij
+            # moet wel te kiezen blijven: anders stuurt het formulier een krimp.
+            return options
+
+
+class IntegerStepOptionsProvider:
+    """De stappen van een ``IntegerSetting``, plus de opgeslagen waarde als die er niet bij
+    staat. De lege keuze slaat niets op, en wat dat betekent zegt de laag: op het project de
+    standaard van het platform, op een deployment de waarde van het project.
+
+    De stappen zijn een gemak; de grens zelf staat in de declaratie, en die is wat valideert.
+    """
 
     options_source: ClassVar[OptionsSource | None] = None
+    setting: ClassVar[IntegerSetting]
+    steps: ClassVar[tuple[int, ...]]
 
     def __init__(self, current_value: str | None = None, yaml_data: dict[str, Any] | None = None) -> None:
         self.current_value = current_value
         self.yaml_data = yaml_data or {}
 
     def empty_label(self) -> str:
-        return f"Standaard van het platform ({CONNECTION_LIMIT.default})"
+        default = self.setting.default
+        return "Geen grens" if default is None else f"Standaard van het platform ({default})"
 
     def get_options(self) -> list[dict[str, Any]]:
-        steps = list(CONNECTION_LIMIT_STEPS)
+        steps = list(self.steps)
         custom = int(self.current_value) if self.current_value and self.current_value.isdigit() else None
         if custom is not None and custom not in steps:
             steps = sorted([*steps, custom])
         options = [{"value": "", "label": self.empty_label()}]
         for step in steps:
-            label = str(step) if step in CONNECTION_LIMIT_STEPS else f"{step} (eigen waarde)"
+            label = str(step) if step in self.steps else f"{step} (eigen waarde)"
             options.append({"value": str(step), "label": label})
         return options
+
+
+class ConnectionLimitOptionsProvider(IntegerStepOptionsProvider):
+    """De connectielimiet van de projectdatabase (RC-201)."""
+
+    setting: ClassVar[IntegerSetting] = CONNECTION_LIMIT
+    steps: ClassVar[tuple[int, ...]] = CONNECTION_LIMIT_STEPS
 
 
 class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
@@ -486,8 +548,59 @@ class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
         return f"Volg het project ({project_connection_limit(self.yaml_data)})"
 
 
+class MaxNoncurrentVersionsOptionsProvider(IntegerStepOptionsProvider):
+    """Hoeveel oude versies een bucket met versioning houdt (RC-380).
+
+    Op de projectlaag is de lege keuze de standaard van het platform, en die is voor beide
+    object-opslagdiensten dezelfde declaratie; de dienst doet hier dus niet mee.
+    """
+
+    setting: ClassVar[IntegerSetting] = MAX_NONCURRENT_VERSIONS
+    steps: ClassVar[tuple[int, ...]] = MAX_NONCURRENT_VERSIONS_STEPS
+
+
+class NoncurrentExpireDaysOptionsProvider(IntegerStepOptionsProvider):
+    """De leeftijdsgrens op oude versies, bovenop het aantal (RC-380)."""
+
+    setting: ClassVar[IntegerSetting] = NONCURRENT_EXPIRE_DAYS
+    steps: ClassVar[tuple[int, ...]] = NONCURRENT_EXPIRE_DAYS_STEPS
+
+
+class DeploymentMaxNoncurrentVersionsOptionsProvider(MaxNoncurrentVersionsOptionsProvider):
+    """Op een deployment volgt de lege keuze het project, en dat is per dienst."""
+
+    service: ClassVar[ServiceType]
+
+    def empty_label(self) -> str:
+        return f"Volg het project ({project_max_noncurrent_versions(self.yaml_data, self.service)})"
+
+
+class DeploymentNoncurrentExpireDaysOptionsProvider(NoncurrentExpireDaysOptionsProvider):
+    service: ClassVar[ServiceType]
+
+    def empty_label(self) -> str:
+        days = project_noncurrent_expire_days(self.yaml_data, self.service)
+        return "Volg het project (geen grens)" if days is None else f"Volg het project ({days} dagen)"
+
+
+class MinioDeploymentMaxNoncurrentVersionsOptionsProvider(DeploymentMaxNoncurrentVersionsOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
+
+
+class MinioDeploymentNoncurrentExpireDaysOptionsProvider(DeploymentNoncurrentExpireDaysOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
+
+
+class SeaweedfsDeploymentMaxNoncurrentVersionsOptionsProvider(DeploymentMaxNoncurrentVersionsOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
+
+
+class SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider(DeploymentNoncurrentExpireDaysOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
+
+
 class KeycloakTemplateOptionsProvider:
-    """The two realm blueprints, named after what a user gets rather than after the file.
+    """The three realm blueprints, named after what a user gets rather than after the file.
 
     What actually differs is the LOGIN SCREEN, and only that. ``sso-only`` points the realm's
     browser flow at "External IDP Redirector", so whoever opens the application travels
@@ -506,9 +619,13 @@ class KeycloakTemplateOptionsProvider:
     A user of ``sso-only`` never reaches a screen where a local account could be typed in, so
     that is the one that really excludes them. ``InviteAuthMethodOptionsProvider`` reads the
     same difference for the invite auth methods.
+
+    ``sso-support-otp`` extends ``sso-support`` with a second factor on the local password path:
+    a password login requires an OTP code and configures the authenticator app on first login.
+    SSO Rijk logins bypass the password step entirely and never see the OTP requirement.
     """
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # Options are fixed: every project gets the same choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -531,6 +648,15 @@ class KeycloakTemplateOptionsProvider:
                     "aanmelden kan niemand zichzelf."
                 ),
             },
+            {
+                "value": "sso-support-otp",
+                "label": "SSO Rijk of een lokaal account, met verplichte OTP",
+                "description": (
+                    "Zelfde keuze als hierboven, maar een lokaal account geeft naast zijn wachtwoord een code "
+                    "uit een authenticator-app. Bij de eerste login stelt het die app in. Wie met SSO Rijk "
+                    "inlogt merkt er niets van."
+                ),
+            },
         ]
 
 
@@ -543,6 +669,45 @@ class PullPolicyOptionsProvider:
             {"value": "Always", "label": "Always"},
             {"value": "IfNotPresent", "label": "IfNotPresent"},
             {"value": "Never", "label": "Never"},
+        ]
+
+
+class EnvironmentOptionsProvider:
+    """De OTAP-markering van een deployment: de vier vaste fasen.
+
+    Ontwikkeling is de standaard en heeft de lege waarde: een deployment zonder markering
+    is ontwikkeling, en zo hoeft die standaard niet in elk bestand te staan. Een bestand dat
+    ``ontwikkeling`` expliciet draagt, valt in de lijst op die lege keuze terug.
+    """
+
+    # De waarden liggen vast; een opsomming is het goede antwoord.
+    options_source: ClassVar[OptionsSource | None] = None
+
+    def __init__(self, yaml_data: dict[str, Any] | None = None, current_value: str | None = None) -> None:
+        self.yaml_data = yaml_data or {}
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        # Van en naar productie gaat alleen voor wie de markering mag zetten
+        # (environment.set); anders weigert het opslaan pas achteraf. De huidige waarde
+        # blijft altijd te kiezen.
+        may_set = actor_may_set(Action.ENVIRONMENT_SET, self.yaml_data, environment=Omgeving.PRODUCTIE)
+        in_production = self.current_value == Omgeving.PRODUCTIE.value
+
+        def option(value: str, label: str, *, production: bool) -> dict[str, Any]:
+            if may_set or production == in_production:
+                return {"value": value, "label": label}
+            return {"value": value, "label": f"{label} (alleen ops)", "disabled": True}
+
+        # .value: elke andere provider levert een gewone string, en een enumlid dat
+        # ergens als waarde belandt breekt de YAML-dumper (gemeten in e257cee79).
+        return [
+            option("", ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT], production=False),
+            *(
+                option(value.value, label, production=value is Omgeving.PRODUCTIE)
+                for value, label in ENVIRONMENT_LABELS.items()
+                if value is not DEFAULT_ENVIRONMENT
+            ),
         ]
 
 
@@ -1859,20 +2024,30 @@ class InviteAuthMethodOptionsProvider:
 
     An invite can only narrow what the realm offers, never widen it (``invite_routes``
     computes ``realm_auth[x] and invite_auth_config[x]``). The realm follows the keycloak
-    template, and the two blueprints differ exactly here:
+    template, and the blueprints differ exactly here:
 
     * ``sso-only``    -- the browser flow redirects straight to SSO Rijk, so there is no
       screen on which a local account could ever be typed in;
-    * ``sso-support`` -- Keycloak's own login screen, which offers both.
+    * ``sso-support`` en ``sso-support-otp`` -- Keycloak's own login screen, which offers
+      both. Welke blauwdruk een lokaal account toelaat staat op één plek:
+      ``allows_local_accounts``.
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
+
+    Koppelt het realm een SSO-identiteit op e-mailadres (``account-link``), dan vervalt
+    "Lokaal account" ook: daar is geen account met een zelf ingetypt adres toegestaan. De
+    uitnodigingsweg weigert die methode dan al en opslaan wordt geweigerd, dus hem hier
+    aanbieden zou een keuze zijn die bij het bewaren alsnog afketst. Anders dan bij sso-only
+    blijft het veld in dat geval wel staan, met alleen SSO: de hulptekst van het veld zegt
+    waarom "Lokaal account" er niet bij staat, en dat is het enige dat het hier nog meldt.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (het template is dan niet sso-only)."
+            "accounts toestaat (sso-support of sso-support-otp) en het realm niet "
+            "automatisch koppelt op e-mailadres (account-link)."
         ),
         endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
         path="configurations[].config.template",
@@ -1885,11 +2060,14 @@ class InviteAuthMethodOptionsProvider:
         from opi.forms.editables.service_path import smart_get_value
 
         options = [{"value": "sso", "label": "Single sign-on (SSO)"}]
-        # An absent template means sso-only: that is the default on KeycloakConfig.template,
-        # so it is what the realm actually gets. Reading it as "unknown, allow both" would
-        # also disagree with the field's show_when, which hides the field in that same case.
-        template = smart_get_value(self.yaml_data, "services/keycloak/config/template") or "sso-only"
-        if template != "sso-only":
+        # Absent template means sso-only (the default on KeycloakConfig.template),
+        # which is what the realm gets. Treating it as "unknown, allow both" would
+        # conflict with the field's show_when rule, which hides the field in that case.
+        template = smart_get_value(self.yaml_data, "services/keycloak/config/template")
+        # Via smart_get_value en niet via de project-ingang van de helper: in de wizard staat
+        # de keycloak-config onder de virtuele root, waar een lezing op "services" niets vindt.
+        links_on_email = account_link_mode(smart_get_value(self.yaml_data, "services/keycloak/config")) is not None
+        if allows_local_accounts(template) and not links_on_email:
             options.append({"value": "local", "label": "Lokaal account"})
         return options
 
@@ -2056,11 +2234,19 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
+    "PostgresStorageSizeOptionsProvider": PostgresStorageSizeOptionsProvider,
     "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
     "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
+    "MaxNoncurrentVersionsOptionsProvider": MaxNoncurrentVersionsOptionsProvider,
+    "NoncurrentExpireDaysOptionsProvider": NoncurrentExpireDaysOptionsProvider,
+    "MinioDeploymentMaxNoncurrentVersionsOptionsProvider": MinioDeploymentMaxNoncurrentVersionsOptionsProvider,
+    "MinioDeploymentNoncurrentExpireDaysOptionsProvider": MinioDeploymentNoncurrentExpireDaysOptionsProvider,
+    "SeaweedfsDeploymentMaxNoncurrentVersionsOptionsProvider": SeaweedfsDeploymentMaxNoncurrentVersionsOptionsProvider,
+    "SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider": SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
     "KeycloakAccountLinkOptionsProvider": KeycloakAccountLinkOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,
+    "EnvironmentOptionsProvider": EnvironmentOptionsProvider,
     "BaseDomainOptionsProvider": BaseDomainOptionsProvider,
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,

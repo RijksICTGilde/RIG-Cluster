@@ -6,7 +6,6 @@ from opi.forms.layout import ButtonGroup, Fieldset, Sequence
 from opi.forms.visualizers.project_registry import (
     AGE_PRIVATE_KEY,
     AGE_PUBLIC_KEY,
-    API_KEY,
     CLUSTERS,
     COMPONENTS_SEQUENCE,
     DEPLOYMENTS_SEQUENCE,
@@ -22,7 +21,7 @@ from opi.forms.visualizers.project_registry import (
 class TestEditableDefinitions:
     def test_get_all_project_editables_returns_expected_count(self):
         editables = get_all_project_editables()
-        assert len(editables) == 10
+        assert len(editables) == 9
 
     def test_all_editables_have_yaml_path(self):
         for editable in get_all_project_editables():
@@ -67,7 +66,7 @@ class TestSequenceEditables:
         children = USERS_SEQUENCE.children or []
         paths = [c.editable.yaml_path for c in children]
         assert "users[*]/email" in paths
-        assert "users[*]/role" in paths
+        assert "users[*]/roles" in paths
 
     def test_components_sequence_has_children(self):
         assert str(COMPONENTS_SEQUENCE.widget) == "sequence"
@@ -76,15 +75,14 @@ class TestSequenceEditables:
         # (scheme, port, liveness-path, readiness-path), +1 for the optional start command,
         # +1 for the authorization-wall signpost (a read-only pointer to the project-level
         # setting, shown only when that service is on this component), +1 for the
-        # image-registries reference (welke eigen registry hoort bij de image van dit
-        # component, RC-177).
+        # image-registries reference (which registry to use), +1 for the description field.
         assert len(COMPONENTS_SEQUENCE.children) == 26
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
         assert str(DEPLOYMENTS_SEQUENCE.widget) == "sequence"
         assert DEPLOYMENTS_SEQUENCE.children is not None
-        assert len(DEPLOYMENTS_SEQUENCE.children) == 14
+        assert len(DEPLOYMENTS_SEQUENCE.children) == 15
 
     def test_deployments_has_nested_components_sequence(self):
         children = DEPLOYMENTS_SEQUENCE.children or []
@@ -92,10 +90,12 @@ class TestSequenceEditables:
         assert len(nested_seq) == 1
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
-        # reference, image, pullPolicy, user-env-vars, the publish-on-web certificate
-        # override (tls + attachment, RC-78), per-deployment attachments sequence, and the
+        # reference, image, pullPolicy, the publish-on-web certificate override
+        # (tls + attachment, RC-78), per-deployment attachments sequence, and the
         # image-registries override (een andere registry alleen voor deze deployment).
-        assert len(nested_seq[0].children) == 8
+        # user-env-vars staat hier sinds RC-388 niet meer tussen: die overschrijving gaat
+        # alleen via het step-up-venster.
+        assert len(nested_seq[0].children) == 7
 
 
 class TestReadonlyEditables:
@@ -107,10 +107,6 @@ class TestReadonlyEditables:
     def test_age_private_key_is_readonly(self):
         assert AGE_PRIVATE_KEY.readonly is True
         assert AGE_PRIVATE_KEY.editable.converter is not None
-
-    def test_api_key_is_readonly(self):
-        assert API_KEY.readonly is True
-        assert API_KEY.editable.converter is not None
 
 
 class TestFormLayout:

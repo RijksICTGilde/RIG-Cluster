@@ -7,6 +7,7 @@ reading a list that is silently empty. Why there is a launcher at all: ``scripts
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -20,10 +21,41 @@ LAUNCHER = "uv run --project operations-manager/python python"
 BARE_PYTHON = "python3"
 
 
+#: A step whose whole content is one backticked command: a list marker or nothing in front of
+#: it, and at most one punctuation mark behind it. Mid-sentence backticks are prose, and the
+#: docs use those for counter-examples ("``python3 scripts/x.py`` stops on ModuleNotFoundError").
+_INLINE_STEP = re.compile(r"^\s*(?:\d+\.|[-*])?\s*`([^`]+)`[.,;:]?$")
+
+_LAUNCHER_STARTS = tuple(f"{start} " for start in (shlex.split(LAUNCHER)[0], BARE_PYTHON))
+
+
+def command_lines(doc: Path) -> list[str]:
+    """Every pasteable command in ``doc``: the lines of a ```bash block, plus inline steps.
+
+    Inline too: an operator pastes a numbered step as readily as a block line, and five broken
+    KEK commands sat in such steps past a block-only gate (RC-334).
+    """
+    commands: list[str] = []
+    inside = False
+    for raw in doc.read_text().splitlines():
+        if raw.startswith("```"):
+            inside = raw.startswith("```bash")
+            continue
+        if inside:
+            line = raw.strip()
+            if line and not line.startswith("#"):
+                commands.append(line)
+            continue
+        step = _INLINE_STEP.match(raw)
+        if step and step.group(1).startswith(_LAUNCHER_STARTS):
+            commands.append(step.group(1).strip())
+    return commands
+
+
 def documented_lines(*scripts: str, doc: Path = FEATURE_DOC) -> list[str]:
-    """Every line of ``doc`` that invokes one of ``scripts``, launcher and all."""
+    """Every command in ``doc`` that invokes one of ``scripts``, launcher and all."""
     prefixes = tuple(f"{prefix} scripts/{name}" for name in scripts for prefix in (LAUNCHER, BARE_PYTHON))
-    return [line.strip() for line in doc.read_text().splitlines() if line.strip().startswith(prefixes)]
+    return [line for line in command_lines(doc) if line.startswith(prefixes)]
 
 
 def flags(line: str) -> list[str]:

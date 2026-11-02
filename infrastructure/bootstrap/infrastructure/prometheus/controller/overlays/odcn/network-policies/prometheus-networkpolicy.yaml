@@ -1,0 +1,129 @@
+# podSelector + policyTypes maakt deny-by-default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-access
+  namespace: rig-prd-operations
+spec:
+  podSelector:
+    matchLabels:
+      app: prometheus
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # De router, voor prometheus.rig.prd1.gn2.quattro.rijksapps.nl (../ingress.yaml,
+    # ip_whitelist 147.181.0.0/16).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+          podSelector:
+            matchLabels:
+              ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig
+      ports:
+        - protocol: TCP
+          port: 9090
+    # OPI bevraagt Prometheus voor resourcegebruik en facturatie (PROMETHEUS_URL in
+    # bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+          podSelector:
+            matchLabels:
+              app: operations-manager
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # De scrape-doelen in de platform-namespace, per job uit ../configmap-patch.yaml:
+    # rig-db 9187 (cloudnative-pg), minio 9000, seaweedfs 9327, keycloak 8080 en 9000,
+    # OPI 8000 (prometheus.io/port op de pod), kube-state-metrics 8080.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+      ports:
+        - protocol: TCP
+          port: 9187
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9327
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8000
+    # De tenant-namespaces, zonder poortbeperking: de kubernetes-pods-job scrapet elke pod
+    # met prometheus.io/scrape, en de service metrics-scraper laat een project zijn eigen
+    # poort kiezen (manifests/deployment.yaml.jinja, metrics_config.port).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+    # Naar buiten op 443, voor de Capsule-Proxy kube-API (KUBERNETES_SERVICE_HOST in
+    # ../kustomization.yaml). De pod-CIDR staat niet in except, zie de keycloak-policy.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+# kube-state-metrics staat op productie op 0 replicas (../kustomization.yaml), maar de
+# policy hoort bij de workload en niet bij het aantal pods: zet iemand hem aan, dan geldt
+# dit beleid meteen.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-kube-state-metrics-access
+  namespace: rig-prd-operations
+spec:
+  podSelector:
+    matchLabels:
+      app: kube-state-metrics
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Alleen Prometheus, op de metrics- en telemetrie-poort (../../base/kube-state-metrics-deployment.yaml).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8081
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # De kube-API op 443. De pod-CIDR staat niet in except, zie de keycloak-policy.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

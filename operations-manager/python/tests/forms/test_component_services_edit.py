@@ -76,7 +76,7 @@ def _project() -> dict[str, Any]:
                 "components": [{"reference": "test"}],
             }
         ],
-        "users": [{"email": "admin@sandbox.rijksapp.dev", "role": "admin"}],
+        "users": [{"email": "admin@sandbox.rijksapp.dev", "roles": ["admin", "ops"]}],
     }
 
 

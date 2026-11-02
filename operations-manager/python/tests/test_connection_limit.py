@@ -98,7 +98,9 @@ def test_elke_waarde_binnen_de_speelruimte_is_geldig() -> None:
 
 def test_de_grenzen_staan_alleen_in_de_declaratie() -> None:
     assert (CONNECTION_LIMIT.minimum, CONNECTION_LIMIT.maximum, CONNECTION_LIMIT.default) == (1, 500, 20)
-    assert get_service(ServiceType.POSTGRESQL_DATABASE).config_settings() == (CONNECTION_LIMIT,)
+    # Sinds RC-327 declareert deze dienst ook de CNPG-velden van scope: project; die
+    # staan hier niet herhaald, want dat zou de grenzen op een tweede plek vastleggen.
+    assert CONNECTION_LIMIT in get_service(ServiceType.POSTGRESQL_DATABASE).config_settings()
 
 
 # --- de connector -----------------------------------------------------------------
@@ -115,7 +117,7 @@ def _connector(rolconnlimit: int | None) -> tuple[PostgresConnector, AsyncMock]:
 @pytest.mark.asyncio
 async def test_een_nieuwe_rol_krijgt_de_meegegeven_limiet() -> None:
     connector, conn = _connector(None)
-    await connector.create_user("proj_test", "Wachtwoord123abc", connection_limit=37)
+    await connector.create_user("proj_test", "DummyWachtwoord123abc", connection_limit=37)
     (sql,) = [call.args[0] for call in conn.execute.await_args_list]
     assert sql.endswith("CONNECTION LIMIT 37")
 
@@ -160,7 +162,7 @@ async def test_de_connector_zet_alleen_een_positief_getal_in_ddl(waarde: Any) ->
     with pytest.raises(PostgresValidationError):
         await connector.set_connection_limit("proj_test", waarde)
     with pytest.raises(PostgresValidationError):
-        await connector.create_user("proj_test", "Wachtwoord123abc", connection_limit=waarde)
+        await connector.create_user("proj_test", "DummyWachtwoord123abc", connection_limit=waarde)
     conn.execute.assert_not_awaited()
 
 
@@ -218,6 +220,7 @@ def _manager(rollen: _Rollen, stappen: list[tuple[str, str | None]]) -> Database
         create_schema=rollen.noop,
         set_role_search_path=rollen.noop,
         grant_readonly_on_schema=rollen.noop,
+        restrict_database_to_roles=rollen.noop,
     )
     mgr._postgres_connector = connector  # type: ignore[assignment]
     return mgr
@@ -225,8 +228,8 @@ def _manager(rollen: _Rollen, stappen: list[tuple[str, str | None]]) -> Database
 
 async def _verwerk(mgr: DatabaseManager, project: dict[str, Any], deployment: str) -> None:
     """Een herverwerking van een deployment waarvan de inloggegevens al kloppen."""
-    bestaand = SimpleNamespace(password="Wachtwoord123abc", ro_password="Wachtwoord123ro")
-    state = SimpleNamespace(database="proj_test", schema="proj_test", password="Wachtwoord123abc")
+    bestaand = SimpleNamespace(password="DummyWachtwoord123abc", ro_password="DummyWachtwoord123ro")
+    state = SimpleNamespace(database="proj_test", schema="proj_test", password="DummyWachtwoord123abc")
     deployment_dict = next(d for d in project["deployments"] if d["name"] == deployment)
     with (
         patch.object(DatabaseManager, "_deployment_uses_postgresql", AsyncMock(return_value=True)),
@@ -311,7 +314,7 @@ async def test_een_externe_kloon_zet_de_limiet_van_de_doelrol() -> None:
         patch.object(DatabaseManager, "_validate_external_source", AsyncMock(return_value={"table_count": 1})),
         patch.object(DatabaseManager, "_deployment_uses_postgresql", AsyncMock(return_value=True)),
         patch.object(DatabaseManager, "_get_database_config_for_deployment", AsyncMock(return_value=("h", "a", "p"))),
-        patch.object(DatabaseManager, "_resolve_database_credentials", AsyncMock(return_value="Wachtwoord123abc")),
+        patch.object(DatabaseManager, "_resolve_database_credentials", AsyncMock(return_value="DummyWachtwoord123abc")),
         patch.object(DatabaseManager, "_get_deployment_database_generation", lambda self, *args: None),
     ):
         result = await mgr._execute_external_clone("proj", "test", "bron", 5432, "u", "p", "db", "public", False)

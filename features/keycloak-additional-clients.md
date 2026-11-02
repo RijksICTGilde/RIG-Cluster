@@ -43,13 +43,17 @@ services:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | Yes | Client ID for the additional client |
-| `redirect-uris` | No | List of allowed redirect URIs (defaults to `["*"]`) |
+| `redirect-uris` | Yes | List of allowed redirect URIs. At least one; see the rules below |
+| `direct-access-grants` | No | Allow the password grant (ROPC) on this client. Default `false` |
+| `service-accounts` | No | Allow this client to get a token for itself. Default `false` |
+
+The `redirect-uris` field has no default. Flows default to off; a project opts in per client by setting `direct-access-grants` or `service-accounts` to true.
 
 ## How It Works
 
 1. **Realm creation/update**: When the owner project is deployed, it creates/updates its realm.
 
-2. **Additional clients created**: After the main client, additional clients are created in the same realm.
+2. **Additional clients created**: After the main client, additional clients are created in the same realm. Web origins are derived from redirect URIs, so you don't need to specify them.
 
 3. **Secrets stored in Kubernetes**: Each additional client's credentials are stored as a separate Kubernetes secret in the operations namespace.
 
@@ -95,9 +99,11 @@ data:
 ## Idempotent Operation
 
 Creating additional clients is idempotent:
-- If the client already exists, it updates the configuration
+- If the client already exists, OPI brings its `redirectUris` and `webOrigins` in line with the project file
 - If the secret already exists, it updates the secret data
 - Re-running a deployment doesn't create duplicates
+
+Flows and attributes of an existing client are not updated; only redirect URIs and web origins are synced.
 
 ## Example: Complete Setup
 
@@ -170,10 +176,13 @@ kubectl get secret keycloak-client-mb-grist-helmfile-production -n rig-prd-opera
 
 ## Redirect URIs
 
-When specifying redirect URIs:
-- Use wildcards (`*`) carefully for development convenience
-- Be specific in production for security
-- Include all callback paths your application uses
+Een redirect URI is `https://` met een concrete host, of `http://` naar een loopback-adres
+(`localhost`, `127.0.0.1`, `::1`) voor lokale ontwikkeling. Een wildcard mag in het PAD
+staan, niet in de hostnaam, en `*` alleen is geen geldige waarde. Een fragment (`#...`),
+whitespace, userinfo voor de host (`https://naam@host/...`) en een ander schema worden
+geweigerd. Dezelfde regel geldt voor
+`additional_redirect_uris` van de deployment zelf, en het formulier, de API en een commit
+in de projects-repo toetsen hem allemaal.
 
 **Common patterns:**
 ```yaml
@@ -181,6 +190,7 @@ redirect-uris:
   - https://app.example.com/*                    # All paths
   - https://app.example.com/oauth/callback       # Specific callback
   - https://app.example.com/api/auth/callback/*  # Auth paths
+  - http://localhost:8080/*                      # Lokale ontwikkeling
 ```
 
 ## Troubleshooting

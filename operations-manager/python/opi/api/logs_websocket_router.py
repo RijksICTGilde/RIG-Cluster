@@ -24,17 +24,16 @@ import contextlib
 import json
 import logging
 import time
-from base64 import b64decode
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from itsdangerous import BadSignature, TimestampSigner
 from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_component_pods
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.session_guard import valid_session_user
 from opi.manager.run_support import LABEL_RUN
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
@@ -62,9 +61,6 @@ _connection_lock = asyncio.Lock()  # Protect concurrent access within a worker
 MAX_CONNECTIONS_PER_USER = 5
 MAX_GLOBAL_CONNECTIONS = 100
 MAX_MESSAGES_PER_SECOND = 100  # Rate limit for log messages
-# Idle session timeout for WebSocket handshakes, shared with the HTTP
-# SessionMiddleware so both reject sessions that have been idle too long.
-SESSION_MAX_AGE_SECONDS = settings.SESSION_MAX_AGE_SECONDS
 MAX_CLIENT_MESSAGE_SIZE = 1024  # 1KB max for client messages (actions like pause/resume/switch)
 
 # Heartbeat interval
@@ -131,60 +127,17 @@ async def send_message(websocket: WebSocket, msg_type: str, **kwargs: Any) -> bo
     return False
 
 
-def _get_session_from_cookie(websocket: WebSocket) -> dict[str, Any] | None:
+def _get_session_from_scope(websocket: WebSocket) -> Any:
+    """De sessie die de ServerSideSessionMiddleware al heeft geladen, uit de scope.
+
+    Geen sessie (of een lege) geeft None, zoals een ontbrekende of ongeldige cookie dat
+    voorheen deed.
     """
-    Extract and validate session data from WebSocket cookies.
-
-    This replicates the session extraction done by Starlette's SessionMiddleware.
-    Starlette uses itsdangerous.TimestampSigner with base64-encoded JSON.
-
-    Returns:
-        Session data dict if valid, None otherwise
-    """
-    try:
-        # Get session cookie from WebSocket headers
-        cookies = websocket.cookies
-        session_cookie = cookies.get("session")
-
-        if not session_cookie:
-            logger.debug("No session cookie found in WebSocket request")
-            return None
-
-        # Use the same SECRET_KEY as Starlette's SessionMiddleware
-        secret_key = settings.SECRET_KEY
-        if not secret_key:
-            logger.error("SECRET_KEY not configured")
-            return None
-
-        # Starlette's SessionMiddleware uses TimestampSigner (not URLSafeTimedSerializer)
-        # The cookie value is: base64(json(session_data)) + signature
-        signer = TimestampSigner(str(secret_key))
-
-        try:
-            # Unsign and validate with max_age
-            data = signer.unsign(session_cookie.encode("utf-8"), max_age=SESSION_MAX_AGE_SECONDS)
-            # Decode base64 and parse JSON
-            session_data = json.loads(b64decode(data))
-        except BadSignature:
-            logger.warning("Session cookie has invalid signature")
-            return None
-
-        if isinstance(session_data, dict):
-            return session_data
-
-        logger.warning(f"Session data is not a dict: {type(session_data)}")
-        return None
-
-    except Exception as e:
-        logger.warning(f"Failed to decode session cookie: {e}")
-        return None
-
-
-def _get_user_from_session(session: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Extract user info from session data."""
+    session = websocket.scope.get("session")
     if not session:
+        logger.debug("No session found in WebSocket scope")
         return None
-    return session.get("user")
+    return session
 
 
 async def _register_connection(user_email: str, websocket: WebSocket) -> bool:
@@ -370,9 +323,10 @@ async def stream_logs(
             return
 
         # === AUTHENTICATION ===
-        # Extract session from cookies (same session as web UI)
-        session = _get_session_from_cookie(websocket)
-        user = _get_user_from_session(session)
+        # De sessie zoals de server-side middleware hem laadde (dezelfde als de web UI).
+        session = _get_session_from_scope(websocket)
+        # Dezelfde controle als de HTTP-middleware: absolute levensduur en intrekken.
+        user = valid_session_user(session)
         user_email = user.get("email") if user else None
 
         if not user_email:

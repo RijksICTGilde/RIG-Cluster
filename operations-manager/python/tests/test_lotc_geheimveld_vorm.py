@@ -1,17 +1,16 @@
-"""De vorm van een geheimveld, waar vier lezers buiten het sjabloon op selecteren.
+"""De vorm van een geheimveld, waar drie lezers buiten het sjabloon op selecteren.
 
 ``<c-secret-field>`` werd met NLDD 0.8.83 een custom element: de klaartekst stond eerst in
 ``data-value`` op een ``.lotc-secret__value`` BINNEN het veld, en staat nu in ``value`` op
 het host-element zelf; de knoppen dragen ``data-action`` in plaats van ``data-act``.
 
-Vier plekken buiten de sjablonen lezen die vorm, en geen ervan draait in CI: de e2e-suite
-staat daar uitgezet (``-m "not e2e"``) en het script draait met de hand tegen een sandbox.
-Verschuift de vorm nog een keer, dan verandert er niets aan een groene CI en breekt het
-pas bij degene die de sandbox gebruikt - een halve dag later, met een foutmelding over een
-lege API-key.
+Drie plekken buiten de sjablonen lezen die vorm, en geen ervan draait in CI: de e2e-suite
+staat daar uitgezet (``-m "not e2e"``). Verschuift de vorm nog een keer, dan verandert er
+niets aan een groene CI en breekt het pas bij degene die de sandbox gebruikt - een halve
+dag later, met een foutmelding over een leeg token.
 
 Daarom staat de meting hier: op de HTML die het sjabloon echt oplevert, met de selectors
-die die vier lezers gebruiken.
+die die drie lezers gebruiken.
 """
 
 from __future__ import annotations
@@ -28,21 +27,28 @@ REPO = Path(__file__).resolve().parent.parent
 #: Per lezer: het bestand, en het stuk tekst waarmee hij het geheimveld aanwijst. Staat
 #: het er niet meer in, dan meet deze test iets anders dan wat die lezer doet.
 LEZERS = [
-    ("tests/e2e/helpers/sandbox_api.py", 'locator("lotc-secret-field")'),
-    ("scripts/sandbox_project_tool.py", r'<lotc-secret-field[^>]*?\svalue="([^"]*)"'),
+    ("tests/e2e/helpers/sandbox_api.py", r'value="(zad_[A-Za-z0-9_-]+)"'),
     ("tests/e2e/test_lotc_project_tab.py", "lotc-secret-field button[data-action='copy']"),
-    ("tests/e2e/test_componentkaart_uitklap.py", 'locator("lotc-secret-field button")'),
+    # tests/e2e/test_componentkaart_uitklap.py stond hier als derde lezer: de kaart toont
+    # sinds RC-388 alleen nog NAMEN van omgevingsvariabelen, dus die test wijst geen
+    # geheimveld meer aan en kan deze vorm niet meer meebewaken.
 ]
 
-#: Het patroon uit scripts/sandbox_project_tool.py::get_api_key, dat de API-key van de
-#: projectpagina plukt. Een 32-tekenwaarde, want de AGE-sleutel op dezelfde pagina is langer.
-API_KEY_PATROON = re.compile(r'<lotc-secret-field[^>]*?\svalue="([^"]*)"')
+#: Het patroon uit ``sandbox_api.geef_projecttoken``, dat het zojuist uitgegeven token van
+#: het tabblad Team plukt. Het voorvoegsel wijst het aan: op die pagina staat geen tweede
+#: geheimveld dat met ``zad_`` begint.
+TOKEN_PATROON = re.compile(r'value="(zad_[A-Za-z0-9_-]+)"')
 
 
-def _render(*, revealed: bool = False) -> str:
+#: Een waarde met de vorm van een token, niet met de inhoud ervan: ``example`` erin houdt
+#: de secret-scan van een bevinding af zonder het patroon hierboven te breken.
+EEN_TOKEN = "zad_example_dEf6-hIj9kLm2nOp5qRs8tUv1"
+
+
+def _render(*, revealed: bool = False, waarde: str = "Ab3_dEf6-hIj9kLm2nOp5qRs8tUv1") -> str:
     extra = " revealed" if revealed else ""
     bron = f'<c-secret-field value="{{{{ waarde }}}}" show-copy{extra} />'
-    return templates_lotc.env.from_string(bron).render(waarde="Ab3_dEf6-hIj9kLm2nOp5qRs8tUv1")
+    return templates_lotc.env.from_string(bron).render(waarde=waarde)
 
 
 @pytest.mark.parametrize(("bestand", "selector"), LEZERS, ids=[pad for pad, _ in LEZERS])
@@ -55,7 +61,7 @@ def test_elke_lezer_gebruikt_nog_de_vorm_die_hier_gemeten_wordt(bestand: str, se
 
 
 def test_de_klaartekst_staat_op_het_host_element() -> None:
-    """De waarde die de twee sandboxlezers ophalen.
+    """De waarde die de tokenuitgifte ophaalt.
 
     Niet de tekst van het element: dat is een rij bolletjes. De volle waarde staat in een
     attribuut, en welk attribuut dat is, is precies wat met 0.8.83 verschoof.
@@ -70,15 +76,15 @@ def test_de_klaartekst_staat_op_het_host_element() -> None:
     )
 
 
-def test_het_patroon_uit_het_sandboxscript_vindt_de_waarde() -> None:
-    """De regex van scripts/sandbox_project_tool.py, op echte uitvoer.
+def test_het_patroon_uit_de_tokenuitgifte_vindt_de_waarde() -> None:
+    """De regex van ``sandbox_api.geef_projecttoken``, op echte uitvoer.
 
-    Dat script heeft geen eigen test en draait alleen met de hand tegen een sandbox. Een
-    stille mismatch komt daar terug als "no API key found on the details page".
+    Die weg draait alleen tegen een sandbox, dus een stille mismatch komt daar terug als
+    "geen uitgegeven token op het tabblad Team".
     """
-    waarden = API_KEY_PATROON.findall(_render())
+    waarden = TOKEN_PATROON.findall(_render(revealed=True, waarde=EEN_TOKEN))
 
-    assert waarden == ["Ab3_dEf6-hIj9kLm2nOp5qRs8tUv1"], f"het patroon plukt er dit uit: {waarden}"
+    assert waarden == [EEN_TOKEN], f"het patroon plukt er dit uit: {waarden}"
 
 
 def test_de_kopieerknop_is_op_zijn_actie_aan_te_wijzen() -> None:
@@ -91,10 +97,10 @@ def test_de_kopieerknop_is_op_zijn_actie_aan_te_wijzen() -> None:
 
 
 def test_de_eerste_knop_van_een_afgeschermd_veld_is_het_oogje() -> None:
-    """De knop waar test_componentkaart_uitklap op klikt, en de reden dat hij ``.first`` is.
+    """Bij een afgeschermd veld staat het oogje vooraan en de kopieerknop erachter.
 
-    Bij een afgeschermd veld staat het oogje vooraan en de kopieerknop erachter. Keert die
-    volgorde om, dan klikt die test op kopieren en meet hij niet meer wat hij zegt.
+    Dit meet het contract van het component zelf; wie op positie in plaats van op
+    ``data-action`` klikt, vertrouwt op deze volgorde.
     """
     knoppen = BeautifulSoup(_render(), "html.parser").select("lotc-secret-field button")
 

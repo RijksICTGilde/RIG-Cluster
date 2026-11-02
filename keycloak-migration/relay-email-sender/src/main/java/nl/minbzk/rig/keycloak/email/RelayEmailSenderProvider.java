@@ -83,7 +83,9 @@ public class RelayEmailSenderProvider implements EmailSenderProvider {
             // Het ontvangeradres staat hier bewust niet in: het komt van de gebruiker en de
             // logregel van Keycloak eromheen noemt de gebeurtenis toch al.
             LOG.error("ZAD-RELAY: versturen via de relay mislukt", e);
-            throw new EmailException(e);
+            // De tekst komt in de beheerconsole terecht, dus zonder host, adres of
+            // foutdetail; die staan in de logregel erboven.
+            throw new EmailException("ZAD-RELAY: versturen via de mailrelay van het platform mislukt", e);
         }
         LOG.info("ZAD-RELAY: bericht aangeboden aan de relay");
     }
@@ -135,6 +137,17 @@ public class RelayEmailSenderProvider implements EmailSenderProvider {
         props.setProperty("mail.smtp.writetimeout", "10000");
         props.setProperty("mail.smtp.from", relay.getFrom());
         return props;
+    }
+
+    /**
+     * Keurt elke {@code smtpServer} goed, want deze provider gebruikt er geen enkel veld van.
+     *
+     * <p>Keycloak 26 roept dit aan bij het aanmaken en bijwerken van een realm
+     * ({@code SMTPUtil.checkSMTPConfiguration}). Hier gooien zou dus elke realmwijziging van
+     * OPI laten falen op een configuratie die daarna toch genegeerd wordt.
+     */
+    @Override
+    public void validate(Map<String, String> config) throws EmailException {
     }
 
     @Override

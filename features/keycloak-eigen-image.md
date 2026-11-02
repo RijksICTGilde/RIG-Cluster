@@ -179,7 +179,27 @@ vandaag geen enkel registry-credential; dat is dan een eigen wijziging.
 ```bash
 task test-keycloak-relay-email-sender    # mvn test van de ene module
 task test-keycloak-custom-mapper         # mvn test van de andere
+task test-keycloak-image                 # de gebouwde image, met zijn providers, in Docker
 ```
+
+`test-keycloak-image` bouwt deze Dockerfile voor de eigen machine, start hem met de
+STARTARGUMENTEN VAN DE BASISDEPLOYMENT tegen een wegwerp-PostgreSQL in een eigen
+Docker-netwerk, en toetst per provider dat hij geregistreerd is (via `/admin/serverinfo`)
+en dat de twee endpoints ook antwoorden. Die argumenten worden gelezen en niet
+overgeschreven, zodat de toets niet stil kan afwijken van wat productie start. De
+containers en het netwerk gaan daarna weg, ook als de toets faalt.
+
+Hij start daarnaast TWEE SMTP-sinks (mailpit) op dat netwerk: een als de relay uit de
+podomgeving, een als de bestemming die een projectbeheerder in zijn realm zou kunnen zetten.
+Zo meet hij ook dat de post door onze eigen verzender gaat en niet naar de `smtpServer` van
+de realm (`features/keycloak-mail.md`), dat de idp-telling van `/rig-metrics` een echte
+federated-identity koppeling telt, en dat de inlogpagina met het nl-design-system-thema
+rendert.
+
+`publish-keycloak-image` draait hem voor de push, dus er gaat geen image naar ghcr die
+deze toets niet haalt. De toets zelf zit in
+`operations-manager/python/tests/integration/test_keycloak_image_providers.py` en
+`test_keycloak_image_mail.py`, en slaat zichzelf over zonder `KEYCLOAK_IMAGE_TEST_URL`.
 
 CI draait `mvn -B test` voor allebei bij elke pull request (job `keycloak-providers`).
 
@@ -244,4 +264,5 @@ bestond.
   manifest of een terugval er niet op stukloopt.
 - **Een Keycloak-upgrade is nu ook een imagebouw.** De basisversie staat in de Dockerfile en
   moet gelijk blijven aan `keycloak.version` in allebei de poms; een toets pint dat. Wat er
-  bij zo'n upgrade gemeten moet worden staat in `features/keycloak-26-upgrade.md`.
+  bij zo'n upgrade gemeten moet worden staat in `features/keycloak-26-upgrade.md`. De
+  basisversie is sinds RC-412 `26.8.1`.

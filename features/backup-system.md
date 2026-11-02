@@ -14,6 +14,7 @@ The backup system provides:
 - **Backup all mode** for Helm/external projects without labels
 - **Resource type tagging** for filtering snapshots by type (pvc, database, bucket)
 - **Scheduled backups** per deployment (daily/weekly/monthly) - see [scheduled-backups.md](scheduled-backups.md)
+- **Monitoring of scheduled backups**: two Prometheus gauges per deployment plus a daily ERROR line when a scheduled backup is not happening - see [scheduled-backups.md](scheduled-backups.md#monitoring-a-backup-that-does-not-happen)
 
 ## Architecture
 
@@ -78,6 +79,58 @@ The backup system provides:
 Elke backup- en restorepod draait op de serviceaccount van het project (`{project}-sa`),
 niet op `default`. Waarom staat in `image-registries.md`, "De eigen serviceaccount per project".
 
+### De sleutels van een pod staan in een Secret
+
+Back-up- en restorepods hebben S3-sleutels, het Kopia-wachtwoord en soms database- of MinIO-wachtwoorden nodig. Die gaan niet in de pod-spec (leesbaar voor wie pods ziet, en argv staat in `/proc/<pid>/cmdline`), maar in een Secret `<pod_name>-credentials`.
+
+De manager maakt het Secret vóór de pod, verwijdert het met de pod, en zet een ownerReference erop zodat OPI-herstart halverwege geen sleutels achterlaat.
+
+De pod leest de sleutels onder de namen die het gereedschap zelf uit de omgeving haalt, dus
+geen enkele sleutel komt op een commandoregel terecht:
+
+| Variabele | Gelezen door | Pods |
+|---|---|---|
+| `KOPIA_PASSWORD` | `kopia` | alle pods met een Kopia-repository |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `kopia` (S3-bestemming) | idem |
+| `DB_PASSWORD`, `TARGET_DB_PASSWORD` | `psql`, `pg_dump`, `pg_restore` via `PGPASSWORD` | database-back-up en -restore |
+| `MC_HOST_source`, `MC_HOST_backup`, `MC_HOST_target` | `mc` (alias inclusief sleutels, percent-encoded) | bucket-back-up, -mirror en -restore |
+
+`mc_host_url` in `opi/manager/backup/base.py` bouwt de `MC_HOST_`-URL; `mc alias set` komt
+in geen enkel sjabloon meer voor. Vastgelegd in `tests/test_backup_pod_credentials.py`,
+inclusief een veegtoets over elk `manifests/*-pod.yaml.jinja`.
+
+### Elke pod krijgt het S3-account van zijn eigen bucket
+
+De bestemming kent in `per-project`-modus een bucket per project. Bij die bucket hoort een
+eigen S3-account `backup-<bucket>`, met een policy op alleen `arn:aws:s3:::<bucket>` en
+`arn:aws:s3:::<bucket>/*` (lezen, schrijven, verwijderen, lijsten; Kopia heeft verwijderrecht
+nodig voor `kopia snapshot expire --delete`). Dat account gaat in het credentials-Secret van
+de pod, zodat een sleutel in een projectnamespace alleen bij de back-ups van dat project kan.
+
+Het geheim van zo'n account wordt afgeleid, niet bewaard:
+
+```
+HMAC-SHA256(BACKUP_S3_SECRET_KEY, "backup-bucket-account-<bucket>") -> base64url, 40 tekens
+```
+
+OPI hoeft het dus nergens op te slaan en komt na een herstart op dezelfde waarde uit. Wijzig
+je `BACKUP_S3_SECRET_KEY`, dan wijzigen alle accountgeheimen mee; `mc admin user add` zet het
+bij de volgende back-up- of restorerun opnieuw.
+
+`_ensure_backup_bucket_exists` zet bucket en account in één keer, en elke back-up- en
+restoreflow roept dat aan voordat er een pod komt. Het beheeraccount
+(`BACKUP_S3_ACCESS_KEY`) blijft bij OPI: voor het aanmaken van bucket en account, de
+retentiesweep en het opruimen bij projectverwijdering. In `single`-modus is er geen bucket
+per project, dus krijgen de pods het beheeraccount, met een waarschuwing in het log.
+Vastgelegd in `tests/test_backup_bucket_account.py`, inclusief een guard die afdwingt dat
+alleen de OPI-functies de beheersleutel nog lezen.
+
+### Een back-uppod ruimt niets op
+
+Faalt `kopia repository connect` en daarna ook `create`, dan stopt de pod met `BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE` en de manager maakt daar een taakfout van. Vroeger leegde de pod de prefix en begon opnieuw: op elke fout, ook bij netwerk of wachtwoord, dus gezonde snapshots gingen verloren. Een back-uppod verwijdert geen back-updata meer.
+
+Uitzondering: `restore-bucket-pod` leegt op verzoek (`clear_target`) de doelbucket van een restore, dat is bedoeld.
+
 ## Quick Start
 
 ### 1. Configure Backup in project.yaml
@@ -132,9 +185,12 @@ them automatically — no curl needed.
 
 ### 3. Check Backup Status
 
+The lock is one per cluster, so this route takes a platform admin's own token and not a
+project key (RC-386).
+
 ```bash
 curl -X GET "http://localhost:9595/api/v1/backup/status" \
-  -H "X-API-Key: your-api-key"
+  -H "Authorization: Bearer <platform admin token>"
 ```
 
 ### 4. List Available Backups
@@ -193,7 +249,7 @@ This method automatically handles PVC versioning, project file updates, and Argo
 
 ```bash
 curl -X POST "http://localhost:9595/api/v1/restore/project/my-project" \
-  -H "X-Master-API-Key: your-master-key" \
+  -H "X-API-Key: your-project-api-key" \
   -H "Content-Type: application/json" \
   -d '{
     "deployment_name": "production",
@@ -443,7 +499,7 @@ text to decide whether retrying makes sense:
 | Success | `200` | field absent |
 
 **How that is decided — never on the log text.** Both restore pods probe their destination
-before touching any data (`psql -c "SELECT 1"`, `mc alias set`). That gate exits with the
+before touching any data (`psql -c "SELECT 1"`, `mc ls target`). That gate exits with the
 dedicated `RESTORE_TARGET_UNUSABLE_EXIT_CODE` (`opi/core/backup_constants.py`), and the
 manager reads the exit code from the pod status into `RestoreResult.target_unusable`.
 Matching on `could not translate host name` would break the moment PostgreSQL or mc rewords
@@ -488,10 +544,11 @@ components:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `BACKUP_IMAGE` | De image van de back-up- en restorepods, op digest gepind (zie features/image-versioning-calver.md) | `ghcr.io/minbzk/base-images/rig-backup@sha256:...` |
 | `BACKUP_S3_ENDPOINT` | S3 endpoint URL | `minio.rig-backup-destination.svc:9000` |
 | `BACKUP_S3_BUCKET` | S3 bucket name (used when project context unavailable) | `rig-backups` |
-| `BACKUP_S3_ACCESS_KEY` | S3 access key | - |
-| `BACKUP_S3_SECRET_KEY` | S3 secret key | - |
+| `BACKUP_S3_ACCESS_KEY` | S3 access key van het beheeraccount, alleen voor OPI zelf | - |
+| `BACKUP_S3_SECRET_KEY` | S3 secret key van dat account, ook de basis voor de accountgeheimen per bucket | - |
 | `BACKUP_SNAPSHOT_CLASS` | VolumeSnapshotClass name | `ocs-storagecluster-rbdplugin-snapclass` |
 | `BACKUP_TIMEOUT_SECONDS` | Max backup duration | `3600` |
 | `BACKUP_RETENTION_KEEP_LATEST` | Keep N latest snapshots per source | `30` |
@@ -518,7 +575,7 @@ task sandbox:setup
 This creates:
 - `rig-backup-destination` namespace
 - MinIO deployment with S3-compatible API
-- Default credentials: `backup-admin` / `backup-secret-key-local`
+- Beheeraccount: `backup-admin` / `backup-secret-key-local` (OPI gebruikt dit om bucket en bucketaccount aan te maken; de pods krijgen het niet)
 
 ## Generational Versioning System
 
@@ -939,6 +996,37 @@ snapshots = await kopia_connector.list_snapshots(config, resource_type="database
 
 ## Security Model
 
+### Invoer van de aanroeper komt getoetst en gequote aan
+
+Een terugzet-endpunt laat OPI een pod of PVC renderen en met zijn eigen serviceaccount
+toepassen, dus wat de aanroeper meegeeft bepaalt wat er in dat manifest staat. Drie
+grenzen houden dat in het gareel:
+
+1. **Een patroon aan de rand.** Elk padsegment en elk veld van de requestmodellen heeft
+   een patroon uit `opi/utils/patterns.py`: `cluster` en `namespace` als DNS-1123-label,
+   `pvc_name` en `reference_name` als DNS-1123-subdomein (`ResourceNamePath`),
+   `storage_size` als Kubernetes-hoeveelheid, een doeldatabase en -gebruiker op de
+   PostgreSQL-identifierregel, een doelbucket op de S3-bucketregels. Een waarde met een
+   regeleinde erin wordt een 422 en bereikt de handler niet.
+2. **Eén gequote scalar in het manifest.** Elke niet-constante waarde in de backup- en
+   restore-sjablonen gaat door `| yaml_scalar`, getallen door `| int`. Naive quoting
+   (`"{{ waarde }}"`) breekt op een backslash of een regeleinde; de YAML-emitter escapet
+   precies wat YAML eist. Alle manifesten lopen daarvoor door één Jinja-omgeving:
+   `KubectlConnector.template_manifest` rendert via `render_template_source` uit
+   `opi/generation/manifests.py`, niet via een eigen `Environment()`.
+3. **Het shellscript van de pod leest uit de omgeving.** `${NAMESPACE}`, `${PVC_NAME}`,
+   `${TARGET_PVC_NAME}`, `${REFERENCE_NAME}` en `${RESTORE_SNAPSHOT_ID}` zijn `env`-items,
+   geen geïnterpoleerde tekst: YAML-quoting is geen shell-quoting, dus een waarde die
+   veilig in een scalar staat kan in een script alsnog een commando afsluiten.
+
+De overige waarden in de backup-scripts (de kopia-tags met project-, deployment- en
+componentnaam, het tijdstip, de `backup_run`) komen niet van een aanroeper maar uit het
+projectbestand, waar het schema ze al als DNS-1123-naam vastlegt.
+
+Gepind in `tests/test_template_injection_sweep.py` (per sjabloon en per veld),
+`tests/test_restore_request_body.py` (de rand) en `tests/test_backup_pod_templates.py`
+(beide renderroutes geven hetzelfde document).
+
 ### Per-Project Encryption
 
 Each namespace's backups are encrypted with a unique key derived from its SOPS age key:
@@ -951,6 +1039,8 @@ Project SOPS Age Key → SHA256 derivation → Kopia Repository Password
 - S3 credentials leaked? Data is encrypted, unusable without project keys
 - Project A cannot read Project B's backups (different encryption keys)
 - Backup key is derived, not stored separately
+- A pod's S3 account reaches only its own project's bucket; the destination's admin account
+  stays with OPI and never enters a project namespace
 
 ### Disaster Recovery
 

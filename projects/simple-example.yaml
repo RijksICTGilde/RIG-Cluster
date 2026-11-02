@@ -1,4 +1,4 @@
-schema-version: 2
+schema-version: '2.13'
 name: example-project
 description: "A simple example project for demonstration purposes"
 
@@ -9,7 +9,7 @@ clusters:
 
 users:
   - email: admin@rijksoverheid.nl
-    role: admin
+    roles: [admin, ops]
 
 # Platform services this project uses
 services:

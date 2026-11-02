@@ -1,18 +1,26 @@
 """Tests for the new options providers added in Sub-part C."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+from opi.core.actor import ACTOR_UNKNOWN, actor, set_actor, user_actor
 from opi.core.cluster_config import get_supported_domain_names
 from opi.core.config import settings
+from opi.core.project_schema import validate_project_schema
 from opi.forms.visualizers.providers import (
     CUSTOM_DOMAIN_SENTINEL,
     BaseDomainOptionsProvider,
     ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
+    EnvironmentOptionsProvider,
     FilteredServiceOptionsProvider,
     KeycloakTemplateOptionsProvider,
     PullPolicyOptionsProvider,
     RepositoryOptionsProvider,
+    ServiceOptionsProvider,
     StorageSizeOptionsProvider,
     StorageTypeOptionsProvider,
+    UserRoleOptionsProvider,
 )
 
 
@@ -43,7 +51,7 @@ class TestKeycloakTemplateOptionsProvider:
     def test_returns_options(self):
         provider = KeycloakTemplateOptionsProvider()
         options = provider.get_options()
-        assert len(options) == 2
+        assert len(options) == 3
         assert all("value" in o and "label" in o for o in options)
 
     def test_includes_expected_template_values(self):
@@ -51,6 +59,7 @@ class TestKeycloakTemplateOptionsProvider:
         values = [o["value"] for o in options]
         assert "sso-support" in values
         assert "sso-only" in values
+        assert "sso-support-otp" in values
 
 
 class TestPullPolicyOptionsProvider:
@@ -58,6 +67,97 @@ class TestPullPolicyOptionsProvider:
         options = PullPolicyOptionsProvider().get_options()
         values = [o["value"] for o in options]
         assert values == ["Always", "IfNotPresent", "Never"]
+
+
+class TestEnvironmentOptionsProvider:
+    """De vier OTAP-fasen, met de standaard als lege eerste keuze en niet nog een keer."""
+
+    def test_first_option_is_the_default_with_an_empty_value(self):
+        options = EnvironmentOptionsProvider().get_options()
+
+        assert options[0] == {"value": "", "label": "Ontwikkeling"}
+
+    def test_returns_the_four_otap_fases(self):
+        options = EnvironmentOptionsProvider().get_options()
+
+        assert [o["value"] for o in options] == ["", "test", "acceptatie", "productie"]
+        assert all("value" in o and "label" in o for o in options)
+
+
+_PROJECT = {
+    "name": "demo",
+    "users": [
+        {"email": "dev@example.org", "roles": ["developer"]},
+        {"email": "ops@example.org", "roles": ["ops"]},
+    ],
+}
+
+
+class TestProductionOnlyForOps:
+    """Van en naar productie is alleen te kiezen voor wie environment.set heeft; anders
+    weigert pas het opslaan."""
+
+    @pytest.fixture(autouse=True)
+    def users(self):
+        users = MagicMock()
+        users.is_platform_admin.return_value = False
+        with patch("opi.services.project_roles.get_user_service", return_value=users):
+            yield users
+        actor.set(ACTOR_UNKNOWN)
+
+    @staticmethod
+    def _production(options):
+        return next(o for o in options if o["value"] == "productie")
+
+    def test_developer_sees_production_disabled(self):
+        set_actor(user_actor("dev@example.org"))
+
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert production["disabled"] is True
+        assert "alleen ops" in production["label"]
+
+    def test_ops_can_choose_production(self):
+        set_actor(user_actor("ops@example.org"))
+
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert "disabled" not in production
+
+    def test_platform_admin_can_choose_production(self, users):
+        users.is_platform_admin.return_value = True
+        set_actor(user_actor("beheer@example.org"))
+
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert "disabled" not in production
+
+    def test_developer_keeps_the_other_stages(self):
+        set_actor(user_actor("dev@example.org"))
+
+        options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="acceptatie").get_options()
+
+        assert [o["value"] for o in options if "disabled" not in o] == ["", "test", "acceptatie"]
+
+    def test_developer_cannot_leave_production(self):
+        set_actor(user_actor("dev@example.org"))
+
+        options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="productie").get_options()
+
+        assert [o["value"] for o in options if "disabled" not in o] == ["productie"]
+
+    def test_ops_can_leave_production(self):
+        set_actor(user_actor("ops@example.org"))
+
+        options = EnvironmentOptionsProvider(yaml_data=_PROJECT, current_value="productie").get_options()
+
+        assert not any("disabled" in o for o in options)
+
+    def test_without_a_signed_in_person_everything_stays_open(self):
+        """Geen scherm voor een gebruiker; de handhaving beslist bij het opslaan."""
+        production = self._production(EnvironmentOptionsProvider(yaml_data=_PROJECT).get_options())
+
+        assert "disabled" not in production
 
 
 class TestBaseDomainOptionsProvider:
@@ -68,6 +168,57 @@ class TestBaseDomainOptionsProvider:
         assert "" in values
         assert "rijksapp.nl" in values
         assert "__custom__" in values
+
+
+class TestUserRoleOptionsProvider:
+    """De keuzelijst van een veld is ook het antwoord op "welke waarden mag ik hier
+    sturen" (RC-323): elke aangeboden rolwaarde moet dus tegen het schema valideren.
+    """
+
+    def test_every_offered_role_validates_against_the_schema(self) -> None:
+        for option in UserRoleOptionsProvider().get_options():
+            project = {
+                "name": "voorbeeld",
+                "users": [
+                    {"email": "beheer@rijksoverheid.nl", "roles": ["admin"]},
+                    {"email": "a@rijksoverheid.nl", "roles": [option["value"]]},
+                ],
+            }
+            validate_project_schema(project)
+
+    def test_the_read_role_is_offered_as_viewer_not_operator(self) -> None:
+        """De keuzelijst komt sinds RC-392 uit het register, dus hij kan geen waarde
+        meer aanbieden die het schema weigert; ``operator`` was er zo een.
+        """
+        values = [o["value"] for o in UserRoleOptionsProvider().get_options()]
+        assert "viewer" in values
+        assert "operator" not in values
+        assert "member" not in values, "member is met schemaversie 2.13 verdwenen"
+
+
+class TestServiceOptionsProviderVervangenDienst:
+    """RC-382: de kaart van een vervangen dienst (minio-storage, op een cluster met
+    seaweedfs-storage) blijft alleen staan voor een project dat de dienst al heeft."""
+
+    def test_geen_kaart_voor_een_project_dat_hem_nog_niet_heeft(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+        options = ServiceOptionsProvider(project_services=[]).get_options()
+        assert "minio-storage" not in [o["value"] for o in options]
+
+    def test_de_kaart_blijft_staan_voor_een_project_dat_hem_al_heeft(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+        options = ServiceOptionsProvider(project_services=["minio-storage"]).get_options()
+        minio = next(o for o in options if o["value"] == "minio-storage")
+        assert minio["replaced_by"] == "seaweedfs-storage"
+
+    def test_zonder_opvolger_op_dit_cluster_blijft_de_kaart_voor_iedereen(self, monkeypatch) -> None:
+        # Sinds RC-381 is "local" het enige cluster zonder seaweedfs-storage, dus
+        # minio-storage is daar niet vervangen en nog een gewone kaart, ook zonder
+        # project_services.
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "local")
+        options = ServiceOptionsProvider(project_services=[]).get_options()
+        minio = next(o for o in options if o["value"] == "minio-storage")
+        assert "replaced_by" not in minio
 
 
 class TestFilteredServiceOptionsProvider:
@@ -192,6 +343,7 @@ class TestProviderRegistry:
             "ComponentReferenceOptionsProvider",
             "RepositoryOptionsProvider",
             "ClusterBaseDomainOptionsProvider",
+            "EnvironmentOptionsProvider",
         ]
         for name in new_names:
             assert name in PROVIDER_REGISTRY

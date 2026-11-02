@@ -14,7 +14,10 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
+from opi.core.actor import set_actor, user_actor
+from opi.core.session_guard import drop_refused_session, valid_session_user
 from opi.services.user_service import get_user_service
+from opi.utils.logging_redact import redact_invite_key_in_path
 
 if typing.TYPE_CHECKING:
     from fastapi import FastAPI
@@ -43,6 +46,9 @@ def get_user(request: Request) -> dict[str, Any] | None:
     """
     Extract user information from the session.
 
+    A session past its absolute lifetime, or one revoked by a logout elsewhere, counts
+    as unauthenticated (see opi/core/session_guard.py).
+
     Args:
         request: The incoming HTTP request
 
@@ -53,11 +59,11 @@ def get_user(request: Request) -> dict[str, Any] | None:
         logger.debug("No session available in request")
         return None
 
-    user = request.session.get("user")
+    user = valid_session_user(request.session)
     if user:
         logger.debug(f"Found authenticated user: {user.get('email', 'unknown')}")
     else:
-        logger.debug("No user found in session")
+        logger.debug("No valid user found in session")
     return user
 
 
@@ -99,12 +105,14 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
 
         # Get user from session
         user = get_user(request)
+        if not user and hasattr(request, "session"):
+            drop_refused_session(request.session)
 
         # Check if the route requires SSO by examining route metadata
         route_requires_sso = self._route_requires_sso(request)
 
         if route_requires_sso and not user:
-            logger.info(f"Redirecting unauthenticated user to login from: {path}")
+            logger.info(f"Redirecting unauthenticated user to login from: {redact_invite_key_in_path(path)}")
             return RedirectResponse(url="/auth/login", status_code=302)
 
         # Store/update user information in the user service if authenticated
@@ -122,6 +130,10 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
 
         # Add user to request state for use in handlers
         request.state.user = user
+        # Voor call_next, want een contextvar reist mee naar de taak die call_next start,
+        # niet terug naar deze middleware.
+        if user and user.get("email"):
+            set_actor(user_actor(user["email"]))
 
         return await call_next(request)
 
@@ -141,6 +153,10 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         # Get the FastAPI app from the request
         app: FastAPI = request.app
 
+        # Het pad door de omzetting: een uitnodigingssleutel staat in het pad en is een
+        # bearer-geheim, en deze twee regels draaien op elk verzoek.
+        gelogd_pad = redact_invite_key_in_path(request.url.path)
+
         # Find the matching route by iterating through routes
         for route in app.router.routes:
             match, _ = route.matches({"type": "http", "path": request.url.path, "method": request.method})
@@ -150,9 +166,9 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 if endpoint:
                     # Check for our custom SSO requirement attribute
                     requires_sso = getattr(endpoint, "_requires_sso", False)  # Default to False
-                    logger.debug(f"Route {request.url.path} SSO requirement: {requires_sso}")
+                    logger.debug(f"Route {gelogd_pad} SSO requirement: {requires_sso}")
                     return requires_sso
 
         # Default behavior for unmatched routes or routes without annotations
-        logger.debug(f"Could not determine SSO requirement for {request.url.path}, defaulting to require SSO")
+        logger.debug(f"Could not determine SSO requirement for {gelogd_pad}, defaulting to require SSO")
         return True

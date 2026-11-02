@@ -9,7 +9,9 @@ and falls back to the application port / ``/metrics`` at render time).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from opi.utils.url_paths import sanitize_path_value
 
 
 class MetricsScraperConfig(BaseModel):
@@ -24,4 +26,17 @@ class MetricsScraperConfig(BaseModel):
             "images run non-root and cannot bind below that."
         ),
     )
-    path: str | None = Field(default=None, description="Path metrics are scraped from; /metrics when left out.")
+    path: str | None = Field(
+        default=None,
+        description=(
+            "Path metrics are scraped from; /metrics when left out. Only '/', letters, digits and '-._~'; "
+            "the path ends up in the scrape config of the ServiceMonitor."
+        ),
+    )
+
+    @field_validator("path")
+    @classmethod
+    def _safe_path(cls, value: str | None) -> str | None:
+        # Dezelfde tekenset als een component-path (opi/utils/url_paths.py), want het is
+        # hetzelfde soort waarde: een pad van een tenant dat in een manifest terechtkomt.
+        return None if value is None else sanitize_path_value(value, "path")

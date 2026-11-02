@@ -1,0 +1,3 @@
+{
+  "$comment": "v2.13 -> 2.14 haalde services[send-email].config.accounts weg: sinds RC-401 heeft elke deployment haar eigen mailaccount met het wachtwoord in haar eigen Kubernetes-secret, in plaats van een account per project met het wachtwoord in het projectbestand. Een 2.13-bestand mag dat blok nog dragen. Er staat hier geen eigen vorm tegenover: project_v2.json beschrijft de config van een dienst niet (zie $defs/service-entry), dus wat een send-email-config mag bevatten komt van het configmodel van de dienst."
+}

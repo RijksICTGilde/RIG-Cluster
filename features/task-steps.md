@@ -23,6 +23,8 @@ ervan op de plekken waar mensen zitten te wachten.
 | Deployment in slaapstand zetten / wekken | Projectgegevens ophalen; Slaap- of wektoestand vastleggen in git; daarna dezelfde stappen van het herverwerken |
 | Image bijwerken | Projectgegevens ophalen; Nieuwe image vastleggen in het projectbestand; Diensten en manifesten bijwerken; ArgoCD laten uitrollen |
 | Database of bucket klonen | Projectgegevens ophalen; Database/bucket kopiëren (met bron en verbindingswijze in de naam) |
+| Deployment verwijderen | Projectgegevens ophalen; ArgoCD-toepassing verwijderen; (Namespace verwijderen); Services opruimen; (Manifesten verwijderen); (Deployment uit het projectbestand verwijderen); Subdomein opruimen; Controleren dat alles verwijderd is, allemaal met de deployment als onderwerp |
+| Project verwijderen | Project '...' verwijderen; per deployment de stappen hierboven; (Projectinfrastructuur opruimen); (Keycloak-realm verwijderen); (ArgoCD-resources van het project verwijderen); (Namespaces verwijderen); (Controleren dat alles verwijderd is); (Projectbestand verwijderen); Subdomeinen opruimen |
 
 Stappen tussen haakjes verschijnen alleen als dat werk echt gebeurt.
 

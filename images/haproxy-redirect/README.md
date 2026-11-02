@@ -6,7 +6,7 @@ Intended for use as a redirect deployment when a project's URL has changed and t
 
 ## Base image
 
-`haproxy:3.2.19-alpine` (HAProxy 3.2 LTS, latest patch). Runs as `USER 10001`, no root required, no writable paths needed — compatible with OpenShift's `restricted-v2` SCC and read-only root filesystems.
+`haproxy:3.4.7-alpine` (HAProxy 3.4 LTS, latest patch). Runs as `USER 10001`, no root required, no writable paths needed, compatible with OpenShift's `restricted-v2` SCC and read-only root filesystems.
 
 ## Environment variables
 

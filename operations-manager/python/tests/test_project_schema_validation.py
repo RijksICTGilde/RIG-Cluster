@@ -19,7 +19,7 @@ from opi.core.project_schema import (
 )
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.shared.storage import StorageEntry
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
@@ -32,7 +32,7 @@ def _valid_project() -> dict:
         "name": "valid-project",
         "description": "A valid project",
         "clusters": ["local", "odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [
             {
                 "name": "main-repo",
@@ -85,7 +85,7 @@ class TestBothAliasShapes:
     @staticmethod
     def _validate(aliases) -> None:
         project = _valid_project()
-        project["schema-version"] = LATEST_SCHEMA_VERSION
+        project["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
         project["components"][0]["aliases"] = aliases
         migrated, _ = migrate_to_latest(copy.deepcopy(project))
         validate_project_schema(migrated)
@@ -438,6 +438,89 @@ def test_repository_url_normal_values_are_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# remote-sources: chisel server-url and service host (RC-326)
+# ---------------------------------------------------------------------------
+
+
+def _remote_source(**overrides: object) -> dict:
+    source: dict = {
+        "name": "odcn-production",
+        "chisel": {
+            "server-url": "https://chisel-server.prd.example.com",
+            "username": "admin",
+            "password": "plain:secret",
+        },
+        "services": {
+            "postgresql-database": {
+                "host": "amt-cluster-db-r",
+                "port": 5432,
+                "username": "tad",
+                "password": "plain:secret",
+                "database": "tad",
+                "schema": "public",
+            }
+        },
+    }
+    source.update(overrides)
+    return source
+
+
+def test_remote_source_server_url_requires_https() -> None:
+    project = _valid_project()
+    project["remote-sources"] = [_remote_source(chisel={"server-url": "http://chisel.example.com", "username": "a"})]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_server_url_with_shell_metacharacters_is_rejected() -> None:
+    project = _valid_project()
+    project["remote-sources"] = [
+        _remote_source(chisel={"server-url": "https://chisel.example.com; rm -rf /", "username": "a"})
+    ]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_server_url_normal_value_is_accepted() -> None:
+    project = _valid_project()
+    project["remote-sources"] = [_remote_source()]
+    validate_project_schema(project)
+
+
+def test_remote_source_service_host_with_shell_metacharacters_is_rejected() -> None:
+    project = _valid_project()
+    source = _remote_source()
+    source["services"]["postgresql-database"]["host"] = "db.example.com; rm -rf /"
+    project["remote-sources"] = [source]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_service_host_with_newline_is_rejected() -> None:
+    project = _valid_project()
+    source = _remote_source()
+    source["services"]["postgresql-database"]["host"] = "db.example.com\ninjected: yes"
+    project["remote-sources"] = [source]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_service_host_normal_values_are_accepted() -> None:
+    """A cluster-internal short name and a full hostname both still pass the pattern.
+
+    The guard that keeps the connection itself from reaching a private address is
+    ``opi/utils/egress_guard.py``, not this schema pattern.
+    """
+    valid_hosts = ["amt-cluster-db-r", "db.example.com", "10.20.1.5"]
+    for host in valid_hosts:
+        project = _valid_project()
+        source = _remote_source()
+        source["services"]["postgresql-database"]["host"] = host
+        project["remote-sources"] = [source]
+        validate_project_schema(project)
+
+
+# ---------------------------------------------------------------------------
 # Per-component security override (hidden YAML-only feature)
 # ---------------------------------------------------------------------------
 
@@ -633,6 +716,8 @@ class TestBareDomainComponentIsDeclared:
     def _with_bare_domain(self, value) -> dict:
         project = _valid_project()
         project["schema-version"] = 2.6
+        # Een 2.6-bestand draagt de ledenvorm van voor 2.13.
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
         project["deployments"][0]["expose-component-on-bare-domain"] = value
         return project
 
@@ -733,6 +818,7 @@ class TestWebAddressLeftTheDeploymentRoot:
             }
         )
         project["schema-version"] = 2.6
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
         validate_declared_project_schema(project)
 
     def test_a_v2_6_file_validates_after_migration(self) -> None:
@@ -741,6 +827,130 @@ class TestWebAddressLeftTheDeploymentRoot:
 
         project = self._deployment(**{"base-domain": "rijksapp.nl", "domain-format": "subdomain"})
         project["schema-version"] = 2.6
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
         migrated, was_migrated = migrate_to_latest(project)
         assert was_migrated is True
         validate_project_schema(migrated)
+
+
+class TestHetSchemaEnDeConstantesZeggenHetzelfde:
+    """Elk pattern heeft een bron. JSON kan niet importeren, dus die gelijkheid is een toets.
+
+    Zonder deze guard lopen de twee stil uit elkaar: het formulier weigert dan iets wat het
+    schema doorlaat, of omgekeerd, en dat merk je pas op de schrijfweg die je niet gebruikte.
+    """
+
+    @staticmethod
+    def _defs() -> dict:
+        from opi.core.project_schema import _load_latest_schema
+
+        return _load_latest_schema()["$defs"]
+
+    def test_de_hoeveelheid(self) -> None:
+        from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN
+
+        assert self._defs()["k8s-quantity"]["pattern"] == K8S_QUANTITY_PATTERN
+
+    def test_de_variabelenaam(self) -> None:
+        from opi.utils.env_vars import ENV_VAR_NAME_PATTERN
+
+        assert self._defs()["env-var-map"]["propertyNames"]["pattern"] == ENV_VAR_NAME_PATTERN
+
+    def test_het_emailadres(self) -> None:
+        from opi.forms.editables.validators import EMAIL_PATTERN
+
+        assert self._defs()["user"]["properties"]["email"]["pattern"] == EMAIL_PATTERN
+
+    def test_de_image(self) -> None:
+        from opi.utils.naming import CONTAINER_IMAGE_PATTERN
+
+        assert self._defs()["component"]["properties"]["image"]["pattern"] == CONTAINER_IMAGE_PATTERN
+
+
+class TestDeHoeveelheidOpResources:
+    """``$defs/k8s-quantity`` op resources.cpu/memory (RC-327 stap 2): de pattern-gelijkheid
+
+    hierboven bewijst niet dat de validator de waarde ook echt toetst -- die bewering
+    staat hier.
+    """
+
+    @pytest.mark.parametrize("waarde", ["500m", "1", "256Mi", "1.5Gi"])
+    def test_geldige_hoeveelheden_passeren(self, waarde: str) -> None:
+        project = _valid_project()
+        project["components"][0]["resources"] = {"cpu": waarde, "memory": waarde}
+        validate_project_schema(project)
+
+    @pytest.mark.parametrize("waarde", ["1 Gi", "256Mi\n", " 256Mi", "256 Mi"])
+    def test_een_hoeveelheid_met_spatie_of_regeleinde_wordt_geweigerd(self, waarde: str) -> None:
+        project = _valid_project()
+        project["components"][0]["resources"] = {"memory": waarde}
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+
+class TestEmailPatternOpUsers:
+    """``$defs/user.email`` krijgt een ``pattern`` naast ``format: email`` (RC-327 stap 4):
+    ``format`` alleen toetst geen whitespace, ``pattern`` wel.
+    """
+
+    def test_een_adres_met_whitespace_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["users"] = [{"email": "admin @rijksoverheid.nl", "roles": ["admin", "ops"]}]
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_een_adres_met_een_afsluitend_regeleinde_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["users"] = [{"email": "admin@rijksoverheid.nl\n", "roles": ["admin", "ops"]}]
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_een_normaal_adres_passeert(self) -> None:
+        project = _valid_project()
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}]
+        validate_project_schema(project)
+
+
+class TestUserEnvVarsObjectvorm:
+    """``$defs/env-var-map`` op de objecttak van ``user-env-vars`` (RC-327 stap 3)."""
+
+    def _with_user_env_vars(self, value: dict) -> dict:
+        project = _valid_project()
+        project["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
+        project["components"][0]["user-env-vars"] = value
+        return project
+
+    def test_een_geldige_sleutel_passeert(self) -> None:
+        validate_project_schema(self._with_user_env_vars({"DATABASE_URL": "postgresql://x"}))
+
+    def test_een_sleutel_met_een_spatie_wordt_geweigerd(self) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with_user_env_vars({"MY KEY": "value"}))
+
+    def test_een_waarde_met_een_newline_wordt_geweigerd(self) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with_user_env_vars({"FOO": "line1\nline2"}))
+
+
+class TestDeploymentComponentReference:
+    """``deployment-component.reference`` deelt zijn pattern met ``component.name`` (issue #87,
+
+    RC-327 stap 8): een verwijzing moet dezelfde vorm hebben als de naam waarnaar hij wijst.
+    """
+
+    def test_een_reference_met_hoofdletter_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["reference"] = "Frontend"
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_een_reference_met_een_regeleinde_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["reference"] = "frontend\n"
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_de_normale_vorm_passeert(self) -> None:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["reference"] = "frontend"
+        validate_project_schema(project)

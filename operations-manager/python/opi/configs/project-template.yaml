@@ -7,7 +7,7 @@
 # ${SETTING_NAME} placeholders are resolved from opi.core.config.settings
 # at load time.
 #
-# schema-version is stamped with LATEST_SCHEMA_VERSION by load_project_template()
+# schema-version is stamped with LATEST_SCHEMA_VERSION_VALUE by load_project_template()
 # so new projects are created at the current schema (no migration on first
 # process). The value below is a documentation placeholder; the loader overrides it.
 

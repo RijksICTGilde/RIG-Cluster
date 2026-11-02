@@ -1,0 +1,11 @@
+{
+  "$comment": "v2.10 -> 2.11 voegde de OTAP-markering 'environment' toe op een deployment. Een 2.10-bestand kent het veld niet; deze patch haalt het weg.",
+  "$defs": {
+    "environment": null,
+    "deployment": {
+      "properties": {
+        "environment": null
+      }
+    }
+  }
+}

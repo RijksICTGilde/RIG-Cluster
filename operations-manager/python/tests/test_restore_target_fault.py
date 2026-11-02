@@ -40,6 +40,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from opi.api.restore_router import restore_router
 from opi.api.v2.models import ErrorCategory
 from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
@@ -77,7 +78,7 @@ EXTERNAL_DATABASE = {
 }
 EXTERNAL_BUCKET = {
     "target_minio_endpoint": "http://doel.invalid:9000",
-    "target_bucket_name": "b",
+    "target_bucket_name": "doelbucket",
     "target_access_key": "a",
     "target_secret_key": CALLER_PASSWORD,
 }
@@ -90,14 +91,17 @@ EXTERNAL_BUCKET = {
 
 @pytest.fixture
 def env() -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(_MANIFESTS_DIR)),
         undefined=StrictUndefined,
         autoescape=False,
     )
+    env.filters.update(MANIFEST_FILTERS)
+    return env
 
 
 _DATABASE_CTX: dict[str, Any] = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "db-restore-test",
     "namespace": NAMESPACE,
     "service_account_name": f"{PROJECT}-sa",
@@ -117,18 +121,20 @@ _DATABASE_CTX: dict[str, Any] = {
     "snapshot_id": "",
     "timeout_seconds": 3600,
     "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+    "credentials_secret": "db-restore-test-credentials",
     # The default schema of the database the dump came from (RC-121); see
     # tests/test_restore_schema_rename.py for what the pod does with it.
     "source_schema": "restore_test_main",
 }
 
 _BUCKET_CTX: dict[str, Any] = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "bucket-restore-test",
     "namespace": NAMESPACE,
     "service_account_name": f"{PROJECT}-sa",
     "reference_name": "main-minio",
     "target_minio_endpoint": "http://doel.invalid:9000",
-    "target_bucket_name": "b",
+    "target_bucket_name": "doelbucket",
     "target_access_key": "a",
     "target_secret_key": CALLER_PASSWORD,
     "s3_endpoint": "minio.example:9000",
@@ -142,6 +148,7 @@ _BUCKET_CTX: dict[str, Any] = {
     "timeout_seconds": 3600,
     "clear_target": False,
     "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+    "credentials_secret": "bucket-restore-test-credentials",
 }
 
 
@@ -162,8 +169,11 @@ class TestRestorePodTemplates:
         script = _script(env, "restore-bucket-pod.yaml.jinja", _BUCKET_CTX)
 
         assert f"exit {RESTORE_TARGET_UNUSABLE_EXIT_CODE}" in script
-        # mc validates endpoint and keys when the alias is set, before any mirroring.
-        assert script.index("Configuring MinIO client for target") < script.index("mc mirror")
+        # mc uses the endpoint and keys for the first time on this listing, before any mirroring.
+        assert script.index("Checking the target bucket") < script.index("mc mirror")
+        # Niet `mc ls target`: dat vraagt ListAllMyBuckets, en het beleid dat OPI aan een
+        # MinIO-gebruiker van een deployment geeft dekt alleen de bucket zelf.
+        assert "mc ls target/" in script
 
     @pytest.mark.parametrize(
         ("template", "ctx"),
@@ -238,7 +248,7 @@ def _project_file() -> dict[str, Any]:
     return {
         "schema-version": 2,
         "name": PROJECT,
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "components": [
             {

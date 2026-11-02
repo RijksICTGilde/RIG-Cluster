@@ -5,6 +5,7 @@ resources:
 - ../../base
 # Let's Encrypt issuer for keycloak.staging.rijksapp.dev TLS certificate
 - issuer-letsencrypt.yaml
+- network-policies/keycloak-networkpolicy.yaml
 
 patches:
   - target:

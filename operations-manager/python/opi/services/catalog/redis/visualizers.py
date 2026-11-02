@@ -15,6 +15,8 @@ REDIS_ACL_KEY_PREFIX = EditableVisualizer(
         "Aan (aanbevolen): de gebruiker mag alleen sleutels met het voorvoegsel "
         "{deployment}-{project}: gebruiken. Uit: de gebruiker kan bij elke sleutel in de "
         "gedeelde Redis. Zet dit alleen uit voor applicaties die hun sleutels niet kunnen "
-        "voorvoegen."
+        "voorvoegen. Uitzetten is een aanvraag: een platformbeheerder beslist erover, en "
+        "tot die tijd houdt je gebruiker het voorvoegsel. Een eigen Redis per project "
+        "bestaat nog niet, dus de aanvraag is de enige weg."
     ),
 )

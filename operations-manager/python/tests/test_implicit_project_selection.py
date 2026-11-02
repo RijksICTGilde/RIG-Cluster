@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from opi.core.project_schema import validate_project_schema
 from opi.manager.project_manager import ProjectManager
+from opi.services.catalog.approval import config_value_approval, service_use_approval
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.registry import SERVICES, get_service
 from opi.services.services import ServiceAdapter, ServiceValidationError, service_entry_name
@@ -37,6 +38,7 @@ IMPLICIT_SERVICES = {
     ServiceType.POSTGRESQL_DATABASE,
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
     ServiceType.MINIO_STORAGE,
+    ServiceType.SEAWEEDFS_STORAGE,
     ServiceType.REDIS,
     ServiceType.NAMESPACE_REDIS,
     ServiceType.PERSISTENT_STORAGE,
@@ -175,8 +177,8 @@ class TestTheHookItself:
             domains: list[str] = []
 
         class ApprovableService(Service):
-            service_type = ServiceType.PUBLISH_ON_WEB
-            definition = SERVICES[ServiceType.PUBLISH_ON_WEB].definition
+            service_type = ServiceType.SEND_EMAIL
+            definition = SERVICES[ServiceType.SEND_EMAIL].definition
             config_model = ProjectChoice
             allows_implicit_project_selection = True
 
@@ -184,12 +186,77 @@ class TestTheHookItself:
                 return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
             def config_approvals(self, layer: ConfigLayer) -> list[Any]:
-                return SERVICES[ServiceType.PUBLISH_ON_WEB].config_approvals(layer)
+                return SERVICES[ServiceType.SEND_EMAIL].config_approvals(layer)
 
         service = ApprovableService()
         assert service.approval_specs()  # guards the premise of the test
         assert ConfigLayer.PROJECT in service.config_layers()  # ... and the reachable layer
         assert service.implicit_project_entry() is None
+
+    def test_a_service_use_approval_always_refuses(self) -> None:
+        """Een goedkeuring op de dienst zelf gaat over het aanzetten, dus er is geen stand
+        waarin de dienst zichzelf mag aanzetten."""
+
+        class ProjectChoice(BaseModel):
+            iets: str = "x"
+
+        class UseApprovedService(Service):
+            service_type = ServiceType.SEND_EMAIL
+            definition = SERVICES[ServiceType.SEND_EMAIL].definition
+            config_model = ProjectChoice
+            allows_implicit_project_selection = True
+
+            def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+                return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
+
+            def config_approvals(self, layer: ConfigLayer) -> list[Any]:
+                return [
+                    service_use_approval(
+                        ServiceType.SEND_EMAIL,
+                        label="Gebruik",
+                        activity="Het gebruik",
+                        consequence="Er gebeurt niets.",
+                    ).spec
+                ]
+
+        assert UseApprovedService().implicit_project_entry() is None
+
+    def test_a_config_value_approval_refuses_only_for_the_value_it_names(self) -> None:
+        """RC-338: niet de aanwezigheid van een spec beslist, maar de config waarmee de
+        dienst zich zou aanmelden."""
+
+        class Keuze(BaseModel):
+            wijd: bool = False
+
+        def _service(default: dict[str, Any]) -> Service:
+            class ValueApprovedService(Service):
+                service_type = ServiceType.REDIS
+                definition = SERVICES[ServiceType.REDIS].definition
+                config_model = Keuze
+                allows_implicit_project_selection = True
+
+                def config_api_fields(self, layer: ConfigLayer) -> list[str]:
+                    return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
+
+                def implicit_project_config(self) -> dict[str, Any]:
+                    return default
+
+                def config_approvals(self, layer: ConfigLayer) -> list[Any]:
+                    return [
+                        config_value_approval(
+                            ServiceType.REDIS,
+                            field="wijd",
+                            label="Wijd bereik",
+                            activity="Wijd bereik",
+                            consequence="Het bereik blijft smal.",
+                            required_when=lambda config: config.get("wijd", False) is True,
+                        ).spec
+                    ]
+
+            return ValueApprovedService()
+
+        assert _service({"wijd": False}).implicit_project_entry() == {"name": "redis", "config": {"wijd": False}}
+        assert _service({"wijd": True}).implicit_project_entry() is None
 
 
 class TestTheCatalogAnswer:
@@ -250,7 +317,7 @@ class TestTheCatalogAnswer:
             "name": "proj",
             "description": "test",
             "clusters": ["odcn-production"],
-            "users": [{"email": "a@b.nl", "role": "admin"}],
+            "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
             "services": [
                 service.implicit_project_entry()
                 for service in SERVICES.values()
@@ -266,7 +333,7 @@ def _project() -> dict[str, Any]:
         "name": "proj",
         "description": "test",
         "clusters": ["odcn-production"],
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         "services": [],
         "components": [
             {

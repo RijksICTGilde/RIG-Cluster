@@ -41,6 +41,9 @@ class MinioStorageService(Service):
     }
 ```
 
+Zo stond het bij `minio-storage` tot RC-380: die laag droeg alleen kloonstatus. Sinds de
+grens op oude versies draagt hij ook een gebruikersveld, en dus een echte sectie.
+
 ## Wat er is rechtgezet
 
 | Dienst | Was | Nu |
@@ -48,7 +51,7 @@ class MinioStorageService(Service):
 | `health-check`, `metrics-scraper`, `publish-on-web`, `persistent-storage`, `temp-storage` | config op component, geen sectie | componentsectie, afgeleid van hun eigen declaraties |
 | `attachments` | config op component, sectie op project | beide: de projectsectie die hij had, plus de componentlaag |
 | `redis` | `acl-key-prefix` in het model en op de API, nergens een veld | projectsectie + eigen configuratie-modal |
-| `minio-storage` | `enable-versioning` idem | projectsectie + eigen configuratie-modal; deployment-laag als OPI-beheerd gedeclareerd |
+| `minio-storage` | `enable-versioning` idem | projectsectie + eigen configuratie-modal; deployment-laag krijgt een sectie en knop voor de grens op oude versies (RC-380), naast de OPI-geschreven kloonstatus |
 | `cross-domain-access` | config op project en deployment, alleen een projectsectie | deployment-laag expliciet gedeclareerd (zie hieronder) |
 
 ### redis: sleutels beperken tot dit project
@@ -82,7 +85,8 @@ er dan alleen achter te worden gehangen.
 
 Bewaar eerdere versies van objecten, zodat een overschrijving of verwijdering terug te
 draaien is. Kost extra opslag, evenredig met hoe vaak objecten wijzigen. Zelfde drie
-plekken.
+plekken. De grens op die oude versies staat ernaast, en per deployment achter een eigen
+knop: zie `oude-versies-in-een-bucket.md`.
 
 ### cross-domain-access: de deployment-laag
 

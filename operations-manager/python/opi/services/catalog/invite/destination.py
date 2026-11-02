@@ -27,8 +27,10 @@ wrong, because the user cannot tell the difference until they have clicked it.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
+from opi.services.catalog.invite.config_model import HTTPS_URL_PATTERN
 from opi.services.catalog.invite.target_format import join_target, split_target
 
 logger = logging.getLogger(__name__)
@@ -106,4 +108,10 @@ def resolve_invite_url(invite: dict[str, Any], project_data: dict[str, Any]) -> 
             logger.info("Invite destination %r no longer resolves to a public address; showing no button", target)
             return ""
         return url
-    return invite.get("application_url") or ""
+    url = invite.get("application_url") or ""
+    if url and not re.match(HTTPS_URL_PATTERN, url):
+        # Tweede laag achter de validator in het configmodel, voor een bestand dat ooit
+        # buiten hem om is geschreven: de waarde landt in een href, dus geen knop.
+        logger.warning("Invite destination is geen https-adres, de knop blijft weg")
+        return ""
+    return url

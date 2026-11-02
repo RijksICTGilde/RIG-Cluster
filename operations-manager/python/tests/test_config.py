@@ -7,9 +7,13 @@ Tests env file discovery, env file parsing/warnings, and SOPS key parsing.
 import logging
 from unittest.mock import mock_open, patch
 
+import pytest
 from opi.core.config import (
+    PROEFBAAR_CLUSTER,
+    Settings,
     _check_env_file_for_environment_var,
     _get_env_files,
+    _load_project_kek,
     parse_sops_age_key_content,
 )
 
@@ -151,6 +155,21 @@ class TestGetEnvFiles:
 
         assert "/custom/.env" in result
 
+    @patch("opi.core.config._check_env_file_for_environment_var")
+    @patch("os.path.exists")
+    @patch.dict("os.environ", {}, clear=True)
+    def test_zonder_environment_laadt_env_production(self, mock_exists, mock_check):
+        """conftest.py zet ENVIRONMENT altijd op 'local' voor de testrun, dus hier expliciet
+        leeg: zonder de variabele moet dit dezelfde 'production'-default lezen als het
+        Settings-veld, anders zeggen de twee lezers iets anders (RC-321).
+        """
+        mock_exists.side_effect = lambda p: p in (".env", ".env.production")
+
+        result = _get_env_files()
+
+        assert ".env.production" in result
+        assert ".env.local" not in result
+
 
 class TestParseSopsAgeKeyContent:
     """Tests for parse_sops_age_key_content."""
@@ -190,3 +209,102 @@ class TestParseSopsAgeKeyContent:
         public, private = parse_sops_age_key_content(content)
         assert public == "age1abc123"
         assert private == "AGE-SECRET-KEY-1ABCDEF"
+
+
+class TestLoadProjectKek:
+    """Tests for _load_project_kek: the project-KEK, zonder KEK verandert er niets (RC-334)."""
+
+    KEK_CONTENT = "# created: today\n# public key: age1kek00000000000000000000000000000000000000000000000kek\nAGE-SECRET-KEY-1KEK\n"
+
+    def test_without_a_file_setting_nothing_changes(self):
+        settings = Settings()
+        settings.PROJECT_KEK_FILE = None
+
+        _load_project_kek(settings)
+
+        assert settings.PROJECT_KEK_PUBLIC_KEY is None
+        assert settings.PROJECT_KEK_PRIVATE_KEY is None
+
+    def test_a_mounted_kek_file_sets_both_halves(self, tmp_path):
+        key_file = tmp_path / "project-kek.txt"
+        key_file.write_text(self.KEK_CONTENT)
+        settings = Settings()
+        settings.PROJECT_KEK_FILE = str(key_file)
+
+        _load_project_kek(settings)
+
+        assert settings.PROJECT_KEK_PUBLIC_KEY == "age1kek00000000000000000000000000000000000000000000000kek"
+        assert settings.PROJECT_KEK_PRIVATE_KEY == "AGE-SECRET-KEY-1KEK"
+
+    def test_a_missing_mount_falls_back_to_no_kek_with_a_warning(self, tmp_path, caplog):
+        """Het secret is optional: een niet-gemount pad is de bedoelde uitkomst, geen opstartfout."""
+        settings = Settings()
+        settings.PROJECT_KEK_FILE = str(tmp_path / "not-mounted.txt")
+
+        with caplog.at_level(logging.WARNING):
+            _load_project_kek(settings)
+
+        assert settings.PROJECT_KEK_PUBLIC_KEY is None
+        assert settings.PROJECT_KEK_PRIVATE_KEY is None
+        assert any("niet gemount" in r.message for r in caplog.records)
+
+    def test_an_empty_kek_file_is_a_hard_startup_error(self, tmp_path):
+        """Een gezet maar leeg bestand mag niet stil terugvallen: dat verbergt een verkeerde mount."""
+        key_file = tmp_path / "project-kek.txt"
+        key_file.write_text("")
+        settings = Settings()
+        settings.PROJECT_KEK_FILE = str(key_file)
+
+        with pytest.raises(RuntimeError, match="Project-KEK is leeg"):
+            _load_project_kek(settings)
+
+    def test_a_kek_file_without_a_private_key_is_refused(self, tmp_path):
+        key_file = tmp_path / "project-kek.txt"
+        key_file.write_text("# public key: age1kek00000000000000000000000000000000000000000000000kek\n")
+        settings = Settings()
+        settings.PROJECT_KEK_FILE = str(key_file)
+
+        with pytest.raises(RuntimeError, match="bevat geen AGE-sleutelpaar"):
+            _load_project_kek(settings)
+
+    def test_existing_values_are_not_overwritten(self, tmp_path):
+        """De env-terugval (``PROJECT_KEK_PRIVATE_KEY`` al gezet) blijft staan boven het bestand."""
+        key_file = tmp_path / "project-kek.txt"
+        key_file.write_text(self.KEK_CONTENT)
+        settings = Settings()
+        settings.PROJECT_KEK_FILE = str(key_file)
+        settings.PROJECT_KEK_PUBLIC_KEY = "age1already-set"
+        settings.PROJECT_KEK_PRIVATE_KEY = "AGE-SECRET-KEY-1ALREADY-SET"
+
+        _load_project_kek(settings)
+
+        assert settings.PROJECT_KEK_PUBLIC_KEY == "age1already-set"
+        assert settings.PROJECT_KEK_PRIVATE_KEY == "AGE-SECRET-KEY-1ALREADY-SET"
+
+
+class TestTaskCleanupRetentionWindows:
+    """RC-282: de kop blijft 90 dagen, de werkgegevens volgens het korte venster."""
+
+    def test_defaults_without_environment(self):
+        settings = Settings()
+
+        assert settings.TASK_WORKER_CLEANUP_RETENTION_HOURS == 1
+        assert settings.TASK_WORKER_HEADER_RETENTION_DAYS == 90
+
+
+class TestProeftokenAlleenOpDeSandbox:
+    """SECURITY_PROOF_TOKEN maakt een instantie een doel van de aanvalsproef."""
+
+    def test_de_sandbox_mag_een_proeftoken_dragen(self):
+        settings = Settings(CLUSTER_MANAGER=PROEFBAAR_CLUSTER, SECURITY_PROOF_TOKEN="een-token-van-deze-run")
+        assert settings.SECURITY_PROOF_TOKEN == "een-token-van-deze-run"
+
+    @pytest.mark.parametrize("cluster", ["odcn-production", "odcn-staging", "local"])
+    def test_elk_ander_cluster_weigert_te_starten(self, cluster):
+        """Faalconditie: een gezet token op staging of productie laat OPI gewoon starten."""
+        with pytest.raises(RuntimeError, match="SECURITY_PROOF_TOKEN"):
+            Settings(CLUSTER_MANAGER=cluster, SECURITY_PROOF_TOKEN="een-token-van-deze-run")
+
+    @pytest.mark.parametrize("cluster", ["odcn-production", "sandboxed-local"])
+    def test_zonder_token_verandert_er_niets(self, cluster):
+        assert Settings(CLUSTER_MANAGER=cluster).SECURITY_PROOF_TOKEN == ""

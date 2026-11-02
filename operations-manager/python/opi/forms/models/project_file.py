@@ -6,10 +6,13 @@ file YAML structure used in rig-cluster-projects, enabling form-based
 editing of project configurations.
 """
 
+from datetime import datetime
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opi.core.leden import LidSoort
+from opi.core.project_environment import Omgeving
 from opi.forms.layout import (
     ButtonGroup,
     Column,
@@ -71,28 +74,73 @@ class DomainsModel(BaseModel):
     allowed_subdomains: list[AllowedSubdomainEntry] = Field(default_factory=list, alias="allowed-subdomains")
 
 
+class ApiTokenModel(BaseModel):
+    """Een uitgegeven API-token van een lid, zoals het in het projectbestand staat.
+
+    Alleen de hash, nooit de waarde: na uitgifte leest niemand het token meer terug, ook de
+    uitgever niet. Intrekken is dit blok weghalen, en dat is dus een commit met historie.
+    """
+
+    name: str = Field(min_length=1, max_length=64)
+    expires: datetime
+    hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class ProjectUserModel(BaseModel):
-    """User with email and role in a project."""
+    """Een lid van een project: een mens, of een service account.
+
+    Een service account is geen tweede soort naast de leden maar een lid met een andere
+    soort naam: dezelfde rollen, dezelfde tokens, alleen geen mens erachter. Daardoor is er
+    een lijst die zegt wie bij dit project hoort, in plaats van twee die uit de pas lopen.
+    """
+
+    type: LidSoort = Field(default=LidSoort.PERSOON)
 
     email: Annotated[
-        str,
+        str | None,
         FormMeta(
             label="user.email",
             description="user.email.description",
             widget="text",
             placeholder="gebruiker@rijksoverheid.nl",
         ),
-    ] = Field(min_length=1)
+    ] = Field(default=None)
 
-    role: Annotated[
-        str,
+    #: Alleen bij een service account, en dan een DNS-label: de naam reist mee in de
+    #: actor en in de git-trailer, dus hij moet overal als een label te schrijven zijn.
+    name: str | None = Field(default=None, pattern=r"^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$")
+
+    roles: Annotated[
+        list[str],
         FormMeta(
-            label="user.role",
-            description="user.role.description",
-            widget="select",
+            label="user.roles",
+            description="user.roles.description",
+            widget="multiselect",
             options_provider="UserRoleOptionsProvider",
         ),
-    ] = Field(default="developer")
+    ] = Field(default_factory=lambda: ["developer"])
+
+    tokens: list[ApiTokenModel] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_naam_past_bij_soort(self) -> ProjectUserModel:
+        """Een mens heeft een e-mailadres, een service account een naam, nooit allebei.
+
+        Een e-mailadres op een service account zou hem als mens laten doorgaan bij elke
+        lezer die alleen naar ``email`` kijkt, en dat is precies de verwarring die
+        :func:`opi.services.project_leden.human_members` moet voorkomen.
+        """
+        if self.type is LidSoort.SERVICE_ACCOUNT:
+            if not self.name:
+                raise ValueError("Een service account heeft een name nodig")
+            if self.email:
+                raise ValueError("Een service account heeft geen email")
+        else:
+            if not self.email:
+                raise ValueError("Een lid heeft een email nodig")
+            if self.name:
+                raise ValueError("Alleen een service account heeft een name")
+        return self
 
 
 class PortsModel(BaseModel):
@@ -177,6 +225,15 @@ class ComponentModel(BaseModel):
             placeholder="component-1",
         ),
     ] = Field(min_length=1)
+
+    description: Annotated[
+        str | None,
+        FormMeta(
+            label="component.description",
+            description="component.description.description",
+            widget="textarea",
+        ),
+    ] = Field(default=None, max_length=500)
 
     type: Annotated[
         str,
@@ -338,6 +395,16 @@ class DeploymentModel(BaseModel):
         ),
     ]
 
+    environment: Annotated[
+        Omgeving | None,
+        FormMeta(
+            label="deployment.environment",
+            description="deployment.environment.description",
+            widget="select",
+            options_provider="EnvironmentOptionsProvider",
+        ),
+    ] = Field(default=None)
+
     repository: Annotated[
         str,
         FormMeta(
@@ -381,6 +448,41 @@ class DeploymentModel(BaseModel):
 REPOSITORY_PATH_PATTERN = (
     r"^(?:(?:[^./\\\u0000-\u001f]|\.[^.\\\u0000-\u001f])(?:[^.\\\u0000-\u001f]|\.[^.\\\u0000-\u001f])*)?\.?\z"
 )
+
+
+#: Alleen https: de link wordt in de browser aangeklikt, en http, ssh of git@ leveren daar
+#: niets bruikbaars op.
+SOURCE_CODE_URL_PATTERN = r'^https://[^\s\u0000"<>]+\z'
+
+SOURCE_CODE_URL_MAX_LENGTH = 500
+SOURCE_CODE_NAME_MAX_LENGTH = 100
+SOURCE_CODE_MAX_LINKS = 20
+
+
+class SourceCodeLinkModel(BaseModel):
+    """Informative link to the project's source code (url and optional name)."""
+
+    url: Annotated[
+        str,
+        FormMeta(
+            label="project.source_code.url",
+            description="project.source_code.url.description",
+            widget="text",
+            placeholder="https://github.com/MinBZK/mijn-app",
+        ),
+    ] = Field(pattern=SOURCE_CODE_URL_PATTERN, max_length=SOURCE_CODE_URL_MAX_LENGTH)
+
+    name: Annotated[
+        str | None,
+        FormMeta(
+            label="project.source_code.name",
+            description="project.source_code.name.description",
+            widget="text",
+            placeholder="Applicatie",
+        ),
+    ] = Field(default=None, min_length=1, max_length=SOURCE_CODE_NAME_MAX_LENGTH)
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
 
 class RepositoryModel(BaseModel):
@@ -496,6 +598,16 @@ class ProjectFileModel(BaseModel):
         ),
     ] = Field(default=None)
 
+    source_code: Annotated[
+        list[SourceCodeLinkModel],
+        FormMeta(
+            label="project.source_code",
+            description="project.source_code.description",
+            widget="sequence",
+            section="basic",
+        ),
+    ] = Field(default_factory=list, alias="source-code", max_length=SOURCE_CODE_MAX_LINKS)
+
     # Infrastructure
     clusters: Annotated[
         list[str],
@@ -573,13 +685,30 @@ class ProjectFileModel(BaseModel):
 
     @model_validator(mode="after")
     def validate_admin_user_exists(self) -> ProjectFileModel:
-        """Ensure at least one user has admin role."""
+        """Ensure at least one HUMAN member has admin role.
+
+        Een service account meetellen laat een project achter zonder mens die nog een token
+        kan intrekken of een rol kan wijzigen, terwijl zijn eigen token doorloopt.
+        """
         if not self.users:
             return self  # Empty users list is handled by min_items constraint
 
-        admin_users = [u for u in self.users if u.role == "admin"]
+        admin_users = [u for u in self.users if "admin" in u.roles and u.type is not LidSoort.SERVICE_ACCOUNT]
         if not admin_users:
             raise ValueError("At least one user must have the 'admin' role")
+        return self
+
+    @model_validator(mode="after")
+    def validate_source_code_urls_are_unique(self) -> ProjectFileModel:
+        """Weigert twee keer dezelfde url.
+
+        ``uniqueItems`` op het schemaveld vergelijkt hele objecten en laat dezelfde url met
+        een andere naam dus door; hier en in ``UniqueSourceCodeUrlEnforcer`` telt alleen de url.
+        """
+        urls = [link.url for link in self.source_code]
+        duplicates = sorted({url for url in urls if urls.count(url) > 1})
+        if duplicates:
+            raise ValueError(f"Dubbele broncodelinks: {', '.join(duplicates)}")
         return self
 
     @classmethod

@@ -1,0 +1,17 @@
+# Het wegwerpcluster waarop task netpol:meet de flowmatrix meet.
+#
+# Dual-stack, want odcn is dual-stack en de internetregel van de tenant-baseline dekt
+# beide adresfamilies (0.0.0.0/0 en ::/0). Een cluster met alleen IPv4 kan de helft van
+# die regel niet meten.
+#
+# Gebruik: envsubst < kind-config.yaml | kind create cluster --config -
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  ipFamily: dual
+  # kindnet handhaaft NetworkPolicies, dus de meting draait standaard op de
+  # ingebouwde CNI. Alleen met CNI=calico zet de task dit op true.
+  disableDefaultCNI: ${NETPOL_DISABLE_DEFAULT_CNI}
+nodes:
+  - role: control-plane
+    image: kindest/node:v${NETPOL_KIND_VERSION}

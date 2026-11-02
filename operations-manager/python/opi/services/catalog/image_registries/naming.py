@@ -7,7 +7,7 @@ import hashlib
 from opi.utils.naming import sanitize_kubernetes_name, upstream_host
 
 #: De operator plakt dit achter de naam van het pull-secret dat hij maakt.
-PULL_SECRET_POSTFIX = "robot-pull-secret"
+PULL_SECRET_POSTFIX = "robot-pull-secret"  # noqa: S105  # achtervoegsel van de secretnaam, geen secret
 
 #: De gebruikersnaam die wij invullen als de afnemer er geen opgaf.
 #:

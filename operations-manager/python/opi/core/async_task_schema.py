@@ -32,7 +32,10 @@ CREATE TABLE IF NOT EXISTS async_tasks (
     max_attempts SMALLINT NOT NULL DEFAULT 3,
     -- De deployments die deze taak raakt. NULL betekent projectbreed, net als None
     -- in scope_of(), dat de enige schrijver van deze kolom is.
-    affects_deployments VARCHAR(63)[]
+    affects_deployments VARCHAR(63)[],
+    -- Wanneer de werkgegevens van deze rij zijn leeggemaakt. NULL is "nog niet", en
+    -- daarop staat de opruiming stil, zodat ze een rij niet elk uur herschrijft.
+    details_purged_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_async_tasks_pending

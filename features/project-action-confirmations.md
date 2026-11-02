@@ -5,6 +5,10 @@ wekken -- gebruikt dezelfde dialoog, hetzelfde fragment en dezelfde regels. De p
 zegt nooit waar iets naartoe post; ze noemt een actie bij naam, en de server leidt het
 endpoint af uit het project zelf.
 
+Voor een korte vraag bij een knop, buiten de projectpagina, is er de lichtere weg uit
+[bevestigen-zonder-systeemvenster](bevestigen-zonder-systeemvenster.md): daar post het
+formulier naar zijn eigen `action` en is er geen fragment van de server nodig.
+
 ## Waarom
 
 Er waren twee dialogen. De ene, voor dienst-acties, opende de gedeelde modal op een

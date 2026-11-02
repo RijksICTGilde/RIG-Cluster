@@ -1,0 +1,65 @@
+"""De condities waarmee een route zich aanmeldt voor een step-up (RC-332).
+
+Een route noemt er een; de regel zelf staat in
+:func:`opi.core.step_up.requires_production_step_up`. Apart van ``opi.core.step_up``
+omdat dit de projectstore leest, en die leunt via de formulierlaag terug op ``core``.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from opi.core.auth_decorators import get_current_user
+from opi.core.project_environment import Omgeving, effective_environment
+from opi.core.step_up import StepUpKind, deployment_by_name, requires_production_step_up
+from opi.services.project_authorization import is_user_authorized_for_project
+from opi.services.project_store import get_project_store
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
+
+
+def _project_data(request: Request, project_name: str) -> dict[str, Any]:
+    """Het projectbestand, of leeg voor een gebruiker die er niet bij mag.
+
+    Leeg leest als "vraagt geen step-up", zodat de route zelf zijn eigen 403 of 404 geeft.
+    Anders zou de dialoog aan iedereen verklappen dat dit project productie raakt. Op een
+    ``/api/``-pad vult alleen ``handhaaf`` dit veld, met de eigenaar van een persoonlijk
+    token, en dat lid is daar al tegen dit project gelegd (RC-322).
+    """
+    email = str((get_current_user(request) or {}).get("email", ""))
+    if email and not is_user_authorized_for_project(project_name, email):
+        return {}
+    project = get_project_store().get(project_name)
+    return (project.data if project is not None else None) or {}
+
+
+def vraagt_altijd_step_up(request: Request, **_: Any) -> bool:
+    """Altijd waar: deze handeling vraagt een step-up los van de omgeving.
+
+    Een wijzigende beheerroute raakt het hele cluster (RC-377), en een token of een
+    lidmaatschap geeft blijvend toegang tot een project, ook buiten productie (RC-387).
+    Geen omgeving om te wegen, maar wel de conditie van ``requires_step_up``, zodat deze
+    handelingen dezelfde step-up dragen als de rest.
+    """
+    return True
+
+
+def deployment_environment_change(
+    request: Request, *, project_name: str = "", deployment_data: Any = None, **_: Any
+) -> bool:
+    """De aanroep ZET of VERLAAGT de OTAP-markering van deze deployment.
+
+    Een aanroep zonder markering laat de bestaande staan. Welke wijzigingen meetellen
+    staat in :func:`opi.core.step_up.production_marking_change`; een deployment die nog niet
+    bestaat gaat daar als nieuw naar binnen, zonder voor-staat.
+    """
+    gevraagd = getattr(deployment_data, "environment", None)
+    if gevraagd is None:
+        return False
+    project_data = _project_data(request, project_name)
+    naam = str(getattr(deployment_data, "deploymentName", ""))
+    bestaand = deployment_by_name(project_data, naam)
+    before = {naam: effective_environment(bestaand)} if bestaand is not None else {}
+    after = {naam: Omgeving(gevraagd)}
+    return requires_production_step_up(StepUpKind.ENVIRONMENT, project_data, change=(before, after))

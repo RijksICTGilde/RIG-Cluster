@@ -67,6 +67,12 @@ realms:
       - UPDATE_PASSWORD
     removeFromDefaultRoles:
       - account:manage-account
+    # Expliciet UIT, en niet weggelaten: een blauwdruk die hierover zwijgt laat de stand
+    # staan die er stond. Een realm die van sso-support-otp hierheen wisselt zou dan elk
+    # nieuw account blijven vragen een authenticator-app in te stellen, terwijl de
+    # inlogflow er niet meer om vraagt (geen lokaal account met verplichte OTP).
+    requiredActionDefaults:
+      CONFIGURE_TOTP: false
 
 identityProviders:
   - alias: "rig-platform-oidc"

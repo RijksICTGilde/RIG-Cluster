@@ -17,17 +17,27 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
-from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.cluster_config import CLUSTER_CONFIG, is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
+from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.services import ServiceAdapter
+from opi.services.approvals import collect_approval_items
+from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.project import Project
-from opi.services.registry import SERVICES, get_service, project_validating_services, property_owning_services
+from opi.services.registry import (
+    SERVICES,
+    change_validating_services,
+    get_service,
+    project_validating_services,
+    property_owning_services,
+)
 from opi.services.services import (
     service_entry_config,
     service_entry_data,
@@ -41,7 +51,11 @@ from opi.utils.naming import (
     registry_tag_owner,
     split_image_reference,
 )
-from opi.utils.project_utils import ComponentValidationError, validate_root_component
+from opi.utils.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    ComponentValidationError,
+    validate_root_component,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -727,18 +741,27 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
     return errors
 
 
-def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
-    """Services this project selected that its deployments' clusters cannot deliver.
+def validate_service_availability(
+    project_data: dict[str, Any],
+    previous: dict[str, Any] | None = None,
+) -> list[str]:
+    """Services this project selected that its deployments may not have on their cluster.
 
-    Asked of each service (``Service.available_on_cluster``), so no cluster name and no
-    service name appears in this module. Measured per DEPLOYMENT cluster rather than
-    against the managing cluster: that is the cluster the pods will actually run on, and
-    it keeps the verdict the same file-in, file-out no matter which OPI instance reads
-    the project.
+    Two rules, both asked of the service itself, so no cluster name and no service name
+    appears in this module. Measured per DEPLOYMENT cluster rather than against the
+    managing cluster: that is the cluster the pods will actually run on, and it keeps the
+    verdict the same file-in, file-out no matter which OPI instance reads the project.
 
-    This is the refusal that counts. Leaving an unavailable service out of the wizard's
-    cards hides it from one of three roads; the API and a hand-written project file never
-    pass a card at all.
+    ``Service.available_on_cluster`` is the hard one: the cluster cannot deliver the
+    service at all, so nobody may have it. ``Service.replaced_on_cluster`` is the softer
+    one: the service has a successor there, so a deployment that already runs it keeps
+    it, and only a deployment that would get it NEW is refused. Which is why this rule
+    needs ``previous``, the version this save replaces; a create has none, and then every
+    choice is new.
+
+    This is the refusal that counts. Leaving a service out of the wizard's cards hides it
+    from one of three roads; the API and a hand-written project file never pass a card at
+    all.
     """
     selected = ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", []) or [])
     if not selected:
@@ -751,6 +774,7 @@ def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
         cluster = deployment.get("cluster")
         if not cluster or cluster not in CLUSTER_CONFIG:
             continue
+        dep_name = deployment.get("name")
         for name in selected:
             try:
                 service_type = ServiceType(name)
@@ -758,11 +782,30 @@ def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
                 # An unknown service name is another check's verdict, not this one's.
                 continue
             service = SERVICES.get(service_type)
-            if service is None or service.available_on_cluster(cluster):
+            if service is None:
                 continue
+            if not service.available_on_cluster(cluster):
+                errors.append(
+                    f"deployment '{dep_name}' draait op cluster '{cluster}', en daar is de dienst "
+                    f"'{name}' niet beschikbaar"
+                )
+                continue
+            if not service.replaced_on_cluster(cluster):
+                continue
+            # Via de handler en niet via de componentenlijst zelf: die kent ook de
+            # helm-charts en helmfiles van een deployment, en het v1-sleutelwoord
+            # ``uses-services``.
+            handler = ProjectFileHandler()
+            if previous is not None and not handler.deployment_uses_service(project_data, str(dep_name), [name]):
+                # De dienst staat wel in de projectlijst maar deze deployment gebruikt hem
+                # niet, dus deze deployment krijgt er niets bij.
+                continue
+            if previous is not None and handler.deployment_uses_service(previous, str(dep_name), [name]):
+                continue
+            successor = service.replaced_by.value if service.replaced_by else ""
             errors.append(
-                f"deployment '{deployment.get('name')}' draait op cluster '{cluster}', en daar is de dienst "
-                f"'{name}' niet beschikbaar"
+                f"de dienst '{name}' is op cluster '{cluster}' vervangen door '{service.replacement_name()}'. "
+                f"Deployment '{dep_name}' had hem niet; gebruik '{successor}' in plaats daarvan"
             )
     return errors
 
@@ -828,7 +871,44 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
             ) from None
 
 
-async def validate_project_structure(project_data: dict[str, Any], *, previous: dict[str, Any] | None = None) -> None:
+#: Decision statuses; ``requested`` is OK from any write path, these two aren't.
+APPROVAL_DECISIONS = frozenset({ApprovalStatus.APPROVED.value, ApprovalStatus.DENIED.value})
+
+
+def _approval_items_by_identity(project_data: dict[str, Any]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    """Each approvable item keyed by identity (service, type, domain, name) with current_status."""
+    return {
+        (item.get("service", ""), item.get("type", ""), item.get("domain", ""), item.get("name", "")): item
+        for item in collect_approval_items(project_data)
+    }
+
+
+def validate_approval_decisions(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
+    """Decisions (approved/denied) may only be set by approval_decision=True.
+
+    Raises ProjectIntegrityError if a status moves to a decision without the marker.
+    """
+    before = _approval_items_by_identity(previous)
+    for identity, item in _approval_items_by_identity(project_data).items():
+        status = item.get("current_status", "")
+        if status not in APPROVAL_DECISIONS:
+            continue
+        was = before.get(identity)
+        if was is not None and was.get("current_status", "") == status:
+            continue
+        raise ProjectIntegrityError(
+            f"Project '{project_data.get('name', '(onbekend)')}': de goedkeuringsstatus van "
+            f"{item.get('label', identity[1])} '{item.get('subject', '(onbekend)')}' kan niet via deze "
+            f"schrijfweg op '{status}' worden gezet; een besluit komt alleen van de goedkeuringsroute"
+        )
+
+
+async def validate_project_structure(
+    project_data: dict[str, Any],
+    *,
+    previous: dict[str, Any] | None = None,
+    approval_decision: bool = False,
+) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
     Runs the reference/uniqueness/path/root/domain checks against the final merged
@@ -836,13 +916,22 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
     ProjectIntegrityError on the first violation; fails closed.
 
     ``previous`` is the version this one replaces, when the caller has it. Only the
-    rules that judge a CHANGE rather than a value need it (see
-    ``validate_service_setting_changes``); everything else reads ``project_data`` alone,
-    so a caller without a previous version -- a create, a replay -- loses nothing else.
+    rules that judge a CHANGE rather than a value need it (``validate_service_setting_changes``,
+    and the composite-name guard, which judges only pairs that are new); everything else
+    reads ``project_data`` alone. A caller without it is judged as a create: every pair is new.
+    The reserved-name rule runs the other way around: only without a previous version,
+    because it judges a name that is being introduced.
+
+    ``approval_decision`` marks an approver's decision; only the approval route sets True.
     """
     project_name = project_data.get("name", "(onbekend)")
     components = project_data.get("components", []) or []
     deployments = project_data.get("deployments", []) or []
+
+    # Alleen bij een create (geen vorige versie): een bestaand project moet opgeslagen
+    # kunnen blijven worden, ook al zou zijn naam vandaag geweigerd worden.
+    if previous is None and is_reserved_project_name(str(project_name)):
+        raise ProjectIntegrityError(RESERVED_PROJECT_NAME_MESSAGE.format(name=project_name))
 
     # Component names unique
     seen_components: set[str] = set()
@@ -939,10 +1028,24 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
         except ValueError as e:
             raise ProjectIntegrityError(str(e)) from e
 
+    # Only guard new pairs: a pre-existing collision must not lock a project out of its own file.
+    stored_pairs: set[str] = set()
+    if previous is not None and previous.get("name") == project_name:
+        stored_pairs = {
+            name for dep in (previous.get("deployments") or []) if isinstance(dep, dict) and (name := dep.get("name"))
+        }
+    new_pairs = seen_deployments - stored_pairs
+    if new_pairs:
+        others = other_project_deployments(project_name)
+        for dep_name in sorted(new_pairs):
+            refusal = composite_name_collision(project_name, dep_name, others)
+            if refusal:
+                raise ProjectIntegrityError(refusal)
+
     # A service is only usable where the cluster can deliver it. Here rather than at the
     # form field because a project reaches this point from the wizard, the API and a
     # hand-edited file alike.
-    availability_errors = validate_service_availability(project_data)
+    availability_errors = validate_service_availability(project_data, previous)
     if availability_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 
@@ -975,3 +1078,14 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
     # can only move one way. Only when the caller handed over the version being replaced.
     if previous is not None:
         validate_service_setting_changes(previous, project_data)
+        if not approval_decision:
+            validate_approval_decisions(previous, project_data)
+
+    # Dezelfde vraag, maar voor een regel die geen declaratie is
+    # (``Service.validate_project_change``). Draait ook zonder vorige versie: een bestand
+    # dat niets vervangt heeft niets opgeslagen staan, dus daarin is elke waarde nieuw.
+    change_errors: list[str] = []
+    for service in change_validating_services():
+        change_errors.extend(service.validate_project_change(previous or {}, project_data))
+    if change_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(change_errors)}")

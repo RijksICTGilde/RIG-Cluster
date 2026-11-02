@@ -63,7 +63,7 @@ def begin_wake(project_data: dict, deployment_name: str, now: datetime, waking_t
 
 
 def to_awake(project_data: dict, deployment_name: str, now: datetime, sleep_after_wake: timedelta) -> bool:
-    """waking|sleeping -> awake. Sets the next sleep deadline and drops the wake token.
+    """waking|sleeping -> awake. Sets the next sleep deadline and keeps the wake token.
 
     Used both for the waking -> awake cleanup after the app is back and for the
     sweeper reverting a stuck ``waking``. No-op if already awake.
@@ -74,7 +74,11 @@ def to_awake(project_data: dict, deployment_name: str, now: datetime, sleep_afte
     return write(
         project_data,
         deployment_name,
-        SleepState(state=STATE_AWAKE, expires_at=(now + sleep_after_wake).isoformat(), wake_token=None),
+        SleepState(
+            state=STATE_AWAKE,
+            expires_at=(now + sleep_after_wake).isoformat(),
+            wake_token=current.wake_token,
+        ),
     )
 
 
@@ -98,10 +102,15 @@ def set_sleep_deadline(project_data: dict, deployment_name: str, now: datetime, 
     """Reset a deployment to awake with a fresh sleep deadline (now + sleep_after).
 
     Called on create and on every image update, so activity pushes the deadline out.
-    Always writes (the deadline moved), dropping any stale token.
+    Always writes (the deadline moved), keeping the wake token.
     """
+    current = read(project_data, deployment_name)
     return write(
         project_data,
         deployment_name,
-        SleepState(state=STATE_AWAKE, expires_at=(now + sleep_after).isoformat(), wake_token=None),
+        SleepState(
+            state=STATE_AWAKE,
+            expires_at=(now + sleep_after).isoformat(),
+            wake_token=current.wake_token,
+        ),
     )

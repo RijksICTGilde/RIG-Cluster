@@ -16,6 +16,7 @@ from opi.forms.editables.validators import (
     ContainerImageValidator,
     MemoryRangeValidator,
     MemoryRequestRangeValidator,
+    MinMaxLengthValidator,
     PathValidator,
 )
 
@@ -34,6 +35,12 @@ COMPONENT_NAME_EDITABLE = Editable(
     yaml_path="components[*]/name",
     validator=ComponentNameValidator(),
     required=True,
+)
+
+COMPONENT_DESCRIPTION_EDITABLE = Editable(
+    yaml_path="components[*]/description",
+    validator=MinMaxLengthValidator(max_length=500),
+    remove_when_none=True,
 )
 
 # TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
@@ -145,6 +152,7 @@ COMPONENTS_SEQUENCE_EDITABLE = Editable(
     min_items=1,
     children=[
         COMPONENT_NAME_EDITABLE,
+        COMPONENT_DESCRIPTION_EDITABLE,
         COMPONENT_IMAGE_EDITABLE,
         COMPONENT_COMMAND_EDITABLE,
         COMPONENT_RESOURCES_CPU_REQUEST_EDITABLE,

@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from opi.api.restore_router import (
     BucketRestoreRequest,
     DatabaseRestoreRequest,
+    RestoreRequest,
     restore_router,
 )
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
@@ -69,7 +70,7 @@ def _project_file() -> dict[str, Any]:
     return {
         "schema-version": 2,
         "name": PROJECT,
-        "users": [{"email": "admin@example.com", "role": "admin"}],
+        "users": [{"email": "admin@example.com", "roles": ["admin", "ops"]}],
         "clusters": ["local"],
         "components": [
             {
@@ -470,3 +471,122 @@ class TestRestoreBucketEndpoint:
         assert response.status_code == 404, response.text
         assert "no-such-bucket" in response.json()["detail"]
         mock_bucket_backup_manager.restore_bucket.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Wat de rand van de waarden zelf eist (RC-339)
+# ---------------------------------------------------------------------------
+
+#: Een waarde met een regeleinde erin. Zonder patroon kwam die ongemoeid in het gerenderde
+#: pod-manifest terecht; nu weigert de rand hem.
+REGELEINDE = 'x"\n          privileged: true'
+
+
+class TestVeldenHebbenEenPatroon:
+    """Elk veld van de drie requestmodellen laat een geldige waarde door en weigert tekst
+    met een regeleinde."""
+
+    @pytest.mark.parametrize(
+        ("model", "veld", "geldig"),
+        [
+            (RestoreRequest, "snapshot_id", "k1234567890"),
+            (RestoreRequest, "target_pvc_name", "app-data-restored"),
+            (RestoreRequest, "storage_size", "10Gi"),
+            (RestoreRequest, "storage_class", "standard"),
+            (DatabaseRestoreRequest, "snapshot_id", "k1234567890"),
+            (DatabaseRestoreRequest, "target_database_host", "postgresql.rig-p0.svc.cluster.local"),
+            (DatabaseRestoreRequest, "target_database_name", "app_restored"),
+            (DatabaseRestoreRequest, "target_database_user", "app"),
+            (BucketRestoreRequest, "snapshot_id", "k1234567890"),
+            (BucketRestoreRequest, "target_minio_endpoint", "http://minio.rig-p0.svc.cluster.local:9000"),
+            (BucketRestoreRequest, "target_bucket_name", "app-restored"),
+        ],
+    )
+    def test_geldige_waarde_wordt_doorgelaten(self, model: Any, veld: str, geldig: str) -> None:
+        assert getattr(model.model_construct(**{veld: geldig}), veld) == geldig
+        model(**{veld: geldig, **_rest_van_het_doel(model, veld)})
+
+    @pytest.mark.parametrize(
+        ("model", "veld"),
+        [
+            (RestoreRequest, "snapshot_id"),
+            (RestoreRequest, "target_pvc_name"),
+            (RestoreRequest, "storage_size"),
+            (RestoreRequest, "storage_class"),
+            (DatabaseRestoreRequest, "snapshot_id"),
+            (DatabaseRestoreRequest, "target_database_host"),
+            (DatabaseRestoreRequest, "target_database_name"),
+            (DatabaseRestoreRequest, "target_database_user"),
+            (BucketRestoreRequest, "snapshot_id"),
+            (BucketRestoreRequest, "target_minio_endpoint"),
+            (BucketRestoreRequest, "target_bucket_name"),
+        ],
+    )
+    def test_een_regeleinde_wordt_geweigerd(self, model: Any, veld: str) -> None:
+        with pytest.raises(ValidationError) as excinfo:
+            model(**{veld: REGELEINDE, **_rest_van_het_doel(model, veld)})
+
+        assert veld in {str(error["loc"][0]) for error in excinfo.value.errors()}
+
+
+def _rest_van_het_doel(model: Any, veld: str) -> dict[str, str]:
+    """De overige doelvelden, want een half doel is op zichzelf al een fout."""
+    if model is DatabaseRestoreRequest:
+        doel = {
+            "target_database_host": "postgresql.rig-p0.svc.cluster.local",
+            "target_database_name": "app",
+            "target_database_user": "app",
+            "target_database_password": "secret",
+        }
+    elif model is BucketRestoreRequest:
+        doel = {
+            "target_minio_endpoint": "http://minio.rig-p0.svc.cluster.local:9000",
+            "target_bucket_name": "app",
+            "target_access_key": "key",
+            "target_secret_key": "secret",
+        }
+    else:
+        return {}
+    return {k: v for k, v in doel.items() if k != veld}
+
+
+class TestPadsegmentenHebbenEenPatroon:
+    """Een padsegment dat geen Kubernetes-naam kan zijn, wordt met 422 geweigerd voordat
+    de handler hem ziet."""
+
+    @pytest.mark.parametrize(
+        "pad",
+        [
+            "/api/v1/restore/snapshots/local/{ns}",
+            "/api/v1/restore/snapshots/local/{ns}/app-data",
+            "/api/v1/restore/pvc/local/{ns}/app-data",
+            "/api/v1/restore/database/local/{ns}/main-database",
+            "/api/v1/restore/bucket/local/{ns}/main-minio",
+        ],
+    )
+    def test_een_regeleinde_in_de_namespace_is_422(self, client: TestClient, pad: str) -> None:
+        response = client.request("POST" if "/snapshots/" not in pad else "GET", pad.format(ns="rig-p0%0Ax"))
+
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize(
+        "pad",
+        [
+            "/api/v1/restore/snapshots/local/{ns}/{naam}",
+            "/api/v1/restore/pvc/local/{ns}/{naam}",
+            "/api/v1/restore/database/local/{ns}/{naam}",
+            "/api/v1/restore/bucket/local/{ns}/{naam}",
+        ],
+    )
+    def test_een_regeleinde_in_de_resourcenaam_is_422(self, client: TestClient, pad: str) -> None:
+        response = client.request(
+            "POST" if "/snapshots/" not in pad else "GET", pad.format(ns=NAMESPACE, naam="app%0Ax")
+        )
+
+        assert response.status_code == 422
+
+    def test_een_geldige_naam_komt_voorbij_de_validatie(self, client: TestClient) -> None:
+        """Zonder API-key stopt het verzoek verderop, en dus niet op 422."""
+        response = client.get(f"/api/v1/restore/snapshots/local/{NAMESPACE}/app-data?project_name={PROJECT}")
+
+        assert response.status_code != 422

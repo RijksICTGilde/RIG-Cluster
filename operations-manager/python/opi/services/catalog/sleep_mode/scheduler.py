@@ -2,7 +2,7 @@
 
 Interval-driven (like the db-console reaper): every ``SLEEP_MODE_SWEEP_MINUTES`` it walks
 the project store for this cluster and, per deployment, either
-- ``awake`` + matches + deadline passed  -> ``sleeping`` (minting a wake token if a waker
+- ``awake`` + matches + deadline passed  -> ``sleeping`` (with a wake token if a waker
   will exist), or
 - ``waking`` past its stuck-deadline      -> ``awake`` (a broken image never came back).
 
@@ -172,7 +172,7 @@ class SleepModeScheduler:
                     if config is not None and config.waker:
                         component = manifests.select_waker_component(project_data, deployment, config, handler)
                         if component is not None:
-                            encrypted_token = token.encrypt(token.mint(), project_data)
+                            encrypted_token = token.reuse_or_mint(project_data, deployment_name)
                     if service.to_sleeping(project_data, deployment_name, encrypted_token):
                         applied.append(deployment_name)
                         logger.info("sleep-mode: sleeping %s/%s (deadline passed)", project_name, deployment_name)

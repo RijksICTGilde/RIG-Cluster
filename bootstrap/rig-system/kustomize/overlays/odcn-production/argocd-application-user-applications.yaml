@@ -6,13 +6,13 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"  # Deploy after infrastructure
 spec:
-  project: default
+  project: zad-app-of-apps
   sources:
     - repoURL: https://user-applications@github.com/RijksICTGilde/argo-applications.git
       path: odcn-production
       targetRevision: main
       plugin:
-        name: kustomize-sops-v1.0
+        name: kustomize-sops-platform-v1.0
         env:
           - name: SOPS_KEY_SECRET
             value: "sops-age-key"

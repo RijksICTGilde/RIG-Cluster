@@ -16,7 +16,7 @@ Not a fit for: many-to-many redirect tables, regex/path-rewriting redirects, red
 ## Image
 
 - Source: [`images/haproxy-redirect/`](../images/haproxy-redirect/)
-- Base: `haproxy:3.2.19-alpine` (HAProxy 3.2 LTS, pinned to a specific patch for reproducibility)
+- Base: `haproxy:3.4.7-alpine` (HAProxy 3.4 LTS, pinned to a specific patch for reproducibility)
 - Published to: `ghcr.io/minbzk/base-images/haproxy-redirect`
 - Build / publish: `task publish-haproxy-redirect` (multi-arch `linux/amd64,linux/arm64`)
 

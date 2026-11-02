@@ -3,7 +3,7 @@
 A wake token is scoped to one deployment. It is deliberately NOT the project API
 key (which can delete deployments and change images): a token leaking from a
 publicly reachable waker pod may do nothing but wake its own deployment. The token
-is minted, AGE-encrypted with the project key and stored on
+is minted once per deployment, AGE-encrypted with the project key and stored on
 ``deployments[].sleep.wake-token`` so OPI can read it back, and separately rendered
 as a SOPS Secret into the namespace for the waker pod's envFrom.
 """
@@ -13,11 +13,12 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
+from opi.services.catalog.sleep_mode.state import read as read_sleep_state
 from opi.utils.age import decrypt_age_content, encrypt_age_content_sync, get_decoded_project_private_key
 from opi.utils.api_keys import generate_api_key
 
 #: The env-var the waker reads its token from (matches the Secret key in secret.py).
-WAKE_TOKEN_ENV = "ZAD_WAKE_TOKEN"
+WAKE_TOKEN_ENV = "ZAD_WAKE_TOKEN"  # noqa: S105  # naam van de env-var, geen secret
 
 
 def mint() -> str:
@@ -37,6 +38,16 @@ async def decrypt(encrypted_token: str, project_data: dict[str, Any]) -> str:
     """Decrypt a stored wake token back to plaintext using the project's private key."""
     private_key = await get_decoded_project_private_key(project_data)
     return await decrypt_age_content(encrypted_token, private_key)
+
+
+def reuse_or_mint(project_data: dict[str, Any], deployment_name: str) -> str:
+    """The deployment's stored encrypted wake token, or a freshly minted one.
+
+    Reused across sleep rounds: the waker pod reads its token once via envFrom and doesn't
+    restart with identical Deployment spec, so per-round minting leaves it sending a stale token.
+    """
+    stored = read_sleep_state(project_data, deployment_name).wake_token
+    return stored or encrypt(mint(), project_data)
 
 
 def compare(candidate: str, expected: str) -> bool:

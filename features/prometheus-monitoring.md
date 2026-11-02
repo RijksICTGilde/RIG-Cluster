@@ -129,7 +129,7 @@ These custom metrics help identify which internal component is consuming memory.
 | `opi_gc_objects{generation="2"}` | Python GC gen-2 objects (long-lived, potential leaks) |
 | `opi_container_memory_bytes` | Total container memory from cgroup (Python + subprocesses) |
 | `opi_child_process_count` | Number of active child processes |
-| `opi_child_process_rss_bytes` | RSS per active child process (labeled by pid and command) |
+| `opi_child_process_rss_bytes` | RSS per active child process (labeled by pid and comm) |
 
 #### Database connection pools
 
@@ -174,7 +174,7 @@ These metrics bridge that gap:
 | Query | What it shows |
 |-------|---------------|
 | `opi_container_memory_bytes{job="operations-manager"}` | Total container memory from cgroup (Python + all subprocesses) - **this is what Kubernetes measures for OOM** |
-| `opi_child_process_rss_bytes{job="operations-manager"}` | RSS of each active child process (labeled by pid and command) |
+| `opi_child_process_rss_bytes{job="operations-manager"}` | RSS of each active child process (labeled by pid and comm) |
 | `opi_child_process_count{job="operations-manager"}` | Number of active child processes at scrape time |
 
 #### Key queries for OOM investigation
@@ -267,7 +267,8 @@ infrastructure/bootstrap/infrastructure/prometheus/
 ├── controller/
 │   ├── base/
 │   │   ├── kustomization.yaml
-│   │   ├── deployment.yaml            # Prometheus server (prom/prometheus:v2.54.1)
+│   │   ├── serviceaccount.yaml        # Prometheus' own read-only SA
+│   │   ├── deployment.yaml            # Prometheus server (prom/prometheus:v2.55.1)
 │   │   ├── service.yaml               # ClusterIP on port 9090
 │   │   ├── configmap.yaml             # Full scrape config (k8s discovery + static)
 │   │   ├── pvc.yaml                   # 10Gi storage, 7-day retention
@@ -290,12 +291,23 @@ infrastructure/bootstrap/infrastructure/prometheus/
 | Aspect | Sandbox | ODCN Production |
 |--------|----------------|-----------------|
 | Scrape method | Kubernetes service discovery | Kubernetes service discovery via Capsule Proxy |
-| K8s API access | Yes (namespace-manager SA) | Yes, via Capsule Proxy (namespace-manager SA) |
+| K8s API access | Yes (`prometheus` SA, nodes + pods read-only) | Yes, via Capsule Proxy (still `namespace-manager`, see below) |
 | Namespace | `rig-system` | `rig-prd-operations` |
 | kube-state-metrics | Active | Scaled to 0 replicas |
 | cAdvisor metrics | Yes | No |
 | Ingress | nginx ingress | HAProxy with IP whitelist |
 | Scrape targets | All annotated pods in multiple namespaces | All annotated pods in tenant namespaces |
+
+### No lifecycle endpoint
+
+`--web.enable-lifecycle` is off (RC-409): with it, anything that reaches port 9090 can
+`POST /-/reload` or `/-/quit`, and Prometheus has no authentication of its own. Nothing in
+this repo called `/-/reload`.
+
+A changed `prometheus-config` ConfigMap therefore needs a rollout of the Deployment to take
+effect: `kubectl -n <ns> rollout restart deployment/prometheus`. Should that become a
+regular chore, the pattern is the ConfigMap-hash annotation OPI's own Deployment uses
+(`features/config-hash-pod-restart.md`), which makes the restart part of the sync.
 
 ## Operations Manager Metrics Endpoint
 
@@ -329,7 +341,7 @@ yield my_gauge
 ## Dependencies
 
 - `prometheus_client` Python library (in Operations Manager)
-- `namespace-manager` ServiceAccount with pod/service/endpoint read access (sandbox)
+- the `prometheus` ServiceAccount with read access to nodes and pods (sandbox; its ClusterRole lives in `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/prometheus-cluster-role.yaml`, because the sandbox ArgoCD runs namespaced); on ODCN still `namespace-manager`, see `features/capsule-proxy-prometheus-discovery.md`
 - Persistent volume for Prometheus data storage (7-day retention, 10Gi)
 - nginx ingress controller (sandbox) or HAProxy (ODCN) for external access
 

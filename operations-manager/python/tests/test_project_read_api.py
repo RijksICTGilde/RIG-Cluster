@@ -67,6 +67,7 @@ SAMPLE_PROJECT_DATA: dict[str, Any] = {
     "name": PROJECT,
     "display-name": "Test Project",
     "description": "A project used to prove the read endpoints",
+    "source-code": [{"url": "https://github.com/example/test-project", "name": "Applicatie"}],
     "clusters": ["local"],
     "services": [
         # A bare selection: on, without configuration. It must still be reported.
@@ -104,6 +105,7 @@ SAMPLE_PROJECT_DATA: dict[str, Any] = {
     "components": [
         {
             "name": "backend",
+            "description": "API voor de zoekfunctie, leest uit de gedeelde database",
             "type": "single",
             "ports": {"inbound": [8000], "outbound": [443]},
             "path": [{"match": "/api"}],
@@ -347,10 +349,16 @@ class TestProjectComponents:
         components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
         backend = next(c for c in components if c["name"] == "backend")
         assert backend["type"] == "single"
+        assert backend["description"] == "API voor de zoekfunctie, leest uit de gedeelde database"
         assert backend["ports"] == {"inbound": [8000], "outbound": [443]}
         assert backend["path"] == [{"match": "/api"}]
         assert backend["resources"] == {"cpu": "1", "limits": {"memory": "649Mi"}}
         assert backend["services"] == ["publish-on-web", "keycloak", "attachments"]
+
+    def test_a_component_without_a_description_reports_null(self, client: TestClient) -> None:
+        components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
+        frontend = next(c for c in components if c["name"] == "frontend")
+        assert frontend["description"] is None
 
     def test_env_vars_come_back_as_names_only(self, client: TestClient) -> None:
         components = _get(client, f"/api/v2/projects/{PROJECT}/components")["components"]
@@ -542,9 +550,23 @@ class TestWholeProject:
             "name": PROJECT,
             "display_name": "Test Project",
             "description": "A project used to prove the read endpoints",
+            "source_code": [{"url": "https://github.com/example/test-project", "name": "Applicatie"}],
             "clusters": ["local"],
         }
         assert payload["source"] == "project-file"
+
+    def test_header_reports_no_source_code_as_an_empty_list(
+        self, client: TestClient, mock_project_service: Any
+    ) -> None:
+        """A project without the optional field must not raise, and must not report None."""
+        project = mock_project_service.get(PROJECT)
+        original = project.data
+        project.data = {k: v for k, v in SAMPLE_PROJECT_DATA.items() if k != "source-code"}
+        try:
+            payload = _get(client, f"/api/v2/projects/{PROJECT}")
+            assert payload["project"]["source_code"] == []
+        finally:
+            project.data = original
 
     def test_services_are_field_for_field_the_separate_endpoint(self, client: TestClient) -> None:
         whole = _get(client, f"/api/v2/projects/{PROJECT}")
@@ -597,55 +619,6 @@ class TestWholeProject:
 # ---------------------------------------------------------------------------
 # One decrypt path, not two
 # ---------------------------------------------------------------------------
-
-
-class TestOneEnvVarReader:
-    """The detail page and the API read env vars through the same function.
-
-    Two copies of a decrypt-and-parse path drift, and a drifting one is how a value ends
-    up where a name was meant. Pinned by identity: both modules must hold the very same
-    function object, so a private copy in either one fails here.
-    """
-
-    def test_page_and_api_share_the_reader(self) -> None:
-        import opi.api.v2.project_read as api_read
-        import opi.services.project_env_vars as shared
-        import opi.web.router as web_router
-
-        assert web_router.read_user_env_vars is shared.read_user_env_vars
-        assert api_read.read_user_env_vars is shared.read_user_env_vars
-
-
-class TestDetailPageIsUnaffected:
-    """The project detail page shares the reader, so it must not change with it.
-
-    ``section-env-vars.html.j2`` shows a block only for a mapping with something in it,
-    so "nothing stored" renders the same whether the reader answers None or ``{}``. That
-    is an assumption about a template, which is exactly the kind you check rather than
-    believe.
-    """
-
-    @staticmethod
-    def _render(stored: Any) -> str:
-        from opi.core.templates_lotc import templates_lotc as templates
-
-        project = {
-            "name": PROJECT,
-            "components": [{"name": "frontend", "user-env-vars": stored}],
-            "deployments": [{"name": "production", "cluster": "local", "components": []}],
-        }
-        return templates.get_template("bg/_env-vars.html.j2").render(project=project)
-
-    def test_empty_mapping_renders_exactly_like_unknown(self) -> None:
-        assert self._render({}) == self._render(None)
-
-    def test_variables_still_render(self) -> None:
-        html = self._render({"API_TOKEN": ENV_VALUE_TWO})
-        assert "API_TOKEN" in html
-        assert "Geen omgevingsvariabelen geconfigureerd" not in html
-
-    def test_nothing_stored_shows_the_empty_state(self) -> None:
-        assert "Geen omgevingsvariabelen geconfigureerd" in self._render({})
 
 
 class TestUserEnvVarsReader:

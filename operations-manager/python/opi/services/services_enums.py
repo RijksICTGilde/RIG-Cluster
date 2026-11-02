@@ -21,6 +21,9 @@ class ServiceType(Enum):
 
     # Object storage services
     MINIO_STORAGE = "minio-storage"
+    # De opvolger van minio-storage als proef, naast hem en niet in zijn plaats (RC-331).
+    # Alleen beschikbaar op een cluster waarvan de configuratie een seaweedfs_host noemt.
+    SEAWEEDFS_STORAGE = "seaweedfs-storage"
 
     # Outgoing mail: an SMTP account on the platform relay, which authenticates once
     # towards the upstream mail server. Named after what it does (like publish-on-web),
@@ -93,6 +96,7 @@ class ManagerKey(Enum):
 
     DATABASE = "database"
     MINIO = "minio"
+    SEAWEEDFS = "seaweedfs"
     REDIS = "redis"
     KEYCLOAK = "keycloak"
     PVC = "pvc"

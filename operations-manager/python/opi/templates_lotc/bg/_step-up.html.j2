@@ -1,0 +1,58 @@
+{#
+  De vraag om een verse code, voordat een handeling in productie doorgaat (RC-332).
+
+  Komt in de gedeelde dialoog te staan, in plaats van de bevestiging die hem opriep. De
+  CSRF-header staat op de omhullende div omdat htmx hem van een voorouder erft, net als
+  in bg/_action-confirm.html.j2.
+
+  Verwacht: vervolg (de handeling die hierna alsnog moet draaien), handeling (hoe hij
+  heet), geregistreerd (of deze gebruiker een bevestigde factor heeft). Optioneel: code_fout (hoort bij het codeveld),
+  vervolg_token (het wizard-token dat de herhaling in de body meestuurt), vervolg_velden
+  (de velden van het formulier dat deze dialoog verving, als JSON) en vervolg_methode
+  (GET of POST; de herhaling gebruikt dezelfde methode als de handeling).
+#}
+<div data-step-up
+     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
+    <c-stack gap="md">
+        {# Niet "raakt productie": sinds RC-377 en RC-387 vraagt ook een beheerhandeling
+           of een token er een, ongeacht de omgeving. #}
+        <c-alert type="warning" heading="Deze handeling vraagt extra rechten, omdat je er gevoelige gegevens of instellingen mee raakt. Bevestig daarom met je ZAD 2-factor code." />
+
+        {% if geregistreerd %}
+            <c-paragraph>Vul een code uit je app in om {{ handeling }}. De code dekt vijf minuten; daarna vraagt de volgende handeling er opnieuw om.</c-paragraph>
+            {# novalidate: de server valideert de code en meldt in het Nederlands. #}
+            <form id="step-up-form"
+                  autocomplete="off"
+                  novalidate
+                  hx-post="/step-up"
+                  hx-target="#edit-section-inner"
+                  hx-swap="innerHTML">
+                <input type="hidden" name="vervolg" value="{{ vervolg }}" />
+                <input type="hidden" name="handeling" value="{{ handeling }}" />
+                <input type="hidden" name="vervolg_token" value="{{ vervolg_token }}" />
+                <input type="hidden" name="vervolg_velden" value="{{ vervolg_velden }}" />
+                <input type="hidden" name="vervolg_methode" value="{{ vervolg_methode }}" />
+                <c-stack gap="md">
+                    <c-text-input-field
+                        id="step_up_code"
+                        name="otp"
+                        label="Code uit je app"
+                        type="text"
+                        autocomplete="one-time-code"
+                        :error="code_fout or none"
+                        required="true" />
+                    <c-action-group align="end">
+                        <c-button type="secondary" label="Annuleren" @click="closeEditModal()" />
+                        <c-button type="warning" label="Bevestigen" html-type="submit" />
+                    </c-action-group>
+                </c-stack>
+            </form>
+        {% else %}
+            <c-paragraph>Je hebt nog geen 2-factor ingericht. Richt er een in: dat is nodig om {{ handeling }}.</c-paragraph>
+            <c-action-group align="end">
+                <c-button type="secondary" label="Annuleren" @click="closeEditModal()" />
+                <c-button type="primary" label="Factor inrichten" href="/account/otp" />
+            </c-action-group>
+        {% endif %}
+    </c-stack>
+</div>

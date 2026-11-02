@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import asyncpg
+
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -18,6 +20,12 @@ from opi.connectors.postgres import (
 )
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
+from opi.manager.backup.runs import clone_backup_items
+from opi.manager.clone_validation import (
+    composite_name_collision,
+    other_project_deployments,
+    resolve_clone_source_deployment,
+)
 from opi.services import CloneFromType, ServiceType
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
@@ -28,6 +36,7 @@ from opi.services.postgres_scope import (
     project_uses_dedicated_postgres,
 )
 from opi.services.project import Project
+from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -120,6 +129,7 @@ class DatabaseManager:
         deployment: dict[str, Any],
         force_clone: bool = False,
         clone_interrupted: bool = False,
+        rotate_password: bool = False,
     ) -> None:
         """
         Create database resources for a deployment that has PostgreSQL service enabled.
@@ -142,6 +152,7 @@ class DatabaseManager:
             deployment: The specific deployment configuration
             force_clone: If True, force clone even if target already exists (runtime override)
             clone_interrupted: A previous run started this deployment's clone and did not record it as completed
+            rotate_password: If True, replace the user's password instead of reusing the stored one
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -154,6 +165,12 @@ class DatabaseManager:
         if not await self._deployment_uses_postgresql(project_data, deployment_name):
             logger.debug(f"Deployment {deployment_name} does not use PostgreSQL service, skipping")
             return
+
+        # Tweede laag: een rol of database met deze naam kan van een ander project zijn,
+        # dus eerst vaststellen dat zij van dit project is voordat we het wachtwoord zetten.
+        refusal = composite_name_collision(project_name, deployment_name, other_project_deployments(project_name))
+        if refusal:
+            raise ValueError(refusal)
 
         logger.info(f"Processing database resources for project: {project_name}, deployment: {deployment_name}")
 
@@ -228,6 +245,7 @@ class DatabaseManager:
                 admin_password=admin_password,
                 connection_limit=connection_limit,
                 database_privileges=database_privileges,
+                rotate_password=rotate_password,
             )
             # Not in the password branch: an existing role with valid credentials never
             # reaches it, and a limit change must not rotate credentials.
@@ -284,7 +302,13 @@ class DatabaseManager:
                 database=db_database,
                 schemas=all_schemas,
                 connection_limit=connection_limit,
+                rotate_password=rotate_password,
             )
+
+            # Alleen deze twee rollen openen deze database. Staat hier en niet in
+            # create_database, omdat de rollen daar nog niet bekend zijn; en op elke
+            # verwerking, zodat een database van voor RC-285 ook wordt afgesloten.
+            await self.postgres_connector.restrict_database_to_roles(db_database, [db_username, ro_username])
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
             logger.info(f"Phase 3: Storing final credentials for {project_name}/{deployment_name}")
@@ -384,6 +408,68 @@ class DatabaseManager:
             for entry in get_postgres_schemas(project_data)
         ]
 
+    async def _resolve_application_schemas(
+        self, *, source_database: str, platform_sources: set[str], platform_targets: set[str]
+    ) -> list[tuple[str, str]]:
+        """Discover and validate app-created schemas from the clone source to preserve them (RC-360).
+
+        Excludes: public, pg_*, extension namespaces (postInitSQL owns those in the target).
+        """
+        inventory = await self.postgres_connector.describe_schemas(source_database)
+        discovered = [
+            name
+            for name in inventory.schemas
+            if name != "public"
+            and not name.startswith("pg_")
+            and name not in platform_sources
+            and name not in inventory.extension_namespaces
+        ]
+
+        for name in sorted(inventory.extension_namespaces - platform_sources - {"public"}):
+            logger.info(f"Clone leaves schema {name} of {source_database} to postInitSQL: it holds an extension")
+
+        # Before the target gets anything: a name the platform cannot handle, or one that
+        # collides with a schema of this deployment, has to fail the whole clone. A half
+        # clone is the problem this solves.
+        for name in discovered:
+            try:
+                self.postgres_connector.validate_cloneable_schema_name(name)
+            except PostgresValidationError as err:
+                raise PostgresValidationError(
+                    f"Cannot clone {source_database}: {err}. Rename the schema in the source deployment, "
+                    "then clone again."
+                ) from err
+            if name in platform_targets:
+                raise PostgresValidationError(
+                    f"Cannot clone {source_database}: schema '{name}' has the same name as a schema this "
+                    "deployment gets of its own. Rename it in the source deployment, then clone again."
+                )
+
+        self._report_cloned_application_schemas(source_database, discovered, inventory.public_objects)
+        return [(name, name) for name in discovered]
+
+    def _report_cloned_application_schemas(
+        self, source_database: str, discovered: list[str], public_objects: list[str]
+    ) -> None:
+        """Say in the task progress which schemas ride along, and what public leaves behind."""
+        progress_manager = self.project_manager.get_progress_manager()
+        if discovered:
+            logger.info(f"Clone takes along the application schemas of {source_database}: {', '.join(discovered)}")
+            if progress_manager:
+                progress_manager.complete_task(
+                    progress_manager.add_task("Kloon", subject=f"ook {', '.join(discovered)}")
+                )
+        if public_objects:
+            objects = ", ".join(public_objects)
+            logger.warning(
+                f"Clone does not take the public schema of {source_database} along, so these objects stay "
+                f"behind: {objects}"
+            )
+            if progress_manager:
+                progress_manager.complete_task(
+                    progress_manager.add_task("Kloon", subject=f"public gaat niet mee: {objects}")
+                )
+
     async def _ensure_readonly_user(
         self,
         deployment_name: str,
@@ -392,6 +478,7 @@ class DatabaseManager:
         database: str,
         schemas: list[str],
         connection_limit: int,
+        rotate_password: bool = False,
     ) -> tuple[str, str]:
         """Ensure a persistent read-only role exists for the deployment's database.
 
@@ -405,6 +492,9 @@ class DatabaseManager:
 
         Args:
             schemas: The deployment's schemas, primary first; must be non-empty.
+            rotate_password: Skip reuse of the stored password and set a new one. Deze rol leest
+                elk schema van de deployment, dus een rotatie die hem laat staan laat een
+                werkende oude waarde achter.
 
         Returns:
             Tuple of (ro_username, ro_password).
@@ -413,8 +503,10 @@ class DatabaseManager:
 
         # Reuse the stored read-only password to avoid churning the secret (and
         # any consumer of it) on every reprocess; generate one only if absent.
-        existing = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
-        ro_password = existing.ro_password if existing and existing.ro_password else ""
+        ro_password = ""
+        if not rotate_password:
+            existing = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
+            ro_password = existing.ro_password if existing and existing.ro_password else ""
         if not ro_password:
             ro_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
 
@@ -431,6 +523,26 @@ class DatabaseManager:
 
         return ro_username, ro_password
 
+    async def _reset_user_password(
+        self,
+        db_username: str,
+        connection_limit: int,
+        database_privileges: list[str] | None,
+    ) -> str:
+        """Set a fresh password on the database role and return it."""
+        new_password, result = await self._create_or_update_user(
+            db_username=db_username,
+            postgres_conn=self.postgres_connector,
+            connection_limit=connection_limit,
+            database_privileges=database_privileges,
+        )
+        if result["status"] not in ["updated", "created", "success"]:
+            raise Exception(
+                f"Failed to update password for database user {db_username}: {result.get('message', 'Unknown error')}"
+            )
+        logger.info(f"Updated password for database user: {db_username}")
+        return new_password
+
     async def _resolve_database_credentials(
         self,
         project_name: str,
@@ -444,6 +556,7 @@ class DatabaseManager:
         admin_password: str,
         connection_limit: int,
         database_privileges: list[str] | None = None,
+        rotate_password: bool = False,
     ) -> str:
         """
         Resolve working database credentials through the following steps:
@@ -463,12 +576,17 @@ class DatabaseManager:
             admin_password: Admin password for database operations
             connection_limit: CONNECTION LIMIT for a role this call creates
             database_privileges: List of PostgreSQL privileges to grant to created user
+            rotate_password: Skip reuse of the stored password and set a new one
 
         Returns:
             The working password for the database user
         """
 
         logger.info(f"Checking database credentials for {project_name}/{deployment_name} at host {db_host}")
+
+        if rotate_password:
+            logger.info(f"Replacing database password for {project_name}/{deployment_name} on request")
+            return await self._reset_user_password(db_username, connection_limit, database_privileges)
 
         # Step 1: Check for existing credentials
         existing_credentials = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
@@ -503,18 +621,7 @@ class DatabaseManager:
                     logger.warning(
                         f"Database credentials are invalid for {project_name}/{deployment_name}, updating password"
                     )
-                    new_password, update_result = await self._create_or_update_user(
-                        db_username=db_username,
-                        postgres_conn=self.postgres_connector,
-                        connection_limit=connection_limit,
-                        database_privileges=database_privileges,
-                    )
-                    if update_result["status"] not in ["updated", "created", "success"]:
-                        raise Exception(
-                            f"Failed to update password for database user {db_username}: {update_result.get('message', 'Unknown error')}"
-                        )
-                    logger.info(f"Updated password for database user: {db_username}")
-                    return new_password
+                    return await self._reset_user_password(db_username, connection_limit, database_privileges)
                 else:
                     raise Exception(
                         f"Database secret exists for {project_name}/{deployment_name} but credentials are invalid. "
@@ -699,7 +806,9 @@ class DatabaseManager:
                 clone_source_ref = clone_from.get("reference")
             elif clone_type == CloneFromType.BACKUP.value:
                 # Backup restore: restore database from Kopia backup
-                backup_items = clone_from.get("backup_items", [])
+                if project_data is None:
+                    raise ValueError(f"project_data is required for backup clone: {deployment_name}")
+                backup_items = await clone_backup_items(project_data, project_name, deployment, clone_from)
                 db_item = next(
                     (item for item in backup_items if item.get("resource_type") == "database"),
                     None,
@@ -771,18 +880,19 @@ class DatabaseManager:
 
         if clone_source_ref:
             # Handle local database cloning (type: deployment)
+            if project_data is None:
+                msg = (
+                    f"project_data is required to clone '{deployment_name}': without it the source cannot be "
+                    "checked against the project and the extra schemas cannot be resolved"
+                )
+                raise ValueError(msg)
+            resolve_clone_source_deployment(project_data, clone_source_ref, deployment_name)
             # Source uses base name (None generation) - versioned sources would need explicit handling
             source_database = generate_database_name(project_name, clone_source_ref, None)
             source_schema = source_database  # Schema matches database name
             # Extra schemas (RC-17) live in the same database and must come along, or a
             # clone would lose their data. Their names embed the deployment, so the
             # source uses the source deployment and the target uses this deployment.
-            if project_data is None:
-                msg = (
-                    f"project_data is required to clone '{deployment_name}': without it the extra schemas "
-                    "cannot be resolved, and a clone that silently drops them loses their data"
-                )
-                raise ValueError(msg)
             extra_clone_pairs = [
                 (
                     generate_extra_database_schema(project_name, clone_source_ref, postfix),
@@ -801,6 +911,14 @@ class DatabaseManager:
 
             # STEP 1: Validate that source database and schema exist before cloning
             await self._validate_clone_source(source_database, source_schema)
+
+            # Schemas the application created itself (RC-360) ride along too, or the clone
+            # yields a database whose migration table claims work that is not there.
+            extra_clone_pairs += await self._resolve_application_schemas(
+                source_database=source_database,
+                platform_sources={source_schema, *(source for source, _ in extra_clone_pairs)},
+                platform_targets={db_schema, *(target for _, target in extra_clone_pairs)},
+            )
 
             # Check if target database exists by attempting to create it
             database_result = await self.postgres_connector.create_database(
@@ -821,16 +939,18 @@ class DatabaseManager:
             resume_in_place = False
             leftover_source_schemas: set[str] = set()
             if target_db_exists and clone_interrupted and not force_clone:
-                target_schemas = {db_schema, *(target for _, target in extra_clone_pairs)}
+                clone_pairs = [(source_schema, db_schema), *extra_clone_pairs]
+                # Alleen de paren die hernoemen zeggen hoe ver de kloon kwam: een gelijknamig
+                # app-schema (RC-360) staat al na CREATE SCHEMA onder zijn doelnaam.
+                renamed_targets = {target for source, target in clone_pairs if source != target}
                 schemas_present = await self._schema_names(db_database)
-                clone_finished = target_schemas <= schemas_present
-                resume_in_place = target_schemas.isdisjoint(schemas_present)
+                clone_finished = renamed_targets <= schemas_present
+                resume_in_place = renamed_targets.isdisjoint(schemas_present)
                 if resume_in_place:
-                    # Een harde stop laat het bronschema liggen (pg_dump hernoemt pas aan het
-                    # eind, postgres.py:2046) en dat weigert de volgende kloon (:1809). Droppen
-                    # mag: zo'n naam hoort bij de brondeployment, hier nooit live data.
-                    source_names = {source_schema, *(source for source, _ in extra_clone_pairs)}
-                    leftover_source_schemas = (source_names - target_schemas) & schemas_present
+                    # Harde stop laat bronschema's staan (pg_dump hernoemt pas aan het eind); droppen
+                    # is veilig want ze horen bij de brondeployment, niet live data.
+                    source_names = {source for source, _ in clone_pairs}
+                    leftover_source_schemas = (source_names - renamed_targets) & schemas_present
 
             if target_db_exists and (
                 force_clone or (generation is None and not clone_finished and not resume_in_place)
@@ -1715,17 +1835,27 @@ class DatabaseManager:
             host: Database host (shared or namespace-specific service endpoint)
 
         Returns:
-            True if connection successful, False otherwise
-        """
-        import asyncpg
+            True if the server accepts the credentials, False if it rejects them or the
+            database does not exist yet (a fresh generation reaches this before phase 2).
 
+        Raises:
+            Exception: Any other connection failure. De aanroeper leest False als
+                "authenticatie mislukt" en zet dan het wachtwoord opnieuw, dus een
+                onbereikbare host of een mislukte TLS-handshake mag daar niet in vallen.
+        """
         try:
-            # Create a direct connection with the user's credentials
-            conn = await asyncpg.connect(host=host, port=5432, user=username, password=password, database=database)
+            conn = await asyncpg.connect(
+                host=host,
+                port=5432,
+                user=username,
+                password=password,
+                database=database,
+                ssl=settings.DATABASE_SSLMODE,
+            )
             await conn.close()
             logger.debug(f"Connection test successful for {username}@{host}/{database}")
             return True
-        except Exception as e:
+        except (asyncpg.InvalidAuthorizationSpecificationError, asyncpg.InvalidCatalogNameError) as e:
             logger.debug(f"Database connection test failed for user {username}: {e}")
             return False
 
@@ -1758,8 +1888,6 @@ class DatabaseManager:
         Raises:
             Exception: If connection or validation fails
         """
-        import asyncpg
-
         logger.info(f"Validating external source: {source_host}:{source_port}/{source_database}.{source_schema}")
 
         source_conn = None
@@ -1794,13 +1922,14 @@ class DatabaseManager:
             return {"table_count": table_count}
 
         except asyncpg.InvalidCatalogNameError as e:
-            raise Exception(f"Source database '{source_database}' does not exist at {source_host}:{source_port}") from e
+            logger.warning(f"Source database '{source_database}' does not exist at {source_host}:{source_port}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         except asyncpg.InvalidPasswordError as e:
-            raise Exception(f"Authentication failed for {source_username}@{source_host}:{source_port}") from e
+            logger.warning(f"Authentication failed for {source_username}@{source_host}:{source_port}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         except Exception as e:
-            raise Exception(
-                f"Failed to connect to external source {source_host}:{source_port}/{source_database}: {e!s}"
-            ) from e
+            logger.warning(f"Failed to connect to external source {source_host}:{source_port}/{source_database}: {e!s}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         finally:
             if source_conn:
                 await source_conn.close()
@@ -1918,6 +2047,22 @@ class DatabaseManager:
             ...     force_clone=True
             ... )
         """
+        refusal = await clone_source_refusal(source_host, chisel_config.get("server-url") if chisel_config else None)
+        if refusal:
+            return {
+                "project": project_name,
+                "deployment": deployment_name,
+                "source": {
+                    "host": source_host,
+                    "port": source_port,
+                    "database": source_database,
+                    "schema": source_schema,
+                },
+                "operations": [],
+                "success": False,
+                "errors": [refusal],
+            }
+
         if chisel_config:
             # Use Chisel tunnel for the connection
             return await self._clone_database_with_chisel_tunnel(
@@ -2082,6 +2227,10 @@ class DatabaseManager:
                     owner=target_username,
                 )
                 target_db_exists = create_result["status"] == "exists"
+                # Ook de handmatige kloon-API komt hier langs, buiten een verwerking om, dus
+                # sluit de database hier al af (RC-285). Alleen de eigenaar: de read-only rol
+                # krijgt zijn CONNECT bij de verwerking die deze database in gebruik neemt.
+                await self.postgres_connector.restrict_database_to_roles(target_database, [target_username])
 
                 if force_clone and target_db_exists:
                     # Generational approach: increment generation and create new versioned database
@@ -2105,6 +2254,7 @@ class DatabaseManager:
                             f"Failed to create versioned database {target_database}: {create_result.get('message', 'Unknown error')}"
                         )
                     logger.info(f"Created new versioned database: {target_database}")
+                    await self.postgres_connector.restrict_database_to_roles(target_database, [target_username])
                     new_generation_created = True
 
                     # Update generation in project file

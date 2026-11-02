@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from jinja2 import Environment, FileSystemLoader
+from opi.generation.manifests import render_template
 from opi.handlers.project_file_handler import (
     USAGE_CERTIFICATE,
     ProjectFileHandler,
@@ -36,8 +36,6 @@ from opi.services.registry import (
     get_service,
 )
 from opi.services.services_enums import ServiceType
-
-_ENV = Environment(loader=FileSystemLoader("manifests"))
 
 #: Attachment content is AGE-encrypted in the file; the guard checks the envelope.
 _AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nx\n-----END AGE ENCRYPTED FILE-----"
@@ -99,7 +97,10 @@ def test_deployment_edit_modal_offers_the_certificate_per_component() -> None:
     from opi.forms.visualizers.wizard_sections import build_deployment_edit_section
 
     section = build_deployment_edit_section(1, component_count=2)
-    paths = [child.editable.yaml_path for child in section.editables[0].children or []]
+    # Op yaml_path en niet op editables[0]: de volgorde van die lijst is geen afspraak,
+    # en de layout bepaalt toch wat er in welke orde getekend wordt.
+    sequence = next(vis for vis in section.editables if vis.editable.yaml_path.endswith("/components"))
+    paths = [child.editable.yaml_path for child in sequence.children or []]
     assert "deployments[1]/components[*]/services/publish-on-web/config/tls" in paths
     assert "deployments[1]/components[*]/services/publish-on-web/config/attachment" in paths
 
@@ -220,7 +221,7 @@ def test_own_certificate_on_production_and_platform_on_staging() -> None:
             "issuer_name": None,
             "cluster_issuer": None,
         }
-        return _ENV.get_template("ingress.yaml.jinja").render({**base, **extra})
+        return render_template("ingress.yaml.jinja", {**base, **extra})
 
     # production: the customer's own secret, and no platform issuance for it
     productie = render(provided_tls_secret="productie-web-provided-tls")
@@ -229,7 +230,7 @@ def test_own_certificate_on_production_and_platform_on_staging() -> None:
 
     # staging: unchanged -- the platform issues, as it did before the override existed
     staging = render(cluster_issuer="letsencrypt-prod")
-    assert "cert-manager.io/cluster-issuer: letsencrypt-prod" in staging
+    assert 'cert-manager.io/cluster-issuer: "letsencrypt-prod"' in staging
     assert "provided-tls" not in staging
 
 
@@ -298,7 +299,7 @@ def test_project_with_a_per_deployment_certificate_validates() -> None:
     project = {
         "schema-version": 2,
         "name": "demo",
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         "clusters": ["odcn-production"],
         **{k: v for k, v in _two_deployments().items() if k in ("services", "components", "deployments")},
     }

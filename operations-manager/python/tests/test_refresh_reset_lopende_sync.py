@@ -252,7 +252,7 @@ class TestWieDeVlagZet:
         with (
             patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
             patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-            patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+            patch("opi.web.router.get_user_roles_for_project", return_value=["admin", "ops"]),
             patch("opi.web.router.get_project_store", return_value=_store_with(PROJECT, DEPLOYMENT)),
             patch("opi.web.router.create_task_and_render_progress", AsyncMock()) as start_task,
         ):
@@ -266,7 +266,7 @@ class TestWieDeVlagZet:
         with (
             patch("opi.web.router.get_current_user", return_value={"email": "boss@example.com"}),
             patch("opi.web.router.is_user_authorized_for_project", return_value=True),
-            patch("opi.web.router.get_user_role_for_project", return_value="admin"),
+            patch("opi.web.router.get_user_roles_for_project", return_value=["admin", "ops"]),
             patch("opi.web.router.get_project_store", return_value=_store_with(PROJECT, DEPLOYMENT)),
             patch("opi.web.router.create_task_and_render_progress", AsyncMock()) as start_task,
         ):

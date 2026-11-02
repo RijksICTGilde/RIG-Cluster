@@ -11,13 +11,26 @@ which drifted away from the config in RC-5 and silently stopped rendering.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from opi.core.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DetailPageSection
 from opi.services.registry import collect_detail_page_sections
 
+if TYPE_CHECKING:
+    from opi.core.authz.actions import Action
+
 REALMS = [{"realm": "proj-realm", "host": "https://keycloak.example", "username": "admin", "password": "s3cret"}]
+
+
+# Een blok gaat sinds RC-392 op een HANDELING en niet op een rolnaam: deze twee staan
+# voor de twee uitersten van wat ``collect_detail_page_sections`` meekrijgt.
+def alles_mag(_handeling: Action) -> bool:
+    return True
+
+
+def niets_mag(_handeling: Action) -> bool:
+    return False
 
 
 def _project(services: list, components: list | None = None) -> dict:
@@ -26,7 +39,7 @@ def _project(services: list, components: list | None = None) -> dict:
 
 def test_keycloak_section_for_admin_with_realms() -> None:
     project = _project([{"name": "keycloak", "config": {"realms": REALMS}}])
-    sections = collect_detail_page_sections(project, "admin")
+    sections = collect_detail_page_sections(project, alles_mag)
     assert len(sections) == 1
     assert sections[0].template == "keycloak/section-detail.html.j2"
     assert sections[0].context["realms"] == REALMS
@@ -38,22 +51,22 @@ def test_keycloak_section_reads_all_three_entry_formats() -> None:
     record = _project([{"name": "keycloak", "config": {"realms": REALMS}}])
     legacy = _project([{"keycloak": {"config": {"realms": REALMS}}}])
     for project in (record, legacy):
-        sections = collect_detail_page_sections(project, "admin")
+        sections = collect_detail_page_sections(project, alles_mag)
         assert [s.context["realms"] for s in sections] == [REALMS]
 
 
-def test_no_section_for_non_privileged_role() -> None:
+def test_no_section_when_the_action_is_not_open() -> None:
     project = _project([{"name": "keycloak", "config": {"realms": REALMS}}])
-    assert collect_detail_page_sections(project, "developer") == []
+    assert collect_detail_page_sections(project, niets_mag) == []
 
 
 def test_no_section_when_no_realms() -> None:
     project = _project([{"name": "keycloak", "config": {}}])
-    assert collect_detail_page_sections(project, "admin") == []
+    assert collect_detail_page_sections(project, alles_mag) == []
 
 
 def test_no_section_when_keycloak_not_selected() -> None:
-    assert collect_detail_page_sections(_project(["publish-on-web"]), "admin") == []
+    assert collect_detail_page_sections(_project(["publish-on-web"]), alles_mag) == []
 
 
 def test_component_referenced_service_counts_as_selected() -> None:
@@ -62,7 +75,7 @@ def test_component_referenced_service_counts_as_selected() -> None:
         [{"name": "keycloak", "config": {"realms": REALMS}}],
         components=[{"name": "c1", "services": [{"reference": "keycloak"}]}],
     )
-    assert len(collect_detail_page_sections(project, "admin")) == 1
+    assert len(collect_detail_page_sections(project, alles_mag)) == 1
 
 
 def test_a_v1_component_service_list_counts_as_selected() -> None:
@@ -95,27 +108,27 @@ class TestAttachmentsSection:
         )
 
     def test_section_for_a_project_that_uses_attachments(self) -> None:
-        sections = collect_detail_page_sections(self._project(), "admin")
+        sections = collect_detail_page_sections(self._project(), alles_mag)
         assert [s.template for s in sections] == ["attachments/section-detail.html.j2"]
         assert sections[0].context["attachments"][0]["filename"] == "keystore.p12"
         assert sections[0].context["can_edit"] is True
 
     def test_no_section_without_the_service(self) -> None:
-        assert collect_detail_page_sections(_project(["publish-on-web"]), "admin") == []
+        assert collect_detail_page_sections(_project(["publish-on-web"]), alles_mag) == []
 
-    def test_section_shows_for_a_developer_without_the_edit_buttons(self) -> None:
-        sections = collect_detail_page_sections(self._project(), "developer")
+    def test_section_shows_without_the_edit_buttons_when_beheren_niet_mag(self) -> None:
+        sections = collect_detail_page_sections(self._project(), niets_mag)
         assert len(sections) == 1
         assert sections[0].context["can_edit"] is False
 
     def test_section_shows_when_the_catalog_is_still_empty(self) -> None:
         """Selecting the service is what makes the block appear -- otherwise a user who
         just switched it on has nowhere to click "Toevoegen"."""
-        sections = collect_detail_page_sections(_project([{"attachments": {"data": []}}]), "admin")
+        sections = collect_detail_page_sections(_project([{"attachments": {"data": []}}]), alles_mag)
         assert [s.context["attachments"] for s in sections] == [[]]
 
     def test_template_renders_through_the_app_env(self) -> None:
-        section = collect_detail_page_sections(self._project(), "admin")[0]
+        section = collect_detail_page_sections(self._project(), alles_mag)[0]
         html = templates.env.get_template(section.template).render(section=section)
         assert "keystore.p12" in html
         assert "Bijlagen" in html

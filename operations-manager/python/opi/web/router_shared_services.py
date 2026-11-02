@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import require_platform_admin, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.services.gedeelde_diensten import (
     DREMPELS,
     ONGEMETEN_DIENSTEN,
@@ -37,6 +38,7 @@ shared_services_router = APIRouter(prefix="/admin/diensten", tags=["gedeelde-die
 
 
 @shared_services_router.get("", response_class=HTMLResponse)
+@action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_overzicht(request: Request) -> Response:
     """Het overzicht: de kaders, de drempels en wat er niet gemeten wordt."""
@@ -56,6 +58,7 @@ async def gedeelde_diensten_overzicht(request: Request) -> Response:
 
 
 @shared_services_router.get("/resources", response_class=HTMLResponse)
+@action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_resources(request: Request) -> Response:
     """Het resourceblok, apart opgehaald."""
@@ -70,6 +73,7 @@ async def gedeelde_diensten_resources(request: Request) -> Response:
 
 
 @shared_services_router.get("/opslag", response_class=HTMLResponse)
+@action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_opslag(request: Request) -> Response:
     """Het opslagblok, apart opgehaald."""
@@ -84,6 +88,7 @@ async def gedeelde_diensten_opslag(request: Request) -> Response:
 
 
 @shared_services_router.get("/databases", response_class=HTMLResponse)
+@action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_databases(request: Request) -> Response:
     """Het databaseblok, apart opgehaald."""
@@ -98,6 +103,7 @@ async def gedeelde_diensten_databases(request: Request) -> Response:
 
 
 @shared_services_router.get("/keycloak", response_class=HTMLResponse)
+@action(Action.PLATFORM_SERVICES)
 @requires_sso
 async def gedeelde_diensten_keycloak(request: Request) -> Response:
     """Het Keycloak-blok, apart opgehaald."""

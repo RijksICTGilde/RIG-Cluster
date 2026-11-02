@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from playwright.sync_api import expect
 from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers import wizard as wizard_helpers
+from tests.e2e.helpers.step_up import fresh_step_up_session
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
@@ -151,7 +152,9 @@ ALL_CREATE_WIZARD_SERVICES = [
     "persistent-storage",
     "temp-storage",
     "postgresql-database",
-    "minio-storage",
+    # seaweedfs-storage en niet minio-storage: MinIO is op een cluster met SeaweedFS
+    # vervangen (RC-382), dus zijn kaart staat er niet meer voor een nieuw project.
+    "seaweedfs-storage",
     "redis",
     "attachments",
 ]
@@ -381,7 +384,7 @@ def _project_na_de_wizard(
 ) -> CreatedProject:
     """De gedeelde afronding van beide wizardhelpers: naam, sleutel, deployment, gezondheid."""
     naam, api_key = naam_en_sleutel_na_de_wizard(page, base_url, forgejo, timeout=create_timeout)
-    with opruimen_als_het_misgaat(page, base_url, naam):
+    with opruimen_als_het_misgaat(base_url, naam):
         deployment_name = forgejo.get_first_deployment_name(naam)
         # The project file appears early in the create_project task, but the task then
         # keeps running (app-of-apps refresh, waiting for the app to go Healthy). Wait
@@ -405,16 +408,16 @@ def naam_en_sleutel_na_de_wizard(
     hebben: die deden deze drie stappen zelf, en liepen daarmee tegen hetzelfde op.
     """
     naam = naam_van_de_voortgangspagina(page, timeout=timeout)
-    with opruimen_als_het_misgaat(page, base_url, naam):
+    with opruimen_als_het_misgaat(base_url, naam):
         assert_aanmaak_geslaagd(page, naam)
         # Het BESTAND blijft een aparte controle: dat de wizard iets aanmaakte zegt nog niet
         # dat het in zad-projects staat, en dat is wat deze suite bewaakt.
         assert naam in forgejo.list_project_names(), f"'{naam}' staat niet in zad-projects"
-        return naam, read_api_key_with_retry(page, base_url, naam)
+        return naam, projecttoken_met_retry(base_url, naam)
 
 
 @contextlib.contextmanager
-def opruimen_als_het_misgaat(page: Page, base_url: str, naam: str) -> Generator[None]:
+def opruimen_als_het_misgaat(base_url: str, naam: str) -> Generator[None]:
     """Valt er binnen dit blok iets om, verwijder dan project ``naam``.
 
     WAAROM DE AANROEPER DIT NIET ZELF KAN. Een sandboxmodule maakt zijn project aan in een
@@ -432,10 +435,10 @@ def opruimen_als_het_misgaat(page: Page, base_url: str, naam: str) -> Generator[
         gelukt = True
     finally:
         if not gelukt:
-            ruim_mislukte_aanmaak_op(page, base_url, naam)
+            ruim_mislukte_aanmaak_op(base_url, naam)
 
 
-def ruim_mislukte_aanmaak_op(page: Page, base_url: str, naam: str) -> None:
+def ruim_mislukte_aanmaak_op(base_url: str, naam: str) -> None:
     """Verwijder een project waarvan de aanmaak omviel nadat het bestand geschreven was.
 
     Best-effort en gooit zelf niets: dit loopt tijdens de afhandeling van een andere fout,
@@ -445,10 +448,10 @@ def ruim_mislukte_aanmaak_op(page: Page, base_url: str, naam: str) -> None:
     logger.warning("De aanmaak van '%s' is omgevallen; het project wordt opgeruimd", naam)
     try:
         # Minder pogingen dan de gewone lezing: dit is een opruiming in een foutpad.
-        api_key = read_api_key_with_retry(page, base_url, naam, attempts=3)
+        api_key = projecttoken_met_retry(base_url, naam, attempts=3)
     except AssertionError as fout:
         logger.error(
-            "Geen API-sleutel voor '%s' (%s): het projectbestand blijft in zad-projects staan. "
+            "Geen API-token voor '%s' (%s): het projectbestand blijft in zad-projects staan. "
             "Haal het weg met `task sandbox:verwijder-weesproject NAAM=%s`.",
             naam,
             fout,
@@ -458,16 +461,29 @@ def ruim_mislukte_aanmaak_op(page: Page, base_url: str, naam: str) -> None:
     sandbox_api.delete_project_via_api(base_url, naam, api_key, verify_ssl=API_VERIFY_SSL)
 
 
-def read_api_key_with_retry(page: Page, base_url: str, project_name: str, *, attempts: int = 20) -> str:
-    """Read the API key from the details page, retrying while the project loads into memory."""
+def projecttoken_met_retry(base_url: str, project_name: str, *, attempts: int = 20) -> str:
+    """Geef een API-token uit voor dit project, met herhalingen zolang het nog inleest.
+
+    Sinds schemaversie 2.12 is er geen sleutel meer te LEZEN: het bewijsmiddel van een
+    project is een token van ``project-api`` en daarvan staat alleen de hash in het
+    bestand. De herhaling blijft nodig om dezelfde reden als bij de oude lezing: het
+    bestand staat er net, maar de store heeft het nog niet gelezen en kent het lid dus nog
+    niet.
+    """
+    # Met een verse step-up erin: uitgeven vraagt er een (RC-387), en deze weg heeft geen
+    # browser om een code in te typen. De sessie zelf is hier al ondertekend met de
+    # SECRET_KEY van het cluster, dus de stempel geeft geen bevoegdheid die er niet was.
+    sessie = fresh_step_up_session()
     last_error: Exception | None = None
     for _ in range(attempts):
         try:
-            return sandbox_api.read_api_key(page, base_url, project_name)
+            return sandbox_api.geef_projecttoken(
+                base_url, project_name, sessie_cookie=sessie, verify_ssl=API_VERIFY_SSL
+            )
         except Exception as exc:
             last_error = exc
             time.sleep(3.0)
-    raise AssertionError(f"Could not read API key for '{project_name}': {last_error}")
+    raise AssertionError(f"Kon geen API-token uitgeven voor '{project_name}': {last_error}")
 
 
 def create_project_via_wizard(

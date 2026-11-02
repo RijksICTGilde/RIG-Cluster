@@ -8,15 +8,19 @@ Four things are worth holding down, and they are the four the plan argues hardes
 2. **The NetworkPolicy comes from the service.** The relay lives in a namespace the tenant
    baseline does not open, so without this rule a pod resolves the relay and then hangs.
    The rule must also DISAPPEAR when the service does, which is what the prune keys on.
-3. **The account is per project, not per deployment.** So removing the service from one
-   deployment while another still has it must not delete the account.
-4. **The account block is platform data.** The API may not clear or rewrite it.
+3. **The account is per DEPLOYMENT** (RC-401), so each one has its own budget, its own
+   password and its own bounce address, and removing the service from one deployment leaves
+   the others alone. The password lives in that deployment's Secret and NOT in the project
+   file, which is also what makes a second run reuse it instead of rotating under running
+   pods.
+4. **The approval blocks are platform data.** The API may not clear or rewrite them.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
@@ -27,7 +31,9 @@ import pytest
 import yaml
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from opi.connectors.kubectl import KubectlExecutionError
 from opi.connectors.mail import (
+    MAIL_ACCOUNT_PROJECT_PREFIX,
     MAIL_LIMITER_PREFIX,
     MAIL_SENDER_ADDRESS_PREFIX,
     MAIL_SENDER_NAME_PREFIX,
@@ -50,16 +56,26 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.mail_manager import MailAccountNameError, MailManager
+from opi.manager.project_validation import ProjectIntegrityError, validate_approval_decisions
 from opi.services.catalog.approval import ApproverScope
 from opi.services.catalog.base import ConfigLayer, DeploymentManifestContext
-from opi.services.catalog.send_email import RELAY_POD_LABELS, RELAY_POD_PORT, SendEmailService
+from opi.services.catalog.send_email import (
+    MESSAGES_PER_DAY_KEY,
+    RELAY_POD_LABELS,
+    RELAY_POD_PORT,
+    SendEmailService,
+    deployment_messages_per_day,
+)
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     MAIL_LOCAL_PART_MAX_LENGTH,
     MAIL_PROJECT_ACCOUNT_PREFIX,
+    MAIL_PROJECT_LABEL_MAX_LENGTH,
     MAIL_SENDER_DOMAIN_ALLOWLIST,
+    generate_deployment_mail_account_name,
+    generate_deployment_mail_sender_address,
     generate_mail_account_name,
 )
 from opi.utils.secrets import SendEmailSecret
@@ -96,10 +112,79 @@ def _project(
             {
                 "name": "prod",
                 "cluster": "sandboxed-local",
+                "namespace": "myproject",
                 "components": [{"reference": "web"}],
             }
         ],
     }
+
+
+def _kubectl(stored: dict[str, str] | None = None, exists: bool | None = False) -> SimpleNamespace:
+    """Een kubectl die het send-email-secret van een deployment wel of niet heeft.
+
+    Sinds RC-401 LEEST de manager het wachtwoord hier, en het verschil tussen "bestaat
+    aantoonbaar niet" (nieuw wachtwoord) en "niet te lezen" (fout, geen rotatie) is precies
+    wat ``secret_exists`` apart houdt. Vandaar twee knoppen in plaats van een.
+    """
+    return SimpleNamespace(
+        get_secret=AsyncMock(return_value=stored),
+        secret_exists=AsyncMock(return_value=exists),
+    )
+
+
+def _fake_connector(existing: dict | None = None) -> MailConnector:
+    """Een relayconnector zonder HTTP: alles wat de manager erop aanroept is genept.
+
+    Inclusief de VERWIJDERwegen, want elke verwerking vraagt de relay ook of het oude
+    projectaccount van voor RC-401 er nog staat. Zonder die mocks loopt een unittest tegen
+    een echte verbinding aan en kost de hele herhaalbudget-retry van de connector.
+    """
+    connector = MailConnector("http://relay", "admin", "geheim")
+    connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
+    connector.create_principal = AsyncMock()  # type: ignore[method-assign]
+    connector.update_principal = AsyncMock()  # type: ignore[method-assign]
+    connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
+    connector.delete_rate_limit = AsyncMock()  # type: ignore[method-assign]
+    connector.delete_principal = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    return connector
+
+
+def _mail_manager(
+    *,
+    kubectl: SimpleNamespace | None = None,
+    secrets: list[tuple] | None = None,
+    saved: list | None = None,
+    project_name: str = "myproject",
+) -> MailManager:
+    """De manager met de ECHTE file handler en nepbuitenwereld.
+
+    De echte handler, want "gebruikt deze deployment de dienst" is juist de vraag die hier
+    geen tweede, simpeler antwoord mag krijgen.
+    """
+    from opi.handlers.project_file_handler import ProjectFileHandler
+
+    async def get_name() -> str:
+        return project_name
+
+    async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
+        if saved is not None:
+            saved.append((project_data, message))
+
+    def add_secret(deployment: str, dienst: str, secret: Any) -> None:
+        if secrets is not None:
+            secrets.append((deployment, dienst, secret))
+
+    return MailManager(
+        project_manager=SimpleNamespace(  # type: ignore[arg-type]
+            _project_file_handler=ProjectFileHandler(),
+            _kubectl_connector=kubectl if kubectl is not None else _kubectl(),
+            get_name=get_name,
+            save_and_commit_project=save_and_commit_project,
+            _add_secret_to_create=add_secret,
+        )
+    )
 
 
 class TestTheConfigModel:
@@ -108,7 +193,9 @@ class TestTheConfigModel:
     def test_an_empty_config_is_valid(self) -> None:
         """Everything is optional: switching the service on requires no decisions."""
         config = SendEmailConfig()
-        assert config.accounts == []
+        assert config.from_name is None
+        assert config.from_address is None
+        assert config.messages_per_day is None
 
     def test_er_is_geen_veld_voor_het_afzenderadres(self) -> None:
         """Het adres draagt sinds RC-145 wel het project, maar het is nog steeds niets dat
@@ -150,7 +237,7 @@ class TestTheAccountBlockIsPlatformData:
         """``approval`` too, and that one is not a nicety: a project that could set its own
         status to approved would make the approval no approval at all."""
         assert SERVICE.platform_managed_fields(ConfigLayer.PROJECT) == frozenset(
-            {"accounts", "approval", "from-address-approval", "messages-per-day-approval"}
+            {"approval", "from-address-approval", "messages-per-day-approval"}
         )
 
     def test_the_user_fields_are_not(self) -> None:
@@ -173,9 +260,10 @@ class TestTheServiceDeclaration:
         """Not hidden: a project switches this on itself."""
         assert SERVICE.definition.hidden is False
 
-    def test_it_carries_config_on_the_project_layer_only(self) -> None:
-        """An account belongs to the project; a component only decides whether it gets it."""
-        assert SERVICE.config_layers() == [ConfigLayer.PROJECT]
+    def test_it_carries_config_on_the_project_and_deployment_layer(self) -> None:
+        """Sinds RC-401 hoort het account bij de DEPLOYMENT, dus die mag de drie velden
+        overschrijven; een component beslist alleen of het de gegevens krijgt."""
+        assert SERVICE.config_layers() == [ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT]
 
     def test_it_does_not_enrol_itself(self) -> None:
         """Sending under the platform's name eats agreed volume: that is a project decision."""
@@ -561,66 +649,152 @@ class TestTheAddresses:
         assert adressen == {"noreply-rijksapp@rijksoverheid.nl"}
 
 
-class TestHetOpgeschrevenAccountVeroudertNiet:
-    """Het accountblok is het antwoord op "als wie verstuurt dit project".
+class TestHetWachtwoordKomtUitHetSecret:
+    """RC-401: het wachtwoord staat in het secret van de deployment, niet in het projectbestand.
 
-    Het account wordt bij een tweede run bijgewerkt op de relay (``ensure_account`` is
-    replay-veilig), dus als het projectbestand alleen bij de EERSTE run wordt geschreven,
-    staat er daarna een afzenderadres in dat de relay niet meer afdwingt.
+    Dit was ``TestHetOpgeschrevenAccountVeroudertNiet``, dat bewaakte dat het opgeschreven
+    accountblok niet verouderde. Dat blok is weg (schema 2.14), en wat ervoor in de plaats
+    komt heeft dezelfde faalstand: leest een tweede verwerking het wachtwoord NIET terug,
+    dan zet zij een nieuw wachtwoord op de relay terwijl de pods het oude nog vasthouden.
+
+    Toetsen 3, 4 en 5 uit het plan.
     """
 
-    def _account(self, from_address: str = "noreply@mail.example") -> MailAccount:
-        return MailAccount(
-            username="myproject",
-            from_address=from_address,
-            bounce_address="bounce+myproject@mail.example",
-            messages_per_day=500,
+    def _project(self) -> dict:
+        return _project(component_services=[ServiceType.SEND_EMAIL.value])
+
+    async def _verwerk(self, manager: MailManager, project: dict, monkeypatch) -> MailConnector:
+        connector = _fake_connector(existing={"name": "er-al"})
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        await manager.create_resources_for_deployment(project, project["deployments"][0])
+        return connector
+
+    @pytest.mark.asyncio
+    async def test_een_bestaand_secret_levert_hetzelfde_wachtwoord(self, monkeypatch) -> None:
+        """Toets 3: een tweede verwerking roteert niets."""
+        secrets: list[tuple] = []
+        bestaand = SendEmailSecret(
+            host="relay",
+            port=587,
+            username="project-myproject-prod-oud",
+            password="HET-OUDE-WACHTWOORD",
+            from_address="noreply-rijksapp+myproject@rijksoverheid.nl",
         )
+        manager = _mail_manager(kubectl=_kubectl(stored=bestaand.to_k8s_secret_data()), secrets=secrets)
+        connector = await self._verwerk(manager, self._project(), monkeypatch)
 
-    def test_an_unchanged_entry_makes_no_commit(self) -> None:
-        entry = {
-            "cluster": "sandboxed-local",
-            "username": "myproject",
-            "password": "AGE-VERSLEUTELD",
-            "from-address": "noreply@mail.example",
-            "bounce-address": "bounce+myproject@mail.example",
-        }
-        assert MailManager._entry_is_stale(entry, self._account()) is False
+        assert connector.update_principal.await_args.kwargs["password"] == "HET-OUDE-WACHTWOORD"
+        assert secrets[0][2].password == "HET-OUDE-WACHTWOORD"
 
-    def test_a_changed_sender_address_is_written_back(self) -> None:
-        """Wat een project wel zelf kiest: het stuk voor de @."""
-        entry = {
-            "cluster": "sandboxed-local",
-            "username": "myproject",
-            "password": "AGE-VERSLEUTELD",
-            "from-address": "noreply@mail.example",
-            "bounce-address": "bounce+myproject@mail.example",
-        }
-        assert MailManager._entry_is_stale(entry, self._account("support@mail.example")) is True
+    @pytest.mark.asyncio
+    async def test_een_ontbrekend_secret_levert_een_nieuw_wachtwoord(self, monkeypatch) -> None:
+        """Toets 4, eerste helft: aantoonbaar afwezig is een nieuw wachtwoord."""
+        secrets: list[tuple] = []
+        manager = _mail_manager(kubectl=_kubectl(stored=None, exists=False), secrets=secrets)
+        connector = await self._verwerk(manager, self._project(), monkeypatch)
+
+        wachtwoord = connector.update_principal.await_args.kwargs["password"]
+        assert wachtwoord
+        assert secrets[0][2].password == wachtwoord
+
+    @pytest.mark.asyncio
+    async def test_een_onleesbaar_secret_roteert_niets(self, monkeypatch) -> None:
+        """Toets 4, tweede helft: ``None`` uit ``secret_exists`` is GEEN afwezigheid.
+
+        Zonder dat onderscheid zet een kubectl die even niet antwoordt een draaiende
+        applicatie uit haar eigen mailaccount: het secret overschreven, de relay gereset,
+        en niets dat het tegenhoudt.
+        """
+        manager = _mail_manager(kubectl=_kubectl(stored=None, exists=None))
+        connector = _fake_connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        project = self._project()
+
+        with pytest.raises(KubectlExecutionError):
+            await manager.create_resources_for_deployment(project, project["deployments"][0])
+
+        connector.create_principal.assert_not_awaited()
+        connector.update_principal.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_het_projectbestand_houdt_geen_accountgegevens(self, monkeypatch) -> None:
+        """Toets 5: na verwerking staat er geen ``accounts`` en geen wachtwoord in."""
+        saved: list = []
+        manager = _mail_manager(kubectl=_kubectl(stored=None, exists=False), saved=saved)
+        project = self._project()
+        await self._verwerk(manager, project, monkeypatch)
+
+        assert saved == [], "een mailaccount is geen reden meer om het projectbestand te schrijven"
+        assert "accounts" not in project["services"][0]["config"]
+        assert not hasattr(MailManager, "_store_account")
 
 
-class TestTheAccountIsSharedByTheProject:
-    """One account per project, so one budget and one bounce address."""
+class TestElkeDeploymentHeeftEenEigenAccount:
+    """RC-401: een account per deployment, met een eigen budget en een eigen bounce-adres.
 
-    def _manager(self) -> MailManager:
-        """With the REAL file handler: 'does this deployment use the service' is exactly
-        the question that must not get a second, simpler answer here."""
-        from opi.handlers.project_file_handler import ProjectFileHandler
+    Dit was ``TestTheAccountIsSharedByTheProject``, dat bewaakte dat het account van het
+    PROJECT was. Dat is precies wat deze taak omdraait, dus de toets draait mee: wat
+    bewaakt moet worden is dat twee deployments twee accounts krijgen en dat de een
+    opruimen de ander niet raakt.
 
-        return MailManager(project_manager=SimpleNamespace(_project_file_handler=ProjectFileHandler()))  # type: ignore[arg-type]
+    Toetsen 1 en 2 uit het plan.
+    """
 
-    def test_another_deployment_still_using_it_blocks_removal(self) -> None:
+    def _project_met_twee(self) -> dict:
         project = _project(component_services=[ServiceType.SEND_EMAIL.value])
         project["deployments"].append(
-            {"name": "acceptatie", "cluster": "sandboxed-local", "components": [{"reference": "web"}]}
+            {
+                "name": "acceptatie",
+                "cluster": "sandboxed-local",
+                "namespace": "myproject-acc",
+                "components": [{"reference": "web"}],
+            }
         )
-        manager = self._manager()
-        assert manager._project_still_uses_send_email(project, exclude_deployment="prod") is True
+        return project
 
-    def test_the_last_deployment_releases_the_account(self) -> None:
-        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
-        manager = self._manager()
-        assert manager._project_still_uses_send_email(project, exclude_deployment="prod") is False
+    @pytest.mark.asyncio
+    async def test_twee_deployments_krijgen_twee_accounts_met_twee_secrets(self, monkeypatch) -> None:
+        secrets: list[tuple] = []
+        manager = _mail_manager(kubectl=_kubectl(stored=None, exists=False), secrets=secrets)
+        connector = _fake_connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        project = self._project_met_twee()
+
+        for deployment in project["deployments"]:
+            await manager.create_resources_for_deployment(project, deployment)
+
+        namen = [secret.username for _, _, secret in secrets]
+        assert namen == [
+            generate_deployment_mail_account_name("myproject", "prod"),
+            generate_deployment_mail_account_name("myproject", "acceptatie"),
+        ]
+        assert len(set(namen)) == 2
+        wachtwoorden = {secret.password for _, _, secret in secrets}
+        assert len(wachtwoorden) == 2, "elk account heeft zijn eigen wachtwoord"
+        limieten = {aanroep.args[0] for aanroep in connector.set_rate_limit.await_args_list}
+        assert limieten == set(namen), "elke deployment krijgt haar eigen limiter"
+
+    @pytest.mark.asyncio
+    async def test_een_deployment_opruimen_raakt_de_andere_niet(self, monkeypatch) -> None:
+        connector = _fake_connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        project = self._project_met_twee()
+
+        result = await _mail_manager().delete_resources_for_deployment(project, project["deployments"][0])
+
+        assert result["operations"][0]["account"] == generate_deployment_mail_account_name("myproject", "prod")
+        connector.delete_principal.assert_awaited_once_with(generate_deployment_mail_account_name("myproject", "prod"))
+        assert not hasattr(MailManager, "_project_still_uses_send_email"), (
+            "de vraag of een ANDERE deployment het account nog gebruikt bestaat niet meer"
+        )
+
+    def test_de_naam_komt_uit_naming_en_valt_niet_samen(self) -> None:
+        """Toets 2: de streepjes in de namen zouden zonder hash samenvallen."""
+        assert generate_deployment_mail_account_name("a-b", "c") != generate_deployment_mail_account_name("a", "b-c")
+
+    def test_de_naam_blijft_binnen_het_label(self) -> None:
+        naam = generate_deployment_mail_account_name("p" * 30, "d" * 63)
+        assert len(naam.removeprefix(MAIL_PROJECT_ACCOUNT_PREFIX)) == MAIL_PROJECT_LABEL_MAX_LENGTH
 
 
 class TestNoRelayConfigured:
@@ -997,8 +1171,8 @@ class TestDeAanvraagLooptViaDeBestaandeWeg:
         specs = SERVICE.config_approvals(ConfigLayer.PROJECT)
         assert [spec.key for spec in specs] == [
             "send-email",
-            "from-address-approval",
-            "messages-per-day-approval",
+            "from-address",
+            "messages-per-day",
         ]
         assert {spec.approver for spec in specs} == {ApproverScope.PLATFORM_ADMIN}
 
@@ -1023,6 +1197,20 @@ class TestDeAanvraagLooptViaDeBestaandeWeg:
         project = {"name": "myproject", "services": []}
         SERVICE.ensure_approval_requests(project)
         assert project["services"] == []
+
+    def test_aanzetten_als_kale_string_maakt_ook_de_aanvraag(self) -> None:
+        """Een dienst met alleen optionele config blijft als kale string in de lijst staan
+        ("send-email", zoals de wizard en de API hem toevoegen), en ook dan is aanzetten de
+        aanvraag. De schrijfplek returnde stil op zo'n entry, dus de aanvraag verdween: de
+        dienst stond aan, er kwam nooit een blok en nooit een besluit."""
+        project = {"name": "myproject", "services": [ServiceType.SEND_EMAIL.value]}
+        SERVICE.ensure_approval_requests(project)
+        assert project["services"] == [
+            {
+                "name": ServiceType.SEND_EMAIL.value,
+                "config": {"approval": {"status": "requested", "history": []}},
+            }
+        ]
 
     def test_de_aanvraag_komt_in_de_generieke_lijst(self) -> None:
         from opi.services.approvals import collect_approval_items
@@ -1091,69 +1279,51 @@ class TestIntrekkenRuimtOp:
     """Het intrekken van een goedkeuring volgt hetzelfde opruimpad als een
     projectverwijdering, anders blijft er een weesaccount op de relay staan."""
 
-    def _manager(self, saved: list) -> MailManager:
-        from opi.handlers.project_file_handler import ProjectFileHandler
-
-        async def get_name() -> str:
-            return "myproject"
-
-        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
-            saved.append(message)
-
-        return MailManager(
-            project_manager=SimpleNamespace(  # type: ignore[arg-type]
-                _project_file_handler=ProjectFileHandler(),
-                get_name=get_name,
-                save_and_commit_project=save_and_commit_project,
-                _add_secret_to_create=lambda *a, **k: None,
-            )
+    @pytest.mark.asyncio
+    async def test_een_ingetrokken_goedkeuring_verwijdert_elk_account(self, monkeypatch) -> None:
+        """Elke deployment, want elke deployment heeft haar eigen account (RC-401)."""
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval="denied")
+        project["deployments"].append(
+            {
+                "name": "acceptatie",
+                "cluster": "sandboxed-local",
+                "namespace": "myproject-acc",
+                "components": [{"reference": "web"}],
+            }
         )
 
-    @pytest.mark.asyncio
-    async def test_een_ingetrokken_goedkeuring_verwijdert_het_account(self, monkeypatch) -> None:
-        project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval="denied")
-        project["services"][0]["config"]["accounts"] = [
-            {
-                "cluster": "sandboxed-local",
-                "username": "myproject",
-                "password": "plain:geheim",
-                "from-address": "noreply@mail.example",
-                "bounce-address": "bounce+myproject@mail.example",
-            }
-        ]
-        verwijderd: list[str] = []
-
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.delete_principal = AsyncMock(side_effect=lambda naam: verwijderd.append(naam) or True)  # type: ignore[method-assign]
-        connector.delete_sender_name = AsyncMock()  # type: ignore[method-assign]
-        connector.delete_rate_limit = AsyncMock()  # type: ignore[method-assign]
+        connector = _fake_connector(existing={"name": "project-myproject"})
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
-        saved: list[str] = []
-        await self._manager(saved).create_resources_for_deployment(project, project["deployments"][0])
+        saved: list = []
+        await _mail_manager(saved=saved).create_resources_for_deployment(project, project["deployments"][0])
 
-        assert verwijderd == ["myproject"]
-        # En de vermelding gaat mee: laten staan toont een project een account dat het niet
-        # heeft, en de volgende goedkeuring zou een wachtwoord hergebruiken dat de relay
-        # niet meer kent.
-        assert project["services"][0]["config"]["accounts"] == []
-        assert saved, "het opruimen hoort te worden vastgelegd"
-        # En de limiter, om dezelfde reden: blijft hij staan, dan geldt hij voor het
+        verwijderd = [aanroep.args[0] for aanroep in connector.delete_principal.await_args_list]
+        assert verwijderd == [
+            generate_deployment_mail_account_name("myproject", "prod"),
+            generate_deployment_mail_account_name("myproject", "acceptatie"),
+            # En het oude projectaccount van voor RC-401, dat geen secret meer noemt.
+            generate_mail_account_name("myproject"),
+        ]
+        # En hun limiters, om dezelfde reden: blijft er een staan, dan geldt hij voor het
         # volgende account dat zo gaat heten (RC-400, toets 6).
-        connector.delete_rate_limit.assert_awaited_once_with("myproject")
+        assert [aanroep.args[0] for aanroep in connector.delete_rate_limit.await_args_list] == verwijderd
+        assert saved == [], "intrekken schrijft niets meer in het projectbestand"
 
     @pytest.mark.asyncio
-    async def test_zonder_account_valt_er_niets_op_te_ruimen(self, monkeypatch) -> None:
+    async def test_een_al_opgeruimd_account_kost_geen_schrijfactie(self, monkeypatch) -> None:
         """De status heeft geen geheugen van wat hij was, dus dit draait bij elke
-        onverwerkte verwerking en moet dan niets doen."""
+        onverwerkte verwerking en is dan een no-op: de relay meldt dat er niets meer is."""
         project = _project(component_services=[ServiceType.SEND_EMAIL.value], approval="requested")
-        connector_gemaakt = AsyncMock()
-        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", connector_gemaakt)
+        connector = _fake_connector()
+        connector.delete_principal = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
-        saved: list[str] = []
-        await self._manager(saved).create_resources_for_deployment(project, project["deployments"][0])
+        saved: list = []
+        await _mail_manager(saved=saved).create_resources_for_deployment(project, project["deployments"][0])
 
-        connector_gemaakt.assert_not_awaited()
+        connector.create_principal.assert_not_awaited()
+        connector.set_rate_limit.assert_not_awaited()
         assert saved == []
 
 
@@ -1209,7 +1379,7 @@ class TestDeAanvraagVoorEenEigenAdres:
     def _blok(self, project: dict) -> dict | None:
         from opi.services.catalog.send_email import FROM_ADDRESS_APPROVAL
 
-        return project["services"][0]["config"].get(FROM_ADDRESS_APPROVAL.spec.key)
+        return project["services"][0]["config"].get(f"{FROM_ADDRESS_APPROVAL.spec.key}-approval")
 
     def test_een_adres_invullen_maakt_de_aanvraag(self) -> None:
         project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
@@ -1270,7 +1440,7 @@ class TestDeAfzenderadresAanvraagInDeGenericeLijst:
 
         project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
         SERVICE.ensure_approval_requests(project)
-        items = [item for item in collect_approval_items(project) if item["type"] == "from-address-approval"]
+        items = [item for item in collect_approval_items(project) if item["type"] == "from-address"]
         assert len(items) == 1
         assert items[0]["subject"] == "noreply@rijksoverheid.nl"
         assert items[0]["name"] == "myproject"
@@ -1280,7 +1450,7 @@ class TestDeAfzenderadresAanvraagInDeGenericeLijst:
         from opi.services.approvals import collect_approval_items
 
         project = _project(config={})
-        items = [item for item in collect_approval_items(project) if item["type"] == "from-address-approval"]
+        items = [item for item in collect_approval_items(project) if item["type"] == "from-address"]
         assert items == []
 
     def test_een_oordeel_landt_in_het_blok_met_geschiedenis(self) -> None:
@@ -1290,7 +1460,7 @@ class TestDeAfzenderadresAanvraagInDeGenericeLijst:
         SERVICE.ensure_approval_requests(project)
         items = collect_approval_items(project)
         for item in items:
-            if item["type"] == "from-address-approval":
+            if item["type"] == "from-address":
                 item["status"] = "approved"
         apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
 
@@ -1311,7 +1481,7 @@ class TestDeAfzenderadresAanvraagInDeGenericeLijst:
             {k: v for k, v in item.items() if k in {"service", "type", "label", "domain", "name", "current_status"}}
             | {"status": "approved", "message": ""}
             for item in collect_approval_items(project)
-            if item["type"] == "from-address-approval"
+            if item["type"] == "from-address"
         ]
 
         project["services"][0]["config"]["from-address"] = "b@rijksoverheid.nl"
@@ -1358,7 +1528,7 @@ class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
         items = collect_approval_items(project)
         for item in items:
-            if item["type"] == "messages-per-day-approval":
+            if item["type"] == "messages-per-day":
                 item["status"] = "approved"
         apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
 
@@ -1387,7 +1557,7 @@ class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
         items = collect_approval_items(project)
         for item in items:
-            if item["type"] == "messages-per-day-approval":
+            if item["type"] == "messages-per-day":
                 item["status"] = "approved"
         apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
         assert effective_messages_per_day(project) == 20000
@@ -1412,7 +1582,7 @@ class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
         items = collect_approval_items(project)
         for item in items:
-            if item["type"] == "messages-per-day-approval":
+            if item["type"] == "messages-per-day":
                 item["status"] = "approved"
         apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
 
@@ -1424,10 +1594,10 @@ class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
 
         blok = self._blok(project)
-        assert blok["status"] == "approved", (
-            "de openstaande 50000 is ingetrokken, niet vervangen door een nieuwe aanvraag"
-        )
-        assert blok["value"] == "20000"
+        # Geen open aanvraag meer, en de status is niet zelf op approved gezet: een besluit
+        # komt alleen van de goedkeuringsroute (validate_approval_decisions).
+        assert "status" not in blok, "de openstaande 50000 is ingetrokken, niet vervangen door een nieuwe aanvraag"
+        assert "value" not in blok
         assert blok.get("approved-value") == "20000"
         assert effective_messages_per_day(project) == 5000
 
@@ -1441,7 +1611,7 @@ class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
         items = collect_approval_items(project)
         for item in items:
-            if item["type"] == "from-address-approval":
+            if item["type"] == "from-address":
                 item["status"] = "approved"
         apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
 
@@ -1453,7 +1623,8 @@ class TestDeBudgetaanvraagLooptViaDeBestaandeWeg:
         SERVICE.ensure_approval_requests(project)
 
         blok = project["services"][0]["config"]["from-address-approval"]
-        assert blok["status"] == "approved"
+        assert "status" not in blok
+        assert blok.get("approved-value") == "a@rijksoverheid.nl"
         assert approved_from_address(project) == "a@rijksoverheid.nl"
 
 
@@ -1513,7 +1684,7 @@ class TestDeWachtstandVoorEenEigenAdres:
         return [
             notice
             for notice in collect_deployment_approval_notices(project, project["deployments"][0])
-            if notice["type"] == "from-address-approval"
+            if notice["type"] == "from-address"
         ]
 
     def test_zonder_adres_meldt_niets(self) -> None:
@@ -1544,7 +1715,10 @@ class TestDeWachtstandVoorEenEigenAdres:
             "history": [],
         }
         notices = self._notices(project)
-        assert "noreply-rijksapp+myproject@rijksoverheid.nl" in notices[0]["text"]
+        # Het afgeleide adres van de DEPLOYMENT (RC-401): het plusdeel draagt project en
+        # deployment, want het account is van de deployment.
+        afgeleid = generate_deployment_mail_sender_address("noreply-rijksapp@rijksoverheid.nl", "myproject", "prod")
+        assert afgeleid in notices[0]["text"]
 
     def test_goedgekeurd_meldt_niets(self) -> None:
         project = _project(config={"from-address": "noreply@rijksoverheid.nl"})
@@ -1598,7 +1772,7 @@ class TestEenAfwijzingNeemtDeStaandeGoedkeuringTerug:
 
         items = collect_approval_items(project)
         for item in items:
-            if item["type"] in ("messages-per-day-approval", "from-address-approval"):
+            if item["type"] in ("messages-per-day", "from-address"):
                 item["status"] = status
         apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
 
@@ -1767,31 +1941,10 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
     in elke andere stand gaat er een lege waarde heen (en die wist een eerder adres)."""
 
     def _manager(self) -> MailManager:
-        from opi.handlers.project_file_handler import ProjectFileHandler
-
-        async def get_name() -> str:
-            return "myproject"
-
-        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
-            pass
-
-        return MailManager(
-            project_manager=SimpleNamespace(  # type: ignore[arg-type]
-                _project_file_handler=ProjectFileHandler(),
-                get_name=get_name,
-                save_and_commit_project=save_and_commit_project,
-                _add_secret_to_create=lambda *a, **k: None,
-            )
-        )
+        return _mail_manager()
 
     def _connector(self) -> MailConnector:
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        return connector
+        return _fake_connector()
 
     async def _verwerk(self, project: dict, monkeypatch) -> MailConnector:
         connector = self._connector()
@@ -1820,19 +1973,19 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
     @pytest.mark.asyncio
     async def test_geen_adres_gaat_er_niets_heen(self, monkeypatch) -> None:
         connector = await self._verwerk(self._project_met_adres(None), monkeypatch)
-        _, _, sender_address = connector.set_sender.call_args.args
+        _, _, sender_address, _ = connector.set_sender.call_args.args
         assert sender_address == ""
 
     @pytest.mark.asyncio
     async def test_aangevraagd_gaat_er_niets_heen(self, monkeypatch) -> None:
         connector = await self._verwerk(self._project_met_adres("requested"), monkeypatch)
-        _, _, sender_address = connector.set_sender.call_args.args
+        _, _, sender_address, _ = connector.set_sender.call_args.args
         assert sender_address == ""
 
     @pytest.mark.asyncio
     async def test_goedgekeurd_gaat_het_adres_mee(self, monkeypatch) -> None:
         connector = await self._verwerk(self._project_met_adres("approved"), monkeypatch)
-        _, _, sender_address = connector.set_sender.call_args.args
+        _, _, sender_address, _ = connector.set_sender.call_args.args
         assert sender_address == "noreply@rijksoverheid.nl"
 
     @pytest.mark.asyncio
@@ -1843,7 +1996,7 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
         connector = await self._verwerk(
             self._project_met_adres("approved", blok_adres="ander@rijksoverheid.nl"), monkeypatch
         )
-        _, _, sender_address = connector.set_sender.call_args.args
+        _, _, sender_address, _ = connector.set_sender.call_args.args
         assert sender_address == ""
 
 
@@ -1853,31 +2006,10 @@ class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
     aangevraagd, goedgekeurd en goedgekeurd-maar-verhoogd."""
 
     def _manager(self) -> MailManager:
-        from opi.handlers.project_file_handler import ProjectFileHandler
-
-        async def get_name() -> str:
-            return "myproject"
-
-        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
-            pass
-
-        return MailManager(
-            project_manager=SimpleNamespace(  # type: ignore[arg-type]
-                _project_file_handler=ProjectFileHandler(),
-                get_name=get_name,
-                save_and_commit_project=save_and_commit_project,
-                _add_secret_to_create=lambda *a, **k: None,
-            )
-        )
+        return _mail_manager()
 
     def _connector(self) -> MailConnector:
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        return connector
+        return _fake_connector()
 
     async def _verwerk(self, project: dict, monkeypatch) -> MailConnector:
         connector = self._connector()
@@ -1944,17 +2076,323 @@ class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
         assert limiet == 5000
 
 
-class TestDeAfzenderverwerkingIsHerhaalbaar:
-    """Toets 5 uit het plan: een tweede verwerking met een goedgekeurd adres schrijft
-    niets opnieuw naar de relay en maakt geen commit."""
+class TestDeDeploymentoverrideIsEenEigenAanvraag:
+    """Toetsen 8, 9 en 10 uit het plan: een override op de deploymentlaag is een aanvraag
+    van DIE deployment, los van wat het project al mag, en twee deployments die dezelfde
+    waarde vragen krijgen elk hun eigen item.
+    """
+
+    def _project_met_override(
+        self,
+        *,
+        from_address: str | None = None,
+        from_address_status: str | None = None,
+        messages_per_day: int | None = None,
+        messages_per_day_status: str | None = None,
+        deployment_name: str = "prod",
+    ) -> dict:
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
+        config: dict[str, Any] = {}
+        if from_address is not None:
+            config["from-address"] = from_address
+            if from_address_status is not None:
+                config["from-address-approval"] = {
+                    "value": from_address,
+                    "status": from_address_status,
+                    "approved-value": from_address if from_address_status == "approved" else None,
+                    "history": [],
+                }
+        if messages_per_day is not None:
+            config["messages-per-day"] = messages_per_day
+            if messages_per_day_status is not None:
+                config["messages-per-day-approval"] = {
+                    "value": str(messages_per_day),
+                    "status": messages_per_day_status,
+                    "approved-value": str(messages_per_day) if messages_per_day_status == "approved" else None,
+                    "history": [],
+                }
+        project["deployments"][0]["name"] = deployment_name
+        project["deployments"][0]["services"] = [{"name": ServiceType.SEND_EMAIL.value, "config": config}]
+        return project
+
+    async def _verwerk(self, project: dict, monkeypatch) -> MailConnector:
+        connector = _fake_connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        await _mail_manager().create_resources_for_deployment(project, project["deployments"][0])
+        return connector
 
     @pytest.mark.asyncio
-    async def test_tweede_verwerking_slaat_niets_opnieuw_op(self, monkeypatch) -> None:
-        from opi.core.config import settings
-        from opi.handlers.project_file_handler import ProjectFileHandler
-        from opi.utils.age import encrypt_age_content
-        from opi.utils.sops import generate_sops_key_pair
+    async def test_een_override_boven_de_standaard_zonder_goedkeuring_gaat_er_niet_heen(self, monkeypatch) -> None:
+        """De projectwaarde van 20000 is wel goedgekeurd, maar de override van de
+        deployment is een EIGEN aanvraag: tot die is goedgekeurd geldt de geerfde waarde."""
+        project = self._project_met_override(messages_per_day=30000)
+        project["services"][0]["config"]["messages-per-day"] = 20000
+        project["services"][0]["config"]["messages-per-day-approval"] = {
+            "value": "20000",
+            "status": "approved",
+            "approved-value": "20000",
+            "history": [],
+        }
+        connector = await self._verwerk(project, monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == 20000, "zonder goedkeuring van de override geldt de geerfde waarde"
 
+    @pytest.mark.asyncio
+    async def test_een_override_boven_de_standaard_met_goedkeuring_gaat_wel_mee(self, monkeypatch) -> None:
+        project = self._project_met_override(
+            messages_per_day=30000,
+            messages_per_day_status="approved",
+        )
+        connector = await self._verwerk(project, monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == 30000
+
+    @pytest.mark.asyncio
+    async def test_een_override_eronder_vraagt_niets_en_geldt_direct(self, monkeypatch) -> None:
+        """Tot en met de standaard kiest de deployment zelf, ook zonder goedkeuring."""
+        project = self._project_met_override(messages_per_day=500)
+        connector = await self._verwerk(project, monkeypatch)
+        _, limiet = connector.set_rate_limit.call_args.args
+        assert limiet == 500
+
+    @pytest.mark.asyncio
+    async def test_afzenderoverride_zonder_goedkeuring_gaat_er_niets_heen(self, monkeypatch) -> None:
+        project = self._project_met_override(from_address="deployment@rijksoverheid.nl")
+        connector = await self._verwerk(project, monkeypatch)
+        _, _, sender_address, _ = connector.set_sender.call_args.args
+        assert sender_address == ""
+
+    @pytest.mark.asyncio
+    async def test_afzenderoverride_met_goedkeuring_gaat_mee(self, monkeypatch) -> None:
+        project = self._project_met_override(
+            from_address="deployment@rijksoverheid.nl",
+            from_address_status="approved",
+        )
+        connector = await self._verwerk(project, monkeypatch)
+        _, _, sender_address, _ = connector.set_sender.call_args.args
+        assert sender_address == "deployment@rijksoverheid.nl"
+
+    def test_twee_deployments_met_dezelfde_aanvraag_krijgen_elk_hun_eigen_item(self) -> None:
+        from opi.services.catalog.approval import ApprovalStatus
+        from opi.services.catalog.send_email import DEPLOYMENT_FROM_ADDRESS_APPROVAL
+
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
+        project["deployments"][0]["name"] = "prod"
+        project["deployments"][0]["services"] = [
+            {"name": ServiceType.SEND_EMAIL.value, "config": {"from-address": "zelfde@rijksoverheid.nl"}}
+        ]
+        project["deployments"].append(
+            {
+                "name": "acceptatie",
+                "cluster": "sandboxed-local",
+                "namespace": "myproject-acc",
+                "components": [{"reference": "web"}],
+                "services": [
+                    {"name": ServiceType.SEND_EMAIL.value, "config": {"from-address": "zelfde@rijksoverheid.nl"}}
+                ],
+            }
+        )
+        SERVICE.ensure_approval_requests(project)
+        items = list(DEPLOYMENT_FROM_ADDRESS_APPROVAL.spec.list_items(project))
+        assert len(items) == 2, "elke deployment heeft een eigen item, ook bij dezelfde gevraagde waarde"
+        namen = {item["name"] for item in items}
+        assert namen == {"myproject/prod", "myproject/acceptatie"}
+
+        for item in items:
+            if item["name"] == "myproject/prod":
+                item["status"] = ApprovalStatus.APPROVED.value
+
+        for item in items:
+            item.setdefault("service", ServiceType.SEND_EMAIL.value)
+            DEPLOYMENT_FROM_ADDRESS_APPROVAL.spec.record(
+                project, item, {"date": "2026-01-01", "status": item["status"]}
+            )
+
+        assert DEPLOYMENT_FROM_ADDRESS_APPROVAL.is_approved(project, "prod") is True
+        assert DEPLOYMENT_FROM_ADDRESS_APPROVAL.is_approved(project, "acceptatie") is False, (
+            "goedkeuring van het ene item keurt het andere niet mee goed"
+        )
+
+    def test_een_deployment_met_dezelfde_naam_als_het_project_valt_niet_samen(self) -> None:
+        """Toets 10, tweede helft: ``deployment_item_name`` plakt met een '/' aan elkaar,
+        dus het item van een deployment heet hetzelfde als het project kan nooit het
+        projectitem zelf worden."""
+        from opi.services.catalog.approval import deployment_item_name
+
+        naam = deployment_item_name("myproject", "myproject")
+        assert naam == "myproject/myproject"
+        assert naam != "myproject"
+
+
+class TestEenGewoneSchrijfwegZetGeenBesluit:
+    """Toets 11 uit het plan: een besluit op de deploymentlaag komt alleen van de
+    goedkeuringsroute.
+
+    De poort is ``validate_approval_decisions``, die items paart op (dienst, type, domain,
+    name). Zonder het voorvoegsel ``deployment-`` op de spec-sleutel zou het item van een
+    deployment buiten die paring vallen, en dan kan een project zijn eigen budget
+    goedkeuren: ``deployment_messages_per_day`` leest alleen het blok.
+    """
+
+    def _met_open_aanvraag(self, waarde: int = 50000) -> dict:
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
+        project["deployments"][0]["services"] = [
+            {"name": ServiceType.SEND_EMAIL.value, "config": {MESSAGES_PER_DAY_KEY: waarde}}
+        ]
+        SERVICE.ensure_approval_requests(project)
+        return project
+
+    def _blok(self, project: dict) -> dict:
+        return project["deployments"][0]["services"][0]["config"][f"{MESSAGES_PER_DAY_KEY}-approval"]
+
+    @pytest.mark.parametrize("besluit", ["approved", "denied"])
+    def test_een_besluit_op_de_deploymentlaag_wordt_geweigerd(self, besluit: str) -> None:
+        vorig = self._met_open_aanvraag()
+        assert self._blok(vorig)["status"] == "requested"
+
+        nieuw = deepcopy(vorig)
+        self._blok(nieuw)["status"] = besluit
+        if besluit == "approved":
+            self._blok(nieuw)["approved-value"] = "50000"
+
+        with pytest.raises(ProjectIntegrityError, match="goedkeuringsroute"):
+            validate_approval_decisions(vorig, nieuw)
+
+    def test_een_openstaande_aanvraag_mag_gewoon_worden_opgeslagen(self) -> None:
+        """De poort weigert een BESLUIT, niet de aanvraag: anders kon niemand het veld zetten."""
+        leeg = _project(component_services=[ServiceType.SEND_EMAIL.value])
+        validate_approval_decisions(leeg, self._met_open_aanvraag())
+
+    def test_zonder_goedkeuring_blijft_het_budget_het_geerfde(self) -> None:
+        """Waarom het de moeite van een poort waard is: het blok IS het budget."""
+        vorig = self._met_open_aanvraag()
+        assert deployment_messages_per_day(vorig, "prod") == settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY
+
+        verzonnen = deepcopy(vorig)
+        self._blok(verzonnen)["status"] = "approved"
+        self._blok(verzonnen)["approved-value"] = "50000"
+        assert deployment_messages_per_day(verzonnen, "prod") == 50000, (
+            "een goedgekeurd blok geldt meteen, dus de poort op de schrijfweg is het enige dat telt"
+        )
+
+
+class TestDeDeploymentknopNaarDeAfzenderEnHetBudget:
+    """``send_email_actions`` levert de knop op de deploymentkaart (RC-401), naar het
+    patroon van ``postgresql_database_actions`` (``test_connection_limit.py``)."""
+
+    def test_de_deploymentkaart_krijgt_een_knop(self) -> None:
+        from opi.services.catalog.send_email.actions import send_email_actions
+
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
+        (knop,) = send_email_actions(project, "prod")
+
+        assert knop.label == "E-mail"
+        assert knop.modal_endpoint == "/projects/myproject/modal-wizard/modal-edit-send-email-deployment-0"
+        assert knop.modal_title == "E-mail - prod"
+
+    def test_zonder_de_dienst_geen_knop(self) -> None:
+        from opi.services.catalog.send_email.actions import send_email_actions
+
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
+        project["services"] = []
+
+        assert send_email_actions(project, "prod") == []
+
+    def test_zonder_die_deployment_geen_knop(self) -> None:
+        from opi.services.catalog.send_email.actions import send_email_actions
+
+        project = _project(component_services=[ServiceType.SEND_EMAIL.value])
+
+        assert send_email_actions(project, "bestaat-niet") == []
+
+
+class TestDeGeerfdeWaardenAlsPlaceholder:
+    """``_send_email_inherited_context`` voedt de deploymentstap met de EFFECTIEVE waarden
+    van het project: het goedgekeurde adres (leeg = de relay leidt het af) en het budget
+    dat de poort doorlaat, niet het blote gevraagde getal."""
+
+    def test_de_context_draagt_de_effectieve_waarden(self) -> None:
+        from opi.forms.visualizers.flows import flow_context_from_base
+
+        project = _project(
+            component_services=[ServiceType.SEND_EMAIL.value],
+            config={"from-name": "Van Het Project", "from-address": "noreply@rijksoverheid.nl"},
+        )
+        project["services"][0]["config"]["from-address-approval"] = {
+            "value": "noreply@rijksoverheid.nl",
+            "status": "approved",
+            "approved-value": "noreply@rijksoverheid.nl",
+            "history": [],
+        }
+
+        context = dict(flow_context_from_base("modal-edit-send-email-deployment-0", project))
+
+        assert context["inherited_send_email"] == {
+            "from-name": "Van Het Project",
+            "from-address": "noreply@rijksoverheid.nl",
+            "messages-per-day": str(settings.MAIL_PROJECT_DEFAULT_MESSAGES_PER_DAY),
+        }
+
+    def test_een_niet_goedgekeurd_adres_erft_leeg(self) -> None:
+        """Niet goedgekeurd betekent dat de relay het zelf afleidt; leeg is dus correct,
+        geen lek van een adres dat niemand goedkeurde."""
+        from opi.forms.visualizers.flows import flow_context_from_base
+
+        project = _project(
+            component_services=[ServiceType.SEND_EMAIL.value],
+            config={"from-address": "nog-niet-goedgekeurd@rijksoverheid.nl"},
+        )
+
+        context = dict(flow_context_from_base("modal-edit-send-email-deployment-0", project))
+
+        assert context["inherited_send_email"]["from-address"] == ""
+
+    def test_het_formulierveld_toont_de_placeholder_bij_leeg(self) -> None:
+        """De vertaalslag van een geerfde waarde naar de tekst in het veld."""
+        from opi.services.catalog.send_email.visualizers import deployment_visualizers
+
+        velden = {
+            veld.editable.yaml_path.rsplit("/", 1)[1]: veld
+            for veld in deployment_visualizers({"from-name": "", "from-address": "", "messages-per-day": "1000"})
+        }
+
+        assert velden["from-name"].placeholder == "van het project: geen naam"
+        assert velden["from-address"].placeholder == "van het project: wordt afgeleid uit je projectnaam"
+        assert velden["messages-per-day"].placeholder == "van het project: 1000"
+
+    def test_het_formulierveld_toont_een_ingevulde_waarde(self) -> None:
+        from opi.services.catalog.send_email.visualizers import deployment_visualizers
+
+        velden = {
+            veld.editable.yaml_path.rsplit("/", 1)[1]: veld
+            for veld in deployment_visualizers(
+                {"from-name": "Robbert", "from-address": "a@rijksoverheid.nl", "messages-per-day": "5000"}
+            )
+        }
+
+        assert velden["from-name"].placeholder == "van het project: Robbert"
+        assert velden["from-address"].placeholder == "van het project: a@rijksoverheid.nl"
+        assert velden["messages-per-day"].placeholder == "van het project: 5000"
+
+    def test_zonder_geerfde_waarden_blijft_de_gedeelde_instantie(self) -> None:
+        from opi.services.catalog.send_email.visualizers import (
+            SEND_EMAIL_DEPLOYMENT_VISUALIZERS,
+            deployment_visualizers,
+        )
+
+        assert deployment_visualizers(None) is SEND_EMAIL_DEPLOYMENT_VISUALIZERS
+
+
+class TestDeAfzenderverwerkingIsHerhaalbaar:
+    """Toets 3 uit het plan: een tweede verwerking zonder wijziging roteert niets en
+    schrijft niets naar de relay.
+
+    Het geheugen zit sinds RC-401 in het SECRET van de deployment en niet meer in het
+    projectbestand, dus deze toets leest het secret terug dat de eerste run wegschreef.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tweede_verwerking_schrijft_niets_opnieuw(self, monkeypatch) -> None:
         project = _project(
             component_services=[ServiceType.SEND_EMAIL.value],
             config={"from-address": "noreply@rijksoverheid.nl"},
@@ -1962,51 +2400,43 @@ class TestDeAfzenderverwerkingIsHerhaalbaar:
         project["services"][0]["config"]["from-address-approval"] = {
             "value": "noreply@rijksoverheid.nl",
             "status": "approved",
+            "approved-value": "noreply@rijksoverheid.nl",
             "history": [],
         }
-        platform_private, platform_public = generate_sops_key_pair()
-        project_private, project_public = generate_sops_key_pair()
-        monkeypatch.setattr(settings, "SOPS_AGE_PRIVATE_KEY", platform_private)
-        project["config"] = {
-            "age-public-key": project_public,
-            "age-private-key": await encrypt_age_content(project_private, platform_public),
-        }
 
-        async def get_name() -> str:
-            return "myproject"
+        secrets: list[tuple] = []
+        kubectl = _kubectl(stored=None, exists=False)
+        saved: list = []
+        manager = _mail_manager(kubectl=kubectl, secrets=secrets, saved=saved)
 
-        opgeslagen: list[str] = []
-
-        async def save_and_commit_project(project_data, message, enforce_validation=True) -> None:
-            opgeslagen.append(message)
-
-        manager = MailManager(
-            project_manager=SimpleNamespace(  # type: ignore[arg-type]
-                _project_file_handler=ProjectFileHandler(),
-                get_name=get_name,
-                save_and_commit_project=save_and_commit_project,
-                _add_secret_to_create=lambda *a, **k: None,
-            )
-        )
-
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        connector = _fake_connector()
         monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         await manager.create_resources_for_deployment(project, project["deployments"][0])
-        assert len(opgeslagen) == 1, "de eerste run schrijft het account weg"
+        eerste = secrets[0][2]
+        assert saved == [], "een mailaccount schrijft het projectbestand niet"
 
-        # Het bestaande account dat de eerste run wegschreef, zit nu in het projectbestand
-        # (encrypted wachtwoord, from-address, bounce-address): de tweede run leest het
-        # terug en ziet geen verschil, dus geen tweede schrijfactie.
-        connector.get_principal = AsyncMock(return_value={"name": "project-myproject"})  # type: ignore[method-assign]
+        eerste_afzender = connector.set_sender.await_args.args
+        eerste_limiet = connector.set_rate_limit.await_args.args
+
+        # Wat de eerste run wegschreef staat nu in het cluster, en het account staat op de
+        # relay. De tweede run leest het wachtwoord terug en vindt geen verschil. De
+        # connector meldt dat zelf met False, zoals hij op een echte relay zou doen.
+        kubectl.get_secret = AsyncMock(return_value=eerste.to_k8s_secret_data())
+        connector = _fake_connector(existing={"name": eerste.username})
+        connector.set_sender = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        connector.set_rate_limit = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
 
         await manager.create_resources_for_deployment(project, project["deployments"][0])
-        assert len(opgeslagen) == 1, "een ongewijzigde tweede run mag geen tweede commit maken"
+
+        assert secrets[1][2].password == eerste.password, "het wachtwoord mag niet roteren"
+        connector.create_principal.assert_not_awaited()
+        # Dezelfde waarden, dus de connector schrijft niets en herlaadt de relay niet. Dat
+        # de vergelijking daar klopt bewaakt ``TestDeWeergavenaamStaatOpDeRelay``; hier
+        # gaat het erom dat deze laag niets ANDERS aanbiedt dan de vorige keer.
+        assert connector.set_sender.await_args.args == eerste_afzender
+        assert connector.set_rate_limit.await_args.args == eerste_limiet
 
 
 class TestDeRelayAntwoordtGeen404:
@@ -2090,6 +2520,79 @@ class TestDeRelayAntwoordtGeen404:
         # vereisen, en dan bezorgt de relay mail AAN dat domein bij zichzelf.
         assert "emails" not in payload
         assert "limits" not in payload
+
+
+class TestDeInventarisVanDeRelay:
+    """``list_principals`` is wat de wezenveger tegen de projectbestanden legt (RC-401).
+
+    Tegen een echte HTTP-server en niet tegen een mock op ``_request``: wat hier mis kan
+    gaan zit in het UITPAKKEN van het antwoord en in het doorbladeren, en een mock op die
+    laag slaat precies dat over. Een lege lijst is hier het enige verkeerde antwoord: dan
+    lijkt elk bestaand account een wees.
+    """
+
+    def _app(self, paginas: dict[int, list], opgevraagd: list[str]) -> web.Application:
+        async def list_principals(request: web.Request) -> web.Response:
+            opgevraagd.append(request.query_string)
+            page = int(request.query.get("page", "1"))
+            items = paginas.get(page, [])
+            return web.json_response({"data": {"items": items, "total": sum(len(p) for p in paginas.values())}})
+
+        app = web.Application()
+        app.router.add_get("/api/principal", list_principals)
+        return app
+
+    async def _connector(self, paginas: dict[int, list], opgevraagd: list[str]):
+        server = TestServer(self._app(paginas, opgevraagd))
+        await server.start_server()
+        return MailConnector(str(server.make_url("")).rstrip("/"), "admin", "geheim", verify_tls=False), server
+
+    @pytest.mark.asyncio
+    async def test_de_accountnamen_komen_uit_de_objecten(self) -> None:
+        opgevraagd: list[str] = []
+        connector, server = await self._connector(
+            {1: [{"id": 1, "name": "project-a-test-1e3791"}, {"id": 2, "name": "zad-platform"}]}, opgevraagd
+        )
+        try:
+            assert await connector.list_principals() == ["project-a-test-1e3791", "zad-platform"]
+        finally:
+            await server.close()
+        assert "types=individual" in opgevraagd[0]
+
+    @pytest.mark.asyncio
+    async def test_een_oudere_relay_antwoordt_kale_namen(self) -> None:
+        connector, server = await self._connector({1: ["project-a-test-1e3791", ""]}, [])
+        try:
+            # De lege naam valt weg: een item zonder naam zou de veger een account zonder
+            # naam laten classificeren.
+            assert await connector.list_principals() == ["project-a-test-1e3791"]
+        finally:
+            await server.close()
+
+    @pytest.mark.asyncio
+    async def test_een_volle_pagina_wordt_doorgebladerd(self) -> None:
+        eerste = [{"name": f"project-p{i:03d}"} for i in range(100)]
+        opgevraagd: list[str] = []
+        connector, server = await self._connector({1: eerste, 2: [{"name": "project-laatste"}]}, opgevraagd)
+        try:
+            namen = await connector.list_principals()
+        finally:
+            await server.close()
+        assert len(namen) == 101
+        assert namen[-1] == "project-laatste"
+        assert "page=2" in opgevraagd[1], "een volle pagina moet een volgende pagina opvragen"
+
+    @pytest.mark.asyncio
+    async def test_een_antwoord_zonder_lijst_is_een_fout_en_geen_lege_inventaris(self) -> None:
+        connector, server = await self._connector({1: [{"name": "project-a"}]}, [])
+        try:
+            # Dezelfde vorm als een relay die de lijstaanroep weigert: 200 met iets anders
+            # dan een lijst erin.
+            connector._request = AsyncMock(return_value={"data": {"error": "notFound"}})  # type: ignore[method-assign]
+            with pytest.raises(MailRelayError):
+                await connector.list_principals()
+        finally:
+            await server.close()
 
 
 class TestEenPodwisselKostGeenUitrol:
@@ -2183,14 +2686,18 @@ class TestDeWeergavenaamStaatOpDeRelay:
             await server.close()
 
         assert gewijzigd is True
-        assert len(geschreven) == 3, "de twee sleutels en de tabel horen in een enkel verzoek te gaan"
+        assert len(geschreven) == 4, "de drie sleutels en de tabel horen in een enkel verzoek te gaan"
         assert geschreven[0]["values"] == [[f"{MAIL_SENDER_NAME_PREFIX}.project-ai1-uit", "Vrije Naam"]]
         # Een project kiest zijn adres NIET, dus die sleutel wordt verwijderd en niet gezet:
         # de relay leidt het adres af uit de accountnaam.
         assert geschreven[1]["type"] == "delete"
         assert geschreven[1]["keys"] == [f"{MAIL_SENDER_ADDRESS_PREFIX}.project-ai1-uit"]
-        assert geschreven[2]["values"][0][0] == MAIL_SENDER_TABLE_KEY
-        assert 'set "naam" "Vrije Naam"' in geschreven[2]["values"][0][1]
+        # En de projectsleutel: ``set_sender_name`` is de korte vorm zonder project, dus die
+        # sleutel gaat weg en het account krijgt geen X-ZAD-Project-kopregel.
+        assert geschreven[2]["type"] == "delete"
+        assert geschreven[2]["keys"] == [f"{MAIL_ACCOUNT_PROJECT_PREFIX}.project-ai1-uit"]
+        assert geschreven[3]["values"][0][0] == MAIL_SENDER_TABLE_KEY
+        assert 'set "naam" "Vrije Naam"' in geschreven[3]["values"][0][1]
         assert herladen == [1]
 
     @pytest.mark.asyncio
@@ -2209,7 +2716,7 @@ class TestDeWeergavenaamStaatOpDeRelay:
         finally:
             await server.close()
 
-        tabel = geschreven[2]["values"][0][1]
+        tabel = geschreven[3]["values"][0][1]
         assert 'set "naam" "Eerste"' in tabel
         assert 'set "naam" "Tweede"' in tabel
 
@@ -2248,7 +2755,9 @@ class TestDeWeergavenaamStaatOpDeRelay:
         assert geschreven[0]["keys"] == [f"{MAIL_SENDER_NAME_PREFIX}.project-zonder"]
         assert geschreven[1]["type"] == "delete"
         assert geschreven[1]["keys"] == [f"{MAIL_SENDER_ADDRESS_PREFIX}.project-zonder"]
-        assert "project-zonder" not in geschreven[2]["values"][0][1]
+        assert geschreven[2]["type"] == "delete"
+        assert geschreven[2]["keys"] == [f"{MAIL_ACCOUNT_PROJECT_PREFIX}.project-zonder"]
+        assert "project-zonder" not in geschreven[3]["values"][0][1]
 
 
 class TestSetRateLimitOpDeRelay:
@@ -2488,13 +2997,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
     waar zijn weergavenaam wordt vastgelegd."""
 
     def _connector(self, existing: dict | None) -> MailConnector:
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.get_principal = AsyncMock(return_value=existing)  # type: ignore[method-assign]
-        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.update_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        return connector
+        return _fake_connector(existing=existing)
 
     async def _ensure(self, connector: MailConnector, from_name: str = "Vrije Naam") -> None:
         await MailManager.ensure_account(
@@ -2505,13 +3008,14 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
             bounce_address="noreply-rijksapp+ai1-uit@rijksoverheid.nl",
             from_name=from_name,
             messages_per_day=500,
+            project_name="ai1-uit",
         )
 
     @pytest.mark.asyncio
     async def test_een_nieuw_account_krijgt_meteen_zijn_weergavenaam(self) -> None:
         connector = self._connector(existing=None)
         await self._ensure(connector)
-        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Vrije Naam", "")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Vrije Naam", "", "ai1-uit")
 
     @pytest.mark.asyncio
     async def test_een_bestaand_account_ook(self) -> None:
@@ -2520,7 +3024,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         Of er dan echt iets naar de relay gaat, beslist de connector op een verschil."""
         connector = self._connector(existing={"name": "project-ai1-uit"})
         await self._ensure(connector, from_name="Nieuwe Naam")
-        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Nieuwe Naam", "")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Nieuwe Naam", "", "ai1-uit")
 
     @pytest.mark.asyncio
     async def test_zonder_naam_gaat_er_een_lege_naam_heen(self) -> None:
@@ -2528,7 +3032,7 @@ class TestDeAfzenderWordtVastgelegdBijHetAccount:
         hem ook op de relay kwijtraken."""
         connector = self._connector(existing={"name": "project-ai1-uit"})
         await self._ensure(connector, from_name="")
-        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "", "")
+        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "", "", "ai1-uit")
 
 
 class TestDeWeergavenaamWordtGetoetst:
@@ -2689,31 +3193,23 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
     ai1-uit en had geen enkele lezer.
     """
 
-    def _manager(self, secrets: list[tuple], monkeypatch) -> MailManager:
-        from opi.handlers.project_file_handler import ProjectFileHandler
+    def _manager(self, secrets: list[tuple]) -> MailManager:
+        return _mail_manager(kubectl=_kubectl(stored=None, exists=False), secrets=secrets, project_name="ai1-uit")
 
-        async def get_name() -> str:
-            return "ai1-uit"
+    def _account(self) -> str:
+        return generate_deployment_mail_account_name("ai1-uit", "prod")
 
-        async def save_and_commit_project(*args, **kwargs) -> None:
-            return None
+    def _adres(self) -> str:
+        return generate_deployment_mail_sender_address("noreply-rijksapp@rijksoverheid.nl", "ai1-uit", "prod")
 
-        manager = MailManager(
-            project_manager=SimpleNamespace(  # type: ignore[arg-type]
-                _project_file_handler=ProjectFileHandler(),
-                get_name=get_name,
-                save_and_commit_project=save_and_commit_project,
-                _add_secret_to_create=lambda deployment, dienst, secret: secrets.append((deployment, dienst, secret)),
-            )
-        )
-        # Het bewaren van het account vraagt de AGE-sleutel van het project en dat is niet
-        # wat hier wordt getoetst; de vorm van het opgeschreven blok staat in
-        # TestHetOpgeschrevenAccountVeroudertNiet.
-        monkeypatch.setattr(MailManager, "_store_account", AsyncMock())
-        return manager
+    async def _verwerk(self, project: dict, secrets: list[tuple], monkeypatch) -> MailConnector:
+        connector = _fake_connector()
+        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        await self._manager(secrets).create_resources_for_deployment(project, project["deployments"][0])
+        return connector
 
     @pytest.mark.asyncio
-    async def test_het_projectadres_en_de_weergavenaam_komen_op_de_relay(self, monkeypatch) -> None:
+    async def test_het_deploymentadres_en_de_weergavenaam_komen_op_de_relay(self, monkeypatch) -> None:
         project = _project(
             component_services=[ServiceType.SEND_EMAIL.value],
             config={"from-name": "Robbert Uittenbroek"},
@@ -2721,43 +3217,48 @@ class TestWatDeDeploymentEnDeRelayTeZienKrijgen:
         project["name"] = "ai1-uit"
         secrets: list[tuple] = []
 
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        connector = await self._verwerk(project, secrets, monkeypatch)
 
-        manager = self._manager(secrets, monkeypatch)
-        await manager.create_resources_for_deployment(project, project["deployments"][0])
-
-        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "Robbert Uittenbroek", "")
+        # Het PROJECT gaat als vierde mee: uit de accountnaam valt het sinds RC-401 niet
+        # meer af te leiden, en de relay heeft het nodig voor X-ZAD-Project.
+        connector.set_sender.assert_awaited_once_with(self._account(), "Robbert Uittenbroek", "", "ai1-uit")
 
         # En de applicatie krijgt hetzelfde adres te zien, want SMTP_FROM is een mededeling
         # over wat de ontvanger krijgt en niet iets waar de applicatie iets aan verandert.
-        assert secrets[0][2].from_address == "noreply-rijksapp+ai1-uit@rijksoverheid.nl"
+        assert secrets[0][2].from_address == self._adres()
+        assert secrets[0][2].username == self._account()
 
     @pytest.mark.asyncio
     async def test_zonder_from_name_gaat_er_geen_naam_mee(self, monkeypatch) -> None:
-        """Een project zonder weergavenaam verstuurt met een kaal PROJECTadres. Dat is een
-        geldige uitkomst en geen terugval: de terugval is het kale PLATFORMadres."""
+        """Een deployment zonder weergavenaam verstuurt met het kale afgeleide adres. Dat is
+        een geldige uitkomst en geen terugval: de terugval is het kale PLATFORMadres."""
         project = _project(component_services=[ServiceType.SEND_EMAIL.value])
         project["name"] = "ai1-uit"
         secrets: list[tuple] = []
 
-        connector = MailConnector("http://relay", "admin", "geheim")
-        connector.get_principal = AsyncMock(return_value=None)  # type: ignore[method-assign]
-        connector.create_principal = AsyncMock()  # type: ignore[method-assign]
-        connector.set_sender = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        connector.set_rate_limit = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        monkeypatch.setattr("opi.manager.mail_manager.create_mail_connector", AsyncMock(return_value=connector))
+        connector = await self._verwerk(project, secrets, monkeypatch)
 
-        await self._manager(secrets, monkeypatch).create_resources_for_deployment(project, project["deployments"][0])
-
-        connector.set_sender.assert_awaited_once_with("project-ai1-uit", "", "")
+        connector.set_sender.assert_awaited_once_with(self._account(), "", "", "ai1-uit")
         # En het adres dat de applicatie te zien krijgt, is het adres dat de relay zelf
         # samenstelt uit de accountnaam - zie TestHetAdresWordtEenKeerSamengesteld.
-        assert secrets[0][2].from_address == "noreply-rijksapp+ai1-uit@rijksoverheid.nl"
+        assert secrets[0][2].from_address == self._adres()
+
+    @pytest.mark.asyncio
+    async def test_de_deployment_overschrijft_de_naam_van_het_project(self, monkeypatch) -> None:
+        """RC-401: wat de deployment invult gaat voor; wat zij weglaat erft zij."""
+        project = _project(
+            component_services=[ServiceType.SEND_EMAIL.value],
+            config={"from-name": "Van Het Project"},
+        )
+        project["name"] = "ai1-uit"
+        project["deployments"][0]["services"] = [
+            {"name": ServiceType.SEND_EMAIL.value, "config": {"from-name": "Van De Deployment"}}
+        ]
+        secrets: list[tuple] = []
+
+        connector = await self._verwerk(project, secrets, monkeypatch)
+
+        connector.set_sender.assert_awaited_once_with(self._account(), "Van De Deployment", "", "ai1-uit")
 
 
 class TestTweeProjectenTegelijk:
@@ -2937,14 +3438,24 @@ class TestDeXZadProjectKopregel:
         ).read_text()
         return config.splitlines()
 
-    def test_de_deleteheader_en_de_let_staan_buiten_het_if_blok(self) -> None:
+    def test_de_deleteheader_staat_buiten_het_if_blok(self) -> None:
         regels = self._regels()
-        let_regel = next(r for r in regels if r.startswith('let "project"'))
         delete_regel = next(r for r in regels if r.strip() == 'deleteheader "X-ZAD-Project";')
-        assert not let_regel.startswith((" ", "\t")), "de let hoort buiten de if, anders overleeft hij hem niet"
         assert not delete_regel.startswith((" ", "\t")), (
             "de deleteheader hoort buiten de if, anders zet een applicatie zelf de kopregel"
         )
+
+    def test_de_projectvariabele_is_global_en_begint_leeg(self) -> None:
+        """Sinds RC-401 komt de projectnaam uit het INGELADEN script in plaats van uit de
+        accountnaam, en dan hangt alles aan twee regels: ``global`` tilt de waarde over de
+        scriptgrens (RFC 6609, een ingesloten script deelt alleen variabelen die aan beide
+        kanten global zijn) en de lege beginwaarde zorgt dat een account zonder sleutel geen
+        kopregel krijgt. Zonder de global blijft de naam hier stil leeg en krijgt NIEMAND de
+        kopregel."""
+        regels = [r.strip() for r in self._regels()]
+        assert 'global "project";' in regels
+        assert regels.index('set "project" "";') > regels.index('global "project";')
+        assert 'include :optional :personal "zad-afzenders";' in regels
 
     def test_de_addheader_staat_wel_binnen_het_if_blok(self) -> None:
         """De tegenproef: alleen deze regel mag voorwaardelijk zijn, anders krijgt ook
@@ -2954,10 +3465,17 @@ class TestDeXZadProjectKopregel:
         assert add_regel.startswith((" ", "\t")), "zonder de if krijgt elk account de kopregel, ook platformaccounts"
 
     def test_het_project_komt_uit_de_login_niet_uit_het_bericht(self) -> None:
+        """De naam komt van de relay-instelling die OPI bij het ACCOUNT schreef, en nooit
+        uit het aangeleverde bericht. De accountnaam zelf zegt het niet meer: die draagt
+        sinds RC-401 de deployment plus een hash."""
         config = "\n".join(self._regels())
         x_zad_block = config.split('deleteheader "X-ZAD-Project"', 1)[1]
-        assert f"strip_prefix(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in config
-        assert f"starts_with(account, '{MAIL_PROJECT_ACCOUNT_PREFIX}')" in x_zad_block
+        assert 'addheader :last "X-ZAD-Project" "${project}"' in x_zad_block
+        assert "header" not in x_zad_block.split("addheader", 1)[0], (
+            "er mag niets uit het bericht worden gelezen tussen het weggooien en het opnieuw zetten"
+        )
+        # En de relay leest de naam uit de sleutelreeks die OPI schrijft.
+        assert MAIL_ACCOUNT_PROJECT_PREFIX in config
 
 
 class TestDeLimietenInConfigToml:

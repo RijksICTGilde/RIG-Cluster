@@ -10,6 +10,7 @@ authenticate with afterwards.
 import asyncio
 import re
 import time
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,11 +19,11 @@ from authlib.jose import JsonWebKey, jwt
 from opi.api.user_token_auth import get_metadata_cache
 from opi.api.v2 import router as v2_router
 from opi.api.v2.models import CreateProjectRequest
+from opi.core.config import settings
 from opi.core.project_schema import validate_project_schema
 from opi.manager.project_validation import validate_project_structure
-from opi.services import project_service
-from opi.utils import api_keys, project_utils
-from opi.utils.age import decrypt_age_content_sync
+from opi.services.project_leden import hash_van
+from opi.utils import age, api_keys, project_utils
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
 
@@ -52,7 +53,7 @@ def sops_keys(monkeypatch: Any) -> Any:
         "CLUSTER_MANAGER": "local",
         "USE_UNSAFE_API_KEY": False,
     }
-    for module in (project_utils, api_keys, project_service, v2_router):
+    for module in (project_utils, api_keys, age, v2_router):
         for name, value in values.items():
             monkeypatch.setattr(module.settings, name, value, raising=False)
     return {"private_key": private_key, "public_key": public_key}
@@ -212,12 +213,35 @@ class TestCreateProject:
         """
         assert "name" not in CreateProjectRequest.model_fields
 
-    def test_the_key_is_the_one_stored_in_the_project_file(self, created: Any) -> None:
-        """A key the caller cannot authenticate with is worse than no key at all."""
-        config = created["project"]["config"]
-        project_private_key = decrypt_age_content_sync(config["age-private-key"], created["keys"]["private_key"])
-        stored = decrypt_age_content_sync(config["api-key"], str(project_private_key))
-        assert stored == created["response"]["api_key"]
+    def test_het_token_hoort_bij_het_service_account_in_het_bestand(self, created: Any) -> None:
+        """Een bewijsmiddel waarmee de aanroeper niet binnenkomt is erger dan geen.
+
+        Sinds schemaversie 2.12 staat er geen ``config.api-key`` meer in het bestand maar
+        een token van ``project-api``, en daarvan alleen de hash. De waarde in het antwoord
+        is dus de enige die er ooit van bestaat.
+        """
+        account = next(lid for lid in created["project"]["users"] if lid.get("name") == "project-api")
+        assert account["type"] == "service-account"
+        assert account["roles"] == ["admin", "ops"]
+        assert account["tokens"][0]["hash"] == hash_van(created["response"]["api_key"])
+
+    def test_het_eerste_token_verloopt_langs_het_platformplafond(self, created: Any) -> None:
+        """Een token dat bij de aanmaak wordt uitgegeven is geen uitzondering op het plafond.
+
+        De migratie van de oude projectsleutel gebruikt wel een vaste datum, omdat ze bij
+        elke lezing van een nog niet weggeschreven bestand opnieuw draait. Een uitgifte
+        heeft die reden niet, dus hij loopt langs ``TOKEN_MAX_DAGEN_SERVICE_ACCOUNT``.
+        """
+        account = next(lid for lid in created["project"]["users"] if lid.get("name") == "project-api")
+        vervalt = datetime.fromisoformat(account["tokens"][0]["expires"])
+        verwacht = datetime.now(UTC) + timedelta(days=settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT)
+        assert abs((vervalt - verwacht).total_seconds()) < 300
+
+    def test_het_token_staat_nergens_plat_in_het_bestand(self, created: Any) -> None:
+        assert created["response"]["api_key"] not in str(created["project"])
+
+    def test_het_bestand_draagt_geen_projectsleutel_meer(self, created: Any) -> None:
+        assert "api-key" not in created["project"]["config"]
 
     def test_the_key_is_never_put_in_a_url(self, created: Any) -> None:
         api_key = created["response"]["api_key"]
@@ -252,7 +276,8 @@ class TestCreateProject:
         assert project["clusters"] == ["local"]
 
     def test_the_creator_becomes_the_admin(self, created: Any) -> None:
-        assert created["project"]["users"] == [{"email": CALLER, "role": "admin"}]
+        mensen = [lid for lid in created["project"]["users"] if lid.get("type") != "service-account"]
+        assert mensen == [{"email": CALLER, "roles": ["admin", "ops"]}]
 
     def test_nothing_is_declared_to_run_yet(self, created: Any) -> None:
         """Explicitly no deployment: that is configured afterwards."""
@@ -343,7 +368,7 @@ class TestRefusedRequests:
         assert response.status_code == 422
         assert captured_task == []
 
-    def test_an_unreadable_key_creates_nothing(
+    def test_een_token_dat_niet_in_het_bestand_landt_maakt_niets(
         self,
         test_client: TestClient,
         sops_keys: Any,
@@ -352,9 +377,20 @@ class TestRefusedRequests:
         captured_task: Any,
         monkeypatch: Any,
     ) -> None:
-        """Handing out a key the caller cannot use would leave an unreachable project."""
-        _, wrong_private_key = generate_sops_key_pair()
-        monkeypatch.setattr(project_service.settings, "SOPS_AGE_PRIVATE_KEY", wrong_private_key, raising=False)
+        """Een bewijsmiddel overhandigen waarmee de aanroeper niet binnenkomt zou een
+        onbereikbaar project achterlaten.
+
+        Vroeger kon dat doordat de versleutelde sleutel niet terug te lezen was; nu kan het
+        alleen nog als het token dat in het bestand belandt niet het token is dat de
+        aanroeper krijgt. Dat wordt hier afgedwongen door het bestand een ANDER token te
+        laten dragen dan de aanmaak teruggeeft; de aanmaak hoort daarop te stoppen.
+        """
+        echte_generator = project_utils.generate_self_service_project_yaml
+
+        async def met_een_ander_token(project_data: Any, *, api_token: str | None = None) -> str:
+            return await echte_generator(project_data, api_token="zad_een-heel-ander-token")
+
+        monkeypatch.setattr(project_utils, "generate_self_service_project_yaml", met_een_ander_token)
 
         response = _post(test_client, bearer_token["token"], {"display_name": "CLI Test", "description": "x"})
 

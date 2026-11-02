@@ -7,7 +7,7 @@ spec:
     spec:
       initContainers:
       - name: init-directories
-        image: busybox:1.36
+        image: busybox:1.38.0
         command: ["sh", "-c", "mkdir -p /var/lib/gitea/custom/conf"]
         volumeMounts:
         - name: data
@@ -19,7 +19,7 @@ spec:
             - ALL
       containers:
       - name: forgejo
-        image: codeberg.org/forgejo/forgejo:14-rootless
+        image: codeberg.org/forgejo/forgejo:14.0.5-rootless
         env:
         - name: USER_UID
           value: "1000"
@@ -54,14 +54,15 @@ spec:
           value: "public"
         - name: FORGEJO__service__DISABLE_REGISTRATION
           value: "true"
+        # Zie de base: lezen vraagt een login, en de repositories staan op privé.
         - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
-          value: "false"
+          value: "true"
         - name: FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE
           value: "true"
         - name: FORGEJO__repository__DEFAULT_BRANCH
           value: "main"
         - name: FORGEJO__repository__DEFAULT_PRIVATE
-          value: "false"
+          value: "true"
         - name: FORGEJO__webhook__ALLOWED_HOST_LIST
           value: "*"
         - name: FORGEJO__webhook__SKIP_TLS_VERIFY

@@ -27,16 +27,19 @@ import pytest
 import yaml
 from _pytest.outcomes import Skipped
 from itsdangerous import TimestampSigner
+from opi.connectors.minio_mc import MinioConnector
 from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync
 from tests.e2e import test_sandbox_migratie_006 as migratie_006
 from tests.e2e import test_sandbox_registry_pull as registry_pull
+from tests.e2e import test_sandbox_seaweedfs_eisen as seaweedfs_eisen
 from tests.e2e import test_sandbox_speelruimte as speelruimte
 from tests.e2e import testserver
-from tests.e2e.conftest import SANDBOX_TEST_USER, _houd_sandboxmodules_bij_elkaar
+from tests.e2e.conftest import _houd_sandboxmodules_bij_elkaar
 from tests.e2e.conftest import pytest_collection_modifyitems as ordeningshook
-from tests.e2e.helpers import cluster, lifecycle, sandbox_api, weesprojecten, zad_cli
+from tests.e2e.helpers import cluster, lifecycle, sandbox_api, seaweedfs, weesprojecten, zad_cli
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from pathlib import Path
 
 
@@ -1006,14 +1009,14 @@ class TestOpruimenNaEenHalveAanmaak:
             verwijderd.append((project, api_key))
             repo.namen.discard(project)
 
-        def _sleutel(_page: Any, _base_url: str, project: str, **_: Any) -> str:
+        def _sleutel(_base_url: str, project: str, **_: Any) -> str:
             if not sleutel_leesbaar:
-                raise AssertionError(f"Could not read API key for '{project}'")
+                raise AssertionError(f"Kon geen API-token uitgeven voor '{project}'")
             return "sleutel-van-" + project
 
         monkeypatch.setattr(lifecycle, "walk_create_wizard_with_services", lambda *a, **k: None)
         monkeypatch.setattr(lifecycle, "walk_create_wizard", lambda *a, **k: None)
-        monkeypatch.setattr(lifecycle, "read_api_key_with_retry", _sleutel)
+        monkeypatch.setattr(lifecycle, "projecttoken_met_retry", _sleutel)
         monkeypatch.setattr(cluster, "wait_for_project_apps_healthy", lambda *a, **k: True)
         monkeypatch.setattr(sandbox_api, "delete_project_via_api", _verwijder)
         return pagina, repo, verwijderd
@@ -1286,6 +1289,24 @@ def _meetbanken() -> list[str]:
 _MEETBANKEN = _meetbanken()
 
 
+def test_de_namen_in_sandbox_api_kloppen_met_het_portaal() -> None:
+    """``sandbox_api`` draagt vier namen van het portaal letterlijk, en waarom.
+
+    Importeren kan niet: dat zou ``opi.core.config`` meebrengen en dan is
+    ``scripts/sandbox_project_tool.py`` niet meer te starten zonder platformsleutel
+    (``TestDeMeetbankscripts`` meet dat). Deze toets is wat daarvoor in de plaats komt:
+    verschuift een naam in het portaal, dan valt het hier op en niet pas op de sandbox.
+    """
+    from opi.core.step_up import STEP_UP_SESSION_KEY
+    from opi.services.schema_migration import PROJECT_API_ACCOUNT
+    from opi.utils.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME
+
+    assert sandbox_api.PROJECT_API_ACCOUNT == PROJECT_API_ACCOUNT
+    assert sandbox_api.CSRF_COOKIE_NAME == CSRF_COOKIE_NAME
+    assert sandbox_api.CSRF_HEADER_NAME == CSRF_HEADER_NAME
+    assert sandbox_api.STEP_UP_SESSION_KEY == STEP_UP_SESSION_KEY
+
+
 class TestDeMeetbankscripts:
     """De scripts in ``scripts/`` die uit ``tests/`` importeren, blijven startbaar.
 
@@ -1322,7 +1343,7 @@ class TestDeMeetbankscripts:
         )
         monkeypatch.setattr(doorloop, "walk_create_wizard_with_services", lambda *a, **k: None)
         monkeypatch.setattr(cluster, "wait_for_project_apps_healthy", lambda naam, **k: gewacht.append(naam))
-        monkeypatch.setattr(lifecycle, "read_api_key_with_retry", lambda *a, **k: "sleutel")
+        monkeypatch.setattr(lifecycle, "projecttoken_met_retry", lambda *a, **k: "sleutel")
         monkeypatch.setattr(sandbox_api, "delete_project_via_api", lambda _u, naam, *a, **k: verwijderd.append(naam))
         monkeypatch.setattr(doorloop, "delete_project_via_api", lambda _u, naam, *a, **k: verwijderd.append(naam))
         monkeypatch.setattr("sys.argv", ["doorloop_rc108.py", "--commit", "abc1234", "--uit", str(tmp_path)])
@@ -1419,6 +1440,13 @@ class TestWeesprojectVerwijderen:
     @staticmethod
     def _client(monkeypatch: pytest.MonkeyPatch) -> type[_NepHttpClient]:
         monkeypatch.setattr(weesprojecten.httpx, "Client", _NepHttpClient)
+        # De sessie dient sinds RC-390 aan als een rij in de sandbox-database; de aanmaak
+        # daarvan is hier niet aan de orde, alleen dat de cookie met de sleutel tekent.
+        monkeypatch.setattr(
+            weesprojecten.sandbox_api,
+            "make_session_cookie",
+            lambda data, *, secret, **_: TimestampSigner(secret).sign(b"e2e-sessie-id").decode(),
+        )
         # ``laatste`` is een klasse-attribuut: zonder deze reset leest een toets die op
         # het UITBLIJVEN van een verzoek grendelt de client van de vorige toets.
         monkeypatch.setattr(_NepHttpClient, "laatste", None)
@@ -1438,8 +1466,8 @@ class TestWeesprojectVerwijderen:
         assert headers["Origin"] == "https://zad.sandbox.test"
         sessie = client.cookies.get("session")
         assert sessie, "er ging geen sessiecookie mee"
-        ondertekend = TimestampSigner("x" * 32).unsign(sessie)
-        assert json.loads(base64.b64decode(ondertekend))["user"]["email"] == SANDBOX_TEST_USER["email"]
+        # Sinds RC-390 draagt de cookie alleen een ondertekend id; de inhoud woont op de server.
+        assert TimestampSigner("x" * 32).unsign(sessie) == b"e2e-sessie-id"
 
     def test_een_sessie_die_niet_wordt_aanvaard_zegt_dat_voor_de_post(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Een omleiding naar de login hoort hier te stoppen, niet in een 403 verderop."""
@@ -1671,3 +1699,263 @@ class TestDeOpruimtaak:
 
         assert "-m" in woorden, woorden
         assert woorden[woorden.index("-m") + 1] == weesprojecten.__name__, woorden
+
+
+class TestSeaweedfsUitvoer:
+    """``Uitvoer`` is wat elke rij van de eisentabel leest: ok, tekst, json en rapport."""
+
+    def test_ok_alleen_bij_exit_nul(self) -> None:
+        assert seaweedfs.Uitvoer("", "", 0).ok
+        assert not seaweedfs.Uitvoer("", "", 1).ok
+
+    def test_tekst_is_stdout_en_stderr_samen(self) -> None:
+        """Een foutmelding van `weed shell` kan op stdout OF stderr staan."""
+        uitvoer = seaweedfs.Uitvoer("op stdout", "op stderr", 1)
+
+        assert "op stdout" in uitvoer.tekst
+        assert "op stderr" in uitvoer.tekst
+
+    def test_json_van_lege_stdout_is_leeg_en_geen_fout(self) -> None:
+        """Een leeg antwoord is bij meerdere rijen een normale uitkomst, geen JSONDecodeError."""
+        assert seaweedfs.Uitvoer("", "", 0).json() == {}
+
+    def test_json_parset_stdout(self) -> None:
+        assert seaweedfs.Uitvoer('{"a": 1}', "", 0).json() == {"a": 1}
+
+    def test_rapport_bevat_de_exitcode_en_beide_stromen(self) -> None:
+        tekst = seaweedfs.Uitvoer("uit", "fout", 1).rapport()
+
+        assert "exit 1" in tekst
+        assert "uit" in tekst
+        assert "fout" in tekst
+
+    def test_rapport_knipt_op_de_grens(self) -> None:
+        tekst = seaweedfs.Uitvoer("x" * 1000, "", 0).rapport(grens=10)
+
+        assert "x" * 1000 not in tekst
+        assert "x" * 10 in tekst
+
+
+class TestSeaweedfsKubectl:
+    """De afdichting rond `kubectl exec`: een time-out mag geen sleutel in de melding zetten."""
+
+    def test_een_time_out_geeft_exit_124_en_geen_argv_in_de_melding(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        geheim = "AKIAFAKESECRETVALUE"
+
+        def _nep(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs.get("timeout", 1))
+
+        monkeypatch.setattr(seaweedfs.subprocess, "run", _nep)
+
+        uitvoer = seaweedfs._kubectl(["exec", "-i", "pod", "-n", "ns", "--", "sh", "-c", geheim], timeout=1.0)
+
+        assert uitvoer.code == 124
+        assert geheim not in uitvoer.stderr, "de melding van een time-out draagt het geheim uit het commando"
+
+    def test_apply_laat_het_manifest_in_de_melding_als_hij_mislukt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            seaweedfs,
+            "_kubectl",
+            lambda *_, **__: seaweedfs.Uitvoer("", "het cluster weigerde het manifest", 1),
+        )
+
+        with pytest.raises(AssertionError, match="het cluster weigerde het manifest"):
+            seaweedfs.apply("kind: Pod")
+
+
+class TestSeaweedfsWeedShell:
+    """Hoe `weed_shell` zijn commando bouwt: via stdin, en met of zonder de JWT-sleutel."""
+
+    @staticmethod
+    def _vang(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        gevangen: dict[str, Any] = {}
+
+        def _nep(
+            namespace: str, pod: str, script: str, *, container: str | None = None, stdin: str | None = None, **_: Any
+        ) -> seaweedfs.Uitvoer:
+            gevangen.update(namespace=namespace, pod=pod, script=script, stdin=stdin)
+            return seaweedfs.Uitvoer("", "", 0)
+
+        monkeypatch.setattr(seaweedfs, "exec_in", _nep)
+        return gevangen
+
+    def test_het_commando_gaat_via_stdin_niet_via_argv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Een wachtwoord in argv staat voor iedereen in de pod zichtbaar in /proc."""
+        gevangen = self._vang(monkeypatch)
+
+        seaweedfs.weed_shell("s3.user.create -name t_a -secret_key geheim-wachtwoord", pod="p")
+
+        assert "geheim-wachtwoord" not in gevangen["script"]
+        assert gevangen["stdin"] == "s3.user.create -name t_a -secret_key geheim-wachtwoord\n"
+
+    def test_zonder_jwt_wordt_de_sleutel_uit_de_omgeving_gehaald(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rij I5: dit IS de meting die laat zien dat de filer-IAM zonder sleutel weigert."""
+        gevangen = self._vang(monkeypatch)
+
+        seaweedfs.weed_shell("s3.user.list", pod="p", jwt=False)
+
+        assert "unset WEED_JWT_FILER_SIGNING_KEY" in gevangen["script"]
+
+    def test_met_jwt_blijft_de_omgeving_ongewijzigd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        gevangen = self._vang(monkeypatch)
+
+        seaweedfs.weed_shell("s3.user.list", pod="p")
+
+        assert "unset" not in gevangen["script"]
+
+    def test_zonder_master_komt_de_vlag_niet_in_het_commando(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rij G18: zonder -master blijft `weed shell` hangen, dus deze vlag is niet optioneel bij de echte aanroep."""
+        gevangen = self._vang(monkeypatch)
+
+        seaweedfs.weed_shell("s3.user.list", pod="p", master="")
+
+        assert "-master=" not in gevangen["script"]
+        assert "-filer=" in gevangen["script"]
+
+
+class TestSeaweedfsManifests:
+    """De manifesten waarop de NetworkPolicy-metingen (I4, I5) steunen."""
+
+    def test_de_tenant_namespace_draagt_het_label_dat_de_networkpolicy_herkent(self) -> None:
+        manifest = yaml.safe_load(seaweedfs._namespace_manifest())
+
+        assert manifest["metadata"]["name"] == seaweedfs.TENANT_NAMESPACE
+        assert manifest["metadata"]["labels"]["created-by"] == "operations-manager"
+
+    def test_de_clientpod_heeft_de_aws_en_mc_container_naast_elkaar(self) -> None:
+        manifest = yaml.safe_load(seaweedfs._client_manifest())
+        namen = {container["name"] for container in manifest["spec"]["containers"]}
+
+        assert namen == {seaweedfs.AWS_CONTAINER, seaweedfs.MC_CONTAINER}
+
+    def test_de_weedpod_draagt_niet_het_label_van_opi(self) -> None:
+        """Rij I4/G18 meet juist dat een pod ZONDER dit label niet door de gRPC-regel komt."""
+        manifest = yaml.safe_load(seaweedfs._weed_pod_manifest())
+
+        assert manifest["metadata"]["labels"]["app"] != seaweedfs.OPI_APP
+        assert manifest["spec"]["containers"][0]["envFrom"][0]["secretRef"]["name"] == "seaweedfs-credentials"
+
+
+class TestSeaweedfsSleutels:
+    """`schrijf_sleutels` schrijft elke keer het HELE bestand opnieuw, met alle profielen tot nu toe."""
+
+    @pytest.fixture(autouse=True)
+    def _schone_profielen(self) -> Generator[None]:
+        seaweedfs._PROFIELEN.clear()
+        yield
+        seaweedfs._PROFIELEN.clear()
+
+    @staticmethod
+    def _vang(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+        aanroepen: list[dict[str, Any]] = []
+
+        def _nep(
+            namespace: str, pod: str, script: str, *, container: str | None = None, stdin: str | None = None, **_: Any
+        ) -> seaweedfs.Uitvoer:
+            aanroepen.append({"container": container, "stdin": stdin})
+            return seaweedfs.Uitvoer("", "", 0)
+
+        monkeypatch.setattr(seaweedfs, "exec_in", _nep)
+        return aanroepen
+
+    def test_schrijft_een_aws_profiel_en_een_mc_host_regel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        aanroepen = self._vang(monkeypatch)
+
+        seaweedfs.schrijf_sleutels({"a": ("t_a", "wachtwoord-a")})
+
+        aws_call = next(a for a in aanroepen if a["container"] == seaweedfs.AWS_CONTAINER)
+        mc_call = next(a for a in aanroepen if a["container"] == seaweedfs.MC_CONTAINER)
+        assert "[a]" in aws_call["stdin"]
+        assert "wachtwoord-a" in aws_call["stdin"]
+        assert "MC_HOST_a=" in mc_call["stdin"]
+        assert "wachtwoord-a" in mc_call["stdin"]
+
+    def test_een_tweede_aanroep_behoudt_het_eerste_profiel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Zonder dit wist een tweede `schrijf_sleutels` de profielen van de eerste identiteit."""
+        aanroepen = self._vang(monkeypatch)
+        seaweedfs.schrijf_sleutels({"a": ("t_a", "eerste")})
+        aanroepen.clear()
+
+        seaweedfs.schrijf_sleutels({"b": ("t_b", "tweede")})
+
+        aws_call = next(a for a in aanroepen if a["container"] == seaweedfs.AWS_CONTAINER)
+        assert "[a]" in aws_call["stdin"]
+        assert "eerste" in aws_call["stdin"]
+        assert "[b]" in aws_call["stdin"]
+        assert "tweede" in aws_call["stdin"]
+
+
+class TestSeaweedfsNetwerkBereikt:
+    """Het python-scriptje dat `nc` vervangt, omdat de testimages geen netcat hebben."""
+
+    def test_het_script_test_de_opgegeven_host_en_poort(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        gevangen: dict[str, Any] = {}
+
+        def _nep(namespace: str, pod: str, script: str, *, container: str | None = None, **_: Any) -> seaweedfs.Uitvoer:
+            gevangen["script"] = script
+            return seaweedfs.Uitvoer("BEREIKT", "", 0)
+
+        monkeypatch.setattr(seaweedfs, "exec_in", _nep)
+
+        uitvoer = seaweedfs.poort_bereikt_uit("ns", "pod", "host.example", 8333)
+
+        assert "'host.example'" in gevangen["script"]
+        assert "8333" in gevangen["script"]
+        assert uitvoer.stdout == "BEREIKT"
+
+
+class TestSeaweedfsEisenPolicyDocument:
+    """Het document dat de eisentabel hardcodeert, tegen de echte `grant_bucket_access`.
+
+    De hele I-reeks (isolatie) hangt eraan dat SeaweedFS hetzelfde document krijgt als
+    MinIO vandaag. Wijkt `grant_bucket_access` ooit af, dan moet deze toets dat zien in
+    plaats van pas een mens die de eisentabel met de hand naleest.
+    """
+
+    async def test_policy_document_is_gelijk_aan_grant_bucket_access(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        connector = MinioConnector()
+        gevangen: dict[str, Any] = {}
+
+        async def _nep_create_policy(alias: str, policy_name: str, policy_document: dict[str, Any]) -> dict[str, Any]:
+            gevangen["policy_name"] = policy_name
+            gevangen["document"] = policy_document
+            return {"status": "created"}
+
+        async def _nep_attach_policy(alias: str, policy_name: str, username: str) -> dict[str, Any]:
+            return {"status": "attached"}
+
+        monkeypatch.setattr(connector, "create_policy", _nep_create_policy)
+        monkeypatch.setattr(connector, "attach_policy", _nep_attach_policy)
+
+        await connector.grant_bucket_access(
+            "alias", seaweedfs_eisen.GEBRUIKER_A, seaweedfs_eisen.BUCKET_A, ["read", "write", "delete", "list"]
+        )
+
+        assert gevangen["document"] == seaweedfs_eisen.policy_document(seaweedfs_eisen.BUCKET_A)
+        assert gevangen["policy_name"] == seaweedfs_eisen.policy_naam(
+            seaweedfs_eisen.GEBRUIKER_A, seaweedfs_eisen.BUCKET_A
+        )
+
+
+class TestSeaweedfsEisenRapport:
+    """`Rapport` is wat de bouwer straks met de hand naleest om de kolom Uitkomst te vullen."""
+
+    def test_open_schrijft_een_nieuw_bestand_maar_laat_een_bestaand_staan(self, tmp_path: pathlib.Path) -> None:
+        pad = tmp_path / "seaweedfs-eisen.md"
+        pad.write_text("al gemeten", encoding="utf-8")
+
+        seaweedfs_eisen.Rapport(pad).open()
+
+        assert pad.read_text(encoding="utf-8") == "al gemeten"
+
+    def test_rij_voegt_de_uitkomst_en_de_ruwe_uitvoer_toe(self, tmp_path: pathlib.Path) -> None:
+        pad = tmp_path / "seaweedfs-eisen.md"
+        rapport = seaweedfs_eisen.Rapport(pad)
+        rapport.open()
+
+        rapport.rij("G1 bucket aanmaken", "werkt", "exit 0")
+
+        inhoud = pad.read_text(encoding="utf-8")
+        assert "## G1 bucket aanmaken" in inhoud
+        assert "**werkt**" in inhoud
+        assert "exit 0" in inhoud

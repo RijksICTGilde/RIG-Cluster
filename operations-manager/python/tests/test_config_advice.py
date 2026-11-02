@@ -265,7 +265,7 @@ def _role_project(assigned: list[str], *, defined: list[str], wall: str | None =
         "name": "vr3ed-r0l",
         "services": [
             {"name": "keycloak", "config": keycloak},
-            {"name": "invite", "config": {"active": [{"key": "k", "realm-roles": assigned}]}},
+            {"name": "invite", "config": {"active": [{"key": "rollen-fixture-example", "realm-roles": assigned}]}},
         ],
         "components": [{"name": "web", "image": "nginx:latest"}],
         "deployments": [{"name": "productie", "components": [{"reference": "web"}]}],

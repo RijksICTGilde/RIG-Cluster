@@ -132,13 +132,19 @@ def pick_secret(cluster: Cluster) -> tuple[str, Path, Path]:
     return options[choose("Welk secret wil je aanpassen?", labels)]
 
 
+def is_production(cluster: Cluster) -> bool:
+    """Of dit cluster productie is. Eén lezer, zodat een tweede guard niet stil smaller
+    wordt dan deze."""
+    return "prd" in cluster.name or "production" in cluster.name
+
+
 def guard_production(cluster: Cluster) -> None:
     """Extra drempel voor --apply op productie: typ de clusternaam over.
 
     `kubectl`-context is NIET de guard: wie op odcn draait met een oude context hoeft
     daar niets van te merken. Het typen van de naam is wat "per ongeluk" uitsluit.
     """
-    if "prd" not in cluster.name and "production" not in cluster.name:
+    if not is_production(cluster):
         return
     print(f"\n⚠️  Je staat op het punt het cluster van {cluster.name} AAN TE PASSEN.")
     typed = input(f"Typ exact '{cluster.name}' om door te gaan: ").strip()
@@ -171,7 +177,14 @@ def rotate_flow(args: argparse.Namespace, cluster: Cluster) -> int:
         selected = rotate.COMPONENTS if picked == len(labels) - 1 else [rotate.COMPONENTS[picked]]
 
     apply_changes = bool(args.apply) and not args.dry_run
-    if apply_changes:
+    if args.yes:
+        # Non-interactief draaien hoort bij een verse sandbox, niet bij productie: daar IS de
+        # vraag de guard, en een ronde zonder mens kan een handmatige stap niet zetten.
+        if is_production(cluster):
+            raise EditFailed("--yes is niets voor productie: daar is de bevestiging de guard")
+        if not args.component:
+            raise EditFailed("--yes werkt alleen met --component: een hele ronde zonder mens is te veel in één keer")
+    if apply_changes and not args.yes:
         guard_production(cluster)
 
     kube = rotate.Kube(cluster.namespace, dry_run=not apply_changes and not args.check, context=args.context)
@@ -209,7 +222,7 @@ def rotate_flow(args: argparse.Namespace, cluster: Cluster) -> int:
                 for line in step.dry_text:
                     print(f"       {line}")
             continue
-        if not rotate.execute(ctx, steps):
+        if not rotate.execute(ctx, steps, assume_yes=bool(args.yes)):
             print(f"❌ {component.key} afgebroken; later opnieuw beginnen kan gewoon.")
             failures += 1
             break  # --all: stop bij de eerste breuk, een halve ronde verder kan drift geven
@@ -321,6 +334,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--apply", action="store_true", help="voer de rotatie echt uit (zonder deze vlag: plan tonen)")
     parser.add_argument("--context", help="kubectl-context gebruiken in plaats van de huidige")
+    parser.add_argument("--cluster", help="cluster bij naam kiezen in plaats van met de vraag (voor een taak)")
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="elke stapbevestiging overslaan; alleen samen met --component en niet op productie",
+    )
     parser.add_argument(
         "--seed-overlay",
         action="store_true",
@@ -330,7 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     available = clusters()
-    cluster = available[choose("Voor welk cluster?", [f"{c.name} (namespace {c.namespace})" for c in available])]
+    if args.cluster:
+        found = next((c for c in available if c.name == args.cluster), None)
+        if found is None:
+            raise EditFailed(f"onbekend cluster {args.cluster}; bekend: {', '.join(c.name for c in available)}")
+        cluster = found
+    else:
+        cluster = available[choose("Voor welk cluster?", [f"{c.name} (namespace {c.namespace})" for c in available])]
 
     if args.seed_overlay:
         # Lezen is read-only; de dry-run-guard hoort bij de SCHRIJFstappen (bestanden),

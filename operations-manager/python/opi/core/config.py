@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -19,6 +19,12 @@ PROJECT_NAME: str = "OPI"
 VERSION: str = os.environ.get("ZAD_VERSION", "0.1.0")
 BUILD_DATE: str = os.environ.get("ZAD_BUILD_DATE", "")
 PROJECT_DESCRIPTION: str = "OPI - Operational Platform Interface"
+
+#: Het enige cluster dat een doel van de aanvalsproef mag zijn.
+PROEFBAAR_CLUSTER = "sandboxed-local"
+
+#: De header waarin een proefdoel het token van de lopende run terugkaatst, op /health.
+SECURITY_PROOF_HEADER = "X-Zad-Proef"
 
 
 def _check_env_file_for_environment_var(file_path: str) -> None:
@@ -64,7 +70,7 @@ def _get_env_files() -> list[str]:
 
     ENVIRONMENT is read from system environment variable first to avoid circular dependency.
     ENVIRONMENT can be a single value or comma-separated list (e.g., "production,kubernetes").
-    If ENVIRONMENT is not set in system env, defaults to 'local'.
+    If ENVIRONMENT is not set in system env, defaults to 'production' (fail closed).
 
     Examples:
     - ENVIRONMENT="local" -> loads .env, then .env.local
@@ -82,7 +88,7 @@ def _get_env_files() -> list[str]:
     env_files = []
 
     # Get ENVIRONMENT from system environment variable first (not from .env files to avoid circular dependency)
-    environment_var = os.environ.get("ENVIRONMENT", "local")
+    environment_var = os.environ.get("ENVIRONMENT", "production")
     environments = [env.strip() for env in environment_var.split(",")]
     # Logging is now initialized via early_logging import
     logger.debug(f"Using ENVIRONMENT={environment_var} -> environments={environments}")
@@ -177,18 +183,58 @@ class Settings(BaseSettings):
     ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
 
     SECRET_KEY: str = Field(default_factory=generate_secret_key)
-    ENVIRONMENT: str = "local"
+    # Default "production": een vergeten instelling valt naar de dichte kant, zonder
+    # proef- en testroutes. Lokaal, sandbox en de dev-compose zetten hun waarde expliciet.
+    ENVIRONMENT: str = "production"
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
 
-    # Idle session timeout. The session cookie is re-signed on every response,
-    # so this acts as a sliding window: a session expires only after this many
-    # seconds of inactivity. Shared by the HTTP SessionMiddleware and the
-    # WebSocket handshake so both enforce the same lifetime.
+    # De OIN in ``notification_events.source``. Tot uitgifte is dit een placeholder, dus
+    # rijen zijn CloudEvents-vormig maar niet geldig; exporteurs moeten dit weigeren.
+    EVENT_SOURCE_OIN: str = "oin-nog-niet-toegekend"
+
+    # Idle session timeout. The session cookie is re-signed on every response that
+    # mutates the session, and the server-side row renews on activity via touch: a
+    # session expires only after this many seconds of inactivity.
     SESSION_MAX_AGE_SECONDS: int = 28800  # 8 hours - one workday
 
+    # Hot-cache voor de server-side sessies (RC-390): een LRU met max + per-item TTL.
+    # Na de TTL is de database weer de bron (een tweede pod loopt nooit verder achter).
+    SESSION_CACHE_MAX_ENTRIES: int = 5000
+    SESSION_CACHE_TTL_SECONDS: float = 60.0
+
+    # Absolute maximumduur van een sessie vanaf het inloggen, hoe actief ook (BIO2 8.05,
+    # ASVS 3.3.1). De inactiviteitsgrens hierboven is een schuivend venster; dit is hard.
+    SESSION_ABSOLUTE_MAX_SECONDS: int = 43200  # 12 hours
+
+    # Mislukte authenticatiepogingen per minuut op de sleutelpaden, apart geteld per client
+    # en per aangeboden sleutel. Boven de grens volgt een 429. Zie
+    # features/een-foute-sleutel-loopt-tegen-een-snelle-weigering.md voor welke van de twee
+    # vóór de sleutelvergelijking weigert en waarom de andere er pas na staat.
+    AUTH_FAILURE_LIMIT_PER_MINUTE: int = 10
+
+    # De grove bovengrens op /api en /auth per client. Ruim: hij hoort de piek af te
+    # vlakken, niet normaal gebruik te raken.
+    API_RATE_LIMIT_PER_MINUTE: int = 600
+    API_RATE_LIMIT_BURST: int = 120
+
+    # Plafond op de Retry-After die bij een 429 meegaat.
+    RATE_LIMIT_RETRY_AFTER_MAX_SECONDS: int = 60
+
+    # Aantal vertrouwde proxy-hops in X-Forwarded-For, geteld van RECHTS. 0 vertrouwt geen
+    # enkele header en telt op het TCP-peer-adres: de juiste waarde voor een opbouw zonder
+    # proxy ervoor (docker-compose, pytest, uv run). Elke opbouw met een ingress ervoor zet
+    # hem op 1 in zijn eigen configmap, want daar is die ene proxy de enige ingang. Zie
+    # features/futures/client-ip-vertrouwen-achter-de-router.md.
+    TRUSTED_PROXY_HOPS: int = 0
+
+    # Het per-run gemunte token waarmee de aanvalsproef deze instantie als doel herkent (header X-Zad-Proef op /health).
+    SECURITY_PROOF_TOKEN: str = ""
+
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
-    DEBUG_MODE: str = "reload"
+    # Default "production": een vergeten instelling valt naar de dichte kant, zonder
+    # bestandsbewaking en zonder debugger. Lokaal en sandbox zetten "reload" expliciet.
+    DEBUG_MODE: str = "production"
 
     # Developer settings
     FIXED_PROJECT_POSTFIX: str | None = None  # If set, use this instead of random postfix for project names
@@ -207,7 +253,12 @@ class Settings(BaseSettings):
     # authorization-code + PKCE loopback flow (RFC 8252), and the audience its
     # access tokens must carry for this API to accept them.
     CLI_CLIENT_ID: str = "zad-cli"
-    CLI_TOKEN_AUDIENCE: str = "zad-api"
+    CLI_TOKEN_AUDIENCE: str = "zad-api"  # noqa: S105  # audience van het CLI-token, geen secret
+
+    # Hoe lang een API-token hoogstens geldig mag zijn, in dagen. Platformbeleid en geen
+    # keuze van wie het token aanmaakt: zonder maximum kiest iedereen het maximum.
+    TOKEN_MAX_DAGEN_PERSOONLIJK: int = 90
+    TOKEN_MAX_DAGEN_SERVICE_ACCOUNT: int = 365
 
     # Invite system settings
     INVITE_CLIENT_ID: str = "operations-manager-invites"
@@ -221,6 +272,8 @@ class Settings(BaseSettings):
     GIT_PROJECTS_SERVER_URL: str = "git://localhost:9090/"
     GIT_PROJECTS_SERVER_USERNAME: str | None = None  # Username for Git projects server authentication
     GIT_PROJECTS_SERVER_PASSWORD: str | None = None  # Password for Git projects server (can be SOPS encrypted)
+    # Webadres van de projecten-repo voor commitlinks in het audit-tabblad.
+    GIT_PROJECTS_WEB_URL: str = ""
     GIT_PROJECTS_SERVER_REPO_PATH: str = "/"
     GIT_PROJECTS_SERVER_FILE_PATH: str = "projects/simple-example.yaml"
     GIT_PROJECTS_SERVER_BRANCH: str = "main"
@@ -242,6 +295,10 @@ class Settings(BaseSettings):
     PROJECT_REPO_PASSWORD: str | None = None
     PROJECT_REPO_BRANCH: str = "main"
 
+    # Komma-gescheiden lijst URL-prefixen van helmfile- en chartbronnen die OPI kloont.
+    # Zie features/helmfile-single-app-deployment.md voor details.
+    RENDER_SOURCE_ALLOWLIST: str = ""
+
     # ArgoCD Applications Git repository - simplified to just URL and credentials
     GIT_ARGO_APPLICATIONS_URL: str = "ssh://git@localhost:2222/srv/git/argo-applications.git"
     GIT_ARGO_APPLICATIONS_PASSWORD: str | None = None
@@ -253,24 +310,36 @@ class Settings(BaseSettings):
     # ArgoCD Server Configuration
     ARGOCD_HOST: str = "argocd-server"
     ARGOCD_PORT: int = 80
-    ARGOCD_USERNAME: str = "admin"
-    ARGOCD_PASSWORD: str = "admin"
+    # Geen default; vergeten instelling moet een fout zijn, niet admin/admin.
+    ARGOCD_USERNAME: str | None = None
+    ARGOCD_PASSWORD: str | None = None
+    # API-token van het account `opi` (Secret opi-argocd-token). Is hij gezet, dan slaat de
+    # connector /api/v1/session over en stuurt hij dit token als bearer.
+    ARGOCD_TOKEN: str | None = None
     ARGOCD_USE_TLS: bool = False
     ARGOCD_VERIFY_SSL: bool = False
+    # Pad van de gemounte CA-bundel van de ArgoCD-server. Verplicht zodra TLS en
+    # certificaatcontrole aan staan: de CA erachter is per cluster een andere.
+    ARGOCD_CA_BUNDLE: str | None = None
 
     # Manifests path
     MANIFESTS_PATH: str = "manifests"
 
     # API security
-    API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development
+    API_TOKEN: str = "d68d6aebd694d636e5eb4784a952b9c3"  # Example hardcoded token for development  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     USE_UNSAFE_API_KEY: bool = False  # Use hardcoded "secret" API key for development (set to True in .env.local)
-    MASTER_API_KEY: str | None = None  # Master API key for admin operations (backups, etc.)
-    ADMIN_API_KEY: str | None = None  # Admin API key for cleanup, reconciliation, and maintenance operations
 
     # SOPS age key settings (from Kubernetes secret)
-    SOPS_AGE_KEY_CONTENT: str | None = None  # Full SOPS age key content from secret
+    SOPS_AGE_KEY_FILE: str | None = None  # Pad naar de gemounte platformsleutel in de pod
+    SOPS_AGE_KEY_CONTENT: str | None = None  # Terugval voor lokale ontwikkeling, zie load_sops_age_key_content
     SOPS_AGE_PUBLIC_KEY: str | None = None  # Public key for SOPS age encryption
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
+
+    # De project-KEK: de sleutel waarmee alleen de projectsleutels zijn ingepakt. Hij staat
+    # bewust alleen in de OPI-pod, zie instructions/sops-sleutel-in-het-cluster.md.
+    PROJECT_KEK_FILE: str | None = None  # Pad naar de gemounte KEK in de pod
+    PROJECT_KEK_PUBLIC_KEY: str | None = None
+    PROJECT_KEK_PRIVATE_KEY: str | None = None
 
     # OpenTelemetry configuration
     OTEL_ENABLED: bool = False  # Safe default - zero overhead when off
@@ -287,6 +356,7 @@ class Settings(BaseSettings):
     EVENT_LOOP_LAG_WARNING_SECONDS: float = 1.0
 
     # Logging configuration
+    LOG_LEVEL: str = "DEBUG"  # Level van de opi-logger; productie staat op INFO
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled
     LOG_ERRORS_TO_FILE: bool = False  # Write WARNING+ to a separate persistent error log
@@ -294,6 +364,13 @@ class Settings(BaseSettings):
 
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
+    # Tijdelijke bestanden met platte geheimen. In de pod een tmpfs, zodat platte
+    # SOPS-inhoud niet op de schijf van de node landt zoals in TEMP_DIR.
+    SECRET_TEMP_DIR: str = "/tmp"  # noqa: S105  # pad naar een map, geen secret
+
+    # GPG-privésleutel (ASCII-armored, zonder passphrase) voor commits in de GitOps-repo's.
+    # Zie features/opi-ondertekent-zijn-commits.md.
+    GIT_SIGNING_KEY_FILE: str | None = None
 
     # Container registry configuration (for image upload proxy)
     REGISTRY_URL: str = ""  # Target registry (e.g., rcr.rijksapps.nl)
@@ -303,10 +380,21 @@ class Settings(BaseSettings):
     REGISTRY_VERIFY_TLS: bool = True
     IMAGE_UPLOAD_MAX_SIZE_MB: int = 5120  # Safety cap (5 GB)
 
+    # Uploads. Het functionele plafond per route staat elders (MAX_ATTACHMENT_BYTES voor
+    # een bijlage, IMAGE_UPLOAD_MAX_SIZE_MB hierboven); dit begrenst wat de pod ervan draagt.
+    MAX_CONCURRENT_UPLOADS: int = 4  # gelijktijdige uploads over alle uploadroutes samen
+    UPLOAD_QUEUE_SIZE: int = 10  # uploads die mogen wachten op een plek; daarboven direct 503
+    UPLOAD_QUEUE_WAIT_SECONDS: float = 30.0  # hoe lang een upload in de wachtrij mag staan
+    UPLOAD_SLOT_RETRY_AFTER_SECONDS: int = 5  # wat die 503 als Retry-After meegeeft
+    UPLOAD_SPILL_AFTER_BYTES: int = 1024 * 1024  # hierboven gaat een upload naar een tempbestand
+    # De body-grens van een bijlageroute is MAX_ATTACHMENT_BYTES maal dit getal: de
+    # multipart-omlijsting komt bovenop het bestand, en 64 KB laat daarvoor weinig ruimte.
+    ATTACHMENT_BODY_LIMIT_FACTOR: int = 16
+
     # Keycloak configuration
     KEYCLOAK_URL: str = "https://keycloak.kind"
     KEYCLOAK_ADMIN_USERNAME: str = "admin"
-    KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"
+    KEYCLOAK_ADMIN_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
 
     # OPI's own client-credentials service account for Keycloak admin operations.
     # When the secret is set, OPI authenticates with this confidential master
@@ -330,6 +418,16 @@ class Settings(BaseSettings):
     # retrofitted (seed shown in the portal) the next time they are processed.
     KEYCLOAK_ENFORCE_ADMIN_OTP: bool = False
 
+    # Require OTP for every password login in the master realm. Disable to troubleshoot
+    # master console access issues.
+    KEYCLOAK_ENFORCE_MASTER_OTP: bool = True
+
+    # Bewaartermijn van de login- en admin-events van de MASTER-realm, in dagen. 0 betekent
+    # in Keycloak: nooit opruimen. Instelbaar omdat BIO2 8.15.04 een risicogerichte termijn
+    # vraagt die niet vanuit de code te bepalen is (open beslissing 7 in
+    # features/futures/gebeurtenissen-plan-van-aanpak.md, aanbeveling: langer dan 90 dagen).
+    KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS: int = 90
+
     # Default shared realm configuration
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
@@ -344,14 +442,34 @@ class Settings(BaseSettings):
 
     # Master OIDC provider configuration (to be added to shared realm)
     KEYCLOAK_MASTER_OIDC_CLIENT_ID: str = "dummy-client-id"
-    KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"
+    KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: str = "dummy-client-secret-123"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     KEYCLOAK_MASTER_OIDC_DISCOVERY_URL: str = "https://keycloak.kind/realms/master/.well-known/openid-configuration"
 
     # Database configuration
     DATABASE_HOST: str = "postgresql.kind"
     DATABASE_NAME: str = "operations_manager"
     DATABASE_ADMIN_NAME: str = "postgres"
-    DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
+    DATABASE_ADMIN_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
+    # De rol waarmee OPI zijn EIGEN database opent: eigenaar van operations_manager, en
+    # zonder superuser, CREATEDB of CREATEROLE. De admin-credentials hierboven blijven
+    # voor het beheer van tenant- en platformdatabases. Geen default op het wachtwoord, om
+    # dezelfde reden als bij ARGOCD_*: een vergeten instelling moet een fout zijn.
+    DATABASE_APP_USER: str = "operations_manager"
+    DATABASE_APP_PASSWORD: str | None = None
+    # libpq sslmode voor OPI's verbindingen naar databases van het platform. require
+    # versleutelt zonder het servercertificaat te toetsen (CNPG's interne CA). Local dev:
+    # zet op disable. Zie features/postgresql-tls.md.
+    DATABASE_SSLMODE: str = "require"
+
+    # PostgreSQL geeft een nieuwe database CONNECT en TEMPORARY aan PUBLIC, dus op de
+    # gedeelde server kan elke rol met elke database verbinden. Dit sluit dat af.
+    #
+    # ``dry-run`` is de standaard om dezelfde reden als bij RECONCILIATION_DRY_RUN: de
+    # REVOKE raakt elke database op de server in een keer, en een rol die nu stil op PUBLIC
+    # leunt valt dan om. In deze stand logt elke verwerking welke REVOKE en GRANT hij zou
+    # doen en wie er op dat moment verbonden is, zodat een volledige nachtelijke
+    # reconciliatie zichtbaar maakt wat ``on`` gaat afsluiten.
+    DATABASE_RESTRICT_PUBLIC_CONNECT: Literal["off", "dry-run", "on"] = "dry-run"
 
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7
@@ -368,6 +486,10 @@ class Settings(BaseSettings):
     RECONCILIATION_HOUR: int = 3  # local time (Europe/Amsterdam)
     RECONCILIATION_DRY_RUN: bool = True
 
+    # De bewaarlus van het audittrail. Geen schakelaar om hem uit te zetten: zonder lus
+    # bewaart notification_events persoonsgegevens zonder termijn.
+    AUDIT_RETENTION_HOUR: int = 4  # local time (Europe/Amsterdam)
+
     # Async task worker settings
     TASK_WORKER_ENABLED: bool = True
     TASK_WORKER_POLL_INTERVAL: float = 2.0
@@ -375,23 +497,36 @@ class Settings(BaseSettings):
     TASK_WORKER_STALE_THRESHOLD: int = 120
     TASK_WORKER_MAX_ATTEMPTS: int = 3
     TASK_WORKER_CONCURRENCY: int = 12
-    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1
+    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1  # Werkgegevens (payload, logs, ...)
+    TASK_WORKER_HEADER_RETENTION_DAYS: int = 90  # Rij zelf (wie, wat, waar, ...)
     TASK_WORKER_MAX_DURATION: int = 1800  # 30 minutes
 
     # MinIO configuration
     MINIO_HOST: str = "minio.kind:9000"
     MINIO_ADMIN_ACCESS_KEY: str = "admin"
-    MINIO_ADMIN_SECRET_KEY: str = "changeMe123!"
+    MINIO_ADMIN_SECRET_KEY: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     MINIO_USE_TLS: bool = False
     MINIO_REGION: str = "us-east-1"  # AWS region for S3 compatibility
 
     # MinIO client configuration
     MC_CONFIG_DIR: str = "/tmp/mc-config"  # Directory for mc CLI configuration files
 
+    # SeaweedFS (seaweedfs-storage, RC-331). Beide adressen zijn nodig: `weed shell`
+    # hangt zonder masteradres in WaitUntilConnected (gemeten, rij G18). Leeg betekent
+    # "dit cluster levert de dienst niet"; de overlay van elk cluster met de dienst zet ze.
+    SEAWEEDFS_FILER_ADDRESS: str = ""
+    SEAWEEDFS_MASTER_ADDRESS: str = ""
+    # Het admin-sleutelpaar uit seaweedfs-credentials, waarmee `mc` een alias op de S3-poort
+    # legt: voor de bucketkopie van een kloon en voor wat `weed shell` niet kan, de
+    # lifecycle-regel op een bucket (RC-380). Beheer van identiteiten loopt NIET hierlangs
+    # maar over `weed shell`.
+    SEAWEEDFS_ADMIN_ACCESS_KEY: str = ""
+    SEAWEEDFS_ADMIN_SECRET_KEY: str = ""
+
     # Redis configuration
     REDIS_HOST: str = "rig-redis.rig-system.svc.cluster.local"
     REDIS_PORT: int = 6379
-    REDIS_PASSWORD: str = "changeMe123!"
+    REDIS_PASSWORD: str = "changeMe123!"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
 
     # SMTP relay configuration (send-email service).
     # The relay is the only thing on the platform that talks to the upstream mail
@@ -424,7 +559,7 @@ class Settings(BaseSettings):
     # A Secret and not an environment variable: OPI generates this password itself, and a
     # pod reads its environment once at start, so a value made after that start would only
     # arrive on a restart -- a boot order nobody can follow afterwards.
-    MAIL_PLATFORM_SECRET_NAME: str = "zad-platform-mail-account"
+    MAIL_PLATFORM_SECRET_NAME: str = "zad-platform-mail-account"  # noqa: S105  # naam van het secret, geen secret
 
     # KEYCLOAK's own account on the relay. A SECOND platform account next to zad-platform,
     # and not the same one, because the two send different post: ZAD writes to a project's
@@ -443,13 +578,13 @@ class Settings(BaseSettings):
     MAIL_KEYCLOAK_ACCOUNT: str = "zad-keycloak"
     MAIL_KEYCLOAK_MESSAGES_PER_DAY: int = 2000
     #: The bootstrap Secret in OPI's own namespace holding Keycloak's mail password.
-    MAIL_KEYCLOAK_SECRET_NAME: str = "keycloak-mail-credentials"
+    MAIL_KEYCLOAK_SECRET_NAME: str = "keycloak-mail-credentials"  # noqa: S105  # naam van het secret, geen secret
     #: The KEY inside that Secret. Load-bearing on two sides: it is the ``key`` in the
     #: secretKeyRef of the Keycloak deployment (which reads it as ZAD_MAIL_RELAY_PASSWORD)
     #: and the key OPI reads here. That secretKeyRef is ``optional: true``, so a rename on
     #: one side does not stop anything -- it just makes every login mail fail authentication
     #: at the relay, far away from the rename.
-    MAIL_KEYCLOAK_SECRET_KEY: str = "smtp-password"
+    MAIL_KEYCLOAK_SECRET_KEY: str = "smtp-password"  # noqa: S105  # naam van de sleutel in het secret, geen secret
     #: The display name in front of the sender address of login mail.
     #:
     #: There is no own local part any more: login mail leaves under the cluster's BARE
@@ -535,12 +670,18 @@ class Settings(BaseSettings):
     FEDERATION_REQUEST_TIMEOUT: int = 30
 
     # Backup configuration
+    # De image van de back-up- en restorepods, op digest zodat vastligt wat er draait.
+    # Ophogen: publiceer met `task publish-backup-image` en zet de nieuwe digest hier.
+    # De sandbox zet hem via zijn configmap op :latest, want daar wordt hij in kind geladen.
+    BACKUP_IMAGE: str = (
+        "ghcr.io/minbzk/base-images/rig-backup@sha256:3de60a9f38f9166a36e100561665eee86cc6a1723ccba5089803392b257a7e0c"
+    )
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"
     BACKUP_S3_BUCKET: str = "rig-backups"  # Fallback bucket when project context unavailable
     BACKUP_S3_BUCKET_MODE: str = "per-project"  # "single" = use BACKUP_S3_BUCKET, "per-project" = auto-generate
     BACKUP_S3_ORG_PREFIX: str = "rig"  # Organization prefix for per-project bucket names
     BACKUP_S3_ACCESS_KEY: str = "backup-admin"
-    BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"
+    BACKUP_S3_SECRET_KEY: str = "backup-secret-key-local"  # noqa: S105  # ontwikkeldefault, in een cluster overschreven door de omgeving
     BACKUP_S3_USE_TLS: bool = False  # Use HTTP (False) or HTTPS (True) for S3 endpoint
     BACKUP_SNAPSHOT_CLASS: str = "ocs-storagecluster-rbdplugin-snapclass"
     BACKUP_TIMEOUT_SECONDS: int = 3600
@@ -571,6 +712,10 @@ class Settings(BaseSettings):
     # without a wait, the second one fails immediately. 30 min is enough for
     # a typical PVC+DB+bucket run to finish.
     BACKUP_LOCK_WAIT_SECONDS: int = 1800
+    # How often a deployment whose scheduled backup is not happening may produce an
+    # ERROR line. The log watcher turns that line into a notification, and the scheduler
+    # sees the same overdue backup on every tick until it is fixed.
+    BACKUP_OVERDUE_LOG_INTERVAL_HOURS: int = 24
     # Daily retention sweep for orphaned backups. Kopia retention only runs
     # at the end of a backup, so snapshots of deployments that no longer get
     # backed up (deleted deployments, removed schedules, broken legacy source
@@ -619,10 +764,39 @@ class Settings(BaseSettings):
     JOB_ENABLED: bool = True
     JOB_TTL_SECONDS: int = 3600  # Max job lifetime; pod kept until then so logs stay readable
 
+    @property
+    def database_app_password(self) -> str:
+        """Het wachtwoord van de app-rol, of een fout als de instelling leeg is.
+
+        Zonder deze controle valt een vergeten ``DATABASE_APP_PASSWORD`` pas om als een
+        authenticatiefout van asyncpg, en die wijst niet naar de instelling.
+        """
+        if not self.DATABASE_APP_PASSWORD:
+            raise ValueError(
+                "DATABASE_APP_PASSWORD is niet gezet. OPI opent zijn eigen database met de rol "
+                f"'{self.DATABASE_APP_USER}'; het wachtwoord komt uit het secret operations-manager-db-credentials."
+            )
+        return self.DATABASE_APP_PASSWORD
+
+    @property
+    def is_development_environment(self) -> bool:
+        """Lokaal of sandbox: de enige plekken waar proef- en testroutes mogen bestaan."""
+        return self.ENVIRONMENT in ("local", "sandboxed-local")
+
     @model_validator(mode="after")
     def _enforce_secure_secret_key(self) -> Settings:
         """Fail closed when an explicitly-set SECRET_KEY is too short."""
         validate_secret_key(self.SECRET_KEY)
+        return self
+
+    @model_validator(mode="after")
+    def _alleen_de_sandbox_mag_een_proeftoken(self) -> Settings:
+        """Weiger een proeftoken op elk cluster behalve de sandbox."""
+        if self.SECURITY_PROOF_TOKEN and self.CLUSTER_MANAGER != PROEFBAAR_CLUSTER:
+            raise RuntimeError(
+                f"SECURITY_PROOF_TOKEN is gezet op cluster {self.CLUSTER_MANAGER!r};"
+                f" alleen {PROEFBAAR_CLUSTER} mag een doel van de aanvalsproef zijn"
+            )
         return self
 
 
@@ -654,15 +828,42 @@ def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
 
         logger.debug("Parsed SOPS age keys from environment content")
         if public_key:
-            logger.debug(f"Public key: {public_key[:10]}...")
+            logger.debug("Public key parsed")
         if private_key:
-            logger.debug(f"Private key: {private_key[:2]}...{private_key[-2:]}")
+            logger.debug("Private key parsed")
 
         return public_key, private_key
 
     except Exception as e:
         logger.error(f"Error parsing SOPS age key content: {e}")
         return None, None
+
+
+def load_sops_age_key_content(
+    key_file: str | None, key_content: str | None, *, label: str = "Platformsleutel"
+) -> str | None:
+    """De inhoud van een AGE-sleutel, uit het gemounte bestand of uit de env-terugval.
+
+    Een gezet maar onleesbaar of leeg bestand is een harde opstartfout: stil terugvallen op
+    de omgeving zou een verkeerd gemounte sleutel verbergen tot de eerste ontsleuteling.
+    """
+    if key_file:
+        try:
+            content = pathlib.Path(key_file).read_text().strip()
+        except OSError as e:
+            raise RuntimeError(f"{label} niet leesbaar: {key_file}") from e
+        if not content:
+            raise RuntimeError(f"{label} is leeg: {key_file}")
+        return content
+
+    if key_content:
+        logger.warning(
+            "SOPS_AGE_KEY_CONTENT is in gebruik; die terugval verdwijnt na een release. "
+            "Mount de sleutel en zet SOPS_AGE_KEY_FILE."
+        )
+        return key_content
+
+    return None
 
 
 def _load_sops_key_from_local_file() -> str | None:
@@ -710,6 +911,32 @@ def _load_sops_key_from_local_file() -> str | None:
         return None
 
 
+def _load_project_kek(settings: Settings) -> None:
+    """Zet de project-KEK uit het gemounte bestand, als dat er is.
+
+    Zonder KEK verandert er niets: in- en uitpakken van projectsleutels valt dan terug op de
+    platformsleutel, zodat de sandbox en lokale ontwikkeling niets hoeven.
+    """
+    key_file = settings.PROJECT_KEK_FILE
+    if key_file and not pathlib.Path(key_file).exists():
+        # Het secret is optional in het deployment, dus zonder secret mount kubelet een lege
+        # map. Dan is "geen KEK" de bedoelde uitkomst en geen opstartfout; een bestand dat er
+        # wel is maar leeg of onleesbaar blijft dat wel.
+        logger.warning(f"Project-KEK niet gemount op {key_file}; projectsleutels blijven op de platformsleutel")
+        key_file = None
+    content = load_sops_age_key_content(key_file, None, label="Project-KEK")
+    if content:
+        public_key, private_key = parse_sops_age_key_content(content)
+        if public_key and not settings.PROJECT_KEK_PUBLIC_KEY:
+            settings.PROJECT_KEK_PUBLIC_KEY = public_key
+        if private_key and not settings.PROJECT_KEK_PRIVATE_KEY:
+            settings.PROJECT_KEK_PRIVATE_KEY = private_key
+        if not (settings.PROJECT_KEK_PUBLIC_KEY and settings.PROJECT_KEK_PRIVATE_KEY):
+            raise RuntimeError(f"Project-KEK bevat geen AGE-sleutelpaar: {settings.PROJECT_KEK_FILE}")
+    logger.info(f"Settings PROJECT_KEK_FILE: {settings.PROJECT_KEK_FILE or 'NOT SET'}")
+    logger.info(f"Settings PROJECT_KEK: {'SET' if settings.PROJECT_KEK_PRIVATE_KEY else 'NOT SET'}")
+
+
 def _get_settings() -> Settings:
     settings = Settings()
 
@@ -718,16 +945,18 @@ def _get_settings() -> Settings:
         log_file_path=settings.LOG_FILE_PATH,
         log_errors_to_file=settings.LOG_ERRORS_TO_FILE,
         log_errors_file_path=settings.LOG_ERRORS_FILE_PATH,
+        level=settings.LOG_LEVEL,
     )
 
     # Detailed logging for SOPS key configuration
     logger.info("=== SOPS Age Key Configuration Debug ===")
 
-    logger.info(f"Environment SOPS_AGE_KEY_CONTENT: {'SET' if os.environ.get('SOPS_AGE_KEY_CONTENT') else 'NOT SET'}")
-    if os.environ.get("SOPS_AGE_KEY_CONTENT"):
-        content_length = len(os.environ.get("SOPS_AGE_KEY_CONTENT", ""))
-        logger.info(f"SOPS_AGE_KEY_CONTENT length: {content_length} characters")
+    settings.SOPS_AGE_KEY_CONTENT = load_sops_age_key_content(settings.SOPS_AGE_KEY_FILE, settings.SOPS_AGE_KEY_CONTENT)
+    # De sleutel hoort na het lezen niet in de omgeving te blijven staan: dan erft elk
+    # kindproces hem alsnog. child_env() weert hem ook, dit is de bron zelf.
+    os.environ.pop("SOPS_AGE_KEY_CONTENT", None)
 
+    logger.info(f"Settings SOPS_AGE_KEY_FILE: {settings.SOPS_AGE_KEY_FILE or 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_KEY_CONTENT: {'SET' if settings.SOPS_AGE_KEY_CONTENT else 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_PUBLIC_KEY: {'SET' if settings.SOPS_AGE_PUBLIC_KEY else 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_PRIVATE_KEY: {'SET' if settings.SOPS_AGE_PRIVATE_KEY else 'NOT SET'}")
@@ -742,7 +971,7 @@ def _get_settings() -> Settings:
             logger.info(f"Parsed public key: {public_key}")
         if private_key and not settings.SOPS_AGE_PRIVATE_KEY:
             settings.SOPS_AGE_PRIVATE_KEY = private_key
-            logger.info(f"Parsed private key: {private_key[:2]}...{private_key[-2:]}")
+            logger.info("Parsed private key")
 
         logger.info("Successfully parsed SOPS age keys from content")
     elif settings.SOPS_AGE_KEY_CONTENT:
@@ -765,14 +994,15 @@ def _get_settings() -> Settings:
                 logger.info(f"Parsed public key: {public_key}")
             if private_key and not settings.SOPS_AGE_PRIVATE_KEY:
                 settings.SOPS_AGE_PRIVATE_KEY = private_key
-                logger.info(f"Parsed private key: {private_key[:2]}...{private_key[-2:]}")
+                logger.info("Parsed private key")
 
             logger.info("Successfully parsed SOPS age keys from local file content")
 
-    # Log the API token for debugging
-    logger.debug(f"Settings loaded with API_TOKEN: {settings.API_TOKEN[:5]}... (first 5 chars)")
+    _load_project_kek(settings)
+
+    logger.debug(f"Settings loaded with API_TOKEN: {'SET' if settings.API_TOKEN else 'NOT SET'}")
     if settings.SOPS_AGE_PUBLIC_KEY:
-        logger.debug(f"SOPS public key available: {settings.SOPS_AGE_PUBLIC_KEY[:10]}...")
+        logger.debug("SOPS public key available")
     if settings.SOPS_AGE_PRIVATE_KEY:
         logger.debug("SOPS private key available")
 

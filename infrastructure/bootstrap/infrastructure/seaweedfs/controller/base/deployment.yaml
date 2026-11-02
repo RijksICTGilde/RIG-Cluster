@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seaweedfs
+  namespace: rig-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seaweedfs
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: seaweedfs
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+        # Zelfde reden als bij minio: anders zet de kubelet bij elke start de ownership van
+        # elk bestand op de PVC om, wat op odcn buiten het rollout-venster viel.
+        fsGroupChangePolicy: OnRootMismatch
+      # Zonder admin-identiteit zet SeaweedFS isAuthEnabled op false en staat de S3-poort
+      # anoniem open (RC-331, rij G14). Een leeg sleutelpaar is daarom een harde fout: deze
+      # container weigert en de pod start niet. Hetzelfde image, dus geen tweede pull.
+      initContainers:
+      - name: eis-admin-identiteit
+        image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+        command:
+        - sh
+        - -c
+        - |
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "seaweedfs-credentials heeft geen admin-sleutelpaar; zonder identiteit staat de S3-poort open" >&2
+            exit 1
+          fi
+        envFrom:
+        - secretRef:
+            name: seaweedfs-credentials
+        # Geen runAsUser hier: die komt van de pod, en op odcn haalt de overlay hem weg
+        # omdat OpenShift de UID uit het bereik van de namespace toekent.
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          limits:
+            memory: 64Mi
+            cpu: 100m
+          requests:
+            memory: 16Mi
+            cpu: 10m
+      containers:
+      - name: seaweedfs
+        # Op een digest gepind: de eisentabel hangt aan precies deze build en upstream beweegt
+        # door. Gaat deze omhoog, dan gaat SEAWEEDFS_IMAGE in tests/e2e/helpers/seaweedfs.py mee;
+        # test_stap1_pod_is_ready van de eisensuite toetst dat de draaiende pod op die digest staat.
+        image: chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+        # Het entrypoint van het image doet als root een chown, dus de binary direct aanroepen;
+        # `weed mini` zou WebDAV en een Admin UI aanzetten. De IAM-API staat uit omdat het
+        # beheer over de filer-gRPC loopt en de S3-poort de enige is die tenants bereiken.
+        #
+        # -volume.max=0 en niet een vast getal: elke bucket is een eigen collection en vraagt
+        # zijn eigen volume, dus met max 3 gaf een PutObject in de vierde bucket een
+        # InternalError (gemeten, rij G12). Wat er echt op past begrenst de PVC; 256 MB per
+        # volume houdt de .idx-bestanden en de filer-metadata naast een object van 100 MiB.
+        command:
+        - weed
+        - server
+        - -dir=/data
+        - -filer
+        - -s3
+        - -s3.iam=false
+        - -s3.port.iceberg=0
+        - -s3.port.lance=0
+        - -master.volumeSizeLimitMB=256
+        - -volume.max=0
+        - -metricsPort=9327
+        ports:
+        - containerPort: 8333
+          name: s3
+        - containerPort: 18333
+          name: s3-grpc
+        - containerPort: 18888
+          name: filer-grpc
+        - containerPort: 19333
+          name: master-grpc
+        - containerPort: 9327
+          name: metrics
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          runAsGroup: 1000
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          limits:
+            memory: 1Gi
+            cpu: 500m
+            ephemeral-storage: "1Gi"
+          requests:
+            cpu: 50m
+            # Gemeten na de hele eisentabel-meting (rij M2): 502 MiB in gebruik, met een
+            # object van 24 MiB en acht buckets erop. Een request van 256Mi zoals minio
+            # zou dus structureel te laag staan.
+            memory: 512Mi
+            ephemeral-storage: "1Gi"
+        envFrom:
+        - secretRef:
+            name: seaweedfs-credentials
+        volumeMounts:
+        - name: seaweedfs-data
+          mountPath: /data
+        # weed zet zijn lokale gRPC-sockets in /tmp, en de root staat read-only.
+        - name: tmp
+          mountPath: /tmp
+        # /healthz op de S3-poort antwoordt zonder sleutel en pas als die poort er is, dus
+        # readiness betekent hier "klaar voor S3" en niet alleen "proces leeft".
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8333
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8333
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: seaweedfs-data
+        persistentVolumeClaim:
+          claimName: seaweedfs-data
+      - name: tmp
+        emptyDir: {}

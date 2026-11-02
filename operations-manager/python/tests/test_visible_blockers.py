@@ -46,7 +46,7 @@ def _project(services: list[Any] | None = None) -> dict[str, Any]:
         "name": "mijn-project",
         "description": "test",
         "clusters": ["odcn-production"],
-        "users": [{"email": "a@b.nl", "role": "admin"}],
+        "users": [{"email": "a@b.nl", "roles": ["admin", "ops"]}],
         "services": services if services is not None else [],
         "components": [
             {

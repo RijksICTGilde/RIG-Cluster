@@ -31,7 +31,7 @@ def _ctx(
     components: list[dict[str, Any]] | None = None,
     prometheus: bool = True,
     cluster: str = "test-cluster",
-    user_role: str = "admin",
+    user_roles: list[str] | None = None,
 ) -> DeploymentPageContext:
     return DeploymentPageContext(
         project_data={
@@ -41,7 +41,7 @@ def _ctx(
             "deployments": [DEPLOYMENT],
         },
         deployment=dict(DEPLOYMENT, cluster=cluster),
-        user_role=user_role,
+        user_roles=user_roles,
         current_cluster="test-cluster",
         backend_available={"prometheus": prometheus, "backups": True},
     )
@@ -190,11 +190,10 @@ def test_service_owned_routes_are_mounted_exactly_once() -> None:
 #: omgevingsvariabelen die er al stonden. Diezelfde schuld, dezelfde reden dat het er een
 #: is, en hij is met dat blok meegekomen zonder hier te worden opgeschreven -- waardoor
 #: deze poort rood stond. Hij hoort in dezelfde beweging weg als de regels hierboven.
+#: RC-388: de drie user-env-vars-regels zijn vervallen - de waarden staan niet meer in de
+#: generieke sjablonen (alleen namen en tellers), dus de schuld is daar ingelost.
 _SYSTEM_SERVICE_DEBT = {
-    ("project-tabs.html.j2", "user-env-vars"),
     ("project-tabs.html.j2", "aliases"),
-    ("_env-vars.html.j2", "user-env-vars"),
-    ("_section-deployments.html.j2", "user-env-vars"),
 }
 
 

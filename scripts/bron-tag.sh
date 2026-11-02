@@ -7,6 +7,8 @@
 # de buildcontext. `-c core.quotePath=false` houdt een naam met unicode of een spatie
 # leesbaar voor `cat`.
 #
+# Via git hash-object, niet sha1sum: het bestaat niet op macOS, en brak alle taken.
+#
 # Gebruik: scripts/bron-tag.sh <pad>...   (de paden waaruit de image wordt gebouwd)
 #
 # Exitcodes: 0 = klaar, 2 = fout gebruik.
@@ -26,6 +28,6 @@ if [ -n "$(git status --porcelain -- "$@")" ]; then
             # doden, en daarmee elke taak: SANDBOX_OM_TAG is een globale Taskfile-var.
             cat "$f" 2>/dev/null || true
         done
-    } | sha1sum | cut -c1-7)"
+    } | git hash-object --stdin | cut -c1-7)"
 fi
 echo "$tag"

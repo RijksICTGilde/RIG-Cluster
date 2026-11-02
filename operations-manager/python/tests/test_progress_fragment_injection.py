@@ -15,11 +15,19 @@ The first fix is what makes it safe; the second keeps made-up names out of the t
 the first place (and gives the user a 404 at the click instead of a task that fails).
 """
 
+from __future__ import annotations
+
+from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.core.step_up import STEP_UP_SESSION_KEY
+
+if TYPE_CHECKING:
+    from fastapi.responses import HTMLResponse
 
 PAYLOAD = "{{ 7 * 7 }}"
 
@@ -125,8 +133,16 @@ def test_the_wizard_progress_modal_shows_text_instead_of_executing_it() -> None:
 
 
 def _request(email: str = "admin@example.com") -> MagicMock:
+    """Een verzoek met een VERSE step-up: de verwijderroutes vragen er een.
+
+    Deze toetsen gaan over de 404 op een onbekend onderdeel, niet over de tweede factor;
+    die staat in ``tests/test_delete_routes_step_up.py``. Het pad moet een echte string
+    zijn, want de decorator kiest op ``/api/`` tussen de dialoog en het problem-detail.
+    """
     request = MagicMock()
     request.state.user = {"email": email}
+    request.session = {STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()}
+    request.url.path = "/projects/demo/delete-component/x"
     return request
 
 
@@ -156,7 +172,7 @@ async def test_deleting_a_component_the_project_does_not_have_is_a_404() -> None
     with (
         patch.object(router, "get_project_store", return_value=_store(PROJECT)),
         patch.object(router, "is_user_authorized_for_project", return_value=True),
-        patch.object(router, "get_user_role_for_project", return_value="admin"),
+        patch.object(router, "get_user_roles_for_project", return_value=["admin", "ops"]),
         patch.object(router, "create_task_and_render_progress", new=AsyncMock()) as create,
         pytest.raises(HTTPException) as excinfo,
     ):
@@ -172,7 +188,7 @@ async def test_reprocessing_a_deployment_the_project_does_not_have_is_a_404() ->
     with (
         patch.object(router, "get_project_store", return_value=_store(PROJECT)),
         patch.object(router, "is_user_authorized_for_project", return_value=True),
-        patch.object(router, "get_user_role_for_project", return_value="admin"),
+        patch.object(router, "get_user_roles_for_project", return_value=["admin", "ops"]),
         patch.object(router, "create_task_and_render_progress", new=AsyncMock()) as create,
         pytest.raises(HTTPException) as excinfo,
     ):
@@ -186,7 +202,7 @@ async def test_deleting_an_attachment_the_project_does_not_have_is_a_404() -> No
     from opi.web import router_attachments
 
     with (
-        patch.object(router_attachments, "require_project_edit_access", return_value=(_project(PROJECT), "a@b.c")),
+        patch.object(router_attachments, "authorized_project", return_value=_project(PROJECT)),
         patch.object(router_attachments, "create_task_and_render_progress", new=AsyncMock()) as create,
         pytest.raises(HTTPException) as excinfo,
     ):
@@ -200,7 +216,7 @@ async def test_an_attachment_the_project_does_have_starts_the_task() -> None:
     from opi.web import router_attachments
 
     with (
-        patch.object(router_attachments, "require_project_edit_access", return_value=(_project(PROJECT), "a@b.c")),
+        patch.object(router_attachments, "authorized_project", return_value=_project(PROJECT)),
         patch.object(router_attachments, "create_task_and_render_progress", new=AsyncMock()) as create,
     ):
         await router_attachments.delete_attachment(_request(), "demo", "a1")
@@ -256,3 +272,53 @@ async def test_whoever_started_the_task_may_follow_it_to_the_end() -> None:
 
     assert task is not None
     authorized.assert_not_called()
+
+
+async def _modal_progress(email: str, task: dict | None, *, member: bool) -> HTMLResponse:
+    """``modal_wizard_progress_html`` met alleen de taakservice weggenomen.
+
+    De poort erachter (``_require_task_of_project``) draait echt: dat is wat gemeten wordt.
+    """
+    from opi.web import router
+    from opi.web.router_detail_edit import modal_wizard_progress_html
+
+    task_service = MagicMock()
+    task_service.get_task = AsyncMock(return_value=task)
+
+    with (
+        patch("opi.core.task_helpers.get_task_service", return_value=task_service),
+        patch.object(router, "is_user_authorized_for_project", return_value=member),
+    ):
+        return await modal_wizard_progress_html(_request(email), "demo", "t-1")
+
+
+async def test_de_modal_geeft_een_taak_van_een_ander_project_niet_vrij() -> None:
+    """Hetzelfde gat als in de zusterroute: het taak-id alleen was genoeg om mee te kijken."""
+    response = await _modal_progress("lid@example.com", {"task_id": "t-1", "project_name": "ander"}, member=True)
+
+    assert response.status_code == 404
+
+
+async def test_de_modal_geeft_een_niet_lid_geen_voortgang() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        await _modal_progress("vreemde@example.com", {"task_id": "t-1", "project_name": "demo"}, member=False)
+
+    assert excinfo.value.status_code == 403
+
+
+async def test_de_modal_geeft_een_lid_het_fragment() -> None:
+    response = await _modal_progress(
+        "lid@example.com",
+        {"task_id": "t-1", "project_name": "demo", "status": "running", "current_step": "Verwerken"},
+        member=True,
+    )
+
+    assert response.status_code == 200
+    assert "Verwerken" in response.body.decode()
+
+
+async def test_de_modal_geeft_een_onbekende_taak_een_404() -> None:
+    """Hetzelfde antwoord als een taak van een ander project, zodat het niet zegt welk van de twee."""
+    response = await _modal_progress("lid@example.com", None, member=True)
+
+    assert response.status_code == 404

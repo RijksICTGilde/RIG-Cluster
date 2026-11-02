@@ -11,8 +11,9 @@ import re
 from typing import Any
 
 # URL-path charset voor tenant-bestuurde component match/rewrite waarden;
-# voorkomt nginx-snippet-injection in ingress.yaml.jinja.
-SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*$")
+# voorkomt nginx-snippet-injection in ingress.yaml.jinja. ``\Z`` en niet ``$``: dat laatste
+# matcht in Python ook voor een afsluitende newline, zodat '/metrics\n' erdoor kwam.
+SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*\Z")
 
 
 def sanitize_path_value(value: Any, field: str) -> str:

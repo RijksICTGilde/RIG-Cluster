@@ -13,7 +13,7 @@ from typing import Any
 from ruamel.yaml import YAML
 
 from opi.core.config import settings
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 
 _TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "configs" / "project-template.yaml"
 _PLACEHOLDER_RE = re.compile(r"\$\{(\w+)\}")
@@ -33,7 +33,7 @@ def _resolve_placeholders(value: Any) -> Any:
 def load_project_template() -> dict[str, Any]:
     """Load and return the project template with settings resolved.
 
-    The template is stamped with ``LATEST_SCHEMA_VERSION`` so newly created
+    The template is stamped with the latest schema version so newly created
     projects are already at the current schema and need no migration. This matters
     because ``process_project`` commits an auto-migration of any file it loads that
     was migrated on read; on create that write-back races the just-pushed project
@@ -44,5 +44,5 @@ def load_project_template() -> dict[str, Any]:
     with _TEMPLATE_PATH.open() as f:
         data = yaml.load(f)
     resolved = _resolve_placeholders(data or {})
-    resolved["schema-version"] = LATEST_SCHEMA_VERSION
+    resolved["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
     return resolved

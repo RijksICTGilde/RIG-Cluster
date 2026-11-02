@@ -17,7 +17,7 @@ classifiers = [
 dependencies = [
     "fastapi==0.135.1",
     "alembic>=1.16.1",
-    "pydantic==2.12.5",
+    "pydantic==2.14.1",
     "jinja2>=3.1.6",
     "pydantic-settings>=2.14.2",
     "psycopg2-binary>=2.9.10",
@@ -30,7 +30,7 @@ dependencies = [
     "fastapi-csrf-protect>=1.0.3",
     "sqlalchemy[asyncio]>=2.0.41",
     "sqlalchemy-utils>=0.41.2",
-    "authlib>=1.6.12", # CVE-2026-44681 open redirect
+    "authlib>=1.9.1", # CVE-2026-44681 open redirect; CVE-2026-96760, CVE-2026-114615, CVE-2026-114616
     "aiosqlite>=0.21.0",
     "asyncpg>=0.30.0",
     "async-lru>=2.0.5",
@@ -53,11 +53,11 @@ dependencies = [
     # Gepind op een commit. Die pin is de reden dat dit veilig is: de NLDD-afgeleide
     # componentlaag schuift met een bump mee, en meer dan duizend aanroepen mogen niet
     # stil van vorm veranderen.
-    "lord-of-the-components @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@172300af100ada5e747f340d0944342bd33a338e#subdirectory=python",
-    "lotc-rvo @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@172300af100ada5e747f340d0944342bd33a338e#subdirectory=packages/lotc-rvo",
-    "lotc-nldd @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@172300af100ada5e747f340d0944342bd33a338e#subdirectory=packages/lotc-nldd",
-    "lotc-layout @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@172300af100ada5e747f340d0944342bd33a338e#subdirectory=packages/lotc-layout",
-    "lotc-forms @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@172300af100ada5e747f340d0944342bd33a338e#subdirectory=packages/lotc-forms",
+    "lord-of-the-components @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=python",
+    "lotc-rvo @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-rvo",
+    "lotc-nldd @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-nldd",
+    "lotc-layout @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-layout",
+    "lotc-forms @ git+https://github.com/RijksICTGilde/lord-of-the-components.git@dc194435b24f9ffed4cea12692fa369b59f2d65d#subdirectory=packages/lotc-forms",
     "beautifulsoup4>=4.13.4",
     "lxml>=6.0.1",
     "python-keycloak>=5.3.0",
@@ -77,6 +77,13 @@ dependencies = [
     # Ontsleutelen loopt hiermee in het proces in plaats van via een fork van het
     # age-binary per veld; zie features/age-ontsleuteling-in-proces.md.
     "pyrage>=1.4.0",
+    # De QR van een OTP-registratie wordt hiermee server-side een inline SVG. Een
+    # script van een CDN op een pagina die een geheim draagt is geen optie; zie de
+    # aanwijzing in features/keycloak-realm-admin-otp.md.
+    "segno>=1.6.1",
+    # Zet SECURITY.md om voor de pagina /security. Kwam al transitief mee; een import
+    # die alleen via een ander pakket binnenkomt valt weg zodra dat pakket hem laat vallen.
+    "markdown-it-py>=4.0.0",
 ]
 
 [dependency-groups]
@@ -94,6 +101,7 @@ test = [
     "pytest-minio-mock>=0.4.17",
     "pytest-timeout>=2.3.1",
     "pytest-randomly>=3.16.0",
+    "schemathesis>=4.0",
 ]
 dev = [
     "ruff>=0.11.11",
@@ -160,7 +168,6 @@ ignore = [
     # S rules - security
     "S104",     # Binding to all interfaces (intentional server config)
     "S108",     # Probable insecure temp file (intentional config paths)
-    "S701",     # Jinja2 autoescape
     # ERA rules
     "ERA001",   # Commented out code
     # PT rules - pytest
@@ -169,10 +176,14 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions
-"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "ANN201", "ANN401", "TRY300", "S106"]
-"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "ANN201", "ANN401", "TRY300", "S106"]
-# OPI code has pre-existing issues to be fixed separately
-"opi/**.py" = ["S105", "S106", "S603", "S607", "S608", "C901"]
+"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+# Het harnas van de aanvalsproef is testcode: asserts, wegwerpsleutels en subprocess-aanroepen
+# horen erbij.
+"security_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+# C901 blijft: de complexiteitsdrempel van bestaande orchestratiefuncties is een eigen
+# opruimtaak, niet een beveiligingsregel.
+"opi/**.py" = ["C901"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 30
@@ -215,6 +226,9 @@ command_line = "-m pytest"
 relative_files = true # needed for sonarcloud code coverage
 omit = [
     "tests/*",
+    # Het harnas van de aanvalsproef (security-proof) is toetslaag, geen applicatiecode onder
+    # de 90%-eis; hij draait tegen een eigen wegwerp-sandbox en niet in de standaardrun.
+    "security_tests/*",
     # Operational/diagnostic scripts are not application code under the 90% bar.
     # Some are imported by tests (e.g. probe-spec drift, upgrade-safety), which
     # would otherwise pull their partial coverage into the application metric.

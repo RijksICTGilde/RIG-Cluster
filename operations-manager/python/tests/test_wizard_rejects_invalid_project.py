@@ -46,10 +46,9 @@ def _valid_project(name: str = "nep-wfo") -> dict[str, Any]:
         "name": name,
         "display-name": "Nep WFO",
         "clusters": ["odcn-production"],
-        "users": [{"email": OWNER_EMAIL, "role": "owner"}],
+        "users": [{"email": OWNER_EMAIL, "roles": ["admin", "ops"]}],
         "components": [{"name": "frontend", "image": "nginx:latest"}],
         "config": {
-            "api-key": AGE_BLOB,
             "age-public-key": "age1publicpublicpublic",
             "age-private-key": AGE_BLOB,
         },
@@ -185,7 +184,7 @@ async def test_edit_rejects_invalid_project_before_saving() -> None:
     stored = _valid_project()
 
     with (
-        patch("opi.web.project_edit_security.require_project_edit_access"),
+        patch("opi.web.router_wizard.authorize"),
         _patch_project_manager(stored, captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
         pytest.raises(ProjectSchemaError) as exc,
@@ -207,7 +206,7 @@ async def test_edit_saves_a_valid_project() -> None:
     stored = _valid_project()
 
     with (
-        patch("opi.web.project_edit_security.require_project_edit_access"),
+        patch("opi.web.router_wizard.authorize"),
         _patch_project_manager(stored, captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):

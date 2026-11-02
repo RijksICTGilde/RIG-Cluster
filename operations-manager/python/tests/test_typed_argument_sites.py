@@ -57,6 +57,31 @@ class TestMinioPurgeUsesTheManagedCluster:
         purge.assert_awaited_once()
         assert results["errors"] == []
 
+    async def test_alias_gets_bare_host_port_not_a_url(self) -> None:
+        """``configure_alias`` plakt zelf het scheme ervoor (uit ``secure``); een
+        aanroeper die een volledige URL als host meegeeft eindigt met
+        ``http://http://...``, wat mc afkeurt als Invalid URL."""
+        from opi.jobs import reconciliation
+        from opi.services.marked_for_deletion_service import MarkedForDeletionService
+
+        service = AsyncMock(spec=MarkedForDeletionService)
+        results: dict[str, Any] = {"purged": [], "errors": []}
+        minio_conn = AsyncMock()
+
+        with (
+            patch.object(reconciliation.settings, "CLUSTER_MANAGER", "odcn-production"),
+            patch.object(reconciliation.settings, "MINIO_USE_TLS", True),
+            patch.object(reconciliation, "create_minio_connector", return_value=minio_conn),
+            patch("opi.core.cluster_config.get_minio_host", return_value="minio.rig"),
+            patch("opi.core.cluster_config.get_minio_port", return_value=9000),
+            patch.object(reconciliation, "_purge_minio_bucket", new=AsyncMock()),
+        ):
+            await reconciliation._purge_marks([self._bucket_mark()], service, results, dry_run=False)
+
+        args, kwargs = minio_conn.configure_alias.await_args
+        assert args[1] == "minio.rig:9000"
+        assert kwargs["secure"] is True
+
 
 class TestServiceConfigSectionIsRequired:
     """A service section listed as a wizard step may not be None.

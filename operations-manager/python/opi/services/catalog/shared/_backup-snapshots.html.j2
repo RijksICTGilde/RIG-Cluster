@@ -13,15 +13,16 @@
       omheen - dat zou stilzwijgend verdwijnen.
     - ``id="backups-snapshots-<naam>"`` en ``id="restore-btn-<naam>"``: die twee id's zet
       shared/section-backups.html.j2 neer en ze worden hier gevuld.
-    - De herstelknop verschijnt alleen waar er iets te herstellen is, en opent de gedeelde
-      dialoog met dezelfde flow-id en dezelfde meegegeven deployment.
+    - De herstelknop verschijnt alleen waar er iets te herstellen is EN voor wie mag
+      terugzetten (``mag_terugzetten``, RC-323), en opent de gedeelde dialoog met dezelfde
+      flow-id en dezelfde meegegeven deployment.
 #}
 {% for deployment in deployments %}
 {% set backups = backups_by_deployment.get(deployment.name, []) %}
 <div id="backups-snapshots-{{ deployment.name }}" hx-swap-oob="true">
     {% include "shared/_backup-snapshots-one.html.j2" %}
 </div>
-{% if backups %}
+{% if backups and mag_terugzetten %}
 
 {% set herstellen = "openEditModal('modal-restore', 'Backup herstellen', {deployment: '" ~ deployment.name ~ "'})" %}
 <span id="restore-btn-{{ deployment.name }}" hx-swap-oob="true">

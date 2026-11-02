@@ -313,12 +313,6 @@ def test_clean_run_ignores_newly_added_patterns(monkeypatch, captured_ntfy):
             ),
             _line(
                 "WARNING",
-                "opi.manager.db_console_manager",
-                "No read-only database credentials for deployment 'pr-5'; falling back to read-write user. "
-                "Reprocess the deployment to provision them.",
-            ),
-            _line(
-                "WARNING",
                 "opi.api.logs_websocket_router",
                 'kubectl stderr: Error from server (BadRequest): container "app" in pod '
                 '"pr-5-nmcapi-56f67cd7fd-5xrrl" is waiting to start: ContainerCreating',

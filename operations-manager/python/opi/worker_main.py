@@ -21,12 +21,14 @@ async def main() -> None:
     from opi.core.database_pool import DatabasePool
     from opi.core.task_worker import TaskWorker
 
-    # Initialize database pool
+    # Initialize database pool. De app-rol, net als de hoofdpool van de frontend: de
+    # worker raakt alleen OPI's eigen tabellen (RC-410).
     pool = DatabasePool(
         host=settings.DATABASE_HOST,
-        user=settings.DATABASE_ADMIN_NAME,
-        password=settings.DATABASE_ADMIN_PASSWORD,
+        user=settings.DATABASE_APP_USER,
+        password=settings.database_app_password,
         database=settings.DATABASE_NAME,
+        sslmode=settings.DATABASE_SSLMODE,
     )
     await pool.initialize()
 
@@ -54,6 +56,8 @@ async def main() -> None:
         handle_clone_database,
         handle_refresh_deployment,
         handle_refresh_project,
+        handle_rotate_credentials,
+        handle_rotate_project_key,
     )
     from opi.core.task_handlers_project import (
         handle_create_project,
@@ -74,9 +78,11 @@ async def main() -> None:
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+    worker.register_handler(TaskType.ROTATE_CREDENTIALS, handle_rotate_credentials)
     worker.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
     worker.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
     worker.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
+    worker.register_handler(TaskType.ROTATE_PROJECT_KEY, handle_rotate_project_key)
     worker.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
     worker.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
     worker.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)

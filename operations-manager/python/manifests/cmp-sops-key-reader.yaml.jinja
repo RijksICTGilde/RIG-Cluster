@@ -1,0 +1,30 @@
+{# Precies een Secret, precies 'get': de repo-server rendert hier een app en mag niets
+   anders zien. Staat naast het Secret dat hij leest, zodat de twee samen komen en gaan. #}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ role_name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
+  labels:
+    created-by: operations-manager
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ secret_name | yaml_scalar }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ role_name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
+  labels:
+    created-by: operations-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ role_name | yaml_scalar }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ service_account | yaml_scalar }}
+    namespace: {{ argo_namespace | yaml_scalar }}

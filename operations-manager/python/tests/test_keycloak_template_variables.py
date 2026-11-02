@@ -35,9 +35,17 @@ OPTIONAL_CONTEXT_KEYS = frozenset({"frontend_redirect_uris"})
 #: Names a template binds itself with `as:` (forEach loop vars and captured outputs).
 _BINDING_PATTERN = re.compile(r"^\s*-?\s*as:\s*([a-zA-Z_][a-zA-Z0-9_]*)", re.MULTILINE)
 
-#: Templates a PROJECT realm can be created from: everything except the bootstrap configs
-#: and the operations-manager's own blueprint, which render against other contexts.
-PLATFORM_ONLY = {"bootstrap.yaml", "bootstrap-local.yaml", "bootstrap-sandbox.yaml", "operations-manager-realm.yaml"}
+#: Templates a PROJECT realm can be created from: everything except the bootstrap configs,
+#: the operations-manager's own blueprint and the master-realm hardening, which render
+#: against other contexts. ``master-realm.yaml`` gets its ``events_expiration_seconds``
+#: from ``ensure_master_realm_hardening()``, never from a project context.
+PLATFORM_ONLY = {
+    "bootstrap.yaml",
+    "bootstrap-local.yaml",
+    "bootstrap-sandbox.yaml",
+    "operations-manager-realm.yaml",
+    "master-realm.yaml",
+}
 PROJECT_TEMPLATES = sorted(p for p in TEMPLATE_DIR.glob("*.yaml") if p.name not in PLATFORM_ONLY)
 
 

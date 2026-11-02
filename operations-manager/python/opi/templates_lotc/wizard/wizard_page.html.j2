@@ -47,7 +47,7 @@
 {% endblock %}
 
 {% block additional_scripts %}
-<script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
-<script src="{{ static_url('js/codemirror-kv.js') }}"></script>
-<script src="{{ static_url('js/wizard.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-kv.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/wizard.js') }}"></script>
 {% endblock %}

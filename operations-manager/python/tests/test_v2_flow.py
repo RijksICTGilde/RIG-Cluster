@@ -298,7 +298,9 @@ class TestUpdateImageFlow:
 class TestCloneDatabaseFlow:
     """Verify create_async_task is called correctly for clone database."""
 
-    def test_task_type_and_names(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_task_type_and_names(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         v2_client.post(
@@ -319,7 +321,9 @@ class TestCloneDatabaseFlow:
         assert call_kwargs["project_name"] == "test-project"
         assert call_kwargs["deployment_name"] == "staging"
 
-    def test_payload_contains_clone_data(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_payload_contains_clone_data(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         v2_client.post(
@@ -339,12 +343,12 @@ class TestCloneDatabaseFlow:
         payload = mock_task_service.create_task.call_args[1]["payload"]
         assert payload["project_name"] == "test-project"
         assert payload["deployment_name"] == "production"
-        assert payload["sourceHost"] == "db.example.com"
-        assert payload["sourcePort"] == 5432
-        assert payload["sourceUsername"] == "admin"
-        assert payload["sourceDatabase"] == "appdb"
-        assert payload["sourceSchema"] == "app"
-        assert payload["forceClone"] is True
+        assert payload["source_host"] == "db.example.com"
+        assert payload["source_port"] == 5432
+        assert payload["source_username"] == "admin"
+        assert payload["source_database"] == "appdb"
+        assert payload["source_schema"] == "app"
+        assert payload["force_clone"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +359,9 @@ class TestCloneDatabaseFlow:
 class TestCloneBucketFlow:
     """Verify create_async_task is called correctly for clone bucket."""
 
-    def test_task_type_and_names(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_task_type_and_names(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         v2_client.post(
@@ -375,7 +381,9 @@ class TestCloneBucketFlow:
         assert call_kwargs["project_name"] == "test-project"
         assert call_kwargs["deployment_name"] == "staging"
 
-    def test_payload_contains_clone_data(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_payload_contains_clone_data(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         v2_client.post(
@@ -395,11 +403,11 @@ class TestCloneBucketFlow:
         payload = mock_task_service.create_task.call_args[1]["payload"]
         assert payload["project_name"] == "test-project"
         assert payload["deployment_name"] == "main"
-        assert payload["sourceHost"] == "minio.example.com"
-        assert payload["sourceAccessKey"] == "admin"
-        assert payload["sourceBucket"] == "data"
-        assert payload["sourceSecure"] is True
-        assert payload["forceClone"] is True
+        assert payload["source_host"] == "minio.example.com"
+        assert payload["source_access_key"] == "admin"
+        assert payload["source_bucket"] == "data"
+        assert payload["source_secure"] is True
+        assert payload["force_clone"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -686,6 +694,26 @@ class TestConfigureServiceFlow:
         )
         assert response.status_code == 422
         mock_task_service.create_task.assert_not_called()
+
+    def test_a_wildcard_redirect_uri_is_rejected_before_enqueue(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        # De API is de tweede weg naar additional_redirect_uris, naast het formulier:
+        # dezelfde regel, en een afwijzing voordat er een taak staat.
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+            json={"template": "sso-only", "additional_redirect_uris": ["*"]},
+        )
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+        ok = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+            json={"template": "sso-only", "additional_redirect_uris": ["https://app.rijksapps.nl/*"]},
+        )
+        assert ok.status_code == 202
 
     def test_unsupported_target_has_no_route(self, v2_client: TestClient) -> None:
         # keycloak carries no config at the component layer, so no such route exists.

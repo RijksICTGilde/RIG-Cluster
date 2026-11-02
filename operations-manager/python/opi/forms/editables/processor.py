@@ -17,6 +17,7 @@ from opi.forms.editables.editable import ContextAwareEditableValidator, WidgetTy
 from opi.forms.editables.merge import deep_merge_into
 from opi.forms.editables.path import get_value, resolve_path
 from opi.forms.editables.rendered_sequences import sequence_was_not_drawn
+from opi.forms.editables.sequence_identity import match_by_identity
 from opi.forms.editables.service_path import (
     is_service_config_path,
     smart_delete_value,
@@ -54,24 +55,6 @@ def _coerce_to_list(value: Any) -> list[Any]:
     if isinstance(value, list):
         return value
     return [value]
-
-
-def _match_original_item(item: Any, originals: list[Any], index: int) -> Any:
-    """Find the pre-edit item matching a submitted sequence item.
-
-    Matches on a stable identity key (``reference`` or ``name``) so add / remove /
-    reorder are handled; falls back to positional index.
-    """
-    if isinstance(item, dict):
-        for key in ("reference", "name"):
-            ident = item.get(key)
-            if ident:
-                for orig in originals:
-                    if isinstance(orig, dict) and orig.get(key) == ident:
-                        return orig
-    if 0 <= index < len(originals):
-        return originals[index]
-    return None
 
 
 def _prune_paths(item: dict[str, Any], rel_paths: list[str]) -> dict[str, Any]:
@@ -544,7 +527,12 @@ class EditableFormProcessor:
                 value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
-            elif vis.widget == WidgetType.CHECKBOX_GROUP:
+            elif vis.widget in (WidgetType.CHECKBOX_GROUP, WidgetType.SERVICE_CARDS):
+                # Een selectie die deze sectie RENDERT is leeg als de inzending er niets
+                # over zegt: een vinkje dat uit staat stuurt niets mee. Zonder de
+                # omzetting naar [] viel de kaartenselectie in de tak hieronder, waar
+                # ``None`` "ongewijzigd" betekent, en bleef de laatst overgebleven dienst
+                # staan: uitvinken lukte alleen zolang er nog een andere dienst aan stond.
                 value = _coerce_to_list(_read_submitted(submitted, ed))
                 value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
@@ -739,7 +727,7 @@ class EditableFormProcessor:
         merged_items: list[Any] = []
         originals = original_items if isinstance(original_items, list) else []
         for idx, item in enumerate(items):
-            orig = _match_original_item(item, originals, idx)
+            orig = match_by_identity(item, originals, idx)
             if isinstance(item, dict) and isinstance(orig, dict):
                 base = _prune_paths(copy.deepcopy(orig), _managed_rel(idx))
                 merged_items.append(deep_merge_into(base, copy.deepcopy(item)))
@@ -763,18 +751,20 @@ class EditableFormProcessor:
 
         # In edit mode, readonly fields aren't rendered in the form and are
         # therefore absent from the submission.  Restore their values from
-        # the original data so they don't get silently dropped.
+        # the original data so they don't get silently dropped. Paired on the same key as
+        # the merge above: on index, a row behind a removed row got its neighbour's name.
         if edit_mode and isinstance(original_items, list):
             result_items = smart_get_value(result, ed.yaml_path) or []
-            for i in range(min(len(result_items), len(original_items))):
-                if not (isinstance(result_items[i], dict) and isinstance(original_items[i], dict)):
+            for i, result_item in enumerate(result_items):
+                orig = match_by_identity(result_item, originals, i)
+                if not (isinstance(result_item, dict) and isinstance(orig, dict)):
                     continue
                 for child_vis in vis.children or []:
                     if not (child_vis.readonly or child_vis.readonly_on_edit):
                         continue
                     last_seg = child_vis.editable.yaml_path.rsplit("/", 1)[-1]
-                    if last_seg in original_items[i]:
-                        result_items[i][last_seg] = copy.deepcopy(original_items[i][last_seg])
+                    if last_seg in orig:
+                        result_item[last_seg] = copy.deepcopy(orig[last_seg])
 
         # When the sequence itself declares ``virtualize`` (e.g.
         # PERSISTENT_STORAGE_SEQUENCE in the modal-edit-component flow where
@@ -849,7 +839,7 @@ class EditableFormProcessor:
         result_items = smart_get_value(result, ed.yaml_path)
         if isinstance(result_items, list):
             for idx, res_item in enumerate(result_items):
-                orig = _match_original_item(res_item, originals, idx)
+                orig = match_by_identity(res_item, originals, idx)
                 if isinstance(res_item, dict) and isinstance(orig, dict):
                     _reorder_like(orig, res_item)
 

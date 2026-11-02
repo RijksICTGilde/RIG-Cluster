@@ -9,18 +9,22 @@ placeholder shape that lives in this tree must NOT be. That second half is the o
 guard believable: an alarm with known findings in it is an alarm people learn to walk around, and
 it is why the tree had to be cleaned before this was switched on.
 
-The three layers are wired up elsewhere, and the wiring is checked here too, because a hook or a
-job that silently stops calling the scan is the other way this rots:
+The layers are wired up elsewhere, and the wiring is checked here too, because a hook or a job
+that silently stops calling the scan is the other way this rots:
 
 * layer 1, ``.pre-commit-config.yaml`` -- local, bypassable with ``--no-verify``, accepted;
-* layer 2, ``.github/workflows/security.yml`` -- binding, scans the whole tree of the branch;
-* layer 3, GitHub push protection -- on the server, and not something a test can reach.
+* layer 2, ``.github/workflows/security.yml`` -- binding: ``secret-scan`` over the tree of the
+  branch, and ``secret-scan-history`` weekly over every blob that ever existed;
+* layer 3, ``test_this_repository_is_clean_right_now`` below -- the same tree scan, so a build
+  outside GitHub has the guard too;
+* layer 4, GitHub push protection -- on the server, and not something a test can reach.
 """
 
 from __future__ import annotations
 
 import ast
 import base64
+import json
 import re
 import shutil
 import subprocess
@@ -30,6 +34,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from opi.core.config import settings
 from opi.utils.api_keys import generate_api_key
 from opi.utils.sops import generate_sops_key_pair
@@ -41,18 +47,24 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from secret_scan import (  # noqa: E402
     BASE64_BLOB,
+    BASELINE_FILE,
     MAX_BYTES,
+    MULTILINE_RULES,
     RULES,
     SKIP_BINARY,
     SKIP_NOT_TEXT,
     SKIP_SUFFIXES,
     SKIP_TOO_LARGE,
     WALK_SKIP_DIRECTORIES,
+    BaselineEntry,
     Finding,
     age_key_is_real,
+    apply_baseline,
     decoded_blobs,
     history_blobs,
+    load_baseline,
     looks_like_a_jwt,
+    looks_like_a_real_url_credential,
     report,
     scan_files,
     scan_history,
@@ -96,6 +108,9 @@ SHORTEST_ALARM_SHAPES: tuple[tuple[str, str], ...] = (
     ("kubeconfig-token", SHORTEST_JWT),
     ("slack-token", "xox" + "b-" + "d" * 10),
     ("aws-access-key", "AKI" + "A" + "E" * 16),
+    ("gitlab-token", "glpat" + "-" + "f" * 20),
+    ("aws-secret-key", "aws" + "_secret_access_key=" + "g" * 40),
+    ("url-credential", "pg" + "://u:" + "h" * 8 + "@db"),
 )
 
 
@@ -111,6 +126,27 @@ def pem_header(label: str) -> str:
 
 def pem_block(label: str, body: str) -> str:
     return pem_header(label) + f"\n{body}\n" + "-----E" + f"ND {label}-----\n"
+
+
+def encrypted_pem_key() -> str:
+    """A real passphrase-protected PEM key, generated here so no fixed key sits in the tree."""
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"a passphrase"),
+    ).decode()
+
+
+#: The shapes ``MULTILINE_RULES`` accepts, for the base64 parametrisation below. They have no
+#: entry in ``SHORTEST_ALARM_SHAPES``: that table pins the base64 THRESHOLD, and a key with two
+#: lines of body in it clears any threshold by hundreds of characters.
+MULTILINE_SHAPES: tuple[tuple[str, str], ...] = (
+    (
+        "pem-private-key",
+        pem_block("PRIVATE KEY", "\n".join(["MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ"] * 3)),
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +237,18 @@ def test_a_pem_private_key_with_a_body_is_a_finding() -> None:
 
 
 @needs_age
+def test_an_encrypted_pem_private_key_is_a_finding() -> None:
+    """``ENCRYPTED PRIVATE KEY`` was the one PKCS8 header the group did not list.
+
+    A passphrase on a key is not a reason to leave it in git: the passphrase is guessable or sits
+    in the same place the key does, and the rest of the group is in there for the same reason.
+    """
+    findings = scan_text(encrypted_pem_key(), "some.pem")
+
+    assert [finding.kind for finding in findings] == ["pem-private-key"]
+
+
+@needs_age
 @pytest.mark.parametrize(
     "text",
     [
@@ -210,6 +258,7 @@ def test_a_pem_private_key_with_a_body_is_a_finding() -> None:
         pem_block("OPENSSH PRIVATE KEY", "FAKEKEYMATERIAL=="),
         pem_block("PRIVATE KEY", "BBBB"),
         pem_block("PRIVATE KEY", "x"),
+        pem_block("ENCRYPTED PRIVATE KEY", "BBBB"),
     ],
 )
 def test_a_pem_header_without_a_real_body_is_not_a_finding(text: str) -> None:
@@ -219,6 +268,65 @@ def test_a_pem_header_without_a_real_body_is_not_a_finding(text: str) -> None:
     test_publish_passthrough and test_attachment_catalog_model.
     """
     assert scan_text(text, "tests/whatever.py") == []
+
+
+@needs_age
+@pytest.mark.parametrize(
+    "placeholder",
+    [
+        "${FORGEJO" + "_PASSWORD}",
+        "{{ vault" + "_password }}",
+        "<het" + "wachtwoord>",
+        "*" * 10,
+        "pass" + "word",
+        "example" + "value",
+        "change" + "me",
+        # Under eight characters: the connector tests in this tree write "user:x@" and "app:s@".
+        "abc",
+    ],
+)
+def test_a_placeholder_in_a_url_is_not_a_finding(placeholder: str) -> None:
+    """These are the forms the measurement over ``git ls-files`` turned up, and all of them stay.
+
+    Twenty-three URLs in this tree carry something in the password position and not one of them is
+    a live credential. A rule without this check would report all twenty-three, which is the known
+    finding that teaches people to ignore the scan.
+    """
+    assert scan_text(f"url: postgresql://opi:{placeholder}@db:5432/opi\n", "docker-compose.yaml") == []
+    assert not looks_like_a_real_url_credential(placeholder)
+
+
+@needs_age
+def test_a_credential_in_a_url_is_a_finding() -> None:
+    """The shape this platform writes itself: a git remote with the token in the URL."""
+    secret = "Hs" + "92kfLq4wZx"
+
+    findings = scan_text(f"FORGEJO_REPO=https://rig-admin:{secret}@forgejo.example.nl/x.git\n", "Taskfile.yaml")
+
+    assert [finding.kind for finding in findings] == ["url-credential"]
+    assert looks_like_a_real_url_credential(secret)
+
+
+@needs_age
+def test_an_aws_secret_key_only_counts_next_to_its_own_name() -> None:
+    """Forty base64 characters on their own say nothing, and that is the whole difficulty.
+
+    A Forgejo or Gitea token has the same problem one step worse -- forty HEX characters, which is
+    also every commit sha in the tree -- which is why there is no rule for it. The key name beside
+    the value is what turns this one from noise into a finding.
+    """
+    value = "A" * 20 + "b" * 10 + "9" * 10
+
+    assert [finding.kind for finding in scan_text(f"aws{'_secret_access_key'} = {value}\n", "creds")] == [
+        "aws-secret-key"
+    ]
+    assert scan_text(f"some_other_field = {value}\n", "creds") == []
+
+
+@needs_age
+def test_a_gitlab_token_needs_its_prefix_and_its_length() -> None:
+    assert [finding.kind for finding in scan_text(f"token: glpat{'-'}{'k' * 20}\n", "ci.yml")] == ["gitlab-token"]
+    assert scan_text(f"token: glpat{'-'}{'k' * 10}\n", "ci.yml") == []
 
 
 @needs_age
@@ -308,7 +416,27 @@ def test_a_key_inside_a_kubernetes_secret_is_a_finding() -> None:
 
 
 @needs_age
-@pytest.mark.parametrize(("kind", "secret"), SHORTEST_ALARM_SHAPES)
+def test_a_pem_key_inside_a_kubernetes_secret_is_a_finding() -> None:
+    """The gap: the multi-line rules ran over the raw text only.
+
+    A PEM key in a secret's ``data`` or in a kubeconfig's ``client-key-data`` is base64 and nothing
+    else, so the header the rule looks for was never in the text it read. The same key in a
+    ``.pem`` failed the scan while this manifest came back CLEAN.
+    """
+    body = "\n".join(["MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ"] * 3)
+    encoded = base64.b64encode(pem_block("RSA PRIVATE KEY", body).encode()).decode()
+    manifest = f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: tls\ndata:\n  tls.key: {encoded}\n"
+
+    findings = scan_text(manifest, "tls-secret.yaml")
+
+    assert [finding.kind for finding in findings] == ["pem-private-key"]
+    # The ENCODED line, like every other finding out of the decoded pass: that is the line the
+    # commit has to lose, and a line number inside a decoding exists nowhere on disk.
+    assert findings[0].line_number == 6
+
+
+@needs_age
+@pytest.mark.parametrize(("kind", "secret"), [*SHORTEST_ALARM_SHAPES, *MULTILINE_SHAPES])
 def test_every_alarm_rule_reaches_through_base64(kind: str, secret: str) -> None:
     """Not only the AGE rule: the pass runs the whole alarm set over the decoded text.
 
@@ -323,6 +451,10 @@ def test_every_alarm_rule_reaches_through_base64(kind: str, secret: str) -> None
     The plain assertion comes first on purpose. Without it a sample could stop being a shape the
     rule accepts at all and the base64 half would still pass -- proving that a rule which alarms
     on nothing alarms on nothing through base64 too.
+
+    The multi-line rules are in here too. They ran over the raw text only, so a PEM key in a
+    secret's ``data`` or in a kubeconfig's ``client-key-data`` was CLEAN: the same half-guard, on
+    the one shape that is base64 and nothing else.
     """
     assert [finding.kind for finding in scan_text(f"token: {secret}\n", "somewhere.md")] == [kind]
 
@@ -363,6 +495,10 @@ def test_every_alarm_rule_has_a_shortest_shape_on_record() -> None:
 
     assert on_record == {kind for kind, _pattern, _hint in RULES}
     assert len(SHORTEST_ALARM_SHAPES) + 1 == len(RULES), "one shortest shape per rule, not per kind"
+
+    # And the same for the multi-line rules, which reach through base64 since this round: a rule
+    # added there without a sample would be a rule nobody checked the decoded pass against.
+    assert {kind for kind, _shape in MULTILINE_SHAPES} == {kind for kind, _pattern, _hint in MULTILINE_RULES}
 
 
 @needs_age
@@ -663,6 +799,77 @@ def test_the_history_sweep_finishes_on_a_repository_that_has_subdirectories(tmp_
 
 
 # ---------------------------------------------------------------------------
+# the baseline: a retracted finding that stays readable forever
+# ---------------------------------------------------------------------------
+
+
+@needs_age
+def test_the_baseline_takes_a_retracted_finding_off_the_history(tmp_path: Path) -> None:
+    """Why the weekly job can be green at all: the history is not rewritten.
+
+    A rotated key stays readable in every old commit, so without a baseline the job reports it
+    every week, and a job that is red every week is a job nobody opens. The entry pins the blob,
+    which is what survives a rename and a shifted line number.
+    """
+    first, _public = generate_sops_key_pair()
+    second, _public = generate_sops_key_pair()
+    repo = _repo_with(tmp_path, {"one.py": f'KEY = "{first}"\n', "two.py": f'KEY = "{second}"\n'})
+    findings = scan_history(repo)
+
+    assert sorted(finding.path for finding in findings) == ["one.py", "two.py"]
+
+    retracted = BaselineEntry(blob=next(f.blob for f in findings if f.path == "one.py"), kind="age-private-key")
+    remaining, stale = apply_baseline(findings, [retracted])
+
+    assert [finding.path for finding in remaining] == ["two.py"]
+    assert stale == []
+
+
+@needs_age
+def test_a_baseline_entry_that_matches_nothing_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Which is what keeps the baseline from growing quietly.
+
+    An entry whose blob no longer turns up silences nothing while reading as if it does. It is
+    housekeeping and not an alarm, so it is printed and the run still passes.
+    """
+    private_key, _public = generate_sops_key_pair()
+    repo = _repo_with(tmp_path, {"one.py": f'KEY = "{private_key}"\n'})
+    invented = BaselineEntry(blob="0" * 40, kind="age-private-key")
+
+    remaining, stale = apply_baseline(scan_history(repo), [invented])
+
+    assert [finding.path for finding in remaining] == ["one.py"]
+    assert stale == [invented]
+
+    assert report([], what="the git history", stale_baseline=stale) == 0
+    printed = capsys.readouterr().out
+    assert "CLEAN" in printed
+    assert f"Baseline: 1 entries matched nothing in this run and can go:\n  {'0' * 40} age-private-key" in printed
+
+
+def test_the_committed_baseline_pins_a_blob_and_a_kind_and_nothing_else() -> None:
+    """Never the value and never the path: a list of where secrets sit is a map to what is not
+    revoked yet, and this file goes to GitHub. ``scripts/README.md`` says the same about the
+    scanner's own output.
+
+    The kinds are checked against the rules, because a misspelled one silences nothing while
+    reading as if it does -- the same silent pass as a stale entry, without the report.
+    """
+    document = json.loads((_REPO_ROOT / BASELINE_FILE).read_text())
+    kinds = {kind for kind, _pattern, _hint in (*RULES, *MULTILINE_RULES)}
+
+    assert document["retracted"], "an empty baseline means the history run was never recorded"
+    for group in document["retracted"]:
+        assert set(group) == {"kind", "reason", "blobs"}
+        assert group["kind"] in kinds, f"{group['kind']} is not a rule, so this entry silences nothing"
+        assert group["reason"].strip()
+        assert all(re.fullmatch(r"[0-9a-f]{40}", blob) for blob in group["blobs"])
+
+    entries = load_baseline(_REPO_ROOT / BASELINE_FILE)
+    assert len(entries) == sum(len(group["blobs"]) for group in document["retracted"])
+
+
+# ---------------------------------------------------------------------------
 # the layers are actually wired up
 # ---------------------------------------------------------------------------
 
@@ -734,6 +941,30 @@ def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:
     assert push_branches is None or "main" in push_branches
 
 
+def test_the_history_job_runs_weekly_and_not_on_a_pull_request() -> None:
+    """The layer over the history, which the tree scan says nothing about.
+
+    On a schedule and on demand only: the sweep reads every blob that ever existed and takes
+    minutes, while the history does not change per pull request. And on a full clone, because a
+    shallow one has no history to scan and would report CLEAN over almost nothing.
+    """
+    workflow = yaml.safe_load((_REPO_ROOT / ".github" / "workflows" / "security.yml").read_text())
+    triggers = workflow[True] if True in workflow else workflow["on"]
+    job = workflow["jobs"]["secret-scan-history"]
+
+    assert "schedule" in triggers
+    assert "workflow_dispatch" in triggers
+    assert job["if"] == "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'"
+
+    checkout = next(step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/checkout"))
+    assert checkout["with"]["fetch-depth"] == 0
+
+    commands = [step.get("run", "") for step in job["steps"]]
+    assert any("scripts/scan-secrets.py --history" in command for command in commands)
+    # age-keygen has to be there, or every placeholder in the history becomes a finding.
+    assert any("age" in command for command in commands)
+
+
 def test_every_flag_the_docs_hand_an_operator_exists_on_the_scanner() -> None:
     """The invocations live in four files outside the scanner, and a paste is only as good as its flags.
 
@@ -792,16 +1023,18 @@ def test_the_scan_refuses_to_run_without_age_keygen(monkeypatch: pytest.MonkeyPa
     assert scan_module.main([]) == 2
 
 
-@needs_age
 def test_this_repository_is_clean_right_now() -> None:
     """The acceptance criterion: a scan of the working tree gives zero findings.
 
     First the tree, then the guard -- otherwise you build an alarm everyone learns to work around.
-    This is the assertion that keeps it that way, and it is the same code CI runs.
-    """
-    findings = scan_files(tracked_files(_REPO_ROOT)).findings
+    This is the assertion that keeps it that way, and it is the same entry point CI runs.
 
-    assert findings == [], "\n".join(str(finding) for finding in findings)
+    Deliberately NOT skipped when ``age-keygen`` is missing, unlike every other test here. This is
+    the layer that gives any build running this suite the same tree scan, also outside GitHub, and
+    a layer that skips itself where the binary happens to be absent is not a layer. ``main``
+    returns 2 with the message from ``scan-secrets.py`` in that case, which fails this.
+    """
+    assert _scan_secrets_module().main([]) == 0
 
 
 @needs_age
@@ -941,6 +1174,20 @@ def test_the_committed_development_token_is_only_handed_out_behind_the_unsafe_fl
     # The other half of the branch, which is what makes the half above mean something: the flag
     # really is the only thing standing between the committed value and every new project.
     assert generate_api_key() == settings.API_TOKEN
+
+
+def test_the_unsafe_api_key_does_not_land_in_the_debug_log(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    """De DEBUG-regel in ``generate_api_key`` toonde de volledige onveilige sleutel; die regel
+    gaat met ``LOG_LEVEL=DEBUG`` naar de logstroom. Geen scan ziet dat terug, want de waarde
+    zelf is geen vaste string.
+    """
+    monkeypatch.setattr(settings, "USE_UNSAFE_API_KEY", True)
+
+    with caplog.at_level("DEBUG", logger="opi.utils.api_keys"):
+        key = generate_api_key()
+
+    assert key == settings.API_TOKEN
+    assert all(key not in record.getMessage() for record in caplog.records)
 
 
 def test_nothing_that_configures_a_running_opi_turns_the_unsafe_flag_on() -> None:

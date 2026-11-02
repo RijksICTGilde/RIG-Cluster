@@ -1,0 +1,18 @@
+{#
+  Dit formulier zit op een pagina en in een dialoog na step-up-weigering; hx-post + hx-target="this"
+  laten validatiefouten beide plekken bereiken. Zie _render_form_html() voor de velden en FORMULIEREN_MET_SERVERVALIDATIE in tests voor novalidate.
+#}
+<form autocomplete="off" method="post" action="{{ form_action }}" novalidate
+      hx-post="{{ form_action }}"
+      hx-target="this" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+    <c-stack gap="lg">
+        {{ form_html | safe }}
+
+        <c-action-group align="start">
+            <c-button type="primary" label="Opslaan" html-type="submit" />
+            <c-button type="secondary" label="Annuleren" href="/admin/users" />
+        </c-action-group>
+    </c-stack>
+</form>

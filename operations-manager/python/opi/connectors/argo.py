@@ -40,12 +40,22 @@ CONNECT_RETRY_SECONDS = 30.0
 
 
 @functools.cache
-def _ssl_context_voor(verify_ssl: bool) -> ssl.SSLContext:
-    """Een ssl-context per verify_ssl-stand, gedeeld over het hele proces.
+def _ssl_context_voor(verify_ssl: bool, ca_bundle: str | None) -> ssl.SSLContext:
+    """Een ssl-context per (verify_ssl, ca_bundle), gedeeld over het hele proces.
 
     Voorkomt dat ssl.create_default_context() de CA-bundel per request van schijf leest.
+
+    Raises:
+        ArgoTLSConfigurationError: de bundel op dit pad ontbreekt of bevat geen certificaat
     """
-    context = ssl.create_default_context()
+    try:
+        context = ssl.create_default_context(cafile=ca_bundle)
+    except (OSError, ssl.SSLError) as fout:
+        # De bundel is een optionele mount, dus een cluster zonder ConfigMap komt hier
+        # met een melding die het pad niet noemt. Terugvallen op plain HTTP is geen uitweg.
+        raise ArgoTLSConfigurationError(
+            f"ARGOCD_CA_BUNDLE={ca_bundle} is niet te lezen als CA-bundel: {_exc_text(fout)}"
+        ) from fout
     if not verify_ssl:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -69,6 +79,23 @@ class ArgoTransportError(RuntimeError):
     """
 
 
+class ArgoTLSConfigurationError(ValueError):
+    """TLS staat aan met certificaatcontrole, maar er is geen CA-bundel om tegen te toetsen.
+
+    De CA van de ArgoCD-server (de service-CA op ODCN, de eigen CA op de sandbox) zit niet
+    in de systeemtrust van de container, dus zonder bundel faalt elke aanroep alsnog.
+    """
+
+
+class ArgoAuthConfigurationError(ValueError):
+    """Er is geen manier om bij ArgoCD binnen te komen: geen ARGOCD_TOKEN en geen
+    gebruiker met wachtwoord.
+
+    Vroeger stond hier admin/admin als default, dus een vergeten instelling probeerde stil
+    het beheeraccount. OPI hoort met het eigen account `opi` en zijn API-token te werken.
+    """
+
+
 class ArgoConnector:
     """Connector for interacting with ArgoCD server."""
 
@@ -76,10 +103,12 @@ class ArgoConnector:
         self,
         server_host: str = "argocd-server",
         server_port: int = 80,
-        username: str = "admin",
-        password: str = "admin",  # noqa: S107
+        username: str | None = None,
+        password: str | None = None,
+        token: str | None = None,
         use_tls: bool = False,
         verify_ssl: bool = False,
+        ca_bundle: str | None = None,
         connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
     ):
         """
@@ -88,26 +117,33 @@ class ArgoConnector:
         Args:
             server_host: ArgoCD server hostname or service name
             server_port: ArgoCD server port
-            username: Username for authentication
-            password: Password for authentication
+            username: Username for authentication (login path)
+            password: Password for authentication (login path)
+            token: API token of the ArgoCD account; sent as bearer, no login at all
             use_tls: Whether to use TLS/HTTPS
             verify_ssl: Whether to verify SSL certificates
+            ca_bundle: Path of the mounted CA bundle to verify the server certificate against
             connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
+
+        Raises:
+            ArgoTLSConfigurationError: TLS with certificate verification but no CA bundle
         """
+        if use_tls and verify_ssl and not ca_bundle:
+            raise ArgoTLSConfigurationError("ARGOCD_USE_TLS en ARGOCD_VERIFY_SSL staan aan zonder ARGOCD_CA_BUNDLE")
+
         self.server_host = server_host
         self.server_port = server_port
         self.username = username
         self.password = password
+        self.token = token
         self.use_tls = use_tls
         self.verify_ssl = verify_ssl
+        self.ca_bundle = ca_bundle
         self.connect_retry_seconds = connect_retry_seconds
 
         # Build base URL
         protocol = "https" if use_tls else "http"
         self.base_url = f"{protocol}://{server_host}:{server_port}"
-
-        # Handle auto-redirect to HTTPS
-        # ArgoCD often redirects HTTP to HTTPS, so we need to detect this
         self._actual_base_url = self.base_url
 
         # Authentication token
@@ -118,12 +154,16 @@ class ArgoConnector:
 
         logger.debug(f"ArgoConnector initialized with server: {self.base_url}")
 
-        # Haal cache op, niet inloggen op de loop (~700 ms + 10 s timeout als onbereikbaar).
-        # ensure_authenticated logt async in als nodig.
-        self.auth_token = self._cached_token()
+        # Een API-token skips de cache: hij verloopt niet per sessie en is voor elke connector dezelfde.
+        if token:
+            self.auth_token = token
+        else:
+            # Haal cache op, niet inloggen op de loop (~700 ms + 10 s timeout als onbereikbaar).
+            # ensure_authenticated logt async in als nodig.
+            self.auth_token = self._cached_token()
 
     def _cache_key(self) -> tuple[str, str]:
-        return (self.base_url, self.username)
+        return (self.base_url, self.username or "")
 
     def _cached_token(self) -> str | None:
         with _token_cache_lock:
@@ -150,9 +190,15 @@ class ArgoConnector:
         """
         Login to ArgoCD server and obtain authentication token.
 
+        Met een API-token is er niets in te loggen: het token is de autorisatie.
+
         Returns:
             True if login successful, False otherwise
         """
+        if self.token:
+            self.auth_token = self.token
+            return True
+
         try:
             return await retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
         except Exception as e:
@@ -176,15 +222,6 @@ class ArgoConnector:
             aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
             session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
         ):
-            # Check if we got redirected to HTTPS
-            if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
-                logger.info(f"Detected redirect to HTTPS: {response.url}")
-                # Update base URL to use HTTPS
-                old_base = self.base_url
-                self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
-                self._actual_base_url = self.base_url
-                logger.info(f"Updated base URL from {old_base} to {self.base_url}")
-
             if response.status == 200:
                 response_data = await response.json()
                 logger.debug(f"Login response data: {response_data}")
@@ -202,7 +239,7 @@ class ArgoConnector:
                 return False
 
     def _ssl_context(self) -> ssl.SSLContext:
-        return _ssl_context_voor(self.verify_ssl)
+        return _ssl_context_voor(self.verify_ssl, self.ca_bundle)
 
     async def ensure_authenticated(self) -> bool:
         """Ensure we have a valid authentication token, logging in at most once.
@@ -296,6 +333,13 @@ class ArgoConnector:
                 else f"Response text: {response_text}"
             )
 
+            if status == 401 and self.token:
+                logger.error(
+                    "ArgoCD wees het API-token van dit account af; opnieuw aanbieden helpt niet. "
+                    "Roteer ARGOCD_TOKEN (scripts/edit-secret.py --component argocd-opi-token)."
+                )
+                return 401, response_text
+
             if status == 401 and retry_count == 0:
                 logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
                 # Invalidate only the token this request actually used, then
@@ -377,13 +421,16 @@ class ArgoConnector:
                 return None
             elif status_code == 403:
                 # ArgoCD returns 403 (not 404) for an application that does not exist, to
-                # avoid leaking which apps are present. OPI authenticates as the ArgoCD
-                # admin, so a 403 here never means a real authorization failure - it means
+                # avoid leaking which apps are present. Since RC-345 OPI is the account opi
+                # and no longer the admin; its role:zad-opi allows `applications, get` on
+                # `*/*`, so a 403 here is still not a real authorization failure - it means
                 # the app is not there yet (just created, AppProject still propagating) or
-                # already gone. Treat it as not-found; every caller already handled the old
-                # PermissionError exactly like the None/404 case (poll-and-wait, or
-                # "already deleted"), so this centralizes that and drops the misleading
-                # "permission denied" error noise.
+                # already gone. Narrow that role and a denial would read as "not present",
+                # which is why wait_for_application_deletion confirms absence against the
+                # Kubernetes API and never on this answer alone. Treat it as not-found;
+                # every caller already handled the old PermissionError exactly like the
+                # None/404 case (poll-and-wait, or "already deleted"), so this centralizes
+                # that and drops the misleading "permission denied" error noise.
                 logger.debug(f"Application {app_name} not found (403 - does not exist yet or already gone)")
                 return None
             elif status_code >= 500:
@@ -804,8 +851,10 @@ def create_argo_connector(
     server_port: int | None = None,
     username: str | None = None,
     password: str | None = None,
+    token: str | None = None,
     use_tls: bool | None = None,
     verify_ssl: bool | None = None,
+    ca_bundle: str | None = None,
     connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
 ) -> ArgoConnector:
     """
@@ -818,12 +867,17 @@ def create_argo_connector(
         server_port: ArgoCD server port (defaults to config)
         username: Username for authentication (defaults to config)
         password: Password for authentication (defaults to config)
+        token: API token of the ArgoCD account (defaults to config)
         use_tls: Whether to use TLS/HTTPS (defaults to config)
         verify_ssl: Whether to verify SSL certificates (defaults to config)
+        ca_bundle: Path of the mounted CA bundle (defaults to config)
         connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
 
     Returns:
         ArgoConnector instance
+
+    Raises:
+        ArgoAuthConfigurationError: geen token en geen gebruiker met wachtwoord geconfigureerd
     """
     from opi.core.config import settings
 
@@ -834,6 +888,13 @@ def create_argo_connector(
     final_password = password if password is not None else settings.ARGOCD_PASSWORD
     final_use_tls = use_tls if use_tls is not None else settings.ARGOCD_USE_TLS
     final_verify_ssl = verify_ssl if verify_ssl is not None else settings.ARGOCD_VERIFY_SSL
+    final_ca_bundle = ca_bundle if ca_bundle is not None else settings.ARGOCD_CA_BUNDLE
+    final_token = token if token is not None else settings.ARGOCD_TOKEN
+
+    if not final_token and not (final_username and final_password):
+        raise ArgoAuthConfigurationError(
+            "geen ARGOCD_TOKEN en geen ARGOCD_USERNAME met ARGOCD_PASSWORD; OPI kan niet bij ArgoCD"
+        )
 
     logger.debug(f"Creating ArgoConnector for server: {final_server_host}:{final_server_port}")
     return ArgoConnector(
@@ -841,7 +902,9 @@ def create_argo_connector(
         server_port=final_server_port,
         username=final_username,
         password=final_password,
+        token=final_token,
         use_tls=final_use_tls,
         verify_ssl=final_verify_ssl,
+        ca_bundle=final_ca_bundle,
         connect_retry_seconds=connect_retry_seconds,
     )

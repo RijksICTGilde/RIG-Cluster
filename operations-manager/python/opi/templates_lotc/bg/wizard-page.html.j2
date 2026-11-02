@@ -64,8 +64,8 @@
    Zonder deze uitbreiding is hx-ext="json-enc" een lege huls: htmx post dan
    formulier-gecodeerd terwijl de stap-route request.json() leest, en elke stap faalt.
    Hij staat hier en niet in de schil omdat alleen de wizard hem nodig heeft. #}
-<script src="{{ static_url('js/json-enc.js') }}"></script>
-<script src="{{ static_url('js/codemirror-bundle.js') }}"></script>
-<script src="{{ static_url('js/codemirror-kv.js') }}"></script>
-<script src="{{ static_url('js/wizard.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/json-enc.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-bundle.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/codemirror-kv.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/wizard.js') }}"></script>
 {% endblock %}

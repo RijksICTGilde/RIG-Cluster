@@ -17,9 +17,10 @@ extends: sso-support
 #   - Op productie draagt deze realm geen lokale accounts. Iedereen komt binnen via SSO
 #     Rijk en is via trustEmail al geverifieerd, dus verifieren zou daar niets doen.
 #   - Op de sandbox draagt hij er precies EEN: de beheerder uit
-#     opi/configs/projects/operations-manager-local.yaml. Die bevestigt bij aanmaak hoe dan
-#     ook (create_user); dit veld gaat alleen over wie zijn adres LATER wijzigt, en daar is
-#     op deze realm geen aanleiding voor.
+#     opi/configs/projects/operations-manager-local.yaml. Die komt bij aanmaak al bevestigd
+#     binnen, omdat zijn adres geen postbus is (setup_operations_realm geeft
+#     skip_email_verification mee); dit veld gaat alleen over wie zijn adres LATER wijzigt,
+#     en daar is op deze realm geen aanleiding voor.
 #
 # De winst is dus nul. Wie dit omzet, zet alleen de bevestiging bij een adreswijziging aan.
 realms:

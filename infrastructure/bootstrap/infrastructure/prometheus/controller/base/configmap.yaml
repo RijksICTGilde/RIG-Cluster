@@ -123,9 +123,20 @@ data:
           - targets: ['minio.rig-system:9000']
         metrics_path: /minio/v2/metrics/cluster
 
+      # Scrape SeaweedFS metrics (bucket sizes per collection)
+      - job_name: 'seaweedfs'
+        scrape_interval: 2h
+        static_configs:
+          - targets: ['seaweedfs.rig-system:9327']
+        metrics_path: /metrics
+
       # Scrape Keycloak RIG custom metrics (user counts, login events per realm)
       - job_name: 'keycloak-rig-metrics'
         scrape_interval: 2h
+        # Hetzelfde token als bij kubernetes-pods: het endpoint weigert zonder deze header.
+        authorization:
+          type: Bearer
+          credentials_file: /etc/prometheus/secrets/metrics-auth/token
         kubernetes_sd_configs:
           - role: pod
             namespaces:

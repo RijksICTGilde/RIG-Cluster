@@ -1,7 +1,7 @@
 """De stapregel van een taak, in het Nederlands, op het moment van TONEN.
 
 De interface is Nederlands, maar op het scherm kwam nog ``Queued`` voorbij, plus
-``Starting...``, ``Done`` en ``Failed: <fout>``. Dat zijn geen labels maar OPGESLAGEN
+``Starting...``, ``Done`` en ``Failed``. Dat zijn geen labels maar OPGESLAGEN
 waarden: ``Queued`` is de kolomstandaard van ``async_tasks.current_step`` (zie
 ``opi/core/async_task_schema.py`` en ``opi/services/persistence/async_tasks.py``), de
 andere drie worden door de voortgangsschrijvers weggeschreven.
@@ -25,9 +25,11 @@ STAP_LABELS = {
     "Queued": "In wachtrij",
     "Starting...": "Wordt gestart...",
     "Done": "Klaar",
+    "Failed": "Mislukt",
 }
 
-#: ``Failed: <fout>`` draagt de fouttekst achter de dubbele punt; alleen de kop vertaalt.
+#: ``Failed: <fout>`` is de vorm die ``fail_project`` tot RC-282 schreef; blijft voor de
+#: rijen die er al staan. Alleen de kop vertaalt, de fouttekst gaat ongewijzigd door.
 _MISLUKT_PREFIX = "Failed: "
 
 

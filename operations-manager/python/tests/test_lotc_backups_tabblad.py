@@ -59,7 +59,7 @@ def client() -> TestClient:
 
 
 def test_backups_is_een_tabblad_met_een_deployment_in_het_pad() -> None:
-    assert PROJECT_TABS["backups"] == {"label": "Backups", "path": "backups"}
+    assert PROJECT_TABS["backups"] == {"label": "Backups", "path": "backups", "icon": "backup-in-cloud"}
     assert "backups" in TABS_MET_DEPLOYMENT
     assert project_tab_url("demo", "backups", deployment="productie") == "/projects/demo/backups/productie"
     assert tab_from_path("/projects/demo/backups/productie") == "backups"

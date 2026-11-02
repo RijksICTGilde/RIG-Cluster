@@ -11,20 +11,20 @@ from opi.forms.editables.enforcers import (
 
 class TestAdminRequiredEnforcer:
     async def test_valid_with_admin(self):
-        users = [{"email": "admin@example.nl", "role": "admin"}]
+        users = [{"email": "admin@example.nl", "roles": ["admin", "ops"]}]
         result = await AdminRequiredEnforcer().enforce(users, {})
         assert result == users
 
     async def test_valid_multiple_users_one_admin(self):
         users = [
-            {"email": "dev@example.nl", "role": "developer"},
-            {"email": "admin@example.nl", "role": "admin"},
+            {"email": "dev@example.nl", "roles": ["developer"]},
+            {"email": "admin@example.nl", "roles": ["admin", "ops"]},
         ]
         result = await AdminRequiredEnforcer().enforce(users, {})
         assert result == users
 
     async def test_invalid_no_admin(self):
-        users = [{"email": "dev@example.nl", "role": "developer"}]
+        users = [{"email": "dev@example.nl", "roles": ["developer"]}]
         with pytest.raises(ValueError, match="administrator"):
             await AdminRequiredEnforcer().enforce(users, {})
 
@@ -38,8 +38,8 @@ class TestAdminRequiredEnforcer:
 
     async def test_multiple_admins(self):
         users = [
-            {"email": "a@b.c", "role": "admin"},
-            {"email": "d@e.f", "role": "admin"},
+            {"email": "a@b.c", "roles": ["admin", "ops"]},
+            {"email": "d@e.f", "roles": ["admin", "ops"]},
         ]
         result = await AdminRequiredEnforcer().enforce(users, {})
         assert len(result) == 2

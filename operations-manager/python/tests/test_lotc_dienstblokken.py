@@ -182,6 +182,9 @@ _DIALOOG_BASIS: dict[str, Any] = {
     "error": None,
     "ttl_seconds": 1800,
     "enabled": True,
+    # Starten en stoppen vragen een operationele rol (RC-323); de dialogen worden hier
+    # gemeten zoals wie dat mag ze ziet, want dat is de tak met de knoppen.
+    "mag_uitvoeren": True,
 }
 DIALOGEN: list[tuple[str, str, dict[str, Any]]] = [
     ("job/nieuw", "shared/_job-modal.html.j2", {**_DIALOOG_BASIS, "job": None, "state": "none"}),

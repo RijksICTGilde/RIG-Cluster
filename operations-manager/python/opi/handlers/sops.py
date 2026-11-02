@@ -14,7 +14,9 @@ import os
 import tempfile
 from typing import TYPE_CHECKING, Any
 
+from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
+from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
@@ -27,6 +29,21 @@ logger = logging.getLogger(__name__)
 # failure as a real, alert-worthy error.
 _SOPS_STORE_MAX_ATTEMPTS = 4
 _SOPS_STORE_RETRY_DELAY_SECONDS = 1.5
+
+#: Secret en Role voor het sleutel-secret. De Role gaat mee bij elke verwerking, ook als
+#: het secret al klopt: zonder Role leest de CMP het secret niet en rendert ArgoCD niet.
+SOPS_SECRET_NAME = "sops-age-key"  # noqa: S105  # naam van het secret, geen secret
+CMP_SOPS_ROLE_NAME = "cmp-sops-key-reader"
+CMP_SERVICE_ACCOUNT = "argocd-cmp"
+
+
+def format_age_key_file(private_key: str, public_key: str) -> str:
+    """De inhoud van het Secret ``sops-age-key``, in de vorm van een AGE-sleutelbestand.
+
+    Het Kopia-wachtwoord wordt uit deze hele tekst afgeleid, dus wie voorspelt wat er na een
+    sleutelvervanging in de namespace komt te staan moet dezelfde vorm gebruiken.
+    """
+    return f"# created: project-specific key\n# public key: {public_key}\n{private_key}\n"
 
 
 # TODO: maybe this handler has to go.. it conflicts with the utils/sops.py
@@ -111,10 +128,8 @@ class SopsHandler:
         self.logger.debug("Encrypting content with SOPS")
 
         try:
-            from opi.core.config import settings
-
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, dir=settings.TEMP_DIR
+                mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
             ) as temp_file:
                 temp_file.write(content)
                 temp_file_path = temp_file.name
@@ -158,18 +173,15 @@ class SopsHandler:
         self.logger.debug("Decrypting content with SOPS")
 
         try:
-            from opi.core.config import settings
-
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, dir=settings.TEMP_DIR
+                mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
             ) as temp_file:
                 temp_file.write(encrypted_content)
                 temp_file_path = temp_file.name
 
             try:
                 # Set the age key in environment for SOPS
-                env = os.environ.copy()
-                env["SOPS_AGE_KEY"] = private_key
+                env = child_env({"SOPS_AGE_KEY": private_key})
 
                 # Decrypt the file using SOPS
                 cmd = ["sops", "--decrypt", temp_file_path]
@@ -204,6 +216,15 @@ class SopsHandler:
         Returns:
             True if successful, False otherwise
         """
+        # Tweede laag naast de weigering van een gereserveerde projectnaam: de
+        # projectsleutel hier overschrijft de platformsleutel, waarna ArgoCD de
+        # platformapplicaties niet meer rendert.
+        if is_platform_namespace(namespace):
+            raise ValueError(
+                f"Weigert een projectsleutel 'sops-age-key' te schrijven in namespace '{namespace}': "
+                f"dat is een namespace van het platform zelf."
+            )
+
         if not self.kubectl:
             self.logger.error("KubectlConnector not available for storing SOPS key")
             return False
@@ -211,14 +232,12 @@ class SopsHandler:
         self.logger.info(f"Storing project-specific SOPS key in namespace: {namespace}")
 
         try:
-            # Construct the full key contents format for the AGE key file
-            # This matches the format that AGE key files use
-            full_key_contents = f"# created: project-specific key\n# public key: {public_key}\n{private_key}\n"
+            full_key_contents = format_age_key_file(private_key, public_key)
 
             # Create secret using the generic secret template
             template_path = "manifests/generic-secret.yaml.to-sops.jinja"
             variables = {
-                "name": "sops-age-key",
+                "name": SOPS_SECRET_NAME,
                 "namespace": namespace,
                 "secret_type": "sops",
                 "secret_k8s_type": "Opaque",
@@ -231,12 +250,14 @@ class SopsHandler:
             from opi.connectors.kubectl import KubectlExecutionError
 
             last_error = ""
+            stored = False
             for attempt in range(1, _SOPS_STORE_MAX_ATTEMPTS + 1):
                 try:
                     await self.kubectl.apply_manifest(template_path, variables, namespace)
                     self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
                     self.logger.debug(f"Public key for project: {public_key}")
-                    return True
+                    stored = True
+                    break
                 except KubectlExecutionError as apply_error:
                     last_error = str(apply_error)
                     is_transient = "forbidden" in last_error.lower()
@@ -250,6 +271,19 @@ class SopsHandler:
                         continue
                     break
 
+            if stored:
+                # Buiten de lus, zodat een falende Role het secret niet opnieuw laat
+                # schrijven, en met een eigen melding: het secret staat er wel.
+                try:
+                    await self.ensure_cmp_key_reader(namespace)
+                except KubectlExecutionError as role_error:
+                    self.logger.error(
+                        f"SOPS key stored, but failed to apply the CMP key reader role "
+                        f"({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {role_error}"
+                    )
+                    return False
+                return True
+
             self.logger.error(f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {last_error}")
             return False
 
@@ -257,11 +291,45 @@ class SopsHandler:
             self.logger.error(f"Error storing SOPS key in namespace {namespace}: {e}")
             return False
 
+    async def ensure_cmp_key_reader(self, namespace: str) -> None:
+        """
+        Laat de CMP-sidecar precies het sleutel-secret van deze namespace lezen.
+
+        Idempotent: een gelijke Role en RoleBinding verandert niets.
+
+        Raises:
+            ValueError: als de namespace van het platform zelf is
+            KubectlExecutionError: als de Role of RoleBinding niet toegepast kan worden
+        """
+        # Zelfde tweede laag als bij store_project_sops_key_in_namespace hierboven: de
+        # namespace komt uit een projectbestand, en in een platformnamespace is
+        # 'sops-age-key' de PLATFORMsleutel. Die leest de platform-sidecar uit zijn eigen
+        # mount; de tenant-sidecar hoort daar niets te mogen. Zelfde uitzondering als
+        # SKIP_NAMESPACES in de migratietaak in Taskfile.yaml.
+        if is_platform_namespace(namespace):
+            raise ValueError(
+                f"Weigert de Role '{CMP_SOPS_ROLE_NAME}' te zetten in namespace '{namespace}': "
+                f"dat is een namespace van het platform zelf."
+            )
+
+        if not self.kubectl:
+            raise RuntimeError("KubectlConnector not available for applying the CMP key reader role")
+
+        variables = {
+            "role_name": CMP_SOPS_ROLE_NAME,
+            "namespace": namespace,
+            "secret_name": SOPS_SECRET_NAME,
+            "service_account": CMP_SERVICE_ACCOUNT,
+            "argo_namespace": get_argo_namespace(settings.CLUSTER_MANAGER),
+        }
+        await self.kubectl.apply_manifest("manifests/cmp-sops-key-reader.yaml.jinja", variables, namespace)
+        self.logger.info(f"Applied CMP key reader role in namespace: {namespace}")
+
     async def store_project_sops_key_in_gitops(
         self, project_name: str, private_key: str, public_key: str, git_connector
     ) -> bool:
         """
-        Store a project-specific SOPS key in the GitOps repository, encrypted with ArgoCD manager's key.
+        Store a project-specific SOPS key in the GitOps repository, wrapped with the project-KEK.
 
         Args:
             project_name: Name of the project
@@ -275,25 +343,14 @@ class SopsHandler:
         self.logger.info(f"Storing encrypted SOPS key backup for project: {project_name}")
 
         try:
-            # Use SOPS keys from config instead of retrieving from ArgoCD namespace
-            manager_public_key = settings.SOPS_AGE_PUBLIC_KEY
-            manager_private_key_clean = settings.SOPS_AGE_PRIVATE_KEY
-
-            if not manager_public_key or not manager_private_key_clean:
-                self.logger.error(
-                    "SOPS keys not available in config (SOPS_AGE_PUBLIC_KEY or SOPS_AGE_PRIVATE_KEY missing)"
-                )
-                return False
-
             # Construct the full key contents for the project
             project_key_contents = (
                 f"# created: project-specific key for {project_name}\n# public key: {public_key}\n{private_key}\n"
             )
 
-            # Encrypt the project key using Age encryption (not SOPS)
-            from opi.utils.age import encrypt_age_content
+            from opi.utils.age import wrap_project_key
 
-            encrypted_key_contents = await encrypt_age_content(project_key_contents, manager_private_key_clean)
+            encrypted_key_contents = await wrap_project_key(project_key_contents)
 
             if not encrypted_key_contents:
                 self.logger.error(f"Failed to encrypt project key for backup: {project_name}")
@@ -325,13 +382,6 @@ class SopsHandler:
         self.logger.info(f"Retrieving encrypted SOPS key backup for project: {project_name}")
 
         try:
-            # Use SOPS keys from config instead of retrieving from ArgoCD namespace
-            manager_private_key_clean = settings.SOPS_AGE_PRIVATE_KEY
-
-            if not manager_private_key_clean:
-                self.logger.error("SOPS private key not available in config (SOPS_AGE_PRIVATE_KEY missing)")
-                return None
-
             # Read encrypted key file from GitOps repository
             key_file_path = f"projects/{project_name}/age-key.txt.age"
 
@@ -344,13 +394,12 @@ class SopsHandler:
                 self.logger.warning(f"Could not read encrypted SOPS key backup from: {key_file_path}")
                 return None
 
-            # Decrypt the key contents using Age (not SOPS)
-            from opi.utils.age import decrypt_age_content
+            from opi.utils.age import unwrap_project_key
 
-            decrypted_contents = await decrypt_age_content(encrypted_contents, manager_private_key_clean)
-
-            if not decrypted_contents:
-                self.logger.error(f"Failed to decrypt SOPS key backup for project: {project_name}")
+            try:
+                decrypted_contents = await unwrap_project_key(encrypted_contents)
+            except ValueError as e:
+                self.logger.error(f"Failed to decrypt SOPS key backup for project {project_name}: {e}")
                 return None
 
             # Extract project keys from decrypted contents
@@ -437,7 +486,7 @@ class SopsHandler:
             CompletedProcess result
         """
         if env is None:
-            env = os.environ.copy()
+            env = child_env()
 
         try:
             self.logger.debug(f"Running command: {' '.join(cmd)}")

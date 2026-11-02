@@ -64,8 +64,8 @@ borging noemt met zoveel woorden: "**Speciale bevoegdheden minimaal per kwartaal
 veronderstelt een lijst. Vandaag is die lijst:
 
 - niet in de applicatie zichtbaar (`/admin/users` heeft geen rolkolom, deel 1 paragraaf 1);
-- niet in de applicatie te wijzigen (het is een ConfigMap plus een herstart);
-- deels hardgecodeerd (`opi/core/startup.py:559-562`);
+- niet in de applicatie te wijzigen, en op productie alleen te lezen door te ontsleutelen
+  (een SOPS-secret daar, een ConfigMap op de sandbox, plus een herstart);
 - en er is een **tweede** verzameling speciale bevoegdheden, `ADMIN_API_KEY`, die niemand een
   rol noemt en waarvan niet is vast te stellen wie hem heeft (deel 1, paragraaf 2).
 

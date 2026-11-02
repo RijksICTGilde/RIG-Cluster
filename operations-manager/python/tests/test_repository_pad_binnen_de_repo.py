@@ -49,7 +49,7 @@ def _project(path: str) -> dict:
         "schema-version": 2.9,
         "name": "demo",
         "clusters": ["odcn-production"],
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
         "repositories": [{"name": "main-repo", "url": "https://example.org/demo.git", "branch": "main", "path": path}],
     }
 
@@ -110,8 +110,11 @@ class TestHetFormuliermodelVolgtHetzelfdePatroon:
         assert RepositoryModel(name="main-repo", url="https://example.org/demo.git").path == "."
 
     def test_het_schema_draagt_hetzelfde_patroon(self) -> None:
+        """``repository/path`` verwijst sinds RC-299 naar ``$defs/relative-path``, dat de
+        helm-chart- en helmfilepaden ook gebruiken; het patroon zelf blijft hetzelfde."""
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-        assert schema["$defs"]["repository"]["properties"]["path"]["pattern"] == REPOSITORY_PATH_PATTERN
+        assert schema["$defs"]["repository"]["properties"]["path"]["$ref"] == "#/$defs/relative-path"
+        assert schema["$defs"]["relative-path"]["pattern"] == REPOSITORY_PATH_PATTERN
 
 
 class TestDePadfunctiesAnkerenInDeRepo:

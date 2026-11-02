@@ -1,13 +1,17 @@
 """Tests for schema migration framework."""
 
 import copy
+import logging
 
+import pytest
 from opi.connectors.subdomain import get_domains_config
-from opi.core.project_schema import validate_declared_project_schema, validate_project_schema
+from opi.core.project_schema import SchemaVersion, validate_declared_project_schema, validate_project_schema
 from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
+    LATEST_SCHEMA_VERSION_VALUE,
+    component_description,
     detect_schema_version,
     migrate_to_latest,
     normalize_domains_location,
@@ -15,6 +19,10 @@ from opi.services.schema_migration import (
     relocate_domain_settings_to_service,
     relocate_registries_to_service,
     remove_domain_mode,
+    remove_mail_accounts,
+    restore_run_reference,
+    roles_as_a_list,
+    source_code_links,
 )
 
 # ---------------------------------------------------------------------------
@@ -222,22 +230,22 @@ def _v2_project() -> dict:
 
 class TestDetectSchemaVersion:
     def test_detect_from_field(self):
-        assert detect_schema_version({"schema-version": 2}) == 2
+        assert detect_schema_version({"schema-version": 2}) == SchemaVersion(2)
 
     def test_detect_from_field_higher(self):
-        assert detect_schema_version({"schema-version": 5}) == 5
+        assert detect_schema_version({"schema-version": 5}) == SchemaVersion(5)
 
     def test_detect_v1_from_component_uses_services(self):
         data = _v1_project_simple()
-        assert detect_schema_version(data) == 1
+        assert detect_schema_version(data) == SchemaVersion(1)
 
     def test_detect_v1_from_helm_chart(self):
         data = _v1_project_with_helm_chart()
-        assert detect_schema_version(data) == 1
+        assert detect_schema_version(data) == SchemaVersion(1)
 
     def test_detect_v1_from_helmfile(self):
         data = _v1_project_with_helmfile()
-        assert detect_schema_version(data) == 1
+        assert detect_schema_version(data) == SchemaVersion(1)
 
     def test_detect_v2_no_indicators(self):
         """Project with no uses-services and no schema-version defaults to latest (v2)."""
@@ -245,7 +253,7 @@ class TestDetectSchemaVersion:
 
     def test_detect_v2_from_field(self):
         data = _v2_project()
-        assert detect_schema_version(data) == 2
+        assert detect_schema_version(data) == SchemaVersion(2)
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +263,7 @@ class TestDetectSchemaVersion:
 
 class TestMigrateToLatestNoOp:
     def test_already_latest(self):
-        data = {**_v2_project(), "schema-version": LATEST_SCHEMA_VERSION}
+        data = {**_v2_project(), "schema-version": LATEST_SCHEMA_VERSION_VALUE}
         original = copy.deepcopy(data)
         result, was_migrated = migrate_to_latest(data)
         assert was_migrated is False
@@ -267,7 +275,7 @@ class TestMigrateToLatestNoOp:
         moet dat zeggen."""
         data = {**_v2_project(), "schema-version": 2.7}
         result, was_migrated = migrate_to_latest(data)
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert was_migrated is True
         assert {k: v for k, v in result.items() if k != "schema-version"} == {
             k: v for k, v in _v2_project().items() if k != "schema-version"
@@ -290,7 +298,7 @@ class TestMigrateV1ToV2:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
 
         comp = result["components"][0]
         assert "uses-services" not in comp
@@ -475,7 +483,7 @@ class TestMigrateV1ToV2:
     def test_schema_version_set(self):
         data = _v1_project_simple()
         result, _ = migrate_to_latest(data)
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
 
     def test_no_components_no_v1_keys_no_migration(self):
         """Project with no components and no v1 keys is detected as v2."""
@@ -551,7 +559,7 @@ class TestMigrateV2ToV2_1:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         dep = result["deployments"][0]
         # v2.7 relocated it under the service, so ask the service (RC-60).
         assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) == "frontend"
@@ -605,7 +613,7 @@ class TestMigrateV2ToV2_1:
 
         # No root flags to clean up; only the stamp moves to the latest version.
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert result["deployments"][0]["components"] == [{"reference": "frontend", "image": "app:latest"}]
         dep = result["deployments"][0]
         assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) is None
@@ -656,7 +664,7 @@ class TestMigrateV2ToV2_1:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert result["components"][0]["path"] == [{"match": "/"}]
 
     def test_multiple_deployments(self):
@@ -718,7 +726,7 @@ class TestMigrateV2ToV2_1:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         dep = result["deployments"][0]
         # v2.7 relocated it under the service, so ask the service (RC-60).
         assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) == "frontend"
@@ -746,7 +754,7 @@ class TestMigrateV2_1ToV2_2:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert result["components"][0]["path"] == [{"match": "/"}]
 
     def test_string_path_with_rewrite_merged(self):
@@ -843,7 +851,7 @@ class TestMigrateV2_1ToV2_2:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert result["components"] == [{"name": "worker"}]
 
     def test_v2_2_not_migrated_again(self):
@@ -859,7 +867,7 @@ class TestMigrateV2_1ToV2_2:
         result, was_migrated = migrate_to_latest(data)
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert result["components"] == [{"name": "api", "path": [{"match": "/api"}]}]
 
 
@@ -891,7 +899,7 @@ def _v22_with_keycloak_connections() -> dict:
 def test_v23_relocates_keycloak_connections_to_service_config():
     out, migrated = migrate_to_latest(_v22_with_keycloak_connections())
     assert migrated is True
-    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
     # moved verbatim under the keycloak service, project-level config.keycloak gone.
     # The keycloak entry is now the normalized {name, config} record (v2.4 also runs).
     assert "keycloak" not in out["config"]
@@ -948,7 +956,7 @@ def test_v24_normalizes_project_services_to_name_records():
     }
     out, migrated = migrate_to_latest(data)
     assert migrated is True
-    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
     assert out["services"] == [
         "publish-on-web",
         {"name": "keycloak", "config": {"template": "sso-only"}},
@@ -1051,7 +1059,7 @@ def test_v25_relocates_root_domains_under_publish_on_web_service():
     }
     out, migrated = migrate_to_latest(data)
     assert migrated is True
-    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
     # root block is gone, relocated under the promoted publish-on-web service record
     assert "domains" not in out
     assert out["services"] == [
@@ -1136,7 +1144,7 @@ def test_relocate_invites_moves_the_block_and_validates():
     out, was_migrated = migrate_to_latest(_project_with_top_level_invites())
     assert was_migrated is True
     assert "invites" not in out
-    assert out["schema-version"] == LATEST_SCHEMA_VERSION
+    assert out["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
     invite_service = next(s for s in out["services"] if isinstance(s, dict) and s.get("name") == "invite")
     config = invite_service["config"]
     assert config["default-language"] == "nl"
@@ -1156,7 +1164,7 @@ def test_relocate_invites_is_idempotent():
 def test_unconditional_fixup_relocates_a_stamped_file():
     # A file already stamped at the latest version but still carrying a top-level invites block
     # (e.g. written by an old pod mid-rollout) is repaired by the always-run fixup.
-    data = _project_with_top_level_invites(version=LATEST_SCHEMA_VERSION)
+    data = _project_with_top_level_invites(version=LATEST_SCHEMA_VERSION_VALUE)
     out, was_migrated = migrate_to_latest(data)
     assert was_migrated is True
     assert "invites" not in out
@@ -1183,7 +1191,7 @@ def test_duplicate_bare_service_entry_is_collapsed():
     the dp-bn7 failure mode, so the repair belongs in the unconditional fixup.
     """
     data = {
-        "schema-version": LATEST_SCHEMA_VERSION,
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "name": "dup",
         "services": ["publish-on-web", "publish-on-web", "keycloak"],
     }
@@ -1201,7 +1209,7 @@ def test_duplicate_collapse_keeps_the_entry_carrying_config():
     """
     record = {"name": "publish-on-web", "config": {"domains": {"allowed-domains": []}}}
     data = {
-        "schema-version": LATEST_SCHEMA_VERSION,
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "name": "dup",
         "services": ["publish-on-web", record],
     }
@@ -1218,7 +1226,7 @@ def test_two_entries_that_both_carry_config_are_left_for_the_validator():
     """
     first = {"name": "keycloak", "config": {"template": "sso-only"}}
     second = {"name": "keycloak", "config": {"template": "sso-support"}}
-    data = {"schema-version": LATEST_SCHEMA_VERSION, "name": "dup", "services": [first, second]}
+    data = {"schema-version": LATEST_SCHEMA_VERSION_VALUE, "name": "dup", "services": [first, second]}
 
     out, _ = migrate_to_latest(data)
 
@@ -1226,7 +1234,7 @@ def test_two_entries_that_both_carry_config_are_left_for_the_validator():
 
 
 def test_collapse_is_idempotent_and_leaves_clean_files_alone():
-    clean = {"schema-version": LATEST_SCHEMA_VERSION, "name": "ok", "services": ["publish-on-web", "keycloak"]}
+    clean = {"schema-version": LATEST_SCHEMA_VERSION_VALUE, "name": "ok", "services": ["publish-on-web", "keycloak"]}
     out, was_migrated = migrate_to_latest(copy.deepcopy(clean))
 
     assert was_migrated is False
@@ -1277,7 +1285,7 @@ class TestRelocateDomainSettingsToService:
         result, was_migrated = migrate_to_latest(self._hwt_nqi_shaped())
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         deployment = result["deployments"][0]
         assert "domain-format" not in deployment
         assert get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT) == "component-deployment-project"
@@ -1371,7 +1379,7 @@ class TestRemoveDomainMode:
         return {
             "schema-version": 2.7,
             "name": "desa",
-            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
             "clusters": ["odcn-production"],
             "components": [{"name": "website", "type": "deployment", "ports": {"inbound": [8080]}}],
             "deployments": [
@@ -1546,7 +1554,7 @@ class TestRelocateRegistriesToService:
         result, was_migrated = migrate_to_latest(self._algor_odc_shaped())
 
         assert was_migrated is True
-        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
         assert "registries" not in result
         assert self._service_config(result, "image-registries")["registries"] == [
             {
@@ -1641,3 +1649,238 @@ class TestRelocateRegistriesToService:
         twice, was_migrated = migrate_to_latest(copy.deepcopy(once))
         assert was_migrated is False
         assert twice == once
+
+
+# ---------------------------------------------------------------------------
+# v2.12 -> v2.13: users[].role: x wordt users[].roles: [...] (RC-392)
+# ---------------------------------------------------------------------------
+
+
+class TestRolesAsAList:
+    @pytest.mark.parametrize(
+        ("oude_rol", "verwachte_rollen"),
+        [
+            ("admin", ["admin", "ops"]),
+            ("owner", ["admin", "ops"]),
+            ("developer", ["developer"]),
+            ("member", ["viewer"]),
+        ],
+    )
+    def test_elke_oude_rol_krijgt_zijn_nieuwe_lijst(self, oude_rol: str, verwachte_rollen: list[str]) -> None:
+        # Een tweede lid met admin, zodat de "geen admin over" fallback hier niet meespeelt:
+        # die heeft zijn eigen test hieronder.
+        data = {
+            "name": "p",
+            "users": [{"email": "a@b.nl", "role": oude_rol}, {"email": "beheerder@b.nl", "role": "admin"}],
+        }
+        gewijzigd = roles_as_a_list(data)
+
+        assert gewijzigd is True
+        assert data["users"][0]["roles"] == verwachte_rollen
+        assert "role" not in data["users"][0]
+
+    def test_een_onbekende_rol_wordt_viewer_en_logt_een_waarschuwing(self, caplog: pytest.LogCaptureFixture) -> None:
+        data = {
+            "name": "p",
+            "users": [{"email": "a@b.nl", "role": "operator"}, {"email": "beheerder@b.nl", "role": "admin"}],
+        }
+
+        with caplog.at_level(logging.WARNING, logger="opi.services.schema_migration"):
+            gewijzigd = roles_as_a_list(data)
+
+        assert gewijzigd is True
+        assert data["users"][0]["roles"] == ["viewer"]
+        assert any("operator" in record.message for record in caplog.records)
+
+    def test_een_lid_dat_al_roles_draagt_blijft_onaangeraakt(self) -> None:
+        data = {"name": "p", "users": [{"email": "a@b.nl", "roles": ["developer"]}]}
+
+        gewijzigd = roles_as_a_list(data)
+
+        assert gewijzigd is False
+        assert data["users"][0]["roles"] == ["developer"]
+
+    def test_zonder_users_lijst_gebeurt_er_niets(self) -> None:
+        assert roles_as_a_list({"name": "p"}) is False
+
+    def test_blijft_na_migratie_zonder_admin_krijgt_het_eerste_lid_admin_erbij(self) -> None:
+        """Zonder deze regel zou een bestand na de migratie ongeldig worden: het schema
+        eist minstens een lid met ``admin`` (``minContains`` op ``users``)."""
+        data = {
+            "name": "p",
+            "users": [
+                {"email": "a@b.nl", "role": "developer"},
+                {"email": "b@b.nl", "role": "member"},
+            ],
+        }
+
+        roles_as_a_list(data)
+
+        assert data["users"][0]["roles"] == ["admin", "developer"]
+        assert data["users"][1]["roles"] == ["viewer"]
+        validate_project_schema({**data, "schema-version": LATEST_SCHEMA_VERSION_VALUE})
+
+    def test_blijft_na_migratie_met_een_admin_laat_de_leden_verder_ongemoeid(self) -> None:
+        data = {
+            "name": "p",
+            "users": [
+                {"email": "a@b.nl", "role": "developer"},
+                {"email": "b@b.nl", "role": "admin"},
+            ],
+        }
+
+        roles_as_a_list(data)
+
+        assert data["users"][0]["roles"] == ["developer"]
+        assert data["users"][1]["roles"] == ["admin", "ops"]
+
+
+class TestRemoveMailAccounts:
+    """v2.13 -> v2.14 (RC-401): ``services[send-email].config.accounts`` gaat weg.
+
+    Elke deployment krijgt sinds RC-401 een eigen account met het wachtwoord in haar eigen
+    Kubernetes-secret, dus het accountblok in het projectbestand heeft niets meer te zeggen.
+    """
+
+    def _project(self, config_extra: dict | None = None) -> dict:
+        return {
+            "schema-version": 2.13,
+            "name": "schrijvers",
+            "users": [{"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}],
+            "clusters": ["odcn-production"],
+            "components": [{"name": "web", "type": "deployment", "ports": {"inbound": [8080]}}],
+            "services": [
+                {
+                    "name": "send-email",
+                    "config": {
+                        "from-name": "Schrijvers",
+                        "approval": {"status": "approved", "history": []},
+                        **(config_extra or {}),
+                    },
+                }
+            ],
+            "deployments": [],
+        }
+
+    def test_haalt_het_accountblok_weg(self) -> None:
+        data = self._project({"accounts": {"odcn-production": {"username": "project-schrijvers"}}})
+
+        gewijzigd = remove_mail_accounts(data)
+
+        assert gewijzigd is True
+        config = data["services"][0]["config"]
+        assert "accounts" not in config
+        assert config["from-name"] == "Schrijvers", "andere velden blijven ongemoeid"
+
+    def test_is_idempotent(self) -> None:
+        data = self._project({"accounts": {"odcn-production": {"username": "project-schrijvers"}}})
+
+        assert remove_mail_accounts(data) is True
+        assert remove_mail_accounts(data) is False
+        assert "accounts" not in data["services"][0]["config"]
+
+    def test_een_bestand_zonder_accounts_blijft_ongewijzigd(self) -> None:
+        data = self._project()
+
+        assert remove_mail_accounts(data) is False
+
+    def test_een_bestand_zonder_de_dienst_gebeurt_er_niets(self) -> None:
+        data = {"name": "zonder-mail", "services": []}
+
+        assert remove_mail_accounts(data) is False
+
+    def test_de_legacy_enkelsleutelvorm_wordt_ook_opgeruimd(self) -> None:
+        """De dienst kan ook als ``{"send-email": {...}}`` voorkomen, niet alleen als
+        ``{"name": "send-email", ...}``."""
+        data = self._project()
+        data["services"] = [{"send-email": {"config": {"accounts": {"odcn-production": {}}}}}]
+
+        gewijzigd = remove_mail_accounts(data)
+
+        assert gewijzigd is True
+        assert "accounts" not in data["services"][0]["send-email"]["config"]
+
+    def test_het_resultaat_valideert_tegen_het_schema(self) -> None:
+        data = self._project({"accounts": {"odcn-production": {"username": "project-schrijvers"}}})
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert "accounts" not in result["services"][0]["config"]
+        validate_project_schema(result)
+
+
+class TestComponentDescriptionMigration:
+    """v2.14 -> v2.15: a new optional field, nothing to migrate for an existing file."""
+
+    def test_is_a_no_op(self) -> None:
+        data = {"name": "p", "components": [{"name": "frontend", "type": "deployment"}]}
+        assert component_description(data) is False
+        assert data == {"name": "p", "components": [{"name": "frontend", "type": "deployment"}]}
+
+    def test_a_2_14_file_reaches_the_latest_version_unchanged(self) -> None:
+        data = {
+            "name": "p",
+            "schema-version": "2.14",
+            "users": [{"email": "a@b.nl", "roles": ["admin"]}],
+            "components": [{"name": "frontend", "type": "deployment"}],
+        }
+        before_without_stamp = {k: v for k, v in data.items() if k != "schema-version"}
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp
+
+
+class TestRestoreRunReferenceMigration:
+    """v2.15 -> v2.16: clone-from.run was added, so there is nothing to migrate.
+
+    Nor could there be: a file still carrying the old ``backup_items`` is rejected by the
+    schema gate, which runs before this chain (RC-404).
+    """
+
+    def test_is_a_no_op(self) -> None:
+        data = {"name": "p", "deployments": [{"name": "backup", "clone-from": {"type": "backup"}}]}
+        assert restore_run_reference(data) is False
+        assert data == {"name": "p", "deployments": [{"name": "backup", "clone-from": {"type": "backup"}}]}
+
+    def test_a_2_15_file_reaches_the_latest_version_unchanged(self) -> None:
+        data = {
+            "name": "p",
+            "schema-version": "2.15",
+            "users": [{"email": "a@b.nl", "roles": ["admin"]}],
+            "components": [{"name": "frontend", "type": "deployment"}],
+        }
+        before_without_stamp = {k: v for k, v in data.items() if k != "schema-version"}
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp
+
+
+class TestSourceCodeLinksMigration:
+    """v2.16 -> v2.17: het root-veld source-code kwam erbij, dus er is niets te migreren."""
+
+    def test_is_a_no_op(self) -> None:
+        data = {"name": "p", "source-code": [{"url": "https://github.com/x/y"}]}
+        assert source_code_links(data) is False
+        assert data == {"name": "p", "source-code": [{"url": "https://github.com/x/y"}]}
+
+    def test_a_2_16_file_reaches_the_latest_version_unchanged(self) -> None:
+        data = {
+            "name": "p",
+            "schema-version": "2.16",
+            "users": [{"email": "a@b.nl", "roles": ["admin"]}],
+            "components": [{"name": "frontend", "type": "deployment"}],
+        }
+        before_without_stamp = {k: v for k, v in data.items() if k != "schema-version"}
+
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION_VALUE
+        assert {k: v for k, v in result.items() if k != "schema-version"} == before_without_stamp

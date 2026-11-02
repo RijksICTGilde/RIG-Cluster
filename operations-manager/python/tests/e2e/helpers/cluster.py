@@ -109,6 +109,22 @@ def secret_values(namespace: str, name: str) -> dict[str, str]:
     return {sleutel: base64.b64decode(waarde).decode() for sleutel, waarde in data.items()}
 
 
+def deployment_database_secret(project: str, deployment: str) -> dict[str, str]:
+    """Het databasesecret van een deployment, ontcijferd.
+
+    De naam wordt opgezocht in plaats van samengesteld: hij volgt uit de secretnaamgeving
+    van OPI en niet uit de deploymentnaam alleen.
+    """
+    namespace = f"rig-{project}"
+    namen = [
+        item["metadata"]["name"]
+        for item in get_json_strict("get", "secrets", "-n", namespace)["items"]
+        if deployment in item["metadata"]["name"] and "database" in item["metadata"]["name"].lower()
+    ]
+    assert namen, f"geen databasesecret voor deployment '{deployment}' in {namespace}"
+    return secret_values(namespace, namen[0])
+
+
 #: Laatste regel van elk statement dat via ``run_psql`` loopt. Komt hij niet terug, dan heeft
 #: de pod de uitvoer van psql niet doorgegeven en is er niets gemeten.
 PSQL_SLUITSTUK = "psql-uitvoer-compleet"

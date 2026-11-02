@@ -7,14 +7,20 @@ and introduces a `schema-version` field; future migrations use the version
 number directly.
 """
 
+import hashlib
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from opi.core.project_schema import SchemaVersion, parse_schema_version, version_key
+from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.image_registries.upstream import normalize_upstream
+from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
 from opi.utils.naming import generate_storage_name
 
 if TYPE_CHECKING:
@@ -28,9 +34,47 @@ logger = logging.getLogger(__name__)
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
-SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9)
+SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
+    parse_schema_version(text)
+    for text in (
+        "1",
+        "2",
+        "2.1",
+        "2.2",
+        "2.3",
+        "2.4",
+        "2.5",
+        "2.6",
+        "2.7",
+        "2.8",
+        "2.9",
+        "2.10",
+        "2.11",
+        "2.12",
+        "2.13",
+        "2.14",
+        "2.15",
+        "2.16",
+        "2.17",
+    )
+)
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
+
+#: De vorm waarin een versie in een projectbestand wordt weggeschreven: een string, zodat
+#: YAML er geen float van maakt en "2.10" niet als 2.1 terugkomt.
+LATEST_SCHEMA_VERSION_VALUE = version_key(LATEST_SCHEMA_VERSION)
+
+_V1, _V2 = SCHEMA_VERSIONS[0], SCHEMA_VERSIONS[1]
+
+#: De dienst waar de 2.14-stap het accountblok uit haalt. Als constante, zodat de stap niet
+#: het dienstpakket hoeft te importeren: een migratiestap hoort niets van de catalogus nodig
+#: te hebben om een sleutel weg te halen.
+SEND_EMAIL_SERVICE = "send-email"
+
+#: Waar het goedkeuringsblok van de Redis-opt-out staat, zoals ``config_value_approval``
+#: het schrijft.
+APPROVAL_FIELD = f"{ACL_KEY_PREFIX_FIELD}-approval"
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -58,6 +102,10 @@ LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 # `domain-format: component.subdomain` (the format that IS nice-url's meaning, and the one
 # the files that carried both already chose), every other value was already equivalent to
 # the default format. See ``remove_domain_mode`` below.
+#
+# v2.10 -> 2.11 (RC-330): een deployment kan een OTAP-markering ``environment`` dragen. De
+# stap vult niets in, zie ``introduce_environment`` onderaan. Hij volgt op 2.10, de
+# Redis-opt-out van RC-338.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -68,33 +116,36 @@ _STORAGE_SERVICE_TO_TYPE = {
 _STORAGE_TYPE_TO_SERVICE = {v: k for k, v in _STORAGE_SERVICE_TO_TYPE.items()}
 
 
-def detect_schema_version(project_data: dict[str, Any]) -> int | float:
+def detect_schema_version(project_data: dict[str, Any]) -> SchemaVersion:
     """
     Detect the schema version of a project file.
 
     Checks for an explicit `schema-version` field first. Falls back to
     structure detection: presence of `uses-services` on any component,
     helm-chart, helmfile, or deployment indicates v1.
+
+    Raises:
+        ProjectSchemaError: if `schema-version` is present but not MAJOR.MINOR.
     """
     if "schema-version" in project_data:
-        return project_data["schema-version"]
+        return parse_schema_version(project_data["schema-version"])
 
     # Structure detection for v1: check for uses-services on any entity
     for comp in project_data.get("components", []):
         if isinstance(comp, dict) and "uses-services" in comp:
-            return 1
+            return _V1
 
     for chart in project_data.get("helm-charts", []):
         if isinstance(chart, dict) and "uses-services" in chart:
-            return 1
+            return _V1
 
     for hf in project_data.get("helmfile", []):
         if isinstance(hf, dict) and "uses-services" in hf:
-            return 1
+            return _V1
 
     for dep in project_data.get("deployments", []):
         if isinstance(dep, dict) and "uses-services" in dep:
-            return 1
+            return _V1
 
     # No version field and no uses-services found - assume latest (v2).
     # Only files with explicit uses-services are v1.
@@ -116,7 +167,7 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     version = detect_schema_version(project_data)
     migrated = False
 
-    if version < 2:
+    if version < _V2:
         project_data = _migrate_v1_to_v2(project_data)
         migrated = True
     else:
@@ -132,7 +183,7 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie, dus dat hoort de
     # stamp te zeggen.
     if migrated or version < LATEST_SCHEMA_VERSION:
-        project_data["schema-version"] = LATEST_SCHEMA_VERSION
+        project_data["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
         migrated = True
 
     # Always run v2 fixups to clean up corruption from past bugs
@@ -182,7 +233,7 @@ def _migrate_v1_to_v2(project_data: dict[str, Any]) -> dict[str, Any]:
             continue
         _merge_uses_services_into_services(dep)
 
-    project_data["schema-version"] = LATEST_SCHEMA_VERSION
+    project_data["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
 
     logger.info(f"Migration to v2 complete for project '{project_name}'")
     return project_data
@@ -1271,25 +1322,297 @@ def _normalize_upstream(url: Any) -> Any:
     return normalize_upstream(url) if isinstance(url, str) else url
 
 
+def approve_existing_acl_key_prefix_optout(project_data: dict[str, Any]) -> bool:
+    """Neem een bestaande Redis-opt-out over als goedgekeurd (v2.9 -> 2.10, RC-338).
+
+    ``acl-key-prefix: false`` vraagt sinds deze versie het besluit van een
+    platformbeheerder. De bestanden die hem al droegen zijn de reden dat de instelling
+    bestaat, dus hun toestand wordt overgenomen in plaats van ingetrokken. Een migratie
+    draait een keer per bestand, dus een opt-out die daarna wordt gezet doorloopt de
+    gewone aanvraag.
+
+    Idempotent. Retourneert True als er iets veranderd is.
+    """
+    for entry in project_data.get("services", []) or []:
+        if service_entry_name(entry) != ServiceType.REDIS.value:
+            continue
+        config = service_entry_config(entry)
+        if not isinstance(config, dict) or config.get(ACL_KEY_PREFIX_FIELD) is not False:
+            continue
+        if isinstance(config.get(APPROVAL_FIELD), dict):
+            continue
+        config[APPROVAL_FIELD] = {
+            "status": ApprovalStatus.APPROVED.value,
+            "value": False,
+            "history": [
+                {
+                    "date": datetime.now(UTC).isoformat(),
+                    "status": ApprovalStatus.APPROVED.value,
+                    "by": "schema-migration",
+                    # De versie van DEZE stap, niet de laatste: de regel legt vast bij welke
+                    # migratie de opt-out is overgenomen, en die blijft 2.10 als er een
+                    # versie bijkomt.
+                    "message": "Bestaande opt-out overgenomen bij de migratie naar 2.10",
+                }
+            ],
+        }
+        return True
+    # Niets te doen. Expliciet en niet door het einde vallen: de stap belooft een bool,
+    # en None leest in de lus van migrate_to_latest als "niet gewijzigd" zonder het te
+    # zeggen.
+    return False
+
+
+def introduce_environment(project_data: dict[str, Any]) -> bool:
+    """De OTAP-markering bestaat (v2.10 -> 2.11), maar wordt niet ingevuld (RC-330).
+
+    Besloten: geen markering afleiden uit een naam of iets anders. Een bestand zonder
+    ``environment`` leest als ``ontwikkeling`` (``effective_environment``), dus het
+    weglaten is de standaard en geen gat. Projectbeheerders zetten de markering zelf.
+    """
+    return False
+
+
+#: Het service account dat de oude projectsleutel overneemt (v2.11 -> 2.12). De naam staat
+#: in de actor en in de git-trailer, dus een pijplijn is daar na de migratie aan te wijzen
+#: waar hij eerst alleen "het project" was.
+PROJECT_API_ACCOUNT = "project-api"
+
+#: De rol van dat account bij de migratie naar 2.12. ADMIN, omdat de projectsleutel de
+#: hele schrijfkant van een project opende, tot en met het verwijderen ervan en het
+#: terugzetten van een backup. Een smallere rol zou draaiende pijplijnen laten breken, en
+#: dat is een keuze voor de projectbeheerder en niet voor de migratie. De stap naar 2.13
+#: maakt er ``[admin, ops]`` van, net als bij elke andere admin.
+PROJECT_API_ROL = "admin"
+
+#: Dezelfde rollen, maar dan zoals een NIEUW project ze meteen schrijft (2.13).
+PROJECT_API_ROLLEN: tuple[str, ...] = ("admin", "ops")
+
+#: De vervaldatum van het overgenomen token. Een vaste datum en geen ``now() + N dagen``:
+#: de migratie draait bij elke lezing van een nog niet weggeschreven bestand, en een datum
+#: die meeschuift zou het bestand elke keer anders maken.
+PROJECT_API_VERVALT = "2031-01-01T00:00:00+00:00"
+
+
+def relocate_api_key_to_service_account(project_data: dict[str, Any]) -> bool:
+    """De projectsleutel wordt een token van het service account ``project-api``.
+
+    ``config.api-key`` was een geheim zonder eigenaar, zonder vervaldatum en zonder manier
+    om hem in te trekken zonder het project te raken. Na deze stap is hij een token van een
+    lid: dezelfde waarde blijft werken, dus een draaiende pijplijn merkt er niets van, maar
+    hij heeft nu een naam, een vervaldatum en een rol, en intrekken is dat tokenblok
+    weghalen.
+
+    De sleutel staat AGE-versleuteld in het bestand en de hash moet over de PLATTE waarde,
+    want dat is wat een aanroeper presenteert. Gaat het ontsleutelen niet, dan BLIJFT
+    ``config.api-key`` staan: weghalen zou de pijplijn van dat project buitensluiten op
+    grond van een sleutel die we niet hebben kunnen lezen. Zo'n bestand blijft GELDIG,
+    want 2.12 laat het veld nog toe, en ``recognise_principal`` aanvaardt die sleutel dan
+    ook nog. Dat is de keuze: een foutregel en een volgende ronde, en niet een bestand dat
+    de validatie afkeurt en dus bij elke verwerking stil blijft staan. Het veld verdwijnt
+    pas uit het schema als de meting zegt dat niemand de oude sleutel meer gebruikt.
+
+    Idempotent: een tweede ronde vindt geen ``config.api-key`` meer, en een bestand dat het
+    account al heeft krijgt er geen tweede token bij.
+    """
+    config = project_data.get("config")
+    if not isinstance(config, dict) or not config.get("api-key"):
+        return False
+
+    opgeslagen = str(config["api-key"])
+    plat = _plattegrond_van_de_sleutel(str(project_data.get("name") or "?"), opgeslagen, config)
+    if plat is None:
+        logger.error(
+            "Projectsleutel van '%s' ging niet open; hij blijft als config.api-key staan "
+            "en wordt bij een volgende ronde opnieuw aangeboden",
+            project_data.get("name"),
+        )
+        return False
+    del config["api-key"]
+
+    leden = project_data.setdefault("users", [])
+    if not isinstance(leden, list):
+        project_data["users"] = leden = []
+
+    account: dict[str, Any] | None = next(
+        (lid for lid in leden if isinstance(lid, dict) and lid.get("name") == PROJECT_API_ACCOUNT),
+        None,
+    )
+    if account is None:
+        account = {"type": "service-account", "name": PROJECT_API_ACCOUNT, "role": PROJECT_API_ROL}
+        leden.append(account)
+
+    tokens = account.setdefault("tokens", [])
+    hash_hex = hashlib.sha256(plat.encode()).hexdigest()
+    if not any(isinstance(t, dict) and t.get("hash") == hash_hex for t in tokens):
+        tokens.append({"name": "projectsleutel", "expires": PROJECT_API_VERVALT, "hash": hash_hex})
+    return True
+
+
+def _plattegrond_van_de_sleutel(project_name: str, opgeslagen: str, config: dict[str, Any]) -> str | None:
+    """De platte projectsleutel, of None als hij niet open te krijgen is.
+
+    Dezelfde twee stappen als ``ProjectService._resolve_plaintext_api_key``: de
+    projectsleutel uitpakken met de KEK en daarmee de waarde ontsleutelen.
+    """
+    if not is_age_encrypted(opgeslagen):
+        return opgeslagen
+    ingepakt = config.get("age-private-key")
+    if not ingepakt:
+        return None
+    try:
+        private_key = unwrap_project_key_sync(str(ingepakt))
+    except ValueError as e:
+        logger.warning("Projectsleutel van '%s' niet uit te pakken: %s", project_name, e)
+        return None
+    return decrypt_age_content_sync(opgeslagen, private_key) or None
+
+
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
     """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
     Project(project_data).set(f"services/{service_name}/config", config)
+
+
+#: De vertaling van de oude ene rol naar de rollenlijst (v2.12 -> 2.13, RC-392). Dezelfde
+#: tabel als ``LEGACY_ROLES`` in ``opi/services/project_roles.py``, hier als waarden omdat
+#: de migratie schrijft wat er in het bestand komt te staan en niet wat de code leest.
+ROLE_MIGRATION: dict[str, list[str]] = {
+    "admin": ["admin", "ops"],
+    "owner": ["admin", "ops"],
+    "developer": ["developer"],
+    "member": ["viewer"],
+}
+
+#: Wat een lid krijgt waarvan de rol niet in de tabel staat. Niet overslaan: een lid zonder
+#: rollen valideert niet, en dan blijft het hele project staan. Viewer is de smalste rol,
+#: dus de fout kost niemand meer dan hij al had.
+ROLE_FALLBACK: list[str] = ["viewer"]
+
+
+def roles_as_a_list(project_data: dict[str, Any]) -> bool:
+    """``users[].role: x`` wordt ``users[].roles: [...]`` (v2.12 -> 2.13, B1 en B2).
+
+    ``admin`` en ``owner`` worden ``[admin, ops]``: admin is sinds dit ontwerp alleen
+    gebruikersbeheer, en wie vandaag admin is doet ook het operationele werk. ``member``
+    wordt ``[viewer]``, ``developer`` blijft ``[developer]``.
+
+    Heeft het project daarna geen enkel lid met ``admin``, dan krijgt het eerste lid die
+    rol erbij: zonder admin kan niemand nog leden of tokens beheren, en het schema weigert
+    zo'n bestand. Idempotent: een lid dat al ``roles`` draagt wordt niet aangeraakt.
+    """
+    leden = project_data.get("users")
+    if not isinstance(leden, list):
+        return False
+
+    gewijzigd = False
+    for lid in leden:
+        if not isinstance(lid, dict) or "role" not in lid:
+            continue
+        oud = str(lid.pop("role"))
+        nieuw = ROLE_MIGRATION.get(oud)
+        if nieuw is None:
+            logger.warning(
+                "Lid in project '%s' had de onbekende rol '%s'; die wordt %s",
+                project_data.get("name"),
+                oud,
+                ROLE_FALLBACK,
+            )
+            nieuw = ROLE_FALLBACK
+        lid["roles"] = list(nieuw)
+        gewijzigd = True
+
+    if gewijzigd and not any(isinstance(lid, dict) and "admin" in (lid.get("roles") or []) for lid in leden):
+        eerste = next((lid for lid in leden if isinstance(lid, dict)), None)
+        if eerste is not None:
+            logger.warning(
+                "Project '%s' had na de rolmigratie geen admin; '%s' krijgt die rol erbij",
+                project_data.get("name"),
+                eerste.get("email") or eerste.get("name"),
+            )
+            eerste["roles"] = sorted({*(eerste.get("roles") or []), "admin"})
+
+    return gewijzigd
+
+
+def remove_mail_accounts(project_data: dict[str, Any]) -> bool:
+    """Take the SMTP account block out of send-email (v2.13 -> v2.14, RC-401).
+
+    ``services[send-email].config.accounts`` held one account per cluster, with the
+    password AGE-encrypted in the project file. Since RC-401 there is an account per
+    DEPLOYMENT and its password lives in that deployment's Kubernetes secret, like every
+    other service credential, so the block has nothing left to say and account credentials
+    never belonged in a project file in the first place.
+
+    The old password is thrown away and not carried anywhere: no deployment takes the old
+    account over. Each one gets its own account with its own password on the next
+    processing, and the old account keeps working on what the pods still hold until OPI
+    removes it (``MailManager._remove_legacy_project_account``).
+
+    Idempotent: a project without the key is left untouched.
+    """
+    changed = False
+    for entry in project_data.get("services") or []:
+        if service_entry_name(entry) != SEND_EMAIL_SERVICE:
+            continue
+        config = service_entry_config(entry)
+        if isinstance(config, dict) and config.pop("accounts", None) is not None:
+            changed = True
+    if changed:
+        logger.info(
+            f"Removed the send-email account block from project '{project_data.get('name', 'unknown')}': "
+            "every deployment now gets its own account with its password in its own secret"
+        )
+    return changed
+
+
+def component_description(project_data: dict[str, Any]) -> bool:
+    """Added components[].description (v2.14 -> v2.15).
+
+    Optional field, so nothing to migrate. This step registers the new version in the chain.
+    """
+    return False
+
+
+def restore_run_reference(project_data: dict[str, Any]) -> bool:
+    """Added deployments[].clone-from.run (v2.15 -> v2.16).
+
+    Nothing to migrate, and nothing that could be: a file still carrying the old
+    ``backup_items`` is rejected by the schema gate, which runs BEFORE this chain. The
+    step only registers the new version.
+    """
+    return False
+
+
+def source_code_links(project_data: dict[str, Any]) -> bool:
+    """Added the root field source-code (v2.16 -> v2.17).
+
+    Optional field, so nothing to migrate. This step registers the new version in the chain.
+    """
+    return False
 
 
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
 #: against the schemas on disk, so a migration without a schema cannot slip through.
-MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...] = (
-    (2.1, _migrate_v2_to_v2_1),
-    (2.2, _migrate_v2_1_to_v2_2),
-    (2.3, _migrate_v2_2_to_v2_3),
-    (2.4, normalize_service_entries),
-    (2.5, normalize_domains_location),
-    (2.6, relocate_invites_to_service),
-    (2.7, relocate_domain_settings_to_service),
-    (2.8, remove_domain_mode),
-    (2.9, relocate_registries_to_service),
+MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], ...] = (
+    (parse_schema_version("2.1"), _migrate_v2_to_v2_1),
+    (parse_schema_version("2.2"), _migrate_v2_1_to_v2_2),
+    (parse_schema_version("2.3"), _migrate_v2_2_to_v2_3),
+    (parse_schema_version("2.4"), normalize_service_entries),
+    (parse_schema_version("2.5"), normalize_domains_location),
+    (parse_schema_version("2.6"), relocate_invites_to_service),
+    (parse_schema_version("2.7"), relocate_domain_settings_to_service),
+    (parse_schema_version("2.8"), remove_domain_mode),
+    (parse_schema_version("2.9"), relocate_registries_to_service),
+    (parse_schema_version("2.10"), approve_existing_acl_key_prefix_optout),
+    (parse_schema_version("2.11"), introduce_environment),
+    (parse_schema_version("2.12"), relocate_api_key_to_service_account),
+    (parse_schema_version("2.13"), roles_as_a_list),
+    (parse_schema_version("2.14"), remove_mail_accounts),
+    (parse_schema_version("2.15"), component_description),
+    (parse_schema_version("2.16"), restore_run_reference),
+    (parse_schema_version("2.17"), source_code_links),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

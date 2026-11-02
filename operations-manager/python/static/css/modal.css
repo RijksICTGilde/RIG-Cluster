@@ -99,6 +99,20 @@
     transform: translate(-50%, -50%) scale(1);
 }
 
+/* Een bevestiging (bg/_action-confirm.html.j2) krijgt de maat en de vorm van
+   <nldd-modal-dialog>: smal, zonder kop, de vraag zelf is de dialoog. Op :has() en niet
+   op een klasse, omdat de schil gedeeld is en de vraag bij bevestigen vervangen wordt
+   door de voortgang: dan valt de regel vanzelf weg en is de schil weer breed. */
+.edit-section-modal:has([data-confirm-action] > nldd-inline-dialog) {
+    width: calc(100% - var(--primitives-space-16, 16px) * 2);
+    max-width: var(--primitives-area-480, 480px);
+    padding: var(--primitives-space-24, 24px);
+}
+
+.edit-section-modal:has([data-confirm-action] > nldd-inline-dialog) .edit-section-header {
+    display: none;
+}
+
 /* Alleen nog de lijn en de lucht eronder; de flexregel is <c-cluster justify="between">. */
 .edit-section-header {
     margin-bottom: var(--rvo-space-xl);

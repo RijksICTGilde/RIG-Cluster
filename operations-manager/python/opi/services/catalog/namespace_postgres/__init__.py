@@ -7,15 +7,19 @@ image/registry/privileges/postInitSQL/resources too, which are API/YAML-only for
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.base import ConfigLayer, Service, config_path
 from opi.services.catalog.namespace_postgres.config_model import NamespacePostgresConfig
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
+from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
+
+if TYPE_CHECKING:
+    from opi.services.catalog.config_settings import ConfigSetting
 
 
 class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
@@ -27,7 +31,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         icon="database",
         color="donkerblauw",
         shared_per_deployment=True,
-        secret_class="DatabaseSecret",
+        secret_class="DatabaseSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in DatabaseVariables],
         hidden=True,
         cleanup_strategy=CleanupStrategy.DEFERRED,
@@ -45,6 +49,9 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
     allows_implicit_project_selection = True
     config_section_id = "postgresql-config"
     modal_flow_id = "modal-edit-postgresql-config"
+
+    def config_settings(self) -> tuple[ConfigSetting, ...]:
+        return DEDICATED_POSTGRES_SETTINGS
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         """Section visibility: derived from this service's service_type."""

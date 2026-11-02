@@ -32,9 +32,9 @@ def test_step_data_shrinks_when_not_also_in_template() -> None:
         # team section's editable, so step_data is the single source of truth.
         base_data={"name": "pm-5sj", "deployments": [{"name": "prod"}]},
     )
-    state.store_step_data("team", {"users": [{"email": "keep@rijksoverheid.nl", "role": "admin"}]})
+    state.store_step_data("team", {"users": [{"email": "keep@rijksoverheid.nl", "roles": ["admin", "ops"]}]})
 
-    assert state.get_merged_data()["users"] == [{"email": "keep@rijksoverheid.nl", "role": "admin"}]
+    assert state.get_merged_data()["users"] == [{"email": "keep@rijksoverheid.nl", "roles": ["admin", "ops"]}]
 
 
 def test_merge_by_index_still_works_for_shared_non_owned_lists() -> None:

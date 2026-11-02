@@ -102,6 +102,7 @@ _FILE_FIELD = ActionField(
         "upload."
     ),
     kind=ActionFieldKind.FILE,
+    max_bytes=MAX_ATTACHMENT_BYTES,
     required_for=_VERBS,
 )
 
@@ -233,11 +234,8 @@ async def _store(ctx: ActionContext, binding: dict[str, Any] | None) -> ActionRe
     attachment_id = ctx.item_id or ctx.values.get("attachment_id") or ctx.values.get("reference")
     if not attachment_id:
         return ActionResult(422, {"detail": "attachment_id is verplicht"})
-    if upload is not None:
-        if len(upload.content) > MAX_ATTACHMENT_BYTES:
-            return ActionResult(413, {"detail": f"Bestand te groot (max {MAX_ATTACHMENT_KB} KB)"})
-        if not upload.content:
-            return ActionResult(422, {"detail": "Leeg bestand geupload"})
+    if upload is not None and not upload.content:
+        return ActionResult(422, {"detail": "Leeg bestand geupload"})
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{ctx.project_name}.yaml")
     try:

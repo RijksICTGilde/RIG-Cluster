@@ -89,7 +89,8 @@
   "properties": {
     "image": {
       "default": "ghcr.io/cloudnative-pg/postgresql:17",
-      "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
+      "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26). Letters, digits and . _ : / @ - only, starting with a letter or digit.",
+      "minLength": 1,
       "title": "Image",
       "type": "string"
     },
@@ -101,8 +102,9 @@
       "type": "integer"
     },
     "postInitSQL": {
-      "description": "SQL statements run once, when the database is first created (extensions, dictionaries).",
+      "description": "Extensies die de database nodig heeft, elk als 'CREATE EXTENSION IF NOT EXISTS <naam> [SCHEMA <schema>];'. Een andere vorm wordt geweigerd: deze statements draaien als superuser van het cluster.",
       "items": {
+        "pattern": "^CREATE EXTENSION IF NOT EXISTS (?:[A-Za-z_][A-Za-z0-9_$]*|\"[A-Za-z0-9_$-]+\")(?: SCHEMA (?:[A-Za-z_][A-Za-z0-9_$]*|\"[A-Za-z0-9_$-]+\"))?;?$",
         "type": "string"
       },
       "title": "Postinitsql",

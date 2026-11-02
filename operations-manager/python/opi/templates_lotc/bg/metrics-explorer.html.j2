@@ -136,7 +136,7 @@
 {% endblock %}
 
 {% block additional_scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     const PROMETHEUS_URL = "{{ prometheus_url }}";
     const SERVICE_INFO = {
         {% for service in services %}

@@ -36,7 +36,7 @@ def generate_api_key(length: int = 32) -> str:
 
     if settings.USE_UNSAFE_API_KEY:
         api_key = settings.API_TOKEN
-        logger.debug(f"Using unsafe API key from settings: {api_key}")
+        logger.debug("Using unsafe API key from settings")
     else:
         # Generate a secure random API key
         alphabet = string.ascii_letters + string.digits

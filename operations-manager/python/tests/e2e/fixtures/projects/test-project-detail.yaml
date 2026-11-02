@@ -7,9 +7,20 @@ clusters:
 
 users:
   - email: test@example.com
-    role: admin
+    roles: [admin, ops]
+    tokens:
+      - name: cli
+        expires: '2030-01-01T00:00:00+00:00'
+        hash: 0f8e3b2a1c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7
   - email: developer@example.com
-    role: developer
+    roles: [developer]
+  - type: service-account
+    name: bouwstraat
+    roles: [developer]
+    tokens:
+      - name: pijplijn
+        expires: '2030-06-01T00:00:00+00:00'
+        hash: 1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809
 
 services:
   - publish-on-web
@@ -41,10 +52,14 @@ config:
   # Overschreven per run door _munt_projectsleutelpaar in tests/e2e/testserver.py
   age-public-key: "wordt-per-run-gemunt"
   age-private-key: "wordt-per-run-gemunt"
-  api-key: test-api-key-detail
+  # Geen api-key: zo ziet dit project eruit NA de migratie naar schemaversie 2.12, en
+  # de projectpagina rendert hier dus het pad zonder projectsleutel. Dat pad las het
+  # veld ongecontroleerd en gaf een 500 op elk tabblad, terwijl alle fixtures hem nog
+  # droegen. De twee andere fixtures dragen hem wel, dus beide vormen staan er.
 
 components:
   - name: web-app
+    description: "De publieke webinterface, bedient de zoekpagina en praat met de worker"
     publish-on-web: true
     type: deployment
     ports:

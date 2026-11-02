@@ -1,0 +1,15 @@
+# De tweede helft van zad-geen-latest-tag: een image zonder tag, met een nette
+# securityContext zodat alleen de tag-policy hier faalt. Zie overtreder-pod.yaml.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagloos
+  namespace: rig-testproject
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true

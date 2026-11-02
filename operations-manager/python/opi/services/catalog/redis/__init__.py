@@ -5,14 +5,31 @@ from __future__ import annotations
 import logging
 from typing import Any, ClassVar
 
+from opi.services.catalog.approval import ApprovalSpec, config_value_approval
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
-from opi.services.catalog.redis.config_model import RedisConfig
+from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD, RedisConfig
 from opi.services.catalog.redis.variables import RedisVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import RedisSecret
 
 logger = logging.getLogger(__name__)
+
+#: De goedkeuring op het uitzetten van de sleutelbeperking. De gedeelde Redis is een
+#: gedeelde datastore: meer dan de eigen partitie is geen zelfbediening maar een aanvraag
+#: met een beslisser (BIO2 8.22 en 8.03). Zolang die er niet is houdt de ACL-gebruiker het
+#: eigen prefix, dus de applicatie blijft werken binnen haar eigen sleutels.
+APPROVAL = config_value_approval(
+    ServiceType.REDIS,
+    field=ACL_KEY_PREFIX_FIELD,
+    label="Redis zonder sleutelprefix",
+    activity="Redis gebruiken zonder sleutelprefix",
+    consequence="De Redis-gebruiker houdt het prefix {deployment}-{project}: zolang er geen goedkeuring is.",
+    required_when=lambda config: config.get(ACL_KEY_PREFIX_FIELD, True) is False,
+)
+
+#: DE POORT: de opt-out geldt pas als hij is goedgekeurd. ``redis_manager`` hangt hieraan.
+is_acl_key_prefix_approved = APPROVAL.is_approved
 
 
 class RedisService(Service):
@@ -24,7 +41,7 @@ class RedisService(Service):
         icon="zandloper",
         color="rood",
         shared_per_deployment=True,
-        secret_class="RedisSecret",
+        secret_class="RedisSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in RedisVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
     )
@@ -32,7 +49,8 @@ class RedisService(Service):
     config_schema_version = "1.0"
     # May enrol itself (RC-84): binding redis to a component decides nothing that the
     # project layer would have decided differently -- the one project-level field
-    # (acl-key-prefix) defaults to the narrow, safe value.
+    # (acl-key-prefix) defaults to the narrow, safe value, so the approval on the wide
+    # value does not fire for the config it enrols with.
     allows_implicit_project_selection = True
     cleanup_manager_key = ManagerKey.REDIS
     provision_order = 40
@@ -55,6 +73,12 @@ class RedisService(Service):
         from opi.services.catalog.redis.editables import REDIS_ACL_KEY_PREFIX_EDITABLE
 
         return [REDIS_ACL_KEY_PREFIX_EDITABLE]
+
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
+        return [APPROVAL.spec] if layer is ConfigLayer.PROJECT else []
+
+    def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
+        APPROVAL.ensure_requested(project_data)
 
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
@@ -107,7 +131,7 @@ class RedisService(Service):
             SecretFileSpec(
                 secret_name=RedisSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="redis",
+                secret_type="redis",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
                 resolve_aliases=True,
             )
         ]

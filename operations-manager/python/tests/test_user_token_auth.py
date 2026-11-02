@@ -23,9 +23,11 @@ from opi.api.user_token_auth import (
     authorize_claims,
     extract_bearer_token,
     get_metadata_cache,
+    validate_platform_admin_token,
     validate_user_token,
     verify_user_token,
 )
+from opi.core.actor import get_actor, user_actor
 from starlette.datastructures import Headers
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
@@ -254,6 +256,7 @@ class TestValidateUserTokenDecorator:
         @validate_user_token
         async def route(request: Any) -> str:
             seen["user"] = request.state.user
+            seen["actor"] = get_actor()
             return "ok"
 
         request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
@@ -262,6 +265,7 @@ class TestValidateUserTokenDecorator:
             assert await route(request=request) == "ok"
 
         assert seen["user"]["email"] == "user@example.test"
+        assert seen["actor"] == user_actor("user@example.test")
 
     async def test_missing_token_gives_401_with_a_challenge(self, realm: Any) -> None:
         @validate_user_token
@@ -291,4 +295,68 @@ class TestValidateUserTokenDecorator:
                 await route(request=request)
 
         assert exc.value.status_code == 401
+        assert called is False
+
+
+@pytest.mark.asyncio
+class TestValidatePlatformAdminTokenDecorator:
+    """Platformbeheer via de API (RC-377): hetzelfde token, plus de rol."""
+
+    async def test_valid_admin_token_reaches_the_route_and_names_the_admin(self, realm: Any, signing_key: Any) -> None:
+        seen: dict[str, Any] = {}
+
+        @validate_platform_admin_token
+        async def route(request: Any) -> str:
+            seen["user"] = request.state.user
+            seen["actor"] = get_actor()
+            return "ok"
+
+        request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
+        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+            get_service.return_value.is_email_allowed.return_value = True
+            get_service.return_value.is_platform_admin.return_value = True
+            assert await route(request=request) == "ok"
+
+        assert seen["user"]["email"] == "user@example.test"
+        assert seen["actor"] == user_actor("user@example.test")
+
+    async def test_missing_token_gives_401(self, realm: Any) -> None:
+        @validate_platform_admin_token
+        async def route(request: Any) -> str:  # pragma: no cover - must not be reached
+            return "ok"
+
+        with pytest.raises(HTTPException) as exc:
+            await route(request=_FakeRequest({}))
+
+        assert exc.value.status_code == 401
+
+    async def test_a_shared_key_alone_is_not_a_token_and_gives_401(self, realm: Any) -> None:
+        """Geen Authorization-header: een X-API-Key is hier geen zwakkere vorm van dit credential."""
+
+        @validate_platform_admin_token
+        async def route(request: Any) -> str:  # pragma: no cover - must not be reached
+            return "ok"
+
+        with pytest.raises(HTTPException) as exc:
+            await route(request=_FakeRequest({"X-API-Key": "een-gedeelde-sleutel"}))
+
+        assert exc.value.status_code == 401
+
+    async def test_a_valid_token_without_the_platform_admin_role_gives_403(self, realm: Any, signing_key: Any) -> None:
+        called = False
+
+        @validate_platform_admin_token
+        async def route(request: Any) -> str:
+            nonlocal called
+            called = True
+            return "ok"
+
+        request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
+        with patch("opi.api.user_token_auth.get_user_service") as get_service:
+            get_service.return_value.is_email_allowed.return_value = True
+            get_service.return_value.is_platform_admin.return_value = False
+            with pytest.raises(HTTPException) as exc:
+                await route(request=request)
+
+        assert exc.value.status_code == 403
         assert called is False

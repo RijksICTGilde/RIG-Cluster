@@ -51,13 +51,14 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff, Delta
 from deepdiff.delta import DeltaError
 from deepdiff.path import extract
 
 from opi.connectors.git import GitConnector, GitPushConflictError, create_git_connector_for_project_files
+from opi.core.audit_trail import record_commit
 from opi.core.config import settings
 from opi.core.project_schema import (
     ProjectIntegrityError,
@@ -66,11 +67,17 @@ from opi.core.project_schema import (
     validate_project_schema,
 )
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
+from opi.services.project import lid_uit
+from opi.services.project_leden import human_emails
 from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_tree, get_decoded_project_private_key
+from opi.utils.forbidden_characters import find_forbidden_characters
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
+
+if TYPE_CHECKING:
+    from opi.core.actor import Actor
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +187,15 @@ class ProjectStore(ABC):
     # ---- mutations: serialized read-modify-write, validated before persist ----
 
     @abstractmethod
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary: ...
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary: ...
 
     @abstractmethod
-    async def mutate(self, name: str, change: ChangeFunction, *, message: str, actor: str) -> MutationResult: ...
+    async def mutate(
+        self, name: str, change: ChangeFunction, *, message: str | Callable[[], str], actor: Actor
+    ) -> MutationResult: ...
 
     @abstractmethod
-    async def delete(self, name: str, *, message: str, actor: str) -> None: ...
+    async def delete(self, name: str, *, message: str, actor: Actor) -> None: ...
 
     # ---- audit / history ----
 
@@ -359,7 +368,7 @@ class GitProjectStore(ProjectStore):
     # mutations
     # ------------------------------------------------------------------
 
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary:
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary:
         """Create a new project file. Fails if the project already exists."""
         async with self._locked("create", name):
             connector = await self.get_connector()
@@ -400,11 +409,12 @@ class GitProjectStore(ProjectStore):
         data: dict[str, Any],
         *,
         message: str,
-        actor: str,
+        actor: Actor,
         enforce_validation: bool = True,
         filename: str | None = None,
         refresh_cache: bool = True,
         base: dict[str, Any] | None = None,
+        approval_decision: bool = False,
     ) -> MutationResult:
         """Persist a pre-built project dict (create or update).
 
@@ -426,6 +436,10 @@ class GitProjectStore(ProjectStore):
         Note this is still weaker than ``mutate``, which re-runs the caller's change
         function on fresh state and therefore resolves the case a text merge cannot:
         two edits to the same YAML list, e.g. both adding a component.
+
+        ``approval_decision`` marks this save as an approver's verdict, the one write that
+        may put an approval status on ``approved`` / ``denied``. Only the approval route
+        passes it; see ``validate_approval_decisions``.
         """
         async with self._locked("save", name):
             connector = await self.get_connector()
@@ -450,13 +464,24 @@ class GitProjectStore(ProjectStore):
                 attempt_data = data
                 if base is not None:
                     attempt_data = await self._reconcile_with_concurrent_write(
-                        connector, relative_path, name=name, base=base, data=data, actor=actor
+                        connector,
+                        relative_path,
+                        name=name,
+                        base=base,
+                        data=data,
+                        actor=actor,
+                        approval_decision=approval_decision,
                     )
 
                 # Read before validating, not after: the committed version is what this
                 # write replaces, and a rule about a change needs both halves.
                 before = await self._read_committed(connector, relative_path)
-                await self._validate(attempt_data, enforce=enforce_validation, previous=before)
+                await self._validate(
+                    attempt_data,
+                    enforce=enforce_validation,
+                    previous=before,
+                    approval_decision=approval_decision,
+                )
 
                 try:
                     ref = await self._persist(connector, relative_path, attempt_data, message, actor)
@@ -485,8 +510,8 @@ class GitProjectStore(ProjectStore):
         name: str,
         change: ChangeFunction,
         *,
-        message: str,
-        actor: str,
+        message: str | Callable[[], str],
+        actor: Actor,
         enforce_validation: bool = True,
         filename: str | None = None,
     ) -> MutationResult:
@@ -502,6 +527,9 @@ class GitProjectStore(ProjectStore):
         a version that is not durable. On a push failure that cannot be
         resolved, the local commit is discarded (reset --hard) so the warm copy
         is left clean.
+
+        ``message`` may be a callable, resolved per attempt after ``change`` has run, so a
+        commit message can name what that attempt actually changed.
         """
         async with self._locked("mutate", name):
             connector = await self.get_connector()
@@ -518,17 +546,18 @@ class GitProjectStore(ProjectStore):
                 # left it a union with the un-awaited Awaitable for everything below.
                 changed = change(copy.deepcopy(current))
                 mutated = await changed if inspect.isawaitable(changed) else changed
+                commit_message = message() if callable(message) else message
 
                 if mutated is None:
                     # Idempotent no-op: the change is already applied.
-                    logger.info("Project mutation already applied, nothing to commit: %s", message)
+                    logger.info("Project mutation already applied, nothing to commit: %s", commit_message)
                     ref = await connector.get_local_commit_hash()
                     return MutationResult(before=current, after=current, ref=ref, committed=False)
 
                 await self._validate(mutated, enforce=enforce_validation, previous=current)
 
                 try:
-                    ref = await self._persist(connector, relative_path, mutated, message, actor)
+                    ref = await self._persist(connector, relative_path, mutated, commit_message, actor)
                 except GitPushConflictError as e:
                     last_error = e
                     # HEAD moved under us. Re-sync to whatever actually landed and re-apply
@@ -539,7 +568,7 @@ class GitProjectStore(ProjectStore):
                     # instead of an invalid file reaching git.
                     logger.warning(
                         "Push conflict on '%s' (attempt %d/%d); re-reading remote and re-applying",
-                        message,
+                        commit_message,
                         attempt + 1,
                         MAX_MUTATION_ATTEMPTS,
                     )
@@ -558,7 +587,7 @@ class GitProjectStore(ProjectStore):
                 f"Could not apply mutation to project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
             ) from last_error
 
-    async def delete(self, name: str, *, message: str, actor: str) -> None:
+    async def delete(self, name: str, *, message: str, actor: Actor) -> None:
         """Remove a project file and evict it from the cache.
 
         Goes through the same publish path as every other mutation, so a failed push
@@ -577,7 +606,7 @@ class GitProjectStore(ProjectStore):
                     logger.info("Project '%s' already absent, nothing to delete", name)
                     break
                 try:
-                    await self._commit_and_publish(connector, {relative_path: None}, message)
+                    await self._commit_and_publish(connector, {relative_path: None}, message, actor)
                     break
                 except GitPushConflictError as e:
                     last_error = e
@@ -604,7 +633,8 @@ class GitProjectStore(ProjectStore):
         name: str,
         base: dict[str, Any],
         data: dict[str, Any],
-        actor: str = "?",
+        actor: Actor,
+        approval_decision: bool = False,
     ) -> dict[str, Any]:
         """Compare-and-swap for a pre-built dict, with a three-way merge fallback.
 
@@ -660,7 +690,7 @@ class GitProjectStore(ProjectStore):
         # the grounds that both inputs were.
         try:
             validate_project_schema(merged)
-            await validate_project_structure(merged, previous=current)
+            await validate_project_structure(merged, previous=current, approval_decision=approval_decision)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             raise ConflictError(
                 f"Project '{name}' is gewijzigd sinds je begon met bewerken en de samengevoegde "
@@ -670,7 +700,14 @@ class GitProjectStore(ProjectStore):
         logger.info("Three-way merge for '%s' applied and validated; both changes preserved", name)
         return merged
 
-    async def _validate(self, data: dict[str, Any], *, enforce: bool, previous: dict[str, Any] | None = None) -> None:
+    async def _validate(
+        self,
+        data: dict[str, Any],
+        *,
+        enforce: bool,
+        previous: dict[str, Any] | None = None,
+        approval_decision: bool = False,
+    ) -> None:
         """Schema + structural validation of the FINAL state, before any write.
 
         ``enforce=False`` is for trusted, narrow programmatic mutators (auto-tune,
@@ -682,10 +719,19 @@ class GitProjectStore(ProjectStore):
         CHANGE (a volume that cannot shrink) can only run here, where both versions are
         in hand; without it the rule would be decoration. A create has no previous
         version and is judged on its values alone.
+
+        ``approval_decision`` is passed on to ``validate_project_structure``: only a save
+        that says it IS the approver's verdict may move an approval status to a decision.
         """
         try:
+            forbidden = find_forbidden_characters(data)
+            if forbidden:
+                raise ProjectSchemaError(
+                    f"Projectbestand '{data.get('name', '(onbekend)')}' is geweigerd: de volgende velden "
+                    f"bevatten een teken dat niet in een projectbestand hoort: {', '.join(forbidden)}."
+                )
             validate_project_schema(data)
-            await validate_project_structure(data, previous=previous)
+            await validate_project_structure(data, previous=previous, approval_decision=approval_decision)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             if enforce:
                 raise
@@ -709,7 +755,7 @@ class GitProjectStore(ProjectStore):
             )
 
     async def _persist(
-        self, connector: GitConnector, relative_path: str, data: dict[str, Any], message: str, actor: str
+        self, connector: GitConnector, relative_path: str, data: dict[str, Any], message: str, actor: Actor
     ) -> str:
         """Commit and push a single project file. Returns the resulting commit ref.
 
@@ -717,7 +763,9 @@ class GitProjectStore(ProjectStore):
         succeeds.
         """
         started = time.monotonic()
-        ref, committed = await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
+        ref, committed = await self._commit_and_publish(
+            connector, {relative_path: dump_yaml_to_string(data)}, message, actor
+        )
         elapsed = time.monotonic() - started
 
         # Say which of the two happened. A save whose result is byte-identical to what
@@ -739,7 +787,7 @@ class GitProjectStore(ProjectStore):
         return ref
 
     async def _commit_and_publish(
-        self, connector: GitConnector, changes: dict[str, str | None], message: str
+        self, connector: GitConnector, changes: dict[str, str | None], message: str, actor: Actor
     ) -> tuple[str, bool]:
         """Build a commit for exactly these paths, publish it, and roll back cleanly on failure.
 
@@ -757,6 +805,7 @@ class GitProjectStore(ProjectStore):
         Args:
             changes: repo-relative path -> new content, or None to delete the path
             message: commit message
+            actor: de handelende partij, die als trailer in de commit komt
 
         Returns:
             ``(ref, committed)``: the published commit ref and True, or the unchanged HEAD
@@ -791,7 +840,7 @@ class GitProjectStore(ProjectStore):
 
         old_head = await connector.get_local_commit_hash()
 
-        commit = await connector.build_commit(changes, message)
+        commit = await connector.build_commit(changes, message, actor=actor)
         if commit is None:
             logger.debug("Nothing to commit for %s", list(changes))
             return old_head, False
@@ -809,6 +858,11 @@ class GitProjectStore(ProjectStore):
 
         # The checkout is stale now that the ref moved; keep the warm copy mirroring HEAD.
         await connector.sync_worktree_to_head()
+        # Hier en niet per muterende methode: dit is de enige plek waar een commit van een
+        # projectbestand ontstaat, dus save, mutate, create en delete leggen hem alle vier
+        # vast. Een idempotente opslag komt hier langs met commit is None en levert dus
+        # geen SHA, wat juist is: er is niets gewijzigd om naar te verwijzen.
+        record_commit(commit)
         return commit, True
 
     def _refresh_cache(self, name: str, data: dict[str, Any], filename: str) -> ProjectSummary:
@@ -1146,7 +1200,8 @@ class GitProjectStore(ProjectStore):
                     logger.warning("Could not load project file %s into the cache", filename)
                     continue
                 loaded[project.name] = project
-                member_emails.extend(user.email for user in project.users or [])
+                # Alleen de MENSEN: een service account hoort niet op de inloglijst.
+                member_emails.extend(human_emails(project))
 
             # Build the full set first, then swap, so concurrent readers never
             # observe an empty or half-populated cache.
@@ -1292,11 +1347,9 @@ def _users_from_data(data: dict[str, Any]) -> list[ProjectUser] | None:
     users_data = data.get("users", [])
     if not isinstance(users_data, list):
         return None
-    users = [
-        ProjectUser(email=u["email"], role=u["role"])
-        for u in users_data
-        if isinstance(u, dict) and "email" in u and "role" in u
-    ]
+    # Dezelfde lezing als het gewone pad: een eigen variant hier liet de service accounts
+    # en daarmee hun tokens vallen, zodat een pijplijn na deze schrijfactie 401 kreeg.
+    users = [lid for lid in (lid_uit(entry) for entry in users_data) if lid is not None]
     return users or None
 
 

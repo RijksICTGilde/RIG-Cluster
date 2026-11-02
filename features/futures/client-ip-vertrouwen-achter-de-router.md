@@ -1,6 +1,16 @@
 # Het echte client-IP achter de router
 
-Status: ontwerp, niets gebouwd. Opgeschreven op 5 oktober 2026, gemeten op `350eb2adf` met uvicorn 0.40.0 (`operations-manager/python/uv.lock`). De verwachting bij het begin was dat dit een kleine codefix was. Dat is het niet: het vraagt een annotatie op de Ingress, een wijziging in het netwerkbeleid en daarna pas een opruiming in de code, en in die volgorde. Dit document bewaart de metingen zodat wie het oppakt niet opnieuw begint.
+Status: laag 3 is gebouwd in RC-368, laag 1 en 2 staan open. Wat er staat: `client_ip` in
+`opi/utils/client_ip.py` leest de keten met `getlist`, telt `TRUSTED_PROXY_HOPS` hops van
+rechts (odcn: 1), strijkt een poort weg en valideert als IP, en `PeerAddressMiddleware`
+(`opi/middleware/client_ip.py`) bewaart het peer-adres buiten `ProxyHeadersMiddleware` om.
+De rate limiter en de AUDIT-regel van de subdomein-check lezen daar nu uit; de hopteller
+staat er omdat laag 1 en 2 ontbreken, en kan eruit zodra ze staan. Niet gebouwd: de
+annotatie op de Ingress (stap 2), het versmallen van het netwerkbeleid (stap 3), het
+peer-veld op de AUDIT-regel (stap 6), en `ProxyHeadersMiddleware` is niet aangeraakt, dus
+`request.client` is daarbuiten nog de door de aanroeper gekozen waarde (stap 5).
+
+Oorspronkelijke status: ontwerp, niets gebouwd. Opgeschreven op 5 oktober 2026, gemeten op `350eb2adf` met uvicorn 0.40.0 (`operations-manager/python/uv.lock`). De verwachting bij het begin was dat dit een kleine codefix was. Dat is het niet: het vraagt een annotatie op de Ingress, een wijziging in het netwerkbeleid en daarna pas een opruiming in de code, en in die volgorde. Dit document bewaart de metingen zodat wie het oppakt niet opnieuw begint.
 
 ## Waarom dit er ligt
 
@@ -15,7 +25,7 @@ De hele client-IP-oppervlakte van OPI is drie plekken:
 | plek | wat er gebeurt |
 |---|---|
 | `opi/server.py:645` | `ProxyHeadersMiddleware(trusted_hosts=["*"])`, dus `always_trust`, dus de meest LINKSE waarde komt in `scope["client"]` |
-| `opi/api/router.py:146` | `IPRateLimiter.get_client_ip` leest de header zelf met `.split(",")[0]` en komt pas bij `request.client` als de header ONTBREEKT |
+| `opi/api/router.py:146` | `IPRateLimiter.get_client_ip` leest de header zelf met `.split(",")[0]` en komt pas bij `request.client` als de header ONTBREEKT. OPGEHEVEN in RC-368: die methode bestaat niet meer, het IP komt nu uit `client_ip` |
 | `opi/api/router.py:163` | de enige plek in heel `opi/` die `request.client` leest |
 
 Twee aanroepers van `get_client_identifier` (`opi/web/router_self_service.py:68` en `opi/api/v2/router.py:626`) voeden de rate limiter, waar de spoofbaarheid is ingecalculeerd omdat er een fingerprint en een sessie bij komen. De derde aanroeper is `opi/api/v2/router.py:632`, en die schrijft de waarde in een AUDIT-logregel, waar zij als bewijs wordt gelezen. `sanitize_for_log` helpt daar niet: die weert loginjectie, niet spoofing.
@@ -59,7 +69,7 @@ Zet er een komma-appendende proxy voor en dezelfde config overhandigt het door d
 
 `X-Forwarded-For` is niet-geauthenticeerde tekst die iedereen op het pad erbij mag zetten. RFC 7239 zegt dat ook: de waarden zijn te vervalsen en de ontvanger moet zijn eigen topologie kennen. Het enige onbetwistbare gegeven in een verzoek is het TCP-peer-adres.
 
-De vuistregel "de laatste in de rij is het echte IP" klopt bij HAProxy maar is geen HTTP-regel. GCP's Application Load Balancer appendt TWEE waarden, `CLIENT_IP, FORWARDING_RULE_IP`, dus daar is de laatste het adres van de load balancer en de client de op een na laatste. En belangrijker voor ons: de rechtse waarde is alleen iets waard als je WEET dat een vertrouwde proxy hem heeft toegevoegd. Het netwerkbeleid van OPI laat poort 8000 binnen met `from: []` (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/network-policy.yaml:12-16`), dus elke pod in het cluster komt rechtstreeks binnen. Daar heeft niemand iets toegevoegd en is de rechtse waarde net zo verzonnen als de linkse.
+De vuistregel "de laatste in de rij is het echte IP" klopt bij HAProxy maar is geen HTTP-regel. GCP's Application Load Balancer appendt TWEE waarden, `CLIENT_IP, FORWARDING_RULE_IP`, dus daar is de laatste het adres van de load balancer en de client de op een na laatste. En belangrijker voor ons: de rechtse waarde is alleen iets waard als je WEET dat een vertrouwde proxy hem heeft toegevoegd. Het netwerkbeleid van OPI liet poort 8000 binnen met `from: []` (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/network-policy.yaml`), dus elke pod in het cluster kwam rechtstreeks binnen. RC-335 heeft die ingress versmald, maar zolang `emergency-restore-allow-all` de OPI-pod nog selecteert, geldt dat nog niet op productie. Daar heeft niemand iets toegevoegd en is de rechtse waarde net zo verzonnen als de linkse.
 
 Elke stack lost dit op dezelfde manier op, namelijk door de peer te vertrouwen en een vast aantal hops van rechts te tellen. Envoy zet dat als knop neer (`xff_num_trusted_hops`, de N+1-e van rechts, default 0). Dat is de de-facto standaard: geen header waar het echte adres in staat, maar een getal of een lijst die jij moet aanleveren.
 
@@ -89,9 +99,9 @@ Waarom we hiervoor `ProxyHeadersMiddleware` niet houden: hij gooit de dubbele re
 
 1. **Meten in prod, read-only**: wie opent er werkelijk verbindingen naar OPI:8000 naast de router. Een grep in git vindt geen ServiceMonitor of scrape naar die poort, maar afwezigheid in git is geen bewijs. Verify: een lijst peers, waarmee de keuze tussen laag 2 en de terugval een feit wordt in plaats van een aanname.
 2. **`set-forwarded-headers: "replace"`** op de drie Ingress-objecten in de prod-overlay (`ingress.yaml`, `ingress-router.yaml`, `ingress-rijksapp.yaml`). Verify: een verzoek met een verzonnen `X-Forwarded-For` via de router levert op de pod nog precies EEN XFF-regel, met het echte adres. Dat is ook de toets die aantoont dat we geen hopteller nodig hebben.
-3. **Netwerkbeleid versmallen** tot de ingress-namespace, als stap 1 dat toelaat. Verify: een `curl` van een willekeurige pod naar OPI:8000 loopt dood, en de portal doet het nog.
+3. **Netwerkbeleid versmallen** tot de ingress-namespace, als stap 1 dat toelaat. GEBEURT IN RC-335, niet hier: `operations-manager-policy` laat op 8000 nog de router, Prometheus (die scrapet de pod) en de tenant-namespaces voor het waker-endpoint van sleep-mode toe. Zie `features/restrictive-network-policies.md`, de sectie over de operations-namespace. Zolang `emergency-restore-allow-all` die pod nog selecteert, geldt de versmalling niet; stap (f) van de uitsluitlijst daar zet hem aan. Verify: een `curl` van een willekeurige pod naar OPI:8000 loopt dood, en de portal doet het nog.
 4. **De middleware** in `opi/middleware/`, met de leeslogica uit laag 3 en zonder config. Verify: unit-tests op twee regels, op een komma-lijst, op de gemengde vorm, op een waarde met een poort, en op een verzoek zonder header.
-5. **`get_client_ip` platleggen** tot `request.client.host if request.client else "unknown"`. Verify: `tests/test_rate_limiter.py:278-299` keert om. Die tests pinnen vandaag precies het spoofbare gedrag vast, en ze gebruiken een dict als headers, dus ze moeten over een echte `Headers`-raw gaan.
+5. **`get_client_ip` platleggen** tot `request.client.host if request.client else "unknown"`. GEDAAN in RC-368, anders dan hier staat: de methode is weg en `get_client_identifier` leest `client_ip`, dat met `TRUSTED_PROXY_HOPS` hops van rechts telt en anders op het peer-adres terugvalt. De twee toetsen op het spoofbare gedrag zijn omgezet naar `tests/test_client_ip.py`.
 6. **Het derde veld van wies overnemen** op de AUDIT-regel in `opi/api/v2/router.py:632`: naast het afgeleide IP ook het peer-adres, zodat een verzoek dat de router omzeilt zichzelf verraadt.
 7. **De sandbox apart toetsen.** Daar staat nginx-ingress, en die negeert met `use-forwarded-headers: false` (de default) de inkomende header al en vult hem zelf. Verify: dezelfde toets als stap 2, zodat we weten dat de code in beide omgevingen klopt en niet per ongeluk.
 8. **Optioneel, los van de uitrol**: het `dict()`-gedrag bij uvicorn melden, met de meting uit dit document.

@@ -112,7 +112,7 @@ class TestNonDestructiveDeploymentEdits:
             "description": "A test project",
             "clusters": ["local"],
             "services": ["publish-on-web", "keycloak"],
-            "users": [{"email": "admin@test.nl", "role": "admin"}],
+            "users": [{"email": "admin@test.nl", "roles": ["admin", "ops"]}],
             "config": {"age-public-key": "age1abc123"},
             "components": [
                 {"name": "web", "publish-on-web": True, "type": "deployment"},

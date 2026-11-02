@@ -1,0 +1,22 @@
+{#
+  De step-up is binnen: voer de handeling alsnog uit (RC-332).
+
+  Een fragment dat zichzelf bij het laden post naar de oorspronkelijke handeling, zodat de
+  gebruiker niet opnieuw op verwijderen hoeft te klikken. Het antwoord daarvan (de
+  voortgang van de taak) vervangt dit blok.
+
+  vals is de body die mee moet: het wizard-token naast de query, net als de bevestigknop in
+  bg/_modal-wizard-review.html.j2 (htmx laat een query string op een POST niet overal
+  staan), en de velden van het formulier dat de dialoog verving (RC-387).
+
+  methode is die van de handeling: meestal een POST, maar een leesvenster (de
+  omgevingsvariabelen, RC-388) gaat met een GET opnieuw.
+#}
+<div hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+     {% if methode == "GET" %}hx-get="{{ vervolg }}"{% else %}hx-post="{{ vervolg }}"{% endif %}
+     hx-vals='{{ vals }}'
+     hx-trigger="load"
+     hx-target="#edit-section-inner"
+     hx-swap="innerHTML">
+    <c-paragraph>Bezig met uitvoeren...</c-paragraph>
+</div>

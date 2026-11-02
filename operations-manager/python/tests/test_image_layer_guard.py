@@ -1,14 +1,23 @@
-"""Tests for the layer layout of operations-manager/Dockerfile.
+"""Tests for the layer layout of operations-manager/Dockerfile, en de image-pins.
 
 What matters is not the total size but how much of it an ordinary code change rebuilds.
 The four regressions guarded here are silent: they cost size, never a failing test.
 Background and measurements: features/image-lagen.md.
+
+TestManifestImages leest de manifesten die op ODCN terechtkomen: een `latest`-tag wijst
+morgen naar een andere image dan vandaag, zonder commit. Zie features/image-versioning-calver.md.
 """
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
+from opi.core.config import settings
+from opi.utils.naming import split_image_reference
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = REPO_ROOT / "operations-manager" / "Dockerfile"
@@ -20,6 +29,45 @@ DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 STATIC_DIR = REPO_ROOT / "operations-manager" / "python" / "static"
 
 APP_STAGE = "application"
+
+#: De manifesten die op ODCN terechtkomen. Elk pad is een kustomization-wortel: de toets
+#: volgt de resources, components en patches die hij opneemt, zodat een nieuw bestand
+#: meekomt zonder dat hier iets bij hoeft.
+PRODUCTIEWORTELS = (
+    "bootstrap/rig-system/kustomize/overlays/odcn-production",
+    "infrastructure/bootstrap/clusters/odcn",
+)
+
+#: Los erbij, want een component die nog door geen enkele overlay wordt opgenomen hoort
+#: ook niet op latest te staan.
+COMPONENTEN = REPO_ROOT / "bootstrap/rig-system/kustomize/components"
+
+#: De back-up- en restoresjablonen uit de tabel van issue #181. Ze halen hun image uit de
+#: setting BACKUP_IMAGE, dus hier mag geen registrypad meer in staan.
+BACKUP_SJABLONEN = (
+    "backup-pod.yaml.jinja",
+    "backup-database-pod.yaml.jinja",
+    "backup-bucket-pod.yaml.jinja",
+    "backup-bucket-mirror-pod.yaml.jinja",
+    "restore-pod.yaml.jinja",
+    "restore-database-pod.yaml.jinja",
+    "restore-bucket-pod.yaml.jinja",
+)
+
+#: Verwijzingen die met opzet niet gepind zijn, met de reden per regel. Zonder reden hoort
+#: een regel hier niet te staan.
+UITZONDERINGEN = {
+    (
+        "bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml",
+        "operations-manager:latest",
+    ): "de odcn-patch overschrijft dit image; de basis draagt de sandboxverwijzing",
+    (
+        "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml",
+        "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig",
+    ): "de ArgoCD-CR draagt de versie in spec.version en niet in de image-verwijzing",
+}
+
+IMAGE_LIJN = re.compile(r"^\s*image:\s*(\S+)\s*$")
 
 
 def _instructions(text: str) -> list[tuple[str, str]]:
@@ -77,6 +125,100 @@ def _copy_dest(instruction: str) -> str:
 
 def _copies(app_stage: list[str]) -> list[tuple[int, str]]:
     return [(index, line) for index, line in enumerate(app_stage) if line.upper().startswith("COPY ")]
+
+
+def _kustomization(map_pad: Path) -> Path | None:
+    for naam in ("kustomization.yaml", "kustomization.yml"):
+        if (map_pad / naam).is_file():
+            return map_pad / naam
+    return None
+
+
+def _opgenomen_bestanden(wortel: Path, gezien: set[Path] | None = None) -> list[Path]:
+    """De bestanden die een kustomization opneemt, de verwijzingen volgend.
+
+    Niet een glob over de map: wat niet wordt opgenomen, komt ook niet op het cluster, en
+    een nieuw opgenomen bestand komt zo mee zonder dat deze toets wordt bijgewerkt.
+    """
+    gezien = set() if gezien is None else gezien
+    kustomization = _kustomization(wortel)
+    if kustomization is None or kustomization in gezien:
+        return []
+
+    gezien.add(kustomization)
+    gevonden = [kustomization]
+    doc = yaml.safe_load(kustomization.read_text()) or {}
+
+    verwijzingen: list[str] = []
+    for sleutel in ("resources", "components", "bases", "patchesStrategicMerge"):
+        verwijzingen += [entry for entry in doc.get(sleutel) or [] if isinstance(entry, str)]
+    verwijzingen += [
+        entry["path"] for entry in doc.get("patches") or [] if isinstance(entry, dict) and entry.get("path")
+    ]
+
+    for verwijzing in verwijzingen:
+        if verwijzing.startswith(("http://", "https://")):
+            continue
+        pad = (kustomization.parent / verwijzing).resolve()
+        if pad.is_dir():
+            gevonden += _opgenomen_bestanden(pad, gezien)
+        elif pad.is_file() and pad not in gezien:
+            gezien.add(pad)
+            gevonden.append(pad)
+    return gevonden
+
+
+#: De velden waarin een patch een image kan zetten. CNPG draagt zijn image in imageName,
+#: niet in image, en zonder die tweede naam blijft die verwijzing ongelezen.
+IMAGE_VELDEN = ("/image", "/imageName")
+
+
+def _patchwaarden(inhoud: str) -> list[str]:
+    """De waarden die de JSON6902-patches van een kustomization op een image-veld zetten."""
+    doc = yaml.safe_load(inhoud) or {}
+    waarden: list[str] = []
+    for patch in doc.get("patches") or []:
+        ops = yaml.safe_load(patch["patch"]) if isinstance(patch, dict) and patch.get("patch") else None
+        waarden += [
+            str(op["value"])
+            for op in (ops if isinstance(ops, list) else [])
+            if isinstance(op, dict) and str(op.get("path", "")).endswith(IMAGE_VELDEN)
+        ]
+    return waarden
+
+
+def _imageverwijzingen(pad: Path) -> list[str]:
+    """Elke image-verwijzing in een manifest: `image:`-regels, `newTag` en de JSON6902-patches."""
+    inhoud = pad.read_text()
+    verwijzingen = [match.group(1).strip("'\"") for match in map(IMAGE_LIJN.match, inhoud.splitlines()) if match]
+    if not pad.name.startswith("kustomization."):
+        return verwijzingen
+
+    doc = yaml.safe_load(inhoud) or {}
+    verwijzingen += [
+        f"{entry.get('newName') or entry.get('name')}:{entry['newTag']}"
+        for entry in doc.get("images") or []
+        if entry.get("newTag")
+    ]
+    return verwijzingen + _patchwaarden(inhoud)
+
+
+def _is_gepind(verwijzing: str) -> bool:
+    """Een digest of een tag die niet beweegt. Een poort in de host is geen tag."""
+    if "@sha256:" in verwijzing:
+        return True
+    naam, _, tag = verwijzing.rpartition(":")
+    return bool(naam) and "/" not in tag and tag != "latest"
+
+
+def _productieverwijzingen() -> list[tuple[str, str]]:
+    bestanden = [pad for wortel in PRODUCTIEWORTELS for pad in _opgenomen_bestanden(REPO_ROOT / wortel)]
+    bestanden += sorted(COMPONENTEN.rglob("*.yaml"))
+    return [
+        (str(pad.relative_to(REPO_ROOT)), verwijzing)
+        for pad in dict.fromkeys(bestanden)
+        for verwijzing in _imageverwijzingen(pad)
+    ]
 
 
 class TestDockerignore:
@@ -349,3 +491,275 @@ class TestAptLayers:
             or "--mount=type=cache,target=/var/lib/apt" not in line
         ]
         assert missing == []
+
+
+# Elke image van derden onder deze paden noemt een volledige versie: drie of meer
+# cijfergroepen met een optioneel achtervoegsel zoals -alpine of -rootless. Een tag die
+# meebeweegt (`redis:7-alpine`, `registry:2`) geeft bij twee pulls een andere versie zonder
+# dat er in git iets verandert, en Renovate kan hem niet bijwerken.
+VERSIEPADEN = ("infrastructure", "bootstrap", "images", "scripts")
+VOLLEDIGE_VERSIE = re.compile(r"v?\d+(\.\d+){2,}([.-][\w.-]+)?")
+YAML_VERWIJZING = re.compile(r"^\s*-?\s*(?:image|imageName|newTag):\s*[\"\']?([^\"\'\s]+)[\"\']?\s*$", re.MULTILINE)
+# De default van een *_IMAGE-variabele in een shellscript, met of zonder ${VAR:-...} eromheen.
+SHELL_VERWIJZING = re.compile(r"^\w*IMAGE=[\"\']?(?:\$\{\w+:-)?([^\"\'}\s]+)", re.MULTILINE)
+
+# Op naam, dus elke tag erop is toegestaan. Alleen voor een naam waarvan de tag per uitrol
+# wisselt: een sleutel op naam en tag wordt dan stil rood zodra iets de tag herschrijft.
+ZWEVENDE_NAMEN_TOEGESTAAN: dict[str, str] = {
+    "localhost:5001/operations-manager": (
+        "eigen image; task sandbox:configure-operations-manager-image zet de tag per uitrol op de commit-sha (RC-348)"
+    ),
+    "ghcr.io/minbzk/base-images/argocd-rig": "eigen image, de operator-CR pint de tag in het veld version:",
+    "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig": (
+        "eigen image, de operator-CR pint de tag in het veld version:"
+    ),
+}
+
+# Op naam en tag, voor een verwijzing die geen volledige versie KAN dragen. Een image dat
+# alleen nog niet gepind is hoort hier niet: dat is een gat met een reden ervoor.
+ZWEVEND_TOEGESTAAN: dict[str, str] = {
+    # Eigen images en lokale namen: dat gaat over `latest` op een eigen pad, en dat is RC-348.
+    "operations-manager:latest": "eigen image, de overlay zet de tag (RC-348)",
+    "rig-cmp-argo-kustomize-sops:latest": "eigen image (RC-348)",
+    "ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest": "eigen image (RC-348)",
+    "ghcr.io/minbzk/base-images/minio:RELEASE.2025-07-23T15-54-02Z": (
+        "eigen spiegel van de MinIO-release; RELEASE.<datum> is daar de volledige versie"
+    ),
+    "RELEASE.2025-07-23T15-54-02Z": "newTag van diezelfde MinIO-spiegel",
+    "<IMAGE>": "placeholder in de voorbeeldtekst van task cr-snippet, wordt niet uitgerold",
+    "quay.io/jupyter/minimal-notebook:2026-10-12": "datumtag, die vult jupyter eenmalig",
+    "quay.io/argoproj/argocd": "de ArgoCD-CR pint de versie ernaast in /spec/repo/version, niet in de verwijzing",
+    # CNPG nummert zijn image naar de PostgreSQL-release, dus twee cijfergroepen is daar de
+    # volledige versie; de plain tag heeft geen datumstempel-variant zoals de bookworm-lijn.
+    "ghcr.io/cloudnative-pg/postgresql:17.11": "CNPG heeft geen derde cijfergroep; 17.11 is daar de volledige versie",
+    "rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11": (
+        "dezelfde image via de rcr-proxy, die de odcn-overlays patchen"
+    ),
+}
+
+
+def _gevolgde_bestanden() -> list[Path]:
+    uitvoer = subprocess.run(
+        ["git", "ls-files", "-z", *VERSIEPADEN],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [REPO_ROOT / naam for naam in uitvoer.split("\0") if naam]
+
+
+def _verwijzingen_in_bestand(bestand: Path) -> list[str]:
+    """De images waar dit bestand naar wijst, zoals ze er staan."""
+    if bestand.name.startswith("Dockerfile"):
+        instructies = _instructions(bestand.read_text())
+        fasen = {fase for fase, _ in instructies if fase}
+        bases = [
+            next(deel for deel in instructie.split()[1:] if not deel.startswith("--"))
+            for _, instructie in instructies
+            if instructie.upper().startswith("FROM ")
+        ]
+        return [basis for basis in bases if basis not in fasen and basis != "scratch"]
+    if bestand.suffix in (".yaml", ".yml"):
+        inhoud = bestand.read_text()
+        if bestand.name.startswith("kustomization."):
+            return YAML_VERWIJZING.findall(inhoud) + _patchwaarden(inhoud)
+        return YAML_VERWIJZING.findall(inhoud)
+    if bestand.suffix == ".sh":
+        return SHELL_VERWIJZING.findall(bestand.read_text())
+    return []
+
+
+def _tag(verwijzing: str) -> str:
+    """Een newTag staat er al als tag; een image-ref draagt hem achter de laatste dubbele punt."""
+    if ":" not in verwijzing:
+        return "" if "/" in verwijzing else verwijzing
+    return verwijzing.rpartition(":")[2]
+
+
+def _zweeft(verwijzing: str) -> bool:
+    naam, _, draagt_digest = split_image_reference(verwijzing)
+    if verwijzing in ZWEVEND_TOEGESTAAN or naam in ZWEVENDE_NAMEN_TOEGESTAAN:
+        return False
+    if draagt_digest:
+        return False
+    return not VOLLEDIGE_VERSIE.fullmatch(_tag(verwijzing))
+
+
+def _pad(bestand: Path) -> str:
+    """Het pad vanaf de repo-root, want de bestandsnaam alleen zegt vaak deployment.yaml."""
+    return str(bestand.relative_to(REPO_ROOT)) if bestand.is_relative_to(REPO_ROOT) else str(bestand)
+
+
+def _zwevende_images(bestanden: list[Path]) -> list[tuple[str, str]]:
+    return [
+        (_pad(bestand), verwijzing)
+        for bestand in bestanden
+        for verwijzing in _verwijzingen_in_bestand(bestand)
+        if _zweeft(verwijzing)
+    ]
+
+
+class TestVasteVersies:
+    """Elke image van derden onder infrastructure/, bootstrap/, images/ en scripts/ noemt een vaste versie.
+
+    Vaste versie betekent hier: een volledige versietag, een digest, of een regel in een van
+    de twee uitzonderingslijsten hierboven met de reden erbij. De meting per image en wat er
+    nog niet gedekt is: features/renovate.md.
+    """
+
+    def test_geen_image_op_een_zwevende_tag(self) -> None:
+        bestanden = _gevolgde_bestanden()
+        assert bestanden, "git ls-files gaf geen bestanden"
+
+        assert _zwevende_images(bestanden) == []
+
+    def test_de_grendel_ziet_een_teruggezette_tag(self, tmp_path: Path) -> None:
+        """Zonder deze toets zegt de test hierboven niets zodra de vorm van een bestand wijzigt."""
+        bron = REPO_ROOT / "infrastructure/bootstrap/infrastructure/redis/controller/base/deployment.yaml"
+        kopie = tmp_path / "deployment.yaml"
+        kopie.write_text(bron.read_text().replace("redis:7.4.11-alpine", "redis:7-alpine"))
+
+        assert _zwevende_images([bron]) == []
+        assert _zwevende_images([kopie]) == [(str(kopie), "redis:7-alpine")] * 2
+
+    def test_de_grendel_leest_de_image_van_een_shellscript(self, tmp_path: Path) -> None:
+        """Zonder deze toets zegt scripts/ in VERSIEPADEN niets: shell is geen yaml en geen Dockerfile."""
+        bron = REPO_ROOT / "scripts/setup-kind-registry.sh"
+        assert _verwijzingen_in_bestand(bron) == ["registry:2.8.3"]
+
+        kopie = tmp_path / "setup-kind-registry.sh"
+        kopie.write_text(bron.read_text().replace("registry:2.8.3", "registry:2"))
+
+        assert _zwevende_images([kopie]) == [(str(kopie), "registry:2")]
+
+    def test_de_grendel_leest_de_imagename_van_een_cnpg_cluster(self, tmp_path: Path) -> None:
+        """CNPG draagt zijn image in imageName; las de grendel alleen image:, dan bleef die tag ongezien."""
+        bron = REPO_ROOT / "infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml"
+        kopie = tmp_path / "cluster.yaml"
+        kopie.write_text(bron.read_text().replace("postgresql:17.11", "postgresql:17"))
+
+        assert _zwevende_images([kopie]) == [(str(kopie), "ghcr.io/cloudnative-pg/postgresql:17")]
+
+    def test_de_grendel_leest_de_patchwaarde_op_een_imagename(self, tmp_path: Path) -> None:
+        """De odcn-overlays zetten imageName via een JSON6902-patch, en die staat niet op een image:-regel."""
+        bron = (
+            REPO_ROOT / "infrastructure/bootstrap/infrastructure/postgresql/database/overlays/odcn/kustomization.yaml"
+        )
+        kopie = tmp_path / "kustomization.yaml"
+        kopie.write_text(bron.read_text().replace("postgresql:17.11", "postgresql:17"))
+
+        zwevend = _zwevende_images([kopie])
+        assert zwevend == [(str(kopie), "rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17")]
+
+    def test_een_naam_blijft_toegestaan_als_de_tag_herschreven_wordt(self) -> None:
+        """De sandbox-tag van OPI wisselt per uitrol, dus de uitzondering staat op de naam."""
+        assert not _zweeft("localhost:5001/operations-manager:8102b1a45")
+        assert not _zweeft("localhost:5001/operations-manager:deadbee12")
+
+
+class TestManifestImages:
+    """De images in de manifesten die op ODCN terechtkomen, en in de back-upketen.
+
+    Het gat dat dit dicht: TestPinnedTools dekt de twee Dockerfiles, maar niet de
+    verwijzingen in de manifesten. Daar wees de SOPS-sidecar van ArgoCD naar `latest`.
+    """
+
+    def test_elke_productieverwijzing_is_gepind(self) -> None:
+        """Een `latest`-tag of een verwijzing zonder tag wijst morgen naar iets anders."""
+        verwijzingen = _productieverwijzingen()
+        assert verwijzingen, "er is geen enkele image-verwijzing gevonden; volgt de toets de manifesten nog?"
+
+        los = [paar for paar in verwijzingen if not _is_gepind(paar[1]) and paar not in UITZONDERINGEN]
+        assert los == []
+
+    def test_elke_uitzondering_staat_er_nog(self) -> None:
+        """Anders houdt de lijst redenen vast voor regels die niet meer bestaan."""
+        verwijzingen = set(_productieverwijzingen())
+
+        verdwenen = [paar for paar in UITZONDERINGEN if paar not in verwijzingen]
+        assert verdwenen == []
+
+    def test_elke_uitzondering_heeft_een_reden(self) -> None:
+        """Zonder reden is het geen uitzondering maar een gat."""
+        zonder = [paar for paar, reden in UITZONDERINGEN.items() if not reden.strip()]
+        assert zonder == []
+
+    @pytest.mark.parametrize("sjabloon", BACKUP_SJABLONEN)
+    def test_een_backupsjabloon_haalt_zijn_image_uit_de_setting(self, sjabloon: str) -> None:
+        """Hard in het sjabloon kan geen cluster hem anders zetten, en de sandbox moet dat."""
+        inhoud = (REPO_ROOT / "operations-manager/python/manifests" / sjabloon).read_text()
+
+        regels = [regel.strip() for regel in inhoud.splitlines() if regel.strip().startswith("image:")]
+
+        assert regels == ["image: {{ backup_image }}"]
+
+    def test_de_standaard_van_backup_image_is_gepind(self) -> None:
+        """Dit is de verwijzing die productie krijgt: de configmap daar zet hem niet."""
+        assert _is_gepind(settings.BACKUP_IMAGE), settings.BACKUP_IMAGE
+
+
+#: De overlays van infrastructuurcomponenten die op een ODCN-cluster terechtkomen. Daar kan
+#: Docker Hub niet bij, en een image dat niet al in git naar de rcr-proxy wijst, wordt door
+#: admission herschreven en blijft daarna eeuwig OutOfSync.
+ODCN_COMPONENTOVERLAYS = (
+    "infrastructure/bootstrap/infrastructure/seaweedfs/controller/overlays/odcn",
+    "infrastructure/bootstrap/infrastructure/seaweedfs/controller/overlays/odcn-staging",
+)
+
+RCR = "rcr.rijksapps.nl/"
+
+
+def _gerenderde_images(overlay: str) -> list[str]:
+    """De images die kustomize voor deze overlay oplevert, niet wat de manifesten zeggen.
+
+    Gerenderd en niet gegrepen, want het pad komt uit een `images:`-blok in de overlay en
+    de digest uit de basis; alleen de uitkomst zegt of ze samenkomen, en een tweede
+    container of initContainer komt zo mee zonder dat deze toets wordt bijgewerkt.
+
+    Een CronJob zet zijn podspec een laag dieper (`jobTemplate`), dus die wordt apart
+    opgezocht: zonder dat viel de lifecycle-ronde van seaweedfs stil buiten deze toets.
+    """
+    proc = subprocess.run(
+        ["kustomize", "build", str(REPO_ROOT / overlay)],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return [
+        container["image"]
+        for doc in yaml.safe_load_all(proc.stdout)
+        if doc
+        for spec in _podspecs(doc)
+        for container in (spec.get("containers") or []) + (spec.get("initContainers") or [])
+    ]
+
+
+def _podspecs(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """De podspecs in een manifest: die van een workload, en die van een CronJob."""
+    spec = doc.get("spec") or {}
+    kandidaten = [
+        (spec.get("template") or {}).get("spec"),
+        ((spec.get("jobTemplate") or {}).get("spec", {}).get("template") or {}).get("spec"),
+    ]
+    return [podspec for podspec in kandidaten if podspec]
+
+
+@pytest.mark.parametrize("overlay", ODCN_COMPONENTOVERLAYS)
+class TestOdcnComponentImages:
+    """Elk image in een ODCN-overlay van een infrastructuurcomponent komt van de rcr-proxy
+    en staat op een digest.
+
+    Het gat dat dit dicht: TestManifestImages volgt alleen de kustomization-wortels van
+    `clusters/odcn` en toetst alleen DAT er een digest staat, niet het pad, en
+    `odcn-staging` valt er helemaal buiten.
+    """
+
+    def test_elk_image_komt_van_de_rcr_proxy_en_staat_op_een_digest(self, overlay: str) -> None:
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+        images = _gerenderde_images(overlay)
+        assert images, f"{overlay} levert geen enkel image op; volgt de toets de overlay nog?"
+
+        fout = [image for image in images if not image.startswith(RCR) or "@sha256:" not in image]
+        assert fout == []

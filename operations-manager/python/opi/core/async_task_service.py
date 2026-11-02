@@ -15,12 +15,14 @@ from typing import Any
 from sqlalchemy import delete, func, literal, or_, select, tuple_, update
 from sqlalchemy.orm import aliased
 
+from opi.core.audit_trail import record_task
 from opi.core.db import session_scope
 from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
 from opi.core.task_rollout import PROCESSING_TASK_TYPES
 from opi.core.task_supersede import Scope, covers, scope_of
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
+from opi.utils.logging_redact import redact_structure, redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +98,11 @@ class TaskType(StrEnum):
     CLONE_DATABASE = "clone_database"
     CLONE_BUCKET = "clone_bucket"
     REFRESH_DEPLOYMENT = "refresh_deployment"
+    ROTATE_CREDENTIALS = "rotate_credentials"
     SLEEP_DEPLOYMENT = "sleep_deployment"
     WAKE_DEPLOYMENT = "wake_deployment"
     REFRESH_PROJECT = "refresh_project"
+    ROTATE_PROJECT_KEY = "rotate_project_key"
     CREATE_PROJECT = "create_project"
     ADD_COMPONENT = "add_component"
     ADD_COMPONENT_TO_DEPLOYMENT = "add_component_to_deployment"
@@ -211,6 +215,9 @@ class AsyncTaskService:
             session.add(row)
             await session.flush()
             await session.refresh(row)  # server defaults (id, timestamps, status)
+            # Voor de auditrij van het verzoek dat deze taak startte; de hook leest hem na
+            # het antwoord, als deze functie al klaar is (opi/core/audit_trail.py).
+            record_task(row.id)
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
                 row.id,
@@ -410,6 +417,10 @@ class AsyncTaskService:
         the work that did succeed; a retry does not store it, because the next attempt
         writes its own.
         """
+        # De fouttekst komt uit een exceptie en gaat naar de database en naar de client,
+        # dus hij loopt langs hetzelfde filter als de logstroom.
+        error_message = redact_text(error_message)
+
         # Er is geen kolombreedte om voor af te knippen: ``error_message`` is TEXT, in de
         # baseline-migratie en in het ORM-model. Het commentaar dat hier stond ("varchar
         # 255") beschreef een kolom die er niet is, en de 255 tekens knipten een zin
@@ -447,7 +458,8 @@ class AsyncTaskService:
                     "completed_at": func.now(),
                 }
                 if result is not None:
-                    values["result"] = result
+                    # result en error_message staan beiden in het antwoord op GET /tasks/{id}.
+                    values["result"] = redact_structure(result)
                 # Prevent duplicate log entry: only first write logs.
                 overgang = await session.execute(
                     update(AsyncTask)
@@ -466,9 +478,14 @@ class AsyncTaskService:
                     await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
 
     async def get_task(self, task_id: str) -> dict | None:
-        """Retrieve a single task by ID."""
+        """Retrieve a single task by ID, or None when there is none (also for an id that is no UUID)."""
+        # Het id komt uit een URL: een id die geen UUID is, is een taak die niet bestaat en geen 500.
+        try:
+            key = uuid.UUID(task_id)
+        except ValueError:
+            return None
         async with session_scope() as session:
-            row = await session.get(AsyncTask, uuid.UUID(task_id))
+            row = await session.get(AsyncTask, key)
             return row.to_dict() if row else None
 
     async def update_task_status(self, task_id: str, status: str) -> None:
@@ -791,28 +808,63 @@ class AsyncTaskService:
             ),
         }
 
-    async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
-        """Delete old completed/failed/cancelled tasks beyond the retention period.
+    async def cleanup_old_tasks(self, retention_hours: int = 168, header_retention_days: int = 90) -> int:
+        """Twee vensters over een taak in een eindtoestand: eerst de werkgegevens leeg,
+        daarna de rij weg.
 
-        A deferred rollout that has not been rolled out yet is kept regardless of age: it
-        is the only record that the project file runs ahead of the cluster, and drift that
-        disappears after a week is exactly the silent drift this is meant to surface.
+        De kop (wie, wat, waar, wanneer, uitkomst) is vandaag de enige persistente
+        vastlegging van een projectwijziging en blijft ``header_retention_days`` staan. De
+        werkgegevens (``payload``, ``logs``, ``subtasks``, ``events``, ``result``,
+        ``error_message``, ``current_step``) kunnen groot zijn en invoer bevatten die niet
+        lang bewaard hoeft te worden, en gaan na ``retention_hours`` leeg. ``current_step``
+        hoort daarbij omdat de voortgangsschrijvers er vrije tekst in zetten.
+        ``details_purged_at`` houdt bij dat dat gebeurd is, zodat de lus dezelfde rijen
+        niet elk uur herschrijft.
+
+        A deferred rollout that has not been rolled out yet is kept whole regardless of
+        age: it is the only record that the project file runs ahead of the cluster, and
+        drift that disappears after a week is exactly the silent drift this is meant to
+        surface. Ook de werkgegevens blijven, want wat zo'n taak uitgesteld maakt staat in
+        zijn ``payload``: leegmaken zou hem even goed laten verdwijnen als verwijderen.
 
         Returns:
             The number of tasks deleted.
         """
-        # make_interval positional args: (years, months, weeks, days, hours, ...).
-        cutoff = func.now() - func.make_interval(0, 0, 0, 0, retention_hours)
+        keep_deferred = ~(_deferred() & _not_yet_reconciled())
         async with session_scope() as session:
-            result = await session.execute(
-                delete(AsyncTask).where(
+            # make_interval positional args: (years, months, weeks, days, hours, ...).
+            purged = await session.execute(
+                update(AsyncTask)
+                .where(
                     AsyncTask.status.in_(_TERMINAL_STATES),
-                    AsyncTask.completed_at < cutoff,
-                    ~(_deferred() & _not_yet_reconciled()),
+                    AsyncTask.completed_at < func.now() - func.make_interval(0, 0, 0, 0, retention_hours),
+                    AsyncTask.details_purged_at.is_(None),
+                    keep_deferred,
+                )
+                .values(
+                    payload={},
+                    logs=None,
+                    subtasks=[],
+                    events=None,
+                    result=None,
+                    error_message=None,
+                    current_step=None,
+                    details_purged_at=func.now(),
                 )
             )
-            deleted_count = result.rowcount
+            purged_count = purged.rowcount
 
+            deleted = await session.execute(
+                delete(AsyncTask).where(
+                    AsyncTask.status.in_(_TERMINAL_STATES),
+                    AsyncTask.completed_at < func.now() - func.make_interval(0, 0, 0, header_retention_days),
+                    keep_deferred,
+                )
+            )
+            deleted_count = deleted.rowcount
+
+        if purged_count > 0:
+            logger.info("Purged details of %d tasks (retention=%dh)", purged_count, retention_hours)
         if deleted_count > 0:
-            logger.info("Cleaned up %d old tasks (retention=%dh)", deleted_count, retention_hours)
+            logger.info("Cleaned up %d old tasks (retention=%dd)", deleted_count, header_retention_days)
         return deleted_count

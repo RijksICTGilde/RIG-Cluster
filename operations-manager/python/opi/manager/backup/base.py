@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -11,15 +12,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
+
+import yaml
 
 from opi.connectors.kubectl import KubectlConnector
-from opi.connectors.minio_mc import create_minio_connector
-from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
+from opi.connectors.minio_mc import MinioConnector, create_minio_connector
+from opi.core.backup_constants import (
+    BACKUP_REPOSITORY_UNUSABLE_ERROR,
+    BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
+    RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+)
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
 from opi.services.catalog.image_registries.resolution import cluster_rules
-from opi.utils.naming import generate_project_service_account_name
+from opi.utils.naming import generate_backup_prefix, generate_project_service_account_name
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -458,6 +466,24 @@ def get_backup_bucket_name(
     return settings.BACKUP_S3_BUCKET
 
 
+def backup_bucket_account_name(bucket_name: str) -> str:
+    """De naam van het S3-account dat alleen bij deze ene back-upbucket mag."""
+    return f"backup-{bucket_name}"
+
+
+# MinIO weigert een langer geheim, dus de afleiding kapt af.
+_MINIO_SECRET_MAX_LENGTH = 40
+
+
+def derive_bucket_account_secret(admin_secret_key: str, bucket_name: str) -> str:
+    """Leid het geheim van dat account af uit het beheergeheim, zodat OPI het niet hoeft te bewaren.
+
+    Wijzigt het beheergeheim, dan wijzigen alle accountgeheimen mee.
+    """
+    digest = hmac.new(admin_secret_key.encode(), f"backup-bucket-account-{bucket_name}".encode(), hashlib.sha256)
+    return base64.urlsafe_b64encode(digest.digest()).decode().rstrip("=")[:_MINIO_SECRET_MAX_LENGTH]
+
+
 @dataclass
 class BackupConfig:
     """Configuration for backup operations."""
@@ -509,6 +535,35 @@ class BackupConfig:
 _KOPIA_USERNAME = "opi-backup"
 
 
+def derive_backup_password(namespace: str, age_key: str) -> str:
+    """Kopia-wachtwoord van een namespace, afgeleid uit zijn SOPS-age-sleutel.
+
+    Vervangt een projectsleutel, dan verandert deze afleiding mee: de rotatie zet het
+    wachtwoord van de bestaande repository over (``features/projectsleutel-vervangen.md``).
+    """
+    material = f"kopia-backup-{namespace}-{age_key}".encode()
+    return base64.b64encode(hashlib.sha256(material).digest()).decode()[:32]
+
+
+def pod_credentials_secret_name(pod_name: str) -> str:
+    """Name of the Secret a backup or restore pod reads its keys from."""
+    return f"{pod_name}-credentials"
+
+
+def mc_endpoint_is_usable(endpoint: str) -> bool:
+    """Whether ``mc_host_url`` can turn this endpoint into an alias: a scheme and a host."""
+    scheme, separator, host = endpoint.partition("://")
+    return bool(scheme and separator and host)
+
+
+def mc_host_url(endpoint: str, access_key: str, secret_key: str) -> str:
+    """Build MC_HOST_<alias> (keys stay out of argv and /proc/<pid>/cmdline)."""
+    if not mc_endpoint_is_usable(endpoint):
+        raise ValueError(f"An mc endpoint needs a scheme and a host, got {endpoint!r}")
+    scheme, _, host = endpoint.partition("://")
+    return f"{scheme}://{quote(access_key, safe='')}:{quote(secret_key, safe='')}@{host}"
+
+
 def kopia_backup_identity(
     project_name: str | None,
     deployment_name: str | None,
@@ -546,15 +601,8 @@ def kopia_backup_identity(
 
 
 class BaseBackupManager:
-    """
-    Base class for backup managers with shared functionality.
-
-    Provides common operations used by all backup types (PVC, database, bucket):
-    - Distributed locking
-    - S3 bucket management
-    - Key derivation from SOPS
-    - Pod lifecycle management
-    """
+    """Base class for PVC, database, and bucket backup managers.
+    Coordinates locking, S3 bucket management, key derivation, and pod lifecycle."""
 
     # Path from /app/opi/manager/backup/ to /app/manifests/
     MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "manifests")
@@ -565,14 +613,92 @@ class BaseBackupManager:
         self.lock = BackupLock(self.kubectl)
 
     def _template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
-        """Render a manifest template, then run the image-registries pass over it.
-
-        Backup pods are bare ``Pod``s applied directly, outside the project manifest
-        pipeline, so without this they keep raw upstream image refs and fail to pull on
-        ODCN. The image is a platform image, so the cluster rules are the whole answer.
-        """
-        rendered = self.kubectl.template_manifest(manifest_content, variables)
+        """Render template and apply image-registries rules (bypass of project manifest pipeline)."""
+        rendered = self.kubectl.template_manifest(
+            manifest_content, {"backup_image": settings.BACKUP_IMAGE, **variables}
+        )
         return apply_rules_to_document(rendered, cluster_rules(settings.CLUSTER_MANAGER))
+
+    def _kopia_credentials(self, kopia_password: str, bucket_name: str) -> dict[str, str]:
+        """The keys every Kopia pod needs: repository password plus the S3 keys of its own bucket.
+
+        The names are the ones Kopia reads from the environment, so no key reaches argv.
+        """
+        access_key, secret_key = self._pod_s3_credentials(bucket_name)
+        return {
+            "KOPIA_PASSWORD": kopia_password,
+            "AWS_ACCESS_KEY_ID": access_key,
+            "AWS_SECRET_ACCESS_KEY": secret_key,
+        }
+
+    def _pod_s3_credentials(self, bucket_name: str) -> tuple[str, str]:
+        """Het account dat een pod meekrijgt: per bucket, of het beheeraccount in single-modus."""
+        if settings.BACKUP_S3_BUCKET_MODE != "per-project":
+            logger.warning(
+                f"BACKUP_S3_BUCKET_MODE is '{settings.BACKUP_S3_BUCKET_MODE}', so backup and restore pods get "
+                "the destination's admin account instead of an account scoped to their own bucket"
+            )
+            return self.config.s3_access_key, self.config.s3_secret_key
+        return (
+            backup_bucket_account_name(bucket_name),
+            derive_bucket_account_secret(self.config.s3_secret_key, bucket_name),
+        )
+
+    async def _apply_pod_with_credentials(
+        self,
+        namespace: str,
+        pod_name: str,
+        manifest: str,
+        credentials: dict[str, str],
+        what: str,
+    ) -> None:
+        """Apply credentials Secret and pod; the Secret is never in the pod spec."""
+        secret_name = pod_credentials_secret_name(pod_name)
+        secret_manifest = yaml.safe_dump(
+            {
+                "apiVersion": "v1",
+                "kind": "Secret",
+                "metadata": {
+                    "name": secret_name,
+                    "namespace": namespace,
+                    "labels": {"app.kubernetes.io/managed-by": "opi-backup"},
+                },
+                "type": "Opaque",
+                "stringData": credentials,
+            }
+        )
+
+        _, stderr, code = await self.kubectl.run_command(["apply", "-f", "-"], stdin_input=secret_manifest)
+        if code != 0:
+            raise RuntimeError(f"Failed to create credentials secret for {what} pod: {stderr}")
+
+        _, stderr, code = await self.kubectl.run_command(["apply", "-f", "-"], stdin_input=manifest)
+        if code != 0:
+            raise RuntimeError(f"Failed to create {what} pod: {stderr}")
+
+        await self._own_credentials_secret(namespace, pod_name, secret_name)
+
+    async def _own_credentials_secret(self, namespace: str, pod_name: str, secret_name: str) -> None:
+        """Set ownerReference so garbage collector removes the Secret if cleanup is skipped (best effort)."""
+        uid, stderr, code = await self.kubectl.run_command(
+            ["get", "pod", pod_name, "-n", namespace, "-o", "jsonpath={.metadata.uid}"]
+        )
+        if code != 0 or not uid.strip():
+            logger.warning(f"Could not read uid of pod {pod_name}; secret {secret_name} stays unowned: {stderr}")
+            return
+
+        patch = json.dumps(
+            {
+                "metadata": {
+                    "ownerReferences": [{"apiVersion": "v1", "kind": "Pod", "name": pod_name, "uid": uid.strip()}]
+                }
+            }
+        )
+        _, stderr, code = await self.kubectl.run_command(
+            ["patch", "secret", secret_name, "-n", namespace, "--type=merge", "-p", patch]
+        )
+        if code != 0:
+            logger.warning(f"Could not set the owner of secret {secret_name}: {stderr}")
 
     @staticmethod
     def _pod_service_account_name(project_name: str | None) -> str:
@@ -637,7 +763,66 @@ class BaseBackupManager:
                 f"Failed to ensure backup bucket exists: {bucket_result.get('message', 'Unknown error')}"
             )
 
+        if settings.BACKUP_S3_BUCKET_MODE == "per-project":
+            await self._ensure_bucket_account(minio_connector, alias_name, bucket_name)
+
         return bucket_name
+
+    async def carry_over_backup_password(
+        self,
+        project_name: str,
+        cluster: str,
+        namespace: str,
+        new_age_key: str,
+    ) -> bool:
+        """Zet het wachtwoord van de Kopia-repository van een namespace over op een nieuwe projectsleutel.
+
+        Zonder deze stap opent de repository na een sleutelvervanging niet meer en staat de
+        backup van die namespace stil. False betekent: daar staat nog geen repository.
+        """
+        # Lokaal: opi.connectors.kopia leest ResourceType uit deze module.
+        from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
+
+        old_password = await self._derive_backup_key(namespace)
+        new_password = derive_backup_password(namespace, new_age_key)
+        if old_password == new_password:
+            return True
+
+        config = KopiaRepositoryConfig(
+            s3_endpoint=self.config.s3_endpoint,
+            s3_bucket=self.config.get_bucket_name(project_name, cluster),
+            s3_access_key=self.config.s3_access_key,
+            s3_secret_key=self.config.s3_secret_key,
+            s3_prefix=generate_backup_prefix(cluster, namespace),
+            password=old_password,
+            use_tls=self.config.s3_use_tls,
+        )
+        return await create_kopia_connector().change_repository_password(config, new_password)
+
+    async def _ensure_bucket_account(
+        self,
+        minio_connector: MinioConnector,
+        alias_name: str,
+        bucket_name: str,
+    ) -> tuple[str, str]:
+        """Zorgt dat het S3-account van deze bucket bestaat en alleen rechten op die bucket heeft.
+
+        ``mc admin user add`` zet het afgeleide geheim bij elke aanroep opnieuw, dus dit is idempotent.
+        """
+        access_key, secret_key = self._pod_s3_credentials(bucket_name)
+
+        await minio_connector.create_user(alias_name, access_key, secret_key)
+        access_result = await minio_connector.grant_bucket_access(
+            alias_name, access_key, bucket_name, ["read", "write", "delete", "list"]
+        )
+        if access_result["status"] not in ("granted", "attached"):
+            raise RuntimeError(
+                f"Failed to scope backup account {access_key} to bucket {bucket_name}: "
+                f"{access_result.get('message', 'Unknown error')}"
+            )
+
+        logger.debug(f"Backup account {access_key} may only reach bucket {bucket_name}")
+        return access_key, secret_key
 
     async def _derive_backup_key(self, namespace: str) -> str:
         """
@@ -654,10 +839,7 @@ class BaseBackupManager:
             logger.warning(f"No SOPS key found in namespace {namespace}, using namespace-based key")
             age_key = f"fallback-key-{namespace}"
 
-        # Derive a backup-specific password
-        material = f"kopia-backup-{namespace}-{age_key}".encode()
-        derived = hashlib.sha256(material).digest()
-        return base64.b64encode(derived).decode()[:32]
+        return derive_backup_password(namespace, age_key)
 
     async def _get_pvc_info(self, namespace: str, pvc_name: str) -> dict[str, str] | None:
         """Get PVC size and storage class."""
@@ -802,32 +984,40 @@ class BaseBackupManager:
 
             await asyncio.sleep(10)
 
-    async def _restore_target_was_unusable(self, namespace: str, pod_name: str) -> bool:
-        """Whether the restore pod stopped on its destination gate.
-
-        Reads the container's terminated exit code from the pod status. Only the
-        dedicated ``RESTORE_TARGET_UNUSABLE_EXIT_CODE`` counts; every other exit
-        code, and every pod that never got far enough to have one (image pull,
-        timeout, deleted pod), answers False. Deliberately not a search through
-        the logs: the wording of a psql or mc error is not ours to depend on.
-        """
+    async def _pod_exit_code(self, namespace: str, pod_name: str) -> int | None:
+        """The exit code a container terminated with (None if pod never started or still runs).
+        Read the code not the logs: tool error wording changes between versions."""
         args = ["get", "pod", pod_name, "-n", namespace, "-o", "json"]
         stdout, stderr, code = await self.kubectl.run_command(args)
         if code != 0:
             logger.warning(f"Could not read exit code of pod {pod_name}: {stderr}")
-            return False
+            return None
 
         try:
             pod_data = json.loads(stdout)
         except json.JSONDecodeError:
             logger.warning(f"Could not parse pod status JSON for {pod_name}")
-            return False
+            return None
 
         for cs in pod_data.get("status", {}).get("containerStatuses", []):
-            terminated = cs.get("state", {}).get("terminated", {})
-            if terminated.get("exitCode") == RESTORE_TARGET_UNUSABLE_EXIT_CODE:
-                return True
-        return False
+            exit_code = cs.get("state", {}).get("terminated", {}).get("exitCode")
+            if exit_code is not None:
+                return int(exit_code)
+        return None
+
+    async def _restore_target_was_unusable(self, namespace: str, pod_name: str) -> bool:
+        """Whether the restore pod stopped on its destination gate.
+
+        Only the dedicated ``RESTORE_TARGET_UNUSABLE_EXIT_CODE`` counts; every other exit
+        code stays "our side" (RC-82).
+        """
+        return await self._pod_exit_code(namespace, pod_name) == RESTORE_TARGET_UNUSABLE_EXIT_CODE
+
+    async def _backup_pod_failure_error(self, namespace: str, pod_name: str, logs: str) -> str:
+        """Why a backup pod failed: its repository gate, or the tail of its logs."""
+        if await self._pod_exit_code(namespace, pod_name) == BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE:
+            return BACKUP_REPOSITORY_UNUSABLE_ERROR
+        return f"Backup pod failed. Logs: {logs[-500:] if logs else 'no logs'}"
 
     async def _get_pod_logs(self, namespace: str, pod_name: str) -> str:
         """Get logs from a pod."""
@@ -840,10 +1030,18 @@ class BaseBackupManager:
         return stdout
 
     async def _cleanup_pod(self, namespace: str, pod_name: str) -> None:
-        """Delete a pod (best effort)."""
+        """Delete a pod and the Secret that carried its keys (best effort)."""
+        secret_name = pod_credentials_secret_name(pod_name)
         try:
-            args = ["delete", "pod", pod_name, "-n", namespace, "--ignore-not-found=true"]
+            args = [
+                "delete",
+                f"pod/{pod_name}",
+                f"secret/{secret_name}",
+                "-n",
+                namespace,
+                "--ignore-not-found=true",
+            ]
             await self.kubectl.run_command(args)
-            logger.debug(f"Deleted pod {pod_name}")
+            logger.debug(f"Deleted pod {pod_name} and secret {secret_name}")
         except Exception as e:
             logger.warning(f"Failed to delete pod {pod_name}: {e}")

@@ -9,5 +9,12 @@ roleRef:
   name: prometheus
 subjects:
   - kind: ServiceAccount
+    name: prometheus
+    namespace: rig-prd-operations
+  # namespace-manager staat er zolang de pod daar nog op draait (de patch in
+  # kustomization.yaml): deze Role is zijn enige pod-leesrecht in DEZE namespace, en zonder
+  # hem valt de kubernetes-pods-job over de platform-namespace stil. Hij gaat eruit samen
+  # met die patch, zodra de TenantOwner voor prometheus er is.
+  - kind: ServiceAccount
     name: namespace-manager
     namespace: rig-prd-operations

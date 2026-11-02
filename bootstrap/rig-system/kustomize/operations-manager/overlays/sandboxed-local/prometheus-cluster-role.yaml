@@ -1,0 +1,36 @@
+# De leesrechten van Prometheus in de sandbox (RC-409). Het hoort bij de
+# prometheus-overlay onder infrastructure/, en staat hier omdat de sandbox-ArgoCD
+# namespaced draait: een ClusterRole daar laat de hele sandbox-infrastructure-app op
+# "can not be managed when in namespaced mode" vallen. De cluster-scoped RBAC van de
+# sandbox staat daarom in dit pad, net als cluster-role.yaml hiernaast, dat kubectl
+# toepast bij het uitrollen.
+#
+# De jobs in infrastructure/.../prometheus/controller/base/configmap.yaml gebruiken
+# role:node en role:pod, en meer dan dat staat hier niet: Prometheus liftte hiervoor mee
+# op de ClusterRole van namespace-manager hiernaast, die namespaces, secrets en
+# rolebindings mag.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/proxy, nodes/metrics, pods]
+    verbs: [get, list, watch]
+  # De kubelet autoriseert /metrics en /metrics/cadvisor met een resource-SAR op
+  # nodes/metrics; deze regel stond om dezelfde reden op namespace-manager.
+  - nonResourceURLs: [/metrics, /metrics/cadvisor]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: rig-system

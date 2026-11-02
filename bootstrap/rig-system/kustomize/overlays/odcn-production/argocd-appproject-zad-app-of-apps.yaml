@@ -1,0 +1,27 @@
+# Het AppProject van het app-of-apps (`user-applications`): alleen de argo-repo als bron,
+# alleen de ArgoCD-namespace als bestemming, en alleen de soorten die OPI in die repo
+# schrijft. De URL staat hier letterlijk zoals de Application hem noemt, userinfo
+# incluis: ArgoCD vergelijkt genormaliseerde URL's, maar niet de userinfo weg.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: zad-app-of-apps
+  namespace: rig-system
+spec:
+  description: Het app-of-apps dat de Applications van de projecten synct
+  sourceRepos:
+    - https://user-applications@github.com/RijksICTGilde/argo-applications.git
+  destinations:
+    - namespace: rig-prd-operations
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  # De drie soorten die OPI per project in de argo-repo schrijft (argo_manager:
+  # Application, AppProject, en het repository-Secret). De kustomization- en
+  # ksops-bestanden ernaast zijn geen resources.
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application
+    - group: argoproj.io
+      kind: AppProject
+    - group: ''
+      kind: Secret

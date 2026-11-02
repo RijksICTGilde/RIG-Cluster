@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 
+from opi.core.project_environment import Omgeving
 from opi.services.catalog.approval import ApprovalStatus
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -262,17 +263,22 @@ class ProjectListItem(BaseModel):
 
     name: str = Field(..., description="The technical project name", examples=["mijn-project"])
     description: str = Field(default="", description="What this project is for", examples=["Nog een test"])
-    role: str | None = Field(
-        default=None,
-        description="The caller's role in this project ('admin' or 'developer'); 'admin' for platform admins",
-        examples=["admin"],
+    roles: list[str] = Field(
+        default_factory=list,
+        description=(
+            "De rollen van de aanroeper op dit project. Wat elke rol opent staat op /rollen. "
+            "Een platformbeheerder krijgt ['admin', 'ops'] op elk project"
+        ),
+        examples=[["admin", "ops"]],
     )
     api_key: str | None = Field(
         default=None,
+        deprecated=True,
         description=(
             "SECRET. The project's API key, for the X-API-Key header on every per-project call. "
-            "Only present for the roles 'admin' and 'owner'; null for a 'developer', who may not "
-            "change the project through the web UI either"
+            "Alleen aanwezig voor een lid met de rol 'admin'; null voor de rest. DEPRECATED: ask for one project's key "
+            "with GET /api/v2/projects/{project_name}/api-key, which logs who got it. This field "
+            "disappears from the list once the CLI uses that route"
         ),
         examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
     )
@@ -292,19 +298,29 @@ class ProjectListResponse(BaseModel):
                     {
                         "name": "mijn-project",
                         "description": "Nog een test",
-                        "role": "admin",
+                        "roles": ["admin", "ops"],
                         "api_key": "Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ",
                     },
                     {
                         "name": "project-van-het-team",
                         "description": "Waar ik in meewerk",
-                        "role": "developer",
+                        "roles": ["developer"],
                         "api_key": None,
                     },
                 ]
             }
         }
     }
+
+
+class ProjectApiKeyResponse(BaseModel):
+    """The API key of one project, for a caller that may change that project."""
+
+    api_key: str = Field(
+        ...,
+        description="SECRET. The project's API key, for the X-API-Key header on every per-project call",
+        examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +520,19 @@ class DeploymentDetail(BaseModel):
     cluster: str = Field(..., description="Target cluster")
     namespace: str = Field(..., description="Kubernetes namespace")
     subdomain: str | None = Field(default=None, description="DNS subdomain override")
+    environment: Omgeving | None = Field(
+        default=None,
+        description=(
+            "De OTAP-markering zoals ze in het projectbestand staat, of null als er geen staat. "
+            "Schrijfbaar via POST /api/v2/projects/{project_name}/:upsert-deployment."
+        ),
+    )
+    effective_environment: Omgeving = Field(
+        ...,
+        description=(
+            "De markering die voor deze deployment GELDT: de eigen, anders 'ontwikkeling'. Alleen-lezen, afgeleid."
+        ),
+    )
     components: list[DeploymentComponentDetail] = Field(default_factory=list, description="Component references")
     urls: dict[str, str] = Field(
         default_factory=dict,

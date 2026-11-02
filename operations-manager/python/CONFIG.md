@@ -122,9 +122,13 @@ kubectl apply -f examples/configmap-config.yaml
 - `OIDC_DISCOVERY_URL`: OIDC discovery endpoint URL
 
 ### SOPS Settings
-- `SOPS_AGE_KEY_CONTENT`: Full SOPS age key content
+- `SOPS_AGE_KEY_FILE`: Path to the mounted platform AGE key (the pod's own source)
+- `SOPS_AGE_KEY_CONTENT`: Full SOPS age key content (fallback for local development)
 - `SOPS_AGE_PRIVATE_KEY`: SOPS age private key
 - `SOPS_AGE_PUBLIC_KEY`: SOPS age public key
+- `PROJECT_KEK_FILE`: Path to the mounted project-KEK, the key the project private keys are
+  wrapped with. Only OPI holds it; absent means everything falls back to the platform key
+- `PROJECT_KEK_PRIVATE_KEY`, `PROJECT_KEK_PUBLIC_KEY`: parsed out of that file
 
 ### ArgoCD Settings
 - `ARGOCD_MANAGER`: ArgoCD manager namespace

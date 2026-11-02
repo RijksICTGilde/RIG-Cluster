@@ -42,20 +42,18 @@ from opi.services.catalog.base import (
     config_path,
 )
 from opi.services.catalog.cross_domain_access.config_model import CrossDomainAccessConfig
-from opi.services.catalog.cross_domain_access.merge import IncompleteRuleError, merge_rules, to_merged_rule
+from opi.services.catalog.cross_domain_access.merge import (
+    IncompleteRuleError,
+    direction_rules,
+    merge_rules,
+    to_merged_rule,
+)
 from opi.services.catalog.cross_domain_access.resolve import ResolvedRule, resolve_rules
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ServiceType
 from opi.utils.naming import generate_network_policy_name, generate_unique_name
 
 logger = logging.getLogger(__name__)
-
-
-def _direction_rules(config: Any, direction: str) -> list[dict]:
-    """The raw ``inbound``/``outbound`` rule dicts from a stored config block, or []."""
-    if not isinstance(config, dict):
-        return []
-    return [rule for rule in (config.get(direction) or []) if isinstance(rule, dict)]
 
 
 def _group_by_peer(rules: list[ResolvedRule]) -> list[dict]:
@@ -281,9 +279,7 @@ class CrossDomainAccessService(Service):
             summary = get_project_store().get(name)
             return summary.data if summary is not None else None
 
-        merged = merge_rules(
-            _direction_rules(project_config, direction), _direction_rules(deployment_config, direction)
-        )
+        merged = merge_rules(direction_rules(project_config, direction), direction_rules(deployment_config, direction))
         normalized = []
         deployment_name = ctx.deployment.get("name")
         for rule_dict in merged:

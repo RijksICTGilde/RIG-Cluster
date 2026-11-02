@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
+from opi.core.config import settings
 from opi.core.errors import log_render_failure
 from opi.services.services import ServiceAdapter
 from opi.web.menu import get_menu_items
@@ -17,7 +19,26 @@ logger = logging.getLogger(__name__)
 services_router = APIRouter()
 
 
+def replacement_marker(service_type) -> str | None:
+    """The successor's display name when this service is replaced on this cluster, else None.
+
+    Choosing a replaced service is already refused in the picker and at save time
+    (RC-382); this overview is read-only, so what it owes the reader is the marker that
+    says why new projects should not pick it. The service's own help page tells the
+    full story.
+    """
+    # The import stays inside: the registry loads the service packages and some of those
+    # import back into the web layer.
+    from opi.services.registry import get_service
+
+    service = get_service(service_type)
+    if not service.replaced_on_cluster(settings.CLUSTER_MANAGER):
+        return None
+    return service.replacement_name()
+
+
 @services_router.get("/services", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def services_overview(request: Request):
     """
@@ -48,6 +69,7 @@ async def services_overview(request: Request):
                     "secret_class": ServiceAdapter.get_secret_class(service),
                     "uses_secrets": ServiceAdapter.uses_secrets(service),
                     "uses_direct_variables": ServiceAdapter.uses_direct_variables(service),
+                    "replaced_by": replacement_marker(service),
                 }
             )
 

@@ -1,5 +1,7 @@
 # Project delete: async, self-healing cleanup as a tracked task
 
+> The whole of the deletion paths, with the invariants and the October 2026 cases, is mapped in [`features/futures/verwijderpaden-in-kaart.md`](verwijderpaden-in-kaart.md).
+
 > **Status: PLANNED / not started.** Design agreed (make the cleanup a visible,
 > retryable task in the tasks table — not an invisible background loop).
 > Implementation not begun.

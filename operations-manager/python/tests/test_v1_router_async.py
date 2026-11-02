@@ -139,6 +139,7 @@ class TestV1AsyncUpsertDeployment:
                 "deploymentName": "staging",
                 "components": [{"reference": "web", "image": "nginx:1.21"}],
                 "cloneFrom": "production",
+                "environment": "acceptatie",
             },
         )
 
@@ -147,6 +148,51 @@ class TestV1AsyncUpsertDeployment:
         assert call_kwargs["project_name"] == "test-project"
         assert call_kwargs["deployment_name"] == "staging"
         assert call_kwargs["payload"]["cloneFrom"] == "production"
+        assert call_kwargs["payload"]["environment"] == "acceptatie"
+        # Geen sessie, maar wel een bewijsmiddel: de taak noemt de aanroeper die de
+        # ingang herkende, en niet meer het vlakke "API" (RC-322).
+        assert call_kwargs["payload"]["actor"] == "project-api-key:test-project"
+
+    def test_een_projectsleutel_maakt_geen_productiedeployment(
+        self, client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        """De markering zetten vraagt ops met een verse step-up (ontwerp paragraaf 7).
+
+        Een machine kan die niet geven, dus deze weg is dicht voor een projectsleutel.
+        Een deployment BUITEN productie aanmaken blijft open: dat is een deployment
+        schrijven en geen markering zetten (zie de toets hierboven).
+        """
+        mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
+
+        response = client.post(
+            "/api/projects/test-project/:upsert-deployment",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "staging",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+                "environment": "productie",
+            },
+        )
+
+        assert response.status_code == 403
+        assert response.json()["action"] == "marking-set"
+        mock_task_service.create_task.assert_not_awaited()
+
+    def test_environment_defaults_to_none_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        """Weglaten moet erven betekenen, niet een lege string die niets is."""
+        mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
+
+        client.post(
+            "/api/projects/test-project/:upsert-deployment",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "staging",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["environment"] is None
 
 
 class TestV1AsyncUpdateImage:
@@ -191,6 +237,18 @@ class TestV1AsyncUpdateComponent:
         assert call_kwargs["task_type"] == "update_component"
         assert call_kwargs["payload"]["name"] == "mgr"
         assert call_kwargs["payload"]["ports"] == [8443, 9443, 9444]
+
+    def test_forwards_description_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="update_component")
+
+        client.patch(
+            "/api/projects/test-project/components/mgr",
+            headers={"X-API-Key": API_KEY},
+            json={"description": "Nieuwe omschrijving"},
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["description"] == "Nieuwe omschrijving"
 
     def test_rejects_port_and_ports_together(self, client: TestClient) -> None:
         response = client.patch(
@@ -262,7 +320,9 @@ class TestV1AsyncRefreshDeployment:
 class TestV1AsyncCloneDatabase:
     """V1 clone database with async mode (default)."""
 
-    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_task_id(
+        self, client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         response = client.post(
@@ -284,7 +344,9 @@ class TestV1AsyncCloneDatabase:
 class TestV1AsyncCloneBucket:
     """V1 clone bucket with async mode (default)."""
 
-    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_task_id(
+        self, client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         response = client.post(

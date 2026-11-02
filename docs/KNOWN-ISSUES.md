@@ -110,11 +110,11 @@ The `sandbox:sync` task could fail with `unable to forward port because pod is n
 
 **Fix:** Added `kubectl wait --for=condition=Ready` before the port-forward attempt, giving the pod up to 120s to become Ready again.
 
-### GHCR egress limit causing ArgoCD repo server timeout
+### GHCR egress limit causing ArgoCD repo server timeout (fixed in RC-348)
 
-During setup, the ArgoCD repo server rollout can time out if GitHub Container Registry returns a `503 Egress is over the account limit` error when pulling `ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest`. This happens because the image uses the `latest` tag with `imagePullPolicy: Always`, so Kubernetes attempts a fresh pull even when the image is already cached on the node.
+This issue has been resolved. Previously, the ArgoCD sidecar image `rig-cmp-argo-kustomize-sops` was pulled from `:latest` with `imagePullPolicy: Always`, causing Kubernetes to attempt a fresh pull on every rollout even when the image was already cached. This triggered GHCR egress limits during setup.
 
-**Workaround:** Re-run `task sandbox:setup`. The image is typically cached on the Kind node from a previous attempt, and the rollout will succeed once the old pod finishes terminating. The setup is idempotent.
+**Fix (RC-348):** The sidecar is now pinned to a digest instead of `:latest`, and `imagePullPolicy` is set to `IfNotPresent`. This prevents unnecessary pulls and resolves the egress issue.
 
 ### Secrets overview files blocking re-runs
 
@@ -192,6 +192,12 @@ SSO-only realm nooit rechtstreeks bij Keycloak inlogt, dan staat daar precies he
 aangemaakte account waar de keten hierboven op begint. Een uitnodiging heeft geen veld om dat
 te omzeilen: `Email verified` op On bestaat alleen in de console.
 
+Die lokale tak is sindsdien wel dicht in de realms waar het meeste op het spel staat: koppelt
+het realm een SSO-identiteit automatisch op e-mailadres (`account-link`), dan werkt een
+uitnodiging daar alleen nog via SSO en ontstaat er dus geen onbevestigd account met een zelf
+ingetypt adres. Zie `features/keycloak-auto-link.md`, sectie Security. In een realm zonder
+`account-link` blijft de keten hierboven staan.
+
 De **SSO**-tak van een uitnodiging maakt dat account niet. `invite_sso_start` stuurt de
 uitgenodigde naar het projectrealm zelf (`_build_realm_auth_url`), dus Keycloak heeft zijn
 first-broker-login al gedaan voordat `complete_sso_invite` draait: stond er nog geen account,
@@ -213,7 +219,7 @@ Buiten de uitnodigingen om bestaat nog een portaalweg, en die stuurt niet eens e
 bevestigingsmail. Een keycloak-template mag een `users:`-sectie hebben, en `_process_users` maakt
 die gebruikers met `create_user` zonder `skip_email_verification` in het projectrealm aan, met
 het adres en de realm-rollen uit de template (`opi/handlers/keycloak_yaml_handler.py:1352`, zie
-`opi/configs/keycloak/algoritmeregister.yaml:240`). Het account staat daarmee op onbevestigd en
+`opi/configs/keycloak/algoritmeregister-demo-users.yaml`). Het account staat daarmee op onbevestigd en
 draagt `VERIFY_EMAIL`, en `send_verify_email` staat in heel `opi/` alleen op de uitnodigingsweg
 (`opi/manager/invite_manager.py:443`), dus hier zet niets de vlag ooit om. Welke template draait
 komt uit het projectbestand (`services/keycloak/config/template`, alleen op path-traversal

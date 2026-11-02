@@ -10,9 +10,9 @@ cross-tenant traffic: it allows the deployment's own pods to talk to each
 other, the platform/operations namespace, the backup destination, and the
 ingress controller, plus internet egress (without restriction beyond blocking
 the cloud-metadata IP). It is emitted ONCE per deployment, selecting pods via
-the `deployment: <name>` label so multiple components share one policy and
-helm/helmfile workloads (which do not carry that label) fall through to
-Kubernetes' default-allow until a separate baseline is added.
+the `deployment: <name>` label so multiple components share one policy. Pods
+zonder dat label (helm, helmfile) krijgen een tweede render van hetzelfde
+template; zie tests/test_namespace_network_policies.py.
 
 The wider test suite fails at collection on this interpreter (pre-existing
 Python 3.14 beta + pydantic + fastapi import break). This module deliberately
@@ -23,6 +23,7 @@ project_manager source, so it runs in isolation via
 
 import os
 
+from opi.core.cluster_config import get_ops_egress
 from opi.generation.manifests import render_template
 from ruamel.yaml import YAML
 
@@ -42,6 +43,8 @@ def _render_baseline(**overrides):
             "pod_labels": {},
         },
         "project_infra_namespace": "rig-myproject-infrastructure",
+        "ops_egress": get_ops_egress("odcn-production"),
+        "cluster_cidrs": None,
     }
     values.update(overrides)
     result = render_template("tenant-baseline-network-policy.yaml.jinja", values)
@@ -82,6 +85,25 @@ class TestAllowAllTemplateRemoved:
         assert source.count("tenant-baseline-network-policy.yaml.jinja") >= 2, (
             "both call sites (infrastructure namespace + per-deployment) must emit the baseline template"
         )
+
+    def test_elk_renderpunt_geeft_de_ops_egress_mee(self):
+        """Een vergeten ``ops_egress`` of ``cluster_cidrs`` valt niet op in de uitvoer.
+
+        Jinja staat op de standaard Undefined, dus een vergeten lijst rendert als een lege
+        lus: geen egress naar de gedeelde services, en geen except op de internetregel,
+        beide zonder foutmelding. Daarom telt deze test de aanroepen.
+        """
+        with open(PROJECT_MANAGER) as f:
+            source = f.read()
+        # deployment_selector komt alleen in de variabelen van deze template voor, dus het
+        # aantal ervan is het aantal renderpunten.
+        renderpunten = source.count('"deployment_selector":')
+        assert renderpunten >= 2, "beide renderpunten van de baseline moeten hun variabelen zetten"
+        for sleutel in ("ops_egress", "cluster_cidrs"):
+            assert source.count(f'"{sleutel}": get_{sleutel}(') >= renderpunten, (
+                f"elk renderpunt van de baseline moet {sleutel} meegeven, anders rendert de "
+                f"template die regel stil als leeg"
+            )
 
     def test_per_component_emission_is_removed(self):
         """The per-component emission caused file collisions (last write wins).
@@ -217,14 +239,15 @@ class TestPerDeploymentBaseline:
             ops_namespace="rig-prd-operations",
             project_infra_namespace="rig-prd-operations",
         )
-        egress_targets = [
+        # Alleen de namespace-brede regels: de ops-egress noemt dezelfde namespace per
+        # service, en die regels zijn juist bedoeld om naast elkaar te bestaan.
+        namespace_wide = [
             peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
             for rule in doc["spec"]["egress"]
             for peer in rule.get("to", [])
-            if peer.get("namespaceSelector", {}).get("matchLabels")
+            if peer.get("namespaceSelector", {}).get("matchLabels") and "podSelector" not in peer
         ]
-        # Each platform namespace appears exactly once.
-        assert egress_targets.count("rig-prd-operations") == 1
+        assert namespace_wide.count("rig-prd-operations") == 0
 
 
 class TestInfrastructureNamespaceVariant:
@@ -286,9 +309,24 @@ class TestDeploymentLabelOnPods:
     """
 
     def test_deployment_template_carries_deployment_label(self):
-        with open(os.path.join(MANIFESTS_DIR, "deployment.yaml.jinja")) as f:
-            source = f.read()
-        assert 'deployment: "{{ deployment_name }}"' in source, (
+        """Op het gerenderde manifest, niet op de sjabloontekst: de labelwaarde gaat
+        door een filter, dus de letterlijke vorm in het sjabloon zegt niets meer."""
+        rendered = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "myapp-web",
+                "deployment_name": "myapp",
+                "namespace": "rig-myproject",
+                "project": {"name": "myproject"},
+                "cluster": "sandboxed-local",
+                "pod_replacement_mode": "RollingUpdate",
+                "application_port": 8080,
+                "imageURL": "ghcr.io/org/web:1",
+                "imagePullPolicy": "IfNotPresent",
+            },
+        )
+        pod_labels = YAML().load(rendered)["spec"]["template"]["metadata"]["labels"]
+        assert pod_labels["deployment"] == "myapp", (
             "pod template metadata must include a `deployment` label so the NetworkPolicy selector matches"
         )
 
@@ -340,3 +378,98 @@ class TestExterneEgressBlijftBeperktTot443En80:
         for rule in doc["spec"].get("egress") or []:
             if any("ipBlock" in peer for peer in rule.get("to") or []):
                 assert rule.get("ports"), "een externe egressregel zonder poortenlijst opent alles"
+
+
+class TestOpsEgressPerService:
+    """De egress naar de operations-namespace is per service, niet per namespace.
+
+    Een regel op de hele namespace opende ook ArgoCD, Prometheus en de interne poorten
+    van OPI en Keycloak voor elke tenant-pod.
+    """
+
+    @staticmethod
+    def _ops_rules(doc, ops_namespace: str = "rig-system") -> list:
+        return [
+            rule
+            for rule in doc["spec"]["egress"]
+            for peer in rule.get("to") or []
+            if peer.get("namespaceSelector", {}).get("matchLabels", {}).get("kubernetes.io/metadata.name")
+            == ops_namespace
+        ]
+
+    def test_geen_namespace_brede_regel_naar_de_ops_namespace(self):
+        _, doc = _render_baseline()
+        for rule in self._ops_rules(doc):
+            for peer in rule["to"]:
+                assert peer.get("podSelector"), "een regel naar de ops-namespace zonder podSelector opent alles"
+            assert rule.get("ports"), "een regel naar de ops-namespace zonder poorten opent elke poort"
+
+    def test_elke_dienst_krijgt_zijn_eigen_labels_en_poort(self):
+        _, doc = _render_baseline()
+        gerenderd = {
+            (
+                tuple(sorted(peer["podSelector"]["matchLabels"].items())),
+                tuple(port["port"] for port in rule["ports"]),
+            )
+            for rule in self._ops_rules(doc)
+            for peer in rule["to"]
+        }
+        verwacht = {
+            (tuple(sorted(service["pod_labels"].items())), tuple(service["ports"]))
+            for service in get_ops_egress("odcn-production")
+        }
+        assert gerenderd == verwacht
+
+
+class TestElkDatabaseEndpointHeeftEenOpsEgressRegel:
+    """Een app die de gedeelde database bereikt moet een regel hebben voor de pods die
+    hij echt aanspreekt.
+
+    Issue #116 zet een CNPG Pooler voor rig-db. Die pods dragen ``cnpg.io/poolerName``
+    en niet ``cnpg.io/cluster``, dus een regel op alleen de cluster-labels sluit apps
+    die de pooler gebruiken buiten. Zodra er een sleutel ``database_pooler`` in
+    cluster_config komt, valt deze test om tot er ook een ops_egress-regel voor is.
+    """
+
+    #: De sleutels in cluster_config die een database-endpoint benoemen.
+    ENDPOINT_KEYS = ("database_server", "database_pooler")
+
+    def test_elk_cluster_dekt_zijn_database_endpoints(self):
+        from opi.core.cluster_config import CLUSTER_CONFIG
+
+        for cluster_name, config in CLUSTER_CONFIG.items():
+            gedekt = {service["endpoint"] for service in config["ops_egress"]}
+            for key in self.ENDPOINT_KEYS:
+                if key in config:
+                    assert key in gedekt, (
+                        f"cluster '{cluster_name}' heeft '{key}' maar geen ops_egress-regel ervoor: "
+                        "een app die dat endpoint gebruikt komt er niet bij"
+                    )
+
+
+class TestDeInternetregelSluitHetClusterUit:
+    """0.0.0.0/0 dekt ook elk pod-IP in het cluster, dus de pod- en service-CIDR horen
+    in de except. Zonder cluster_cidrs blijft de regel zoals hij was.
+    """
+
+    @staticmethod
+    def _ipblocks(doc) -> list[dict]:
+        return [peer["ipBlock"] for rule in doc["spec"]["egress"] for peer in rule.get("to") or [] if "ipBlock" in peer]
+
+    def test_zonder_cluster_cidrs_verandert_er_niets(self):
+        _, doc = _render_baseline(cluster_cidrs=None)
+        assert self._ipblocks(doc) == [{"cidr": "0.0.0.0/0"}, {"cidr": "::/0"}]
+
+    def test_de_cidrs_komen_in_de_except_van_hun_eigen_adresfamilie(self):
+        _, doc = _render_baseline(
+            cluster_cidrs={"ipv4": ["10.244.0.0/16", "10.96.0.0/16"], "ipv6": ["fd00:10:244::/56"]}
+        )
+        assert self._ipblocks(doc) == [
+            {"cidr": "0.0.0.0/0", "except": ["10.244.0.0/16", "10.96.0.0/16"]},
+            {"cidr": "::/0", "except": ["fd00:10:244::/56"]},
+        ]
+
+    def test_een_adresfamilie_zonder_cidrs_houdt_zijn_blok_ongewijzigd(self):
+        """Sandboxed-local is single-stack: alleen het IPv4-blok krijgt een except."""
+        _, doc = _render_baseline(cluster_cidrs={"ipv4": ["10.244.0.0/16"]})
+        assert self._ipblocks(doc)[1] == {"cidr": "::/0"}

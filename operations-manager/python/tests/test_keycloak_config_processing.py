@@ -282,7 +282,7 @@ class TestKeycloakRealmSetup:
             mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call the method
-            result = await self.keycloak_manager._setup_project_keycloak_realm(
+            await self.keycloak_manager._setup_project_keycloak_realm(
                 project_name="test-project",
                 cluster="local",
                 keycloak_url="http://keycloak.local",
@@ -336,7 +336,7 @@ class TestKeycloakRealmSetup:
             mock_keycloak.get_user_by_username = AsyncMock(return_value=None)
 
             # Call the method
-            result = await self.keycloak_manager._setup_project_keycloak_realm(
+            await self.keycloak_manager._setup_project_keycloak_realm(
                 project_name="test-project",
                 cluster="local",
                 keycloak_url="http://keycloak.local",
@@ -488,3 +488,166 @@ class TestKeycloakConfigRecordForm:
 
         assert config["type"] == "external"
         assert config["template"] == "sso-only"
+
+
+class TestKeycloakConfigRedirectUrisAndFlows:
+    """RC-325: strakke redirects en de opt-in flows, zoals ``_get_keycloak_service_config``
+
+    ze uit het projectbestand haalt. De regel zelf en de modellen hebben hun eigen tests
+    (``test_keycloak_redirect_uris.py``); dit dekt de haakjes hier: dat deze functie de
+    regel ook echt aanroept, en dat de twee flow-vlaggen met beide schrijfwijzen en met
+    hun default binnenkomen.
+    """
+
+    def setup_method(self):
+        self.keycloak_manager = KeycloakManager(Mock())
+
+    def test_additional_redirect_uris_met_een_wildcard_wordt_geweigerd(self):
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"additional_redirect_uris": ["*"]}}}],
+        }
+
+        with pytest.raises(ValueError, match="additional_redirect_uris"):
+            self.keycloak_manager._get_keycloak_service_config(project_data)
+
+    def test_additional_clients_zonder_redirect_uris_wordt_geweigerd(self):
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"additional-clients": [{"name": "partner"}]}}}],
+        }
+
+        with pytest.raises(ValueError, match="redirect"):
+            self.keycloak_manager._get_keycloak_service_config(project_data)
+
+    def test_additional_clients_met_een_wildcard_redirect_uri_wordt_geweigerd(self):
+        project_data = {
+            "name": "test-project",
+            "services": [
+                {"keycloak": {"config": {"additional-clients": [{"name": "partner", "redirect-uris": ["*"]}]}}}
+            ],
+        }
+
+        with pytest.raises(ValueError, match="redirect"):
+            self.keycloak_manager._get_keycloak_service_config(project_data)
+
+    def test_additional_clients_met_geldige_redirect_uri_komt_door(self):
+        project_data = {
+            "name": "test-project",
+            "services": [
+                {
+                    "keycloak": {
+                        "config": {
+                            "additional-clients": [
+                                {"name": "partner", "redirect-uris": ["https://partner.rijksapps.nl/cb"]}
+                            ]
+                        }
+                    }
+                }
+            ],
+        }
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["additional_clients"] == [
+            {"name": "partner", "redirect-uris": ["https://partner.rijksapps.nl/cb"]}
+        ]
+
+    def test_direct_access_grants_en_service_accounts_staan_standaard_uit(self):
+        project_data = {"name": "test-project", "services": ["keycloak"]}
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["direct_access_grants"] is False
+        assert config["service_accounts"] is False
+
+    @pytest.mark.parametrize("sleutel", ["direct-access-grants", "direct_access_grants"])
+    def test_direct_access_grants_opt_in_werkt_met_beide_schrijfwijzen(self, sleutel):
+        project_data = {"name": "test-project", "services": [{"keycloak": {"config": {sleutel: True}}}]}
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["direct_access_grants"] is True
+
+    @pytest.mark.parametrize("sleutel", ["service-accounts", "service_accounts"])
+    def test_service_accounts_opt_in_werkt_met_beide_schrijfwijzen(self, sleutel):
+        project_data = {"name": "test-project", "services": [{"keycloak": {"config": {sleutel: True}}}]}
+
+        config = self.keycloak_manager._get_keycloak_service_config(project_data)
+
+        assert config["service_accounts"] is True
+
+    def test_direct_access_grants_moet_een_boolean_zijn(self):
+        project_data = {
+            "name": "test-project",
+            "services": [{"keycloak": {"config": {"direct-access-grants": "ja"}}}],
+        }
+
+        with pytest.raises(ValueError, match="must be a boolean"):
+            self.keycloak_manager._get_keycloak_service_config(project_data)
+
+
+class TestCreateAdditionalClientsFlowOptIn:
+    """``_create_additional_clients`` geeft de opt-in vlaggen van elke extra client door
+
+    aan ``create_oidc_client``. De connector zelf heeft zijn eigen tests
+    (``test_keycloak_redirect_uris.py``); dit dekt dat de manager de waarden uit
+    ``client_config`` ook werkelijk doorzet in plaats van ze te laten liggen.
+    """
+
+    def setup_method(self):
+        self.keycloak_manager = KeycloakManager(Mock())
+
+    @pytest.mark.asyncio
+    async def test_de_opt_in_vlaggen_van_de_client_bereiken_create_oidc_client(self):
+        mock_keycloak = AsyncMock()
+        mock_keycloak.create_oidc_client = AsyncMock(return_value={"secret": "s", "created": True})
+
+        with (
+            patch("opi.manager.keycloak_manager.create_keycloak_connector", AsyncMock(return_value=mock_keycloak)),
+            patch("opi.manager.keycloak_manager.get_namespace", return_value="rig-system"),
+            patch.object(self.keycloak_manager, "_store_additional_client_secret", AsyncMock()),
+        ):
+            await self.keycloak_manager._create_additional_clients(
+                realm_name="r",
+                keycloak_host="https://keycloak.rijksapp.nl",
+                additional_clients=[
+                    {
+                        "name": "partner",
+                        "redirect-uris": ["https://partner.rijksapps.nl/cb"],
+                        "direct-access-grants": True,
+                        "service-accounts": True,
+                    }
+                ],
+                cluster="local",
+            )
+
+        mock_keycloak.create_oidc_client.assert_awaited_once_with(
+            realm_name="r",
+            client_id="partner",
+            client_name="partner",
+            redirect_uris=["https://partner.rijksapps.nl/cb"],
+            direct_access_grants=True,
+            service_accounts=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_zonder_opt_in_gaan_beide_vlaggen_false_mee(self):
+        mock_keycloak = AsyncMock()
+        mock_keycloak.create_oidc_client = AsyncMock(return_value={"secret": "s", "created": True})
+
+        with (
+            patch("opi.manager.keycloak_manager.create_keycloak_connector", AsyncMock(return_value=mock_keycloak)),
+            patch("opi.manager.keycloak_manager.get_namespace", return_value="rig-system"),
+            patch.object(self.keycloak_manager, "_store_additional_client_secret", AsyncMock()),
+        ):
+            await self.keycloak_manager._create_additional_clients(
+                realm_name="r",
+                keycloak_host="https://keycloak.rijksapp.nl",
+                additional_clients=[{"name": "partner", "redirect-uris": ["https://partner.rijksapps.nl/cb"]}],
+                cluster="local",
+            )
+
+        kwargs = mock_keycloak.create_oidc_client.call_args.kwargs
+        assert kwargs["direct_access_grants"] is False
+        assert kwargs["service_accounts"] is False

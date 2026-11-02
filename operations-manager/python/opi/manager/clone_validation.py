@@ -14,19 +14,55 @@ and a check that opens connections is no longer a dry run.
 This lives apart from ``ProjectManager`` because it is a pure function of the
 project data: no git, no cluster, no connectors, and therefore testable as data in,
 report out.
+
+``composite_name_collision`` is here for the same reason: a pure function of project data
+(reading the in-memory cache of other projects). A resource name built from project
++ deployment can be built by more than one pair, so we guard against collisions.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from opi.services.project import Project
 from opi.services.services_enums import CloneFromType
+from opi.utils.naming import (
+    generate_argocd_application_filename,
+    generate_argocd_application_name,
+    generate_bucket_name,
+    generate_database_name,
+    generate_database_schema,
+    generate_database_username,
+    generate_keycloak_client_id,
+    generate_minio_policy_name,
+    generate_minio_username,
+    generate_project_deployment_prefix,
+    generate_redis_key_prefix,
+    generate_redis_username,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
-# Kinds of resource a backup clone can carry, as recorded in ``backup_items``.
-_KNOWN_BACKUP_RESOURCE_TYPES = ("database", "bucket", "pvc")
+#: Naming functions that fuse project and deployment: ``('amt', 'odc-prd-staging')`` and
+#: ``('amt-odc-prd', 'staging')`` compose the same names. See features/samengestelde-naambotsing.md.
+_COMPOSITE_NAME_BUILDERS = (
+    generate_database_name,
+    generate_database_username,
+    generate_database_schema,
+    generate_minio_username,
+    generate_minio_policy_name,
+    generate_bucket_name,
+    generate_redis_username,
+    generate_redis_key_prefix,
+    generate_keycloak_client_id,
+    generate_argocd_application_name,
+    generate_argocd_application_filename,
+    generate_project_deployment_prefix,
+)
 
 
 def _check(name: str, passed: bool, message: str) -> dict[str, str]:
@@ -38,20 +74,83 @@ def _report(checks: list[dict[str, str]]) -> dict[str, Any]:
     return {"validation": {"passed": passed, "checks": checks}}
 
 
+def resolve_clone_source_deployment(
+    project_data: dict[str, Any], reference: str, deployment_name: str
+) -> dict[str, Any]:
+    """The deployment that ``clone-from.reference`` names, as a clone source for ``deployment_name``.
+
+    The provisioning path builds source names from project name + reference, so an
+    unchecked reference could compose another project's resource name.
+
+    Raises:
+        ValueError: if the reference is missing, names the deployment itself, or names a
+            deployment that is not part of this project.
+    """
+    if not reference:
+        raise ValueError("clone-from type 'deployment' without a reference")
+    if reference == deployment_name:
+        raise ValueError(f"Deployment '{deployment_name}' clones from itself")
+
+    source = Project(project_data).find("deployments", name=reference)
+    if source is None:
+        raise ValueError(f"Source deployment '{reference}' not found in project")
+    return source
+
+
+def other_project_deployments(project_name: str) -> dict[str, list[str]]:
+    """The deployment names of every project but ``project_name``, from the project cache."""
+    from opi.services.project_store import get_project_store  # circular import otherwise
+
+    return {
+        summary.name: [
+            dep_name
+            for dep in (summary.data.get("deployments") or [])
+            if isinstance(dep, dict) and isinstance(dep_name := dep.get("name"), str)
+        ]
+        for summary in get_project_store().get_all()
+        if summary.name != project_name and summary.data
+    }
+
+
+def composite_name_collision(
+    project_name: str, deployment_name: str, other_projects: Mapping[str, Sequence[str]]
+) -> str | None:
+    """Why this project/deployment pair may not be used, or None when it is free.
+
+    A database, bucket, MinIO user or Keycloak client is named by gluing the project name
+    and the deployment name together, so ``amt`` + ``odc-prd-staging`` composes the very
+    same names as ``amt-odc-prd`` + ``staging``. Provisioning treats an existing resource
+    with that name as its own: it resets the password and hands it over, which takes the
+    other project's database away from it. Both pairs are valid on their own, so the only
+    place the clash is visible is here, against every other project.
+
+    Args:
+        project_name: The project the pair belongs to.
+        deployment_name: The deployment name to judge.
+        other_projects: Deployment names per project, EXCLUDING ``project_name``
+            (see ``other_project_deployments``).
+    """
+    own_names = [build(project_name, deployment_name) for build in _COMPOSITE_NAME_BUILDERS]
+    for other_project, deployments in other_projects.items():
+        for other_deployment in deployments:
+            for name, build in zip(own_names, _COMPOSITE_NAME_BUILDERS, strict=True):
+                if name != build(other_project, other_deployment):
+                    continue
+                return (
+                    f"Project '{project_name}' met deployment '{deployment_name}' levert de naam "
+                    f"'{name}' op, en die naam is al van deployment '{other_deployment}' van project "
+                    f"'{other_project}'. Twee projecten kunnen die resource niet delen, dus kies een "
+                    f"andere naam voor het project of voor de deployment"
+                )
+    return None
+
+
 def _validate_deployment_source(project_data: dict[str, Any], reference: str, deployment_name: str) -> dict[str, str]:
     """The source is another deployment in this same project."""
-    if not reference:
-        return _check("source_deployment_exists", False, "clone-from type 'deployment' without a reference")
-    if reference == deployment_name:
-        return _check("source_deployment_exists", False, f"Deployment '{deployment_name}' clones from itself")
-
-    names = {dep.get("name") for dep in project_data.get("deployments", []) if isinstance(dep, dict)}
-    if reference not in names:
-        return _check(
-            "source_deployment_exists",
-            False,
-            f"Source deployment '{reference}' not found in project",
-        )
+    try:
+        resolve_clone_source_deployment(project_data, reference, deployment_name)
+    except ValueError as error:
+        return _check("source_deployment_exists", False, str(error))
     return _check("source_deployment_exists", True, f"Source deployment '{reference}' found")
 
 
@@ -86,30 +185,24 @@ def _validate_remote_source(project_data: dict[str, Any], reference: str) -> lis
     return checks
 
 
-def _validate_backup_source(clone_from: dict[str, Any]) -> list[dict[str, str]]:
-    """The source is a backup: the items to restore are named in the clone-from itself."""
-    items = clone_from.get("backup_items")
-    if not isinstance(items, list) or not items:
-        return [_check("backup_items", False, "clone-from type 'backup' without backup_items")]
+def _validate_backup_source(
+    project_data: dict[str, Any], clone_from: dict[str, Any], deployment_name: str
+) -> list[dict[str, str]]:
+    """The source is a backup: the clone-from names the run, and the deployment it was taken from.
 
-    incomplete = [
-        item
-        for item in items
-        if not isinstance(item, dict)
-        or item.get("resource_type") not in _KNOWN_BACKUP_RESOURCE_TYPES
-        or not item.get("snapshot_id")
-    ]
-    if incomplete:
-        return [
-            _check(
-                "backup_items",
-                False,
-                f"{len(incomplete)} of {len(items)} backup item(s) miss a known resource_type or a snapshot_id",
-            )
-        ]
+    Which snapshots that run holds is runtime state at Kopia, not project data, so this
+    dry run checks the reference only; ``backup_run_items`` reports a run that is gone.
+    """
+    run = clone_from.get("run")
+    if not isinstance(run, str) or not run:
+        return [_check("backup_run", False, "clone-from type 'backup' without a run")]
 
-    kinds = ", ".join(sorted({str(item["resource_type"]) for item in items}))
-    return [_check("backup_items", True, f"{len(items)} backup item(s) to restore: {kinds}")]
+    try:
+        resolve_clone_source_deployment(project_data, str(clone_from.get("reference") or ""), deployment_name)
+    except ValueError as error:
+        return [_check("backup_run", False, f"backup run '{run}': {error}")]
+
+    return [_check("backup_run", True, f"Backup run '{run}' of deployment '{clone_from['reference']}' to restore")]
 
 
 def validate_clone_readiness(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
@@ -170,7 +263,7 @@ def validate_clone_readiness(project_data: dict[str, Any], deployment_name: str)
     elif clone_type == CloneFromType.REMOTE_SOURCE.value:
         checks.extend(_validate_remote_source(project_data, reference))
     elif clone_type == CloneFromType.BACKUP.value:
-        checks.extend(_validate_backup_source(clone_from))
+        checks.extend(_validate_backup_source(project_data, clone_from, deployment_name))
     else:
         known = ", ".join(sorted(item.value for item in CloneFromType))
         checks.append(_check("clone_type", False, f"Unknown clone-from type '{clone_type}'. Known types: {known}"))

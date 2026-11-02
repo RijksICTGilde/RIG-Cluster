@@ -6,7 +6,7 @@
   gevallen:
 
     permission-denied/_uitleg      -> een c-alert met de reden, plus de uitleg eronder
-    permission-denied/_organisatie -> c-detail-list in plaats van een <c-ul> met vet
+    permission-denied/_organisatie -> een <dl> in nldd-rich-text in plaats van een <c-ul> met vet
     permission-denied/_acties      -> c-action-group met dezelfde mailto-link
 
   Het onderscheid tussen de twee gevallen (`reason == 'email-not-verified'` en de rest)
@@ -66,15 +66,15 @@
 
     {% if user and user.organization %}
         {% call panel("Je Organisatie Informatie", "person") %}
-            <c-detail-list>
-                <c-detail-item label="Organisatie" value="{{ user.organization.name }}" />
+            <nldd-rich-text><dl>
+                <dt>Organisatie</dt><dd>{{ user.organization.name }}</dd>
                 {% if user.organization.number %}
-                    <c-detail-item label="Organisatie Nummer" value="{{ user.organization.number }}" />
+                    <dt>Organisatie Nummer</dt><dd>{{ user.organization.number }}</dd>
                 {% endif %}
                 {% if user.organization.role %}
-                    <c-detail-item label="Rol" value="{{ user.organization.role }}" />
+                    <dt>Rol</dt><dd>{{ user.organization.role }}</dd>
                 {% endif %}
-            </c-detail-list>
+            </dl></nldd-rich-text>
         {% endcall %}
     {% endif %}
 

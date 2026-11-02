@@ -29,7 +29,7 @@ config:
     -----END AGE ENCRYPTED FILE-----
 users:
 - email: test@example.com
-  role: admin
+  roles: [admin, ops]
 components:
 - name: backend
   type: single

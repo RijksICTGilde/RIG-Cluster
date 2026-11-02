@@ -1,5 +1,7 @@
 # Service-orphan reconciliation (rapport-eerst opruiming van DB's, Keycloak-clients, MinIO-buckets)
 
+> Het geheel van de verwijderpaden, met de invarianten en de gevallen van oktober 2026, staat in [`features/futures/verwijderpaden-in-kaart.md`](futures/verwijderpaden-in-kaart.md).
+
 ## Probleem
 
 Deletes uit het pre-#123 tijdperk rapporteerden succes terwijl service-resources
@@ -62,7 +64,7 @@ kubectl -n rig-prd-operations exec rig-db-1 -- psql -U postgres -d keycloak -tAc
 ### Sweep (rapport, nul mutaties)
 
 ```bash
-curl -X GET "https://<opi>/api/v2/admin/orphans/report" -H "X-API-Key: $ADMIN_API_KEY"
+curl -X GET "https://<opi>/api/v2/admin/orphans/report" -H "Authorization: Bearer $ZAD_TOKEN"
 ```
 
 Inventariseert databases (rig-db), Keycloak realms/clients en MinIO-buckets en
@@ -83,10 +85,15 @@ juist weer in de verwachte set zit.
 
 ```bash
 curl -X POST "https://<opi>/api/v2/admin/orphans/confirm" \
-  -H "X-API-Key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456" \
+  -H "Content-Type: application/json" \
   -d '{"items": [{"type": "postgresql_database", "name": "regel_k4c_pr104"},
                  {"type": "keycloak_client", "name": "regel-k4c-pr250-public", "realm": "regel-k4c-odcn-production"}]}'
 ```
+
+Bevestigen verandert iets, dus naast het token van de platformbeheerder vraagt de route een
+verse code in `X-ZAD-OTP` (`features/platformbeheer-via-de-api.md`). Het rapport is alleen
+lezen en vraagt er geen.
 
 De sweep wordt server-side opnieuw uitgevoerd; alleen items die op dat moment
 `orphan_candidate` zijn worden geaccepteerd. Daarna geldt de normale

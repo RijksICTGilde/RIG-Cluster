@@ -26,13 +26,14 @@ DE VERGRENDELING
 De laatste test hieronder is generiek: elke route die ``validate_api_token`` draagt, moet
 een VERPLICHTE ``project_name`` kunnen ontvangen (in haar pad of als queryparameter). Dat
 vond nog twee gevallen: ``GET /api/v1/backup/status`` had de naam helemaal niet en gaat naar
-de mastersleutel, en ``GET /api/subdomains`` had hem als optionele filter terwijl weglaten
+het token van een platformbeheerder, en ``GET /api/subdomains`` had hem als optionele filter terwijl weglaten
 dezelfde 401 opleverde.
 """
 
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -55,7 +56,7 @@ PROJECT_DATA: dict[str, Any] = {
     "schema-version": 2,
     "name": PROJECT,
     "clusters": ["local"],
-    "users": [{"email": "user@example.com", "role": "admin"}],
+    "users": [{"email": "user@example.com", "roles": ["admin", "ops"]}],
     "config": {"age-public-key": "age1notarealkey"},
 }
 
@@ -231,6 +232,38 @@ class TestDeControleBlijftEenControle:
         )
 
         assert response.status_code == 401
+
+
+class TestDeAuditregelLeestHetAfgeleideAdres:
+    """RC-368: deze regel gebruikte ``IPRateLimiter.get_client_ip``, die de koptekst zelf
+    las. Zonder vertrouwde proxy-hop (de default) telt ``client_ip`` op het peer-adres, en
+    een verzonnen ``X-Forwarded-For`` mag daar niet doorheen lekken naar het auditspoor."""
+
+    def test_een_verzonnen_header_komt_niet_in_het_auditspoor(
+        self, mock_settings: Any, store: Any, connector: Any, caplog: Any
+    ) -> None:
+        """Door de echte ``create_app()``-opbouw, zodat de volgorde van
+        ``PeerAddressMiddleware`` vóór ``ProxyHeadersMiddleware`` meetelt: zonder die
+        volgorde overschrijft ``ProxyHeadersMiddleware`` ``scope["client"]`` al met de
+        gespoofte waarde voordat het peer-adres bewaard is.
+        """
+        from opi.server import create_app
+
+        app = create_app()
+        echte_peer = "203.0.113.9"
+        client = TestClient(app, client=(echte_peer, 1234))
+
+        with caplog.at_level(logging.INFO, logger="opi.api.v2.router"):
+            response = client.get(
+                PATH,
+                params={"base_domain": "rijksapp.nl"},
+                headers={**HEADERS, "X-Forwarded-For": "198.51.100.77"},
+            )
+
+        assert response.status_code == 200
+        audit = next(r.getMessage() for r in caplog.records if "AUDIT: Subdomain check" in r.getMessage())
+        assert "198.51.100.77" not in audit
+        assert f"ip={echte_peer}" in audit, audit
 
 
 class TestHetDocumentZegtHetOok:

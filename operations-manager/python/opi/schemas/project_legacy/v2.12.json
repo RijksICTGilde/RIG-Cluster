@@ -1,0 +1,28 @@
+{
+  "$comment": "v2.12 -> 2.13 maakte van users[].role een lijst users[].roles, met de zes rollen uit het ontwerp; owner en member verdwenen. Een 2.12-bestand draagt nog de ene oude rol en kent de eis 'minstens een admin' niet.",
+  "properties": {
+    "users": {
+      "contains": null,
+      "minContains": null
+    }
+  },
+  "$defs": {
+    "user": {
+      "required": [
+        "role"
+      ],
+      "properties": {
+        "roles": null,
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "owner",
+            "member",
+            "developer"
+          ]
+        }
+      }
+    }
+  }
+}

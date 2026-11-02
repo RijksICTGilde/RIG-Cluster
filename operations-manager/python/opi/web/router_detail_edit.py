@@ -7,16 +7,21 @@ to drive multi-step edit flows within the modal.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
+from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -31,6 +36,7 @@ from opi.forms.visualizers.wizard_sections import (
     _extract_services,
 )
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.forms.wizard.leden import leden_voor_formulier
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.resolver import (
     get_section_metadata,
@@ -42,29 +48,30 @@ from opi.forms.wizard.secrets import (
     reachable_leaf_keys,
     redact_unreachable_secrets,
 )
+from opi.forms.wizard.selection import narrow_to_selection, parse_selection, selectable_names
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
-    get_modal_state_by_token,
     init_modal_state_tokenized,
+    load_modal_state_for,
     save_modal_state_by_token,
 )
 from opi.handlers.project_file_handler import extract_attachment_catalog
+from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
-from opi.services.project_authorization import (
-    is_user_authorized_for_project,
-)
 from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
+from opi.web.authz import authorize, authorized_project, require_action
 from opi.web.lotc_switch import render_fragment
 from opi.web.navigation_lotc import to_nldd_icon
-from opi.web.project_edit_security import require_project_edit_access
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
     _find_sequence_editable,
     _split_data_across_sections,
+    flow_uit_pad,
 )
 from opi.web.router_wizard_attachments import REPLACE_TARGET_KEY
+from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -197,20 +204,17 @@ def _render_section_html(
     return html
 
 
-def _require_project_member_access(request: Request, project_name: str):
-    """Check auth for project member access (any role). Returns (project, user_email)."""
-
-    user = get_current_user(request)
-    project = get_project_store().get(project_name)
-
-    if not project:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
-
-    user_email = user.get("email", "").lower()
-    if not is_user_authorized_for_project(project_name, user_email):
-        raise HTTPException(status_code=403, detail="Geen toegang tot dit project")
-
-    return project, user_email
+#: Welke action een modal-wizard-stroom vraagt. De route zelf draagt ``project.read``
+#: als bodem; welk recht de stroom ECHT vraagt hangt af van ``flow_id``, en dat is een
+#: padparameter. Een back-up aanmaken mag elk projectlid; terugzetten overschrijft data
+#: of schrijft een nieuwe deployment, dus dat vraagt de operationele rol (RC-323); elke
+#: andere stroom bewerkt het projectbestand.
+FLOW_ACTIONS: dict[str, Action] = {
+    "modal-backup": Action.BACKUP_CREATE,
+    "modal-restore": Action.RESTORE_RUN,
+    # De team-wizard bezit ``users``, dus hij vraagt hetzelfde recht als de Team-kaart.
+    "modal-edit-team": Action.MEMBER_MANAGE,
+}
 
 
 def _extract_deployment_index_from_sections(state: WizardState) -> int | None:
@@ -226,6 +230,27 @@ def _extract_deployment_index_from_sections(state: WizardState) -> int | None:
 def _is_backup_restore_flow(flow_id: str) -> bool:
     """Check if a flow ID is a backup or restore flow."""
     return flow_id in ("modal-backup", "modal-restore")
+
+
+def _flow_action(flow_id: str) -> Action:
+    return FLOW_ACTIONS.get(flow_id, Action.PROJECT_EDIT)
+
+
+def _check_flow_access(request: Request, project_name: str, flow_id: str) -> None:
+    """The gate for NAVIGATING a flow: a 403 without an audit row.
+
+    Opening, loading, submitting or skipping a step is not a handling, so it gets no
+    row; a refusal is recorded by ``require_action`` (RC-406).
+    """
+    require_action(request, _flow_action(flow_id), project_name)
+
+
+def _authorize_flow(request: Request, project_name: str, flow_id: str) -> tuple[ProjectSummary, str]:
+    """The gate for the FINISHED flow, the only one that records the decision.
+
+    Returns (project, user_email).
+    """
+    return authorize(request, action=_flow_action(flow_id), project_name=project_name)
 
 
 def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
@@ -562,13 +587,10 @@ async def _start_deployment(
     project_name: str,
     result_yaml: dict[str, Any],
     deployment_name: str | None = None,
-    base_version: str | None = None,
 ) -> str:
     """Create a V2 async task for deployment processing. Returns task_id.
 
-    ``base_version`` is the project-file version the wizard was seeded from. The task
-    writes the whole file, so without it a change that landed while the user was
-    editing is silently overwritten; with it the store merges the two.
+    project_file_already_saved tells the task not to rewrite: the modal already saved.
     """
     from opi.core.task_helpers import create_async_task
     from opi.utils.yaml_util import dump_yaml_to_string
@@ -584,7 +606,7 @@ async def _start_deployment(
             "project_name": project_name,
             "yaml_content": yaml_content,
             "deployment_name": deployment_name,
-            "base_version": base_version,
+            "project_file_already_saved": True,
         },
         max_attempts=1,
     )
@@ -597,10 +619,11 @@ async def _start_deployment(
 
 
 @detail_edit_router.post("/{project_name}/edit/{section_id}/sequence", response_class=HTMLResponse)
+@action(Action.PROJECT_EDIT)
 @requires_sso
 async def sequence_action(request: Request, project_name: str, section_id: str) -> HTMLResponse:
     """Handle add/remove sequence item and re-render the section form."""
-    project, _user_email = require_project_edit_access(request, project_name)
+    project = authorized_project(request)
 
     section = _get_edit_section(section_id)
     project_data = project.data or {}
@@ -615,7 +638,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
     # Prefer wizard state data if modal wizard is active
     wizard_token = body.pop("_wizard_token", None) or _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     base_data = state.get_merged_data() if state else project_data
 
     processor = EditableFormProcessor()
@@ -650,14 +673,13 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
 
 @detail_edit_router.get("/{project_name}/modal-wizard/{flow_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize modal wizard and return the first step HTML."""
-    # Backup/restore flows only require project membership, not admin/owner
-    if _is_backup_restore_flow(flow_id):
-        project, _user_email = _require_project_member_access(request, project_name)
-    else:
-        project, _user_email = require_project_edit_access(request, project_name)
+    _check_flow_access(request, project_name, flow_id)
+    project = authorized_project(request)
+    user_email = str((get_current_user(request) or {}).get("email", "")).lower()
 
     project_data = project.data or {}
 
@@ -700,12 +722,28 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         deployments.append({"cluster": settings.CLUSTER_MANAGER})
         project_data = {**project_data, "deployments": deployments}
 
-    flow = get_flow(flow_id, **flow_context)
+    flow = flow_uit_pad(flow_id, **flow_context)
 
     # Populate transient fields for deferred editables (e.g. custom domain text input)
     processor = EditableFormProcessor()
     for section in flow.sections:
         processor.populate_deferred_fields(project_data, section.editables)
+
+    # Een selectie: de modal toont alleen deze items van de lijst die de flow aanwijst.
+    # Narrowen VOOR de split, zodat step_data en base_data allebei alleen het getoonde
+    # deel dragen; het opslaan zet het terug tussen de rest (wizard/selection.py).
+    selection = parse_selection(request.query_params.get("components"))
+    if selection:
+        if flow.selectable is None:
+            raise HTTPException(status_code=400, detail=f"Flow '{flow_id}' kent geen selectie van componenten")
+        bekend = selectable_names(project_data, flow.selectable)
+        onbekend = [name for name in selection if name not in bekend]
+        if onbekend:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Component '{', '.join(onbekend)}' bestaat niet in dit project",
+            )
+        project_data = narrow_to_selection(project_data, flow.selectable, selection)
 
     # Pre-fill step data from existing project. Strip attachment content first: only
     # id/filename are needed to display the catalog, and carrying the encrypted blocks
@@ -725,6 +763,13 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             len(redacted_paths),
             ", ".join(redacted_paths),
         )
+
+    # De teamvorm rendert alleen de MENSEN en hun rol, dus hij draagt ook alleen die het
+    # formulier in; de tokens en de service accounts zet ``zet_verborgen_leden_terug`` bij
+    # het opslaan terug.
+    owned = _fully_owned_list_keys(flow)
+    if "users" in owned:
+        session_data = leden_voor_formulier(session_data)
 
     step_data = _split_data_across_sections(flow, session_data)
 
@@ -747,16 +792,12 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         first_step=first_step,
         active_sections=active_section_ids,
         project_name=project_name,
+        owner_email=user_email,
     )
     state.step_data = step_data
+    state.selection = selection
     state.locked_services = _extract_services(project_data)
     state.populate_virt_mappings(flow.sections)
-
-    # Record which version of the project file this form is showing. It travels with
-    # the eventual save so the edit is applied as a change on top of that version --
-    # otherwise the full file written back at the end silently reverts anything that
-    # landed while the user was in the wizard.
-    state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")
 
     # The full project data is the domain object — providers and converters
     # use it to resolve context (e.g. deployment name from path, component
@@ -767,7 +808,6 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # own that list — step_data already carries the complete value. Keeping
     # a copy in base_data would cause get_merged_data's merge-by-index
     # to silently retain items the user removed in the UI.
-    owned = _fully_owned_list_keys(flow)
     # ``session_data``, not ``project_data``: base_data is persisted to disk like
     # step_data is, so it needs the same attachment strip and secret redaction. It read
     # from the raw project before, which left the encrypted blocks in the session even
@@ -830,7 +870,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # that carry its section. Template-only: no editable names it, so it falls outside the
     # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.base_data.update(build_cross_domain_context(_user_email))
+        state.base_data.update(build_cross_domain_context(user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -849,14 +889,15 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 
 
 @detail_edit_router.get("/{project_name}/modal-wizard/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
     reject_misfired_form_get(request)
-    require_project_edit_access(request, project_name)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -875,16 +916,14 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/step/{section_id}", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate step data and advance to next step, or complete the flow."""
-    if _is_backup_restore_flow(flow_id):
-        _require_project_member_access(request, project_name)
-    else:
-        require_project_edit_access(request, project_name)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (step=%s)", project_name, flow_id, section_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1166,16 +1205,14 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/skip", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """'Later configureren' - save accumulated data and trigger deployment."""
-    if _is_backup_restore_flow(flow_id):
-        _require_project_member_access(request, project_name)
-    else:
-        require_project_edit_access(request, project_name)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = await _get_wizard_token_with_body(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (skip)", project_name, flow_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1184,16 +1221,14 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 
 
 @detail_edit_router.post("/{project_name}/modal-wizard/{flow_id}/confirm", response_class=HTMLResponse)
+@action(Action.PROJECT_READ)
 @requires_sso
 async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Confirm after review - execute the final submit."""
-    if _is_backup_restore_flow(flow_id):
-        _require_project_member_access(request, project_name)
-    else:
-        require_project_edit_access(request, project_name)
+    _check_flow_access(request, project_name, flow_id)
 
     wizard_token = await _get_wizard_token_with_body(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (confirm)", project_name, flow_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1205,13 +1240,14 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
     "/{project_name}/modal-wizard/modal-backup/select-deployment",
     response_class=HTMLResponse,
 )
+@action(Action.PROJECT_READ)
 @requires_sso
 async def backup_select_deployment(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the backup step partial when deployment changes."""
-    _require_project_member_access(request, project_name)
+    require_action(request, Action.BACKUP_CREATE, project_name)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != "modal-backup":
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -1233,13 +1269,14 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     "/{project_name}/modal-wizard/modal-restore/select-restore-mode",
     response_class=HTMLResponse,
 )
+@action(Action.PROJECT_READ)
 @requires_sso
 async def restore_select_mode(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the restore target step when mode changes."""
-    _require_project_member_access(request, project_name)
+    require_action(request, Action.RESTORE_RUN, project_name)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != "modal-restore":
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -1384,12 +1421,11 @@ async def _modal_do_submit(
 ) -> HTMLResponse:
     """Execute the final modal wizard submission."""
 
-    # TOCTOU recheck on the mutating request. Backup/restore has its own
-    # member-level gate further down.
-    if not _is_backup_restore_flow(flow_id):
-        require_project_edit_access(request, project_name)
+    # TOCTOU recheck on the mutating request, with the gate for this flow. This is the only
+    # weighing of the flow action that records an audit row.
+    _authorize_flow(request, project_name, flow_id)
 
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state:
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -1451,7 +1487,6 @@ async def _modal_do_submit(
             project_name,
             existing_data,
             deployment_name=target_deployment_name,
-            base_version=state.base_version,
         )
         if target_deployment_name:
             logger.info(
@@ -1511,6 +1546,13 @@ async def _process_and_save_modal_edit(
     """
     existing_data = await project_manager.get_contents()
 
+    # De OTAP-markeringen van voor deze bewerking. Hier en niet in de store: alleen de
+    # aanvraag weet WIE de wijziging doet, en dat is wat zo'n melding moet noemen.
+    environment_before = environment_markings(existing_data)
+
+    # De staat van voor de merge, om een verwijdering of een verlaging aan af te lezen.
+    before_data = copy.deepcopy(existing_data)
+
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
     # save by PreserveAttachmentContentHook keyed by id.
@@ -1540,6 +1582,11 @@ async def _process_and_save_modal_edit(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
 
+    # Een stand die een goedkeuring vraagt, legt hier zijn aanvraag vast, net als de
+    # bewerkwizard. Op de opslagweg en niet in de merge: die mag een lege bewerking
+    # niets laten veranderen.
+    ensure_approval_requests(existing_data)
+
     # Save through the single validated path: schema + structural integrity
     # validation, canonical dumper, commit + push, and cache refresh in one shot.
     # A validation failure (e.g. pre-existing structural drift surfaced by the
@@ -1550,6 +1597,33 @@ async def _process_and_save_modal_edit(
     # de uitleg voor de gebruiker mee. Zonder deze regel viel hij door naar buiten als
     # een kale 500: gemeten in de reallife-doorloop van RC-112, waar een API-patch en
     # een verwijdering in de componenten-modal elkaar op hetzelfde bestand raakten.
+    # De step-up hoort hier en niet op de route: pas na de merge is er een NA-staat om de
+    # verlaging of de verwijdering aan af te lezen. Nog voor het opslaan, dus een weigering
+    # laat niets achter.
+    # De markering is geen gewone bewerking van het projectbestand: ze bepaalt wat
+    # 'productie' is, en daarmee wat elke andere regel afdwingt. Welke flow de gebruiker
+    # ervoor opende doet niet mee, dus de poort staat op de SCHRIJFWEG en niet op de
+    # route; dat ``environment`` ook in een restore-flow te zetten is, is precies waarom.
+    if production_marking_change(environment_before, environment_markings(existing_data)):
+        authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
+
+    handeling = save_requires_step_up(before_data, existing_data)
+    if handeling is not None and not has_fresh_step_up(request):
+        log_step_up_refusal(
+            handeling,
+            project_name=project_name,
+            actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
+        )
+        # De herhaling gaat naar /confirm en niet naar het pad van dit verzoek: een flow
+        # zonder review komt hier via de step-route binnen, en die eist een JSON-body die
+        # de bodyloze herhaling niet heeft (gemeten: HTTP 400). /confirm is de staart van
+        # beide wegen en leest alles uit de sessiestaat bij het wizard-token.
+        vervolg = f"/projects/{project_name}/modal-wizard/{flow.flow_id}/confirm"
+        if wizard_token:
+            vervolg = f"{vervolg}?_wizard_token={quote(wizard_token)}"
+        dialoog = await render_step_up_dialog(request, vervolg=vervolg, handeling=handeling, vervolg_token=wizard_token)
+        return existing_data, step_up_dialog_response(dialoog)
+
     try:
         await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
     except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
@@ -1563,6 +1637,13 @@ async def _process_and_save_modal_edit(
         return existing_data, _render_modal_review(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
+
+    log_production_downgrades(
+        environment_before,
+        environment_markings(existing_data),
+        project_name=project_name,
+        actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
+    )
     return existing_data, None
 
 
@@ -1611,6 +1692,10 @@ async def _handle_backup_restore_submit(
         )
 
     else:  # trigger_restore
+        # Guard tegen een tussenstap die de poort mist: terugzetten is geen back-up.
+        # Without a row, like backup: ``_modal_do_submit`` already recorded the decision.
+        require_action(request, Action.RESTORE_RUN, project_name)
+
         from opi.services import RestoreMode
 
         backup_run_id = merged_data.get("backup_run_id", "")
@@ -1678,32 +1763,29 @@ async def _handle_backup_restore_submit(
     return HTMLResponse(content=rendered)
 
 
+# PORTAL_READ for the same reason as the task-progress route in opi/web/router.py.
 @detail_edit_router.get("/{project_name}/modal-wizard/progress/{task_id}", response_class=HTMLResponse)
+@action(Action.PORTAL_READ)
 @requires_sso
 async def modal_wizard_progress_html(request: Request, project_name: str, task_id: str) -> HTMLResponse:
     """Return server-rendered progress fragment for HTMX polling.
 
-    Reads task state from the V2 async task service (database-backed).
+    Reads task state from the V2 async task service (database-backed). The task id
+    alone is not enough: the task has to be this project's and this user's to follow,
+    the same gate the task-progress fragment uses.
     """
     from opi.core.task_helpers import get_task_service
-    from opi.web.router import _v2_task_to_template_context
+    from opi.web.router import _require_task_of_project, _v2_task_to_template_context
 
     task_service = get_task_service(request)
-    task = await task_service.get_task(task_id)
+    # Dezelfde schermung als de andere voortgangsfragmenten (RC-29): de taak moet van dit
+    # project zijn, en de lezer moet er toegang toe hebben of hem zelf gestart hebben.
+    task = await _require_task_of_project(request, task_service, project_name, task_id)
 
     if task is None:
-        context: dict[str, Any] = {
-            "task_id": task_id,
-            "project_name": project_name,
-            "progress": 0,
-            "current_step": "",
-            "tasks": [],
-            "status": "failed",
-            "error": "Taak niet gevonden",
-        }
-        return HTMLResponse(content=_progress_fragment(request, context))
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
-    context = _v2_task_to_template_context(task, project_name)
+    context: dict[str, Any] = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id
 
     # Rendered once on purpose. The fragment is a template file, so the component
@@ -1784,7 +1866,7 @@ async def _gather_backup_runs_async(
 ) -> list[dict[str, Any]]:
     """Gather backup runs grouped by backup_run_id for the restore wizard (async)."""
     from opi.core.cluster_config import get_prefixed_namespace
-    from opi.manager.backup import BackupManager
+    from opi.manager.backup import BackupManager, group_snapshots_into_runs
 
     backup_runs_map: dict[str, dict[str, Any]] = {}
     try:
@@ -1802,34 +1884,7 @@ async def _gather_backup_runs_async(
             k8s_ns = get_prefixed_namespace(dep_cluster, base_ns)
             try:
                 snapshots = await backup_manager.list_snapshots(dep_cluster, k8s_ns, project_name=project_name)
-                dep_snapshots = [s for s in snapshots if s.deployment_name == dep_name]
-
-                for s in dep_snapshots:
-                    run_id = s.backup_run_id or s.snapshot_id
-                    if run_id not in backup_runs_map:
-                        backup_runs_map[run_id] = {
-                            "backup_run_id": run_id,
-                            "timestamp": s.timestamp,
-                            "deployment_name": dep_name,
-                            "resource_count": 0,
-                            "resource_types": [],
-                            "items": [],
-                        }
-                    run = backup_runs_map[run_id]
-                    run["resource_count"] += 1
-                    rt = s.resource_type or "pvc"
-                    if rt not in run["resource_types"]:
-                        run["resource_types"].append(rt)
-                    run["items"].append(
-                        {
-                            "snapshot_id": s.snapshot_id,
-                            "resource_type": rt,
-                            "component_name": s.component_name,
-                            "storage_name": s.storage_name,
-                            "reference_name": s.storage_name or s.pvc_name,
-                            "generation": s.generation,
-                        }
-                    )
+                backup_runs_map.update(group_snapshots_into_runs(snapshots, dep_name))
             except Exception as e:
                 logger.warning("Failed to fetch backups for deployment %s: %s", dep_name, e)
 

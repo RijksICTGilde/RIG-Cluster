@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core.actor import ACTOR_UNKNOWN, get_actor, user_actor
 from opi.core.task_worker import TaskWorker
 
 
@@ -36,6 +37,7 @@ def mock_worker_settings() -> Any:
         s.TASK_WORKER_STALE_THRESHOLD = 120
         s.TASK_WORKER_MAX_ATTEMPTS = 3
         s.TASK_WORKER_CLEANUP_RETENTION_HOURS = 72
+        s.TASK_WORKER_HEADER_RETENTION_DAYS = 90
         s.TASK_WORKER_CONCURRENCY = 1
         s.TASK_WORKER_MAX_DURATION = 1800
         yield s
@@ -48,6 +50,7 @@ def _make_task(
     payload: dict[str, Any] | None = None,
     attempt_count: int = 0,
     max_attempts: int = 3,
+    created_by: str | None = None,
 ) -> dict[str, Any]:
     """Helper to build a task dict."""
     return {
@@ -57,6 +60,7 @@ def _make_task(
         "payload": payload or {},
         "attempt_count": attempt_count,
         "max_attempts": max_attempts,
+        "created_by": created_by,
     }
 
 
@@ -313,3 +317,116 @@ class TestWorkerHeartbeat:
         # at least one heartbeat should have been sent
         assert mock_task_service.send_heartbeat.call_count >= 1
         mock_task_service.send_heartbeat.assert_any_call("test-id")
+
+
+class TestWorkerSetsActor:
+    """The handler must see the git-trailer actor the task was created with (RC-284)."""
+
+    async def _run_with_handler(
+        self,
+        mock_progress_cls: MagicMock,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+        task: dict[str, Any],
+        seen: dict[str, str],
+    ) -> None:
+        mock_task_service.claim_next_task.side_effect = [task, None]
+
+        mock_progress_instance = AsyncMock()
+        mock_progress_instance.mark_legacy_completed = MagicMock()
+        mock_progress_instance.mark_legacy_failed = MagicMock()
+        mock_progress_cls.return_value = mock_progress_instance
+
+        async def handler(payload: dict[str, Any], progress: Any) -> dict[str, Any]:
+            seen["actor"] = get_actor()
+            return {"status": "ok"}
+
+        worker.register_handler("upsert_deployment", handler)
+
+        done = asyncio.Event()
+        original_complete = mock_task_service.complete_task
+
+        async def complete_and_signal(*args: Any, **kwargs: Any) -> None:
+            await original_complete(*args, **kwargs)
+            done.set()
+
+        mock_task_service.complete_task = AsyncMock(side_effect=complete_and_signal)
+
+        await _run_worker_until(worker, done)
+
+    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    async def test_handler_ziet_de_actor_van_created_by(
+        self,
+        mock_progress_cls: MagicMock,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        seen: dict[str, str] = {}
+        await self._run_with_handler(
+            mock_progress_cls, worker, mock_task_service, _make_task(created_by="iemand@example.org"), seen
+        )
+
+        assert seen["actor"] == user_actor("iemand@example.org")
+
+    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    async def test_zonder_created_by_ziet_de_handler_onbekend(
+        self,
+        mock_progress_cls: MagicMock,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        seen: dict[str, str] = {}
+        await self._run_with_handler(mock_progress_cls, worker, mock_task_service, _make_task(created_by=None), seen)
+
+        assert seen["actor"] == ACTOR_UNKNOWN
+
+
+class TestWorkerCleanupLoop:
+    """RC-282: de kop blijft 90 dagen, de werkgegevens volgens het korte venster."""
+
+    async def test_cleanup_loop_passes_both_retention_windows(
+        self,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+        mock_worker_settings: Any,
+    ) -> None:
+        async def _stop_after_call(**_kwargs: Any) -> int:
+            worker._running = False
+            return 0
+
+        mock_task_service.cleanup_old_tasks.side_effect = _stop_after_call
+        worker._running = True
+
+        with patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock()):
+            await worker._cleanup_loop()
+
+        mock_task_service.cleanup_old_tasks.assert_awaited_once_with(
+            retention_hours=72,
+            header_retention_days=90,
+        )
+
+    async def test_cleanup_loop_purges_expired_sessions(
+        self,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+        mock_worker_settings: Any,
+    ) -> None:
+        """RC-390: de uurlijkse lus ruimt ook de verlopen sessierijen op."""
+
+        async def _stop_after_first_sleep(_seconds: float) -> None:
+            worker._running = False
+
+        store = AsyncMock()
+        store.purge_expired = AsyncMock(return_value=3)
+        otp_service = AsyncMock()
+        otp_service.purge_expired_pending_registrations = AsyncMock(return_value=0)
+        worker._running = True
+
+        with (
+            patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock(side_effect=_stop_after_first_sleep)),
+            patch("opi.core.task_worker.UserOtpService", return_value=otp_service),
+            patch("opi.core.task_worker.get_session_store", return_value=store),
+        ):
+            await worker._cleanup_loop()
+
+        store.purge_expired.assert_awaited_once()

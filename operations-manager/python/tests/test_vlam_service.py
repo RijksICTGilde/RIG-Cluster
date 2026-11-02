@@ -220,10 +220,17 @@ class TestTheWizardCard:
         assert ServiceType.VLAM.value not in self._service_values(WITHOUT_VLAM, monkeypatch)
 
     def test_the_other_services_are_unaffected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The filter must remove exactly one card, not quietly thin the catalog."""
+        """The filter must remove exactly one card, not quietly thin the catalog.
+
+        On ONE cluster with only the VLAM configuration taken away. Comparing two
+        clusters put every other cluster-bound service (seaweedfs) in the difference too.
+        """
         with_vlam = set(self._service_values(WITH_VLAM, monkeypatch))
-        without_vlam = set(self._service_values(WITHOUT_VLAM, monkeypatch))
+        monkeypatch.setattr("opi.services.catalog.vlam.endpoint.get_vlam_config", lambda cluster: None)
+        without_vlam = set(self._service_values(WITH_VLAM, monkeypatch))
+
         assert with_vlam - without_vlam == {ServiceType.VLAM.value}
+        assert not without_vlam - with_vlam
 
 
 class TestTheEnvironmentVariable:
@@ -830,7 +837,7 @@ class TestHetBlokOpDeProjectpagina:
         from opi.services.catalog.base import ProjectPageContext
 
         return SERVICE.handle_ui(
-            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=_project(), user_role="admin")
+            UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=_project(), can=lambda _handeling: True)
         )
 
     def test_het_blok_noemt_beide_adressen_en_het_pad(self, doorlus, op_het_vlam_cluster) -> None:

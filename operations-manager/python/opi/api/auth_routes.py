@@ -6,12 +6,16 @@ for handling user authentication via Keycloak.
 """
 
 import logging
+import time
 from urllib.parse import quote_plus
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from opi.middleware.server_side_session import ServerSideSession
+from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_service import get_user_service
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
@@ -123,6 +127,12 @@ async def auth_callback(request: Request) -> Response:
             request.session["denied_reason"] = "email-not-verified"
             return RedirectResponse(url="/permission-denied", status_code=302)
 
+        # Sessiefixatie: nieuw sessie-id op het privilegescharnier, zodat een geplant id
+        # (cookie tossing vanaf een sibling-subdomain) dood is voordat de identiteit erin landt.
+        session = request.session
+        if isinstance(session, ServerSideSession):
+            await session.regenerate()
+
         # Store user information in the session
         request.session["user"] = {
             "sub": user_info.get("sub"),
@@ -131,6 +141,8 @@ async def auth_callback(request: Request) -> Response:
             "given_name": user_info.get("given_name"),
             "family_name": user_info.get("family_name"),
             "preferred_username": user_info.get("preferred_username"),
+            # Authenticatietijdstip: voor absolute levensduur en intrekken.
+            "login_at": time.time(),
         }
 
         # Store id_token for proper Keycloak logout
@@ -184,10 +196,16 @@ async def logout(request: Request) -> Response:
 
         logger.info(f"Logging out user: {user_email}")
 
-        # Remove user from our user service
+        # Remove user from our user service, and make every session this user still has
+        # open elsewhere invalid: clearing the cookie only ends the session in this browser.
         if user and user.get("email"):
             user_service = get_user_service()
             user_service.remove_user(user["email"])
+            try:
+                await revoke_sessions(user["email"])
+            except SQLAlchemyError as e:
+                # Database-fout mag logout niet afbreken, anders Keycloak end-session overslaan.
+                logger.error(f"Sessies van {user['email']} niet ingetrokken: {e}")
 
         # Clear the session
         request.session.clear()

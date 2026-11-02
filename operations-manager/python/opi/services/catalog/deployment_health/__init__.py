@@ -45,7 +45,7 @@ class DeploymentHealthService(Service):
         ),
         help_template="deployment_health/help.md",
         icon="stethoscoop",
-        color="grijs-600",
+        color="mintgroen",
         selectable_per_component=False,
         variables=[],
         # Always on, never in the project file -> a system service (kind=SYSTEM also

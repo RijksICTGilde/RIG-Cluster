@@ -206,21 +206,17 @@ bij het aanmaken van de dienst leeg is (`opi/services/user_service.py:28`).
 
 ### Waar de lijst vandaan komt
 
-Twee bronnen, allebei bij het opstarten, allebei via `add_platform_admins`
-(`opi/services/user_service.py:270-277`):
+Eén bron, bij het opstarten, via `add_platform_admins`
+(`opi/services/user_service.py:270-277`): **de instelling `ADMIN_EMAILS`**,
+komma-gescheiden (`opi/core/config.py:217`). De lijst in de broncode die er als tweede
+bron stond is in RC-272 verwijderd; het adres staat sindsdien in `ADMIN_EMAILS` zelf.
 
-1. **Een lijst in de broncode.** `opi/core/startup.py:559-562` zet
-   `robbert.uittenbroek@rijksoverheid.nl` erin, onvoorwaardelijk, op elk cluster.
-2. **De instelling `ADMIN_EMAILS`**, komma-gescheiden (`opi/core/config.py:217`,
-   toegepast in `opi/core/startup.py:564-567`).
-
-Op productie staat `ADMIN_EMAILS=robbert.bos@rijksoverheid.nl`
-(`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:46`).
+Op productie staat `ADMIN_EMAILS` in een AGE-versleuteld SOPS-secret (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-access-secrets.yaml`).
 **Op productie zijn er dus twee platformbeheerders**, en dat is een getal dat je alleen kunt
-kennen door twee bestanden te lezen die geen van beide in de applicatie zichtbaar zijn.
+kennen door een versleuteld bestand te lezen dat niet in de applicatie zichtbaar is.
 
 Op de sandbox staat `ADMIN_EMAILS=admin@sandbox.rijksapp.dev`
-(`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/configmap.yaml:55`), plus dezelfde vaste eerste. Ook twee.
+(`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/configmap.yaml:55`). Eén.
 
 ### Hoe de lijst zich verhoudt tot de `users`-tabel
 
@@ -327,9 +323,9 @@ de platformbeheerderstak is `return "admin"` en verder niets. Van de 36 doorwerk
 dus 23 een regel achter en 13 niets.
 
 **Die 23 regels landen wel degelijk ergens, en dat is precies het punt.** De stdout-handler
-wordt onvoorwaardelijk toegevoegd op `DEBUG` (`opi/utils/logging_config.py:65-69`) en de
-`opi`-logger staat op `DEBUG` (`:59`); er is geen `LOG_LEVEL`-instelling in
-`opi/core/config.py`. `LOG_TO_FILE` (`opi/core/config.py:282`) schakelt alleen een **extra**
+wordt onvoorwaardelijk toegevoegd op `DEBUG` (`opi/utils/logging_config.py:65-69`); de
+`opi`-logger staat op `LOG_LEVEL` (zie `features/logniveau-en-redactie.md`), wat in productie
+op INFO staat. `LOG_TO_FILE` (`opi/core/config.py:282`) schakelt alleen een **extra**
 filehandler in, "Enable file logging alongside stdout", en die tak begint pas op
 `opi/utils/logging_config.py:71`. Op productie staat die vlag op `false`
 (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:42`),
@@ -423,7 +419,7 @@ wat die rol vervult, met 113 taken.
 |---|---|---|---|
 | Een cluster opzetten, bijwerken, afbreken | `Taskfile.yaml` (113 taken) | Taskfile | wie de repository en de AGE-sleutel heeft |
 | Het OPI-image bouwen en uitrollen | `Taskfile.yaml`, `sandbox:update-operations-manager`, `publish-operations-manager` | Taskfile | idem |
-| Iemand platformbeheerder maken | ConfigMap `ADMIN_EMAILS` plus een herstart | Git + ArgoCD + herstart | wie de repository heeft |
+| Iemand platformbeheerder maken | SOPS-secret `ADMIN_EMAILS` (productie) of ConfigMap (sandbox) plus een herstart | Git + ArgoCD + SOPS + herstart | wie de repository en AGE-sleutel heeft |
 | Wezen opsporen | `opi/jobs/service_orphan_sweep.py` via `GET /api/v2/admin/orphans/report` | API | `ADMIN_API_KEY`, **op productie 501** |
 | Wezen bevestigen als te verwijderen | `POST /api/v2/admin/orphans/confirm` (`opi/api/admin_router.py:208`) | API | idem |
 | De markeringen inzien | `MarkedForDeletionService.get_all_marks` (`opi/services/marked_for_deletion_service.py:163`) | API | idem, en verder alleen de achtergrondtaken |
@@ -587,8 +583,8 @@ metingen.
 | Componentdefinities | 90 | idem |
 | Component-instanties in deployments | **261** | idem |
 | Project-deployments op productie | **127**, in **44** namespaces | `opi/core/startup.py:582-583`, een meting uit de opstartlus zelf ("127 `get namespace` plus 127 `label namespace` for 44 distinct namespaces") |
-| Platformbeheerders op productie | **2** | `opi/core/startup.py:559-561` (één vast) plus `ADMIN_EMAILS` (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:46`, één adres) |
-| Toegelaten gebruikers uit de ConfigMap | 6 | `ALLOWED_EMAILS`, idem `:45` |
+| Platformbeheerders op productie | **2** | `ADMIN_EMAILS` (SOPS-secret `operations-manager-access-secrets.yaml`, twee adressen) |
+| Toegelaten gebruikers (ALLOWED_EMAILS) | productie: secret, sandbox: ConfigMap | productie: `operations-manager-access-secrets.yaml`; sandbox: `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/configmap.yaml:54` |
 | Taaksoorten | **23** | `TaskType`, `opi/core/async_task_service.py:54-77` |
 
 De twee tellingen van de deploymentaantallen (137 uit de bestanden, 127 uit de opstartlus)

@@ -1,15 +1,36 @@
 # De pod per gebruiker van JupyterHub: JupyterLab plus VS Code.
 FROM quay.io/jupyter/minimal-notebook:2026-10-12
 
+# renovate: datasource=github-releases depName=coder/code-server extractVersion=^v(?<version>.+)$
 ARG CODE_SERVER_VERSION=4.141.0
+# renovate: datasource=pypi depName=jupyter-vscode-proxy
 ARG VSCODE_PROXY_VERSION=0.7
+# renovate: datasource=pypi depName=jupyter-server-proxy
 ARG SERVER_PROXY_VERSION=4.6.0
+# renovate: datasource=pypi depName=jupyter-collaboration
 ARG COLLABORATION_VERSION=5.0.4
+# Geen datasource voor VS Code-extensiemarktplaats; handwerk.
+# Uitzonderingslijst in tests/test_dockerfile_downloads_hebben_een_checksum.py.
 ARG PYTHON_EXTENSION_VERSION=2026.4.0
 ARG BASEDPYRIGHT_VERSION=1.40.2
 
+# Het .deb van de release in plaats van install.sh van internet: het script verandert per bouw.
+# code-server publiceert geen checksumbestand, dus deze sommen zijn van het artefact zelf berekend.
+ARG TARGETARCH
+ARG CODE_SERVER_SHA256_AMD64=f384beb4f3ba207e0bca27d0dbd36dd825d5aa909d78c6d4baa8703eaf6b77ba
+ARG CODE_SERVER_SHA256_ARM64=0bca33a9b01180ad88f0b8969a8e34ae1c76417df471697e7cd65c20ef5dd60d
+
 USER root
-RUN curl -fsSL https://code-server.dev/install.sh | sh -s -- --version "${CODE_SERVER_VERSION}"
+RUN case "${TARGETARCH}" in \
+      amd64) SHA256="${CODE_SERVER_SHA256_AMD64}" ;; \
+      arm64) SHA256="${CODE_SERVER_SHA256_ARM64}" ;; \
+      *) echo "geen code-server-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && PAKKET="/tmp/code-server_${CODE_SERVER_VERSION}_${TARGETARCH}.deb" \
+ && curl -fsSL -o "${PAKKET}" "https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server_${CODE_SERVER_VERSION}_${TARGETARCH}.deb" \
+ && echo "${SHA256}  ${PAKKET}" | sha256sum -c - \
+ && dpkg -i "${PAKKET}" \
+ && rm "${PAKKET}"
 USER ${NB_UID}
 
 # jupyter-vscode-proxy 0.7 declareert geen dependencies, dus jupyter-server-proxy expliciet erbij.

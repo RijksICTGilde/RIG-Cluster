@@ -26,6 +26,8 @@ from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
+# Zodat een test de scan van kindprocessen op een nep-/proc kan laten lopen.
+_PROC = "/proc"
 
 # Peak memory tracking state (updated by background sampler every second)
 _peak_memory_bytes: int = 0
@@ -98,6 +100,41 @@ class OPICollector(Collector):
             logger.debug("Failed to collect WebSocket metrics", exc_info=True)
         yield ws_global
         yield ws_users
+
+        # --- Bewijsmiddelen per project (RC-322) ---
+        # Zonder deze telling is "de projectsleutel verdwijnt zodra niemand hem meer
+        # gebruikt" een wens. De labelwaarde ``projectsleutel`` is de oude weg; een token
+        # telt mee onder ``persoon`` of ``service-account`` en dus niet als oud.
+        credentials = CounterMetricFamily(
+            "opi_api_credential_calls",
+            "Geslaagde legitimaties per project en per soort bewijsmiddel",
+            labels=["project", "credential"],
+        )
+        try:
+            from opi.api.principal import gebruik_per_project
+
+            for (project, soort), aantal in gebruik_per_project().items():
+                credentials.add_metric([project, soort], aantal)
+        except Exception:
+            logger.debug("Failed to collect credential metrics", exc_info=True)
+        yield credentials
+
+        # --- Mislukte auditschrijfacties ---
+        #
+        # record_action gooit niets naar de aanroeper, dus zonder deze teller zou een
+        # kapotte audit stil zijn. De naam volgt het huisvoorvoegsel opi_, niet het
+        # zad_ uit het ontwerp.
+        audit_failures = CounterMetricFamily(
+            "opi_audit_write_failures",
+            "Mislukte schrijfacties naar het audittrail sinds de start",
+        )
+        try:
+            from opi.services.audit import write_failures
+
+            audit_failures.add_metric([], write_failures())
+        except Exception:
+            logger.debug("Failed to collect audit write failures", exc_info=True)
+        yield audit_failures
 
         # --- Rate limiter ---
         rl_clients = GaugeMetricFamily(
@@ -194,7 +231,7 @@ class OPICollector(Collector):
         child_rss = GaugeMetricFamily(
             "opi_child_process_rss_bytes",
             "RSS memory of active child processes",
-            labels=["pid", "command"],
+            labels=["pid", "comm"],
         )
         child_count = GaugeMetricFamily(
             "opi_child_process_count",
@@ -203,11 +240,11 @@ class OPICollector(Collector):
         my_pid = os.getpid()
         num_children = 0
         try:
-            for entry in os.listdir("/proc"):
+            for entry in os.listdir(_PROC):
                 if not entry.isdigit():
                     continue
                 try:
-                    with open(f"/proc/{entry}/stat") as f:
+                    with open(f"{_PROC}/{entry}/stat") as f:
                         stat = f.read()
                     # Parse: pid (comm) state ppid ...
                     # comm can contain spaces/parens, find closing paren
@@ -218,9 +255,10 @@ class OPICollector(Collector):
                         continue
                     rss_pages = int(fields_after_comm[21])
                     rss_bytes = rss_pages * _PAGE_SIZE
-                    with open(f"/proc/{entry}/cmdline") as f:
-                        cmdline = f.read().replace("\0", " ").strip()[:100]
-                    child_rss.add_metric([entry, cmdline], rss_bytes)
+                    # Alleen de procesnaam, nooit de commandoregel: die kan geheimen bevatten
+                    # en een labelwaarde komt in Prometheus en Grafana terecht (BIO2 8.15).
+                    comm = stat[stat.find("(") + 1 : close_paren]
+                    child_rss.add_metric([entry, comm], rss_bytes)
                     num_children += 1
                 except FileNotFoundError, IndexError, ValueError, PermissionError:
                     continue
@@ -340,6 +378,34 @@ class OPICollector(Collector):
         yield pull_failures
         yield pull_by_reason
         yield pull_observed
+
+        # --- Scheduled backups that are not happening ---
+        #
+        # One series per deployment with a schedule, refreshed by the backup scheduler on
+        # every tick. The timestamp is 0 while no scheduled snapshot has ever been seen,
+        # in the shape of opi_image_pull_observed_timestamp above: a gauge that is simply
+        # absent cannot be told apart from a backup that is simply late.
+        backup_last_success = GaugeMetricFamily(
+            "opi_backup_last_scheduled_success_timestamp_seconds",
+            "Unix timestamp of the last successful scheduled backup per deployment (0: never seen one)",
+            labels=["project", "deployment"],
+        )
+        backup_unknown = GaugeMetricFamily(
+            "opi_backup_schedule_unknown",
+            "1 when the last scheduler tick could not ask Kopia about this deployment",
+            labels=["project", "deployment"],
+        )
+        try:
+            from opi.services.backup_schedule_report import backup_schedule_states
+
+            for state in backup_schedule_states():
+                labels = [state.project, state.deployment]
+                backup_last_success.add_metric(labels, state.last_success.timestamp() if state.last_success else 0.0)
+                backup_unknown.add_metric(labels, 1 if state.unknown_streak else 0)
+        except Exception:
+            logger.debug("Failed to collect backup schedule metrics", exc_info=True)
+        yield backup_last_success
+        yield backup_unknown
 
     def describe(self):
         """Return empty description; metrics are generated dynamically."""

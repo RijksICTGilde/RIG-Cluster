@@ -21,6 +21,7 @@ These tests hold the new arrangement in place:
 import json
 import logging
 import re
+from typing import cast
 
 import pytest
 from opi.core.git_monitor import file_change_handler
@@ -28,26 +29,64 @@ from opi.core.project_schema import (
     LEGACY_PATCH_DIR,
     SCHEMA_PATH,
     ProjectSchemaError,
+    SchemaVersion,
     check_schema_versions,
     known_schema_versions,
     latest_schema_version,
+    parse_schema_version,
     validate_declared_project_schema,
     validate_project_schema,
     version_key,
 )
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, MIGRATION_STEPS, SCHEMA_VERSIONS
+from opi.services.schema_migration import (
+    LATEST_SCHEMA_VERSION,
+    LATEST_SCHEMA_VERSION_VALUE,
+    MIGRATION_STEPS,
+    SCHEMA_VERSIONS,
+)
+
+#: De versie waarin ``users[].role`` een lijst ``users[].roles`` werd.
+_ROLLEN_ALS_LIJST = parse_schema_version("2.13")
+
+
+def _lid(versie: object) -> dict:
+    """Het lid in de vorm die DEZE versie kent: ``role`` tot 2.12, ``roles`` vanaf 2.13.
+
+    Op de versie en niet op "is dit de nieuwste": met die vergelijking viel elke versie na
+    2.13 terug op de oude vorm, en een nieuwe schemastap maakte de minimale projecttoets
+    rood op een rolmigratie waar hij niet over gaat.
+    """
+    try:
+        geparsed = parse_schema_version(versie)  # type: ignore[arg-type]
+    except ProjectSchemaError, TypeError, ValueError:
+        return {"email": "admin@rijksoverheid.nl", "role": "admin"}
+    if geparsed >= _ROLLEN_ALS_LIJST:
+        return {"email": "admin@rijksoverheid.nl", "roles": ["admin", "ops"]}
+    return {"email": "admin@rijksoverheid.nl", "role": "admin"}
 
 
 def _project(**extra: object) -> dict:
     """Minimal project that validates at every version."""
+    versie = cast("SchemaVersion | int | float | str", extra.get("schema-version", LATEST_SCHEMA_VERSION_VALUE))
     base: dict = {
         "name": "voorbeeld",
-        "schema-version": LATEST_SCHEMA_VERSION,
-        "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
+        "users": [_lid(versie)],
         "components": [{"name": "frontend", "type": "deployment"}],
     }
     base.update(extra)
     return base
+
+
+def _oud_project(**extra: object) -> dict:
+    """Hetzelfde, maar met de ledenvorm van VOOR 2.13 (``role`` in plaats van ``roles``).
+
+    Voor een toets die dezelfde gegevens tegen twee OUDE versies legt: geen enkele
+    ledenvorm valideert zowel onder 2.12 als onder 2.13, want 2.13 verving het veld.
+    """
+    data = _project(**extra)
+    data["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
+    return data
 
 
 class TestSchemaSetCompleteness:
@@ -58,7 +97,7 @@ class TestSchemaSetCompleteness:
         assert latest_schema_version() == LATEST_SCHEMA_VERSION
 
     def test_known_versions_are_exactly_the_migration_chain(self) -> None:
-        assert known_schema_versions() == tuple(float(v) for v in SCHEMA_VERSIONS)
+        assert known_schema_versions() == SCHEMA_VERSIONS
 
     def test_a_new_migration_without_a_schema_fails_loudly(self) -> None:
         # The situation this guards: someone adds the next migration and forgets the
@@ -66,18 +105,20 @@ class TestSchemaSetCompleteness:
         # nobody noticing; instead startup stops here. The version used is deliberately one
         # past the real chain, so this test does not have to be touched again when a
         # migration lands (which is exactly what happened when 2.7 became real).
-        next_version = round(float(SCHEMA_VERSIONS[-1]) + 0.1, 1)
-        # Op de naam zoals de code hem schrijft, niet zoals Python hem afdrukt: bij 3.0
-        # zijn dat twee verschillende dingen ("3" tegen "3.0").
+        latest = SCHEMA_VERSIONS[-1]
+        next_version = SchemaVersion(latest.major, latest.minor + 1)
         with pytest.raises(ProjectSchemaError, match=re.escape(version_key(next_version))):
             check_schema_versions((*SCHEMA_VERSIONS, next_version))
 
     def test_a_gap_in_the_chain_fails_loudly(self) -> None:
-        with pytest.raises(ProjectSchemaError, match=r"2\.15"):
-            check_schema_versions((*SCHEMA_VERSIONS[:-1], 2.15, SCHEMA_VERSIONS[-1]))
+        # A version in the middle of the chain without a patch.
+        latest = SCHEMA_VERSIONS[-1]
+        zonder_patch = SchemaVersion(latest.major, latest.minor + 2)
+        with pytest.raises(ProjectSchemaError, match=re.escape(version_key(zonder_patch))):
+            check_schema_versions((*SCHEMA_VERSIONS[:-1], zonder_patch, latest))
 
     def test_a_schema_without_a_migration_fails_loudly(self) -> None:
-        chain = tuple(v for v in SCHEMA_VERSIONS if v != 2.4)
+        chain = tuple(v for v in SCHEMA_VERSIONS if v != parse_schema_version("2.4"))
         with pytest.raises(ProjectSchemaError, match=r"2\.4"):
             check_schema_versions(chain)
 
@@ -85,14 +126,14 @@ class TestSchemaSetCompleteness:
         assert tuple(v for v, _ in MIGRATION_STEPS) == SCHEMA_VERSIONS[2:]
 
     @pytest.mark.parametrize("version", [v for v in SCHEMA_VERSIONS if v != LATEST_SCHEMA_VERSION])
-    def test_each_legacy_patch_is_a_json_object(self, version: float) -> None:
+    def test_each_legacy_patch_is_a_json_object(self, version: SchemaVersion) -> None:
         patch = json.loads((LEGACY_PATCH_DIR / f"v{version_key(version)}.json").read_text(encoding="utf-8"))
         assert isinstance(patch, dict)
         assert patch.get("$comment"), "a patch must say which migration it is the schema side of"
 
     @pytest.mark.parametrize("version", SCHEMA_VERSIONS)
-    def test_a_minimal_project_validates_at_every_version(self, version: float) -> None:
-        validate_project_schema(_project(**{"schema-version": version}), schema_version=float(version))
+    def test_a_minimal_project_validates_at_every_version(self, version: SchemaVersion) -> None:
+        validate_project_schema(_project(**{"schema-version": version_key(version)}), schema_version=version)
 
 
 class TestDeclaredVersionGate:
@@ -108,9 +149,9 @@ class TestDeclaredVersionGate:
         with pytest.raises(ProjectSchemaError, match="onbekend"):
             validate_declared_project_schema(_project(**{"schema-version": 99}))
 
-    def test_non_numeric_version_is_refused(self) -> None:
+    def test_malformed_version_is_refused(self) -> None:
         with pytest.raises(ProjectSchemaError, match="schema-version"):
-            validate_declared_project_schema(_project(**{"schema-version": "2.6"}))
+            validate_declared_project_schema(_project(**{"schema-version": "2.x"}))
 
     def test_boolean_version_is_refused(self) -> None:
         # bool is an int subclass; a YAML `schema-version: true` must not pass for 1.
@@ -141,46 +182,162 @@ class TestMigrationsCanBeFinished:
     """
 
     def test_keycloak_config_block_accepted_at_2_2_rejected_at_2_3(self) -> None:
-        data = _project(config={"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]})
-        validate_project_schema(data, schema_version=2.2)
+        data = _oud_project(config={"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]})
+        validate_project_schema(data, schema_version=parse_schema_version("2.2"))
         with pytest.raises(ProjectSchemaError, match="config"):
-            validate_project_schema(data, schema_version=2.3)
+            validate_project_schema(data, schema_version=parse_schema_version("2.3"))
 
     def test_string_path_accepted_at_2_1_rejected_at_2_2(self) -> None:
-        data = _project(components=[{"name": "frontend", "path": "/api", "rewrite-path": "/"}])
-        validate_project_schema(data, schema_version=2.1)
+        data = _oud_project(components=[{"name": "frontend", "path": "/api", "rewrite-path": "/"}])
+        validate_project_schema(data, schema_version=parse_schema_version("2.1"))
         with pytest.raises(ProjectSchemaError, match="path"):
-            validate_project_schema(data, schema_version=2.2)
+            validate_project_schema(data, schema_version=parse_schema_version("2.2"))
 
     def test_component_root_flag_accepted_at_2_rejected_at_2_1(self) -> None:
-        data = _project(components=[{"name": "frontend", "root": True}])
-        validate_project_schema(data, schema_version=2)
+        data = _oud_project(components=[{"name": "frontend", "root": True}])
+        validate_project_schema(data, schema_version=parse_schema_version("2"))
         with pytest.raises(ProjectSchemaError, match="root"):
-            validate_project_schema(data, schema_version=2.1)
+            validate_project_schema(data, schema_version=parse_schema_version("2.1"))
 
     def test_root_domains_block_accepted_at_2_4_rejected_at_2_5(self) -> None:
-        data = _project(domains={"allowed-domains": [{"domain": "rijksapps.nl", "status": "approved"}]})
-        validate_project_schema(data, schema_version=2.4)
+        data = _oud_project(domains={"allowed-domains": [{"domain": "rijksapps.nl", "status": "approved"}]})
+        validate_project_schema(data, schema_version=parse_schema_version("2.4"))
         with pytest.raises(ProjectSchemaError, match="domains"):
-            validate_project_schema(data, schema_version=2.5)
+            validate_project_schema(data, schema_version=parse_schema_version("2.5"))
 
     def test_root_invites_block_accepted_at_2_5_rejected_at_2_6(self) -> None:
-        data = _project(invites={"settings": {"default_language": "nl"}, "active": []})
-        validate_project_schema(data, schema_version=2.5)
+        data = _oud_project(invites={"settings": {"default_language": "nl"}, "active": []})
+        validate_project_schema(data, schema_version=parse_schema_version("2.5"))
         with pytest.raises(ProjectSchemaError, match="invites"):
-            validate_project_schema(data, schema_version=2.6)
+            validate_project_schema(data, schema_version=parse_schema_version("2.6"))
 
     def test_uses_services_accepted_at_v1_rejected_at_v2(self) -> None:
-        data = _project(components=[{"name": "frontend", "uses-services": ["publish-on-web"]}])
-        validate_project_schema(data, schema_version=1)
+        data = _oud_project(components=[{"name": "frontend", "uses-services": ["publish-on-web"]}])
+        validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="uses-services"):
-            validate_project_schema(data, schema_version=2)
+            validate_project_schema(data, schema_version=parse_schema_version("2"))
 
     def test_v0_publish_on_web_boolean_accepted_at_v1_rejected_at_v2(self) -> None:
-        data = _project(components=[{"name": "frontend", "publish-on-web": True}])
-        validate_project_schema(data, schema_version=1)
+        data = _oud_project(components=[{"name": "frontend", "publish-on-web": True}])
+        validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="publish-on-web"):
-            validate_project_schema(data, schema_version=2)
+            validate_project_schema(data, schema_version=parse_schema_version("2"))
+
+    def test_component_description_rejected_at_2_14_accepted_at_2_15(self) -> None:
+        """The reverse of the rest of this class: a FIELD ADDED, not removed.
+
+        2.14 does not know `description` and the component is a closed object, so an
+        old file carrying it is rejected rather than silently accepted.
+        """
+        new_form = _project(components=[{"name": "frontend", "type": "deployment", "description": "Wat het doet"}])
+        validate_project_schema(new_form, schema_version=parse_schema_version("2.15"))
+
+        old_form = _project(components=[{"name": "frontend", "type": "deployment", "description": "Wat het doet"}])
+        with pytest.raises(ProjectSchemaError, match="description"):
+            validate_project_schema(old_form, schema_version=parse_schema_version("2.14"))
+
+    def test_component_description_over_500_chars_is_rejected(self) -> None:
+        data = _project(components=[{"name": "frontend", "type": "deployment", "description": "x" * 501}])
+        with pytest.raises(ProjectSchemaError, match="description"):
+            validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
+
+    def test_component_description_at_exactly_500_chars_is_accepted(self) -> None:
+        data = _project(components=[{"name": "frontend", "type": "deployment", "description": "x" * 500}])
+        validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
+
+    def test_clone_from_run_rejected_at_2_15_accepted_at_2_16(self) -> None:
+        """A field ADDED, like description above: 2.15 does not know it and clone-from is closed."""
+        data = _project(
+            deployments=[
+                {
+                    "name": "backup",
+                    "cluster": "odcn-production",
+                    "namespace": "voorbeeld",
+                    "clone-from": {
+                        "type": "backup",
+                        "reference": "productie",
+                        "mode": "once",
+                        "run": "20261030084847",
+                    },
+                }
+            ]
+        )
+        validate_project_schema(data, schema_version=parse_schema_version("2.16"))
+        with pytest.raises(ProjectSchemaError, match="run"):
+            validate_project_schema(data, schema_version=parse_schema_version("2.15"))
+
+    def test_clone_from_backup_items_stays_rejected(self) -> None:
+        """The shape the restore used to write. No version ever accepted it (RC-404)."""
+        data = _project(
+            deployments=[
+                {
+                    "name": "backup",
+                    "cluster": "odcn-production",
+                    "namespace": "voorbeeld",
+                    "clone-from": {
+                        "type": "backup",
+                        "reference": "productie",
+                        "mode": "once",
+                        "backup_items": [{"snapshot_id": "41bbdb", "resource_type": "database"}],
+                    },
+                }
+            ]
+        )
+        for versie in SCHEMA_VERSIONS:
+            with pytest.raises(ProjectSchemaError, match="backup_items"):
+                validate_project_schema(data, schema_version=versie)
+
+    def test_clone_from_run_only_makes_sense_for_a_backup(self) -> None:
+        """``run`` names a backup run, so any other clone type refuses it."""
+        data = _project(
+            deployments=[
+                {
+                    "name": "acceptatie",
+                    "cluster": "odcn-production",
+                    "namespace": "voorbeeld",
+                    "clone-from": {"type": "deployment", "reference": "productie", "run": "20261030084847"},
+                }
+            ]
+        )
+        with pytest.raises(ProjectSchemaError, match="run"):
+            validate_project_schema(data, schema_version=LATEST_SCHEMA_VERSION)
+
+    def test_source_code_rejected_at_2_16_accepted_at_2_17(self) -> None:
+        """Een veld TOEGEVOEGD, net als clone-from.run hierboven: de root is gesloten."""
+        data = _project(**{"source-code": [{"url": "https://github.com/MinBZK/mijn-app", "name": "Applicatie"}]})
+        validate_project_schema(data, schema_version=parse_schema_version("2.17"))
+        with pytest.raises(ProjectSchemaError, match="source-code"):
+            validate_project_schema(data, schema_version=parse_schema_version("2.16"))
+
+    @pytest.mark.parametrize(
+        "links",
+        [
+            [{"url": "http://github.com/x/y"}],
+            [{"url": "ssh://git@github.com/x/y"}],
+            [{"url": "https://github.com/x/y met spatie"}],
+            [{"url": "https://github.com/x/y", "branch": "main"}],
+            [{"name": "Zonder link"}],
+            [{"url": "https://github.com/x/y"}, {"url": "https://github.com/x/y"}],
+            [{"url": f"https://github.com/x/{i}"} for i in range(21)],
+        ],
+        ids=["http", "ssh", "spatie", "extra-veld", "zonder-url", "dubbel-identiek", "te-veel"],
+    )
+    def test_de_poort_weigert_een_broncodelink_die_niet_klopt(self, links: list[dict[str, str]]) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(_project(**{"source-code": links}), schema_version=LATEST_SCHEMA_VERSION)
+
+    def test_dezelfde_url_met_een_andere_naam_komt_langs_de_poort(self) -> None:
+        """``uniqueItems`` vergelijkt hele objecten, dus deze twee zijn voor het schema verschillend.
+
+        Dat gat wordt een laag hoger gedicht, op elke schrijfweg: ``UniqueSourceCodeUrlEnforcer``
+        op de identiteitssectie en de modelvalidator op ``ProjectFileModel`` kijken alleen naar
+        de url. Zie tests/test_source_code_links.py.
+        """
+        links = [
+            {"url": "https://github.com/x/y", "name": "Een"},
+            {"url": "https://github.com/x/y", "name": "Twee"},
+        ]
+        validate_project_schema(_project(**{"source-code": links}), schema_version=LATEST_SCHEMA_VERSION)
 
     def test_the_newest_schema_is_the_newest_shape_only(self) -> None:
         # The regression this locks: someone re-adds a legacy form to the newest

@@ -25,12 +25,21 @@ from opi.forms.editables.hooks import (
 from opi.forms.editables.lifecycle import run_hooks
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.resolvers import build_resolver_map
+from opi.forms.visualizers.flows import COMPONENTS_SELECTABLE
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst, zet_verborgen_leden_terug
 from opi.forms.wizard.secrets import restore_redacted_secrets
+from opi.forms.wizard.selection import selectable_names, splice_selection
 from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
-from opi.handlers.project_file_handler import ProjectFileHandler, _parse_resources_block_partial
+from opi.handlers.project_file_handler import (
+    ComponentInUseError,
+    ProjectFileHandler,
+    _parse_resources_block_partial,
+    remove_component,
+)
 from opi.services.schema_migration import normalize_service_entries
+from opi.services.services import ServiceAdapter
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
 if TYPE_CHECKING:
@@ -281,6 +290,27 @@ def _record_user_resource_intent(
     )
 
 
+def _apply_component_removals(existing_data: dict[str, Any], names_before: list[str]) -> None:
+    """Haal de verwijzingen mee weg naar elk component dat deze save uit de lijst haalde.
+
+    De merge haalt alleen de DEFINITIE uit ``components``; een deployment die het
+    component nog noemt maakt het bestand daarmee ongeldig. Dezelfde functie als de
+    API-verwijderroute, zodat er een regel is voor "een component gaat weg".
+
+    ``confirm_in_use=True``, net als de verwijderknop in het portaal: het item uit de
+    lijst halen is de bevestiging. Een component waar een webadres omheen gebouwd is
+    wordt ook hier geweigerd, met dezelfde uitleg.
+    """
+    remaining = set(selectable_names(existing_data, COMPONENTS_SELECTABLE))
+    for name in names_before:
+        if name in remaining:
+            continue
+        try:
+            remove_component(existing_data, name, confirm_in_use=True)
+        except ComponentInUseError as e:
+            raise ProjectIntegrityError(str(e)) from e
+
+
 async def apply_modal_edit(
     existing_data: dict[str, Any],
     merged_data: dict[str, Any],
@@ -316,6 +346,21 @@ async def apply_modal_edit(
     # placeholder cannot reach the project file by any route.
     merged_data = restore_redacted_secrets(merged_data, existing_data)
 
+    # Platform-managed fields are not the form's to set, just like the API rejects them.
+    ServiceAdapter.enforce_platform_managed_fields(merged_data, existing_data)
+
+    # Hetzelfde voor de ledenlijst: het teamformulier rendert alleen het adres en de rol
+    # van een mens, maar bezit het pad ``users`` als geheel. Zonder deze stap gooit het
+    # bewerken van het Team-blok elk API-token en elk service account van het project weg.
+    # Wie de ledenlijst niet bezit, schrijft hem niet; wie hem wel bezit houdt zich aan
+    # de rollen en aan de eis dat er een admin overblijft (ontwerp paragraaf 7).
+    try:
+        bewaak_ledenlijst(merged_data, existing_data, bezit_users="users" in flow_write_paths(list(flow.sections)))
+    except LedenlijstGeweigerd as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    zet_verborgen_leden_terug(merged_data, existing_data)
+
     # A new list item has no stored version to protect, so it is appended
     # whole: the empty slot the wizard was seeded with carries fields no form
     # collects (the cluster of a new deployment) and they must come along.
@@ -335,6 +380,14 @@ async def apply_modal_edit(
         if target.list_key == "deployments":
             _system_fields_for_new_deployment(existing_data, project_name)
 
+    # Een modal die op een selectie is geopend droeg alleen die items. Zet ze terug
+    # tussen de items die hij niet toonde, zodat de write hieronder de hele lijst schrijft
+    # en niet alleen het getoonde deel.
+    if flow.selectable is not None and state.selection:
+        splice_selection(existing_data, merged_data, flow.selectable, state.selection)
+
+    components_before = selectable_names(existing_data, COMPONENTS_SELECTABLE)
+
     # Everything else: write only what this flow's editables declare. What no
     # editable names is not written, and therefore does not need saving from
     # being overwritten either - that is what the template-only strip, and the
@@ -346,6 +399,8 @@ async def apply_modal_edit(
     # Drop tombstones before anything downstream reads the data: a PRE_SAVE
     # hook seeing the marker sitting in a field would take it for a value.
     _strip_cleared_fields(existing_data)
+
+    _apply_component_removals(existing_data, components_before)
 
     # Run post_merge hooks (e.g. distribute component refs to deployments)
     for section in active_sections:

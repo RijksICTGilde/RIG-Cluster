@@ -89,8 +89,8 @@ def test_kustomize_is_installed_before_the_tests_run(ci_test_steps: list[dict]) 
 
 
 def test_kustomize_version_matches_the_cmp_image(ci_test_steps: list[dict]) -> None:
-    image_version = re.search(r'^\s*RUN KUSTOMIZE_VERSION="(\S+)"', KUSTOMIZE_DOCKERFILE.read_text(), re.MULTILINE)
-    assert image_version, "KUSTOMIZE_VERSION ontbreekt in images/cmp-kustomize-sops/Dockerfile"
+    image_version = re.search(r"^ARG KUSTOMIZE_VERSION=(\S+)$", KUSTOMIZE_DOCKERFILE.read_text(), re.MULTILINE)
+    assert image_version, "ARG KUSTOMIZE_VERSION ontbreekt in images/cmp-kustomize-sops/Dockerfile"
     script = ci_test_steps[_index_of_name(ci_test_steps, KUSTOMIZE_STAP)]["run"]
     ci_versions = set(re.findall(r"/kustomize/(v[\d.]+)/kustomize_(v[\d.]+)_", script))
     verwacht = f"v{image_version[1]}"

@@ -82,11 +82,6 @@ INVENTARIS: dict[str, Schrijver] = {
         "Deels: registries en bijlagen worden gedraaid; de andere methoden hebben elk hun eigen test "
         "in tests/test_component_*.py en tests/test_*_api.py, die het resultaat nog niet langs de poorten leggen.",
     ),
-    "opi/manager/mail_manager.py": Schrijver(
-        "services/send-email/config/accounts: per cluster de gebruikersnaam, het AGE-versleutelde "
-        "wachtwoord, het afzender- en het bounce-adres; en het intrekken haalt datzelfde item weg",
-        "test_een_mailaccount_blijft_geldig",
-    ),
     "opi/manager/keycloak_manager.py": Schrijver(
         "services/keycloak/config/realms: host, realm, gebruikersnaam, versleuteld wachtwoord en totp_secret",
         None,
@@ -123,6 +118,19 @@ INVENTARIS: dict[str, Schrijver] = {
         "het projectbestand zoals een zelfbedieningsaanvraag het aanlevert",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
     ),
+    "opi/web/router_env_vars.py": Schrijver(
+        "user-env-vars op een component of deployment-override: het AGE-versleutelde blok "
+        "van de gebruiker, achter een verse step-up (RC-388)",
+        "test_het_env_vars_venster_schrijft_geldig",
+    ),
+    "opi/services/api_token_service.py": Schrijver(
+        "leden onder users: een service account toevoegen of verwijderen, een rol wijzigen, "
+        "en per lid een token uitgeven of intrekken",
+        None,
+        "De schrijfweg is enforce=True, dus een lid of token dat niet aan het schema voldoet blokkeert de "
+        "wijziging in plaats van stil te landen; de vorm zelf staat in tests/test_leden_en_tokens_projectbestand.py "
+        "en de regels eromheen in tests/test_api_token_service.py.",
+    ),
 }
 
 
@@ -149,6 +157,7 @@ HANDLER_MUTATOREN: dict[str, str] = {
     "set_clone_status": "test_de_kloonstatus_blijft_geldig",
     "remove_attachment_references": "test_het_verwijderen_van_verwijzingen_blijft_geldig",
     "remove_component_references": "test_het_verwijderen_van_verwijzingen_blijft_geldig",
+    "remove_component": "test_een_component_verwijderen_laat_een_geldig_bestand_achter",
 }
 
 

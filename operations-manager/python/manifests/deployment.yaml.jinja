@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: "{{ object_name | default(name) }}"
-  namespace: "{{ namespace }}"
+  name: {{ (object_name | default(name)) | tojson }}
+  namespace: {{ namespace | tojson }}
   labels:
-    app: "{{ name }}"
-    deployment: "{{ deployment_name }}"
-    project: "{{ project.name }}"
+    app: {{ name | tojson }}
+    deployment: {{ (deployment_name | default('', true)) | tojson }}
+    project: {{ project.name | tojson }}
     component: application
 {% for k, v in (extra_selector_labels or {}).items() %}
-    {{ k }}: {{ v | tojson }}
+    {{ k | tojson }}: {{ v | tojson }}
 {% endfor %}
 spec:
   strategy:
@@ -24,10 +24,10 @@ spec:
   progressDeadlineSeconds: 300
   selector:
     matchLabels:
-      app: "{{ name }}"
+      app: {{ name | tojson }}
       component: application
 {% for k, v in (extra_selector_labels or {}).items() %}
-      {{ k }}: {{ v | tojson }}
+      {{ k | tojson }}: {{ v | tojson }}
 {% endfor %}
   template:
     metadata:
@@ -35,23 +35,23 @@ spec:
       annotations:
         # Prometheus scraping annotations (metrics-scraper service enabled)
         prometheus.io/scrape: "true"
-        prometheus.io/port: "{{ metrics_config.port if metrics_config.port else application_port }}"
-        prometheus.io/path: "{{ metrics_config.path if metrics_config.path else '/metrics' }}"
+        prometheus.io/port: {{ (metrics_config.port if metrics_config.port else application_port) | string | tojson }}
+        prometheus.io/path: {{ (metrics_config.path if metrics_config.path else '/metrics') | tojson }}
 {% endif %}
       labels:
-        app: "{{ name }}"
-        deployment: "{{ deployment_name }}"
-        project: "{{ project.name }}"
+        app: {{ name | tojson }}
+        deployment: {{ (deployment_name | default('', true)) | tojson }}
+        project: {{ project.name | tojson }}
         component: application
         network-policy: allow-db-access
 {% for k, v in (extra_selector_labels or {}).items() %}
-        {{ k }}: {{ v | tojson }}
+        {{ k | tojson }}: {{ v | tojson }}
 {% endfor %}
     spec:
       {% if service_account_name %}
       # De eigen serviceaccount van het project, zonder pull-secrets; deze pod draagt
       # hieronder alleen wat hij zelf nodig heeft.
-      serviceAccountName: {{ service_account_name }}
+      serviceAccountName: {{ service_account_name | tojson }}
       {% endif %}
       {% if host_aliases is defined and host_aliases %}
       # Extra regels in /etc/hosts van de pod. Een dienst zet ze wanneer een naam naar een
@@ -94,7 +94,7 @@ spec:
       containers:
         - name: app
           image: {{ (imageURL | default('', true)) | tojson }}
-          imagePullPolicy: {{ imagePullPolicy }}
+          imagePullPolicy: {{ (imagePullPolicy | default(None)) | tojson }}
           {% if command %}
           # Override of the image's ENTRYPOINT — set via project YAML
           # `components[].command` or `deployments[].components[].command`.
@@ -143,11 +143,11 @@ spec:
           envFrom:
           {% for secret_name in env_from_secrets | default([]) %}
             - secretRef:
-                name: {{ secret_name }}
+                name: {{ secret_name | tojson }}
           {% endfor %}
           {% for cm_name in env_from_configmaps | default([]) %}
             - configMapRef:
-                name: {{ cm_name }}
+                name: {{ cm_name | tojson }}
           {% endfor %}
           {% endif %}
           {% if storage_configs or (ca_config and ca_config.enabled) or (attachment_secret_mounts is defined and attachment_secret_mounts) %}
@@ -179,18 +179,18 @@ spec:
           {% endif %}
           resources:
             requests:
-              memory: "{{ resources_requests_memory }}"
-              cpu: "{{ resources_requests_cpu }}"
+              memory: {{ (resources_requests_memory | default('', true)) | tojson }}
+              cpu: {{ (resources_requests_cpu | default('', true)) | tojson }}
             limits:
-              memory: "{{ resources_limits_memory }}"
-              cpu: "{{ resources_limits_cpu }}"
+              memory: {{ (resources_limits_memory | default('', true)) | tojson }}
+              cpu: {{ (resources_limits_cpu | default('', true)) | tojson }}
           {% if probe_scheme != 'none' %}
           startupProbe:
             {% if probe_scheme in ('http', 'https') %}
             httpGet:
               port: {{ probe_port | default(application_port, true) | tojson }}
               path: {{ probe_liveness_path | default('/') | tojson }}
-              scheme: {{ probe_scheme | upper }}
+              scheme: {{ probe_scheme | upper | tojson }}
             {% else %}
             tcpSocket:
               port: {{ probe_port | default(application_port, true) | tojson }}
@@ -203,7 +203,7 @@ spec:
             httpGet:
               port: {{ probe_port | default(application_port, true) | tojson }}
               path: {{ probe_liveness_path | default('/') | tojson }}
-              scheme: {{ probe_scheme | upper }}
+              scheme: {{ probe_scheme | upper | tojson }}
             {% else %}
             tcpSocket:
               port: {{ probe_port | default(application_port, true) | tojson }}
@@ -216,7 +216,7 @@ spec:
             httpGet:
               port: {{ probe_port | default(application_port, true) | tojson }}
               path: {{ probe_readiness_path | default('/') | tojson }}
-              scheme: {{ probe_scheme | upper }}
+              scheme: {{ probe_scheme | upper | tojson }}
             {% else %}
             tcpSocket:
               port: {{ probe_port | default(application_port, true) | tojson }}

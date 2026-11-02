@@ -5,6 +5,10 @@ metadata:
   namespace: rig-system
 spec:
   replicas: 1
+  # Recreate en niet RollingUpdate: een schemamigratie mag pas lopen als de oude pod uit is,
+  # anders migreert de nieuwe pod terwijl de oude nog op het oude schema schrijft.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: keycloak
@@ -36,7 +40,7 @@ spec:
           #
           # Is er nog nooit gepromoveerd, dan staat hier het woord promoveer-eerst en geen
           # tag: een verzonnen versienummer zou eruitzien als een image die te halen valt.
-          image: ghcr.io/rijksictgilde/zad/keycloak-zad:2026.10.13.1948-72684cb4
+          image: ghcr.io/rijksictgilde/zad/keycloak-zad:2026.10.30.1552-ce33c478
           # DE VLAG DIE DE EIGEN VERZENDER AANWIJST. Zonder hem verstuurt de
           # standaardprovider, en die leest de smtpServer van de realm - de weg waarlangs
           # een projectbeheerder de post naar een eigen luisteraar kan sturen.
@@ -63,12 +67,16 @@ spec:
           args:
             ["start", "--optimized", "--spi-theme-welcome-theme=nl-design-system", "--spi-email-sender-provider=zad-relay" ]
           env:
-            - name: KEYCLOAK_ADMIN
+            # De namen van 26: KEYCLOAK_ADMIN en KEYCLOAK_ADMIN_PASSWORD doen daar niets
+            # meer, dus een verse database zou zonder beheerder opkomen. De SLEUTELS in
+            # keycloak-admin-credentials blijven heten zoals ze heten; dat secret wordt
+            # ook door OPI en door de taken gelezen.
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: keycloak-admin-credentials
                   key: KEYCLOAK_ADMIN
-            - name: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: keycloak-admin-credentials
@@ -86,12 +94,11 @@ spec:
               value: "keycloak.kind"
             - name: KC_HOSTNAME_STRICT
               value: "false"
-            - name: KC_HOSTNAME_PORT
-              value: "-1"
-            - name: KC_PROXY_ADDRESS_FORWARDING
-              value: "true"
+            # sslmode=require versleutelt zonder het servercertificaat te toetsen. CNPG
+            # tekent met zijn eigen interne CA, en die zit niet in de truststore van de
+            # Keycloak-pod; verify-full vraagt dat certificaat erbij.
             - name: KC_DB_URL
-              value: "jdbc:postgresql://rig-db-rw:5432/keycloak"
+              value: "jdbc:postgresql://rig-db-rw:5432/keycloak?sslmode=require"
             - name: KC_DB_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -102,14 +109,6 @@ spec:
                 secretKeyRef:
                   name: keycloak-db-credentials
                   key: password
-            - name: ORGANIZATION
-              value: "RIG Cluster"
-            - name: KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED
-              value: "true"
-            - name: KEYCLOAK_ADMIN_IMPORT_ENABLED
-              value: "true"
-            - name: KEYCLOAK_ADMIN_EXPORT_ENABLED
-              value: "true"
             # DE MAILRELAY, ZOALS DE POD HEM KENT. Deze vijf zijn de HELE configuratie van
             # de eigen verzender: geen realm draagt nog een bestemming, dus er is nergens
             # een veld dat een projectbeheerder kan omzetten. Zie
@@ -150,6 +149,20 @@ spec:
                 secretKeyRef:
                   name: keycloak-mail-credentials
                   key: smtp-password
+                  optional: true
+            # HET SCRAPE-TOKEN VAN /realms/master/rig-metrics, hetzelfde token dat
+            # Prometheus meestuurt en dat OPI op zijn eigen /metrics controleert.
+            #
+            # optional: true om dezelfde reden als bij het mailwachtwoord hierboven: een
+            # cluster zonder dit secret moet WEL kunnen inloggen. Ontbreekt het, dan is het
+            # endpoint dicht (503) en niet open.
+            #
+            # ACHTERAAN DE LIJST, want de sandbox- en odcn-overlay patchen env/4 op index.
+            - name: RIG_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-metrics-auth
+                  key: token
                   optional: true
           resources:
             limits:

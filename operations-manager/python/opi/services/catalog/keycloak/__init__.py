@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.core.authz.actions import Action
 from opi.services.catalog.base import (
     ConfigLayer,
     DetailPageSection,
@@ -34,7 +35,7 @@ class KeycloakService(Service):
         help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
-        secret_class="KeycloakSecret",
+        secret_class="KeycloakSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in KeycloakVariables],
         requires=["services/publish-on-web"],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
@@ -49,7 +50,11 @@ class KeycloakService(Service):
     manifest_order = 30
 
     async def provision(self, ctx: ProvisionContext) -> None:
-        await ctx.keycloak_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
+        await ctx.keycloak_manager.create_resources_for_deployment(
+            ctx.project_data,
+            ctx.deployment,
+            rotate_client_secret=self.service_type.value in ctx.rotate_credentials,
+        )
 
     # --- config field ownership -------------------------------------------------
 
@@ -97,7 +102,7 @@ class KeycloakService(Service):
         # RC-5 relocated them; the general template used to read the old project-level
         # ``config.keycloak``, which no longer exists, so the section silently stopped
         # rendering. Owning the block here keeps it pinned to the config's real home.
-        if ctx.user_role not in ("admin", "owner"):
+        if not ctx.can(Action.PROJECT_KEY_READ):
             return []
         from opi.services.project import Project
 

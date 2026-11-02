@@ -1308,6 +1308,8 @@ def _deployment_harness(
     the first wait time out and reach the force branch.
     """
     pm = AsyncMock()
+    # Geen voortgangsmanager: de delete-stappen melden dan niets.
+    pm.get_progress_manager = MagicMock(return_value=None)
     pm._kubectl_connector = _recording_kubectl(
         calls, destination="rig-mpfm-w3h", tracked=tracked or [], complete=complete
     )
@@ -1315,6 +1317,9 @@ def _deployment_harness(
     pm._manifest_generator.create_kustomization_files = MagicMock(return_value=True)
     pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
     pm._minio_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
+    # Deze deployment noemt seaweedfs-storage niet, dus de guard in delete_deployment
+    # slaat die tak over. Een AsyncMock zegt uit zichzelf overal ja.
+    pm._project_file_handler.deployment_uses_service = MagicMock(return_value=False)
     pm._ensure_database_manager.return_value.delete_resources_for_deployment = AsyncMock(
         return_value={"operations": [], "errors": []}
     )

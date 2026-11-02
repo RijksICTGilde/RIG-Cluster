@@ -148,9 +148,11 @@ def test_confirmation_states_what_will_happen(app_server: str, auth_page: Page) 
     """The dialog names the project it is about, so the user can see what they confirm."""
     _open_confirmation(auth_page, app_server, "Project verwijderen")
 
-    body = auth_page.text_content("#edit-section-inner") or ""
-    assert "Detail Test Project" in body
-    assert "verwijderen" in body.lower()
+    # get_by_text en geen text_content: de vraag staat in de schaduwboom van
+    # <nldd-inline-dialog>, en text_content leest alleen de light DOM.
+    vraag = auth_page.locator("#edit-section-inner").get_by_text("Detail Test Project", exact=False)
+    vraag.wait_for(state="visible", timeout=10000)
+    assert "verwijderen" in (vraag.inner_text() or "").lower()
 
 
 def test_running_action_cannot_be_dismissed(app_server: str, auth_page: Page) -> None:
