@@ -119,3 +119,9 @@ patches:
       - op: replace
         path: /spec/imageName
         value: rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11
+
+# ODCN herschrijft het image van de backup-cronjob bij admission naar het rcr-pad. Zonder
+# dat pad in git blijft ArgoCD OutOfSync, zie de keycloak-overlay.
+images:
+  - name: ghcr.io/minbzk/base-images/rig-backup
+    newName: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-backup
