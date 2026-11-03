@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.requires_infra
 
 #: Provider-id per SPI, gelezen uit de factories en de META-INF/services-bestanden van
-#: `keycloak-migration/`, niet uit het plan. De SPI-namen komen uit `getName()` van de
+#: `images/keycloak-zad/extensions/`, niet uit het plan. De SPI-namen komen uit `getName()` van de
 #: bijbehorende Spi-klasse in de Keycloak-jars.
 PROVIDERS = (
     ("identity-provider-mapper", "saml-unrestricted-xpath-idp-mapper"),

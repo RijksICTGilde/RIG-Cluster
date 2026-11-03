@@ -41,8 +41,8 @@ secrets-overview-*.yaml
 /bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/operations-manager-env-secrets.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine
-/keycloak-migration/custom-mapper/target/
-/keycloak-migration/relay-email-sender/target/
+/images/keycloak-zad/extensions/custom-mapper/target/
+/images/keycloak-zad/extensions/relay-email-sender/target/
 /infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/
 /operations-manager/docs/interview.sh
 /operations-manager/docs/business-case-interview-prompt.md

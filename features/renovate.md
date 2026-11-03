@@ -24,7 +24,7 @@ andere workflows, waardoor `ci.yml` niet op de Renovate-PR's zou draaien.
 |---|---|---|
 | Python | `operations-manager/python/pyproject.toml` + `uv.lock` | `pep621` |
 | Go | `images/e2e-allservices/go.mod`, `images/zad-waker/go.mod` | `gomod` |
-| Maven | `keycloak-migration/*/pom.xml` | `maven` |
+| Maven | `images/keycloak-zad/extensions/*/pom.xml` | `maven` |
 | npm | `operations-manager/python/static/js/package.json`, `presentation/reveal/package.json` | `npm` |
 | Dockerfiles | 15 stuks in `images/`, `operations-manager/` | `dockerfile` |
 | docker compose | `docker-compose.dev.yaml` | `docker-compose` |

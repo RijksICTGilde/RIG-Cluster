@@ -112,7 +112,7 @@ spec:
             # DE MAILRELAY, ZOALS DE POD HEM KENT. Deze vijf zijn de HELE configuratie van
             # de eigen verzender: geen realm draagt nog een bestemming, dus er is nergens
             # een veld dat een projectbeheerder kan omzetten. Zie
-            # keycloak-migration/relay-email-sender/ en features/keycloak-mail.md.
+            # images/keycloak-zad/extensions/relay-email-sender/ en features/keycloak-mail.md.
             #
             # De basis is het cluster met de relay in rig-ron (sandboxed-local);
             # de odcn-overlay zet de host om naar rig-prd-ron.

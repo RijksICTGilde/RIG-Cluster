@@ -34,7 +34,7 @@ en 8.19 (installeren van software) vragen.
 
 De bronpaden en niet de hele repo: voor de operations-manager is dat `operations-manager/` (de
 `COPY`-regels in `operations-manager/Dockerfile`), voor `publish-keycloak-image` zijn dat
-`keycloak-migration/relay-email-sender`, `keycloak-migration/custom-mapper` en
+`images/keycloak-zad/extensions/relay-email-sender`, `images/keycloak-zad/extensions/custom-mapper` en
 `images/keycloak-zad`. Over de hele repo was de tag altijd `-dirty`, omdat
 `publish-operations-manager` afhangt van `generate-env-secrets-for-operations-manager` en die het
 secrets-bestand in `bootstrap/` herschrijft. Daarmee verloor `-dirty` zijn betekenis, en weigerde de

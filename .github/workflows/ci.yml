@@ -136,7 +136,7 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Tests van ${{ matrix.module }}
-        working-directory: keycloak-migration/${{ matrix.module }}
+        working-directory: images/keycloak-zad/extensions/${{ matrix.module }}
         run: mvn -B test
 
   asvs-meetlat:

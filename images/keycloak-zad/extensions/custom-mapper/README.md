@@ -30,7 +30,7 @@ task build-keycloak-custom-mapper
 
 Or manually with Maven:
 ```bash
-cd keycloak-migration/custom-mapper
+cd images/keycloak-zad/extensions/custom-mapper
 mvn clean package
 ```
 

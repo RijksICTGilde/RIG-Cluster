@@ -9,8 +9,8 @@ Bron: `images/keycloak-zad/Dockerfile`. Image: `ghcr.io/rijksictgilde/zad/keyclo
 
 | Provider | Waar hij vandaan komt |
 |---|---|
-| `keycloak-relay-email-sender` | `keycloak-migration/relay-email-sender/`, gebouwd tijdens de imagebouw |
-| `keycloak-saml-nameid-mapper` (vier SPI's) | `keycloak-migration/custom-mapper/`, gebouwd tijdens de imagebouw |
+| `keycloak-relay-email-sender` | `images/keycloak-zad/extensions/relay-email-sender/`, gebouwd tijdens de imagebouw |
+| `keycloak-saml-nameid-mapper` (vier SPI's) | `images/keycloak-zad/extensions/custom-mapper/`, gebouwd tijdens de imagebouw |
 | `keycloak-nl-design-system` (thema) | release van MinBZK, opgehaald tijdens de imagebouw, op sha256 gecontroleerd |
 
 De twee eigen jars komen dus uit de bron in deze repo. Een jar kan daarmee niet meer uit de

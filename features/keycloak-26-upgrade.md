@@ -136,7 +136,7 @@ verschil en valt niet op eigen initiatief terug.
 
 ## Afhankelijkheden
 
-- `keycloak-migration/custom-mapper/` en `keycloak-migration/relay-email-sender/` (de jars)
+- `images/keycloak-zad/extensions/custom-mapper/` en `images/keycloak-zad/extensions/relay-email-sender/` (de jars)
 - `keycloak-migration/proefmigratie/` (de manifesten van de proef)
 - MinBZK/keycloak-theme (het loginthema, v1.4.2)
 - de realm-blauwdrukken: `operations-manager/python/opi/configs/keycloak/*.yaml`

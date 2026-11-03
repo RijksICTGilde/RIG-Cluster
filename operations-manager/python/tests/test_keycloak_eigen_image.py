@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 DOCKERFILE = REPO_ROOT / "images/keycloak-zad/Dockerfile"
 KEYCLOAK = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller"
-MODULES = REPO_ROOT / "keycloak-migration"
+MODULES = REPO_ROOT / "images" / "keycloak-zad" / "extensions"
 BRON_TAG = REPO_ROOT / "scripts/bron-tag.sh"
 CALVER_TAG = REPO_ROOT / "scripts/calver-tag.sh"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -173,10 +173,10 @@ class TestDeImageIsHetArtefact:
         in plaats van de eerste pod die zijn provider mist.
         """
         modules = sorted(p.name for p in MODULES.iterdir() if (p / "pom.xml").is_file())
-        assert modules, "geen Java-module gevonden onder keycloak-migration/"
+        assert modules, "geen Java-module gevonden onder images/keycloak-zad/extensions/"
 
         for naam in modules:
-            assert f"COPY keycloak-migration/{naam} " in _dockerfile(), naam
+            assert f"COPY images/keycloak-zad/extensions/{naam} " in _dockerfile(), naam
             assert f"-f {naam}/pom.xml clean package" in _dockerfile(), naam
 
     def test_de_basisversie_is_die_waar_de_modules_tegen_bouwen(self) -> None:
@@ -538,7 +538,7 @@ class TestDeImageWordtGebouwdEnGepusht:
         assert sorted(job["strategy"]["matrix"]["module"]) == _module_namen()
 
         stap = next(s for s in job["steps"] if "mvn" in s.get("run", ""))
-        assert stap["working-directory"] == "keycloak-migration/${{ matrix.module }}"
+        assert stap["working-directory"] == "images/keycloak-zad/extensions/${{ matrix.module }}"
         assert stap["run"].strip() == "mvn -B test"
 
     def test_elke_module_blijft_los_te_bouwen_en_te_toetsen(self) -> None:
@@ -548,7 +548,7 @@ class TestDeImageWordtGebouwdEnGepusht:
             for vorm in ("build", "test"):
                 taak = f"{vorm}-keycloak-{naam}"
                 assert taak in taken, taak
-                assert f"keycloak-migration/{naam}" in yaml.dump(taken[taak])
+                assert f"images/keycloak-zad/extensions/{naam}" in yaml.dump(taken[taak])
 
     def test_elke_module_bouwt_reproduceerbaar(self) -> None:
         """Bouwt een van de twee jars op de klok, dan is de imagelaag alsnog elke keer nieuw.

@@ -8,7 +8,7 @@
 /operations-manager/python/opi/services/project_authorization.py @uittenbroekrobbert
 /operations-manager/python/opi/utils/api_keys.py @uittenbroekrobbert
 /operations-manager/python/opi/configs/keycloak/bootstrap.yaml @uittenbroekrobbert
-/keycloak-migration/custom-mapper/src/main/java/ @uittenbroekrobbert
+/images/keycloak-zad/extensions/custom-mapper/src/main/java/ @uittenbroekrobbert
 
 # Sessie en CSRF
 /operations-manager/python/opi/core/secret_key.py @uittenbroekrobbert

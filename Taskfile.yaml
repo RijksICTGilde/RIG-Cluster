@@ -2113,7 +2113,7 @@ tasks:
     cmds:
       - |
         echo "🔨 Building Keycloak custom mapper..."
-        cd keycloak-migration/custom-mapper
+        cd images/keycloak-zad/extensions/custom-mapper
         mvn clean package
         echo "✅ JAR built: $(ls target/keycloak-saml-nameid-mapper-*.jar)"
     silent: false
@@ -2124,7 +2124,7 @@ tasks:
     cmds:
       - |
         echo "🧪 Running tests..."
-        cd keycloak-migration/custom-mapper
+        cd images/keycloak-zad/extensions/custom-mapper
         mvn test
     silent: false
 
@@ -2275,272 +2275,12 @@ tasks:
             tests/integration/test_keycloak_admin_api.py -m requires_infra -q
     silent: false
 
-  keycloak-telling:
-    desc: "Tel wat er in de database keycloak staat: realms, clients, gebruikers, credentials per type"
-    summary: |
-      De telling waarmee een versiesprong "alle data behouden" kan aantonen. Draai hem voor
-      de migratie en na de start van de nieuwe versie; een verschil is een reden om terug
-      te vallen. Alleen AANTALLEN, geen persoonsgegevens.
-
-      Standaard de sandbox. Voor productie: task keycloak-telling CONTEXT=prd OUT=voor.txt
-
-      CLUSTER, DB en SECRET staan los, zodat keycloak-proefmigratie dezelfde telling op zijn
-      kopie kan draaien.
-    vars:
-      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
-      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
-      OUT: '{{.OUT | default ""}}'
-      CLUSTER: '{{.CLUSTER | default "rig-db"}}'
-      DB: '{{.DB | default "keycloak"}}'
-      SECRET: '{{.SECRET | default "keycloak-db-credentials"}}'
-      SQL_FILE: keycloak-migration/telling.sql
-    cmds:
-      - |
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        # De primary via het label van CNPG en niet via een vaste podnaam: na een failover
-        # is rig-db-1 een replica, en een telling op een replica kan achterlopen.
-        POD="$($KUBECTL get pods -l cnpg.io/cluster={{.CLUSTER}},cnpg.io/instanceRole=primary \
-          -o jsonpath='{.items[0].metadata.name}')"
-        if [ -z "$POD" ]; then
-          echo "Geen primary van {{.CLUSTER}} gevonden in {{.NAMESPACE}} op {{.CONTEXT}}" >&2
-          exit 1
-        fi
-        ROLE="$($KUBECTL get secret {{.SECRET}} -o jsonpath='{.data.username}' | base64 -d)"
-        SQL="$(cat {{.SQL_FILE}})"
-        # Het wachtwoord gaat via stdin en nooit als argument: de argv van een pod is te
-        # lezen. `$(cat)` en niet `read -r`, want zonder afsluitende newline stopt read de
-        # keten stil. De SQL en de rol gaan als $0 en $1 mee, want stdin is al bezet door
-        # het wachtwoord; zo komt geen van beide in het script zelf terecht.
-        TELLING="$($KUBECTL get secret {{.SECRET}} -o jsonpath='{.data.password}' \
-          | base64 -d \
-          | $KUBECTL exec -i "$POD" -c postgres -- sh -c \
-              'PGPASSWORD=$(cat) exec psql -h localhost -U "$1" -d {{.DB}} \
-                 -v ON_ERROR_STOP=1 -A -F "|" -P footer=off -c "$0"' "$SQL" "$ROLE")"
-        printf '%s\n' "$TELLING"
-        if [ -n "{{.OUT}}" ]; then
-          printf '%s\n' "$TELLING" > "{{.OUT}}"
-          echo "Weggeschreven naar {{.OUT}}" >&2
-        fi
-    silent: false
-
-  keycloak-proefmigratie:
-    desc: "Migreer een KOPIE van de database keycloak naar de nieuwe image en vergelijk de telling"
-    summary: |
-      De proef die "alle data behouden" aantoonbaar maakt VOORDAT productie migreert.
-
-      Wat hij doet, in de namespace van rig-db:
-        1. een CNPG-cluster keycloak-proef met een pod-naar-pod import van de database
-           keycloak uit rig-db, met de eigen rol van Keycloak als bron;
-        2. task keycloak-telling op die kopie, VOOR de migratie;
-        3. een Deployment keycloak-proef met de nieuwe image en de args van de
-           basisdeployment, tegen die kopie; de pod is ready zodra de migratie klaar is;
-        4. dezelfde telling NA de migratie, en een diff die bij elk verschil faalt;
-        5. een direct grant via een port-forward, met de OTP-beheerder (wachtwoord plus
-           code) als die in het secret staat en anders met admin: dat bewijst dat een
-           wachtwoord-hash en een OTP-secret van de oude versie nog kloppen;
-        6. opruimen, ook bij een fout, en tonen dat er niets met keycloak-proef meer staat.
-
-      De kopie verlaat het cluster niet. Niets is van buiten bereikbaar: geen Ingress, de
-      Service is ClusterIP en er vertrekt geen mail.
-
-      Standaard de sandbox met de tag uit de sandbox-overlay. Voor productie hoort er een
-      besluit van de eigenaar bij: deze task zet tijdelijk resources in de
-      productienamespace met kubectl, en productie verandert normaal alleen via Git en
-      ArgoCD. Draaien kan dan zo:
-
-        task keycloak-proefmigratie CONTEXT=prd NAMESPACE=rig-prd-operations \
-          IMAGE=rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad:<tag> \
-          PG_IMAGE=rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11 \
-          STORAGE_CLASS=ocs-storagecluster-ceph-rbd \
-          PULL_SECRET=rig-robot-pull-secret,ghcr-rig-robot-pull-secret
-
-      PG_IMAGE en STORAGE_CLASS moeten op ODCN mee, want zonder het rcr-pad vervangt CNPG
-      zijn eigen pod in een lus (admission herschrijft imageName) en zonder de storageClass
-      komt er geen volume. PULL_SECRET gaat naar de Deployment EN naar de CNPG-cluster.
-
-      Het runbook voor het venster zelf staat in features/keycloak-26-upgrade.md.
-    vars:
-      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
-      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
-      MANIFESTEN: keycloak-migration/proefmigratie
-      IMAGE: '{{.IMAGE | default ""}}'
-      # Zonder IMAGE de tag uit de sandbox-overlay: dat is de image die op de sandbox heeft
-      # gedraaid. Als var en niet in een cmd, zodat een ontbrekende pin meteen faalt en niet
-      # pas na de import.
-      KC_IMAGE:
-        sh: |
-          IMAGE="{{.IMAGE}}"
-          if [ -z "$IMAGE" ]; then
-            TAG="$(yq '.images[] | select(.name == "ghcr.io/rijksictgilde/zad/keycloak-zad") | .newTag' \
-              infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/sandboxed-local/kustomization.yaml)"
-            case "$TAG" in
-              ""|null|bouw-eerst)
-                echo "De sandbox-overlay pint geen keycloak-zad-tag; geef IMAGE mee." >&2
-                exit 1
-                ;;
-            esac
-            IMAGE="ghcr.io/rijksictgilde/zad/keycloak-zad:$TAG"
-          fi
-          printf '%s' "$IMAGE"
-      # Komma-gescheiden; gaat naar Deployment EN CNPG-cluster.
-      PULL_SECRET: '{{.PULL_SECRET | default ""}}'
-      # Op ODCN met rcr-pad en ocs-storagecluster-ceph-rbd, om admission-herschrijving en
-      # volume-aanmaak te voorkomen.
-      PG_IMAGE: '{{.PG_IMAGE | default ""}}'
-      STORAGE_CLASS: '{{.STORAGE_CLASS | default ""}}'
-      STORAGE_SIZE: '{{.STORAGE_SIZE | default ""}}'
-      VOOR: '{{.VOOR | default "/tmp/keycloak-proef-voor.txt"}}'
-      NA: '{{.NA | default "/tmp/keycloak-proef-na.txt"}}'
-    cmds:
-      - defer: |
-          # ALTIJD opruimen, ook bij een fout: deze resources mogen niet blijven staan.
-          KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-          echo "Opruimen van de proef..."
-          $KUBECTL delete deployment,service -l rig.nl/proefmigratie=keycloak --ignore-not-found >/dev/null 2>&1
-          $KUBECTL delete cluster.postgresql.cnpg.io keycloak-proef --ignore-not-found >/dev/null 2>&1
-          $KUBECTL delete pvc -l rig.nl/proefmigratie=keycloak --ignore-not-found >/dev/null 2>&1
-          # De secrets die CNPG zelf aanmaakt dragen het label van de proef niet.
-          $KUBECTL delete secret -l cnpg.io/cluster=keycloak-proef --ignore-not-found >/dev/null 2>&1
-          REST="$($KUBECTL get cluster.postgresql.cnpg.io,deployment,service,pod,pvc,secret \
-            -o name 2>/dev/null | grep keycloak-proef || true)"
-          if [ -n "$REST" ]; then
-            echo "LET OP: er staat nog iets met keycloak-proef in de naam:" >&2
-            printf '%s\n' "$REST" >&2
-            exit 1
-          fi
-          echo "Niets met keycloak-proef in de naam meer in {{.NAMESPACE}}."
-      - |
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        echo "Proefmigratie met {{.KC_IMAGE}} in {{.NAMESPACE}} op {{.CONTEXT}}"
-
-        # Een restant van een afgebroken ronde zou als een geslaagde import lezen.
-        if $KUBECTL get cluster.postgresql.cnpg.io keycloak-proef >/dev/null 2>&1; then
-          echo "keycloak-proef bestaat al in {{.NAMESPACE}}; ruim hem eerst op." >&2
-          exit 1
-        fi
-        # Het beeld, de opslag en de pull-secrets gaan er met yq in VOORDAT de cluster bestaat:
-        # imageName naderhand patchen laat CNPG zijn pod opnieuw aanmaken.
-        RENDER="$(mktemp)"
-        trap 'rm -f "$RENDER"' EXIT
-        PG_IMAGE='{{.PG_IMAGE}}' STORAGE_CLASS='{{.STORAGE_CLASS}}' STORAGE_SIZE='{{.STORAGE_SIZE}}' \
-          PULL_SECRET='{{.PULL_SECRET}}' yq '
-            with(select(strenv(PG_IMAGE) != ""); .spec.imageName = strenv(PG_IMAGE))
-            | with(select(strenv(STORAGE_SIZE) != ""); .spec.storage.size = strenv(STORAGE_SIZE))
-            | with(select(strenv(STORAGE_CLASS) != ""); .spec.storage.storageClass = strenv(STORAGE_CLASS))
-            | with(select(strenv(PULL_SECRET) != "");
-                .spec.imagePullSecrets = [strenv(PULL_SECRET) | split(",") | .[] | {"name": .}])
-          ' {{.MANIFESTEN}}/cluster.yaml > "$RENDER"
-        $KUBECTL apply -f "$RENDER"
-        echo "Wachten tot de kopie klaar is (de import loopt van pod naar pod)..."
-        $KUBECTL wait --for=condition=Ready cluster.postgresql.cnpg.io/keycloak-proef --timeout=900s
-      - task: keycloak-telling
-        vars:
-          CONTEXT: '{{.CONTEXT}}'
-          NAMESPACE: '{{.NAMESPACE}}'
-          CLUSTER: keycloak-proef
-          SECRET: keycloak-proef-app
-          OUT: '{{.VOOR}}'
-      - |
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        # De image gaat er met yq in VOORDAT de apply gebeurt: het manifest draagt een woord
-        # in plaats van een tag, dus een apply met daarna `set image` zou de pod eerst op een
-        # mislukte pull laten staan.
-        RENDER="$(mktemp)"
-        trap 'rm -f "$RENDER"' EXIT
-        KC_IMAGE='{{.KC_IMAGE}}' PULL_SECRET='{{.PULL_SECRET}}' yq '
-            with(select(.kind == "Deployment");
-              .spec.template.spec.containers[0].image = strenv(KC_IMAGE))
-            | with(select(.kind == "Deployment" and strenv(PULL_SECRET) != "");
-                .spec.template.spec.imagePullSecrets = [strenv(PULL_SECRET) | split(",") | .[] | {"name": .}])
-          ' {{.MANIFESTEN}}/deployment.yaml > "$RENDER"
-        $KUBECTL apply -f "$RENDER"
-        echo "Wachten tot de nieuwe Keycloak ready is; dan is de schemamigratie klaar..."
-        if ! $KUBECTL rollout status deployment/keycloak-proef --timeout=900s; then
-          $KUBECTL logs deployment/keycloak-proef --tail=80 >&2
-          exit 1
-        fi
-      - task: keycloak-telling
-        vars:
-          CONTEXT: '{{.CONTEXT}}'
-          NAMESPACE: '{{.NAMESPACE}}'
-          CLUSTER: keycloak-proef
-          SECRET: keycloak-proef-app
-          OUT: '{{.NA}}'
-      - |
-        echo "Telling voor en na de migratie:"
-        if ! diff -u {{.VOOR}} {{.NA}}; then
-          echo "De telling verschilt na de migratie. Dit is een reden om NIET te promoveren." >&2
-          exit 1
-        fi
-        echo "Geen verschil in de telling."
-      - |
-        # De inlogcontrole: een wachtwoord-hash en een OTP-secret uit de oude versie moeten op
-        # de nieuwe nog kloppen. Bij voorkeur met de OTP-beheerder, wachtwoord plus code: een
-        # direct grant zonder code geeft OOK "Invalid user credentials" zodra een gebruiker
-        # een OTP draagt, dus met alleen het wachtwoord van admin meet je dan niets.
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        PORT=58091
-        $KUBECTL port-forward service/keycloak-proef "$PORT:8080" >/dev/null 2>&1 &
-        FORWARD=$!
-        trap 'kill $FORWARD 2>/dev/null' EXIT
-        i=0
-        until curl -sf -o /dev/null "http://localhost:$PORT/realms/master"; do
-          i=$((i + 1))
-          if [ "$i" -gt 30 ]; then
-            echo "De port-forward naar keycloak-proef kwam niet op binnen 60 seconden" >&2
-            exit 1
-          fi
-          sleep 2
-        done
-        veld() {
-          $KUBECTL get secret keycloak-admin-credentials -o jsonpath="{.data.$1}" | base64 -d
-        }
-        OTP_GEBRUIKER="$(veld KEYCLOAK_OTP_ADMIN_USERNAME)"
-        if [ -n "$OTP_GEBRUIKER" ]; then
-          GEBRUIKER="$OTP_GEBRUIKER"
-          WACHTWOORD_VELD=KEYCLOAK_OTP_ADMIN_PASSWORD
-          # De code staat wel in argv: hij geldt maar een periode van 30 seconden.
-          CODE="$(veld KEYCLOAK_OTP_ADMIN_TOTP_SECRET | (cd operations-manager/python \
-            && uv run -q python -c 'import sys; from opi.utils.totp import totp_now; print(totp_now(sys.stdin.read())[0])'))"
-          echo "Inlogcontrole met $GEBRUIKER: wachtwoord en OTP-code"
-        else
-          GEBRUIKER="$(veld KEYCLOAK_ADMIN)"
-          WACHTWOORD_VELD=KEYCLOAK_ADMIN_PASSWORD
-          CODE=""
-          echo "Inlogcontrole met $GEBRUIKER: alleen het wachtwoord (geen OTP-beheerder in het secret)"
-        fi
-        # Het wachtwoord gaat via stdin en nooit als argument, dezelfde norm als
-        # keycloak-telling: de argv van een lopend proces is te lezen via /proc.
-        ANTWOORD="$(veld "$WACHTWOORD_VELD" \
-          | curl -s "http://localhost:$PORT/realms/master/protocol/openid-connect/token" \
-              -d grant_type=password -d client_id=admin-cli \
-              --data-urlencode "username=$GEBRUIKER" \
-              ${CODE:+--data-urlencode "totp=$CODE"} \
-              --data-urlencode "password@/dev/stdin")"
-        case "$ANTWOORD" in
-          *access_token*)
-            echo "Inloggen op de kopie lukt: de credentials van de oude versie kloppen nog."
-            ;;
-          *Invalid*user*credentials*)
-            echo "$GEBRUIKER kan niet inloggen op de kopie. Ofwel klopt de hash niet meer, ofwel" >&2
-            echo "draagt de gebruiker een OTP die deze controle niet meegeeft, ofwel staat hij" >&2
-            echo "tijdelijk geblokkeerd door de brute-force-detectie. Zoek uit welke van de drie." >&2
-            exit 1
-            ;;
-          *)
-            echo "Geen token, maar ook geen afgewezen wachtwoord. Lees het antwoord:" >&2
-            printf '%s\n' "$ANTWOORD" >&2
-            exit 1
-            ;;
-        esac
-    silent: false
-
   build-keycloak-relay-email-sender:
     desc: "Bouw de relay-emailSender-jar"
     cmds:
       - |
         echo "🔨 Bouwen van de relay-emailSender..."
-        cd keycloak-migration/relay-email-sender
+        cd images/keycloak-zad/extensions/relay-email-sender
         mvn clean package
         echo "✅ JAR gebouwd: $(ls target/keycloak-relay-email-sender-*.jar)"
     silent: false
@@ -2565,7 +2305,7 @@ tasks:
     deps: [requirements-check, sandbox:build-builder]
     vars:
       IMAGE_VERSION:
-        sh: scripts/calver-tag.sh keycloak-migration/relay-email-sender keycloak-migration/custom-mapper images/keycloak-zad
+        sh: scripts/calver-tag.sh images/keycloak-zad/extensions/relay-email-sender images/keycloak-zad/extensions/custom-mapper images/keycloak-zad
     preconditions:
       # Een inlog met een credential-helper laat een LEGE auths-regel achter, dus de sleutel
       # is het signaal en niet de inhoud. Hier en niet na de bouw: de validatiebouw staat uit,
@@ -2776,7 +2516,7 @@ tasks:
     cmds:
       - |
         echo "🧪 Tests van de relay-emailSender..."
-        cd keycloak-migration/relay-email-sender
+        cd images/keycloak-zad/extensions/relay-email-sender
         mvn test
     silent: false
 

@@ -12,7 +12,7 @@ In scope:
 - Runtime image bump. The base version sits in `images/keycloak-zad/Dockerfile`, which builds our own
   image with the providers in it; the tag of that build is pinned per environment
   (`features/keycloak-eigen-image.md`).
-- `keycloak-migration/custom-mapper/pom.xml` Keycloak dep bump + recompile + retest of all four custom providers:
+- `images/keycloak-zad/extensions/custom-mapper/pom.xml` Keycloak dep bump + recompile + retest of all four custom providers:
   - `UnrestrictedXPathAttributeMapper`
   - `RequireClientRoleAuthenticator`
   - `RigMetricsEndpoint`
@@ -45,7 +45,7 @@ Output: a section appended to this doc with concrete findings before any code ch
 
 Branch off `main`. Do not bundle with logout-endpoint work.
 
-- [ ] Bump `<keycloak.version>` in `keycloak-migration/custom-mapper/pom.xml`.
+- [ ] Bump `<keycloak.version>` in `images/keycloak-zad/extensions/custom-mapper/pom.xml`.
 - [ ] `mvn clean package`. Fix compile breakages. Most likely candidates:
   - `AuthenticationManager.backchannelLogout` signature drift.
   - `CookieProvider` / `CookieType` API shape.
