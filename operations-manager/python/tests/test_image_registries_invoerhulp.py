@@ -27,6 +27,7 @@ from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENC
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType
+from opi.utils import age
 from opi.web.router_wizard import _empty_sequence_item
 from pydantic import ValidationError
 
@@ -300,6 +301,12 @@ class TestCreateWizardEncryptsTheToken:
     """In the create wizard the project has no AGE key yet, so the converter leaves the
     token as typed. The final submit must encrypt it once the key exists, as it does for
     user-env-vars; otherwise the save refuses the project on the password pattern."""
+
+    @pytest.fixture(autouse=True)
+    def _wrapping_key(self, monkeypatch: pytest.MonkeyPatch, age_keypair: tuple[str, str]) -> None:
+        """The generated project key is wrapped with a platform key, which a bare test run lacks."""
+        monkeypatch.setattr(age.settings, "SOPS_AGE_PUBLIC_KEY", age_keypair[1], raising=False)
+        monkeypatch.setattr(age.settings, "PROJECT_KEK_PUBLIC_KEY", None, raising=False)
 
     @staticmethod
     def _final_data(registry: dict[str, Any]) -> dict[str, Any]:

@@ -202,7 +202,9 @@ async def test_een_eigenaar_krijgt_ze_wel(monkeypatch: pytest.MonkeyPatch, rol: 
 
     assert context["project"]["config"]["api-key"] == API_KEY
     assert context["project"]["config"]["age-private-key"] == project_prive
-    assert API_KEY in html
+    # Het blok Configuratie & Secrets toont de API key alleen aan platformbeheerders
+    # (56fdd6b74); een eigenaar die dat niet is, krijgt hem wel in de context maar niet op de pagina.
+    assert API_KEY not in html
     realm = _realms(context)[0]
     assert realm["password"] == KEYCLOAK_WACHTWOORD
     assert re.fullmatch(r"\d{6}", realm["totp_code"])
