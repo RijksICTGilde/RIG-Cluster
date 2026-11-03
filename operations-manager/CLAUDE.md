@@ -114,7 +114,7 @@ Manifest templates (Jinja2 for K8s YAML generation) are at: `operations-manager/
 
 ## Key Design Patterns
 
-Working on a service (keycloak, postgres, storage, ...)? Read `instructions/services.md`
+Working on a service (keycloak, postgres, storage, ...)? Read `docs/development/services.md`
 first: it holds the service/manager/connector split, the package layout, and every hook a
 service declares.
 

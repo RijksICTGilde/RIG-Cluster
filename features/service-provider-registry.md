@@ -26,7 +26,7 @@ registry line, and a coverage test fails CI if you forget the registry line.
   `Service` subclass (`__init__.py`) plus the config model, editables, visualizers,
   committed schema fragment and any detail-page template, all owned in one place. A
   service is a user-facing configuration-as-code unit, **not** a connector/provider
-  ("how OPI talks to a system"). See `instructions/services.md` for the full contract
+  ("how OPI talks to a system"). See `docs/development/services.md` for the full contract
   and every hook a service declares.
 - `opi/services/registry.py` — assembles `SERVICES` (one entry per `ServiceType`) plus
   the derivation helpers (`get_service`, `provisioning_services`,

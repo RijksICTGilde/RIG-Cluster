@@ -88,7 +88,7 @@ draagt, niet hoe de stap heet.
 
 ## Testen
 
-Zie `instructions/wizard-tests.md`. De vier bugs van 6 augustus 2026 zijn gedekt op
+Zie `docs/development/wizard-tests.md`. De vier bugs van 6 augustus 2026 zijn gedekt op
 niveau 2 (`tests/forms/test_wizard_base_and_mutations.py`, zonder browser) en het
 vergrendelde-dienst-geval ook op niveau 5
 (`tests/e2e/test_wizard_locked_service.py`, Playwright) — dat laatste is het enige niveau

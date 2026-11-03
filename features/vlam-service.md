@@ -264,4 +264,4 @@ peer. Dat is er nu, als **wildcard-peer** (`config_schema_version` 1.1):
 
 - `vlam.md` — het runbook van de gateway en van `vlam-proxy-intern` zelf
 - `features/futures/vlam-api-vpn-proxy.md` — het ontwerp achter het VPN-pad
-- `instructions/services.md` — hoe een dienst in elkaar zit
+- `docs/development/services.md` — hoe een dienst in elkaar zit

@@ -22,7 +22,7 @@ faalt ook (dat zou blijven slagen nadat de config die hij excuseerde verhuisd is
 ## Hoe een laag antwoord geeft
 
 **Projectlaag** -- de dienst bouwt zijn eigen `FormSection` (een aparte wizardstap), en die
-wordt met de hand in de flows gehangen. Ongewijzigd; zie `instructions/services.md`.
+wordt met de hand in de flows gehangen. Ongewijzigd; zie `docs/development/services.md`.
 
 **Component- en deployment-componentlaag** -- die velden zitten *ingebed* in het
 componentformulier, niet in een eigen stap, dus er valt per dienst niets te schrijven. De

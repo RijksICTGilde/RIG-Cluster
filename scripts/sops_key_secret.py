@@ -18,7 +18,7 @@ platform key and make their secrets unreadable.
 Until RC-351 ``rig-ron`` held a second copy of the platform key, because the RON renderer read it
 from its own destination namespace. The platform apps now render in the ``cmp-platform`` sidecar
 with the key as a mount, so that copy is gone; see
-``instructions/sops-sleutel-in-het-cluster.md``.
+``docs/development/sops-sleutel-in-het-cluster.md``.
 
 So the selection is by KEY and not by name, exactly like the file side selects by recipient: this
 tool reads each secret, derives its public half, and only replaces the ones that currently hold

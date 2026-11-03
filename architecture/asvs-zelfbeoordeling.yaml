@@ -123,7 +123,7 @@ oordelen:
 - id: V2.1.1
   status: toets
   toets: operations-manager/python/tests/test_editable_processor.py
-  toelichting: De validatieregels per veld staan in de editables, en instructions/services.md beschrijft
+  toelichting: De validatieregels per veld staan in de editables, en docs/development/services.md beschrijft
     die vorm.
 - id: V2.1.2
   status: handwerk

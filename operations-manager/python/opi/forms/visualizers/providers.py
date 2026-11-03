@@ -201,7 +201,7 @@ class ServiceOptionsProvider:
         """Get available service options from ServiceAdapter definitions."""
         # Imported here, not at module scope: the registry imports the catalog, whose
         # services import this forms module back. The catalog breaks the same cycle the
-        # same way (instructions/services.md, "Keep the catalog import-light").
+        # same way (docs/development/services.md, "Keep the catalog import-light").
         from opi.services.registry import get_service
 
         options: list[dict[str, Any]] = []

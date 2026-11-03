@@ -787,7 +787,7 @@ class Service(ABC):
 
     #: Whether the CONFIG of this service at the component layer is at the same time its
     #: SELECTION, so there is no separate on/off for it on a component. What follows from
-    #: it, and when to declare it: ``instructions/services.md``.
+    #: it, and when to declare it: ``docs/development/services.md``.
     component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
@@ -1771,6 +1771,6 @@ def offers_component_checkbox(service: Service) -> bool:
     """Whether a component ticks this service on and off in the per-component picker.
 
     The one place where the two declarations that take the checkbox away meet; they stay
-    separate because their consequences elsewhere differ (``instructions/services.md``).
+    separate because their consequences elsewhere differ (``docs/development/services.md``).
     """
     return service.definition.selectable_per_component and not service.component_selection_follows_config

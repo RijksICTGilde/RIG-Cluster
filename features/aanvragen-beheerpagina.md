@@ -54,7 +54,7 @@ tabel komt te staan en de teller met de lijst blijft kloppen.
 ## Een nieuwe dienst met goedkeuring erop
 
 Niets. Een dienst die een `ApprovalSpec` met een `list_items` declareert verschijnt vanzelf
-met een eigen groep; zie `instructions/services.md` ("Approvals"). Geef het item wel een
+met een eigen groep; zie `docs/development/services.md` ("Approvals"). Geef het item wel een
 `subject`, anders staat er wat de terugval ervan maakt.
 
 ## De proefopstelling

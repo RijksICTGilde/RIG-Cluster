@@ -157,7 +157,7 @@ weg is voordat de taak klaar meldt.
 ## Een nieuwe bevestiging toevoegen
 
 - Hoort de actie bij een dienst? Geef die een `DeploymentAction` met `confirm_message` --
-  zie `instructions/services.md`. Hier hoeft niets bij.
+  zie `docs/development/services.md`. Hier hoeft niets bij.
 - Hoort de actie bij het project zelf? Voeg een sleutel toe in
   `opi/web/project_actions.py` (bericht, knop, endpoint, toetsing van `target`) en roep
   vanaf de pagina `openServiceModal(...)` aan met die sleutel. Het endpoint moet

@@ -336,7 +336,7 @@ class Settings(BaseSettings):
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
 
     # De project-KEK: de sleutel waarmee alleen de projectsleutels zijn ingepakt. Hij staat
-    # bewust alleen in de OPI-pod, zie instructions/sops-sleutel-in-het-cluster.md.
+    # bewust alleen in de OPI-pod, zie docs/development/sops-sleutel-in-het-cluster.md.
     PROJECT_KEK_FILE: str | None = None  # Pad naar de gemounte KEK in de pod
     PROJECT_KEK_PUBLIC_KEY: str | None = None
     PROJECT_KEK_PRIVATE_KEY: str | None = None

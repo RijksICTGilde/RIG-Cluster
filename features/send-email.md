@@ -618,7 +618,7 @@ plek om te kijken als de dienst niets doet.
    `cmp-platform`-sidecar leest in plaats van uit de bestemmingsnamespace. RC-261 zette
    die kopie nog vanuit de bootstrap; die stap is vervallen, en een cluster dat het
    secret nog heeft staan mag het na de uitrol met de hand weghalen (zie
-   `instructions/sops-sleutel-in-het-cluster.md`).
+   `docs/development/sops-sleutel-in-het-cluster.md`).
 
 2b. **De eigen Application**: `- argocd-application-ron-infrastructure.yaml` in
    `bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml`, en dan de

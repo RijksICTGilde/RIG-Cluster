@@ -443,5 +443,5 @@ Daarom staat het memory-request op **512Mi** en niet op de 256Mi van MinIO; de l
 ## Verder
 
 - `features/impliciete-dienstselectie.md` - waarom deze dienst zich zelf mag inschrijven
-- `instructions/services.md` - het dienstensysteem waar deze dienst in past
+- `docs/development/services.md` - het dienstensysteem waar deze dienst in past
 - `docs/KNOWN-ISSUES.md` - waarom MinIO een overbrugging is

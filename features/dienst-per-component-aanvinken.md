@@ -49,7 +49,7 @@ niet). `hidden` slaat alleen op de projectkaart.
 is wél een keuze per component, maar die zit in het eigen configuratieveld. De picker
 stelt er één afgeleide vraag over, `offers_component_checkbox(service)` in
 `opi/services/catalog/base.py`. Waarom ze niet samengevouwen mogen worden, en wat er
-verder aan hangt: `instructions/services.md`.
+verder aan hangt: `docs/development/services.md`.
 
 ## Gedeeld per deployment is een derde feit
 

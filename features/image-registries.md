@@ -127,10 +127,10 @@ Drie richtingen, en ze gelden voor het formulier en voor de API:
 | "Automatisch" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
 | niets kiezen | er verandert niets; afwezig BETEKENT automatisch (zie de voorrangsregel hieronder) |
 
-Dat is de val waar `instructions/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
+Dat is de val waar `docs/development/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
 een default stil een selectie), maar hier gewild, en alleen in de ene richting. De regel staat
 een keer, als `component_selection_follows_config` op de dienst; wat daaruit volgt staat in
-`instructions/services.md`.
+`docs/development/services.md`.
 
 Of het veld verschijnt volgt uit zijn eigen keuzelijst (`hidden_without_options`). Heeft het
 project geen registries, dan blijft de componentvorm zoals hij was: de toestand van 47 van de

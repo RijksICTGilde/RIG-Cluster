@@ -136,7 +136,7 @@ Na een klik op uitloggen waren de Keycloak-sessies weg (`mb-docs-helmfile-odcn-p
 
 Twee gevolgen, beide gemeten in het harnas (`operations-manager/python/tests/e2e/test_keycloak_logout_harness.py`, marker `keycloak_harness`). De metingen hier en hieronder zijn op Keycloak 25.0.6 gedaan; sinds RC-412 draait dat harnas op 26.8.1, want de shim is tegen die versie gebouwd en draagt geen `@Provider` meer. Een herhaling van de meting hoort bij de checklist in `features/keycloak-26-upgrade.md`.
 
-1. **Een applicatie moet haar eigen sessie wissen vóór de redirect.** ZAD doet dat (`opi/api/auth_routes.py`, `request.session.clear()` voor de redirect) en heeft dit probleem daarom niet. Het contract staat in `instructions/uitloggen-in-een-applicatie.md`.
+1. **Een applicatie moet haar eigen sessie wissen vóór de redirect.** ZAD doet dat (`opi/api/auth_routes.py`, `request.session.clear()` voor de redirect) en heeft dit probleem daarom niet. Het contract staat in `docs/development/uitloggen-in-een-applicatie.md`.
 2. **`frontchannel.logout.url` op een applicatieclient wordt binnen deze federatie niet aangeroepen**, ook niet als hij netjes gezet is. Buiten de federatie (inloggen op het projectrealm zelf) wel: daar draait `finishBrowserLogout` in de browser van de gebruiker en belt Keycloak het pad. Binnen de federatie bereikt de uitlog het projectrealm als server-naar-server POST, en daar valt niets te renderen. Zie "Waarom de backchannel-notificatie faalt" hieronder.
 
 ### Repareer dit niet door de shim om te draaien
@@ -204,7 +204,7 @@ Caveat: BZK must honor the standard SAML `ForceAuthn` attribute. If their implem
 
 ## Related
 
-- `instructions/uitloggen-in-een-applicatie.md` - het contract voor de applicatiekant: wis je eigen sessie vóór de redirect
+- `docs/development/uitloggen-in-een-applicatie.md` - het contract voor de applicatiekant: wis je eigen sessie vóór de redirect
 - `features/keycloak-logout-path.md` - het opt-in `logout-path` dat de front-channel logout URL op de client zet
 - BZK federation chain context: `[[project_keycloak_slo]]` — every downstream OIDC broker (`rig-platform-oidc` in ZAD realms) must have `backchannelSupported=false` so the chain stays frontchannel up to this point.
 - Existing `RealmResourceProvider` pattern this mirrors: `nl.minbzk.rig.keycloak.metrics.RigMetricsEndpoint`.
