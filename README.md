@@ -49,18 +49,39 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 | PostgreSQL | CNPG-managed database cluster |
 | Keycloak | Identity and access management, SSO |
 | MinIO | S3-compatible object storage |
+| SeaweedFS | Fallback object storage |
+| Redis | Key-value store for projects |
+| Mail relay | Outgoing mail for projects and Keycloak |
+| Prometheus | Metrics and monitoring |
 | Operations Manager | ZAD self-service portal and API |
 
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) - local setup guide
+- [Working in the code](docs/development/README.md) - contracts and step-by-step for changing a subsystem; start here before you change code
+- [Features](features/README.md) - what each built feature is and how it works, indexed by theme
 - [Keycloak Configuration](docs/keycloak/keycloak.md) - Keycloak administration
 - [Keycloak YAML Configuration](docs/keycloak/keycloak-yaml-configuration.md) - declarative Keycloak setup
 - [Beveiligingsbeleid](SECURITY.md) - hoe je een kwetsbaarheid meldt
 
+### Repository Layout
+
+| Folder | Contains |
+|--------|----------|
+| `operations-manager/` | The Operations Manager (FastAPI, Python) |
+| `infrastructure/`, `bootstrap/` | Kustomize for the platform components and the `rig-system` namespace, per cluster type |
+| `images/` | Our own container images (Keycloak with extensions, ArgoCD, PostgreSQL with dictionaries, test workloads) |
+| `features/` | One document per built feature |
+| `docs/` | `development/` (working in the code), `sandbox/`, `operations/`, `keycloak/`, `security/`, `post-mortems/` |
+| `architecture/` | System overviews, decision records, ASVS and BIV assessments |
+| `scripts/` | Key rotation, secret scanning and sandbox helpers |
+| `weekly/` | Release notes |
+
+Plans, TODO lists, run reports and other outdated material live in the separate repository RIG-Cluster-Legacy, under the same path they had here.
+
 ### Feature Documentation
 
-Feature-specific documentation is in the [`features/`](features/) directory. Key features:
+The full list is in [`features/README.md`](features/README.md). Key features:
 
 - [Sandboxed Local Development](features/sandboxed-local-development.md) - sandbox architecture and configuration
 - [Sandbox SSO Setup](features/sandbox-sso-setup.md) - connecting to production Keycloak for SSO
