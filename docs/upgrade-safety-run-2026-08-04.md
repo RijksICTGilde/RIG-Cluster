@@ -114,7 +114,7 @@ schema-bump, invite-relocation, uniform-normalization and SOPS/AGE churn.
 
 ## Problems hit this run, and how to prevent them next time
 
-Ordered roughly as encountered. C, D and E were fixed by re-converting/​re-pushing (C, D by
+Ordered roughly as encountered. C, D and E were fixed by re-converting/re-pushing (C, D by
 the owner; E by hand this run); B and E-repair are the only sandbox-side repairs I made.
 
 - **A. Pre-staged repo access.** `zad-upgrade-test-projects` returned 404 until access
