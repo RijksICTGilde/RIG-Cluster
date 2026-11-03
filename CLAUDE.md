@@ -78,16 +78,15 @@ RIG-Cluster/
 |-- bootstrap/              # Bootstrap Kustomize for rig-system namespace
 |   +-- rig-system/         #   OPI deployment, secrets, overlays per cluster type
 |
-|-- projects/               # Example project definition files (YAML)
 |-- instructions/           # How to work in the code (read before changing a subsystem)
-|-- features/               # Feature documentation (one .md per feature)
-|-- docs/                   # Setup guides, known issues, post-mortems
+|-- features/               # Feature documentation (one .md per feature, index in README.md)
+|-- docs/                   # Operating the platform: sandbox/, operations/, keycloak/, security/, post-mortems/
 |-- architecture/           # Architectural diagrams and overviews
 |-- images/                 # Custom Docker images (e.g., postgresql-with-dictionaries)
 |-- security/               # AGE keys, SOPS config (not committed to repo)
 |-- scripts/                # Utility scripts
+|-- references/             # Reference material (e.g. usage/: billing queries)
 |-- weekly/                 # Release notes / weekly updates
-|-- archive/                # Outdated documentation kept for reference
 |-- Taskfile.yaml           # All operations (100+ tasks)
 +-- docker-compose.dev.yaml # Local dev (PostgreSQL + OPI)
 ```
@@ -177,7 +176,9 @@ which also states which folder is for what (`instructions/` vs `features/` vs `d
 - `instructions/services.md` - the service system: what a service owns, how config, forms,
   provisioning, manifests and approvals hook in, and how to add one.
 
-When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames.
+When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames, and add a line for it to `features/README.md`.
+
+Plans, TODO lists, run reports, design briefs for unbuilt work (the old `features/futures/`) and other outdated material live in the separate repo **RIG-Cluster-Legacy** (`~/IdeaProjects/RIG-Cluster-Legacy`), under the same path they had here. A reference to a path that does not exist here points there. New plans go in `plans/` in that repo for now. Open work belongs on a card on the ZAD project board, not in a file.
 
 ## Python Code Style
 
