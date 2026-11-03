@@ -7,7 +7,7 @@ The sweep must never offer anything actively used for deletion:
 
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.jobs.service_orphan_sweep import (
@@ -18,6 +18,22 @@ from opi.jobs.service_orphan_sweep import (
     _live_deployments,
     sweep,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every source of sweep() fails at once, unless a test patches it itself.
+
+    Without this, sweep() talked to PostgreSQL, Keycloak, MinIO and GitHub, and each test
+    waited a minute for the timeout. sweep() catches every error per source, so the report
+    is the same.
+    """
+    error = ConnectionError("no real inventory in a unit test")
+    for name in ("create_postgres_connector", "create_minio_connector"):
+        monkeypatch.setattr(f"opi.jobs.service_orphan_sweep.{name}", MagicMock(side_effect=error))
+    for name in ("create_keycloak_connector", "create_mail_connector", "create_git_connector_for_argocd"):
+        monkeypatch.setattr(f"opi.jobs.service_orphan_sweep.{name}", AsyncMock(side_effect=error))
+
 
 PROJECTS = {"regel-k4c": ["regelrecht", "pr781"], "waggl-9et": ["productie"]}
 EXPECTED = {
