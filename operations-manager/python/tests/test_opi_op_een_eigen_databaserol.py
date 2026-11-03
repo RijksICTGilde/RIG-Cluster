@@ -95,6 +95,7 @@ async def test_de_hoofdpool_krijgt_de_app_credentials(monkeypatch: pytest.Monkey
             gebouwd.append(kwargs)
 
     monkeypatch.setattr("opi.core.database_pools.DatabasePool", _Pool)
+    monkeypatch.setattr("opi.core.database_pools._pools", {})
     monkeypatch.setattr("opi.core.database_pools._ensure_database_exists", AsyncMock())
     monkeypatch.setattr("opi.core.database_pools._initialize_database_pool_with_retry", AsyncMock())
     monkeypatch.setattr("opi.core.database_pools._verify_app_role", AsyncMock())

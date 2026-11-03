@@ -25,7 +25,10 @@ spec:
         # Waarschuwmodus, en met opzet: het tekenen van de images zelf hangt aan
         # RC-369, en welke build productie draait aan het open admission-besluit. In
         # Audit meldt deze regel wat er nog niet getekend is, zonder iets te stoppen.
+        # mutateDigest false: in Audit weigert Kyverno een regel die de image-referentie
+        # zou herschrijven, en de standaard is true.
         - failureAction: Audit
+          mutateDigest: false
           imageReferences:
             - "ghcr.io/rijksictgilde/zad/*"
           attestors:

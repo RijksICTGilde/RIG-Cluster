@@ -34,14 +34,14 @@ oordelen:
     meet het op de gerenderde pagina.
 - id: V1.2.4
   status: toets
-  toets: aanvalsproef/semgrep-zad.yaml .github/workflows/security.yml#sast-codeql
+  toets: aanvalsproef/semgrep-zad.yaml
   toelichting: SQLAlchemy 2.0 met gebonden parameters; de SAST-gate is wat een rauwe query zou vangen.
 - id: V1.2.5
   status: toets
   toets: operations-manager/python/tests/test_pgdump_command_injection.py aanvalsproef/semgrep-zad.yaml
-    .github/workflows/security.yml#sast-codeql
   toelichting: De connectors geven een argumentenlijst mee; de semgrep-regels zad-subprocess-buiten-connector
-    en zad-subprocess-via-een-shell en de taint-analyse van CodeQL houden dat vast.
+    en zad-subprocess-via-een-shell en de taint-analyse van CodeQL (default setup op de repo, query-set
+    extended) houden dat vast.
 - id: V1.2.6
   status: nvt
   toelichting: 'ZAD doet geen eigen LDAP-queries: de koppeling met SSO-Rijk loopt via Keycloak over OIDC.'
@@ -61,7 +61,7 @@ oordelen:
   toelichting: Er is geen WYSIWYG-editor; vrije tekst wordt als tekst gerenderd.
 - id: V1.3.2
   status: toets
-  toets: aanvalsproef/semgrep-zad.yaml .github/workflows/security.yml#sast-codeql
+  toets: aanvalsproef/semgrep-zad.yaml
   toelichting: Geen eval of dynamische codeuitvoering; de SAST-gate is wat dat zou vangen.
 - id: V1.3.3
   status: toets
@@ -117,7 +117,7 @@ oordelen:
     ronde voor de externe audit
 - id: V1.5.2
   status: toets
-  toets: aanvalsproef/semgrep-zad.yaml .github/workflows/security.yml#sast-codeql
+  toets: aanvalsproef/semgrep-zad.yaml
   toelichting: Deserialisatie gaat via Pydantic en yaml.safe_load; de SAST-gate vangt een pickle of een
     onveilige loader.
 - id: V2.1.1
