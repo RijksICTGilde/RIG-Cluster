@@ -46,9 +46,6 @@ secrets-overview-*.yaml
 /operations-manager/docs/interview.sh
 /operations-manager/docs/business-case-interview-prompt.md
 /operations-manager/docs/business-case-answers/
-/keycloak-migration/sso-migration/steps.md
-/keycloak-migration/sso-migration/backups/
-/keycloak-migration/sso-migration/verify_sso_migration.py
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-repo-secret-infrastructure-secret.yaml.sops.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-repo-users-applications-secret.yaml.sops.yaml
 /bootstrap/rig-system/kustomize/overlays/sandboxed-local/decrypt-sops.yaml
