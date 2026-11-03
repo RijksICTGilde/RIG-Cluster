@@ -14,7 +14,7 @@ historie van de repo, en het draaiende portaal.
 | `gitleaks` | gitleaks | sleutelvormen in de boom, met vendor- en entropieregels | `security.yml`, elke PR |
 | `gitleaks-history` | gitleaks | dezelfde regels over elke blob die ooit bestond | `security.yml`, wekelijks |
 | `sast-semgrep` | semgrep | `p/python`, `p/owasp-top-ten` plus de eigen ZAD-regels | `security.yml`, elke PR |
-| `sast-codeql` | CodeQL | taint-analyse van invoer naar de argumentenlijst van een extern programma | `security.yml`, elke PR |
+| CodeQL default setup | CodeQL | taint-analyse van invoer naar de argumentenlijst van een extern programma, query-set extended, alle talen | repo-instelling, elke PR |
 | `manifest-posture` | kube-linter, checkov | de manifests die ZAD voor elke tenant genereert | `security.yml`, elke PR |
 | `nuclei` | nuclei | ruim 11.000 templates tegen een zelf opgezet portaal, met en zonder sessie | `aanvalsproef.yml`, elke PR |
 

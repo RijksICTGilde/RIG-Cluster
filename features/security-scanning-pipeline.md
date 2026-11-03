@@ -56,7 +56,7 @@ Manual trigger via GitHub Actions UI.
 | `gitleaks` | gitleaks | sleutelvormen in de boom, met de vendorregels | Push, PR, weekly |
 | `gitleaks-history` | gitleaks | elke blob die ooit bestond, met de vendorregels | Weekly and on demand |
 | `sast-semgrep` | semgrep | `p/python`, `p/owasp-top-ten` plus de eigen ZAD-regels | Push, PR, weekly |
-| `sast-codeql` | CodeQL | taint-analyse van invoer naar de argumentenlijst van een extern programma | Push, PR, weekly |
+| CodeQL default setup | CodeQL | taint-analyse van invoer naar de argumentenlijst van een extern programma, query-set extended, alle talen | Repo-instelling: push, PR, weekly |
 | `manifest-posture` | kube-linter, checkov | de manifests die ZAD voor elke tenant genereert | Push, PR, weekly |
 
 De onderste vijf jobs, de dynamische scan in `.github/workflows/aanvalsproef.yml` en de
