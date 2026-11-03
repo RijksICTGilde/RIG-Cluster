@@ -26,7 +26,8 @@ Prometheus-vorm, zodat het aantal alerts per regel te volgen is naast de bestaan
 
 ## De driver, en waarom dat uitmaakt
 
-De DaemonSet draait `falcosecurity/falco-no-driver` met `--modern-bpf`. Dat laadt geen
+De DaemonSet draait `falcosecurity/falco` met `--modern-bpf`. Sinds Falco 0.40 is dat image
+zelf zonder driver; `falco-no-driver` houdt op bij 0.39.2. Dat laadt geen
 kernelmodule en vraagt geen privileged container: `hostPID` plus vier capabilities (`BPF`,
 `PERFMON`, `SYS_RESOURCE`, `SYS_PTRACE`) is genoeg. De oudere drivers vragen wel een
 privileged container, en dat is precies het schot dat we hier niet willen doorbreken om een

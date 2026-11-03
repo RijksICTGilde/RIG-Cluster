@@ -21,7 +21,7 @@ spec:
       hostNetwork: false
       containers:
         - name: falco
-          image: falcosecurity/falco-no-driver:0.42.0
+          image: falcosecurity/falco:0.42.0
           args:
             - /usr/bin/falco
             - --modern-bpf

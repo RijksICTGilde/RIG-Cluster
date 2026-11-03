@@ -77,8 +77,10 @@ def boom(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _task(boom: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _task(boom: Path, *args: str, cluster_type: str | None = None) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if k not in ("CLUSTER_TYPE", "KIND_CLUSTER_NAME")}
+    if cluster_type:
+        env["CLUSTER_TYPE"] = cluster_type
     env["PATH"] = f"{boom / 'stubs'}{os.pathsep}{env['PATH']}"
     return subprocess.run([echt_programma("task"), *args], cwd=boom, env=env, capture_output=True, text=True)
 
@@ -122,7 +124,7 @@ def test_een_overlaypad_zonder_clustersoort_weigert(boom: Path, taak: str) -> No
 
 def test_een_overlaypad_met_een_geldige_clustersoort_loopt_wel(boom: Path) -> None:
     uitslag = _task(
-        boom, "--dry", "deploy-operations-manager", "CLUSTER_TYPE=odcn-production", "KEY_FILE=security/key.txt"
+        boom, "--dry", "deploy-operations-manager", "KEY_FILE=security/key.txt", cluster_type="odcn-production"
     )
 
     assert uitslag.returncode == 0, uitslag.stderr
@@ -130,7 +132,7 @@ def test_een_overlaypad_met_een_geldige_clustersoort_loopt_wel(boom: Path) -> No
 
 def test_zonder_sleutel_weigert_de_taak_in_plaats_van_de_prodsleutel_te_nemen(boom: Path) -> None:
     """Zonder AGE_KEY_FILE viel de sleutel vroeger stil op security/key.txt, ook voor een ander cluster."""
-    uitslag = _task(boom, "--dry", "deploy-operations-manager", "CLUSTER_TYPE=odcn-staging")
+    uitslag = _task(boom, "--dry", "deploy-operations-manager", cluster_type="odcn-staging")
 
     assert uitslag.returncode != 0
     assert "AGE_KEY_FILE" in uitslag.stderr + uitslag.stdout
@@ -172,13 +174,13 @@ def test_sandbox_setup_loopt_zonder_env_bestand(boom: Path) -> None:
 
 
 def _select_cluster(boom: Path, taskfile: dict, keuze: str) -> subprocess.CompletedProcess[str]:
-    script = "\n".join(str(cmd) for cmd in taskfile["tasks"]["select-cluster"]["cmds"])
+    script = "\n".join(str(cmd) for cmd in taskfile["tasks"]["select-cluster"]["cmds"]).replace("{{.CLUSTER}}", "")
     return subprocess.run(["bash", "-c", script], cwd=boom, input=f"{keuze}\n", capture_output=True, text=True)
 
 
 def test_select_cluster_weigert_een_ongeldige_keuze(boom: Path, taskfile: dict) -> None:
     """Viel terug op local, inclusief het kopieren van .env-taskfile-local naar current."""
-    uitslag = _select_cluster(boom, taskfile, "3")
+    uitslag = _select_cluster(boom, taskfile, "9")
 
     assert uitslag.returncode != 0
     assert not (boom / ".env-taskfile-current").exists()

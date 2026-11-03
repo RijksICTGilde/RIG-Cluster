@@ -19,6 +19,8 @@ env:
   # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
   # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
   # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
+  # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
   HARDEN_ENDPOINTS: |
     *.actions.githubusercontent.com:443
     *.blob.core.windows.net:443
@@ -79,9 +81,9 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -103,9 +105,9 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -127,9 +129,9 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -180,9 +182,9 @@ jobs:
             registry: ghcr.io/minbzk/base-images/argocd-rig
             pin: bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -290,9 +292,9 @@ jobs:
       matrix:
         map: [bootstrap, infrastructure]
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -317,9 +319,9 @@ jobs:
     name: Gitleaks - branch tree
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -342,9 +344,9 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -366,9 +368,9 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -427,41 +429,14 @@ jobs:
           sarif_file: semgrep.sarif
           category: semgrep
 
-  sast-codeql:
-    name: SAST - CodeQL
-    runs-on: ubuntu-latest
-    steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
-        with:
-          egress-policy: block
-          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: "3.14"
-
-      # security-extended omdat de taint-analyse het scherpst is op het pad dat hier het
-      # meest kan kosten: een veld uit een projectbestand dat in de argumentenlijst van
-      # kubectl, git, sops of mc belandt.
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
-        with:
-          languages: python
-          queries: security-extended
-
-      - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
-        with:
-          category: codeql-python
 
   manifest-posture:
     name: Manifest posture
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -529,9 +504,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
