@@ -18,7 +18,7 @@ import pytest
 from opi.jobs.reconciliation import _build_expected_resources, _purge_backup_data, cleanup_project, reconcile
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.utils.yaml_util import load_yaml_from_string
-from tests.loop_meeloper import meeloper
+from tests.jsonpath_counter import count_jsonpath_compiles
 
 # --- _row_to_dict tests ---
 
@@ -847,7 +847,7 @@ class TestBuildExpectedResourcesHoudtDeLoopNietVast:
     """De nachtelijke reconciliatie en de admin-endpoints draaien dit op de hele vloot.
 
     Zonder de gedeelde jsonpath-compiler en de directe deployment-lookup kostte een
-    enkel project met 25 deployments ongeveer 1 s, en faalde deze toets.
+    enkel project met 25 deployments ongeveer 1 s, met een jsonpath per deployment.
     """
 
     @pytest.mark.asyncio
@@ -857,8 +857,10 @@ class TestBuildExpectedResourcesHoudtDeLoopNietVast:
         )
         assert project_data is not None
 
-        async with meeloper() as meting:
+        with count_jsonpath_compiles() as compiles:
             expected = _build_expected_resources([project_data])
 
         assert expected
-        meting.eis_onder(0.2, "_build_expected_resources op 25 deployments")
+        # Counted rather than timed: a time limit measures the machine, a compile per
+        # deployment is the cause itself.
+        assert compiles.count < 25, f"{compiles.count} jsonpath compiles for 25 deployments: one per deployment again?"

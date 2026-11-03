@@ -711,23 +711,23 @@ _voortgang_stand = {"klaar": 0, "totaal": 0, "rood": 0}
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
-    """Houd met TEST_SHARDS/TEST_SHARD alleen dit deel van de bestanden over, en onthoud
-    hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen.
+    """Keep only this shard's files under TEST_SHARDS/TEST_SHARD, and remember how many tests
+    will run, so every progress line can show 'n of total'.
 
-    Per bestand en niet per test: de fixtures op modulescope blijven dan in één run. Hier
-    en niet met een bestandslijst in de CI-stap, zodat die stap gewoon ``tests/`` aanroept
-    en test_rotation_ci_wiring hem kan blijven lezen.
+    Per file and not per test: module scoped fixtures then stay in one run. Done here and not
+    with a file list in the CI step, so that step still calls ``tests/`` and
+    test_rotation_ci_wiring can keep reading it.
 
-    ``trylast``, want de deselectie op markers (``-m e2e``) gebeurt ook in deze hook: tel je
-    eerder, dan staat er 9054 als totaal terwijl er 462 tests draaien.
+    ``trylast``, because marker deselection (``-m e2e``) also happens in this hook: counting
+    earlier shows 9054 as the total while 462 tests run.
     """
     shards = int(os.environ.get("TEST_SHARDS", "1"))
     if shards > 1:
         shard = int(os.environ["TEST_SHARD"])
-        bestanden = sorted({item.path for item in items})
-        mijn_deel = {pad for index, pad in enumerate(bestanden) if index % shards == shard}
-        config.hook.pytest_deselected(items=[item for item in items if item.path not in mijn_deel])
-        items[:] = [item for item in items if item.path in mijn_deel]
+        files = sorted({item.path for item in items})
+        mine = {path for index, path in enumerate(files) if index % shards == shard}
+        config.hook.pytest_deselected(items=[item for item in items if item.path not in mine])
+        items[:] = [item for item in items if item.path in mine]
     _voortgang_stand["totaal"] = len(items)
 
 
