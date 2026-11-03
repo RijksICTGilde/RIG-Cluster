@@ -80,7 +80,7 @@ Die commit je, waarna je deployt:
 ```bash
 git add bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
 git commit -m "deploy: operations-manager 2026.07.22.1432-7ccad61d"
-task deploy-operations-manager CLUSTER_TYPE=odcn-production
+CLUSTER_TYPE=odcn-production task deploy-operations-manager
 ```
 
 De pin staat dus in git. Daarmee is de git-historie van dat ene bestand het draaiboek van wat er

@@ -1,6 +1,11 @@
 version: '3'
 
-dotenv: ['.env', '.env-taskfile-current']
+# Met CLUSTER_TYPE in de omgeving (`CLUSTER_TYPE=odcn-staging task ...`) komt de hele
+# clusterconfiguratie uit .env-taskfile-<cluster>, wat task select-cluster ook geselecteerd
+# heeft: het eerste bestand dat een naam zet, wint. Zonder CLUSTER_TYPE geldt de selectie.
+# Een argument (`task ... CLUSTER_TYPE=x`) bestaat nog niet als dit gelezen wordt; daarvoor
+# is de guard selected_cluster_guard.
+dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '.env-taskfile-current']
 
 vars:
   KIND_VERSION: 1.32.0
@@ -37,7 +42,7 @@ tasks:
     silent: true
 
   select-cluster:
-    desc: "Select target cluster and load corresponding environment file"
+    desc: "Select target cluster and load corresponding environment file (CLUSTER=<naam> kiest zonder vraag)"
     cmds:
       - |
         echo "🎯 Cluster Selection"
@@ -48,19 +53,23 @@ tasks:
         echo "2) sandboxed-local (self-contained sandbox with Forgejo)"
         echo "3) odcn-staging (ODCN, tenant rig-staging)"
         echo ""
-        printf "Select cluster [1-3]: "
-        read -r CLUSTER_CHOICE
+        # CLUSTER=<naam> of CLUSTER=<nummer> kiest zonder vraag, ook waar geen terminal is.
+        CLUSTER_CHOICE="{{.CLUSTER}}"
+        if [ -z "$CLUSTER_CHOICE" ]; then
+          printf "Select cluster [1-3]: "
+          read -r CLUSTER_CHOICE
+        fi
 
         case $CLUSTER_CHOICE in
-          1)
+          1|odcn-production)
             ENV_FILE=".env-taskfile-odcn-production"
             CLUSTER_NAME="odcn-production"
             ;;
-          2)
+          2|sandboxed-local)
             ENV_FILE=".env-taskfile-sandboxed-local"
             CLUSTER_NAME="sandboxed-local"
             ;;
-          3)
+          3|odcn-staging)
             ENV_FILE=".env-taskfile-odcn-staging"
             CLUSTER_NAME="odcn-staging"
             ;;
@@ -610,13 +619,14 @@ tasks:
       # Draai de taak daarna nog een keer zonder deze optie, dan staat prune weer aan.
       PAUSE_PRUNE: '{{default "false" .PAUSE_PRUNE}}'
     preconditions:
-      # CLUSTER_TYPE kiest de overlay, maar namespace, sleutel en secrets-map komen uit
-      # task select-cluster. Liepen die uiteen, dan ging het stil mis: op 2 november 2026
-      # schreef een deploy de prod-geheimen in de staging-namespace, en herstartte een
-      # bootstrap voor staging de ArgoCD van productie.
+      # CLUSTER_TYPE kiest de overlay, maar namespace, sleutel en secrets-map komen uit de
+      # geladen clusterconfiguratie. Liepen die uiteen, dan ging het stil mis: op 2 november
+      # 2026 schreef een deploy de prod-geheimen in de staging-namespace, en herstartte een
+      # bootstrap voor staging de ArgoCD van productie. $CLUSTER_TYPE is wat er geladen is,
+      # {{.CLUSTER_TYPE}} wat er gevraagd wordt.
       - &selected_cluster_guard
-        sh: '[ "$(sed -n "s/^CLUSTER_TYPE=//p" .env-taskfile-current 2>/dev/null)" = "{{.CLUSTER_TYPE}}" ]'
-        msg: "CLUSTER_TYPE={{.CLUSTER_TYPE}} is niet het cluster uit 'task select-cluster' (.env-taskfile-current). Namespace, sleutel en secrets komen uit de selectie: draai eerst 'task select-cluster' en kies {{.CLUSTER_TYPE}}."
+        sh: '[ "$CLUSTER_TYPE" = "{{.CLUSTER_TYPE}}" ]'
+        msg: "Gevraagd is CLUSTER_TYPE={{.CLUSTER_TYPE}}, maar geladen is de configuratie van een ander cluster. Geef het cluster mee in de omgeving, dan komt alles uit .env-taskfile-{{.CLUSTER_TYPE}}: CLUSTER_TYPE={{.CLUSTER_TYPE}} task <taak>"
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
@@ -1431,7 +1441,7 @@ tasks:
         echo ""
         echo "Commit this pin, then deploy:"
         echo "  git add {{.PATCH_FILE}} && git commit -m 'deploy: operations-manager {{.IMAGE_TAG}}'"
-        echo "  task deploy-operations-manager CLUSTER_TYPE={{.OVERLAY}}"
+        echo "  CLUSTER_TYPE={{.OVERLAY}} task deploy-operations-manager"
         echo ""
         echo "To roll back, pin an earlier tag from the git history of that file."
     silent: true
@@ -3457,10 +3467,9 @@ tasks:
       - task: sandbox:sync
       # Phase 4: Bootstrap ArgoCD + Operations Manager (images pulled from GHCR)
       - task: prepare-argocd-operator
-      - task: bootstrap-argo-system
-        vars:
-          CLUSTER_TYPE: sandboxed-local
-          KEY_FILE: security/sandbox-key.txt
+      # Een eigen run en geen `task:`: deze run las bij het starten de configuratie van de
+      # vorige selectie, en de cp hierboven verandert dat niet meer.
+      - CLUSTER_TYPE=sandboxed-local task bootstrap-argo-system KEY_FILE=security/sandbox-key.txt
       # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
       # Phase 5: Wait for everything to be deployed and ready
       - task: sandbox:wait-ready

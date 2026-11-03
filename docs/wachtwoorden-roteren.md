@@ -121,8 +121,8 @@ niet roteren), het aanvragen van een nieuwe Grafana-token bij ODCN, het regenere
 upstream Keycloak (`keycloak-master-oidc`), en voor `registry` zowel het aanmaken van een nieuw robot-token in
 de registry-console als het intrekken van het oude. Voor de componenten die alleen in het envsecret van ZAD
 leven blijft ook het regenereren van dat secret handwerk:
-`task generate-env-secrets-for-operations-manager CLUSTER_TYPE=<cluster>`, daarna committen en pushen, en
-daarna toepassen met `task deploy-operations-manager CLUSTER_TYPE=<cluster>` (op de sandbox:
+`CLUSTER_TYPE=<cluster> task generate-env-secrets-for-operations-manager`, daarna committen en pushen, en
+daarna toepassen met `CLUSTER_TYPE=<cluster> task deploy-operations-manager` (op de sandbox:
 `task sandbox:update-operations-manager`). Die laatste stap is nodig omdat de OPI-overlay in geen
 ArgoCD-Application hangt: zonder de deploy-task blijft het nieuwe secret in git staan en draait OPI de oude
 waarde. Bij `secret-key` wacht de tool daarna op het cluster-secret voor ze OPI herstart. De sops-age-sleutel zelf

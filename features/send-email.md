@@ -610,7 +610,7 @@ plek om te kijken als de dienst niets doet.
    daarom als `namespace-ron.yaml` in de bootstrap-overlay
    (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
    (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
-   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` past hem met
+   `argocd.argoproj.io/managed-by`-label erop; `CLUSTER_TYPE=odcn-production task bootstrap-argo-system` past hem met
    kubectl toe, buiten ArgoCD om.
 
    **Een `sops-age-key` in die namespace is sinds RC-351 niet meer nodig.**

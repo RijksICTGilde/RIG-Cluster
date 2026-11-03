@@ -59,6 +59,8 @@ task select-cluster      # 3) odcn-staging
 task staging:setup
 ```
 
+Een losse taak voor één cluster kan ook zonder te selecteren: `CLUSTER_TYPE=odcn-staging task bootstrap-argo-system` laadt alles uit `.env-taskfile-odcn-staging`, wat er ook geselecteerd is. `task select-cluster CLUSTER=odcn-staging` selecteert zonder vraag. Geef je `CLUSTER_TYPE` als argument (`task bootstrap-argo-system CLUSTER_TYPE=...`) terwijl er een ander cluster geselecteerd is, dan weigeren bootstrap, generate-env-secrets en deploy: namespace, sleutel en secrets zouden dan van het andere cluster komen.
+
 `staging:setup` is opnieuw te draaien: wat er al is, slaat hij over. Hij doet achter elkaar:
 
 1. controleert de context: je account moet in `rig-staging-admin-group` zitten, en je typt `staging` om door te gaan;
