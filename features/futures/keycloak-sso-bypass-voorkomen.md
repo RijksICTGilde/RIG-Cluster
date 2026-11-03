@@ -193,7 +193,7 @@ Beide zijn wel realm-scoped, dus ze passen prima als eigen secties in de bluepri
 3. **Bestaande wachtwoorden opruimen.** De knoppen omzetten verandert niets aan wat er al is: wie al een wachtwoord heeft gezet, houdt de omzeiling. Dat geldt in elk geval voor het testaccount waarmee dit is ontdekt. Het rapport uit stap 2 levert de lijst en de `DELETE`-paden; opschonen daarna, in de stijl van de service-orphan sweep.
 4. **Besluit over de platform-realm.** De `bootstrap*.yaml` zijn bewust niet aangeraakt. Daar leeft de `sso-rijk`-koppeling, dus dezelfde omzeiling bestaat daar een niveau hoger en weegt zwaarder. De reden om te wachten is dat onbekend is of er lokale break-glass-accounts op `rig-platform` staan die je niet wil klemzetten; stap 2 beantwoordt dat.
 5. **Los daarvan, lagere prioriteit: `directAccessGrantsEnabled`.** Deployment-clients krijgen die op `True` (`connectors/keycloak.py`, zowel de deployment-client als de extra clients). Dat is de ROPC-flow: met gebruikersnaam, wachtwoord en het client secret is een token te halen zonder browser en zonder IdP. De clients zijn confidential, dus dit is geen open deur, maar ZAD-applicaties gebruiken de authorization-code flow, dus de vlag mag uit. Aparte, kleine opruiming.
-   
+
    **Status**: gereed in RC-325. Deployment-clients en extra clients krijgen nu `directAccessGrantsEnabled` en `serviceAccountsEnabled` standaard op `false`. Een project zet ze per client aan met `direct-access-grants` en `service-accounts` in het projectbestand.
 
 ## Fase 2: wachtwoord-zelfbediening terugbrengen, buiten Keycloak om

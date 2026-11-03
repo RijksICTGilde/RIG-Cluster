@@ -52,7 +52,7 @@ jobs:
           python-version: "3.14"
       - name: Install dependencies
         working-directory: operations-manager/python
-        run: uv sync
+        run: uv sync --all-groups
       # De secret-scan-hook roept age-keygen aan om een sleutelvormige string op geldigheid te
       # toetsen, net als de secret-scan-job in security.yml.
       - name: Install age

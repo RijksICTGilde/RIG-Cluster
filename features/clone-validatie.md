@@ -77,4 +77,3 @@ resourcenaam die bij een ander project uitkomt. Zie
 Een afgeronde kloon (`mode: once`, `completed`) skipt klonen al eerder. Een projectbestand
 dat naar een verwijderde bron verwijst blijft uitrollen; alleen een kloon die echt zou
 lopen, en niet kan, faalt nu.
-
