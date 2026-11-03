@@ -3201,19 +3201,31 @@ def read_multiline(prompt: str, end_marker: str = "-----END PRIVATE KEY-----") -
             return "\n".join(lines) + "\n"
 
 
-def new_value_for(component: Component, field: str, template_fields: dict[str, tuple[str | None, int | None]]) -> str:
+def new_value_for(
+    component: Component,
+    field: str,
+    template_fields: dict[str, tuple[str | None, int | None]],
+    *,
+    assume_yes: bool = False,
+) -> str:
     """De nieuwe waarde voor één veld: genereren waar de template dat kan, anders invoeren.
 
     `external`-componenten vragen áltijd om invoer: de waarde komt van buiten dit cluster.
+    Met `assume_yes` wordt zonder vraag gegenereerd; een veld dat alleen een mens kan
+    invullen weigert dan, want er is niemand om het te vragen.
     """
     kind, length = template_fields.get(field, (None, None))
     if (kind is None or length is None) and component.gen_without_template:
         kind, length = component.gen_without_template
     generatable = component.category != "external" and kind in ("random", "bcrypt")
     if generatable:
+        if assume_yes:
+            return generate(str(kind), length)
         answer = input(f"  {field}: opnieuw genereren ({kind}:{length})? [J/n] ").strip().lower()
         if answer not in ("n", "nee"):
             return generate(str(kind), length)
+    if assume_yes:
+        raise EditFailed(f"{component.key}: {field} vraagt een waarde van een mens; draai zonder --yes")
     if field in MULTILINE_FIELDS:
         return read_multiline(f"  nieuwe waarde voor {field}:")
     while True:
@@ -3247,7 +3259,9 @@ def read_current_from_secret(component: Component, kube: Kube) -> str:
     return value
 
 
-def gather_ctx(component: Component, cluster: Cluster, kube: Kube, *, apply_changes: bool) -> Ctx:
+def gather_ctx(
+    component: Component, cluster: Cluster, kube: Kube, *, apply_changes: bool, assume_yes: bool = False
+) -> Ctx:
     """Lees de huidige waarden en vraag de nieuwe; bouwt nog GEEN stappen."""
     if component.template:
         current = read_current(component, cluster)
@@ -3286,7 +3300,7 @@ def gather_ctx(component: Component, cluster: Cluster, kube: Kube, *, apply_chan
         fields = template_fields_of(component)
         print(f"\nNieuwe waarden voor {component.title}:")
         for name in component.rotate_fields:
-            new[name] = new_value_for(component, name, fields)
+            new[name] = new_value_for(component, name, fields, assume_yes=assume_yes)
 
     return Ctx(
         cluster=cluster,

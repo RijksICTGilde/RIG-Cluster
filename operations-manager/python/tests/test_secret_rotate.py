@@ -1297,3 +1297,29 @@ def test_execute_met_assume_yes_voert_gewone_stappen_uit_zonder_te_vragen(
 
     assert rotate.execute(ctx, steps, assume_yes=True) is True
     assert gedaan == [1]
+
+
+class TestYesVraagtNiets:
+    """--yes is voor een ronde zonder mens: ook de vraag om een nieuwe waarde valt weg."""
+
+    def test_een_genereerbaar_veld_wordt_zonder_vraag_gegenereerd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def geen_vraag(_prompt: str) -> str:
+            raise AssertionError("met assume_yes hoort er niets gevraagd te worden")
+
+        monkeypatch.setattr("builtins.input", geen_vraag)
+        component = rotate.BY_KEY["secret-key"]
+
+        waarde = rotate.new_value_for(component, "SECRET_KEY", {"SECRET_KEY": ("random", 48)}, assume_yes=True)
+
+        assert len(waarde) >= 32
+
+    def test_een_waarde_van_buiten_weigert_in_plaats_van_te_wachten(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def geen_vraag(_prompt: str) -> str:
+            raise AssertionError("met assume_yes hoort er niets gevraagd te worden")
+
+        monkeypatch.setattr("builtins.input", geen_vraag)
+        component = rotate.BY_KEY["grafana"]
+        veld = component.rotate_fields[0]
+
+        with pytest.raises(rotate.EditFailed, match="vraagt een waarde van een mens"):
+            rotate.new_value_for(component, veld, {}, assume_yes=True)
