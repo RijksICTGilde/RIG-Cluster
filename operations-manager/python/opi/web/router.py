@@ -2900,7 +2900,10 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
 
 @web_router.get("/about")
 async def about_platform() -> RedirectResponse:
-    """Over ZAD is opgegaan in de introductie; oude links blijven werken."""
+    """Over ZAD is opgegaan in de introductie; oude links blijven werken.
+
+    BEWUST ZONDER ``@requires_sso``: een redirect naar de introductie, die zelf open staat.
+    """
     return RedirectResponse(url="/introductie", status_code=301)
 
 
