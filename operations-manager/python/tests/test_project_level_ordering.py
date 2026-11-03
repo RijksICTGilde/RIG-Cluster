@@ -8,7 +8,7 @@ Die ordening leunde op de sync-wave (projectniveau 0, deployments 1) en daar val
 op: een net aangemaakte kind-Application beheert nul resources en meldt zich daarmee binnen
 een seconde Healthy, dus de wave-0-grendel van de umbrella gaat open voordat het
 projectniveau zijn ServiceAccount heeft uitgerold. Gemeten in
-``docs/de-serviceaccount-komt-na-de-deployment.md``.
+``docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md``.
 
 Wat de ordening nu draagt is de AANMAAKVOLGORDE: de deployment-applicaties gaan pas naar
 git nadat het projectniveau gesynchroniseerd is. Bestaat hun CR nog niet, dan kan ArgoCD ze

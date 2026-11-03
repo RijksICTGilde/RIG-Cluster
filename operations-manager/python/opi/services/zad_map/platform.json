@@ -460,6 +460,10 @@
      "title": "Domain Configuration"
     },
     {
+     "file": "features/domain-format.md",
+     "title": "Domain Format (Primary Wizard Control)"
+    },
+    {
      "file": "features/domain-restrictions.md",
      "title": "Domain Restrictions"
     },

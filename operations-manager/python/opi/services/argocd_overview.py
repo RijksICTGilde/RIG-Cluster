@@ -120,7 +120,7 @@ async def get_project_argocd_statuses(project_name: str, deployment_names: list[
             return {naam: bewaard[1][naam] for naam in deployment_names}
 
     # Fail fast, zoals elke aanroeper op een renderpad: het standaardbudget wacht hier 30
-    # seconden met de pagina erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    # seconden met de pagina erachter. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
     argo = create_argo_connector(connect_retry_seconds=0)
     # Dezelfde toets als de pagina zelf doet voor ``argocd_available``, zodat die twee
     # niet uiteen kunnen lopen: de pagina die zegt dat ArgoCD verbonden is hoort ook

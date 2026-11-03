@@ -61,7 +61,7 @@ To renew (one team member, every ~90 days):
 task sandbox:renew-wildcard-cert
 ```
 
-See **[docs/sandbox-wildcard-cert-renewal.md](../docs/sandbox-wildcard-cert-renewal.md)** for the full runbook, prerequisites, and how it works (TransIP API + IP-whitelisted `kubectl exec` via the production `operations-manager` pod).
+See **[docs/sandbox/sandbox-wildcard-cert-renewal.md](../docs/sandbox/sandbox-wildcard-cert-renewal.md)** for the full runbook, prerequisites, and how it works (TransIP API + IP-whitelisted `kubectl exec` via the production `operations-manager` pod).
 
 ## How to Use
 

@@ -70,7 +70,7 @@ identityProviders:
       # self-crafted SAML Response POSTed to the broker ACS endpoint and lets the
       # attacker impersonate any user. wantAssertionsSigned forces the assertion
       # itself to be signed (not just the response envelope), closing signature-
-      # wrapping bypasses. See docs/keycloak.md.
+      # wrapping bypasses. See docs/keycloak/keycloak.md.
       validateSignature: true
       wantAssertionsSigned: true
       wantAssertionsEncrypted: false

@@ -1054,7 +1054,7 @@ class TestTheClusterConfig:
 
     def test_production_sends_from_the_fixed_address(self) -> None:
         """Geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid en
-        dragen daarom hun domein. Zie docs/ron-koppeling.md."""
+        dragen daarom hun domein. Zie docs/operations/ron-koppeling.md."""
         assert get_mail_from_address("odcn-production") == "noreply-rijksapp@rijksoverheid.nl"
 
 

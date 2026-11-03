@@ -8,8 +8,8 @@
 FROM --platform=$BUILDPLATFORM maven:3.10.0-eclipse-temurin-21 AS providers
 
 WORKDIR /bouw
-COPY keycloak-migration/relay-email-sender relay-email-sender
-COPY keycloak-migration/custom-mapper custom-mapper
+COPY images/keycloak-zad/extensions/relay-email-sender relay-email-sender
+COPY images/keycloak-zad/extensions/custom-mapper custom-mapper
 
 # Elke module houdt zijn eigen pom en zijn eigen versie; `package` draait hun toetsen mee.
 RUN mvn -B -f relay-email-sender/pom.xml clean package \

@@ -23,11 +23,12 @@ The docs grew organically; this is the split we are holding from here on.
 | Folder | Contains | Written for |
 |---|---|---|
 | `instructions/` | How to work in the code: contracts, hooks, step-by-step | Whoever changes the code |
-| `features/` | What a feature is and why it exists, per feature | Whoever needs to understand a subsystem |
-| `features/futures/` | Design briefs for work not built yet | Whoever picks up the design |
-| `docs/` | Operating the platform: setup, environments, known issues, post-mortems | Whoever runs it |
+| `features/` | What a built feature is and why it exists, per feature; `features/README.md` is the index | Whoever needs to understand a subsystem |
+| `docs/` | Operating the platform: `sandbox/`, `operations/`, `keycloak/`, `security/`, `post-mortems/` | Whoever runs it |
 | `architecture/` | System-level overviews and decision records | Whoever needs the big picture |
-| `plans/` | A finished plan for one piece of work, the contract for its PR | Whoever implements that plan |
+| `references/` | Reference material that is not about the code, such as billing queries | Whoever needs the numbers |
+
+Plans (the contract for one piece of work) and design briefs for work not built yet are not in this repo: plans live in `plans/` in RIG-Cluster-Legacy for now, and an unbuilt design becomes a card on the ZAD project board.
 
 A rule of thumb when you are unsure: if it goes stale the moment the code changes, it
 belongs in `instructions/` next to the contract it describes. If it explains a decision

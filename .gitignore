@@ -4,9 +4,8 @@ __pycache__/
 .venv/
 /CLAUDE.md
 /.claude/settings.local.json
-# Security - ignore private keys, allow encrypted certs and readme
+# Security - ignore private keys, allow encrypted certs
 /security/*
-!/security/readme.md
 !/security/tls/
 /security/tls/**/*.pem
 # De sandbox-CA voor argocd-server (task sandbox:generate-argocd-tls) schrijft hier
@@ -41,8 +40,8 @@ secrets-overview-*.yaml
 /bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/operations-manager-env-secrets.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine
-/keycloak-migration/custom-mapper/target/
-/keycloak-migration/relay-email-sender/target/
+/images/keycloak-zad/extensions/custom-mapper/target/
+/images/keycloak-zad/extensions/relay-email-sender/target/
 /infrastructure/bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/
 /operations-manager/docs/interview.sh
 /operations-manager/docs/business-case-interview-prompt.md
@@ -56,17 +55,7 @@ secrets-overview-*.yaml
 /.claude/worktrees/
 
 # E2E test screenshots (generated artifacts)
-# Let op de /* in plaats van /: git daalt niet af in een uitgesloten MAP, dus een
-# uitzondering erbinnen zou nooit werken. Op bestandsniveau uitsluiten kan dat wel.
-/operations-manager/python/tests/e2e/screenshots/*
-# Uitzondering: de screenshots van de LOTC-bouwlijn zijn geen wegwerpartefact maar het
-# resultaat waar de omzetting op beoordeeld wordt. Ze horen bij de PR, en zonder ze in
-# de repo kan niemand zien wat er gebouwd is zonder eerst de tests te draaien.
-!/operations-manager/python/tests/e2e/screenshots/lotc/
-# Om dezelfde reden de vergelijking oud-naast-nieuw uit scripts/lotc_shots.py: daar
-# staat het contactvel bij (index.html), en dat is bedoeld om over de schouder mee te
-# kijken zonder eerst iets te hoeven draaien.
-!/operations-manager/python/tests/e2e/screenshots/vergelijk/
+/operations-manager/python/tests/e2e/screenshots/
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
 # Coverage-uitvoer. Niets in de repo maakt deze map; hij ontstaat bij een handmatige run.

@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.keycloak_harness, pytest.mark.requires_infra, pytest.m
 KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:26.8.1"
 CONTAINER = "kc-logout-harness"
 ADMIN = "admin"
-SHIM_SOURCE = Path(__file__).resolve().parents[4] / "keycloak-migration" / "custom-mapper"
+SHIM_SOURCE = Path(__file__).resolve().parents[4] / "images" / "keycloak-zad" / "extensions" / "custom-mapper"
 SHIM_JAR_PATROON = "target/keycloak-saml-nameid-mapper-*.jar"
 BROKER_SECRET = "harness-secret"
 #: Veiligheidsnet voor de browser, geen wachtmechanisme: het harnas wacht eerst zelf op de

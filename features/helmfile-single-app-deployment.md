@@ -345,6 +345,6 @@ Compared to full mijn-bureau deployment which would include 10+ additional appli
 
 ### Related Documentation
 
-- [Keycloak YAML Configuration](../docs/keycloak-yaml-configuration.md)
+- [Keycloak YAML Configuration](../docs/keycloak/keycloak-yaml-configuration.md)
 - [Namespace PostgreSQL Database](namespace-postgresql-database.md)
 - [Client Access Restriction](client-access-restriction.md)

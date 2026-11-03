@@ -54,8 +54,8 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) - local setup guide
-- [Keycloak Configuration](docs/keycloak.md) - Keycloak administration
-- [Keycloak YAML Configuration](docs/keycloak-yaml-configuration.md) - declarative Keycloak setup
+- [Keycloak Configuration](docs/keycloak/keycloak.md) - Keycloak administration
+- [Keycloak YAML Configuration](docs/keycloak/keycloak-yaml-configuration.md) - declarative Keycloak setup
 - [Beveiligingsbeleid](SECURITY.md) - hoe je een kwetsbaarheid meldt
 
 ### Feature Documentation

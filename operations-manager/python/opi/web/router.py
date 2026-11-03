@@ -1280,7 +1280,7 @@ async def dashboard(request: Request):
             # Fail fast: het standaardbudget van 30 seconden zou hier PER deployment
             # gelden, sequentieel in een enkel verzoek, waar deze pagina eerder in
             # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
-            # opi/api/v2/router.py; zie docs/argocd-server-herstart-elke-40-minuten.md.
+            # opi/api/v2/router.py; zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
             argo_connector = create_argo_connector(connect_retry_seconds=0)
             argocd_available = await argo_connector.ensure_authenticated()
 
@@ -1745,7 +1745,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
         # does not block the page render; only the cheap availability check stays here.
         # Fail fast: op het standaardbudget wacht deze toets 30 seconden met de pagina
-        # erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+        # erachter. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
         argocd_available = False
         if not map_tab:
             try:
@@ -2427,7 +2427,7 @@ async def argocd_status_fragment(
 
     # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
     # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
-    # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    # taak. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
     # Zonder ARGOCD_TOKEN en zonder wachtwoord is er geen connector te maken. Dat hoort
     # dezelfde kaart te geven als een ArgoCD die niet antwoordt, niet een 500 in dit fragment.
     argo = None

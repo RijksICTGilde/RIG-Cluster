@@ -1219,7 +1219,7 @@ def get_mail_from_address(cluster_name: str) -> str:
     It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
     carries their domain. That is also the only arrangement that survives DMARC, because
     they publish ``p=reject`` and we sign nothing with DKIM, leaving SPF alignment between
-    envelope and ``From:`` as the single thing that can pass. See docs/ron-koppeling.md.
+    envelope and ``From:`` as the single thing that can pass. See docs/operations/ron-koppeling.md.
 
     Args:
         cluster_name: Name of the cluster

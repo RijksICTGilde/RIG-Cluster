@@ -132,7 +132,7 @@ Buiten scope: de sleutels per project en de zad-deployments-repo, die op de proj
 | `scripts/rewrap-project-keys.py` | `config.age-private-key` en de `age-key.txt.age`-back-ups van de platformsleutel naar de project-KEK |
 | `scripts/scan-secrets.py` | de guard: weigert een commit, een branch of een historie met een geheim |
 
-De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/sops-en-age-met-de-hand.md`.
+De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/operations/sops-en-age-met-de-hand.md`.
 
 Op de productie-overlays staat een tweede laag: `test_productie_overlay_geen_platte_secrets.py` weigert een `kind: Secret` onder `**/overlays/odcn*/` dat niet SOPS-versleuteld is. De secret-scan kan dat niet vangen (die zoekt sleutelVORMEN, en korte wachtwoorden hebben geen vorm), dus deze toets kijkt naar de documentsoort en draait in CI.
 

@@ -21,7 +21,7 @@ The user lands on the upstream logout page with their Keycloak session already g
 
 ### Java provider
 
-- Module: `keycloak-migration/custom-mapper/` (bundled into the `keycloak-saml-nameid-mapper` JAR).
+- Module: `images/keycloak-zad/extensions/custom-mapper/` (bundled into the `keycloak-saml-nameid-mapper` JAR).
 - Package: `nl.minbzk.rig.keycloak.logout`
 - Classes:
   - `AlwaysClearSessionLogoutEndpointFactory` — `RealmResourceProviderFactory`, `getId() = "always-clear-session-logout"`.

@@ -7,7 +7,7 @@ Vijf dingen worden hier bewaakt:
      Valt die weg, dan negeert containerd de hosts.toml en pullt de node stilletjes niets.
   3. Taskfile - sandbox:setup moet het script aanroepen na het cluster en voor alles wat
      een image nodig heeft.
-  4. De verwijzingen naar docs/sandbox-kind-registry.md. Het script en de kind-config
+  4. De verwijzingen naar docs/sandbox/sandbox-kind-registry.md. Het script en de kind-config
      leggen niets meer zelf uit, dus een hernoemde doc laat de weigering naar niets wijzen.
   5. scripts/prune-kind-registry.sh - de weigeringen voor het iets aanraakt, en de plek in
      het deploy-pad. Wat het opruimen echt doet meet tests/integration/test_kind_registry_prune.py.
@@ -30,7 +30,7 @@ SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
 PRUNE_SCRIPT = REPO_ROOT / "scripts" / "prune-kind-registry.sh"
 KIND_CONFIG = REPO_ROOT / "sandboxed-local" / "kind-config.yaml"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
-DOC = REPO_ROOT / "docs" / "sandbox-kind-registry.md"
+DOC = REPO_ROOT / "docs" / "sandbox" / "sandbox-kind-registry.md"
 
 REGISTRY_TASK = "sandbox:setup-registry"
 PRUNE_TASK = "sandbox:prune-registry"
@@ -558,7 +558,7 @@ class TestDocumentation:
         PRUNE_SCRIPT,
         KIND_CONFIG,
         DOC,
-        REPO_ROOT / "docs" / "sandbox-image-deploy-via-registry.md",
+        REPO_ROOT / "docs" / "sandbox" / "sandbox-image-deploy-via-registry.md",
     )
 
     @staticmethod
