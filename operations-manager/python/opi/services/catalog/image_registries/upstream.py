@@ -26,7 +26,9 @@ _TAG_OR_DIGEST = re.compile(r"(?::[^/:@]+|@sha256:[0-9a-f]+)$")
 
 def normalize_upstream(value: str) -> str:
     """De upstream die bij *value* hoort, of *value* zelf als we de vorm niet kennen."""
-    text = _PROTOCOL.sub("", value.strip().lower())
+    # A pasted pull command (``docker pull [flags] <image>``) ends with the image.
+    words = value.split()
+    text = _PROTOCOL.sub("", (words[-1] if words else "").lower())
     # Userinfo (``git@host/x``) blijft bewust staan: wegknippen zou een upstream opleveren
     # die er geldig uitziet maar ergens anders heen wijst.
     text = text.split("?", 1)[0].split("#", 1)[0].strip("/")

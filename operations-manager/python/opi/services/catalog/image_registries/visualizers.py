@@ -40,7 +40,8 @@ REGISTRY_UPSTREAM = EditableVisualizer(
     label="Registry",
     help_text=(
         "De registry waar je images staan, inclusief je eigen pad en zonder protocol, "
-        "bijvoorbeeld code.overheid.nl/jouw-naam."
+        "bijvoorbeeld code.overheid.nl/jouw-naam. Je mag ook de URL van je package-pagina, een "
+        "image met tag of het docker pull-commando plakken: wij maken er de registry van."
     ),
 )
 
@@ -60,7 +61,8 @@ REGISTRY_PASSWORD = EditableVisualizer(
     widget=WidgetType.PASSWORD,
     label="Token",
     help_text=(
-        "Een token met leesrecht op je packages. Het wordt versleuteld opgeslagen in het projectbestand "
+        "Een token met leesrecht op je packages. Bij GitHub is dat een personal access token (classic) "
+        "met het recht read:packages. Het wordt versleuteld opgeslagen in het projectbestand "
         "en staat hier afgeschermd; wie dit formulier mag openen kan het wel opvragen. Op productie verloopt het token na 90 dagen "
         "en moet je het opnieuw invullen."
     ),

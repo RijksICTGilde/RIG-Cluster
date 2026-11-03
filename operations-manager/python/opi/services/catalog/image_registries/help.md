@@ -5,7 +5,7 @@ Draait je applicatie op een image die in je eigen private registry staat, dan vu
 ## Wat je invult
 
 - **Naam** - hoe jij deze registry noemt, bijvoorbeeld `Code Overheid`. Vrije tekst; wij maken er zelf een korte verwijzing van, en die blijft hetzelfde als je het label later verandert.
-- **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol, bijvoorbeeld `code.overheid.nl/jouw-naam`. Heb je de pagina van je packages open, dan mag je die URL hier ook plakken: wij maken er de goede vorm van. Datzelfde geldt voor een volledige image-verwijzing met tag. Wij moeten de registry vanaf het internet kunnen bereiken: een naam die we niet kunnen opzoeken, of die naar een intern adres wijst, komt niet door de tokentoets hieronder.
+- **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol, bijvoorbeeld `code.overheid.nl/jouw-naam`. Heb je de pagina van je packages open, dan mag je die URL hier ook plakken: wij maken er de goede vorm van. Datzelfde geldt voor een volledige image-verwijzing met tag en voor het `docker pull`-commando dat GitHub bij een package laat zien. Wij moeten de registry vanaf het internet kunnen bereiken: een naam die we niet kunnen opzoeken, of die naar een intern adres wijst, komt niet door de tokentoets hieronder.
 - **Token** - waarmee wij bij je images mogen. Verplicht.
 - **Gebruikersnaam** - alleen nodig bij een registry die ernaar kijkt, zoals Docker Hub en Quay: vul daar je accountnaam of de naam van je robotaccount in. Bij GitHub (ghcr.io) mag je hem leeg laten. Eist je registry een naam en laat je hem leeg, dan lukt het ophalen van je images niet.
 
@@ -21,7 +21,7 @@ De keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er 
 
 ## Wat je van het token moet weten
 
-- Het token heeft **leesrecht op packages** nodig. Een token dat te weinig mag geeft geen duidelijke fout maar een melding dat de image niet bestaat, en die wijst de verkeerde kant op. Wij toetsen het token daarom bij het afronden van de wizard en bij het opslaan van dit blok, tegen de images die je componenten dan al hebben. Voeg je daarna via het componentformulier een component met een image uit deze registry toe, sla dit blok dan nog eens op.
+- Het token heeft **leesrecht op packages** nodig. Bij GitHub is dat een personal access token (classic) met het recht `read:packages`, aan te maken onder Settings, Developer settings, Personal access tokens. Een token dat te weinig mag geeft geen duidelijke fout maar een melding dat de image niet bestaat, en die wijst de verkeerde kant op. Wij toetsen het token daarom bij het afronden van de wizard en bij het opslaan van dit blok, tegen de images die je componenten dan al hebben. Voeg je daarna via het componentformulier een component met een image uit deze registry toe, sla dit blok dan nog eens op.
 - Op productie **verloopt het token na 90 dagen**. Daarna moet je het opnieuw invullen.
 - Er zit een **quotum** op wat er van je images wordt bewaard.
 

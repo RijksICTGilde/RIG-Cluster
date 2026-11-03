@@ -13,11 +13,14 @@ from typing import Any
 import pytest
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
+from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN, RegistryEntry
 from opi.services.catalog.image_registries.editables import REGISTRY_DISPLAY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
 from opi.services.catalog.image_registries.naming import registry_slug
+from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.image_registries.upstream import normalize_upstream, upstream_from_project_images
 from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE, REGISTRY_UPSTREAM
 from opi.services.registry import get_service
@@ -57,6 +60,12 @@ class TestEenGeplakteUrlWordtEenUpstream:
                 "ghcr.io/rijksictgilde/algoritmeregister/backend@sha256:abc123",
                 "ghcr.io/rijksictgilde/algoritmeregister",
             ),
+            # The package page GitHub shows for one image, and its settings page.
+            ("https://github.com/orgs/MinBZK/packages/container/package/e2e-private", "ghcr.io/minbzk"),
+            ("https://github.com/orgs/MinBZK/packages/container/e2e-private/settings", "ghcr.io/minbzk"),
+            # The pull command a package page offers to copy, with or without flags.
+            ("docker pull ghcr.io/minbzk/e2e-private:2026.11.03.1001-e763d018", "ghcr.io/minbzk"),
+            ("podman pull --platform linux/amd64 code.overheid.nl/team/app:1", "code.overheid.nl/team"),
             # De generieke bewerkingen.
             ("HTTPS://GHCR.IO/", "ghcr.io"),
             ("  ghcr.io  ", "ghcr.io"),
@@ -284,3 +293,34 @@ class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
         item = _empty_sequence_item(REGISTRIES_SEQUENCE, {})
         assert "upstream" not in item
         json.dumps(item)
+
+
+class TestCreateWizardEncryptsTheToken:
+    """In the create wizard the project has no AGE key yet, so the converter leaves the
+    token as typed. The final submit must encrypt it once the key exists, as it does for
+    user-env-vars; otherwise the save refuses the project on the password pattern."""
+
+    @staticmethod
+    def _final_data(registry: dict[str, Any]) -> dict[str, Any]:
+        merged = {
+            "display-name": "Registry Project",
+            "users": [{"email": "test@example.com", "roles": ["admin"]}],
+            "components": [{"name": "web", "image": "ghcr.io/org/app:1"}],
+            "services": [{"name": "image-registries", "config": {"registries": [registry]}}],
+        }
+        flow = get_flow("create-project")
+        return EditableFormProcessor().apply_generators(flow.generated_editables, merged)
+
+    def test_a_typed_token_is_stored_as_an_age_block(self) -> None:
+        data = self._final_data(
+            {"name": "ghcr", "upstream": "ghcr.io/org", "username": "u", "password": "secret-token"}
+        )
+        (registry,) = project_registries(data)
+        assert registry["password"].startswith("-----BEGIN AGE ENCRYPTED FILE-----")
+        validate_service_configs(data)
+
+    def test_an_already_encrypted_token_is_left_alone(self) -> None:
+        stored = "base64+age:YWdl"
+        data = self._final_data({"name": "ghcr", "upstream": "ghcr.io/org", "username": "u", "password": stored})
+        (registry,) = project_registries(data)
+        assert registry["password"] == stored
