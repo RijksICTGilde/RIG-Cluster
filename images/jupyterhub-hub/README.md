@@ -32,7 +32,7 @@ pod niet verder dan ImagePullBackOff.
 Alles wat per project verschilt komt uit env vars. De diensten van het project leveren
 `OIDC_*` (keycloak), `PUBLIC_HOSTNAME` (publish-on-web), `DATA_PATH` (persistent-storage) en
 `OBJECT_STORE_*` (minio-storage). De rest staat als `user-env-vars` in
-`projects/ideas/jupyterhub-poc.yaml`:
+`jupyterhub-poc.yaml`:
 
 | Variabele | Betekenis |
 |---|---|

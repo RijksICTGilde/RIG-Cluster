@@ -25,15 +25,6 @@ repositories:
     path: "infra"
   - name: github-repo
     url: "https://github.com/RijksICTGilde/rig-cluster-application-test.git"
-    username: "git"
-    password: |-
-      -----BEGIN AGE ENCRYPTED FILE-----
-      YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB3dk42YTVRMXNIeVJuYmVK
-      QmdsT0laV2haU09hdXpDMStJZTNZL2RKUjFVCjM0KzNsVi83WU1Qd0ZkNHBodHdH
-      bHVxRnU3eWRybCtUT09PWlllVExwTGMKLS0tIElLSWFVM2hXVFpySDRwTWltcVhk
-      dkI4TGRBUkNnWG45VnFYc3RmZCsvUW8KBkdHlmlJeFrec+BjxPtpeHuomqu9pC68
-      M0lJ+TTScTS0WYBN4RjTae4C0KjLdhedfMrjYRikatqkyn++BKsGmJut96xF6sHP
-      -----END AGE ENCRYPTED FILE-----
     branch: "main"
     path: "."
   - name: main-repo-autocreated
