@@ -17,6 +17,7 @@ from opi.forms.visualizers.flows import get_flow
 from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.image_registries import _section_description
 from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN, RegistryEntry
 from opi.services.catalog.image_registries.editables import REGISTRY_DISPLAY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
 from opi.services.catalog.image_registries.naming import registry_slug
@@ -324,3 +325,14 @@ class TestCreateWizardEncryptsTheToken:
         data = self._final_data({"name": "ghcr", "upstream": "ghcr.io/org", "username": "u", "password": stored})
         (registry,) = project_registries(data)
         assert registry["password"] == stored
+
+
+class TestProxySetupNotice:
+    """Where ODCN builds a proxy per registry, the step says up front that it takes minutes."""
+
+    @pytest.mark.parametrize("cluster", ["odcn-production", "odcn-staging"])
+    def test_a_proxy_cluster_announces_the_wait(self, cluster: str) -> None:
+        assert "een paar minuten" in _section_description(cluster)
+
+    def test_a_cluster_with_direct_secrets_does_not(self) -> None:
+        assert "ODCN" not in _section_description("sandboxed-local")
