@@ -1396,7 +1396,7 @@ async def _handle_sequence_action(
         items = []
 
     if action == "add":
-        items.append(_empty_sequence_item(editable))
+        items.append(_empty_sequence_item(editable, yaml_data))
     elif action == "remove":
         remove_index = int(seq_index) if seq_index not in (None, "") else -1
         if 0 <= remove_index < len(items):
@@ -1536,7 +1536,7 @@ def _find_sequence_editable(
     return None
 
 
-def _empty_sequence_item(editable: Any | None) -> Any:
+def _empty_sequence_item(editable: Any | None, yaml_data: dict[str, Any]) -> Any:
     """Return the right empty item for a sequence.
 
     For simple sequences (single non-sequence child) returns ``""``.
@@ -1585,7 +1585,10 @@ def _empty_sequence_item(editable: Any | None) -> Any:
             # Seed nested sequences with min_items empty entries
             set_value(item, rel, ["" for _ in range(child_ed.min_items)])
         elif child_ed.default is not None:
-            set_value(item, rel, child_ed.default)
+            # A callable default derives its value from the project, like the processor does.
+            default = child_ed.default(yaml_data) if callable(child_ed.default) else child_ed.default
+            if default is not None:
+                set_value(item, rel, default)
     return item
 
 

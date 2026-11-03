@@ -6,6 +6,7 @@ de naam mag een vrij label zijn waar wij de verwijzing uit afleiden.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -22,6 +23,7 @@ from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENC
 from opi.services.registry import get_service
 from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType
+from opi.web.router_wizard import _empty_sequence_item
 from pydantic import ValidationError
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
@@ -270,3 +272,15 @@ class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
         processor._yaml_data = {"components": [{"image": "code.overheid.nl/team/app:1"}]}
         assert processor._effective_value(REGISTRY_UPSTREAM, "ghcr.io/anders") == "ghcr.io/anders"
         assert processor._effective_value(REGISTRY_UPSTREAM, "") == "code.overheid.nl/team"
+
+    def test_added_row_gets_the_upstream_not_the_function(self) -> None:
+        """The wizard stores its state as JSON; the function itself in the row made "add item" a 500."""
+        project = {"components": [{"image": "code.overheid.nl/team/app:1"}]}
+        item = _empty_sequence_item(REGISTRIES_SEQUENCE, project)
+        assert item["upstream"] == "code.overheid.nl/team"
+        json.dumps(item)
+
+    def test_added_row_without_unambiguous_upstream_leaves_it_out(self) -> None:
+        item = _empty_sequence_item(REGISTRIES_SEQUENCE, {})
+        assert "upstream" not in item
+        json.dumps(item)

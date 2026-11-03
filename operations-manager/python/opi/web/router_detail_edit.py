@@ -655,7 +655,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
     if action == "add":
         editable = _find_sequence_editable(section, seq_path)
-        items.append(_empty_sequence_item(editable))
+        items.append(_empty_sequence_item(editable, yaml_data))
     elif action == "remove":
         remove_index = int(seq_index) if seq_index not in (None, "") else -1
         if 0 <= remove_index < len(items):
@@ -699,7 +699,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             if idx >= len(items):
                 flow_context["is_new"] = True
                 while len(items) <= idx:
-                    items.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
+                    items.append(_empty_sequence_item(COMPONENTS_SEQUENCE, project_data))
                 project_data = {**project_data, kind.list_key: items}
 
         # An add flow always writes into a fresh slot at the end of the list.
@@ -974,7 +974,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             items = []
 
         if seq_action == "add":
-            items.append(_empty_sequence_item(editable))
+            items.append(_empty_sequence_item(editable, merged))
         elif seq_action == "remove":
             remove_index = int(seq_index) if seq_index not in (None, "") else -1
             if 0 <= remove_index < len(items):

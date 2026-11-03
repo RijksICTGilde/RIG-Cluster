@@ -11,7 +11,7 @@ from opi.web.router_wizard import _empty_sequence_item
 
 
 def test_seed_has_no_leaked_filter_notation_keys() -> None:
-    item = _empty_sequence_item(COMPONENTS_SEQUENCE)
+    item = _empty_sequence_item(COMPONENTS_SEQUENCE, {})
     assert isinstance(item, dict)
     # The bug: keys like "services{metrics-scraper}" leaked onto the component.
     leaked = [k for k in item if "{" in k or "}" in k]
@@ -19,7 +19,7 @@ def test_seed_has_no_leaked_filter_notation_keys() -> None:
 
 
 def test_seed_services_is_a_list() -> None:
-    item = _empty_sequence_item(COMPONENTS_SEQUENCE)
+    item = _empty_sequence_item(COMPONENTS_SEQUENCE, {})
     # If services were seeded at all, they must be a proper list of entries.
     if "services" in item:
         assert isinstance(item["services"], list)
