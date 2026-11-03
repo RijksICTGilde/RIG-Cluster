@@ -89,6 +89,9 @@ De workflows volgen de OpenSSF Scorecard-checks "Pinned-Dependencies" en
   een pin houdt tegen dat een action van inhoud verandert, niet wat hij doet zodra hij
   draait. Een geblokkeerd endpoint komt als annotatie in de run te staan; dat is de plek om
   te lezen wat er nog in de lijst hoort. `tests/test_workflows_harden_runner.py` bewaakt het.
+  **Sinds 3 november 2026 tijdelijk op `audit`:** in `block` weigert harden-runner ook
+  domeinen uit de allowlist, en dan lopen jobs vast (step-security/harden-runner#708). De
+  allowlist blijft staan; terug naar `block` zodra dat is opgelost (`EGRESS_POLICY` in de test).
 - **Het workflowtoken staat op `contents: read`.** Per job komt erbij wat die job nodig
   heeft: `packages: write` voor de build-job van `docker.yml`, `contents: write` alleen
   voor de job `tag`, die niets anders doet dan de CalVer-tag zetten en alleen op main
