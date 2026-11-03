@@ -2334,7 +2334,7 @@ tasks:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
   pin-keycloak-image:
-    desc: "Zet een gepushte keycloak-zad-tag in de sandbox-overlay (TARGET=base: in de basis)"
+    desc: "Zet een gepushte keycloak-zad-tag in de sandbox-overlay (TARGET=staging of base: verder)"
     summary: |
       publish-keycloak-image roept dit aan met de tag die hij net gepusht heeft. Los aanroepen
       kan ook, bijvoorbeeld om een tag van CI op de sandbox te zetten.
@@ -2348,17 +2348,22 @@ tasks:
       dus daar hoort geen eigen IMAGE_TAG bij: die komt uit de sandbox-overlay. Geef je er
       toch een mee, dan moet het die tag zijn. Deze taak bouwt en pusht nooit: een herbouw
       levert een ander artefact op, en dan is het bewijs van de sandbox niets waard.
+
+      TARGET=staging is dezelfde promotie, maar alleen naar de odcn-staging overlay: de tag van
+      de sandbox draait dan eerst op staging, terwijl productie op de basis blijft. Een
+      promotie naar de basis haalt die pin weer weg, zodat staging daarna de basis erft.
     vars:
       TARGET: '{{.TARGET | default "sandbox"}}'
       IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
       REPO: ghcr.io/rijksictgilde/zad/keycloak-zad
       KEYCLOAK: infrastructure/bootstrap/infrastructure/keycloak/controller
     preconditions:
-      - sh: 'case "{{.TARGET}}" in sandbox|base) exit 0 ;; esac; exit 1'
+      - sh: 'case "{{.TARGET}}" in sandbox|staging|base) exit 0 ;; esac; exit 1'
         msg: |
-          TARGET is sandbox (de sandboxed-local overlay) of base (de basis, die ODCN erft).
-      # Niet voor base: daar IS de tag die van de sandbox, en die wordt gelezen.
-      - sh: '[ -n "{{.IMAGE_TAG}}" ] || [ "{{.TARGET}}" = "base" ]'
+          TARGET is sandbox (de sandboxed-local overlay), staging (de odcn-staging overlay)
+          of base (de basis, die ODCN erft).
+      # Niet voor staging en base: daar IS de tag die van de sandbox, en die wordt gelezen.
+      - sh: '[ -n "{{.IMAGE_TAG}}" ] || [ "{{.TARGET}}" != "sandbox" ]'
         msg: |
           IMAGE_TAG is verplicht, bijvoorbeeld:
             task pin-keycloak-image IMAGE_TAG=2026.09.26.1432-7ccad61d
@@ -2369,16 +2374,21 @@ tasks:
         TAG="{{.IMAGE_TAG}}"
         OVERLAY="{{.KEYCLOAK}}/overlays/sandboxed-local/kustomization.yaml"
         BASIS="{{.KEYCLOAK}}/base/deployment.yaml"
+        STAGING="{{.KEYCLOAK}}/overlays/odcn-staging/kustomization.yaml"
         PAD="${REPO#ghcr.io/}"
 
-        if [ "$TARGET" = "base" ]; then
-          # De newTag onder DEZE naam, niet de eerste die voorbijkomt; dezelfde grens die het
-          # schrijven verderop heeft.
-          SANDBOXTAG="$(awk -v repo="$REPO" '
+        # De newTag onder DEZE naam in een overlay, niet de eerste die voorbijkomt; dezelfde
+        # grens die het schrijven verderop heeft.
+        tag_in() {
+          awk -v repo="$REPO" '
               $0 ~ "- name: " repo "$" { gevonden = 1; next }
               gevonden && /^ *newTag: / { sub(/^ *newTag: /, ""); gsub(/["\x27]/, ""); print; exit }
               gevonden && /^ *- name: / { exit }
-          ' "$OVERLAY")"
+          ' "$1"
+        }
+
+        if [ "$TARGET" != "sandbox" ]; then
+          SANDBOXTAG="$(tag_in "$OVERLAY")"
 
           # De tag komt uit de sandbox-overlay en nergens anders: de basis mag alleen een tag
           # dragen die aantoonbaar op de sandbox heeft gedraaid. Een tag die hier met de hand
@@ -2407,10 +2417,18 @@ tasks:
           esac
 
           # De commit is een losse handeling, dus deze taak wordt ook twee keer gedraaid.
-          HUIDIG="$(sed -n "s|^ *image: $REPO:||p" "$BASIS")"
-          if [ "$HUIDIG" = "$TAG" ]; then
-            echo "De basis draagt $TAG al."
-            exit 0
+          if [ "$TARGET" = "staging" ]; then
+            HUIDIG="$(tag_in "$STAGING")"
+            if [ "$HUIDIG" = "$TAG" ]; then
+              echo "Staging draagt $TAG al."
+              exit 0
+            fi
+          else
+            HUIDIG="$(sed -n "s|^ *image: $REPO:||p" "$BASIS")"
+            if [ "$HUIDIG" = "$TAG" ] && [ -z "$(tag_in "$STAGING")" ]; then
+              echo "De basis draagt $TAG al."
+              exit 0
+            fi
           fi
         fi
 
@@ -2438,6 +2456,33 @@ tasks:
           exit 1
         fi
 
+        if [ "$TARGET" = "staging" ]; then
+          # De newTag komt direct onder de newName van DEZE naam. Een eerdere pin vervalt, ook
+          # als hij NA de newName staat: het blok loopt tot de volgende naam of sleutel.
+          awk -v repo="$REPO" -v tag="$TAG" '
+              $0 ~ "- name: " repo "$" { gevonden = 1; print; next }
+              gevonden && (/^ *- name: / || /^[^ ]/) { gevonden = 0 }
+              gevonden && /^ *newTag: / { next }
+              gevonden && /^ *newName: / { print; sub(/newName: .*/, "newTag: \"" tag "\""); print; next }
+              { print }
+          ' "$STAGING" > "$STAGING.nieuw"
+          mv "$STAGING.nieuw" "$STAGING"
+
+          [ "$(tag_in "$STAGING")" = "$TAG" ] && grep -q "newTag: \"$TAG\"" "$STAGING" || {
+            echo "$STAGING pint $TAG niet: staat de images-regel met newName voor $REPO er nog?" >&2
+            exit 1
+          }
+
+          echo ""
+          echo "Staging draait nu $TAG (was ${HUIDIG:-de tag van de basis}); productie blijft op de basis."
+          echo ""
+          echo "Commit dit en schuif de branch staging door; ArgoCD rolt hem daar uit:"
+          echo "  git add $STAGING && git commit -m 'deploy: keycloak-zad $TAG naar staging'"
+          echo ""
+          echo "Naar productie: task pin-keycloak-image TARGET=base, dat deze pin ook weer weghaalt."
+          exit 0
+        fi
+
         if [ "$TARGET" = "base" ]; then
           # Alleen het stuk achter de dubbele punt: de inspringing van de regel blijft zoals
           # hij is.
@@ -2452,12 +2497,22 @@ tasks:
             exit 1
           }
 
+          # Staging erft vanaf nu weer de basis. Een achtergebleven pin zou staging stil op een
+          # oude tag houden na de volgende promotie.
+          awk -v repo="$REPO" '
+              $0 ~ "- name: " repo "$" { gevonden = 1; print; next }
+              gevonden && (/^ *- name: / || /^[^ ]/) { gevonden = 0 }
+              gevonden && /^ *newTag: / { next }
+              { print }
+          ' "$STAGING" > "$STAGING.nieuw"
+          mv "$STAGING.nieuw" "$STAGING"
+
           echo ""
           echo "De basis draagt nu $TAG (was ${HUIDIG:-onbekend})."
           grep -n "image: $REPO:" "$BASIS"
           echo ""
           echo "Commit dit; ODCN erft de tag uit de basis en ArgoCD rolt hem uit:"
-          echo "  git add $BASIS && git commit -m 'deploy: keycloak-zad $TAG naar productie'"
+          echo "  git add $BASIS $STAGING && git commit -m 'deploy: keycloak-zad $TAG naar productie'"
           echo ""
           echo "Terugrollen: pin een eerdere tag uit de git-historie van dat bestand."
           exit 0
