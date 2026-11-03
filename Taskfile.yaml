@@ -1053,21 +1053,34 @@ tasks:
       - *age_key_file_guard
     cmds:
       - |
+        set -o pipefail
         echo "Updating operations-manager deployment..."
+        TEMPLATE="kubectl get deployment operations-manager -n {{.RIG_NAMESPACE}} -o jsonpath={.spec.template}"
+        VOOR=$($TEMPLATE 2>/dev/null | shasum)
+        UIT=""
         # Met SECRETS_DIR draagt de overlay het env-secret niet zelf.
         if [ -n "{{.SECRETS_DIR}}" ]; then
-          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f -
+          UIT=$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f - 2>&1) || { echo "$UIT"; exit 1; }
         fi
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        # On the ODCN clusters the image is a CalVer tag that changes every deploy, so the
-        # apply above already rolls the deployment. A `rollout restart` on top of that is
-        # a SECOND change to the pod template, so two rollouts start at once and you
-        # briefly see three pods. Only restart where apply may see nothing new: the sandbox
-        # overlay keeps the tag of its last configure.
+        UIT2=$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f - 2>&1) || { echo "$UIT"; echo "$UIT2"; exit 1; }
+        UIT=$(printf '%s\n%s\n' "$UIT" "$UIT2" | sed '/^$/d')
+        echo "$UIT"
+        NA=$($TEMPLATE 2>/dev/null | shasum)
+        # Een gewijzigde pod-template rolt Kubernetes zelf uit; een rollout restart erbovenop
+        # is een TWEEDE wijziging, met twee rollouts tegelijk. Maar een secret of de configmap
+        # komt alleen bij het starten binnen: verandert alleen die (een rotatie), dan blijft
+        # de oude pod met de oude waarde draaien tot iemand hem herstart. Dat gebeurde op
+        # 3 november met SECRET_KEY op staging.
         if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
+          # De sandbox-overlay houdt de tag van zijn laatste configure: apply ziet vaak niets.
+          kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        elif [ "$VOOR" != "$NA" ]; then
+          echo "De pod-template is gewijzigd; Kubernetes rolt zelf uit (geen restart nodig)."
+        elif echo "$UIT" | grep -qE '^(secret/operations-manager-(env-secrets|access)|configmap/operations-manager-config) configured'; then
+          echo "Alleen een secret of de configmap is gewijzigd; herstart zodat de pod de nieuwe waarden laadt."
           kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
         else
-          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
+          echo "Niets gewijzigd voor de pod; geen herstart."
         fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true

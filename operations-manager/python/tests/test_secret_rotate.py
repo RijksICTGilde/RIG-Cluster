@@ -714,7 +714,7 @@ def test_de_handmatige_stap_noemt_de_deploy_task_per_cluster(monkeypatch: pytest
     kube = _dry_kube(monkeypatch)
     component = rotate.BY_KEY["secret-key"]
     for naam, verwacht in (
-        ("odcn-production", "task deploy-operations-manager CLUSTER_TYPE=odcn-production"),
+        ("odcn-production", "CLUSTER_TYPE=odcn-production task deploy-operations-manager"),
         ("sandboxed-local", "task sandbox:update-operations-manager"),
     ):
         cluster = rotate.Cluster(name=naam, namespace="ns", folders={"infrastructure": "odcn", "bootstrap": naam})

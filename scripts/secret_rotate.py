@@ -2376,7 +2376,7 @@ def zad_env_steps(component: Component, cluster: Cluster, *, defer_restarts: boo
     deploy = (
         "task sandbox:update-operations-manager"
         if cluster.name == "sandboxed-local"
-        else f"task deploy-operations-manager CLUSTER_TYPE={cluster.name}"
+        else f"CLUSTER_TYPE={cluster.name} task deploy-operations-manager"
     )
     steps = [
         cluster_secret_check(component),
@@ -2385,7 +2385,7 @@ def zad_env_steps(component: Component, cluster: Cluster, *, defer_restarts: boo
             "HANDMATIG: envsecret regenereren, pushen en toepassen",
             "manual",
             [
-                f"task generate-env-secrets-for-operations-manager CLUSTER_TYPE={cluster.name}",
+                f"CLUSTER_TYPE={cluster.name} task generate-env-secrets-for-operations-manager",
                 "review de diff, commit en push",
                 # De OPI-overlay hangt in geen ArgoCD-Application, dus git brengt het
                 # envsecret niet in het cluster: de deploy-task doet de apply.
