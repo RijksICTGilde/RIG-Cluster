@@ -187,12 +187,14 @@ jobs:
       # Dit is de snelle poort, en hij faalt zodra een policy niet meer doet wat hij belooft.
       - name: Policies tegen een overtreder en een nette pod
         run: |
+          # kyverno apply eindigt met exitcode 1 zodra een resource faalt, en dat is hier de
+          # bedoeling; de telling hieronder is de toets.
           UITKOMST=$(kyverno apply \
             infrastructure/bootstrap/infrastructure/kyverno/policies/base/geen-latest-tag.yaml \
             infrastructure/bootstrap/infrastructure/kyverno/policies/base/securitycontext.yaml \
             --resource .github/aanvalsproef/overtreder-pod.yaml \
             --resource .github/aanvalsproef/tagloze-pod.yaml \
-            --resource .github/aanvalsproef/nette-pod.yaml)
+            --resource .github/aanvalsproef/nette-pod.yaml) || true
           echo "$UITKOMST"
           echo "$UITKOMST" | grep -q "pass: 5, fail: 4" \
             || { echo "verwacht 5 geslaagd en 4 gefaald: de policies meten niet meer wat ze beloven"; exit 1; }
