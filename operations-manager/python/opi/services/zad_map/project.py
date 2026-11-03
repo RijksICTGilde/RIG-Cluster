@@ -534,7 +534,7 @@ def _deployment_rows(
         elif capacity is None:
             measured = format_bytes(used)
         else:
-            measured = f"{format_bytes(used)} van {format_bytes(capacity)}"
+            measured = f"{format_bytes(used)} / {format_bytes(capacity)}"
         rows.append(Row(icon=Glyph.DISK, text=f"{label}: {measured}"))
 
     if _BUCKET_SERVICES.intersection(_used_service_names(data)):

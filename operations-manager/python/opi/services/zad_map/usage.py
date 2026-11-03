@@ -113,10 +113,10 @@ async def measure_usage(namespaces: set[str], databases: set[str]) -> MeasuredUs
 
 
 def format_bytes(value: float) -> str:
-    """A size as a reader says it: ``340 MB``, ``1,2 GB``. Decimal units, Dutch comma."""
+    """A size as a reader says it: ``340 MB``, ``1,2 GB``, ``1 GB``. Decimal units, Dutch comma."""
     for unit, factor in (("TB", 1e12), ("GB", 1e9), ("MB", 1e6), ("kB", 1e3)):
         if value >= factor:
             amount = value / factor
-            text = f"{amount:.1f}" if amount < 10 else f"{amount:.0f}"
+            text = f"{amount:.1f}".removesuffix(".0") if amount < 10 else f"{amount:.0f}"
             return f"{text.replace('.', ',')} {unit}"
     return f"{value:.0f} B"

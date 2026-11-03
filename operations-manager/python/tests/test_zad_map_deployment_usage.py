@@ -81,7 +81,7 @@ def test_the_card_shows_the_measured_sizes(store: Any) -> None:
 
     graph = project_graph(PROJECT, usage)
 
-    assert _rows(graph, "productie")[:2] == ["database: 1,2 GB", "web/data: 340 MB van 1,0 GB"]
+    assert _rows(graph, "productie")[:2] == ["database: 1,2 GB", "web/data: 340 MB / 1 GB"]
 
 
 def test_an_unmeasured_store_says_so_instead_of_zero(store: Any) -> None:
@@ -180,7 +180,7 @@ async def test_measurements_are_keyed_by_namespace_pvc_and_database() -> None:
 
 @pytest.mark.parametrize(
     ("value", "text"),
-    [(512, "512 B"), (340e6, "340 MB"), (1.2e9, "1,2 GB"), (12.4e9, "12 GB")],
+    [(512, "512 B"), (340e6, "340 MB"), (1e9, "1 GB"), (1.2e9, "1,2 GB"), (12.4e9, "12 GB")],
 )
 def test_format_bytes(value: float, text: str) -> None:
     assert format_bytes(value) == text
