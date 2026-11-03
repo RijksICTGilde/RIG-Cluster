@@ -219,7 +219,12 @@ jobs:
 
       - name: Zet de policies erop
         run: |
-          kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base
+          # Een geslaagde rollout betekent nog niet dat de webhook van Kyverno al antwoordt.
+          for poging in $(seq 1 30); do
+            kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base && break
+            [ "$poging" = 30 ] && exit 1
+            sleep 5
+          done
           kubectl wait --for=condition=Ready clusterpolicy/zad-geen-latest-tag --timeout=120s
           kubectl wait --for=condition=Ready clusterpolicy/zad-securitycontext --timeout=120s
 
