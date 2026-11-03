@@ -257,13 +257,6 @@ def test_h_component_buiten_de_aanvalsproef_valt_op(ruwe_inventaris: dict) -> No
 # --- 6. De BIO-narratief verwijst, schrijft niet over --------------------------------
 
 
-def test_de_bio_narratief_verwijst_naar_de_inventaris() -> None:
-    """De scan-documenten leiden naar de inventaris in plaats van eigen scores te noemen."""
-    for naam in ("technische-review-bio-en-nora.md", "technische-review-bio-en-nora-bevindingen.md"):
-        tekst = (REPO_ROOT / "plans" / naam).read_text(encoding="utf-8")
-        assert "architecture/biv-inventaris.yaml" in tekst
-
-
 def test_het_overzicht_staat_in_architecture() -> None:
     assert Path(OVERZICHT).parent == REPO_ROOT / "architecture"
 

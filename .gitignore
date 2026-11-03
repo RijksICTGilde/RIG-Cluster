@@ -4,9 +4,8 @@ __pycache__/
 .venv/
 /CLAUDE.md
 /.claude/settings.local.json
-# Security - ignore private keys, allow encrypted certs and readme
+# Security - ignore private keys, allow encrypted certs
 /security/*
-!/security/readme.md
 !/security/tls/
 /security/tls/**/*.pem
 # De sandbox-CA voor argocd-server (task sandbox:generate-argocd-tls) schrijft hier
