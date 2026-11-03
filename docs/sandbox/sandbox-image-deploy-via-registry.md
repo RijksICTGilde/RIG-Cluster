@@ -2,7 +2,7 @@
 
 > Dit document gaat over de **in-cluster** `rig-registry`, voor images van projecten. Voor
 > platform-images staat er inmiddels een registry **naast** het cluster, die een
-> clusterherbouw overleeft: zie `docs/sandbox-kind-registry.md`.
+> clusterherbouw overleeft: zie `docs/sandbox/sandbox-kind-registry.md`.
 
 Een build op de dev-sandbox neerzetten met `kind load docker-image` is traag: `kind load`
 exporteert **elke keer de hele image als tar** uit de docker-daemon en importeert die in de
@@ -66,11 +66,11 @@ kunnen die worden bijgewerkt:
 
 - **`sandbox-deploy`** (de baked dclaude-command): laat die pushen en de deployment naar
   de registry-tag zetten in plaats van `kind load`. `task sandbox:update-operations-manager`
-  doet dat al, via de registry naast het cluster (`docs/sandbox-kind-registry.md`).
+  doet dat al, via de registry naast het cluster (`docs/sandbox/sandbox-kind-registry.md`).
 - **De operations-manager overlay** (`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local`):
   de `imagePullSecrets: [rig-registry-pull]` daar vastleggen, zodat de kubelet standaard uit
   `rig-registry` kan pullen en de patch bij stap 3 niet meer per sessie nodig is.
 - **`workflow/sandbox.md`**: de deploy-sectie verwijzen naar deze flow.
 
-Zie ook `docs/sandbox-on-dev-server.md` (Caddy/poorten) en `images/argocd-rig/README.md`,
+Zie ook `docs/sandbox/sandbox-on-dev-server.md` (Caddy/poorten) en `images/argocd-rig/README.md`,
 waar dezelfde registry al voor de argocd-rig image wordt gebruikt.

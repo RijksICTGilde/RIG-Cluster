@@ -36,7 +36,7 @@ twijfel uit elkaar te houden.
 ## Bevinding vooraf: meet de handshake op de poort van de ingress, niet op 443
 
 Op de gedeelde dev-server luistert Caddy op 443 en publiceert de Kind-container de ingress
-op **8843** (`docs/sandbox-on-dev-server.md` noemt 8443 als voorbeeld; de draaiende
+op **8843** (`docs/sandbox/sandbox-on-dev-server.md` noemt 8443 als voorbeeld; de draaiende
 container zegt 8843). Caddy termineert TLS zelf, met hetzelfde wildcard-certificaat. Een
 meting op 443 levert daardoor voor **elke** hostnaam het platformcertificaat op -- ook voor
 een deployment die aantoonbaar zijn eigen certificaat aanbiedt.

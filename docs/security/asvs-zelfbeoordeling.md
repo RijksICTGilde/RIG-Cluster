@@ -1,6 +1,6 @@
 # ASVS-zelfbeoordeling van ZAD
 
-Gegenereerd uit [architecture/asvs-zelfbeoordeling.yaml](../architecture/asvs-zelfbeoordeling.yaml) en [architecture/asvs-5.0-eisen.yaml](../architecture/asvs-5.0-eisen.yaml) met `task asvs-afvinklijst`. Bewerk dit bestand niet met de hand: een wijziging hoort in de beoordeling, en `task asvs-check` meldt het verschil.
+Gegenereerd uit [architecture/asvs-zelfbeoordeling.yaml](../../architecture/asvs-zelfbeoordeling.yaml) en [architecture/asvs-5.0-eisen.yaml](../../architecture/asvs-5.0-eisen.yaml) met `task asvs-afvinklijst`. Bewerk dit bestand niet met de hand: een wijziging hoort in de beoordeling, en `task asvs-check` meldt het verschil.
 
 Meetlat: OWASP ASVS 5.0.0, niveau L2 (CC BY-SA 3.0). Per eis staat hier of een automatische toets hem dekt, welk plan hem bouwt, of dat hij handwerk blijft. Een eis met status *automatische toets* noemt een toets die bestaat; `task asvs-check` faalt zodra die verdwijnt.
 

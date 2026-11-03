@@ -149,7 +149,7 @@ alleen wanneer een `BackupConfig` buiten `from_settings()` om wordt gebouwd.
 #### c. `manifests/namespace.yaml.jinja:10` — `egress.projectcalico.org/egressGatewayPolicy: "internet"`
 
 Staat onvoorwaardelijk op **elke** gegenereerde namespace, met er letterlijk boven de notitie
-`# NOTE: we need manifests per cluster` (regel 8). Volgens `docs/ron-koppeling.md:37` is dit op
+`# NOTE: we need manifests per cluster` (regel 8). Volgens `docs/operations/ron-koppeling.md:37` is dit op
 ODCN een door **Kyverno** gecontroleerde annotatie met een beperkte waardenlijst (`internet`
 of een klantgateway `rig-*`), en "bij een foutieve annotatie wordt de namespace onbruikbaar".
 
@@ -421,7 +421,7 @@ overgaan of eruit moeten — punten 2.2c, 2.2d en 2.2e.)*
     dit antwoord bepaalt de hele hub-en-spoke-opzet.**
 13. Is er internet-egress vanuit pods? Zo nee: via welke gateway, en hoe wordt die aangezet —
     een annotatie op de namespace, een label, een aparte resource? *(Op ODCN is dit
-    `egress.projectcalico.org/egressGatewayPolicy`, zie `docs/ron-koppeling.md`; dit is het
+    `egress.projectcalico.org/egressGatewayPolicy`, zie `docs/operations/ron-koppeling.md`; dit is het
     soort afspraak dat op fundament gegarandeerd anders heet — punt 2.2c.)*
 14. Kunnen wij Let's Encrypt gebruiken (ACME HTTP-01 of DNS-01), of is er een interne CA?
 
@@ -659,7 +659,7 @@ Als fundament niet publiek is, is de vraag over welk pad ODCN hem dan bereikt. O
 volgorde van voorkeur:
 
 1. **Interne koppeling tussen de clusters** — als er een netwerkpad is tussen ODCN en fundament
-   (bijvoorbeeld via het RON, zie `docs/ron-koppeling.md`), dan is het gewoon een interne
+   (bijvoorbeeld via het RON, zie `docs/operations/ron-koppeling.md`), dan is het gewoon een interne
    hostnaam met TLS. Simpelst.
 2. **Een gateway of proxy** die de fundament-API op een beperkt pad publiceert
    (`/api/v2/*` en `/api/tasks/*`), met de `X-API-Key` als enige toegang.
@@ -736,7 +736,7 @@ verhuizen, niet over een nieuwe laag eromheen.
 **Geen federatie aanzetten of testen.** Paragraaf 5 stelt alleen vast wat er is, wat het gat
 is, en wat beslist moet worden.
 
-**Geen ODCN-eigenaardigheden meeverhuizen.** `docs/ron-koppeling.md` en
+**Geen ODCN-eigenaardigheden meeverhuizen.** `docs/operations/ron-koppeling.md` en
 `features/futures/vlam-api-vpn-proxy.md` zijn leerzaam als *voorbeeld van het soort
 platformafspraak dat je moet uitvragen* — de egressgateway-annotatie en het
 ingresscontroller-label zullen op fundament gegarandeerd anders heten of niet bestaan. Ze zijn

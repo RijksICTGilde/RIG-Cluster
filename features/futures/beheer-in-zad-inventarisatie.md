@@ -578,7 +578,7 @@ metingen.
 
 | Grootheid | Waarde | Bron |
 |---|---|---|
-| Projecten | **47** | `docs/derde-generale-augustus-2026.md:243-245`, nageteld in `rig-cluster-projects-sandbox`; de sandboxrepository is de omgezette kopie van de productierepository (`docs/productiebestanden-naar-een-sandbox.md:63`, "Done: 47/47 projects migrated") |
+| Projecten | **47** | `docs/derde-generale-augustus-2026.md:243-245`, nageteld in `rig-cluster-projects-sandbox`; de sandboxrepository is de omgezette kopie van de productierepository (`docs/sandbox/productiebestanden-naar-een-sandbox.md:63`, "Done: 47/47 projects migrated") |
 | Deployments | **137** | idem, tabel op `:249-254` |
 | Componentdefinities | 90 | idem |
 | Component-instanties in deployments | **261** | idem |

@@ -99,7 +99,7 @@ MAX_CONNECTIONS=100
 | Supported variables | Only `PUBLIC_HOST` | All service secret variables |
 | Storage | Component-specific secret | Service secrets (shared across components) |
 
-For referencing database, minio, or keycloak variables, use `aliases` instead. See [ALIASES.md](./ALIASES.md) for details.
+For referencing database, minio, or keycloak variables, use `aliases` instead. See [ALIASES.md](aliases.md) for details.
 
 ## Technical Notes
 

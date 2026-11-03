@@ -35,7 +35,7 @@ _token_refresh_lock = asyncio.Lock()
 
 # While argocd-server restarts its API server in-process, the service can be without an
 # endpoint for as long as its 20 second graceful-shutdown deadline. 30 seconds covers
-# that with margin. Why it restarts: docs/argocd-server-herstart-elke-40-minuten.md.
+# that with margin. Why it restarts: docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
 CONNECT_RETRY_SECONDS = 30.0
 
 

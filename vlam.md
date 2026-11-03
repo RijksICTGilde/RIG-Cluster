@@ -41,7 +41,7 @@ doorlus-pad. Het VPN-pad blijft bestaan, voor laptops.
 ## De RON-koppeling
 
 De koppeling zelf, inclusief het gekoppelde IP-blok en de ingresskant, staat in
-`docs/ron-koppeling.md`. Hieronder alleen wat deze gateway ervan gebruikt.
+`docs/operations/ron-koppeling.md`. Hieronder alleen wat deze gateway ervan gebruikt.
 
 Egress naar RON wordt gekozen met een **annotatie op de namespace**, geen label:
 

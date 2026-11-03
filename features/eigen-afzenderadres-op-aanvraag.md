@@ -70,7 +70,7 @@ Zes dingen die erbij horen en die niet uit de tabel volgen:
 
 ## Fasering
 
-1. **De vraag bij het mailteam.** Verifieer: mag dit, onder welke voorwaarde, en wie bewaakt de naamruimte. Zonder ja hoeft de rest niet. Toets: een antwoord op schrift in `docs/ron-koppeling.md`.
+1. **De vraag bij het mailteam.** Verifieer: mag dit, onder welke voorwaarde, en wie bewaakt de naamruimte. Zonder ja hoeft de rest niet. Toets: een antwoord op schrift in `docs/operations/ron-koppeling.md`.
 2. **Het commentaar bij de relay rechtzetten.** De docstring in `opi/connectors/mail.py` is op 22 september 2026 al bijgewerkt; wat rest is de identiteitsregel in `config.toml`, en die wacht op een uitrol die er toch al is. Toets: de tekst klopt met wat `ensure_keycloak_account` doorgeeft.
 3. **Het veld plus de goedkeuring.** Editable, validatie via het model, `ApprovalSpec` erbij op de projectlaag, aanvragen via de bestaande `post_merge`-haak. Toets: een opgeslagen adres verschijnt in dezelfde beheerpagina als een domeinaanvraag, en een oordeel landt in het projectbestand met geschiedenis.
 4. **De poort in de schrijfweg.** `sender_address` alleen doorgeven bij goedkeuring, intrekken wist de sleutel. Toets: twee opeenvolgende verwerkingen schrijven niets extra's, een ingetrokken goedkeuring laat het volgende bericht weer onder het afgeleide adres vertrekken, gemeten in de Mailpit-sink op de sandbox.

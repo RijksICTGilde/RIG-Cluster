@@ -1,7 +1,7 @@
 """Een aiohttp-aanroep herhalen zolang de verbinding niet tot stand komt.
 
 Hier en niet in een connector, want twee connectors hebben hem: ArgoCD rijdt er de
-herstart van zijn eigen API-server mee uit (docs/argocd-server-herstart-elke-40-minuten.md)
+herstart van zijn eigen API-server mee uit (docs/post-mortems/argocd-server-herstart-elke-40-minuten.md)
 en de mailrelay een podwissel, en in beide gevallen kost dat verschil anders een hele
 uitrol.
 """

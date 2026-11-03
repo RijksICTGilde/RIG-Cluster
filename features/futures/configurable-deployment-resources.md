@@ -296,4 +296,4 @@ Increase your memory limit (up to 2048Mi maximum).
 
 ## Related Features
 
-- [auto-scale-resources.md](../../operations-manager/python/features/auto-scale-resources.md) - Automatic resource scaling based on metrics (planned)
+- [auto-scale-resources.md](../auto-scale-resources.md) - Automatic resource scaling based on metrics (planned)

@@ -38,7 +38,7 @@ This task:
 ## Image Usage Patterns
 
 ### Local Development
-- **Image**: `localhost:5001/operations-manager:<commit>` (local build, see `docs/sandbox-kind-registry.md`)
+- **Image**: `localhost:5001/operations-manager:<commit>` (local build, see `docs/sandbox/sandbox-kind-registry.md`)
 - **Used in**: Sandbox kind cluster deployments
 - **Configuration**: `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml`
 

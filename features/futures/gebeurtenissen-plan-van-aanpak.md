@@ -277,7 +277,7 @@ Wat wel vaststaat over het netwerk, en dat is genoeg om de vraag scherp te stell
 
 **Dus: een Mattermost op het internet is bereikbaar.** Zonder nieuwe regel, zonder gesprek.
 
-**En een Mattermost binnen het Rijksnetwerk is dat niet, en dat is een harde blokkade.** `docs/ron-koppeling.md:70`: de annotatie neemt **een** waarde, `internet` of een klantgateway zoals `rig-ron`, en de een vervangt de ander. `plans/mailrelay.md:258` heeft dat gemeten en getrokken tot de conclusie: RON aanzetten op `rig-prd-operations` kost daar het internet, en daarmee ArgoCD, de registry en Keycloak. Precies daarom draait de mailrelay in een EIGEN namespace (`rig-prd-ron`) en niet naast OPI.
+**En een Mattermost binnen het Rijksnetwerk is dat niet, en dat is een harde blokkade.** `docs/operations/ron-koppeling.md:70`: de annotatie neemt **een** waarde, `internet` of een klantgateway zoals `rig-ron`, en de een vervangt de ander. `plans/mailrelay.md:258` heeft dat gemeten en getrokken tot de conclusie: RON aanzetten op `rig-prd-operations` kost daar het internet, en daarmee ArgoCD, de registry en Keycloak. Precies daarom draait de mailrelay in een EIGEN namespace (`rig-prd-ron`) en niet naast OPI.
 
 Als de Mattermost op RON staat, is de oplossing dus dezelfde als bij de mail: een klein tussenstation in een eigen namespace met `rig-ron`, waar OPI intern naartoe praat. Dat is geen regel erbij, dat is een component erbij.
 

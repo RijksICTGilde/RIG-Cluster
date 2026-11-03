@@ -13,7 +13,7 @@ verstuurt alleen wat er veranderd is in plaats van het volledige image van bijna
 
 De in-cluster `rig-registry` kan dat niet: die bewaart zijn lagen op een PVC in het cluster,
 dus een reset wist ze. Hij blijft waar hij voor is, images van projecten; zie
-`docs/sandbox-image-deploy-via-registry.md`.
+`docs/sandbox/sandbox-image-deploy-via-registry.md`.
 
 ## Wat het script doet
 

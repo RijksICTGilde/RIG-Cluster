@@ -1,6 +1,6 @@
 # Back-upbeleid ZAD
 
-*Concept, 2 september 2026. Vast te stellen door de proceseigenaar. Dit document beschrijft wat ZAD toezegt over back-ups en wat een projecteigenaar zelf moet regelen. De techniek erachter staat in `docs/backup-architectuur-overzicht.md`; die wordt hier niet herhaald.*
+*Concept, 2 september 2026. Vast te stellen door de proceseigenaar. Dit document beschrijft wat ZAD toezegt over back-ups en wat een projecteigenaar zelf moet regelen. De techniek erachter staat in `docs/operations/backup-architectuur-overzicht.md`; die wordt hier niet herhaald.*
 
 Dit beleid geeft invulling aan BIO2 v1.3, beheersmaatregel 8.13 (back-up van informatie) en de daarbij horende overheidsmaatregelen 8.13.01 tot en met 8.13.04, en raakt 5.30 (ICT-gereedheid voor bedrijfscontinuïteit).
 
@@ -68,7 +68,7 @@ BIO 8.13.02 vraagt om een expliciete afweging van maximaal toegestaan dataverlie
 | Eén database, opslag of bucket terugzetten, platform verder gezond | 4 werkuren | Het pad is beproefd op een testcluster, de tijd is nog niet in productie gemeten |
 | Een hele deployment of een heel project terugzetten | 1 werkdag | Schatting, nooit als geheel uitgevoerd |
 | ZAD opnieuw inrichten op andere hardware, back-ups intact | 1 werkdag | Schatting, onder de drie voorwaarden hieronder |
-| ZAD inrichten op een ander platformtype | Weken | Geen incidentscenario maar een project, zie `docs/een-nieuw-cluster-installeren.md` |
+| ZAD inrichten op een ander platformtype | Weken | Geen incidentscenario maar een project, zie `docs/operations/een-nieuw-cluster-installeren.md` |
 | Verlies of corruptie van de back-upopslag zelf | Geen toezegging | Zie paragraaf 8, dit is een erkend risico |
 
 Bij het derde scenario horen drie voorwaarden die expliciet gemaakt moeten worden, omdat de streefwaarde zonder die voorwaarden niets waard is:

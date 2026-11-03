@@ -5,7 +5,7 @@ De vier Forgejo-repositories van de sandbox (`zad-projects`,
 privé, en Forgejo vraagt een login voordat het iets laat lezen. Ze bevatten de
 projectbestanden met hun AGE-versleutelde waarden, de ArgoCD-applicaties en de
 gegenereerde manifests; de sandbox draait op een dev-server onder een publiek
-resolvende naam (`docs/sandbox-on-dev-server.md`), dus zonder dit was dat alles
+resolvende naam (`docs/sandbox/sandbox-on-dev-server.md`), dus zonder dit was dat alles
 leesbaar voor wie Forgejo kon bereiken (BIO2 8.31).
 
 ## Wat er aan staat

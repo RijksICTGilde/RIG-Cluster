@@ -336,5 +336,5 @@ This approach was chosen because Keycloak's built-in conditional sub-flows don't
 
 ## Related Documentation
 
-- [Keycloak YAML Configuration](../docs/keycloak-yaml-configuration.md)
+- [Keycloak YAML Configuration](../docs/keycloak/keycloak-yaml-configuration.md)
 - [Keycloak Server Admin - Authentication Flows](https://www.keycloak.org/docs/latest/server_admin/#_authentication-flows)

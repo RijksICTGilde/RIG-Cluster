@@ -118,7 +118,7 @@ de versleutelde blob die `kopia maintenance` na die zes maanden weghaalt blijft 
 dagen als oudere objectversie staan, tot de lifecycle-regel hem opruimt. Wie de S3-sleutel en
 het Kopia-wachtwoord heeft, haalt die versie er met zijn version ID nog uit. De bewaartermijn
 in de opslag is dus uiterlijk ongeveer dertien maanden, niet zes. Dat staat ook in
-`docs/backup-beleid.md` paragraaf 4, waar de bewaartermijnen van het platform bij elkaar
+`docs/operations/backup-beleid.md` paragraaf 4, waar de bewaartermijnen van het platform bij elkaar
 staan.
 
 ### De bucket en object lock
@@ -202,7 +202,7 @@ Gemeten op de sandbox: zie "Gemeten" hieronder.
   gedaan, omdat een logische dump per database onafhankelijk van de operator werkt en per
   database terug te zetten is.
 - **De bestemming zelf.** Die staat vandaag op dezelfde opslaglaag als de productiedata; zie
-  `docs/backup-architectuur-overzicht.md`. Verhuist de bestemming, dan verhuist deze dump
+  `docs/operations/backup-architectuur-overzicht.md`. Verhuist de bestemming, dan verhuist deze dump
   mee, want hij leest het endpoint uit hetzelfde geheim als OPI.
 - **De rollen en wachtwoorden van PostgreSQL zelf.** Een logische dump per database bevat de
   globale objecten niet. De rollen komen declaratief uit `cluster.yaml` en hun wachtwoorden

@@ -18,7 +18,7 @@ totdat de sandbox vandaag (2026-05-20) gebruikt werd.
 
 **Tijdelijke fix:** Cert opnieuw geïssued via nieuw scripted flow
 (`task sandbox:renew-wildcard-cert`, runbook in
-`docs/sandbox-wildcard-cert-renewal.md`). Nieuw cert geldig tot 2026-08-18.
+`docs/sandbox/sandbox-wildcard-cert-renewal.md`). Nieuw cert geldig tot 2026-08-18.
 
 **Wat structureel nodig:** Monitoring/alerting op cert NotAfter. Voorstel:
 GitHub Action die faalt als de committed `.age` cert <14 dagen heeft. Geen
@@ -64,7 +64,7 @@ aanmaakt). Mogelijke oplossingen:
 
 **Wat:** De "truuk" met `*.sandbox.rijksapp.dev` → 127.0.0.1 + Let's Encrypt
 wildcard via TransIP DNS-01 was nergens gedocumenteerd, terwijl het
-load-bearing is. Nu wel (`docs/sandbox-wildcard-cert-renewal.md`).
+load-bearing is. Nu wel (`docs/sandbox/sandbox-wildcard-cert-renewal.md`).
 
 **Wat structureel nodig:** Audit van andere operationele kennis die nergens
 op schrift staat. Kandidaten:

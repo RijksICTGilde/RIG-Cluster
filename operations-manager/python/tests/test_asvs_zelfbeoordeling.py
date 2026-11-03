@@ -37,7 +37,7 @@ def test_de_afvinklijst_loopt_niet_achter() -> None:
     eisen = laad_eisen()
     niveau, oordelen = laad_beoordeling()
     assert AFVINKLIJST.read_text(encoding="utf-8") == render(eisen, niveau, oordelen), (
-        "docs/asvs-zelfbeoordeling.md loopt achter, genereer opnieuw met `task asvs-afvinklijst`"
+        "docs/security/asvs-zelfbeoordeling.md loopt achter, genereer opnieuw met `task asvs-afvinklijst`"
     )
 
 

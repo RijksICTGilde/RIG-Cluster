@@ -74,7 +74,7 @@ spec:
             # TLS. De basis draagt de productiewaarde: de mailserver van de organisatie,
             # zonder gebruikersnaam en wachtwoord - gemeten op 17 augustus 2026 adverteert
             # die server geen AUTH en vertrouwt hij op ons uitgaande adres 145.21.227.140.
-            # Zie docs/ron-koppeling.md. De component mail/sink/as-upstream zet hem om naar
+            # Zie docs/operations/ron-koppeling.md. De component mail/sink/as-upstream zet hem om naar
             # de SMTP-sink, dus sandboxed-local krijgt de sink vanzelf mee.
             - name: MAIL_UPSTREAM_HOST
               value: rmrmail.rijksweb.nl

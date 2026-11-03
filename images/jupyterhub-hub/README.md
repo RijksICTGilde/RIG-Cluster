@@ -9,7 +9,7 @@ zit al in de base-image en draait als subproces in dezelfde pod.
 
 ## Bouwen en op de sandbox zetten
 
-Rechtstreeks naar de in-cluster registry (`docs/sandbox-image-deploy-via-registry.md`), en
+Rechtstreeks naar de in-cluster registry (`docs/sandbox/sandbox-image-deploy-via-registry.md`), en
 **niet** via `docker save` plus de push-API van ZAD. Die weg is in ronde 1 gemeten en werkt
 hier niet: een image van 2,7 GB komt er niet door en legt de control plane van de sandbox
 om, en wat er wel doorkomt is daarna niet pullbaar omdat het project geen pull-secret heeft

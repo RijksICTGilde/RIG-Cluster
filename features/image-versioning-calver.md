@@ -164,7 +164,7 @@ uitzonderingen staan in `UITZONDERINGEN`, met de reden per regel.
 ## Wat bewust niet is meegenomen
 
 - **De sandbox.** Die pusht naar de registry naast het cluster met de commit als tag
-  (`docs/sandbox-kind-registry.md`), en publiceert niet, dus er is geen rollback-probleem.
+  (`docs/sandbox/sandbox-kind-registry.md`), en publiceert niet, dus er is geen rollback-probleem.
 - **De overige images** (hello-world, argocd-rig, zad-waker). `docker-build-and-push`
   ondersteunt `IMAGE_TAG` en `EXTRA_TAG` voor iedereen, dus dit is per image een kleine stap
   zodra het nodig is.

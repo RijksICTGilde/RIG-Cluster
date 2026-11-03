@@ -3,7 +3,7 @@
 > **Waar dit wordt opgeslagen (schemaversie 2.7):** de velden hieronder staan in het
 > projectbestand onder `deployments[].services[publish-on-web].config`, niet meer los in de
 > wortel van de deployment. Zie
-> [webadres-onder-de-dienst.md](../../../features/webadres-onder-de-dienst.md). De
+> [webadres-onder-de-dienst.md](webadres-onder-de-dienst.md). De
 > YAML-fragmenten in dit document tonen de velden zonder dat omhulsel, om over hun betekenis
 > te gaan en niet over hun plek.
 
@@ -42,7 +42,7 @@ approved for this project:
 Without approval none of the four happens and the deployment publishes on the cluster
 address; the form saves the setting anyway, with a warning that says to request the domain.
 The split between saving and applying is in
-[webadres-onder-de-dienst.md](../../../features/webadres-onder-de-dienst.md).
+[webadres-onder-de-dienst.md](webadres-onder-de-dienst.md).
 
 ## Wizard
 

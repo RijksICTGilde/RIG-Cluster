@@ -1,7 +1,7 @@
 # JupyterHub met KubeSpawner als ZAD-component (RC-258), op de sandbox.
 #
 # Twee images uit images/jupyterhub-hub en images/jupyterhub-user, rechtstreeks naar de
-# in-cluster registry (docs/sandbox-image-deploy-via-registry.md) en niet via de push-API
+# in-cluster registry (docs/sandbox/sandbox-image-deploy-via-registry.md) en niet via de push-API
 # van ZAD: die weg is gemeten en werkt hier niet. De Role en RoleBinding die KubeSpawner
 # nodig heeft staan in features/jupyterhub-poc/hub-role.yaml en worden in deze POC met de
 # hand toegepast: ZAD kan ze nog niet genereren.

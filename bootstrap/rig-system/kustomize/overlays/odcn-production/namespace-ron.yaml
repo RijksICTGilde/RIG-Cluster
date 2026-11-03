@@ -27,5 +27,5 @@ metadata:
   annotations:
     # DE RON-KOPPELING. Deze annotatie neemt exact een waarde, dus RON en internet
     # kunnen niet allebei op dezelfde namespace staan; dat is de reden dat de relay een
-    # eigen namespace heeft (plans/mailrelay.md, aanvulling 2, docs/ron-koppeling.md).
+    # eigen namespace heeft (plans/mailrelay.md, aanvulling 2, docs/operations/ron-koppeling.md).
     egress.projectcalico.org/egressGatewayPolicy: "rig-ron"

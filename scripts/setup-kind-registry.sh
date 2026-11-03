@@ -4,7 +4,7 @@
 # de nodes erop aan, volgens https://kind.sigs.k8s.io/docs/user/local-registry/.
 #
 # Waarom naast het cluster, en de containerdConfigPatches die de kind-config daarvoor
-# nodig heeft: docs/sandbox-kind-registry.md. Ontbreekt die regel, dan leest containerd
+# nodig heeft: docs/sandbox/sandbox-kind-registry.md. Ontbreekt die regel, dan leest containerd
 # de hosts.toml niet en weigert dit script; de fout is anders stil tot de eerste deploy.
 #
 # Gebruik: scripts/setup-kind-registry.sh [--cluster NAAM]
@@ -53,7 +53,7 @@ fi
 
 # 1. Bestaat de container maar staat hij stil, dan starten we hem: een `docker run` met
 # dezelfde naam zou daarop stuklopen. Een container zonder deletes maken we opnieuw aan
-# op het volume van de oude (docs/sandbox-kind-registry.md).
+# op het volume van de oude (docs/sandbox/sandbox-kind-registry.md).
 reg_run() {
     docker run -d --restart=always -p "127.0.0.1:${REG_PORT}:5000" \
         -e REGISTRY_STORAGE_DELETE_ENABLED=true \
@@ -96,7 +96,7 @@ for node in $nodes; do
     if ! grep -qE '^[[:space:]]*config_path[[:space:]]*=' <<<"$config"; then
         echo "[kind-registry] node $node leest geen /etc/containerd/certs.d." >&2
         echo "[kind-registry] De kind-config van dit cluster mist containerdConfigPatches." >&2
-        echo "[kind-registry] Bijwerken zonder herbouw kan: docs/sandbox-kind-registry.md," >&2
+        echo "[kind-registry] Bijwerken zonder herbouw kan: docs/sandbox/sandbox-kind-registry.md," >&2
         echo "[kind-registry] sectie 'Een bestaand cluster bijwerken zonder herbouw'." >&2
         exit 4
     fi

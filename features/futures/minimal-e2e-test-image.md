@@ -389,7 +389,7 @@ first-class feature, not an afterthought:
   (mirroring how other images are built) is the tidy home for this.
 - **Fast sandbox iteration:** during development, push to the in-cluster
   `rig-registry` and pull via the existing `rig-registry-pull` secret instead of
-  `kind load` — see `docs/sandbox-image-deploy-via-registry.md`. Because the
+  `kind load` — see `docs/sandbox/sandbox-image-deploy-via-registry.md`. Because the
   final image is a single tiny layer, even a full re-push is seconds.
 - **Pull secret:** the E2E projects pull user workloads the same way any
   component image is pulled; publishing under `ghcr.io/minbzk/base-images` keeps

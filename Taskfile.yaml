@@ -26,9 +26,9 @@ vars:
   # Optionele registry-cache, dezelfde vorm als publish-operations-manager. Leeg = alleen
   # de cache van de builder zelf, wat op een dev-server het geval is.
   SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
-  # De registry naast het kind-cluster, zie docs/sandbox-kind-registry.md.
+  # De registry naast het kind-cluster, zie docs/sandbox/sandbox-kind-registry.md.
   SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
-  # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
+  # Tag per commit, zie docs/sandbox/sandbox-kind-registry.md. Alleen operations-manager/ telt
   # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
   SANDBOX_OM_TAG:
     sh: scripts/bron-tag.sh operations-manager
@@ -788,7 +788,7 @@ tasks:
     cmds:
       - |
         # De scripts zitten niet in de image (.dockerignore), dus ze gaan naar /tmp in de
-        # pod, zoals in docs/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
+        # pod, zoals in docs/sandbox/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
         # uit de omgeving van die pod.
         POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
         kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_set_dns.py "$POD:/tmp/transip_set_dns.py"
@@ -1574,7 +1574,7 @@ tasks:
     silent: true
 
   asvs-afvinklijst:
-    desc: "Genereer docs/asvs-zelfbeoordeling.md uit de ASVS-zelfbeoordeling"
+    desc: "Genereer docs/security/asvs-zelfbeoordeling.md uit de ASVS-zelfbeoordeling"
     dir: operations-manager/python
     cmds:
       - uv run python -m opi.tools.asvs_render
@@ -3163,7 +3163,7 @@ tasks:
       - task: requirements-check
       - |
         cat banner.txt
-        cat docs/sandbox-prerequisites.md
+        cat docs/sandbox/sandbox-prerequisites.md
         echo ""
         # SANDBOX_NONINTERACTIVE=true skips this confirmation (unattended installs)
         if [ "${SANDBOX_NONINTERACTIVE:-}" = "true" ]; then
@@ -3198,7 +3198,7 @@ tasks:
       - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
-      # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox-kind-registry.md.
+      # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox/sandbox-kind-registry.md.
       - task: sandbox:setup-registry
       # De images moeten klaarstaan vóórdat de deployments ze proberen te halen: de
       # CMP-sidecar geladen in kind (Never), operations-manager in de registry.
@@ -3240,9 +3240,9 @@ tasks:
         echo "Sandboxed local cluster setup complete!"
         echo "========================================="
         echo ""
-        cat docs/sandbox-reference.md
+        cat docs/sandbox/sandbox-reference.md
         echo ""
-        echo "This reference card is saved at: docs/sandbox-reference.md"
+        echo "This reference card is saved at: docs/sandbox/sandbox-reference.md"
     silent: true
 
   sandbox:issue-argocd-opi-token:
@@ -3286,7 +3286,7 @@ tasks:
   sandbox:prune-registry:
     desc: "Verwijder oude tags uit de registry naast het kind-cluster, de gedeelde lagen blijven"
     summary: |
-      Zie docs/sandbox-kind-registry.md.
+      Zie docs/sandbox/sandbox-kind-registry.md.
 
         task sandbox:prune-registry RETENTIE_DAGEN=0
     vars:
@@ -3527,7 +3527,7 @@ tasks:
         echo "Overlays configured for local images"
     silent: true
 
-  # Draait bij elke deploy, zie docs/sandbox-kind-registry.md.
+  # Draait bij elke deploy, zie docs/sandbox/sandbox-kind-registry.md.
   sandbox:configure-operations-manager-image:
     desc: "Zet de operations-manager-overlay op het image van deze commit in de registry"
     cmds:
@@ -3539,7 +3539,7 @@ tasks:
     silent: true
 
   sandbox:renew-wildcard-cert:
-    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox-wildcard-cert-renewal.md."
+    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox/sandbox-wildcard-cert-renewal.md."
     cmds:
       - scripts/renew-sandbox-cert.sh
 
@@ -4510,7 +4510,7 @@ tasks:
     desc: "Build operations-manager image and push it to the registry next to Kind (no deploy)"
     cmds:
       # Niet beginnen als er te weinig vrij is: dat was vooraf te zien toen een build de
-      # server bijna omver trok. Zie docs/uitrol-op-de-dev-server.md.
+      # server bijna omver trok. Zie docs/sandbox/uitrol-op-de-dev-server.md.
       - scripts/build-preflight.sh
       # Eerst de versie schrijven, anders bakt de build in wat er toevallig op schijf ligt:
       # opi/version.json staat in .gitignore en dus niet in `git status`, maar wel in de
@@ -4558,7 +4558,7 @@ tasks:
           ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
         kubectl rollout status deployment/operations-manager -n {{.RIG_NAMESPACE}} --timeout=300s
       - echo "Operations manager updated successfully"
-      # Waarom hier en niet in een cron: docs/sandbox-kind-registry.md.
+      # Waarom hier en niet in een cron: docs/sandbox/sandbox-kind-registry.md.
       - task: sandbox:prune-registry
     silent: true
 
