@@ -825,7 +825,7 @@ happened to the Keycloak realm block when RC-5 relocated the realms into the ser
   are asked; sections render in registry order, in place of a hardcoded `{% include %}`.
 - Put the template **next to the service** under `opi/services/catalog/<svc>/` and address
   it as `<svc>/<file>` -- the catalog directory is on the Jinja search path (see
-  `opi/core/templates.py`). The include gets the `DetailPageSection` as `section`, so the
+  `opi/core/templates_lotc.py`). The include gets the `DetailPageSection` as `section`, so the
   template reads its data from `section.context`.
 
 ### Which of the two section events
