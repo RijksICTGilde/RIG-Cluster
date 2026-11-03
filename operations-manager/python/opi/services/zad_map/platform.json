@@ -576,12 +576,12 @@
     {
      "name": "grafana_prometheus",
      "file": "opi/connectors/grafana_prometheus.py",
-     "uses": 1
+     "uses": 2
     },
     {
      "name": "prometheus",
      "file": "opi/connectors/prometheus.py",
-     "uses": 11
+     "uses": 12
     }
    ],
    "services": [
