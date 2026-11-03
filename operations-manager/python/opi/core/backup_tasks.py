@@ -31,6 +31,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     set_domain_setting,
 )
 from opi.services.project_store import get_project_store
+from opi.services.schema_migration import normalize_service_entries
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
 if TYPE_CHECKING:
@@ -192,6 +193,9 @@ async def _build_and_save_restore_deployment(
 
     # Add deployment to project data
     project_data["deployments"].append(new_deployment)
+    # The wizard editables write service config in the name-as-key shape, which the
+    # schema's deployment-service envelope rejects; the other wizard save paths normalize too.
+    normalize_service_entries(project_data)
 
     # Persist through the single validated path (schema + structural validation,
     # canonical dumper, commit + push, cache refresh).
