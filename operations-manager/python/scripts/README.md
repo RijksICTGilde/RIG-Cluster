@@ -58,3 +58,9 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Tool | What it does |
 |---|---|
 | `transip_delete_dns.py` | Delete TransIP DNS records (the TransIP API key is IP-whitelisted; calls must originate from an allowed IP). |
+
+## Tests
+
+| Tool | What it does |
+|---|---|
+| `test_durations.py` | Turns the junit xml of a test run into `tests/test_durations.json`, the seconds per test file that the CI shards split on. Run it through `task test-durations`. |
