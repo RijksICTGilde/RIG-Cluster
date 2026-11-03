@@ -46,6 +46,8 @@ from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.services.zad_map import platform_graph, project_graph
 from opi.services.zad_map.platform import current_cluster_folder
+from opi.services.zad_map.project import usage_targets
+from opi.services.zad_map.usage import measure_usage
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -1389,7 +1391,8 @@ async def project_map_json(request: Request, project_name: str) -> JSONResponse:
     zijn plaat zelf. Leest alleen ``ProjectSummary.data``, nooit de ontsleutelde vorm.
     """
     try:
-        graph = project_graph(project_name)
+        usage = await measure_usage(*usage_targets(project_name))
+        graph = project_graph(project_name, usage)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found") from None
     return JSONResponse(graph.as_json())
