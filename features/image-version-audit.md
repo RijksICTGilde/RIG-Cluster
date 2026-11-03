@@ -127,7 +127,7 @@ Audit of all container images used across the repository, performed February 202
 
 - **Current**: `kindest/node:v1.32.0`
 - **Latest**: v1.32.11 (same K8s version, patched) / v1.35.0 (latest Kind default)
-- **Files**: `sandboxed-local/kind-config.yaml`
+- **Files**: `bootstrap/sandbox/kind-config.yaml`
 
 **Upgrade notes**:
 - K8s 1.32 nearing end-of-life (~Feb 2026). 11 patch releases behind at minimum.

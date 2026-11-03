@@ -33,7 +33,7 @@ Het script is idempotent: nog een keer draaien verandert niets aan een cluster d
 
 ## De voorwaarde in de kind-config
 
-`sandboxed-local/kind-config.yaml` bevat:
+`bootstrap/sandbox/kind-config.yaml` bevat:
 
 ```yaml
 containerdConfigPatches:

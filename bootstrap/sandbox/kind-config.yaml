@@ -1,7 +1,7 @@
 # Kind cluster configuration for sandboxed-local RIG-Cluster development
 # Self-contained sandbox with in-cluster Forgejo, real wildcard TLS cert
 #
-# Usage: envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
+# Usage: envsubst < bootstrap/sandbox/kind-config.yaml | kind create cluster --name rig-sandbox --config -
 # Set KIND_HTTP_PORT / KIND_HTTPS_PORT to override default ports (80/443)
 
 kind: Cluster

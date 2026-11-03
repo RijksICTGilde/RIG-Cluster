@@ -34,7 +34,7 @@ andere workflows, waardoor `ci.yml` niet op de Renovate-PR's zou draaien.
 | Tools | `.tool-versions` | `asdf` + custom managers voor `task` en `mc` |
 | Remote kustomize-resources | versies in de raw.githubusercontent-URL's | custom manager |
 | Taskfile | de CNPG-URL (patch en het `release-X.Y`-segment), de snapshot-CRD-URL, de argocd-operator-versie | custom manager |
-| kind-node | `sandboxed-local/kind-config.yaml` | custom manager |
+| kind-node | `bootstrap/sandbox/kind-config.yaml` | custom manager |
 | Versies in een Dockerfile-ARG | `ARG <NAAM>_VERSION` met een `# renovate:`-annotatie | preset `customManagers:dockerfileVersions` |
 | De themajar van keycloak-zad | de versie in de download-URL | custom manager |
 

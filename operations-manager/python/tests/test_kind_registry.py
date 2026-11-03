@@ -3,7 +3,7 @@
 Vijf dingen worden hier bewaakt:
   1. scripts/setup-kind-registry.sh - de stappen van de kind-recipe, en de weigering als
      containerd de certs.d-map niet leest.
-  2. sandboxed-local/kind-config.yaml - de containerdConfigPatches die dat mogelijk maken.
+  2. bootstrap/sandbox/kind-config.yaml - de containerdConfigPatches die dat mogelijk maken.
      Valt die weg, dan negeert containerd de hosts.toml en pullt de node stilletjes niets.
   3. Taskfile - sandbox:setup moet het script aanroepen na het cluster en voor alles wat
      een image nodig heeft.
@@ -28,7 +28,7 @@ from tests.programma import echt_programma
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
 PRUNE_SCRIPT = REPO_ROOT / "scripts" / "prune-kind-registry.sh"
-KIND_CONFIG = REPO_ROOT / "sandboxed-local" / "kind-config.yaml"
+KIND_CONFIG = REPO_ROOT / "bootstrap" / "sandbox" / "kind-config.yaml"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
 DOC = REPO_ROOT / "docs" / "sandbox" / "sandbox-kind-registry.md"
 
