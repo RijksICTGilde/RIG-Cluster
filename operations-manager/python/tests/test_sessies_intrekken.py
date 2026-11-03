@@ -186,7 +186,13 @@ async def test_het_intrekken_staat_in_de_tabel_en_overleeft_een_herstart(orm_db:
 
 def _verzoek(email: str | None) -> Any:
     user = {"email": email} if email else None
-    return SimpleNamespace(state=SimpleNamespace(user=user), query_params={})
+    return SimpleNamespace(
+        state=SimpleNamespace(user=user),
+        query_params={},
+        url=SimpleNamespace(path="/admin/users/x/revoke-sessions"),
+        headers={},
+        method="POST",
+    )
 
 
 def _gebruikersdienst(admins: set[str]) -> Any:
@@ -199,7 +205,10 @@ async def test_een_platformbeheerder_beeindigt_de_sessies_van_een_gebruiker(orm_
     aangemaakt = await UserAdminService().create_user(email=EMAIL, full_name="Iemand")
     sessie = _sessie(time.time() - 60)
 
-    with patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst({BEHEERDER})):
+    with (
+        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=True),
+        patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst({BEHEERDER})),
+    ):
         antwoord = await revoke_user_sessions(_verzoek(BEHEERDER), aangemaakt["id"])
 
     assert antwoord.status_code == 303
@@ -210,6 +219,7 @@ async def test_een_gewone_gebruiker_mag_de_sessies_van_een_ander_niet_beeindigen
     aangemaakt = await UserAdminService().create_user(email=EMAIL, full_name="Iemand")
 
     with (
+        patch("opi.core.auth_decorators.has_fresh_step_up", return_value=True),
         patch("opi.services.user_service.get_user_service", return_value=_gebruikersdienst(set())),
         pytest.raises(HTTPException) as fout,
     ):
