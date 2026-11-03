@@ -1,11 +1,13 @@
 version: '3'
 
 # Met CLUSTER_TYPE in de omgeving (`CLUSTER_TYPE=odcn-staging task ...`) komt de hele
-# clusterconfiguratie uit .env-taskfile-<cluster>, wat task select-cluster ook geselecteerd
-# heeft: het eerste bestand dat een naam zet, wint. Zonder CLUSTER_TYPE geldt de selectie.
-# Een argument (`task ... CLUSTER_TYPE=x`) bestaat nog niet als dit gelezen wordt; daarvoor
-# is de guard selected_cluster_guard.
-dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '.env-taskfile-current']
+# clusterconfiguratie uit .env-taskfile-<cluster>, en de selectie van task select-cluster
+# wordt dan NIET geladen: ook geen naam die het clusterbestand zelf niet zet. Op 3 november
+# 2026 vulde de staging-selectie zo SECRETS_DIR aan bij een deploy voor productie, en schreef
+# die deploy het prod-env-secret in de werkmap van zad-staging-secrets. Zonder CLUSTER_TYPE
+# geldt de selectie. Een argument (`task ... CLUSTER_TYPE=x`) bestaat nog niet als dit gelezen
+# wordt; daarvoor is de guard selected_cluster_guard.
+dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '{{if not .CLUSTER_TYPE}}.env-taskfile-current{{end}}']
 
 vars:
   KIND_VERSION: 1.32.0
