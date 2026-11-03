@@ -42,6 +42,8 @@ _SLEUTELPAD = re.compile(
     r"\{\{\.KEY_FILE\}\}|\{\{\.KEY\}\}|security/sandbox-key\.txt|security/developer-key\.txt|security/key\.txt"
 )
 
+_TASK_AANROEP = re.compile(r"^\s*(\w+=\S+\s+)*task\s")
+
 
 def _taken() -> dict[str, Any]:
     return yaml.safe_load(TASKFILE.read_text())["tasks"]
@@ -63,9 +65,13 @@ def _leest_rechtstreeks_een_sleutelpad(taak: dict[str, Any]) -> bool:
 
     Een `task: andere-taak` met `vars: {KEY_FILE: ...}` geeft het pad door aan een taak die
     zijn eigen guard draagt (zie `_generate-secrets-shared` en de taken die hem aanroepen),
-    en telt hier niet mee.
+    en telt hier niet mee. Een shellregel `CLUSTER_TYPE=x task andere-taak KEY_FILE=...` ook
+    niet: die eigen run draagt dezelfde guard.
     """
-    return any(isinstance(cmd, str) and _SLEUTELPAD.search(cmd) for cmd in taak.get("cmds") or [])
+    return any(
+        isinstance(cmd, str) and _SLEUTELPAD.search(cmd) and not _TASK_AANROEP.match(cmd)
+        for cmd in taak.get("cmds") or []
+    )
 
 
 def _draai(key_file: Path) -> subprocess.CompletedProcess[str]:
