@@ -75,6 +75,7 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       calver_tag: ${{ steps.calver.outputs.tag }}
     steps:
@@ -104,6 +105,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'rig-backup' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -171,6 +173,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -238,6 +241,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'postgresql-with-dictionaries' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -301,6 +305,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'keycloak-zad' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write

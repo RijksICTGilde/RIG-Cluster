@@ -9,6 +9,7 @@ skip and nothing goes red. A guard against a silent skip may not sit behind that
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import subprocess
@@ -69,7 +70,7 @@ def test_ci_installs_age_and_sops_so_the_rotation_guards_actually_run() -> None:
     workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
     # A step behind a falsy condition installs nothing, and reading only the "run" lines would
     # call that wired up.
-    installs = _steps_that_run(workflow, job="test")
+    installs = _steps_that_run(workflow, job="test-shard")
 
     assert any(re.search(r"\bage\b", command) for command in installs), (
         "the job 'test' must install age: without it the three rotation test modules skip whole, "
@@ -168,11 +169,11 @@ def test_the_ci_test_job_really_collects_the_rotation_modules() -> None:
     collection rather than a reading of the markers.
     """
     workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
-    working_directory = workflow["jobs"]["test"].get("defaults", {}).get("run", {}).get("working-directory")
+    working_directory = workflow["jobs"]["test-shard"].get("defaults", {}).get("run", {}).get("working-directory")
     assert working_directory == "operations-manager/python", (
         f"the pytest step runs in {working_directory!r}, so its paths no longer mean what this guard reads"
     )
-    expression, paths = _selection(_pytest_argv(workflow, "test"))
+    expression, paths = _selection(_pytest_argv(workflow, "test-shard"))
     assert paths, "the pytest step points at no path at all, so this guard measures nothing"
 
     for module in _ROTATION_MODULES:
@@ -194,6 +195,8 @@ def test_the_ci_test_job_really_collects_the_rotation_modules() -> None:
             *_ROTATION_MODULES,
         ],
         cwd=_REPO_ROOT / working_directory,
+        # Zonder de shardvariabelen van de CI-stap: die zouden de rotatiemodules hier wegfilteren.
+        env={k: v for k, v in os.environ.items() if k not in {"TEST_SHARDS", "TEST_SHARD"}},
         capture_output=True,
         text=True,
     )
