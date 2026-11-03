@@ -68,6 +68,19 @@ Omdat de lijst uit de bron van de validatie komt, kan de editor nooit een naam v
 
 Andere KV-velden krijgen geen `kv_completions` en dus geen aanvullingen.
 
+### Het veil over de waarden (`data-mask-values`)
+
+Het venster met omgevingsvariabelen (`opi/templates_lotc/bg/_env-vars-venster.html.j2`) toonde na de step-up alle waarden in platte tekst. De editor tekent ze nu als een rij stippen, en toont ze pas als je erom vraagt.
+
+- Aanzetten doe je met `data-mask-values="true"` op de `.kv-editor`-wikkel. Alleen het env-vars-venster draagt het. Het aliassenveld niet: daar staan `$PLATFORM_VARIABELE`-namen, geen geheimen.
+- `codemirror-kv.js` zet een `ViewPlugin` met `Decoration.replace` over het deel na de `=` (ENV) of na de `:` (YAML). De rij stippen heeft vaste lengte, zodat ook de lengte van een geheim niets verraadt. Commentaarregels (`#`) en lege regels blijven ongemoeid.
+- De regel waar de cursor staat toont zijn waarde, zodat je er een kunt bewerken. Dit werkt alleen zolang de editor focus heeft.
+- De knop "Toon waarden" / "Verberg waarden" schakelt het masker om via een `Compartment`, net als de ENV/YAML-wissel. Het is een `<nldd-toggle-button>`, net als de pauzeknop in de logviewer, en draagt `aria-pressed` voor de screenreader. De stand is niet onthouden: elke keer opnieuw openen bouwt de editor op en sluit het veil.
+- Een gemaskeerde waarde krijgt voor een screenreader `role="img"` met `aria-label="verborgen waarde"`, dus niet de stippen en niet de waarde.
+- De stippen krijgen hun kleur van `--semantics-content-secondary-color` in `zadTheme`, zodat ze in beide weergaven leesbaar blijven.
+
+**Wat dit wel en niet beschermt.** Dit is een veil tegen meekijken en schermdelen, niet tegen lezen. Het document in CodeMirror verandert niet, dus de waarden staan nog in de verborgen textarea, in de HTML die de server stuurt, en in wat je uit de editor kopieert. Wie de pagina-broncode of het netwerkverkeer opent ziet ze gewoon. De sterkere variant, waarin de server de waarden pas na "Toon" stuurt, vraagt een "onveranderd"-markering per waarde bij het opslaan en is niet gebouwd.
+
 ## Waarom niet `<nldd-code-editor>`
 
 Het NLDD-thema heeft sinds kort zelf een `nldd-code-editor`, en die is intern ook CodeMirror, met de themategens al ingevuld. Toch blijft deze eigen bundel staan, om twee dingen die het component niet heeft:

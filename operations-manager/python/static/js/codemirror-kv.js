@@ -10,6 +10,9 @@
  *   - ENV mode: checks each non-empty/non-comment line for KEY=value
  *   - YAML mode: parses with js-yaml and shows parse errors at position
  *
+ * Editors met data-mask-values="true" tonen elke waarde als een rij stippen tot
+ * toggleKvMask() het veil opheft; zie "masker" hieronder.
+ *
  * Depends on window.CM (set by codemirror-bundle.js).
  */
 (function () {
@@ -32,6 +35,10 @@
     var syntaxHighlighting = CM.syntaxHighlighting;
     var tags          = CM.tags;
     var autocompletion = CM.autocompletion;
+    var Decoration    = CM.Decoration;
+    var ViewPlugin    = CM.ViewPlugin;
+    var WidgetType    = CM.WidgetType;
+    var RangeSetBuilder = CM.RangeSetBuilder;
 
     var _instances = {};
 
@@ -81,6 +88,7 @@
             backgroundColor: "var(--semantics-surfaces-tinted-background-color)",
             color: "var(--semantics-content-color)",
         },
+        ".cm-kv-mask": { color: "var(--semantics-content-secondary-color)", letterSpacing: "0.15em" },
     });
 
     /*
@@ -161,6 +169,85 @@
         return envLinter();
     }
 
+    /* ---- masker ---- */
+
+    /*
+     * Veil over de waarden via Decoration.replace op het deel na de `=` (ENV) of `:` (YAML).
+     *
+     * Het document verandert niet, dus textarea en opslaan zien de echte waarden.
+     * De rij stippen heeft vaste lengte. De regel met de cursor toont zijn waarde,
+     * maar alleen zolang de editor focus heeft (anders stond de eerste waarde al open
+     * omdat de cursor begint op positie 0).
+     */
+    var MASK_DOTS = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+
+    /* Een screenreader leest de rol voor, niet de stippen en niet de waarde. */
+    class MaskWidget extends WidgetType {
+        eq() {
+            return true;
+        }
+        toDOM() {
+            var span = document.createElement("span");
+            span.className = "cm-kv-mask";
+            span.setAttribute("role", "img");
+            span.setAttribute("aria-label", "verborgen waarde");
+            span.textContent = MASK_DOTS;
+            return span;
+        }
+    }
+
+    var maskDecoration = Decoration.replace({ widget: new MaskWidget() });
+
+    /* Waar de waarde in de regel begint, of -1 als die geen waarde bevat. */
+    function valueStart(text, format) {
+        var separator = format === "yaml" ? /^[^:]*:[ \t]*/ : /^[^=]*=/;
+        var match = separator.exec(text);
+        return match ? match[0].length : -1;
+    }
+
+    function linesWithCursor(state) {
+        var lines = {};
+        for (var i = 0; i < state.selection.ranges.length; i++) {
+            var range = state.selection.ranges[i];
+            lines[state.doc.lineAt(range.head).number] = true;
+            lines[state.doc.lineAt(range.anchor).number] = true;
+        }
+        return lines;
+    }
+
+    function maskDecorations(view, format) {
+        var state = view.state;
+        var builder = new RangeSetBuilder();
+        var exempt = view.hasFocus ? linesWithCursor(state) : {};
+        for (var i = 1; i <= state.doc.lines; i++) {
+            if (exempt[i]) continue;
+            var line = state.doc.line(i);
+            var trimmed = line.text.trim();
+            if (!trimmed || trimmed.charAt(0) === "#") continue;
+            var start = valueStart(line.text, format);
+            if (start < 0 || line.from + start >= line.to) continue;
+            builder.add(line.from + start, line.to, maskDecoration);
+        }
+        return builder.finish();
+    }
+
+    function maskExtension(format, enabled) {
+        if (!enabled) return [];
+        return ViewPlugin.fromClass(
+            class {
+                constructor(view) {
+                    this.decorations = maskDecorations(view, format);
+                }
+                update(update) {
+                    if (update.docChanged || update.selectionSet || update.focusChanged) {
+                        this.decorations = maskDecorations(update.view, format);
+                    }
+                }
+            },
+            { decorations: function (plugin) { return plugin.decorations; } }
+        );
+    }
+
     /* ---- aanvullen ---- */
 
     /*
@@ -227,6 +314,8 @@
         var format = editorDiv.dataset.format || "env";
         var langCompartment = new Compartment();
         var lintCompartment = new Compartment();
+        var maskCompartment = new Compartment();
+        var masked = editorDiv.dataset.maskValues === "true";
 
         var completions = parseCompletions(editorDiv);
 
@@ -242,6 +331,7 @@
             basicSetup,
             langCompartment.of(langExtension(format)),
             lintCompartment.of(lintExtension(format)),
+            maskCompartment.of(maskExtension(format, masked)),
             EditorView.updateListener.of(function (update) {
                 if (update.docChanged) {
                     textarea.value = update.state.doc.toString();
@@ -266,6 +356,8 @@
             view: view,
             langCompartment: langCompartment,
             lintCompartment: lintCompartment,
+            maskCompartment: maskCompartment,
+            masked: masked,
         };
         editorDiv.dataset.cmInitialized = "1";
     }
@@ -309,11 +401,12 @@
         var textarea = editorDiv ? editorDiv.querySelector("textarea[data-cm-kv]") : null;
         if (!textarea) return;
 
-        // Single dispatch: reconfigure language + linter AND replace content.
+        // Single dispatch: reconfigure language + linter + mask AND replace content.
         inst.view.dispatch({
             effects: [
                 inst.langCompartment.reconfigure(langExtension(newFormat)),
                 inst.lintCompartment.reconfigure(lintExtension(newFormat)),
+                inst.maskCompartment.reconfigure(maskExtension(newFormat, inst.masked)),
             ],
             changes: {
                 from: 0,
@@ -321,6 +414,23 @@
                 insert: textarea.value,
             },
         });
+    }
+
+    /* Hef of herstel het masker en herbepaal het knopetiket.
+       Het aan-zijn van de nldd-toggle-button IS de stand: aan betekent zichtbaar. */
+    function toggleKvMask(editorId, button) {
+        var inst = _instances[editorId];
+        if (!inst) return;
+
+        var editorDiv = document.getElementById(editorId);
+        var format = editorDiv ? editorDiv.dataset.format || "env" : "env";
+
+        inst.masked = button ? !button.selected : !inst.masked;
+        inst.view.dispatch({
+            effects: inst.maskCompartment.reconfigure(maskExtension(format, inst.masked)),
+        });
+
+        if (button) button.text = inst.masked ? "Toon waarden" : "Verberg waarden";
     }
 
     /**
@@ -346,5 +456,6 @@
     // Expose on window
     window.initKvEditors = initKvEditors;
     window.switchKvLanguage = switchKvLanguage;
+    window.toggleKvMask = toggleKvMask;
     window.destroyKvEditor = destroyKvEditor;
 })();
