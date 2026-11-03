@@ -10,13 +10,25 @@ Daarvoor gelden drie grenzen naast elkaar:
 
 | grens | instelling | standaard | wat hij doet |
 |---|---|---|---|
-| inactiviteit | `SESSION_MAX_AGE_SECONDS` | 8 uur | De cookie wordt bij elke sessie-mutatie opnieuw getekend en de server-side rij verlengt bij activiteit: je sessie vervalt na zoveel tijd zonder verzoek. |
+| inactiviteit | `SESSION_MAX_AGE_SECONDS` | 8 uur | De server weigert een cookie waarvan de ondertekening ouder is dan deze tijd, en de server-side rij verlengt bij activiteit: je sessie vervalt na zoveel tijd zonder verzoek. De cookie zelf draagt geen levensduur. |
 | absolute levensduur | `SESSION_ABSOLUTE_MAX_SECONDS` | 12 uur | Gerekend vanaf het inloggen, hoe actief je ook bent. Daarna log je opnieuw in. |
 | intrekken | geen | | Uitloggen, of een platformbeheerder, maakt elke sessie van dat e-mailadres ongeldig: de rijen verdwijnen ook echt (server-side sessies, zie `server-side-sessies.md`). |
 
 Alle drie worden ze afgedwongen in de middleware, in de handshake van de logs-WebSocket en
 op `/api/logs/pods/...`: ze lezen dezelfde sessie, opgebouwd uit de cookie (alleen het id)
 en de rij erachter.
+
+## De cookie is een sessiecookie
+
+De cookie `session` draagt geen `Max-Age` en geen `expires`, dus de browser gooit hem weg
+bij het afsluiten. Wie het portaal opent nadat de browser echt is afgesloten, komt op de
+inlogpagina.
+
+De grens zelf zit niet in de cookie maar op de server: de ondertekening (het
+inactiviteitsvenster) en de rij in `sessions`. Dat is nodig, want een browser die
+tabbladen herstelt, zet ook sessiecookies terug. Chrome met "Doorgaan waar je was
+gebleven", Firefox-sessieherstel en Safari doen dat, en op macOS sluit een venster de
+browser niet af. In die gevallen blijven de 8 en 12 uur de grens, precies zoals voorheen.
 
 ## Hoe het werkt
 

@@ -58,8 +58,11 @@ SessionCache (LRU + TTL)              |  tabel `sessions`  |
 De grenzen uit `features/portaalsessie-levensduur.md` gelden onverkort:
 
 - **inactiviteit** (`SESSION_MAX_AGE_SECONDS`, 8 uur): de ondertekening van de cookie
-  draagt een tijdstempel die bij elke mutatie ververst wordt, en `expires_at` op de rij
-  schuift mee bij activiteit (`touch` bij een gelezen sessie). Wie niets doet, vervalt.
+  draagt een tijdstempel die bij elke mutatie ververst wordt, en de middleware weigert een
+  stempel die ouder is dan het venster; `expires_at` op de rij schuift mee bij activiteit
+  (`touch` bij een gelezen sessie). Wie niets doet, vervalt. De cookie kent dat venster
+  zelf niet: hij is een sessiecookie en verdwijnt als de browser sluit
+  (`features/portaalsessie-levensduur.md`).
 - **absolute levensduur** (`SESSION_ABSOLUTE_MAX_SECONDS`, 12 uur): zit in de data zelf
   (`user.login_at`), gehandhaafd door dezelfde guard als voorheen.
 
