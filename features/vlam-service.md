@@ -4,7 +4,7 @@ De ZAD-dienst `vlam` geeft een project toegang tot de VLAM-API van SSC-ICT vanui
 zonder VPN en zonder dat de afnemer zelf een certificaat hoeft te vertrouwen.
 
 ```
-afnemer-pod --http--> vlam-proxy-intern:8081 --https (SNI + CA-verificatie)--> vlam-api.rijksweb.nl
+afnemer-pod --http--> vlam-proxy-intern:8082 --https (SNI + CA-verificatie)--> vlam-api.overheid-i.nl
 ```
 
 De dienst is bewust dun. Hij levert een adres en een netwerkregel; alles wat daar aan de andere kant
@@ -25,11 +25,9 @@ En op een cluster dat het **doorlus-pad** aanbiedt (RC-167) daarnaast:
 | | |
 |---|---|
 | `VLAM_API_URL_DIRECT` | het adres van de doorlus-poort, met de VLAM-hostnaam erin: `https://vlam-api.overheid-i.nl:8443` |
-| `VLAM_CA_BUNDLE_PATH` | `/etc/ssl/vlam/vlam-ca.pem`, de uitgevers waartegen je het certificaat van VLAM verifieert |
 | een regel in `/etc/hosts` | die de VLAM-naam naar het ClusterIP van onze proxy wijst (`hostAliases`) |
-| het bestand zelf | als Secret per deployment, read-only gemount op dat pad |
 
-Er zijn geen instellingen. Er valt niets te kiezen: een endpoint, drie variabelen, een regel.
+Er zijn geen instellingen. Er valt niets te kiezen: een endpoint, twee variabelen, een regel.
 
 Verwacht je bibliotheek een andere naam dan `VLAM_API_URL`, gebruik dan een alias op je component.
 
@@ -40,43 +38,38 @@ praat dan zelf met VLAM en verifieert zelf het certificaat; ZAD ziet dat verkeer
 lag er sinds RC-142, maar was niet bruikbaar zonder handwerk -- en dat handwerk is precies het soort
 dat afnemers verkeerd doen.
 
-Er zijn drie dingen nodig, en ze zijn alle drie waardeloos zonder de andere twee:
+Er zijn twee dingen nodig, en ze zijn beide waardeloos zonder het andere:
 
 | wat | waarom | zonder dit |
 |---|---|---|
 | het **adres** van de doorlus-poort | de afnemer moet weten waar hij heen moet | hij kent 8443 niet |
 | de **naam** die naar onze proxy wijst | TLS vergelijkt de hostnaam uit de URL met het certificaat | certificaatfout op elke verbinding |
-| het **CA-certificaat** in de pod | hij verifieert nu zelf, en kent de uitgever niet | onbekende uitgever, verbinding faalt |
 
 Daarom levert de dienst ze als EEN geheel: `VlamEndpoint.passthrough` is er of is er niet, nooit voor
-twee derde. Een cluster biedt de doorlus aan zodra zijn `vlam`-blok `passthrough_port`, `api_host`,
-`cluster_ip` en `ca_bundle` noemt EN het genoemde bestand in de dienstmap staat.
+de helft. Een cluster biedt de doorlus aan zodra zijn `vlam`-blok `passthrough_port`, `api_host` en
+`cluster_ip` noemt.
 
-### Waarom het certificaat van het platform komt en geen bijlage is
+Verifiëren doet de afnemer tegen de gewone certificatenlijst van zijn eigen image. Draait hij op een
+image zonder CA-certificaten, zoals sommige distroless- of scratch-images, dan faalt dit net zo goed
+als elke andere HTTPS-aanroep uit zo'n image.
 
-Het is voor elke afnemer identiek en verandert alleen als VLAM van uitgever wisselt. Als bijlage zou
-hetzelfde publieke bestand AGE-versleuteld in elk projectbestand terechtkomen, en zou roteren
-betekenen dat iedereen opnieuw moet uploaden. Levert de dienst het, dan is roteren een wijziging op
-een plek. Wat wel wordt hergebruikt is de MACHINERIE van bijlagen (`attachment_secret_mounts`:
-Secret -> volume -> `volumeMount`), zodat er geen tweede manier ontstaat om een bestand in een pod te
-krijgen. Die bijdrage is additief, dus de eigen bijlagen van een component blijven staan.
+`VariableDefinition.conditional` markeert `VLAM_API_URL_DIRECT` als "hangt aan het cluster, niet aan
+de selectie", zodat de e2e-probe hem niet in elke pod eist.
 
-Het clusterbrede `ca_certificate`-mechanisme is bewust NIET gebruikt: dat zet een CA op elke
-Deployment op het cluster, staat alleen op het lokale Kind-cluster aan en mount via een `hostPath`
-van de node.
+### Waarom er geen CA-bundel meer bij zit (RC-414)
 
-### Waarom de taalstandaard-variabelen NIET gezet worden
+Van RC-167 tot RC-414 leverde de dienst een derde ding: een CA-bundel als Secret per deployment,
+gemount op `VLAM_CA_BUNDLE_PATH`, met in `help.md` per taal een recept om die bundel NAAST de
+standaardbundel te zetten. Dat was nodig omdat `vlam-api.rijksweb.nl` een certificaat van de
+Rijksdienst Root CA van SSC-ICT droeg, en die zit in geen enkele standaardbundel.
 
-Het is verleidelijk om ook `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` of `NODE_EXTRA_CA_CERTS` te zetten
-zodat het vanzelf werkt. De eerste twee **vervangen** de vertrouwensketen in plaats van hem aan te
-vullen: een pod met `SSL_CERT_FILE` op alleen deze bundel vertrouwt verder niets meer -- geen publieke
-API, geen Keycloak, geen pakketspiegel -- en die storing lijkt in niets op zijn oorzaak. De dienst kan
-ook geen betrouwbare samenvoeging maken, want hij kent het basis-image van de afnemer niet. Dus: een
-pad aanbieden, de applicatie laat kiezen, en per taal in `help.md` uitleggen hoe je een CA er NAAST
-zet.
-
-Dat verschil zit ook in de code: `VariableDefinition.conditional` markeert de twee doorlus-variabelen
-als "hangt aan het cluster, niet aan de selectie", zodat de e2e-probe ze niet in elke pod eist.
+Op 21 september 2026 heeft SSC-ICT rijksweb uitgezet en is `api_host` `vlam-api.overheid-i.nl`
+geworden. Dat certificaat komt van DigiCert (`DigiCert G2 TLS EU RSA4096 SHA384 2022 CA1` onder
+`DigiCert Global Root G2`) en is publiek vertrouwd. Daarmee was de bundel niet alleen overbodig maar
+schadelijk: de recepten stuurden elke afnemer trustconfiguratie in die niets toevoegde en die het
+makkelijkst fout gaat (`SSL_CERT_FILE` VERVANGT de vertrouwensketen in plaats van hem aan te vullen,
+en zo'n pod vertrouwt verder niets meer terwijl juist de VLAM-aanroep prima werkt). Daarom zijn de
+bundel, de Secret, de mount, de env-var, de downloadroute en de uitleg eruit.
 
 ### Het ClusterIP is een geconfigureerde waarde, en dat is een aanvaard risico
 
@@ -97,12 +90,11 @@ er bij afnemers niets, maar kan onze eigen proxy zichzelf niet meer opzoeken en 
 VLAM-adres in onze backend hardgecodeerd worden -- precies wat `resolvers dns` daar oplost, want VLAM
 is eerder van IP gewisseld en dat leverde 500'en op.
 
-### De CA-bundel downloaden
+### Het blok op de projectpagina
 
-Op de projectpagina, tabblad Services info, staat het blok VLAM-API met beide adressen, het pad in de
-pod en een knop die de bundel ophaalt (`GET /services/vlam/ca-bundle`, achter de login zoals elke
-andere route van de app). Van de drie dingen die de dienst neerzet is het bestand het enige dat je
-zonder de pod niet kunt bekijken, en het is het ding dat het vaakst verkeerd begrepen wordt.
+Op de projectpagina, tabblad Services info, staat het blok VLAM-API met beide adressen en de reden om
+het ene of het andere te kiezen. Het adres staat ook in een env-var; wat een afnemer daar niet uit
+leest is welk pad hij hoort te nemen.
 
 ## Toegang: eenmalig aan de VLAM-kant, daarna is afnemen genoeg
 
@@ -155,25 +147,23 @@ Er zijn drie paden naar VLAM, en ze bestaan naast elkaar:
 |---|---|---|---|
 | voor | mensen op een laptop | workloads in het cluster | workloads met een versleutelingseis |
 | TLS | end-to-end, niet getermineerd | getermineerd op de proxy | end-to-end, niet getermineerd |
-| CA-probleem | lost de gebruiker zelf op | een keer opgelost, op de proxy | de dienst levert de bundel, de applicatie gebruikt hem |
+| CA-probleem | lost de gebruiker zelf op | een keer opgelost, op de proxy | geen: het certificaat is publiek vertrouwd |
 | toegang | Keycloak-login met rolfilter | netwerkregel + de API-sleutel van VLAM | netwerkregel + de API-sleutel van VLAM |
 
-De keuze voor terminatie is de kern van het GETERMINEERDE pad, en het pad dat je hoort te kiezen tenzij je
-een reden hebt om dat niet te doen. Het certificaat van `vlam-api.rijksweb.nl` komt
-van `Rijksdienst Issuing CA2` en zit in geen enkele publieke bundel, dus zonder terminatie moet elke
-afnemer die keten in zijn eigen runtime vertrouwen. Dat is per taal anders, en in de meeste runtimes
-VERVANGT `SSL_CERT_FILE` de hele bundel, waarmee je andere HTTPS-verkeer van diezelfde applicatie
-sloopt. Eén keer goed op de proxy is beter dan tien keer bijna goed bij de afnemers.
+De keuze voor terminatie is de kern van het GETERMINEERDE pad, en het pad dat je hoort te kiezen tenzij
+je een reden hebt om dat niet te doen. Het is het pad waarop een afnemer niets hoeft te weten: geen
+hostnaam, geen poort, geen certificaat. Toen VLAM nog op `vlam-api.rijksweb.nl` zat was dat verschil
+groot, want die keten zat in geen enkele publieke bundel; sinds het overheid-i-adres is het verschil
+kleiner, maar de proxy blijft de eenvoudigste weg.
 
 **De prijs, expliciet:** tussen de afnemer-pod en de proxy is het verkeer niet versleuteld. Dat
 blijft binnen ons cluster en ons beheer, en de hop naar buiten is wel versleuteld en geverifieerd.
-Wie versleuteling tot aan VLAM zelf nodig heeft, gebruikt sinds RC-167 het doorlus-pad hieronder --
-en neemt daarmee het CA-probleem terug naar zijn eigen applicatie, met de bundel die de dienst
-meelevert. Het VPN-pad blijft bestaan, voor laptops.
+Wie versleuteling tot aan VLAM zelf nodig heeft, gebruikt sinds RC-167 het doorlus-pad. Het VPN-pad
+blijft bestaan, voor laptops.
 
 **Geen eigen certificaat op de interne hop.** Dat zou het vertrouwensprobleem alleen verplaatsen
-naar de afnemer, met precies de `SSL_CERT_FILE`-valkuil hierboven. Intern HTTP met netwerkregels als
-toegangscontrole is hier de eerlijkere keuze.
+naar de afnemer, die dan een private uitgever in zijn runtime moet hangen. Intern HTTP met
+netwerkregels als toegangscontrole is hier de eerlijkere keuze.
 
 ## Waar de dienst bestaat
 
@@ -217,7 +207,7 @@ een platformbeheerde opzet, dan verandert alleen dat blok.
 |---|---|
 | variabele | `ManifestContribution.env_vars` — additief, dus de eigen variabelen van het component blijven staan. Geen geheim: een intern adres versleutelen maakt het alleen onleesbaar voor de eigenaar. |
 | netwerkregel | `contribute_deployment_manifests`, één `NetworkPolicy` per aangevinkt component, egress-only, `podSelector` op `app`. Opent ELKE poort van de proxy waarvoor de afnemer een adres kreeg (`VlamEndpoint.ports`): een adres dat de netwerkregel niet opent is een time-out |
-| alias en bestand | `template_vars["host_aliases"]` (override, niets anders zet die sleutel) en `ManifestContribution.secret_mounts` (additief) plus een `SecretFileSpec` met de inhoud van de bundel |
+| alias | `template_vars["host_aliases"]` (override, niets anders zet die sleutel) |
 | uitzetten | de bestandsnaam draagt het prune-voorvoegsel `{deployment}-vlam-`, dus de generieke opruiming haalt de regel weg zodra de dienst niet meer bijdraagt |
 | aanzetten | het vinkje op het component (RC-213). Tot dan gold de PROJECTselectie voor elk component van elke deployment: op `bouwm-6gn` droeg `main-component-1` `VLAM_API_URL` en viel het onder de egress-regel zonder dat ooit te hebben gevraagd |
 
@@ -249,18 +239,13 @@ peer. Dat is er nu, als **wildcard-peer** (`config_schema_version` 1.1):
 - **De inkomende regel voor 8443 in `vlam-wt8`.** De dienst opent de uitgaande weg naar beide
   poorten; de inkomende wildcard aan de VLAM-kant bestaat vandaag alleen voor 8081. Die tweede regel
   hoort bij de eerste keer dat het doorlus-pad echt gebruikt wordt.
-- **De herkomst van de Rijksdienst Root CA bij SSC-ICT bevestigen.** De bundel zelf staat er sinds
-  22 september als `opi/services/catalog/vlam/vlam-ca.pem` (drie certificaten, geen private keys) en
-  het doorlus-pad is daarmee aan. Twee van de drie zijn tegen een publieke bron te verifiëren:
-  `DigiCert Global Root G2` en zijn intermediate `DigiCert G2 TLS EU RSA4096 SHA384 2022 CA1`. De
-  derde, `Rijksdienst Root CA` van SSC-ICT, staat in geen publieke distributie. Op 25 september
-  gemeten is de repo-kopie wel gelijk aan wat de draaiende proxy gebruikt: de bijlage
-  `productie-attch-rijksdienst-ca` in `rig-prd-vlam-wt8` bevat dezelfde drie certificaten, en de
-  Rijksdienst-root heeft daar dezelfde SHA256-vingerafdruk
-  `1A:04:61:6F:8D:6A:2F:6E:90:3A:7B:56:E3:7F:75:BF:9F:76:B9:16:0C:D4:D2:27:71:7E:C9:FC:95:5F:33:6D`.
-  Wat daarmee nog niet vastligt is dat die bytes ooit van SSC-ICT kwamen. Dat is een eenmalige
-  bevestiging, en die is het waard omdat dit certificaat in elke afnemerpod belandt en via de
-  downloadknop wordt uitgedeeld. Leg de vingerafdruk daarna hier vast als bevestigd.
+- **Afnemers die de oude bundel nog lezen.** Code die `VLAM_CA_BUNDLE_PATH` opvraagt of
+  `/etc/ssl/vlam/vlam-ca.pem` opent, faalt na de uitrol van RC-414. Dat raakt `ai-3rt`, `bouwm-6gn`,
+  `gv-ukr` en `regel-k4c`; de fix aan hun kant is de bundel weglaten en de standaardverificatie
+  gebruiken.
+- **De bijlage `rijksdienst-ca` in `vlam-wt8`.** De terminerende kant van de proxy verifieert daar nog
+  tegen, voor de backend op 8081 naar rijksweb. Dat is projectconfiguratie in de vlam-repo en kan weg
+  zodra 8081 weg mag.
 - **Verloopt het geconfigureerde ClusterIP ooit stilzwijgend?** Bewust uitgesteld. Twee latere
   mogelijkheden, geen van beide nu nodig: een controle die het geconfigureerde adres vergelijkt met
   de draaiende Service en klaagt bij verschil, of alsnog een vaste `clusterIP`, wat een kleine
@@ -268,9 +253,9 @@ peer. Dat is er nu, als **wildcard-peer** (`config_schema_version` 1.1):
 - **Welke naam zet de alias?** Dit was een keuze tussen `vlam-api.rijksweb.nl` en
   `vlam-api.overheid-i.nl`, en hij is op 21 september voor ons beslist: SSC-ICT heeft rijksweb
   uitgezet, dat adres sluit de verbinding meteen na de TCP-handshake terwijl overheid-i 200 geeft.
-  De doorlus wijst daarom naar `vlam-api.overheid-i.nl` (commit `2fad03076`). De keten waarop dit
-  gebouwd is draagt nog wel de oude naam (de SNI-ACL van de proxy, het certificaat, het runbook),
-  dus verwacht `rijksweb` nog op plekken die niet de `api_host` zijn. Hij staat als `api_host` in de
+  De doorlus wijst daarom naar `vlam-api.overheid-i.nl`. De keten waarop dit
+  gebouwd is draagt nog wel de oude naam (de SNI-ACL van de proxy, het runbook), dus verwacht
+  `rijksweb` nog op plekken die niet de `api_host` zijn. Hij staat als `api_host` in de
   clusterconfiguratie en is daar met een regel te wijzigen.
 - **`chat.rijksweb.nl` ontsluiten.** Kan (tweede frontend op 8082 met een eigen vaste backend en een
   `VLAM_CHAT_URL`), maar pas als er een concrete afnemer voor is.

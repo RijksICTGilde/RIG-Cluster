@@ -215,9 +215,8 @@ CLUSTER_CONFIG = {
             # niet vastgezet op de Service die de stub aanmaakt. Het staat er zodat het blok
             # dezelfde vorm heeft als dat van productie.
             "passthrough_port": 8443,
-            "api_host": "vlam-api.rijksweb.nl",
+            "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "10.96.144.8",
-            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -339,18 +338,12 @@ CLUSTER_CONFIG = {
             #                     veilig op een certificaatfout in plaats van verkeerd te
             #                     bezorgen. Dit is de ene plek om hem te wijzigen.
             #
-            # ca_bundle noemt het bestand in de vlam-dienst zelf waartegen de afnemer het
-            # certificaat van VLAM verifieert. Het is een platformgegeven en geen bijlage:
-            # het is voor elke afnemer identiek, en roteren is zo een wijziging op een plek.
-            # De bundel bevat sinds 2026-09-21 TWEE ketens, want de twee adressen hebben
-            # verschillende uitgevers: rijksweb komt onder de Rijksdienst Root CA van
-            # SSC-ICT, overheid-i onder DigiCert Global Root G2. Tot die datum ontbrak dit
-            # bestand in het pakket, en dan geeft _passthrough() None terug: de doorlus
-            # heeft daardoor nooit aangestaan.
+            # Een eigen CA-bundel hoort hier sinds RC-414 niet meer bij: het certificaat
+            # van `vlam-api.overheid-i.nl` komt van DigiCert en zit in elke standaardbundel,
+            # dus de afnemer verifieert het met de certificatenlijst van zijn eigen image.
             "passthrough_port": 8443,
             "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.254.144",
-            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -495,9 +488,8 @@ CLUSTER_CONFIG = {
             "namespace": "vlam-wt8",
             "port": 8081,
             "passthrough_port": 8443,
-            "api_host": "vlam-api.rijksweb.nl",
+            "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.0.1",
-            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -1853,9 +1845,8 @@ def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
     allowed to reach are BOTH derived from these, so they cannot drift apart.
 
     Since RC-167 the same entry also carries the doorlus half -- ``passthrough_port``,
-    ``api_host``, ``cluster_ip`` and ``ca_bundle``. Those four are one unit: an address
-    without the name it must be reached under, or the name without the issuer to verify
-    against, is not a usable path but three quarters of one. ``vlam_endpoint()`` derives
-    them together for that reason.
+    ``api_host`` and ``cluster_ip``. Those three are one unit: an address without the name
+    it must be reached under is not a usable path but two thirds of one.
+    ``vlam_endpoint()`` derives them together for that reason.
     """
     return get_cluster_config(cluster_name).get("vlam")
