@@ -14,7 +14,9 @@ Run: uv run pytest tests/e2e/test_wizard_registry_token_encrypted.py -m "e2e and
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -52,6 +54,18 @@ def captured_yaml(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(task_helpers, "create_async_task", _fake_create_async_task)
     return captured
+
+
+@pytest.fixture(autouse=True)
+def _token_check_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The token check talks to the real registry; this test is about what is stored."""
+    import opi.services.catalog.image_registries.enforcers as enforcers
+
+    connector = SimpleNamespace(
+        check_login=AsyncMock(return_value=(True, "")),
+        check_repository_access=AsyncMock(return_value=(True, "")),
+    )
+    monkeypatch.setattr(enforcers, "_connector", lambda: connector)
 
 
 def _step(page: Page) -> str:

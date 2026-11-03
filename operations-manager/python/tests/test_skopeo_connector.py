@@ -671,3 +671,57 @@ class TestARealSkopeoFollowsTheRegistryInward:
             result = await connector.check_repository_access(f"{registry}/team/app", "robbert", PASSWORD)
         assert "unable to retrieve auth token" in caplog.text
         assert result == (False, UNREADABLE_REASON)
+
+
+@pytest.mark.asyncio
+class TestCheckLogin:
+    """The login check for a registry the project has no image from yet."""
+
+    @staticmethod
+    def _process(returncode: int, stderr: bytes = b"") -> MagicMock:
+        process = MagicMock(returncode=returncode)
+        process.communicate = AsyncMock(return_value=(b"", stderr))
+        return process
+
+    @pytest.mark.parametrize(("returncode", "expected"), [(0, (True, "")), (1, (False, UNREADABLE_REASON))])
+    async def test_the_outcome_follows_skopeo(self, connector, resolver, returncode, expected):
+        process = self._process(returncode, b"unauthorized: authentication required")
+        with patch("asyncio.create_subprocess_exec", return_value=process):
+            assert await connector.check_login("ghcr.io/minbzk", "robbert", PASSWORD) == expected
+
+    async def test_the_password_goes_over_stdin_and_the_host_is_the_target(self, connector, resolver):
+        process = self._process(0)
+        with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
+            await connector.check_login("ghcr.io/minbzk", "robbert", PASSWORD)
+        cmd = mock_exec.call_args[0]
+        assert cmd[:2] == ("skopeo", "login")
+        assert "--password-stdin" in cmd
+        assert cmd[-1] == "ghcr.io"
+        assert PASSWORD not in " ".join(cmd)
+        process.communicate.assert_awaited_once_with(PASSWORD.encode())
+
+    async def test_the_authfile_is_a_fresh_one_and_gone_afterwards(self, connector, resolver):
+        process = self._process(0)
+        with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
+            await connector.check_login("ghcr.io/minbzk", "robbert", PASSWORD)
+        cmd = mock_exec.call_args[0]
+        authfile = Path(cmd[cmd.index("--authfile") + 1])
+        assert not authfile.parent.exists()
+
+    async def test_a_private_destination_is_refused_without_running_skopeo(self, connector, resolver):
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            result = await connector.check_login("registry.voorbeeld.nl/team", "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+        mock_exec.assert_not_called()
+
+    async def test_without_skopeo_nothing_is_refused(self, connector):
+        connector.is_skopeo_available = False
+        assert await connector.check_login("ghcr.io/minbzk", "robbert", PASSWORD) == (True, "")
+
+    async def test_the_log_carries_no_password(self, connector, resolver, caplog):
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=self._process(1, b"denied")),
+            caplog.at_level(logging.DEBUG, logger="opi.connectors.skopeo"),
+        ):
+            await connector.check_login("ghcr.io/minbzk", "robbert", PASSWORD)
+        assert PASSWORD not in caplog.text

@@ -21,7 +21,7 @@ De keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er 
 
 ## Wat je van het token moet weten
 
-- Het token heeft **leesrecht op packages** nodig. Bij GitHub is dat een personal access token (classic) met het recht `read:packages`, aan te maken onder Settings, Developer settings, Personal access tokens. Een token dat te weinig mag geeft geen duidelijke fout maar een melding dat de image niet bestaat, en die wijst de verkeerde kant op. Wij toetsen het token daarom bij het afronden van de wizard en bij het opslaan van dit blok, tegen de images die je componenten dan al hebben. Voeg je daarna via het componentformulier een component met een image uit deze registry toe, sla dit blok dan nog eens op.
+- Het token heeft **leesrecht op packages** nodig. Bij GitHub is dat een personal access token (classic) met het recht `read:packages`, aan te maken onder Settings, Developer settings, Personal access tokens. Een token dat te weinig mag geeft geen duidelijke fout maar een melding dat de image niet bestaat, en die wijst de verkeerde kant op. Wij toetsen het token daarom al bij deze stap: heeft je project nog geen image uit deze registry, dan of de registry het token accepteert. Zodra er een component met een image uit deze registry is, toetsen we bij het afronden van de wizard en bij het opslaan van dit blok ook of het token die image mag lezen. Voeg je daarna via het componentformulier een component met een image uit deze registry toe, sla dit blok dan nog eens op.
 - Op productie **verloopt het token na 90 dagen**. Daarna moet je het opnieuw invullen.
 - Er zit een **quotum** op wat er van je images wordt bewaard.
 
