@@ -39,7 +39,6 @@ oordelen:
 - id: V1.2.5
   status: toets
   toets: operations-manager/python/tests/test_pgdump_command_injection.py aanvalsproef/semgrep-zad.yaml
-   
   toelichting: De connectors geven een argumentenlijst mee; de semgrep-regels zad-subprocess-buiten-connector
     en zad-subprocess-via-een-shell en de taint-analyse van CodeQL (default setup op de repo, query-set
     extended) houden dat vast.
