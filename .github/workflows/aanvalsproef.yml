@@ -22,6 +22,8 @@ env:
   # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
   # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
   # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
+  # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
   #
   # Waarom elk endpoint erbij hoort:
   #   agent.api.stepsecurity.io   harden-runner zelf, anders meldt hij niets
@@ -93,7 +95,7 @@ jobs:
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -170,7 +172,7 @@ jobs:
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -245,7 +247,7 @@ jobs:
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

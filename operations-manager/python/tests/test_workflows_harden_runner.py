@@ -15,6 +15,11 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 
 HARDEN = "step-security/harden-runner"
 
+# Tijdelijk audit en niet block: in block weigert harden-runner ook domeinen uit de allowlist,
+# en dan lopen jobs vast (step-security/harden-runner#708). Terug naar "block" zodra dat is
+# opgelost; de allowlist blijft daarom staan en gevuld.
+EGRESS_POLICY = "audit"
+
 
 def _jobs() -> list[tuple[str, str, dict]]:
     paden = sorted(p for p in WORKFLOW_DIR.iterdir() if p.suffix in {".yml", ".yaml"})
@@ -39,9 +44,9 @@ def test_elke_job_begint_met_een_harden_runner(workflow: str, naam: str, job: di
 
 
 @pytest.mark.parametrize(("workflow", "naam", "job"), ALLE_JOBS, ids=IDS)
-def test_de_egress_staat_op_block_met_een_allowlist(workflow: str, naam: str, job: dict) -> None:
+def test_de_egress_staat_op_de_afgesproken_policy_met_een_allowlist(workflow: str, naam: str, job: dict) -> None:
     mee = job["steps"][0].get("with", {})
-    assert mee.get("egress-policy") == "block", f"{workflow}:{naam} staat niet op block"
+    assert mee.get("egress-policy") == EGRESS_POLICY, f"{workflow}:{naam} staat niet op {EGRESS_POLICY}"
     assert mee.get("allowed-endpoints") == "${{ env.HARDEN_ENDPOINTS }}", (
         f"{workflow}:{naam} krijgt zijn allowlist niet uit env.HARDEN_ENDPOINTS"
     )
