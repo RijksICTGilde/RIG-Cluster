@@ -6,7 +6,6 @@ for backup/restore orchestration with progress tracking.
 
 from __future__ import annotations
 
-import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -22,14 +21,8 @@ from opi.handlers.project_file_handler import (
     extract_storage_from_component_services,
 )
 from opi.manager.backup import create_backup_manager
+from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services import CloneFromType
-from opi.services.catalog.publish_on_web.domain_config import (
-    DomainSetting,
-    get_domain_setting,
-    has_domain_setting,
-    set_domain_setting,
-)
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import normalize_service_entries
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
@@ -95,16 +88,17 @@ async def _create_deployment_from_source(
     source_deployment: str,
     deployment_config: dict[str, Any] | None = None,
     backup_run_id: str = "",
+    config_source: str | None = None,
 ) -> None:
-    """Create a new deployment by copying structure from a source deployment.
+    """Create the restore-target deployment and persist it.
 
-    Copies the deployment configuration (cluster, namespace, services, etc.)
-    and sets clone-from type to "backup" with the backup run to restore, so managers
-    look that run up and restore its data during infrastructure provisioning.
+    Saved here and not by the modal wizard: ``_pre_restore_pvcs`` has to fill the PVCs
+    before ArgoCD syncs the project, and a save from the wizard starts the processing right
+    away.
 
-    When deployment_config is provided (from the wizard editables), the user's
-    choices for domain fields (subdomain, base-domain, domain-format) and
-    clone-from are used instead of copying from source.
+    Args:
+        config_source: The deployment whose config (images and env vars included) the new
+            one inherits, or None for an empty deployment.
     """
     project = get_project_store().get(project_name)
     if not project or not project.data:
@@ -123,6 +117,7 @@ async def _create_deployment_from_source(
             source_deployment,
             deployment_config,
             backup_run_id,
+            config_source,
         )
     finally:
         await project_manager.close()
@@ -135,6 +130,7 @@ async def _build_and_save_restore_deployment(
     source_deployment: str,
     deployment_config: dict[str, Any] | None,
     backup_run_id: str,
+    config_source: str | None = None,
 ) -> None:
     """Build the restore-target deployment and persist it via the validated save path.
 
@@ -142,57 +138,16 @@ async def _build_and_save_restore_deployment(
     """
     project_data = await project_manager.get_contents()
 
-    # Find source deployment
-    source_dep = None
-    for dep in project_data.get("deployments", []):
-        if dep.get("name") == source_deployment:
-            source_dep = dep
-            break
+    new_deployment = build_restore_target_deployment(
+        project_data,
+        target_deployment=target_deployment,
+        backup_source=source_deployment,
+        backup_run_id=backup_run_id,
+        config_source=config_source,
+        wizard_config=deployment_config,
+    )
 
-    if not source_dep:
-        msg = f"Bron deployment '{source_deployment}' niet gevonden in project '{project_name}'"
-        raise ValueError(msg)
-
-    # Build new deployment from the wizard config (user's choices)
-    # and only infer system-managed fields that the wizard doesn't collect.
-    new_deployment: dict[str, Any] = copy.deepcopy(deployment_config) if deployment_config else {}
-    new_deployment["name"] = target_deployment
-
-    # Set clone-from for backup restore. Only the run goes in the file: the managers
-    # look its snapshots up themselves, so no runtime Kopia data ends up in the project.
-    new_deployment["clone-from"] = {
-        "type": CloneFromType.BACKUP.value,
-        "reference": source_deployment,
-        "mode": "once",
-        "run": backup_run_id,
-    }
-
-    # Infer system-managed fields from source deployment or project
-    if not new_deployment.get("cluster"):
-        new_deployment["cluster"] = source_dep.get("cluster") or (project_data.get("clusters", [None])[0])
-
-    if not new_deployment.get("namespace"):
-        new_deployment["namespace"] = source_dep.get("namespace") or project_name
-
-    if not new_deployment.get("repository"):
-        new_deployment["repository"] = source_dep.get("repository") or (
-            project_data.get("repositories", [{}])[0].get("name", "")
-        )
-
-    # Copy components from source deployment (deep copy to avoid shared references)
-    if "components" not in new_deployment and "components" in source_dep:
-        new_deployment["components"] = copy.deepcopy(source_dep["components"])
-
-    # Auto-set subdomain: if source subdomain matches source name, use target name.
-    # Presence, not truth: a subdomain the caller stored explicitly -- even as null -- is a
-    # decision and stays untouched, the same rule as before the fields moved (RC-60).
-    if not has_domain_setting(new_deployment, DomainSetting.SUBDOMAIN):
-        source_subdomain = get_domain_setting(source_dep, DomainSetting.SUBDOMAIN, "")
-        if source_subdomain == source_deployment or source_subdomain:
-            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, target_deployment)
-
-    # Add deployment to project data
-    project_data["deployments"].append(new_deployment)
+    project_data.setdefault("deployments", []).append(new_deployment)
     # The wizard editables write service config in the name-as-key shape, which the
     # schema's deployment-service envelope rejects; the other wizard save paths normalize too.
     normalize_service_entries(project_data)
@@ -204,10 +159,11 @@ async def _build_and_save_restore_deployment(
         f"Add deployment '{target_deployment}' to project '{project_name}' (restore from '{source_deployment}')",
     )
     logger.info(
-        "Created deployment '%s' in project '%s' (cloned from '%s' for backup restore)",
+        "Created deployment '%s' in project '%s' (restore from '%s', config from '%s')",
         target_deployment,
         project_name,
         source_deployment,
+        config_source or "(leeg)",
     )
 
 

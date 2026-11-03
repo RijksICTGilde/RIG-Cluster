@@ -1043,6 +1043,7 @@ class TestHandleRestoreNewDeployment:
             "create_new_deployment": True,
             "source_deployment": "prod",
             "deployment_config": {"subdomain": "staging"},
+            "config_source": "prod",
             "backup_items": [
                 {"resource_type": "pvc", "component_name": "web-app", "snapshot_id": "snap-1", "storage_name": "data"},
                 {
@@ -1063,6 +1064,7 @@ class TestHandleRestoreNewDeployment:
             "prod",
             deployment_config={"subdomain": "staging"},
             backup_run_id="20260325020000",
+            config_source="prod",
         )
         new_deploy_mocks["pre_restore"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
@@ -1250,10 +1252,10 @@ class TestCreateDeploymentFromSourceYAML:
         assert new_dep["clone-from"]["mode"] == "once"
 
     def test_new_deployment_copies_components(self, yaml_mocks) -> None:
-        """Components are deep-copied from source deployment."""
+        """Components are deep-copied from the deployment the config is inherited from."""
         from opi.core.backup_tasks import _create_deployment_from_source
 
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_deployment_from_source("test-project", "staging", "production", config_source="production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert len(new_dep["components"]) == 1

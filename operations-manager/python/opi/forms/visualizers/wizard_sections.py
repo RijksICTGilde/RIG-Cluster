@@ -38,6 +38,7 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_ENVIRONMENT,
     DEPLOYMENT_NAME,
     DEPLOYMENTS_SEQUENCE,
+    RESTORE_CONFIG_SOURCE,
 )
 from opi.forms.visualizers.fields.domains import (
     WIZARD_DEPLOYMENT_NAME,
@@ -927,7 +928,10 @@ def _new_deployment_summary(data: dict[str, Any], deployment_index: int = 0) -> 
     """Build review summary for new deployment configuration."""
     deployments = data.get("deployments", [])
     name = deployments[deployment_index].get("name", "-") if deployment_index < len(deployments) else "-"
-    return [("Deployment", str(name))]
+    items: list[SummaryItem] = [("Deployment", str(name))]
+    if "config_source" in data:
+        items.append(("Config overnemen van", str(data["config_source"]) or "Geen (lege deployment)"))
+    return items
 
 
 def _materialize_new_deployment_fields(
@@ -955,8 +959,9 @@ def _restore_new_visible(data: dict[str, Any]) -> bool:
 def build_restore_new_deployment_sections(deployment_index: int = 0) -> list[FormSection]:
     """Build sections for the restore-to-new-deployment flow.
 
-    Reuses the add-deployment builders (info, components, domain) with
-    clone-from excluded — the backup source is already selected in step 2.
+    Reuses the add-deployment builders (info, components, domain). The clone-from field is
+    replaced by the config source: the backup is always the data source, so the choice here
+    is which deployment's configuration the new one inherits (RC-417).
     All sections are conditionally visible based on ``restore_mode == "new"``.
 
     Args:
@@ -964,7 +969,13 @@ def build_restore_new_deployment_sections(deployment_index: int = 0) -> list[For
             deployments list. Set at init time to ``len(deployments)``
             so it targets an empty slot, not an existing deployment.
     """
-    info = build_deployment_add_info_section(deployment_index, include_clone_from=False)
+    base_info = build_deployment_add_info_section(deployment_index, include_clone_from=False)
+    info = dataclasses.replace(
+        base_info,
+        description="Kies een naam en van welke deployment de config wordt overgenomen",
+        editables=[*base_info.editables, RESTORE_CONFIG_SOURCE],
+        layout=[*base_info.layout, RESTORE_CONFIG_SOURCE.editable.yaml_path],
+    )
     components = build_deployment_add_components_section(deployment_index)
     domain = build_deployment_add_domain_section(deployment_index)
 

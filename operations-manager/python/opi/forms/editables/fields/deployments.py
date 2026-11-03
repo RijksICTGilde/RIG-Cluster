@@ -102,6 +102,14 @@ BACKUP_DEPLOYMENT_NAME_EDITABLE = Editable(
     transient=True,
     values_provider="BackupDeploymentOptionsProvider",
 )
+# De deployment waarvan een restore naar een NIEUWE deployment zijn config overneemt. Een
+# eigen transient veld en niet ``clone-from``: die sleutel draagt na een restore de
+# backup-run, dus de twee kunnen niet dezelfde waarde zijn.
+RESTORE_CONFIG_SOURCE_EDITABLE = Editable(
+    yaml_path="config_source",
+    transient=True,
+    values_provider="RestoreConfigSourceOptionsProvider",
+)
 BACKUP_RESOURCE_TYPES_EDITABLE = Editable(
     yaml_path="resource_types",
     transient=True,

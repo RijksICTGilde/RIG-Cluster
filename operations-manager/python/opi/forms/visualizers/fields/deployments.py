@@ -31,6 +31,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_REPOSITORY_EDITABLE,
     DEPLOYMENT_SUBDOMAIN_EDITABLE,
     DEPLOYMENTS_SEQUENCE_EDITABLE,
+    RESTORE_CONFIG_SOURCE_EDITABLE,
 )
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.services.catalog.publish_on_web.visualizers import (
@@ -102,6 +103,13 @@ DEPLOYMENT_CLONE_FROM = EditableVisualizer(
     widget=WidgetType.SELECT,
     label="Kloon data van",
     help_text="Kopieer database- en opslagdata van een andere deployment. Handig voor preview/PR-omgevingen.",
+)
+
+RESTORE_CONFIG_SOURCE = EditableVisualizer(
+    editable=RESTORE_CONFIG_SOURCE_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Config overnemen van",
+    help_text="De nieuwe deployment krijgt de images en env-vars van deze deployment. Standaard de deployment waar de backup van is.",
 )
 
 DEPLOYMENT_BACKUP_SCHEDULE = EditableVisualizer(

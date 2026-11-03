@@ -59,6 +59,18 @@ Onveranderd: is het `subdomain` van de bron gelijk aan zijn deploymentnaam, dan 
 kloon zijn eigen naam als subdomein. Dat is de bestaande heuristiek voor het patroon waarin
 componenten één hostnaam delen en zich met paden onderscheiden.
 
+## Wie deze afleiding gebruikt
+
+De splitsing hierboven staat in één afleiding, `derive_deployment_from_source` in
+`opi/manager/clone_validation.py`. Twee wegen bouwen een deployment uit een bestaande, en
+ze gebruiken allebei die functie:
+
+- `upsert_deployment` met `cloneFrom`, de PR-previews. De componenten gaan niet mee: de
+  images komen uit het request.
+- Terugzetten van een backup naar een nieuwe deployment. Daar gaan de componenten juist wel
+  mee, met hun image en hun `user-env-vars` als ciphertext, want de teruggezette data moet
+  naast dezelfde applicatie staan. Zie `features/backup-restore-wizard.md`.
+
 ## Wat dit niet oplost
 
 Een deployment met een **lege** `domain-format` blijft de default van vandaag volgen, en de

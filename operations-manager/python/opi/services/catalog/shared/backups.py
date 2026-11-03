@@ -168,7 +168,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     from opi.manager.backup import BackupManager
     from opi.services.project_authorization import is_user_authorized_for_project
     from opi.services.project_store import get_project_store
-    from opi.web.authz import may
+    from opi.web.authz import may_on_any_deployment
     from opi.web.lotc_switch import render
 
     user = get_current_user(request) or {}
@@ -227,7 +227,8 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
             "deployments": deployments,
             "backups_by_deployment": backups_by_deployment,
             "backups_error": error,
-            # De herstelknop volgt de rolpoort van de restore-stroom (RC-323).
-            "mag_terugzetten": may(request, action=Action.RESTORE_RUN, project_name=project_name),
+            # De herstelknop volgt de rolpoort van de restore-stroom (RC-323). Op minstens
+            # een deployment, net als de wizard zelf: het doel kiest de gebruiker daarin.
+            "mag_terugzetten": may_on_any_deployment(request, action=Action.RESTORE_RUN, project_name=project_name),
         },
     )

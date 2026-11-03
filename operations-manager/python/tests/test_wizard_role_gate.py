@@ -731,10 +731,11 @@ async def test_restore_select_mode_invokes_operate_access_gate() -> None:
 
     request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
 
-    # ``require_action`` en niet ``authorize``: het formulier herrenderen is geen
-    # herstel, en de audit hoort er geen rij over te krijgen (RC-398).
+    # ``require_on_any_deployment`` en niet ``authorize``: het formulier herrenderen is geen
+    # herstel, en de audit hoort er geen rij over te krijgen (RC-398). Op minstens een
+    # deployment, want het doel kiest de gebruiker pas in de wizard (RC-417).
     with (
-        patch("opi.web.router_detail_edit.require_action", side_effect=_TE_SMALLE_ROL) as gate,
+        patch("opi.web.router_detail_edit.require_on_any_deployment", side_effect=_TE_SMALLE_ROL) as gate,
         patch("opi.web.router_detail_edit.authorize", side_effect=AssertionError("geen rij hierover")),
         pytest.raises(HTTPException) as exc,
     ):
@@ -745,11 +746,11 @@ async def test_restore_select_mode_invokes_operate_access_gate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _handle_backup_restore_submit: the TOCTOU guard on trigger_restore
+# _handle_backup_restore_submit: the gate on trigger_restore
 #
-# The route-level gates above run at init/step time. A restore is only actually
-# executed here, so this function re-checks the operate-role itself as a guard
-# against any intermediate step missing the gate; a backup needs no such guard.
+# The route-level gates above run at init/step time, and without a deployment. A restore
+# is only actually executed here, so this is where ``restore.run`` is weighed on the
+# source and on the target it really points at (RC-417); a backup needs no such guard.
 # ---------------------------------------------------------------------------
 
 
@@ -778,7 +779,7 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
         )
 
     assert exc.value.status_code == 403
-    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.RESTORE_RUN, PROJECT_NAME)
+    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), Action.RESTORE_RUN, PROJECT_NAME, deployment="")
 
 
 @pytest.mark.asyncio

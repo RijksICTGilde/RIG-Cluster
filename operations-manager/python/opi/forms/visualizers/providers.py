@@ -1002,6 +1002,19 @@ class DeploymentCloneFromOptionsProvider:
         return options
 
 
+class RestoreConfigSourceOptionsProvider(DeploymentCloneFromOptionsProvider):
+    """Provides the deployments a restore can take its configuration from.
+
+    Same list as the clone-from picker, with an empty option that says what empty means
+    here: a restore always clones the backup, so "not cloning" is not the choice.
+    """
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = [{"value": "", "label": "Geen (lege deployment)"}]
+        options.extend({"value": name, "label": name} for name in self.deployment_names)
+        return options
+
+
 class RepositoryOptionsProvider:
     """
     Provides repository names from the project as select options.
@@ -2258,6 +2271,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "BackupResourceTypesOptionsProvider": BackupResourceTypesOptionsProvider,
     "BackupDeploymentOptionsProvider": BackupDeploymentOptionsProvider,
     "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
+    "RestoreConfigSourceOptionsProvider": RestoreConfigSourceOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
     "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,

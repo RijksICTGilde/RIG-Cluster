@@ -105,7 +105,7 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
-from opi.manager.clone_validation import resolve_clone_source_deployment
+from opi.manager.clone_validation import derive_deployment_from_source, resolve_clone_source_deployment
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -134,10 +134,8 @@ from opi.services.catalog.image_registries.resolution import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
-    clear_domain_name_settings,
     custom_domain_certificate_note,
     get_domain_setting,
-    pop_domain_setting,
     set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
@@ -153,7 +151,6 @@ from opi.services.project_store import ConcurrencyError, ConflictError, get_proj
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
-    deployment_runtime_keys,
     generate_missing_values,
     manifest_services,
     project_manifest_services,
@@ -185,7 +182,6 @@ from opi.utils.fs_paths import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
-    SELF_CONTAINED_FORMAT_IDS,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
@@ -8035,61 +8031,13 @@ class ProjectManager:
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
-                        # Clone properties from source, excluding fields that must be
-                        # unique per deployment. The backup block is not copied: backups
-                        # are an explicit per-deployment choice, and inheriting the
-                        # source's schedule made every PR preview accumulate nightly
-                        # snapshots.
-                        #
-                        # On top of those, every key a service uses for its own runtime
-                        # state about the SOURCE deployment: that state describes the
-                        # deployment it was recorded on, so it must not travel to this
-                        # one. Asked of the catalog rather than listed here, so a service
-                        # that starts recording state does not need an edit in this file.
-                        clone_exclude_keys = ["name", "components", "backup", *deployment_runtime_keys()]
+                        # One derivation for every path that builds a deployment out of an
+                        # existing one: the upsert here, and the restore to a new
+                        # deployment. The components stay out of it, because the images
+                        # come from this request.
                         new_deployment.update(
-                            {
-                                key: copy.deepcopy(value)
-                                for key, value in source_deployment.items()
-                                if key not in clone_exclude_keys
-                            }
+                            derive_deployment_from_source(source_deployment, deployment_name, requested_domain_settings)
                         )
-
-                        # A clone uses its own (target) domain setup, never the source's
-                        # hostnames, or two deployments claim the same ones. The web
-                        # address travels inside the source's `services` block, so it is
-                        # removed AFTER the copy -- excluding the old root key names would
-                        # be a silent no-op.
-                        #
-                        # The SHAPE stays, unless it leans on the name it is about to lose
-                        # (SELF_CONTAINED_FORMAT_IDS): dropping it handed the clone the
-                        # platform default of the day it was processed (RC-217). Dropped
-                        # first, so clearing the names also tidies away a service entry
-                        # that has nothing left in it.
-                        if (
-                            get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                            not in SELF_CONTAINED_FORMAT_IDS
-                        ):
-                            pop_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                        clear_domain_name_settings(new_deployment)
-
-                        # The caller's own request was written before that copy and got
-                        # overwritten by it. Write it again; it must beat the source.
-                        for setting, setting_value in requested_domain_settings.items():
-                            set_domain_setting(new_deployment, setting, setting_value)
-
-                        # When the source's subdomain matches its deployment name, it means
-                        # components share a single hostname and use paths to differentiate.
-                        # Preserve this pattern for the clone by setting subdomain to the
-                        # new deployment name.
-                        source_subdomain = get_domain_setting(source_deployment, DomainSetting.SUBDOMAIN)
-                        source_name = source_deployment.get("name")
-                        if source_subdomain and source_subdomain == source_name:
-                            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, deployment_name)
-                            logger.info(
-                                f"Source subdomain '{source_subdomain}' matches source deployment name, "
-                                f"setting cloned subdomain to '{deployment_name}'"
-                            )
 
                         # Set clone-from in dict format for proper status tracking
                         new_deployment["clone-from"] = {
