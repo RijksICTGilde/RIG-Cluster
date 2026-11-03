@@ -121,6 +121,10 @@ jobs:
       # Dezelfde testserver als de E2E-suite: de echte app met gemockte externe systemen,
       # zonder cluster, database of Keycloak. Auth staat AAN, zodat de ongeauthenticeerde
       # scan het echte oppervlak achter de inlogmuur ziet.
+      # De testserver maakt bij het opstarten een AGE-sleutelpaar aan.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
       - name: Zet het doelwit op
         working-directory: operations-manager/python
         env:
