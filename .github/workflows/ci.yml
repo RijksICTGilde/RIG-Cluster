@@ -153,13 +153,13 @@ jobs:
           path: operations-manager/python
           merge-multiple: true
       - name: Coverage samenvoegen
-        run: uv run coverage combine .coverage.*
+        run: uv run --group test coverage combine .coverage.*
       - name: Coverage report
-        run: uv run coverage report --fail-under=71
+        run: uv run --group test coverage report --fail-under=71
       # De beveiligingskritische modules: drempel mag omhoog, niet omlaag zonder reden in de PR.
       # Zakt de dekking hier, dan is dat een bevinding.
       - name: Coverage report (beveiligingskritische modules)
-        run: uv run coverage report --fail-under=86 --include="opi/middleware/*,opi/api/user_token_auth.py,opi/api/endpoint_util.py,opi/services/project_authorization.py,opi/utils/age.py,opi/utils/sops.py,opi/utils/api_keys.py"
+        run: uv run --group test coverage report --fail-under=86 --include="opi/middleware/*,opi/api/user_token_auth.py,opi/api/endpoint_util.py,opi/services/project_authorization.py,opi/utils/age.py,opi/utils/sops.py,opi/utils/api_keys.py"
 
   # De twee Java-pakketten die images/keycloak-zad/ tot een Keycloak-image bundelt. Die
   # imagebouw draait alleen op workflow_dispatch, dus zonder deze job draaien hun toetsen
