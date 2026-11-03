@@ -68,7 +68,7 @@ Twee fasen. Fase 1 verplaatst geen bestanden en kan direct; fase 2 verplaatst al
    - Bron: de bestaande markers (`e2e`, `sandbox`, `requires_infra`, `slow`).
    - Daarnaast de fixtures die een test gebruikt (`test_client`, `async_client` → component; de Postgres-fixture, `age_keypair`, `make_age_keypair` → infra).
    - En voor wat dan nog niet past een lijst in de conftest, per bestand, met de reden. Die lijst komt uit een meting: draai de unit-laag met de guard uit stap 5 in een meldstand, en zet wat hij vangt op de lijst.
-   
+
    `addopts` verliest zijn `-m`-reeks; de standaard wordt `-m "unit or component"`, op één plek.
    → toets: elke verzamelde test heeft precies één laag-marker (een test in de conftest zelf); `pytest --collect-only -m unit`, `-m component` enzovoort tellen samen op tot het totaal.
 3. **Eén Taskfile-ingang per laag.** Volgens de afspraak in de repo geen losse scripts, alleen Taskfile-taken:
