@@ -140,16 +140,23 @@ def test_project_rule_does_not_yield_an_edge_per_deployment(graph: Graph) -> Non
     assert len(to_redis) == 1
 
 
-def test_deployment_shows_only_its_own_components(graph: Graph) -> None:
-    deployment = _node(graph, "d:prod")
-    assert deployment is not None
-    assert [child.title for child in deployment.children] == ["editor"]
-    assert deployment.related == ["c:editor"]
-    rows = deployment.children[0].rows
+def test_deployment_map_shows_only_its_own_components() -> None:
+    with patch("opi.services.zad_map.project.get_project_store", return_value=_store()):
+        graph = project_graph("demo", "prod")
+    assert [node.id for node in graph.nodes if node.id.startswith("c:")] == ["c:editor"]
+    rows = _node(graph, "c:editor").rows
     assert rows[0].text == "editor:1.2.3"
     # Het webadres komt uit publish_on_web, niet uit een eigen afleiding.
     assert rows[1].href is not None
     assert rows[1].href.startswith("https://")
+
+
+def test_unknown_deployment_raises_keyerror() -> None:
+    with (
+        patch("opi.services.zad_map.project.get_project_store", return_value=_store()),
+        pytest.raises(KeyError),
+    ):
+        project_graph("demo", "bestaat-niet")
 
 
 def test_component_without_resources_gets_no_bars(graph: Graph) -> None:
@@ -171,15 +178,10 @@ def test_bar_shows_only_what_the_component_declares(graph: Graph) -> None:
     assert [(row.bar, row.req, row.lim, row.text) for row in bars] == [("mem", None, 256.0, "256Mi")]
 
 
-def test_project_without_deployments_gets_no_empty_group() -> None:
-    data = _demo()
-    data["deployments"] = []
-    store = MagicMock()
-    store.get.side_effect = {"demo": ProjectSummary(name="demo", filename="demo.yaml", data=data)}.get
-    store.get_all.return_value = []
-    with patch("opi.services.zad_map.project.get_project_store", return_value=store):
-        graph = project_graph("demo")
-    assert [group.id for group in graph.groups if group.id == "deps"] == []
+def test_project_map_has_no_deployments_frame(graph: Graph) -> None:
+    """De deployments zitten in de keuzelijst boven de kaart, niet als kader ernaast."""
+    assert graph.groups == [group for group in graph.groups if group.style == "external"]
+    assert not any(node.id.startswith("d:") for node in graph.nodes)
 
 
 def test_output_validates_against_contract(graph: Graph) -> None:

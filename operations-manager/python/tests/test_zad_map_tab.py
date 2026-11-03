@@ -76,7 +76,17 @@ def test_both_routes_carry_the_read_action() -> None:
 def test_template_carries_the_element() -> None:
     content = TABS.read_text(encoding="utf-8")
     assert "{% elif active_tab == 'kaart' %}" in content
-    assert '<zad-map src="/projects/{{ project.name }}/kaart.json">' in content
+    assert '<zad-map id="zad-map" src="/projects/{{ project.name }}/kaart.json">' in content
+    # De keuzelijst zet de deployment in de querystring van de graafroute.
+    assert "kaart.json' + (this.value ? '?deployment=' + encodeURIComponent(this.value)" in content
+
+
+def test_the_route_reads_the_deployment_from_the_query() -> None:
+    """FastAPI negeert een onbekende queryparameter stil; dit toetst dat hij bekend is."""
+    from opi.web.router import web_router
+
+    (route,) = [r for r in web_router.routes if getattr(r, "path", "") == "/projects/{project_name}/kaart.json"]
+    assert [param.name for param in route.dependant.query_params] == ["deployment"]
 
 
 @pytest.mark.asyncio

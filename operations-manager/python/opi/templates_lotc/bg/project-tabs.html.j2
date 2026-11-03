@@ -1074,8 +1074,22 @@
     {% elif active_tab == 'kaart' %}
     {# De kaart van dit project. De pagina draagt alleen het element; de plaat komt van
        /projects/<naam>/kaart.json, achter dezelfde poort als dit tabblad. #}
+    {# Project toont de definitie; een deployment toont wat er draait en hoeveel data het
+       bewaart. De opties staan er bij het renderen al in, dus de bekende beperking van
+       <nldd-dropdown> met later toegevoegde opties (zie _log-viewer.html.j2) speelt niet. #}
+    {% if project.deployments %}
+    <c-dropdown size="sm" width="16rem">
+        <select id="zad-map-view" aria-label="Weergave van de kaart"
+                onchange="document.getElementById('zad-map').src = '/projects/{{ project.name }}/kaart.json' + (this.value ? '?deployment=' + encodeURIComponent(this.value) : '')">
+            <option value="">Project</option>
+            {% for deployment in project.deployments %}
+            <option value="{{ deployment.name }}">Deployment {{ deployment.name }}</option>
+            {% endfor %}
+        </select>
+    </c-dropdown>
+    {% endif %}
     <div class="zad-map-frame">
-        <zad-map src="/projects/{{ project.name }}/kaart.json"></zad-map>
+        <zad-map id="zad-map" src="/projects/{{ project.name }}/kaart.json"></zad-map>
     </div>
 
     {% elif active_tab == 'audit' %}

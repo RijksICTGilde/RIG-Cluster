@@ -1384,17 +1384,18 @@ async def project_details(request: Request, project_name: str):
 @web_router.get("/projects/{project_name}/kaart.json")
 @action(Action.PROJECT_READ)
 @requires_sso
-async def project_map_json(request: Request, project_name: str) -> JSONResponse:
-    """De graaf achter het tabblad Kaart.
+async def project_map_json(request: Request, project_name: str, deployment: str | None = None) -> JSONResponse:
+    """De graaf achter het tabblad Kaart; met ``?deployment=`` die van een deployment.
 
     Een eigen route met een eigen action, zoals het metingenfragment: het tabblad laadt
     zijn plaat zelf. Leest alleen ``ProjectSummary.data``, nooit de ontsleutelde vorm.
+    Alleen de kaart van een deployment meet groottes.
     """
     try:
-        usage = await measure_usage(*usage_targets(project_name))
-        graph = project_graph(project_name, usage)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found") from None
+        usage = await measure_usage(*usage_targets(project_name, deployment)) if deployment else None
+        graph = project_graph(project_name, deployment, usage)
+    except KeyError as missing:
+        raise HTTPException(status_code=404, detail=f"'{missing.args[0]}' not found") from None
     return JSONResponse(graph.as_json())
 
 

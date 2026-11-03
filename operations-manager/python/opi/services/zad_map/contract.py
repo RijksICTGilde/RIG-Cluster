@@ -153,8 +153,6 @@ class Edge(BaseModel):
     to: str
     color: Color | None = None
     label: str = ""
-    #: ``dashed`` for a line that is a rule rather than a fixed connection.
-    style: Literal["", "dashed"] = ""
 
 
 class Graph(BaseModel):

@@ -1,7 +1,8 @@
-"""The project map shows per deployment where its data sits, its backups and its sleep rule.
+"""The map of one deployment: what runs in it, how much data it keeps, its backups and sleep rule.
 
-Lines go to the Deployments frame, not to each card: the frame packs its cards itself, so
-a line cannot reach one of them. The card says what it holds instead.
+The project map shows the definition. Picking a deployment narrows it to the components
+that run there, and puts the measured sizes on the services: with one deployment in view
+it is unambiguous whose data it is.
 """
 
 from __future__ import annotations
@@ -34,14 +35,15 @@ def _project() -> dict[str, Any]:
                     "postgresql-database",
                     {"persistent-storage": {"config": [{"name": "data", "size": "1Gi", "mount-path": "/data"}]}},
                 ],
-            }
+            },
+            {"name": "worker", "type": "single", "services": []},
         ],
         "deployments": [
             {
                 "name": "productie",
                 "cluster": "local",
                 "namespace": "demo",
-                "components": [{"reference": "web", "image": "nginx:1"}],
+                "components": [{"reference": "web", "image": "nginx:1"}, {"reference": "worker", "image": "w:1"}],
                 "backup": {"schedule": "FREQ=DAILY;BYHOUR=2;BYMINUTE=0"},
             },
             {
@@ -54,95 +56,103 @@ def _project() -> dict[str, Any]:
     }
 
 
+def _summary(data: dict[str, Any]) -> ProjectSummary:
+    return ProjectSummary(name=PROJECT, filename=f"{PROJECT}.yaml", data=data)
+
+
 @pytest.fixture
 def store() -> Any:
-    summary = ProjectSummary(name=PROJECT, filename=f"{PROJECT}.yaml", data=_project())
     mock = MagicMock()
-    mock.get.side_effect = {PROJECT: summary}.get
-    mock.get_all.return_value = [summary]
+    mock.get.side_effect = {PROJECT: _summary(_project())}.get
+    mock.get_all.return_value = []
     with (
         patch("opi.services.zad_map.project.get_project_store", return_value=mock),
-        patch("opi.services.zad_map.project.get_prefixed_namespace", side_effect=lambda _c, ns: f"rig-{ns}"),
+        patch("opi.services.zad_map.project.get_prefixed_namespace", side_effect=lambda _cluster, ns: f"rig-{ns}"),
     ):
         yield mock
 
 
-def _rows(graph: Graph, deployment: str) -> list[str]:
-    node = next(node for node in graph.nodes if node.id == f"d:{deployment}")
-    return [row.text for row in node.rows]
+def _node(graph: Graph, node_id: str) -> Any:
+    return next((node for node in graph.nodes if node.id == node_id), None)
 
 
-def test_the_card_shows_the_measured_sizes(store: Any) -> None:
-    usage = MeasuredUsage(
-        volume_used={("rig-demo", "productie-web-data-pvc"): 340e6},
-        volume_capacity={("rig-demo", "productie-web-data-pvc"): 1e9},
-        database_size={"demo_productie": 1.2e9},
-    )
-
-    graph = project_graph(PROJECT, usage)
-
-    assert _rows(graph, "productie")[:2] == ["database: 1,2 GB", "web/data: 340 MB / 1 GB"]
+def _rows(graph: Graph, node_id: str) -> list[str]:
+    return [row.text for row in _node(graph, node_id).rows]
 
 
-def test_an_unmeasured_store_says_so_instead_of_zero(store: Any) -> None:
+USAGE = MeasuredUsage(
+    volume_used={("rig-demo", "productie-web-data-pvc"): 340e6},
+    volume_capacity={("rig-demo", "productie-web-data-pvc"): 1e9},
+    database_size={"demo_productie": 1.2e9},
+)
+
+
+@pytest.mark.usefixtures("store")
+def test_only_the_components_that_run_in_the_deployment() -> None:
+    graph = project_graph(PROJECT, "pr-12")
+
+    assert [node.id for node in graph.nodes if node.id.startswith("c:")] == ["c:web"]
+    assert _rows(graph, "c:web") == ["nginx:2"]
+
+
+@pytest.mark.usefixtures("store")
+def test_the_sizes_sit_on_the_services() -> None:
+    graph = project_graph(PROJECT, "productie", USAGE)
+
+    assert _rows(graph, "s:postgresql-database") == ["1,2 GB"]
+    assert _rows(graph, "s:persistent-storage") == ["web/data: 340 MB / 1 GB"]
+
+
+@pytest.mark.usefixtures("store")
+def test_an_unmeasured_store_says_so_instead_of_zero() -> None:
+    graph = project_graph(PROJECT, "pr-12")
+
+    assert _rows(graph, "s:postgresql-database") == ["niet gemeten"]
+    assert _rows(graph, "s:persistent-storage") == ["web/data: niet gemeten"]
+
+
+@pytest.mark.usefixtures("store")
+def test_backups_follow_the_services_they_cover() -> None:
+    graph = project_graph(PROJECT, "productie")
+
+    assert _rows(graph, "backups") == ["dagelijks rond 02:00"]
+    assert {edge.from_ for edge in graph.edges if edge.to == "backups"} == {
+        "s:postgresql-database",
+        "s:persistent-storage",
+    }
+
+
+@pytest.mark.usefixtures("store")
+def test_no_backups_node_without_a_schedule() -> None:
+    graph = project_graph(PROJECT, "pr-12")
+
+    assert _node(graph, "backups") is None
+
+
+@pytest.mark.usefixtures("store")
+def test_the_sleep_rule_says_whether_this_deployment_sleeps() -> None:
+    assert _rows(project_graph(PROJECT, "pr-12"), "s:sleep-mode") == ["slaapt na 48h"]
+    assert _rows(project_graph(PROJECT, "productie"), "s:sleep-mode") == ["slaapt niet vanzelf"]
+
+
+@pytest.mark.usefixtures("store")
+def test_the_project_map_measures_nothing_and_shows_the_definition() -> None:
     graph = project_graph(PROJECT)
 
-    assert _rows(graph, "pr-12")[:2] == ["database: niet gemeten", "web/data: niet gemeten"]
+    assert {node.id for node in graph.nodes if node.id.startswith("c:")} == {"c:web", "c:worker"}
+    assert _rows(graph, "s:postgresql-database") == []
+    assert _node(graph, "backups") is None
 
 
-def test_data_services_have_a_line_to_the_deployments_frame(store: Any) -> None:
-    graph = project_graph(PROJECT)
-
-    assert any(edge.from_ == "s:postgresql-database" and edge.to == "deps" for edge in graph.edges)
-
-
-def test_backups_are_a_service_for_the_deployments_that_have_a_schedule(store: Any) -> None:
-    graph = project_graph(PROJECT)
-
-    backups = next(node for node in graph.nodes if node.id == "backups")
-    assert backups.info is not None
-    assert [item.text for item in backups.info.sections[0].items] == ["productie: dagelijks rond 02:00"]
-    assert any(edge.from_ == "backups" and edge.to == "deps" for edge in graph.edges)
-    assert "backups: dagelijks rond 02:00" in _rows(graph, "productie")
-    assert not any(text.startswith("backups") for text in _rows(graph, "pr-12"))
+@pytest.mark.usefixtures("store")
+def test_the_targets_are_those_of_the_one_deployment() -> None:
+    assert usage_targets(PROJECT, "productie") == ({"rig-demo"}, {"demo_productie"})
+    assert usage_targets(PROJECT, "bestaat-niet") == (set(), set())
 
 
-def test_no_backups_node_without_a_schedule(store: Any) -> None:
-    data = _project()
-    del data["deployments"][0]["backup"]
-    store.get.side_effect = {PROJECT: ProjectSummary(name=PROJECT, filename="demo.yaml", data=data)}.get
-
-    graph = project_graph(PROJECT)
-
-    assert not any(node.id == "backups" for node in graph.nodes)
-
-
-def test_the_sleep_rule_is_a_dashed_line_with_its_patterns(store: Any) -> None:
-    graph = project_graph(PROJECT)
-
-    (rule,) = [edge for edge in graph.edges if edge.from_ == "s:sleep-mode"]
-    assert (rule.to, rule.style, rule.label) == ("deps", "dashed", "pr-*, *-preview")
-    # The card says it, by the sweeper's own match.
-    assert "slaapstand na 48h" in _rows(graph, "pr-12")
-    assert not any(text.startswith("slaapstand") for text in _rows(graph, "productie"))
-
-
-def test_no_sleep_line_without_patterns(store: Any) -> None:
-    data = _project()
-    data["services"][1]["config"]["match"] = []
-    store.get.side_effect = {PROJECT: ProjectSummary(name=PROJECT, filename="demo.yaml", data=data)}.get
-
-    graph = project_graph(PROJECT)
-
-    assert not any(edge.from_ == "s:sleep-mode" for edge in graph.edges)
-
-
-def test_the_targets_name_the_namespaces_and_databases(store: Any) -> None:
-    assert usage_targets(PROJECT) == ({"rig-demo", "rig-demo-pr-12"}, {"demo_productie", "demo_pr_12"})
-
-
-def test_the_output_validates_against_the_contract(store: Any) -> None:
-    Graph.model_validate(project_graph(PROJECT).as_json())
+@pytest.mark.usefixtures("store")
+def test_the_output_validates_against_the_contract() -> None:
+    Graph.model_validate(project_graph(PROJECT, "productie", USAGE).as_json())
 
 
 @pytest.mark.asyncio

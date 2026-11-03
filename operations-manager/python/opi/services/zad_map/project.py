@@ -86,14 +86,14 @@ SERVICE_COLOR: dict[ServiceType, Color] = {
 #: Het aantal componenten dat onder elkaar past; daarboven komen er kolommen bij.
 COMPONENTS_PER_COLUMN = 6
 
-#: The services that hold a deployment's data: they get a line to the Deployments frame.
-DATA_SERVICES: tuple[ServiceType, ...] = (
-    ServiceType.POSTGRESQL_DATABASE,
-    ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
-    ServiceType.MINIO_STORAGE,
-    ServiceType.SEAWEEDFS_STORAGE,
-    ServiceType.PERSISTENT_STORAGE,
-)
+#: The services a backup covers: they get a line to the deployment's Backups node.
+_BACKED_UP_SERVICES = {
+    ServiceType.POSTGRESQL_DATABASE.value,
+    ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+    ServiceType.MINIO_STORAGE.value,
+    ServiceType.SEAWEEDFS_STORAGE.value,
+    ServiceType.PERSISTENT_STORAGE.value,
+}
 _DATABASE_SERVICES = {ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value}
 _BUCKET_SERVICES = {ServiceType.MINIO_STORAGE.value, ServiceType.SEAWEEDFS_STORAGE.value}
 #: A backup schedule that means "no schedule".
@@ -473,21 +473,18 @@ def _deployment_database(
     return generate_database_name(project_name, deployment_name, handler.get_database_generation(data, deployment_name))
 
 
-def usage_targets(project_name: str) -> tuple[set[str], set[str]]:
-    """What the map measures for this project: (namespaces, database names)."""
+def usage_targets(project_name: str, deployment_name: str) -> tuple[set[str], set[str]]:
+    """What the map of one deployment measures: (namespaces, database names)."""
     summary = get_project_store().get(project_name)
     data = (summary.data or {}) if summary else {}
+    deployment = next((item for item in data.get("deployments") or [] if item.get("name") == deployment_name), None)
+    if deployment is None:
+        return set(), set()
     handler = ProjectFileHandler()
-    namespaces: set[str] = set()
-    databases: set[str] = set()
-    for deployment in data.get("deployments") or []:
-        namespace = _deployment_namespace(deployment)
-        if namespace and _deployment_volumes(data, deployment, handler):
-            namespaces.add(namespace)
-        database = _deployment_database(data, project_name, deployment, handler)
-        if database:
-            databases.add(database)
-    return namespaces, databases
+    namespace = _deployment_namespace(deployment)
+    namespaces = {namespace} if namespace and _deployment_volumes(data, deployment, handler) else set()
+    database = _deployment_database(data, project_name, deployment, handler)
+    return namespaces, {database} if database else set()
 
 
 def _sleep_config(data: dict[str, Any]) -> SleepModeConfig | None:
@@ -508,151 +505,94 @@ def _backup_schedule(deployment: dict[str, Any]) -> str | None:
     return schedule if isinstance(schedule, str) and schedule not in _NO_SCHEDULE else None
 
 
-def _deployment_rows(
+def _measured(used: float | None, capacity: float | None) -> str:
+    if used is None:
+        return "niet gemeten"
+    return format_bytes(used) if capacity is None else f"{format_bytes(used)} / {format_bytes(capacity)}"
+
+
+def _service_usage_rows(
+    service: str,
     data: dict[str, Any],
     project_name: str,
     deployment: dict[str, Any],
     handler: ProjectFileHandler,
     usage: MeasuredUsage,
-    sleep: SleepModeConfig | None,
 ) -> list[Row]:
-    """Where the deployment's data sits and how big it is, its backups and whether it sleeps."""
-    rows: list[Row] = []
-    database = _deployment_database(data, project_name, deployment, handler)
-    if database:
-        size = usage.database_size.get(database)
-        rows.append(
-            Row(icon=Glyph.DISK, text=f"database: {format_bytes(size) if size is not None else 'niet gemeten'}")
-        )
+    """How much the deployment keeps in this service, as rows on the service's pill."""
+    if service in _DATABASE_SERVICES:
+        database = _deployment_database(data, project_name, deployment, handler)
+        size = usage.database_size.get(database or "")
+        return [Row(icon=Glyph.DISK, text=format_bytes(size) if size is not None else "niet gemeten")]
+    if service == ServiceType.PERSISTENT_STORAGE.value:
+        namespace = _deployment_namespace(deployment) or ""
+        return [
+            Row(
+                icon=Glyph.DISK,
+                text=f"{label}: {_measured(usage.volume_used.get((namespace, pvc)), usage.volume_capacity.get((namespace, pvc)))}",
+            )
+            for label, pvc in _deployment_volumes(data, deployment, handler)
+        ]
+    if service in _BUCKET_SERVICES:
+        return [Row(icon=Glyph.DISK, text="niet gemeten")]
+    return []
 
-    namespace = _deployment_namespace(deployment)
-    for label, pvc in _deployment_volumes(data, deployment, handler):
-        used = usage.volume_used.get((namespace or "", pvc))
-        capacity = usage.volume_capacity.get((namespace or "", pvc))
-        if used is None:
-            measured = "niet gemeten"
-        elif capacity is None:
-            measured = format_bytes(used)
-        else:
-            measured = f"{format_bytes(used)} / {format_bytes(capacity)}"
-        rows.append(Row(icon=Glyph.DISK, text=f"{label}: {measured}"))
 
-    if _BUCKET_SERVICES.intersection(_used_service_names(data)):
-        rows.append(Row(icon=Glyph.DISK, text="bucket: niet gemeten"))
-
-    schedule = _backup_schedule(deployment)
-    if schedule:
-        rows.append(Row(text=f"backups: {format_rrule(schedule).lower()}"))
-    if sleep is not None and sleep.matches(deployment.get("name") or ""):
-        rows.append(Row(text=f"slaapstand na {sleep.sleep_after_deploy}"))
+def _deployment_component_rows(entry: dict[str, Any], urls: dict[str, str]) -> list[Row]:
+    """What runs: the deployment's image tag and web address, not the component definition."""
+    reference = entry.get("reference") or ""
+    rows = [Row(icon=Glyph.BOX, text=_image_tag(entry.get("image")))]
+    if reference in urls:
+        rows.append(Row(icon=Glyph.GLOBE, text=urls[reference].removeprefix("https://"), href=urls[reference]))
     return rows
 
 
-def _deployment_nodes(
+def _apply_deployment(
+    graph: Graph,
     data: dict[str, Any],
     project_name: str,
+    deployment: dict[str, Any],
     handler: ProjectFileHandler,
-    component_names: set[str | None],
     usage: MeasuredUsage,
-    sleep: SleepModeConfig | None,
-) -> list[Node]:
-    """De deployments, elk uitklapbaar naar de componenten die er ECHT in zitten.
-
-    Het webadres komt van publish-on-web; de image-tag van de deployment, want het
-    ``image`` in de componentdefinitie wordt bij het uitrollen niet gebruikt.
-    """
-    nodes = []
-    for deployment in data.get("deployments") or []:
-        name = deployment.get("name") or ""
-        urls = {
-            link["component_name"]: link["url"]
-            for link in public_urls_for_deployment(data, deployment, project_name, handler)
-        }
-        children: list[Node] = []
-        for entry in deployment.get("components") or []:
-            reference = entry.get("reference") or ""
-            rows = [Row(icon=Glyph.BOX, text=_image_tag(entry.get("image")))]
-            if reference in urls:
-                rows.append(Row(icon=Glyph.GLOBE, text=urls[reference].removeprefix("https://"), href=urls[reference]))
-            children.append(Node(id=f"di:{name}:{reference}", shape="card", title=reference, rows=rows))
-        nodes.append(
-            Node(
-                id=f"d:{name}",
-                group="deps",
-                shape="card",
-                color="deployment",
-                title=name,
-                subtitle=str(deployment.get("cluster") or ""),
-                rows=_deployment_rows(data, project_name, deployment, handler, usage, sleep),
-                click="expand",
-                related=[
-                    f"c:{entry.get('reference')}"
-                    for entry in (deployment.get("components") or [])
-                    if entry.get("reference") in component_names
-                ],
-                children=children,
-            )
-        )
-    return nodes
-
-
-def _add_deployment_frame_edges(
-    graph: Graph, data: dict[str, Any], sleep: SleepModeConfig | None, services_column: str
+    backups_column: str,
 ) -> None:
-    """Lines into the Deployments frame: the data services, the backups and the sleep rule.
+    """Fill the nodes with what this deployment runs and keeps, and add its backups and sleep rule."""
+    urls = {
+        link["component_name"]: link["url"]
+        for link in public_urls_for_deployment(data, deployment, project_name, handler)
+    }
+    entries = {entry.get("reference"): entry for entry in deployment.get("components") or []}
+    for node in graph.nodes:
+        kind, _, name = node.id.partition(":")
+        if kind == "c" and name in entries:
+            node.rows = _deployment_component_rows(entries[name], urls)
+        elif kind == "s":
+            node.rows = _service_usage_rows(name, data, project_name, deployment, handler, usage)
 
-    To the frame and not to each deployment: the frame packs its cards itself, so a line
-    cannot reach one of them, and packing it by layout puts thirty PR deployments in one
-    column. Each card says what it holds instead.
-    """
-    if not data.get("deployments"):
-        return
-    present = {node.id for node in graph.nodes}
-    for service in DATA_SERVICES:
-        if f"s:{service.value}" in present:
-            graph.edges.append(Edge(from_=f"s:{service.value}", to="deps", color="data"))
+    sleep = _sleep_config(data)
+    sleep_node = next((node for node in graph.nodes if node.id == f"s:{ServiceType.SLEEP_MODE.value}"), None)
+    if sleep_node is not None:
+        sleeps = sleep is not None and sleep.matches(deployment.get("name") or "")
+        sleep_node.rows = [
+            Row(text=f"slaapt na {sleep.sleep_after_deploy}" if sleep and sleeps else "slaapt niet vanzelf")
+        ]
 
-    scheduled = [
-        (deployment.get("name") or "", schedule)
-        for deployment in data.get("deployments") or []
-        if (schedule := _backup_schedule(deployment))
-    ]
-    if scheduled:
+    schedule = _backup_schedule(deployment)
+    if schedule:
         graph.nodes.append(
             Node(
                 id="backups",
-                column=services_column,
+                column=backups_column,
                 shape="pill",
                 color="ops",
                 title="Backups",
-                click="focus",
-                info=Info(
-                    eyebrow="Service",
-                    title="Backups",
-                    sections=[
-                        InfoSection(
-                            heading="Per deployment",
-                            items=[
-                                InfoItem(text=f"{name}: {format_rrule(schedule).lower()}")
-                                for name, schedule in scheduled
-                            ],
-                        )
-                    ],
-                ),
+                rows=[Row(text=format_rrule(schedule).lower())],
             )
         )
-        graph.edges.append(Edge(from_="backups", to="deps", color="ops"))
-
-    if sleep is not None and sleep.match and f"s:{ServiceType.SLEEP_MODE.value}" in present:
-        graph.edges.append(
-            Edge(
-                from_=f"s:{ServiceType.SLEEP_MODE.value}",
-                to="deps",
-                color="ops",
-                label=", ".join(sleep.match),
-                style="dashed",
-            )
-        )
+        for node in list(graph.nodes):
+            service = node.id.removeprefix("s:")
+            if node.id.startswith("s:") and service in _BACKED_UP_SERVICES:
+                graph.edges.append(Edge(from_=node.id, to="backups", color="ops"))
 
 
 def _add_link_edges(graph: Graph, data: dict[str, Any], project_name: str, outgoing_column: str) -> None:
@@ -691,35 +631,43 @@ def _add_link_edges(graph: Graph, data: dict[str, Any], project_name: str, outgo
         graph.edges.append(Edge(from_=source, to=f"c:{local_component}", color="link", label=f":{port}"))
 
 
-def project_graph(project_name: str, usage: MeasuredUsage | None = None) -> Graph:
-    """De kaart van een project.
+def project_graph(project_name: str, deployment_name: str | None = None, usage: MeasuredUsage | None = None) -> Graph:
+    """De kaart van een project, of van een van zijn deployments.
+
+    Zonder deployment de definitie: componenten met wat ze vragen, de services die ze
+    gebruiken en de koppelingen. Met een deployment alleen de componenten die erin draaien,
+    met hun image en webadres, en op de services hoeveel deze deployment erin bewaart.
 
     Kolommen van links naar rechts: het project zelf met zijn team en wie naar hem toe
-    wijst, dan de componenten, dan de services, dan de deployments, en helemaal rechts de
-    projecten waar dit project naartoe wijst.
+    wijst, dan de componenten, dan de services, dan de backups van de deployment, en
+    helemaal rechts de projecten waar dit project naartoe wijst.
+
+    Raises KeyError for an unknown project or deployment.
     """
     summary = get_project_store().get(project_name)
     if summary is None:
         raise KeyError(project_name)
     data = summary.data or {}
-    handler = ProjectFileHandler()
+    deployment: dict[str, Any] | None = None
+    if deployment_name is not None:
+        deployment = next((item for item in data.get("deployments") or [] if item.get("name") == deployment_name), None)
+        if deployment is None:
+            raise KeyError(deployment_name)
+        running = {entry.get("reference") for entry in deployment.get("components") or []}
+        data = {**data, "components": [c for c in data.get("components") or [] if c.get("name") in running]}
 
     components = list(data.get("components") or [])
     component_names = {component.get("name") for component in components}
     column_count = max(1, math.ceil(len(components) / COMPONENTS_PER_COLUMN))
     per_column = math.ceil(len(components) / column_count) if components else 1
     services_column = f"c{column_count + 1}"
-    deployments_column = f"c{column_count + 2}"
+    backups_column = f"c{column_count + 2}"
     outgoing_column = f"c{column_count + 3}"
 
     graph = Graph(columns=[Column(id=f"c{index}") for index in range(column_count + 4)])
-    if data.get("deployments"):
-        graph.groups.append(Group(id="deps", title="Deployments", column=deployments_column, pack="grid"))
     graph.nodes.extend(_project_nodes(data, project_name))
     graph.nodes.extend(_component_nodes(data, per_column))
     graph.nodes.extend(_service_nodes(data, services_column))
-    sleep = _sleep_config(data)
-    graph.nodes.extend(_deployment_nodes(data, project_name, handler, component_names, usage or MeasuredUsage(), sleep))
 
     service_nodes = {node.id for node in graph.nodes}
     for component in components:
@@ -731,6 +679,9 @@ def project_graph(project_name: str, usage: MeasuredUsage | None = None) -> Grap
             if other in component_names:
                 graph.edges.append(Edge(from_=f"c:{name}", to=f"c:{other}", color="component"))
 
-    _add_deployment_frame_edges(graph, data, sleep, services_column)
+    if deployment is not None:
+        _apply_deployment(
+            graph, data, project_name, deployment, ProjectFileHandler(), usage or MeasuredUsage(), backups_column
+        )
     _add_link_edges(graph, data, project_name, outgoing_column)
     return graph
