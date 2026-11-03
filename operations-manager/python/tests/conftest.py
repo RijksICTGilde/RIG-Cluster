@@ -4,7 +4,6 @@ Shared pytest fixtures for all tests.
 This module provides common fixtures used across unit and integration tests.
 """
 
-import json
 import os
 
 # Voor elke import van opi: setup_components leest LOTC_STRICT tijdens het importeren van
@@ -710,38 +709,14 @@ _VOORTGANG_PAD = os.environ.get("PYTEST_VOORTGANG")
 _voortgang_stand = {"klaar": 0, "totaal": 0, "rood": 0}
 
 
-_TEST_DURATIONS = Path(__file__).parent / "test_durations.json"
-
-
-def _split_over_shards(files: list[Path], shards: int) -> list[set[Path]]:
-    """Split the files by measured duration: longest first, each into the lightest shard.
-
-    Durations come from tests/test_durations.json (``task test-durations``). A file that is
-    not in there yet counts as the median. Every shard computes the same split, so they fit
-    together as long as they collect the same files.
-    """
-    measured: dict[str, float] = json.loads(_TEST_DURATIONS.read_text()) if _TEST_DURATIONS.exists() else {}
-    root = Path(__file__).parent
-    known = sorted(measured.values())
-    default = known[len(known) // 2] if known else 1.0
-    duration = {path: measured.get(path.relative_to(root).as_posix(), default) for path in files}
-    parts: list[set[Path]] = [set() for _ in range(shards)]
-    load = [0.0] * shards
-    for path in sorted(files, key=lambda path: (-duration[path], path.as_posix())):
-        lightest = min(range(shards), key=lambda index: (load[index], index))
-        parts[lightest].add(path)
-        load[lightest] += duration[path]
-    return parts
-
-
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     """Keep only this shard's files under TEST_SHARDS/TEST_SHARD, and remember how many tests
     will run, so every progress line can show 'n of total'.
 
-    Per file and not per test, split by measured duration (see ``_split_over_shards``): module
-    scoped fixtures then stay in one run. Done here and not with a file list in the CI step,
-    so that step still calls ``tests/`` and test_rotation_ci_wiring can keep reading it.
+    Per file and not per test: module scoped fixtures then stay in one run. Done here and not
+    with a file list in the CI step, so that step still calls ``tests/`` and
+    test_rotation_ci_wiring can keep reading it.
 
     ``trylast``, because marker deselection (``-m e2e``) also happens in this hook: counting
     earlier shows 9054 as the total while 462 tests run.
@@ -749,7 +724,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     shards = int(os.environ.get("TEST_SHARDS", "1"))
     if shards > 1:
         shard = int(os.environ["TEST_SHARD"])
-        mine = _split_over_shards(sorted({item.path for item in items}), shards)[shard]
+        files = sorted({item.path for item in items})
+        mine = {path for index, path in enumerate(files) if index % shards == shard}
         config.hook.pytest_deselected(items=[item for item in items if item.path not in mine])
         items[:] = [item for item in items if item.path in mine]
     _voortgang_stand["totaal"] = len(items)

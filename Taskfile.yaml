@@ -2692,16 +2692,6 @@ tasks:
       - uv run pytest tests/ --ignore=tests/integration/ -v
     silent: false
 
-  test-durations:
-    desc: "Measure the duration per test file for the split over the CI shards"
-    summary: |
-      Runs the CI selection of the suite with junit xml and writes the seconds per file to
-      tests/test_durations.json. Commit that file; the CI shards read it.
-    dir: operations-manager/python
-    cmds:
-      - LOTC_STRICT=1 uv run pytest tests/ -q -m "not slow and not e2e and not requires_infra and not sandbox" -p no:cacheprovider --junitxml=/tmp/test_durations.xml -o junit_duration_report=total
-      - uv run python scripts/test_durations.py /tmp/test_durations.xml
-
   test-db-stop:
     desc: "Stop and remove the shared test Postgres (zad-test-postgres)"
     summary: |
