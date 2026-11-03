@@ -20,8 +20,27 @@ tabbladen (`PROJECT_READ`). Van links naar rechts:
   metrics-pad en het aantal bijlagen;
 - de services die het project gebruikt, in de kleur van hun categorie;
 - het kader **Deployments**: klik een deployment open voor zijn componenten, met de
-  image-tag en het webadres;
+  image-tag en het webadres. Op de kaart zelf staat waar zijn data zit en hoe groot die
+  is (database en volumes), zijn backupschema en of de slaapstand hem matcht;
 - helemaal rechts de projecten waar dit project naartoe wijst.
+
+De data-services, de knoop **Backups** (alleen als een deployment een backupschema heeft)
+en de slaapstand hebben een lijn naar het kader Deployments, niet naar elke deployment: het
+kader legt zijn kaarten zelf neer, en daar kan geen lijn naartoe. De slaapstand is een
+stippellijn met zijn patronen als label (`pr-*, *-preview`). Welke deployment slaapt beslist
+`SleepModeConfig.matches`, dezelfde functie als de sweeper. Zonder patronen is er geen lijn.
+
+### Groottes
+
+De groottes komen uit Prometheus/Mimir, met hetzelfde venster als de pagina gedeelde
+diensten (`last_over_time(...[6h])`): `kubelet_volume_stats_used_bytes` en
+`..._capacity_bytes` voor de volumes, `cnpg_pg_database_size_bytes` voor de database. De
+namen zijn die van de PVC-manager en `generate_database_name`, met de generatie uit het
+projectbestand (`opi/services/zad_map/usage.py`, `usage_targets` in `project.py`).
+
+Een meting die mislukt of langer duurt dan vijf seconden kost de groottes, niet de kaart: er
+staat dan "niet gemeten", nooit nul. Buckets staan altijd op "niet gemeten", want MinIO
+wordt in productie niet gescrapet.
 
 Cross-domain koppelingen staan er in **beide richtingen**, met de naam van het andere
 project en component en de poort als label. De inkomende kant komt uit het bestand van de
@@ -83,6 +102,9 @@ en in het plan van RC-403 (paragraaf 4). Kort:
 - **Kleuren** zijn namen, geen hex: `component`, `deployment`, `team`, `project`, `web`,
   `identity`, `data`, `ops`, `link`, `gitops`, `network`, `platform`, `external`. Het
   element vertaalt ze naar de Rijkshuisstijl.
+- **Lijnen** kunnen `style: "dashed"` zijn, voor een regel in plaats van een vaste
+  koppeling. Labels naar hetzelfde doel worden samengevoegd, maar alleen tussen lijnen van
+  dezelfde kleur en stijl.
 - **Klikken**: `focus` dimt alles behalve wat erbij hoort, `expand` klapt open, `info`
   opent meteen het paneel. Een knoop met `info` krijgt een "i"-knop.
 - **Alle tekst is platte tekst**, behalve `html` in een infosectie. Dat veld krijgt
@@ -130,6 +152,7 @@ reden staat erbij.
 
 ## Afhankelijkheden
 
+- Meten: `get_metrics_connector()` (Prometheus of Grafana/Mimir, wat het cluster heeft).
 - Lezen: `get_project_store()`, `public_urls_for_deployment`,
   `ProjectFileHandler.extract_component_resources`, `merge_rules`/`to_merged_rule`
   (cross-domain) en `render_service_help`. De kaart bouwt niets na.
