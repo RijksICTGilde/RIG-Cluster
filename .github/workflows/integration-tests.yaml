@@ -74,6 +74,7 @@ jobs:
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -120,6 +121,7 @@ jobs:
   integration-tests-mock:
     name: Integration Tests (Mock)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: lint
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -168,6 +170,7 @@ jobs:
   integration-tests-kind:
     name: Integration Tests (Kind)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: integration-tests-mock
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -250,6 +253,7 @@ jobs:
   tests-passed:
     name: All Tests Passed
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs:
       - lint
       - integration-tests-mock

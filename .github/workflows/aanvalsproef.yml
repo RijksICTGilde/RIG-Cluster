@@ -88,10 +88,15 @@ env:
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
   KIND_VERSION: 0.24.0
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   nuclei:
     name: Template-scan tegen een eigen doelwit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -174,6 +179,7 @@ jobs:
   admission-audit:
     name: Admission control in waarschuwmodus
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
@@ -258,6 +264,7 @@ jobs:
   falco-regels:
     name: Runtime-detectieregels
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:

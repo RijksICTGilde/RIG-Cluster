@@ -710,12 +710,24 @@ _voortgang_stand = {"klaar": 0, "totaal": 0, "rood": 0}
 
 
 @pytest.hookimpl(trylast=True)
-def pytest_collection_modifyitems(items: list) -> None:
-    """Onthoud hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen.
+def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
+    """Houd met TEST_SHARDS/TEST_SHARD alleen dit deel van de bestanden over, en onthoud
+    hoeveel tests er gaan draaien, zodat elke regel 'n van totaal' kan tonen.
+
+    Per bestand en niet per test: de fixtures op modulescope blijven dan in één run. Hier
+    en niet met een bestandslijst in de CI-stap, zodat die stap gewoon ``tests/`` aanroept
+    en test_rotation_ci_wiring hem kan blijven lezen.
 
     ``trylast``, want de deselectie op markers (``-m e2e``) gebeurt ook in deze hook: tel je
     eerder, dan staat er 9054 als totaal terwijl er 462 tests draaien.
     """
+    shards = int(os.environ.get("TEST_SHARDS", "1"))
+    if shards > 1:
+        shard = int(os.environ["TEST_SHARD"])
+        bestanden = sorted({item.path for item in items})
+        mijn_deel = {pad for index, pad in enumerate(bestanden) if index % shards == shard}
+        config.hook.pytest_deselected(items=[item for item in items if item.path not in mijn_deel])
+        items[:] = [item for item in items if item.path in mijn_deel]
     _voortgang_stand["totaal"] = len(items)
 
 

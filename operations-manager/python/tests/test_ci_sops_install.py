@@ -18,7 +18,7 @@ KUSTOMIZE_DOCKERFILE = REPO_ROOT / "images" / "cmp-kustomize-sops" / "Dockerfile
 
 @pytest.fixture(scope="module")
 def ci_test_steps() -> list[dict]:
-    return yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]["test"]["steps"]
+    return yaml.safe_load(CI_WORKFLOW.read_text())["jobs"]["test-shard"]["steps"]
 
 
 INSTALL_STAP = "Install sops"
@@ -27,7 +27,7 @@ KUSTOMIZE_STAP = "Install kustomize"
 
 def _index_of(steps: list[dict], pattern: str) -> int:
     hits = [i for i, step in enumerate(steps) if re.search(pattern, step.get("run", ""))]
-    assert hits, f"geen stap in jobs.test die {pattern!r} draait"
+    assert hits, f"geen stap in jobs.test-shard die {pattern!r} draait"
     return hits[0]
 
 
@@ -39,7 +39,7 @@ def _index_of_name(steps: list[dict], name: str) -> int:
     een verbetering die niets verandert aan wat hij bewaakt.
     """
     hits = [i for i, step in enumerate(steps) if step.get("name") == name]
-    assert hits, f"geen stap in jobs.test met naam {name!r}"
+    assert hits, f"geen stap in jobs.test-shard met naam {name!r}"
     return hits[0]
 
 
