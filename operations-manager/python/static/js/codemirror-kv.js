@@ -119,8 +119,30 @@
 
     /* ---- linter extensions ---- */
 
+    /*
+     * Of een ENV-veld eigenlijk YAML (of JSON) bevat. Dezelfde regel als
+     * _detect_env_var_format in opi/utils/env_vars.py: de server accepteert beide in
+     * hetzelfde veld, dus de linter moet YAML niet regel voor regel rood maken.
+     */
+    function looksLikeYaml(text) {
+        var trimmed = text.trim();
+        if (/^(---|\{\n|\[\n)/.test(trimmed)) return true;
+        var yamlLines = 0;
+        var envLines = 0;
+        var lines = trimmed.split("\n").slice(0, 10);
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line || line.charAt(0) === "#") continue;
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*:(\s|$)/.test(line)) yamlLines++;
+            else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(line)) envLines++;
+        }
+        return yamlLines > envLines;
+    }
+
     function envLinter() {
+        var yamlDiagnostics = yamlLinterSource();
         return linter(function (view) {
+            if (looksLikeYaml(view.state.doc.toString())) return yamlDiagnostics(view);
             var diagnostics = [];
             var doc = view.state.doc;
             for (var i = 1; i <= doc.lines; i++) {
@@ -141,7 +163,11 @@
     }
 
     function yamlLinter() {
-        return linter(function (view) {
+        return linter(yamlLinterSource());
+    }
+
+    function yamlLinterSource() {
+        return function (view) {
             var text = view.state.doc.toString();
             if (!text.trim()) return [];
             try {
@@ -161,7 +187,7 @@
                 }
                 return [];
             }
-        });
+        };
     }
 
     function lintExtension(format) {
@@ -198,11 +224,20 @@
 
     var maskDecoration = Decoration.replace({ widget: new MaskWidget() });
 
-    /* Waar de waarde in de regel begint, of -1 als die geen waarde bevat. */
-    function valueStart(text, format) {
-        var separator = format === "yaml" ? /^[^:]*:[ \t]*/ : /^[^=]*=/;
-        var match = separator.exec(text);
-        return match ? match[0].length : -1;
+    /*
+     * Waar de waarde in de regel begint, of -1 als die geen waarde bevat.
+     *
+     * Niet per format: ook een ENV-veld mag YAML of JSON bevatten (de server herkent
+     * dat zelf), en een scheiding alleen op `=` liet `KEY: geheim` open staan. Het
+     * eerste `=` of `:` is de scheiding, want een sleutel bevat geen van beide.
+     * Een ingesprongen regel zonder scheiding is het vervolg van een YAML-blokwaarde
+     * (`KEY: |`) en is in zijn geheel waarde.
+     */
+    function valueStart(text) {
+        var match = /^[^=:]*[=:][ \t]*/.exec(text);
+        if (match) return match[0].length;
+        var indent = /^[ \t]+(?=\S)/.exec(text);
+        return indent ? indent[0].length : -1;
     }
 
     function linesWithCursor(state) {
@@ -215,7 +250,7 @@
         return lines;
     }
 
-    function maskDecorations(view, format) {
+    function maskDecorations(view) {
         var state = view.state;
         var builder = new RangeSetBuilder();
         var exempt = view.hasFocus ? linesWithCursor(state) : {};
@@ -224,23 +259,23 @@
             var line = state.doc.line(i);
             var trimmed = line.text.trim();
             if (!trimmed || trimmed.charAt(0) === "#") continue;
-            var start = valueStart(line.text, format);
+            var start = valueStart(line.text);
             if (start < 0 || line.from + start >= line.to) continue;
             builder.add(line.from + start, line.to, maskDecoration);
         }
         return builder.finish();
     }
 
-    function maskExtension(format, enabled) {
+    function maskExtension(enabled) {
         if (!enabled) return [];
         return ViewPlugin.fromClass(
             class {
                 constructor(view) {
-                    this.decorations = maskDecorations(view, format);
+                    this.decorations = maskDecorations(view);
                 }
                 update(update) {
                     if (update.docChanged || update.selectionSet || update.focusChanged) {
-                        this.decorations = maskDecorations(update.view, format);
+                        this.decorations = maskDecorations(update.view);
                     }
                 }
             },
@@ -373,7 +408,7 @@
             basicSetup,
             langCompartment.of(langExtension(format)),
             lintCompartment.of(lintExtension(format)),
-            maskCompartment.of(maskExtension(format, masked)),
+            maskCompartment.of(maskExtension(masked)),
             EditorView.updateListener.of(function (update) {
                 if (update.docChanged) {
                     textarea.value = update.state.doc.toString();
@@ -446,12 +481,11 @@
         var textarea = editorDiv ? editorDiv.querySelector("textarea[data-cm-kv]") : null;
         if (!textarea) return;
 
-        // Single dispatch: reconfigure language + linter + mask AND replace content.
+        // Single dispatch: reconfigure language + linter AND replace content.
         inst.view.dispatch({
             effects: [
                 inst.langCompartment.reconfigure(langExtension(newFormat)),
                 inst.lintCompartment.reconfigure(lintExtension(newFormat)),
-                inst.maskCompartment.reconfigure(maskExtension(newFormat, inst.masked)),
             ],
             changes: {
                 from: 0,
@@ -467,12 +501,9 @@
         var inst = _instances[editorId];
         if (!inst) return;
 
-        var editorDiv = document.getElementById(editorId);
-        var format = editorDiv ? editorDiv.dataset.format || "env" : "env";
-
         inst.masked = button ? !button.selected : !inst.masked;
         inst.view.dispatch({
-            effects: inst.maskCompartment.reconfigure(maskExtension(format, inst.masked)),
+            effects: inst.maskCompartment.reconfigure(maskExtension(inst.masked)),
         });
 
         if (button) button.text = inst.masked ? "Toon waarden" : "Verberg waarden";
