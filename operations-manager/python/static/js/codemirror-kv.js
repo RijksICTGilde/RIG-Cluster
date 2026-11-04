@@ -248,6 +248,44 @@
         );
     }
 
+    /*
+     * Wie de editor binnenkomt zonder een regel aan te wijzen, landt op een lege regel
+     * onderaan. Anders zette CodeMirror de cursor op de laatste (klik onder de tekst) of
+     * eerste regel (Tab), en lag die waarde open. Een lege regel wordt bij het opslaan
+     * overgeslagen.
+     *
+     * De mousedown luistert in de capture-fase op view.dom: zo valt ook een klik in de
+     * kantlijn eronder, en komt CodeMirror er niet aan te pas.
+     */
+    function moveToEmptyLastLine(view) {
+        var doc = view.state.doc;
+        if (doc.line(doc.lines).text.trim()) {
+            view.dispatch({ changes: { from: doc.length, insert: "\n" }, selection: { anchor: doc.length + 1 }, scrollIntoView: true });
+        } else {
+            view.dispatch({ selection: { anchor: doc.length }, scrollIntoView: true });
+        }
+    }
+
+    function enterOnEmptyLastLine(view) {
+        var byPointer = false;
+        view.dom.addEventListener("mousedown", function (event) {
+            byPointer = true;
+            var lastLineBottom = view.lineBlockAt(view.state.doc.length).bottom + view.documentTop;
+            if (event.clientY <= lastLineBottom) return;
+            event.preventDefault();
+            event.stopPropagation();
+            moveToEmptyLastLine(view);
+            view.focus();
+        }, true);
+        view.contentDOM.addEventListener("focus", function () {
+            if (!byPointer) moveToEmptyLastLine(view);
+            byPointer = false;
+        });
+        view.contentDOM.addEventListener("blur", function () {
+            byPointer = false;
+        });
+    }
+
     /* ---- aanvullen ---- */
 
     /*
@@ -351,6 +389,8 @@
         wrapper.appendChild(view.dom);
         textarea.parentNode.insertBefore(wrapper, textarea.nextSibling);
         textarea.style.display = "none";
+
+        if (masked) enterOnEmptyLastLine(view);
 
         _instances[editorId] = {
             view: view,
