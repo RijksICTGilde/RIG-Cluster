@@ -16,7 +16,7 @@ Er waren twee oorzaken, beide in `DeleteProjectManager.delete_deployment`.
 stap 8 uit het projectbestand. Daartussen zit de wacht op ArgoCD: minuten. Draait in dat
 venster `ProjectManager.process_project` voor hetzelfde project, dan leest die het
 projectbestand nog mét de deployment, en schrijft `create_argocd_resources` de Application
-opnieuw. Elke taak heeft een eigen clone van de argo-repo, dus de push zet hem terug.
+opnieuw. Tot RC-422 had elke taak een eigen clone van de argo-repo, dus de push zette hem terug.
 
 Gemeten in de argo-applications-repo en de projects-repo:
 

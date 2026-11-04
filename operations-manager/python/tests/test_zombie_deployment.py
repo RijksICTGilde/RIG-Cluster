@@ -215,6 +215,9 @@ def _sync_manager(monkeypatch: pytest.MonkeyPatch, open_deletes: dict[str, str])
     argo = MagicMock()
     argo.refresh_application = AsyncMock(return_value="2026-10-09T09:22:02Z")
     argo.get_application_manifests = AsyncMock(return_value=(True, ""))
+    # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
+    # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
+    argo.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
     monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo)
     # ApplicationGone is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
     # de wacht stopt daar, zodat deze test de wacht meet en niet de hele uitrol erna.
@@ -337,12 +340,12 @@ def _delete_manager() -> tuple[DeleteProjectManager, MagicMock, MagicMock]:
         return await mutate()
 
     gitops.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
-    pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+    pm.get_argo_workspace = AsyncMock(return_value=gitops)
 
     manifests = AsyncMock()
     manifests.get_working_dir = AsyncMock(return_value="/tmp/deploy-repo")
-    manifests.commit_and_push_changes = AsyncMock(return_value=True)
-    pm.get_git_connector_for_deployment = AsyncMock(return_value=manifests)
+    manifests.remove_and_push = AsyncMock(return_value=True)
+    pm.get_deployment_workspace = AsyncMock(return_value=manifests)
 
     deployment = _deployment()
     pm.get_contents = AsyncMock(
@@ -446,20 +449,9 @@ async def test_een_mislukte_commit_in_stap_2_wacht_niet_op_argocd() -> None:
     pm.mutate_and_commit_project.assert_not_awaited()
 
 
-async def test_een_mislukte_commit_van_de_manifestmap_laat_de_deployment_staan() -> None:
-    manager, _gitops, manifests = _delete_manager()
-    manifests.commit_and_push_changes = AsyncMock(return_value=False)
-
-    result = await _delete(manager, exists=_alleen_de_manifestmap)
-
-    manager.project_manager.mutate_and_commit_project.assert_not_awaited()
-    assert result["success"] is False
-    assert [op["status"] for op in _project_file_ops(result)] == ["skipped"]
-
-
 async def test_een_fout_bij_het_weghalen_van_de_manifestmap_laat_de_deployment_staan() -> None:
     manager, _gitops, manifests = _delete_manager()
-    manifests.commit_and_push_changes = AsyncMock(side_effect=RuntimeError("git push weigerde"))
+    manifests.remove_and_push = AsyncMock(side_effect=RuntimeError("git push weigerde"))
 
     result = await _delete(manager, exists=_alleen_de_manifestmap)
 

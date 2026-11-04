@@ -2830,6 +2830,39 @@ tasks:
         {{if .FACTOR}}--factor {{.FACTOR}}{{end}} {{if .ALL}}--all{{end}}
     silent: true
 
+  bench-rollout:
+    desc: "Meet waar de tijd van een rollout-taak heen gaat, op de sandbox"
+    summary: |
+      Drijft een bestaand sandboxproject via de API door de scenario's uit RC-418 (een
+      nieuwe deployment bij 1 en bij 5 bestaande, een image-update, een configure_service
+      op een deployment) en meldt per scenario de taakduur, de fases uit
+      opi_rollout_phase_seconds en de tijd die ZAD zelf toevoegt.
+
+      Draai hem voor en na een wijziging op hetzelfde project; de tabellen naast elkaar
+      zijn het bewijs. De deployments die hij aanmaakt ruimt hij weer op.
+
+      De sleutels komen uit het cluster:
+
+        eval "$(sandbox-gegevens --env)"
+        export ZAD_METRICS_TOKEN=$(kubectl -n rig-system get secret operations-manager-secrets \
+          -o jsonpath='{.data.PROMETHEUS_METRICS_AUTH_TOKEN}' | base64 -d)
+        PROJECT=mijnproject task bench-rollout
+        PROJECT=mijnproject LABEL=na-deel-1 JSON=/tmp/bench-na.json task bench-rollout
+        PROJECT=mijnproject SCENARIOS=a1,b task bench-rollout
+        PROJECT=mijnproject ALT_IMAGE=ghcr.io/org/app:2 task bench-rollout
+    dir: operations-manager/python
+    requires:
+      vars: [PROJECT]
+    cmds:
+      - >-
+        uv run python scripts/bench_rollout.py --project "{{.PROJECT}}"
+        {{if .SCENARIOS}}--scenarios {{.SCENARIOS}}{{end}}
+        {{if .LABEL}}--label {{.LABEL}}{{end}}
+        {{if .JSON}}--json {{.JSON}}{{end}}
+        {{if .KEEP}}--keep{{end}}
+        {{if .ALT_IMAGE}}--alt-image {{.ALT_IMAGE}}{{end}}
+    silent: true
+
   argocd-orphan-sweep:
     desc: "Spoor resources op die achterbleven toen hun ArgoCD-Application verdween"
     summary: |

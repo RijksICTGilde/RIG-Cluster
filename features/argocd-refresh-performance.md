@@ -76,3 +76,14 @@ Only minimal exclusions are configured:
 - **Consider ApplicationSet** - instead of app-of-apps with CMP, use an ApplicationSet with a Git generator to auto-discover project folders; this avoids the heavy `user-applications` manifest generation entirely
 - **Webhook-driven sync** - configure GitHub webhooks to notify ArgoCD directly on push, rather than relying on the operations manager to trigger refresh
 - **Separate ArgoCD instances** - if the number of projects keeps growing, consider splitting the workload across multiple ArgoCD instances to reduce cache resync scope
+
+## Hoeveel het nog voorkomt (RC-418)
+
+De verloren-refresh-detectie is gebleven en is te meten: `opi_argocd_umbrella_refresh_lost_total`
+telt elke ronde waarin `user-applications` nog op een oudere revisie stond dan de onze, en de
+fase `argo_umbrella` van [rollout-metingen](./rollout-metingen.md) zegt wat de wacht erop kostte.
+
+De ondergrens tussen twee refreshes is van 5 naar 1 seconde gegaan. De refresh zelf blijft
+hangen tot een reconcile klaar is, dus die grens is er alleen voor het geval de call meteen
+terugkomt; vier van die vijf seconden waren wachten zonder dat er iets gebeurde. Een gemeten
+verloren refresh kostte circa 18 seconden.

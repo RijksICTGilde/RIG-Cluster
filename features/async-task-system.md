@@ -291,7 +291,7 @@ Both modes use the exact same `TaskWorker` class. The only difference is who sta
 ### Worker Loops
 
 ```
-Main Loop (every TASK_WORKER_POLL_INTERVAL seconds):
+Main Loop (woken by a new task, or every TASK_WORKER_POLL_INTERVAL seconds):
     claim_next_task() via SKIP LOCKED
     -> start heartbeat coroutine (every 30s)
     -> route to handler based on task_type
@@ -303,6 +303,11 @@ Stale Recovery Loop (every 60s):
 Cleanup Loop (every hour):
     cleanup_old_tasks(retention_hours=1, header_retention_days=90)
 ```
+
+An idle worker waits on an event rather than on the clock (RC-418): `create_task()` calls
+`notify_new_task()`, so a task created in this process is claimed at once instead of up to
+`TASK_WORKER_POLL_INTERVAL` later. The poll stays as the safety net, for a task another process
+created and for anything the event misses.
 
 Processes 1 task at a time per worker instance. Scale by adding more worker pods/processes -- they coordinate via `SKIP LOCKED` on the shared database.
 

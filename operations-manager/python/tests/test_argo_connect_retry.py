@@ -33,7 +33,7 @@ import inspect
 import json
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -42,10 +42,20 @@ from aiohttp.client_reqrep import ConnectionKey
 from fastapi.responses import HTMLResponse
 from opi.api.v2.router import _connect_status_backend
 from opi.connectors import argo as argo_module
-from opi.connectors.argo import ArgoAuthConfigurationError, ArgoConnector, create_argo_connector
+from opi.connectors.argo import (
+    ArgoAuthConfigurationError,
+    ArgoConnector,
+    _sessions,
+    _shared_session,
+    close_shared_sessions,
+    create_argo_connector,
+)
 from opi.manager.argo_manager import ArgoManager
 from opi.web import router
 from opi.web.router import argocd_status_fragment, dashboard
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _APPLICATIONS_URL = "http://argocd-server:80/api/v1/applications"
 _APPLICATION_URL = f"{_APPLICATIONS_URL}/my-app"
@@ -119,9 +129,9 @@ class _FakeRequest:
 class _FakeSession:
     """Stands in for aiohttp.ClientSession and hands out one outcome per request.
 
-    A real session is unusable once it has left its async with, so a retry that spans
-    the session has to build a new one per attempt. Raising here the way aiohttp does
-    keeps that honest: reusing the closed session shows up instead of silently working.
+    The connector keeps ONE session per TLS setting for the whole process (RC-418), so a
+    retry reuses it. Raising on a closed session keeps that honest: a session that was
+    closed and then used again shows up instead of silently working.
     """
 
     def __init__(self, network: _FakeNetwork) -> None:
@@ -161,6 +171,14 @@ class _FakeNetwork:
         self.calls.append((method, url))
         assert self._outcomes, f"unexpected extra request: {method} {url}"
         return self._outcomes.pop(0)
+
+
+@pytest.fixture(autouse=True)
+def _geen_gedeelde_sessie_tussen_tests() -> Iterator[None]:
+    """De gedeelde sessie leeft per proces, dus zonder dit erft de volgende test hem."""
+    _sessions.clear()
+    yield
+    _sessions.clear()
 
 
 def _authenticated_connector(connect_retry_seconds: float = 30.0) -> ArgoConnector:
@@ -430,7 +448,7 @@ async def test_a_connect_failure_during_login_is_retried() -> None:
 
     assert connector.auth_token == "token-fresh"
     assert len(h.calls) == 2, "the login was not retried"
-    assert len(h.sessions) == 2, "the second attempt reused the session the first one closed"
+    assert len(h.sessions) == 1, "both attempts must ride the one shared session, not a fresh TLS handshake each"
     assert h.sleeps == [1.0]
 
 
@@ -773,3 +791,53 @@ async def test_a_fail_fast_request_whose_401_relogin_meets_the_lock_degrades_at_
     assert (status, text) == (401, "Re-authentication failed")
     assert len(h.calls) == 1, "the request went out again without ever getting a fresh token"
     assert waited < 0.5, f"an interactive request waited {waited:.2f}s for someone else's login"
+
+
+class TestGedeeldeSessie:
+    """Een ClientSession per TLS-instelling voor het hele proces, niet per verzoek (RC-418).
+
+    Elk ArgoCD-verzoek opende voorheen zijn eigen sessie met een eigen TCP-verbinding en
+    TLS-handshake; een wachtlus deed er tientallen per deployment. Dit toetst de sleutel
+    waarop sessies worden gedeeld en dat het proces ze netjes achterlaat bij het afsluiten.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dezelfde_tls_instelling_geeft_dezelfde_sessie(self) -> None:
+        een = await _shared_session(True, None)
+        twee = await _shared_session(True, None)
+        assert een is twee
+        await close_shared_sessions()
+
+    @pytest.mark.asyncio
+    async def test_een_andere_verify_ssl_instelling_krijgt_een_eigen_sessie(self) -> None:
+        verifieert = await _shared_session(True, None)
+        verifieert_niet = await _shared_session(False, None)
+        assert verifieert is not verifieert_niet
+        await close_shared_sessions()
+
+    @pytest.mark.asyncio
+    async def test_een_gesloten_sessie_wordt_vervangen_en_niet_hergebruikt(self) -> None:
+        eerste = await _shared_session(True, None)
+        await eerste.close()
+
+        tweede = await _shared_session(True, None)
+
+        assert tweede is not eerste
+        assert not tweede.closed
+        await tweede.close()
+
+    @pytest.mark.asyncio
+    async def test_close_shared_sessions_sluit_elke_sessie_en_leegt_het_register(self) -> None:
+        sessie = await _shared_session(True, None)
+        assert _sessions
+
+        await close_shared_sessions()
+
+        assert sessie.closed
+        assert _sessions == {}
+
+    @pytest.mark.asyncio
+    async def test_close_shared_sessions_op_een_leeg_register_faalt_niet(self) -> None:
+        """Het proces sluit ook af als er nooit een ArgoCD-verzoek is geweest."""
+        await close_shared_sessions()
+        await close_shared_sessions()

@@ -50,6 +50,7 @@ volgbaar -- het project staat dan niet (meer) in de store.
 
 - een voortgangsbalk, met het percentage naast de huidige stap;
 - de stappen en substappen met een vinkje, kruis, pijl of klok;
+- de duur van een stap die klaar is (zie [rollout-metingen](./rollout-metingen.md));
 - de foutregel van een stap of substap die mislukte;
 - bij mislukken: de uitleg per component uit `partials/_component_failures.html.j2`;
 - een afsluitknop, als de aanroeper er een meegeeft.

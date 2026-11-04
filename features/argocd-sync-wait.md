@@ -75,3 +75,37 @@ De wachttijd zelf blijft ongeveer 43 seconden (5 s + 8 s + 15 pogingen van 2 s).
 niet-afgeronde sync geen fout meer is, is de lengte van dat venster minder belangrijk: je krijgt
 een informatieve melding in plaats van een rode stap. Of de wachttijd omhoog moet, is een aparte
 afweging die je pas goed kunt maken met de nieuwe logging erbij.
+
+## Wat van de wacht is weggehaald (RC-418)
+
+De wacht zelf is gebleven; wat eromheen stond en niets opleverde is weg. Beide overslaan mag
+alleen op bewijs; bij twijfel doet de code wat hij deed. Wat elke stap kost is te zien in de
+fases `argo_project_gate`, `argo_wait_synced` en `argo_wait_healthy` van
+[rollout-metingen](./rollout-metingen.md).
+
+**De grendel op het projectniveau** (`wait_for_project_level_application`, de ordening uit
+`docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`) wordt overgeslagen als drie
+dingen kloppen: deze ronde veranderde de project-level manifests niet, de applicatie
+`<project>-project` meldt `Synced` EN `Healthy`, en de map met die manifests is bij de
+revisie die ze vergeleek byte-voor-byte gelijk aan wat er nu in git staat
+(`GitConnector.path_unchanged_since`). Het geval uit de post-mortem valt op de laatste eis:
+een net aangemaakte applicatie beheert nul resources, meldt zich binnen een seconde Healthy,
+en heeft nog geen vergeleken revisie.
+
+De vergelijking gaat over de MAP en niet over de commit. Een repo die meerdere projecten
+delen heeft een tip die altijd voorloopt op de laatste vergelijking van een enkele
+applicatie, dus "bevat ArgoCD's revisie onze commit" is daar vrijwel nooit waar en de
+grendel liep altijd; gemeten op de sandbox, 4 november 2026.
+
+Een status die niet te lezen is, is geen bewijs en laat de grendel lopen. ArgoCD antwoordt
+400 zolang de AppProject van een project net is aangemaakt en de applicatie er nog niet in
+is toegelaten; die fout mag een rollout niet kosten.
+
+**De render-check per applicatie** (`get_application_manifests`, de hele render over de lijn)
+wordt overgeslagen als de applicatie na onze eigen refresh al `Synced` meldt: ArgoCD kan niet
+vergelijken zonder manifests, dus de render is dan al bewezen. Een applicatie die nog niet
+Synced is, of een status van voor onze refresh, haalt de render wel op, en een kapotte
+kustomization faalt daar nog steeds snel in plaats van op de time-out van 300 s.
+
+Of een status na onze refresh is, antwoordt `ArgoManager.status_reflects_refresh` -- op een plek,
+voor de drie wachten die het vragen.

@@ -17,7 +17,11 @@ from typing import Any
 
 import httpx
 
-from opi.connectors.grafana_prometheus import create_grafana_prometheus_connector
+from opi.connectors.grafana_prometheus import (
+    GrafanaConnectionError,
+    GrafanaQueryError,
+    create_grafana_prometheus_connector,
+)
 from opi.core.config import settings
 from opi.services.log_watcher import LogWatchConfig, send_ntfy
 
@@ -121,7 +125,11 @@ class CapacityWatcher:
                 break
 
     async def tick(self) -> None:
-        quotas = await self._fetch()
+        try:
+            quotas = await self._fetch()
+        except (GrafanaConnectionError, GrafanaQueryError) as e:
+            logger.info("Capacity watcher: skipping this round, no metrics: %s", e)
+            return
         if not quotas:
             logger.warning("Capacity watcher: no quota metrics for tenant %s", settings.CAPACITY_WATCH_TENANT)
             return

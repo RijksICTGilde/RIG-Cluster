@@ -531,6 +531,21 @@ class TestOpisOwnTimeOut:
         )
 
 
+def _werkmap(order: list[str]) -> MagicMock:
+    """Een werkmap die noteert wanneer hij de stap toepast en wanneer hij schrijft."""
+
+    async def mutate_and_push(_message: str, mutate):  # type: ignore[no-untyped-def]
+        uitkomst = await mutate()
+        order.append("write")
+        return uitkomst
+
+    workspace = MagicMock()
+    workspace.get_working_dir = AsyncMock(return_value="/tmp/repo")
+    workspace.mutate_and_push = AsyncMock(side_effect=mutate_and_push)
+    workspace.last_write = None
+    return workspace
+
+
 class TestItRunsBeforeThePush:
     """Dekking op de helper pint de AANROEP niet. Deze toetsen doen dat per plek."""
 
@@ -539,22 +554,20 @@ class TestItRunsBeforeThePush:
         """De orde is het hele punt: na de push is de nieuwe revisie al in git terechtgekomen
         terwijl de sync die hem moet uitrollen nog geblokkeerd is."""
         order: list[str] = []
-        git = MagicMock()
-        git.get_working_dir = AsyncMock(return_value="/tmp/repo")
-        git.commit_changes = AsyncMock(side_effect=lambda *a: order.append("commit"))
-        git.push_changes = AsyncMock(side_effect=lambda *a: order.append("push"))
+        workspace = _werkmap(order)
 
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": "dd-mco"})
-        fake.get_git_connector_for_deployment = AsyncMock(return_value=git)
+        fake.get_deployment_workspace = AsyncMock(return_value=workspace)
         fake._process_deployment_manifests = AsyncMock(side_effect=lambda *a: order.append("manifests"))
         fake.get_deployments = AsyncMock(return_value=[])
+        fake._project_level_path = None
         fake._clear_blocking_sync_operations = AsyncMock(side_effect=lambda *a, **kw: order.append("clear"))
 
         deployments = [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]
         await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments)
 
-        assert order == ["manifests", "commit", "clear", "push"]
+        assert order == ["manifests", "clear", "write"]
         fake._clear_blocking_sync_operations.assert_awaited_once_with(deployments, reset_running_sync=False)
 
     @pytest.mark.asyncio
@@ -565,18 +578,16 @@ class TestItRunsBeforeThePush:
         worden. Gemeten voor de reparatie: ``RAISED KubectlConnectionError``, order
         ``['manifests', 'commit']``, push awaited 0. Precies in de situatie waarvoor deze
         feature bestaat, want een hik van de apiserver zet ``isConnected`` procesbreed op
-        False."""
+        False. De opruimronde staat sinds RC-422 binnen de mutatie, dus vlak voor de write."""
         order: list[str] = []
-        git = MagicMock()
-        git.get_working_dir = AsyncMock(return_value="/tmp/repo")
-        git.commit_changes = AsyncMock(side_effect=lambda *a: order.append("commit"))
-        git.push_changes = AsyncMock(side_effect=lambda *a: order.append("push"))
+        workspace = _werkmap(order)
 
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": "dd-mco"})
-        fake.get_git_connector_for_deployment = AsyncMock(return_value=git)
+        fake.get_deployment_workspace = AsyncMock(return_value=workspace)
         fake._process_deployment_manifests = AsyncMock(side_effect=lambda *a: order.append("manifests"))
         fake.get_deployments = AsyncMock(return_value=[])
+        fake._project_level_path = None
         fake.get_name = AsyncMock(return_value="dd-mco")
         fake._kubectl_connector = MagicMock()
         fake._kubectl_connector.get_argocd_application = AsyncMock(
@@ -593,8 +604,8 @@ class TestItRunsBeforeThePush:
             fake, {"name": "main-repo"}, [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]
         )
 
-        assert order == ["manifests", "commit", "push"]
-        git.push_changes.assert_awaited_once()
+        assert order == ["manifests", "write"]
+        workspace.mutate_and_push.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_an_unreachable_kubectl_still_reports_the_time_out(self, monkeypatch: pytest.MonkeyPatch) -> None:

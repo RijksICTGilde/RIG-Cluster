@@ -25,6 +25,7 @@ from opi.core.template_helpers import (
     cluster_tag,
     format_dutch_date,
     format_rrule_schedule,
+    format_step_duration,
     get_service_definition_for_entry,
     get_service_name,
     shorten_image_digest,
@@ -149,6 +150,7 @@ templates_lotc.env.filters["service_definition"] = get_service_definition_for_en
 # verzint over wat een verwijzing is.
 templates_lotc.env.filters["is_verwijzing"] = _alias_is_reference
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
+templates_lotc.env.filters["stapduur"] = format_step_duration
 templates_lotc.env.filters["rrule_schedule"] = format_rrule_schedule
 templates_lotc.env.filters["deployment_action_key"] = deployment_action_key
 # De digest in een imageverwijzing afgekort tot twaalf tekens. Als filter en niet als

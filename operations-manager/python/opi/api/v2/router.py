@@ -178,7 +178,12 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 from opi.utils.project_names import ensure_unique_project_name
-from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
+from opi.utils.project_utils import (
+    ProjectApiKeyError,
+    affected_deployments,
+    generate_base_project_file,
+    validate_project_name,
+)
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 from opi.utils.yaml_util import dump_yaml_to_string
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
@@ -534,6 +539,20 @@ def _project_data_or_404(project_name: str) -> dict[str, Any]:
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
     return project.data
+
+
+def _deployments_of_components(project_name: str, component_names: list[str] | None) -> list[str] | None:
+    """De deployments die deze componenten gebruiken, of None voor projectbreed.
+
+    Zonder componentnamen, en voor een project dat niet in de store staat, is er niets om
+    op te versmallen: dan blijft de ronde projectbreed, zoals ze was.
+    """
+    if not component_names:
+        return None
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        return None
+    return affected_deployments(project.data, component_names=component_names)
 
 
 async def _deployment_details(project_name: str, project_data: dict[str, Any]) -> list[DeploymentDetail]:
@@ -2014,6 +2033,9 @@ async def update_component_v2(
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
             "rollout": rollout,
+            # Alleen de deployments die dit component gebruiken; staat het project niet in
+            # de store, dan valt er niets te versmallen en blijft de ronde projectbreed.
+            "deployment_names": _deployments_of_components(project_name, [component_name]),
         },
     )
     return _accepted_response(task, "update_component")
@@ -2243,6 +2265,10 @@ async def add_service_v2(
             "service": service_data.service,
             "components": service_data.components,
             "rollout": rollout,
+            # Met een lijst componenten is de ronde te versmallen tot de deployments die
+            # ze gebruiken. Zonder lijst bindt de dienst aan ELK component van het
+            # project, en dan is projectbreed de waarheid.
+            "deployment_names": _deployments_of_components(project_name, service_data.components),
         },
     )
     return _accepted_response(task, "add_service")
@@ -2839,6 +2865,13 @@ async def _enqueue_config_write(
         "component": component,
         "deployment": deployment,
         "rollout": rollout,
+        # De deployments die deze config raakt, hier opgelost zodat de taakscope en de
+        # verwerking dezelfde lijst gebruiken. None = projectbreed (de projectlaag).
+        "deployment_names": affected_deployments(
+            _project_data_or_404(project_name),
+            deployment_name=deployment,
+            component_names=[component] if component else None,
+        ),
     }
     if operation == "patch":
         payload["add"] = add
@@ -4278,6 +4311,9 @@ async def _enqueue_values_write(
             "values": values,
             "keys": keys,
             "rollout": rollout,
+            "deployment_names": affected_deployments(
+                project.data, deployment_name=deployment_name, component_names=[component_name]
+            ),
         },
     )
     return _accepted_response(task, "configure_service_values")

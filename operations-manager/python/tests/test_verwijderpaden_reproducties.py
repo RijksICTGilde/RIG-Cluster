@@ -122,25 +122,18 @@ async def test_de_projectapplicatie_houdt_het_appproject_in_de_map(tmp_path: Pat
         "niets meldt dat de deployment van het projectbestand geen Application heeft"
     ),
 )
-async def test_de_sweep_meldt_een_deployment_zonder_application(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_de_sweep_meldt_een_deployment_zonder_application(monkeypatch: pytest.MonkeyPatch) -> None:
     from opi.jobs import service_orphan_sweep
 
     project_yaml = {
         "name": "swfa1-maw",
         "deployments": [{"name": "productie", "cluster": "sandboxed-local", "namespace": "swfa1-maw"}],
     }
-    project_dir = tmp_path / "sandboxed-local" / "swfa1-maw"
-    project_dir.mkdir(parents=True)
     # Alleen de projectapplicatie; de Application van 'productie' is er nooit gekomen.
-    (project_dir / "swfa1-maw-project-argocd-application.yaml").write_text("kind: Application\n")
-
     gitops = AsyncMock()
-    gitops.get_working_dir = AsyncMock(return_value=str(tmp_path))
-    monkeypatch.setattr(
-        service_orphan_sweep, "create_git_connector_for_argocd", AsyncMock(return_value=gitops), raising=True
-    )
+    gitops.list_tree = AsyncMock(return_value=["sandboxed-local/swfa1-maw/swfa1-maw-project-argocd-application.yaml"])
+    monkeypatch.setattr(service_orphan_sweep, "get_git_repo", MagicMock(return_value=gitops), raising=True)
+    monkeypatch.setattr(service_orphan_sweep, "credentials_from_repo_config", MagicMock(), raising=True)
     # Alleen de GitOps-sectie wordt hier gemeten; de andere inventarissen leveren niets,
     # zodat hun connectorfouten het rapport niet vervuilen.
     leeg = AsyncMock()
@@ -315,12 +308,11 @@ def _project_manager_met_levend_projectbestand(bestand: dict[str, Any]) -> Async
         return await mutate()
 
     gitops.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
-    pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+    pm.get_argo_workspace = AsyncMock(return_value=gitops)
 
     manifests = AsyncMock()
     manifests.get_working_dir = AsyncMock(return_value="/tmp/deploy-repo")
-    manifests.commit_and_push_changes = AsyncMock(return_value=True)
-    pm.get_git_connector_for_deployment = AsyncMock(return_value=manifests)
+    pm.get_deployment_workspace = AsyncMock(return_value=manifests)
 
     async def _get_contents(**kwargs: Any) -> dict[str, Any]:
         return copy.deepcopy(bestand)

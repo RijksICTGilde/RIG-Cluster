@@ -390,23 +390,23 @@ class TestProjectManagerCloseIdempotency:
             pm = ProjectManager.__new__(ProjectManager)
             pm._closed = False
             pm.close_git_connector_for_project_files = AsyncMock()
-            pm.close_git_connector_for_argocd = AsyncMock()
-            pm.close_git_connectors_for_deployments = AsyncMock()
+            pm.close_argo_workspace = AsyncMock()
+            pm.close_deployment_workspaces = AsyncMock()
             pm._database_manager = None
 
             await pm.close()
             assert pm._closed is True
             pm.close_git_connector_for_project_files.assert_awaited_once()
-            pm.close_git_connector_for_argocd.assert_awaited_once()
-            pm.close_git_connectors_for_deployments.assert_awaited_once()
+            pm.close_argo_workspace.assert_awaited_once()
+            pm.close_deployment_workspaces.assert_awaited_once()
 
             # Reset mocks and call again
             pm.close_git_connector_for_project_files.reset_mock()
-            pm.close_git_connector_for_argocd.reset_mock()
-            pm.close_git_connectors_for_deployments.reset_mock()
+            pm.close_argo_workspace.reset_mock()
+            pm.close_deployment_workspaces.reset_mock()
 
             await pm.close()
             # Second call should not invoke any cleanup
             pm.close_git_connector_for_project_files.assert_not_awaited()
-            pm.close_git_connector_for_argocd.assert_not_awaited()
-            pm.close_git_connectors_for_deployments.assert_not_awaited()
+            pm.close_argo_workspace.assert_not_awaited()
+            pm.close_deployment_workspaces.assert_not_awaited()

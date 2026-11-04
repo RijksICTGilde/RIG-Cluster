@@ -72,6 +72,9 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, render_ok: bool = True)
     argo_connector.refresh_application = AsyncMock(return_value="2026-10-12T11:37:00Z")
     render = (True, "") if render_ok else (False, "rpc error: code = Unknown desc = kustomize build failed: oeps")
     argo_connector.get_application_manifests = AsyncMock(return_value=render)
+    # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
+    # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
+    argo_connector.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
     monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo_connector)
 
     wacht = AsyncMock(return_value=None)

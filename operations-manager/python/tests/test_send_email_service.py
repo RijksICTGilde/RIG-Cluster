@@ -3927,7 +3927,9 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
 
         monkeypatch.setattr(startup, "check_schema_versions", lambda *a, **k: None)
         monkeypatch.setattr(
-            startup, "get_metrics_connector", AsyncMock(return_value=SimpleNamespace(is_connected=True))
+            startup,
+            "get_metrics_connector",
+            AsyncMock(return_value=SimpleNamespace(is_connected=True, start_probe=lambda: None)),
         )
         monkeypatch.setattr(startup, "_setup_database", AsyncMock(return_value=True))
         monkeypatch.setattr(startup, "_setup_projects", AsyncMock(return_value=True))

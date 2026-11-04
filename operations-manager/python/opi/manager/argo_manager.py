@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from opi.connectors.argo import ArgoTransportError
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.metrics import PHASE_ARGO_WAIT_HEALTHY, PHASE_ARGO_WAIT_SYNCED, observe_rollout_phase
 from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
@@ -77,7 +78,12 @@ POLL_INTERVAL_SECONDEN = 2
 #: zo'n tien seconden), en juist op dat moment is te zien of die reconcile onze revisie had.
 #: Deze ondergrens is er alleen voor het geval de call wél meteen terugkomt, zodat het geen
 #: hete lus wordt. Er zit dus een mens op te wachten en dat mag je merken.
-UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
+#:
+#: Een seconde en niet vijf (RC-418): een verloren refresh kostte gemeten ~18 seconden, en
+#: deze grens legde daar per ronde maximaal vier seconden wachten bovenop zonder dat er iets
+#: gebeurde. De storm die hij afhoudt is nog steeds afgehouden, want de refresh zelf blijft
+#: hangen tot een reconcile klaar is en komt alleen bij uitzondering meteen terug.
+UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 1
 
 #: Hoe vaak we dat hoogstens proberen. Een refresh op de umbrella is duur, want de
 #: applicatie mist de `manifest-generate-paths`-annotatie (issue #130) en hertekent dus
@@ -241,14 +247,13 @@ class ArgoManager:
 
     async def _mutate_and_push_argo[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
         """Write to argo-applications repo and remember the pushed commit."""
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        uitkomst = await git_connector_for_argocd.mutate_and_push(message, mutate)
-        try:
-            self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
-        except RuntimeError as e:
-            # Zonder hash valt er niets te bewijzen; de wachter gedraagt zich dan als voorheen.
-            logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
-            self.last_pushed_argo_commit = None
+        workspace = await self.project_manager.get_argo_workspace()
+        uitkomst = await workspace.mutate_and_push(message, mutate)
+        # De stand die de wachter in de umbrella moet terugzien. Landde er niets omdat die
+        # stand er al stond, dan is dat de tip waarop we bouwden: ook dan valt te bewijzen
+        # dat ArgoCD hem heeft vergeleken.
+        write = workspace.last_write
+        self.last_pushed_argo_commit = write.ref if write else None
         return uitkomst
 
     async def create_repository_secrets(
@@ -285,8 +290,8 @@ class ArgoManager:
             logger.warning(f"No deployments for cluster {settings.CLUSTER_MANAGER}")
             return
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         logger.info(
             f"Creating ArgoCD repository secrets for project: {project_name} on cluster {settings.CLUSTER_MANAGER}"
@@ -529,8 +534,8 @@ class ArgoManager:
             project_name,
         )
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
@@ -700,8 +705,8 @@ class ArgoManager:
         project_name = await self.project_manager.get_name()
         logger.debug(f"Creating ArgoCD application for project: {project_name}")
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         try:
             # Create an ArgoCD application for each deployment (filtered by cluster and optional name)
@@ -818,8 +823,8 @@ class ArgoManager:
             sync_wave=0,
         )
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
         project_dir = os.path.join(str(working_dir), generate_argocd_project_folder_path(cluster_name, project_name))
         output_filename = get_output_filename_from_template("argocd-application.yaml.jinja", app_name)
         self._write_manifest_file(project_dir, output_filename, content)
@@ -843,8 +848,8 @@ class ArgoManager:
             project_data: The project configuration data
             deployment_name: Optional deployment name (currently unused, for future filtering)
         """
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         project_name = await self.project_manager.get_name()
 
@@ -891,8 +896,8 @@ class ArgoManager:
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD infrastructure application for project: {project_name}")
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         try:
             # Get repository information (use first repository, typically main-repo)
@@ -1156,15 +1161,13 @@ class ArgoManager:
                     return True
 
                 # Determine whether the status reflects our refresh.
-                status_is_fresh = True
-                if refreshed_after:
-                    reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
-                    if reconciled_at <= refreshed_after:
-                        status_is_fresh = False
-                        logger.debug(
-                            f"Infrastructure '{app_name}': status is stale "
-                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after})"
-                        )
+                status_is_fresh = self.status_reflects_refresh(status_data, refreshed_after)
+                if not status_is_fresh:
+                    logger.debug(
+                        f"Infrastructure '{app_name}': status is stale "
+                        f"(reconciledAt={status_data.get('status', {}).get('reconciledAt', '')} "
+                        f"<= refreshed_after={refreshed_after})"
+                    )
 
                 if status_is_fresh:
                     # A terminal ArgoCD condition (ComparisonError etc.) means the manifests
@@ -1255,6 +1258,18 @@ class ArgoManager:
         logger.error(f"ArgoCD dashboard: {argocd_url}/applications/{app_name}")
         raise TimeoutError(error_msg)
 
+    @staticmethod
+    def status_reflects_refresh(status_data: dict[str, Any], refreshed_after: str | None) -> bool:
+        """Of deze status NA onze eigen refresh gereconcilieerd is.
+
+        Zonder dat bewijst een ``Synced`` niets over de commit die we net pushten: de status
+        kan nog van de vorige reconcile zijn. Zonder ``refreshed_after`` valt er niets te
+        vergelijken en geldt de status als vers, zoals voorheen.
+        """
+        if not refreshed_after:
+            return True
+        return str(status_data.get("status", {}).get("reconciledAt", "")) > refreshed_after
+
     async def wait_for_application_synced(
         self,
         app_name: str,
@@ -1318,6 +1333,9 @@ class ArgoManager:
         # is een leeg antwoord "hij moet nog verschijnen" en polt de lus door. Daarna is
         # hetzelfde lege antwoord "hij is weg", en dat is geen leesfout maar een einde.
         seen = False
+        # Het moment dat de sync klaar was, zodat de tijd TOT Synced en de tijd van Synced
+        # tot Healthy apart meetbaar zijn: de eerste is ArgoCD, de tweede is de pod.
+        synced_at: float | None = None
         while elapsed_time < timeout:
             await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to sync")
             try:
@@ -1338,8 +1356,13 @@ class ArgoManager:
                 sync_status = status_data.get("status", {}).get("sync", {}).get("status")
                 health_status = status_data.get("status", {}).get("health", {}).get("status")
 
+                if sync_status == "Synced" and synced_at is None:
+                    synced_at = _verstreken_sinds(start)
+                    observe_rollout_phase(PHASE_ARGO_WAIT_SYNCED, synced_at)
+
                 if sync_status == "Synced" and health_status == "Healthy":
                     logger.info(f"Application '{app_name}' is synced and healthy")
+                    observe_rollout_phase(PHASE_ARGO_WAIT_HEALTHY, _verstreken_sinds(start) - (synced_at or 0.0))
                     return True
 
                 # Staat de status al een minuut op Progressing, vraag dan zelf om een
@@ -1366,16 +1389,13 @@ class ArgoManager:
                 # If reconciledAt is still <= refreshed_after, ArgoCD
                 # hasn't processed our changes yet - don't treat errors
                 # as terminal.
-                status_is_fresh = True
-                if refreshed_after:
-                    reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
-                    if reconciled_at <= refreshed_after:
-                        status_is_fresh = False
-                        logger.debug(
-                            f"Application '{app_name}': status is stale "
-                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after}), "
-                            f"not evaluating terminal states yet"
-                        )
+                status_is_fresh = self.status_reflects_refresh(status_data, refreshed_after)
+                if not status_is_fresh:
+                    logger.debug(
+                        f"Application '{app_name}': status is stale "
+                        f"(reconciledAt={status_data.get('status', {}).get('reconciledAt', '')} "
+                        f"<= refreshed_after={refreshed_after}), not evaluating terminal states yet"
+                    )
 
                 if status_is_fresh:
                     # Check for a terminal ArgoCD condition (ComparisonError etc.). This is

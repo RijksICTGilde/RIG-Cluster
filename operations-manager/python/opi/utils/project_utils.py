@@ -293,6 +293,46 @@ def normalize_container_image(image: str) -> tuple[str, bool]:
     return normalized, was_normalized
 
 
+def deployments_using_component(project_data: dict[str, Any], component_name: str) -> list[str]:
+    """De namen van de deployments die naar dit component verwijzen, op bestandsvolgorde."""
+    namen = []
+    for deployment in project_data.get("deployments") or []:
+        if not isinstance(deployment, dict) or not deployment.get("name"):
+            continue
+        if any(
+            isinstance(component, dict) and component.get("reference") == component_name
+            for component in deployment.get("components") or []
+        ):
+            namen.append(str(deployment["name"]))
+    return namen
+
+
+def affected_deployments(
+    project_data: dict[str, Any],
+    *,
+    deployment_name: str | None = None,
+    component_names: list[str] | None = None,
+) -> list[str] | None:
+    """De deployments die een wijziging raakt, of None voor projectbreed.
+
+    Een wijziging op EEN deployment raakt alleen die. Een wijziging op een component raakt
+    de deployments die hem gebruiken, en dat kunnen er meer zijn dan een. Zonder beide is
+    de wijziging projectbreed, en dan mag er niets versmald worden.
+
+    Wie hiermee een ronde versmalt moet dezelfde lijst ook als taakscope vastleggen
+    (``opi.core.task_supersede.scope_of``): een scope die breder is dan wat de ronde echt
+    verwerkt zou een wachtende taak verdringen waarvan de deployments niemand meer doet.
+    """
+    if deployment_name:
+        return [deployment_name]
+    if component_names:
+        namen: list[str] = []
+        for component_name in component_names:
+            namen.extend(deployments_using_component(project_data, component_name))
+        return list(dict.fromkeys(namen))
+    return None
+
+
 def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any] | None:
     """De deployment die het PROJECTNIVEAU van dit project draagt, of None.
 

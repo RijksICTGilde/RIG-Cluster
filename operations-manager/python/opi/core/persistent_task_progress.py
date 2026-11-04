@@ -28,6 +28,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _now_iso() -> str:
+    """De klok van een stapgrens, als tijdstempel in de subtaak."""
+    return datetime.now(tz=UTC).isoformat()
+
+
 class PersistentTaskProgressManager:
     """Task progress manager that persists state to PostgreSQL.
 
@@ -118,6 +123,8 @@ class PersistentTaskProgressManager:
                 "error": redact_text(info["error"]) if info.get("error") else None,
                 "parent_id": info.get("parent_id"),
                 "subject": info.get("subject"),
+                "started_at": info.get("started_at"),
+                "completed_at": info.get("completed_at"),
             }
             for subtask_id, info in self._subtasks.items()
         ]
@@ -197,6 +204,8 @@ class PersistentTaskProgressManager:
             "error": None,
             "parent_id": None,
             "subject": subject,
+            "started_at": _now_iso(),
+            "completed_at": None,
         }
         logger.info("Task %s: Added task: %s (%s)", self._task_id, name, task_id)
         self.update_current_step(format_step_line(name, subject))
@@ -213,6 +222,8 @@ class PersistentTaskProgressManager:
             "error": None,
             "parent_id": parent_task_id,
             "subject": subject,
+            "started_at": _now_iso(),
+            "completed_at": None,
         }
         logger.info(
             "Task %s: Added subtask: %s (%s) under %s",
@@ -249,6 +260,7 @@ class PersistentTaskProgressManager:
         """Mark a task/subtask as completed."""
         if task_id in self._subtasks:
             self._subtasks[task_id]["status"] = TaskStatus.COMPLETED.value
+            self._subtasks[task_id]["completed_at"] = _now_iso()
             logger.info(
                 "Task %s: Completed task: %s (%s)",
                 self._task_id,
@@ -267,6 +279,7 @@ class PersistentTaskProgressManager:
         if task_id in self._subtasks:
             self._subtasks[task_id]["status"] = TaskStatus.FAILED.value
             self._subtasks[task_id]["error"] = error
+            self._subtasks[task_id]["completed_at"] = _now_iso()
             log = logger.warning if client_error else logger.error
             log(
                 "Task %s: Failed task: %s (%s): %s",

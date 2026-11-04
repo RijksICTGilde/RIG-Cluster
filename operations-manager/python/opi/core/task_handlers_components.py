@@ -261,6 +261,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
+                deployment_names=payload.get("deployment_names"),
             )
 
             if processing_success:
@@ -554,6 +555,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
+                deployment_names=payload.get("deployment_names"),
             )
 
             if processing_success:
@@ -691,7 +693,9 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             deploy_task = progress.add_task("Project verwerken")
             progress.update_current_step("Project verwerken om de dienstconfiguratie bij te trekken")
             processing_success = await project_manager.process_project_from_git(
-                project_file_relative_path, task_progress_manager=progress
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_names=payload.get("deployment_names"),
             )
             if processing_success:
                 processing = {"status": "completed"}
@@ -830,7 +834,9 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
             deploy_task = progress.add_task("Project verwerken")
             progress.update_current_step("Project verwerken om de nieuwe waarden bij te trekken")
             processing_success = await project_manager.process_project_from_git(
-                project_file_relative_path, task_progress_manager=progress
+                project_file_relative_path,
+                task_progress_manager=progress,
+                deployment_names=payload.get("deployment_names"),
             )
             if processing_success:
                 processing = {"status": "completed"}

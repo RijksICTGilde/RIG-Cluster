@@ -36,6 +36,7 @@ from opi.api.token_router import token_router
 from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
+from opi.connectors.prometheus import close_metrics_connector
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, SECURITY_PROOF_HEADER, VERSION, settings
@@ -457,6 +458,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     if capacity_watcher is not None:
         await capacity_watcher.stop()
 
+    # Stop the metrics connector: its recovery task and its HTTP client
+    await close_metrics_connector()
+
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:
         await _worker_instance.stop()
@@ -505,6 +509,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.error("Timed out disposing ORM async engine after 10s; continuing shutdown")
     except Exception as e:
         logger.error(f"Error disposing ORM async engine: {e}")
+
+    # De gedeelde HTTP-sessies naar ArgoCD: een open connector zou het sluiten van de
+    # loop met een waarschuwing halen.
+    try:
+        from opi.connectors.argo import close_shared_sessions
+
+        await close_shared_sessions()
+    except Exception as e:
+        logger.error(f"Error closing shared ArgoCD sessions: {e}")
 
     stop_loop_watchdog()
 

@@ -43,10 +43,11 @@ pusht - zonder concurrent die het opnieuw ongeldig maakt. Het thrash-gedrag verd
 
 ## Reikwijdte en afweging
 
-Dit is **aanpak A**: de push serialiseren om de botsing weg te nemen. `allow_rebase=True` blijft op
-het deployments/argo-pad, dus bij een non-fast-forward wordt nog steeds ge-rebaset (text-merge). Voor
-**gegenereerde** manifests is dat laag risico: elke herverwerking regenereert de volledige set
-deterministisch uit hetzelfde projectbestand, dus het convergeert.
+Dit is **aanpak A**: de push serialiseren om de botsing weg te nemen. Op het deployments- en
+argo-pad werd bij een non-fast-forward toen nog ge-rebaset (text-merge). Voor
+**gegenereerde** manifests was dat laag risico: elke herverwerking regenereert de volledige
+set deterministisch uit hetzelfde projectbestand, dus het convergeert. Sinds RC-422 gebeurt
+dat niet meer; zie de volgende paragraaf.
 
 De project-store (`zad-projects`) blijft `allow_rebase=False` gebruiken met zijn eigen
 compare-and-swap; de push-lock is daar orthogonaal aan en verandert die semantiek niet. Een
@@ -75,11 +76,25 @@ Dat kan omdat een OPI-instantie de enige schrijver is voor zijn eigen clustermap
 Distributed Model). Wat NA de push hoort (een ArgoCD-refresh, een wacht) staat buiten de
 mutatie, anders houdt de lock andere taken op voor iets dat niets meer schrijft. De
 rebase-herhaling in `push_changes` blijft voor botsingen tussen verschillende projecten;
-beide locks gebruiken dezelfde credential-vrije sleutelvorm (`_repo_lock_key`).
+beide locks gebruiken dezelfde credential-vrije sleutelvorm (`repo_lock_key`).
 
-Dit is dus aanpak B voor de argo-repo, en de goedkope helft ervan: geen warme working copy,
-maar wel een commit die aantoonbaar op de laatste stand is gebouwd. `zad-deployments` loopt
-nog op aanpak A.
+Dit was aanpak B voor de argo-repo, en de goedkope helft ervan: geen warme working copy,
+maar wel een commit die aantoonbaar op de laatste stand is gebouwd.
+
+## Aanpak B, voor beide repo's (RC-422)
+
+Sinds RC-422 is aanpak B er helemaal, en voor beide repo's: `GitRepo` geeft de
+deployments- en de argo-repo elk een beheerde bare kopie per remote, en elke schrijfactie
+bouwt zijn commit uit git-objecten op de laatste stand en pusht die als los object naar de
+branch. Zie [`git-repo.md`](./git-repo.md).
+
+Wat dat met deze twee locks doet:
+
+- de **push-lock** per (repo, branch) blijft, nu rond `GitRepo._push`;
+- de **lock per (repo, project)** blijft, nu rond `GitRepoWorkspace.mutate_and_push`;
+- het laatste text-merge-risico is weg: er wordt niet meer ge-rebaset. Een push die niet op
+  de laatste stand is gebouwd wordt door de remote geweigerd, en dan wordt de stap opnieuw
+  op de nieuwe stand toegepast in plaats van samengevoegd.
 
 ## Uitzondering
 
