@@ -89,6 +89,8 @@ data:
 
     GRAFANA_DATASOURCE_UID=mimir-prd
     GRAFANA_BILLING_DATASOURCE_UID=mimir-billing
+    CAPACITY_WATCH_ENABLED=true
+    CAPACITY_WATCH_TENANT=rig-prd
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-prd-operations
 

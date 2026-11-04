@@ -338,6 +338,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start mail relay watcher: %s", e)
 
+    if settings.CAPACITY_WATCH_ENABLED and settings.CAPACITY_WATCH_TENANT:
+        try:
+            from opi.core.capacity_watcher import CapacityWatcher
+
+            _capacity_watcher = CapacityWatcher()
+            await _capacity_watcher.start()
+            app.state.capacity_watcher = _capacity_watcher
+        except Exception as e:
+            logger.error("Failed to start capacity watcher: %s", e)
+
     # Start the cluster-wide OOM pod watch if this cluster runs it
     from opi.core.cluster_config import watches_pods_for_oom
 
@@ -442,6 +452,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     mail_relay_watcher = getattr(app.state, "mail_relay_watcher", None)
     if mail_relay_watcher is not None:
         await mail_relay_watcher.stop()
+
+    capacity_watcher = getattr(app.state, "capacity_watcher", None)
+    if capacity_watcher is not None:
+        await capacity_watcher.stop()
 
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:

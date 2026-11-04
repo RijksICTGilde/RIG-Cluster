@@ -543,6 +543,11 @@ class Settings(BaseSettings):
     MAIL_RELAY_CHECK_INTERVAL_SECONDS: int = 60
     MAIL_RELAY_DOWN_ALERT_SECONDS: int = 300  # pas melden na vijf minuten, een rollout mag duren
 
+    # Tijdelijke capaciteitswacht op het tenantquotum (opi/core/capacity_watcher.py); meldt via
+    # het ntfy-topic van de log_watcher. De tenant is expliciet: het cluster weet niet welke het bedient.
+    CAPACITY_WATCH_ENABLED: bool = False
+    CAPACITY_WATCH_TENANT: str = ""  # Capsule tenant, e.g. rig-prd
+
     # ZAD's own account on the relay. It is an ORDINARY account on the relay, made by the
     # same connector call a project account is made by; only the caller differs (the boot
     # instead of a project run). So there is no password setting here: the password does
