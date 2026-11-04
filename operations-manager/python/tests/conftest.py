@@ -31,6 +31,11 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from opi.api.otp_step_up import OTP_CODE_HEADER
 from opi.core.db import Base
+
+# Load every app module with the real settings before any test patches them. A module first
+# imported while mock_settings is active binds `settings` to the MagicMock for the rest of the
+# session, so a later test fails or passes depending on which tests ran before it.
+from opi.server import create_app
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 from opi.utils.sops import generate_sops_key_pair
 from sqlalchemy import Engine, create_engine, text
@@ -254,9 +259,6 @@ def test_client(mock_settings: Any) -> TestClient:
 
     Note: For WebSocket tests, use async_client instead.
     """
-    # Import here to avoid circular imports and ensure mocks are applied
-    from opi.server import create_app
-
     app = create_app()
     return TestClient(app)
 
@@ -271,8 +273,6 @@ async def async_client(mock_settings: Any) -> AsyncGenerator[AsyncClient]:
             response = await async_client.get("/api/health")
             assert response.status_code == 200
     """
-    from opi.server import create_app
-
     app = create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", timeout=30.0) as client:
