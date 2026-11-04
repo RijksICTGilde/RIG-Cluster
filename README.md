@@ -2,7 +2,7 @@
 
 ZAD (Zelfservice Applicatie Deployment) is the set of tools that together make deploying software for government projects easy, fast and accessible. You describe what your application needs; the platform provisions it, deploys it and keeps it running. It currently runs in ODC-Noord, but is designed to work on any Kubernetes cluster.
 
-One declarative project file describes your deployments and the services they use (PostgreSQL, Keycloak, MinIO, Redis, mail). ZAD provisions those services, generates the credentials and manifests, and ArgoCD rolls them out.
+One declarative project file describes your deployments and the services they use (PostgreSQL, Keycloak, S3 storage, Redis, mail). ZAD provisions those services, generates the credentials and manifests, and ArgoCD rolls them out.
 
 ZAD is GitOps, operated through a portal or a CLI instead of through Git. It translates functional requirements into technical solutions, so deploying an application does not require platform engineering skills.
 
@@ -40,8 +40,7 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 | Forgejo | In-cluster Git server (sandboxed-local) |
 | PostgreSQL | CNPG-managed database cluster |
 | Keycloak | Identity and access management, SSO |
-| MinIO | S3-compatible object storage |
-| SeaweedFS | Fallback object storage |
+| S3 Storage (SeaweedFS) | S3-compatible object storage |
 | Redis | Key-value store for projects |
 | Mail relay | Outgoing mail for projects and Keycloak |
 | Prometheus | Metrics and monitoring |
