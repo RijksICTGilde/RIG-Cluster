@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 DOCKERFILE = REPO_ROOT / "images/keycloak-zad/Dockerfile"
 KEYCLOAK = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller"
-MODULES = REPO_ROOT / "keycloak-migration"
+MODULES = REPO_ROOT / "images" / "keycloak-zad" / "extensions"
 BRON_TAG = REPO_ROOT / "scripts/bron-tag.sh"
 CALVER_TAG = REPO_ROOT / "scripts/calver-tag.sh"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -173,10 +173,10 @@ class TestDeImageIsHetArtefact:
         in plaats van de eerste pod die zijn provider mist.
         """
         modules = sorted(p.name for p in MODULES.iterdir() if (p / "pom.xml").is_file())
-        assert modules, "geen Java-module gevonden onder keycloak-migration/"
+        assert modules, "geen Java-module gevonden onder images/keycloak-zad/extensions/"
 
         for naam in modules:
-            assert f"COPY keycloak-migration/{naam} " in _dockerfile(), naam
+            assert f"COPY images/keycloak-zad/extensions/{naam} " in _dockerfile(), naam
             assert f"-f {naam}/pom.xml clean package" in _dockerfile(), naam
 
     def test_de_basisversie_is_die_waar_de_modules_tegen_bouwen(self) -> None:
@@ -442,7 +442,9 @@ class TestDePinStaatPerOmgeving:
         assert isinstance(entry["newTag"], str), f"newTag {entry['newTag']!r} moet aangehaald in de overlay staan"
         assert "newName" not in entry, "de sandbox haalt uit dezelfde registry als de basis"
 
-    @pytest.mark.parametrize("plek", ["basis", "sandbox"], ids=["de basis", "de sandbox-overlay"])
+    @pytest.mark.parametrize(
+        "plek", ["basis", "sandbox", "staging"], ids=["de basis", "de sandbox-overlay", "de staging-overlay"]
+    )
     def test_geen_van_de_pinnen_is_met_de_hand_geschreven(self, plek: str) -> None:
         """DE VAL DIE ER STOND: de basis pinde `2026.9.1`, een CalVer die alleen CI uitrekent.
 
@@ -454,7 +456,12 @@ class TestDePinStaatPerOmgeving:
         De CalVer van CI (`{YYYY}.{M}.{patch}`) valt daar buiten: die wordt in dezelfde run
         uitgerekend en gepusht en hoort in geen enkel manifest.
         """
-        tag = _basis_image().split(":")[-1] if plek == "basis" else _image_entry(_overlay("sandboxed-local"))["newTag"]
+        if plek == "basis":
+            tag = _basis_image().split(":")[-1]
+        else:
+            tag = _image_entry(_overlay("sandboxed-local" if plek == "sandbox" else "odcn-staging")).get("newTag")
+            if tag is None:
+                pytest.skip(f"de {plek}-overlay pint niets en erft de basis")
 
         # Een plaatshouder ("er is hier nog niets gebouwd") draagt geen cijfer en is daarmee
         # ook geen versie die eruitziet als iets dat te halen valt.
@@ -538,7 +545,7 @@ class TestDeImageWordtGebouwdEnGepusht:
         assert sorted(job["strategy"]["matrix"]["module"]) == _module_namen()
 
         stap = next(s for s in job["steps"] if "mvn" in s.get("run", ""))
-        assert stap["working-directory"] == "keycloak-migration/${{ matrix.module }}"
+        assert stap["working-directory"] == "images/keycloak-zad/extensions/${{ matrix.module }}"
         assert stap["run"].strip() == "mvn -B test"
 
     def test_elke_module_blijft_los_te_bouwen_en_te_toetsen(self) -> None:
@@ -548,7 +555,7 @@ class TestDeImageWordtGebouwdEnGepusht:
             for vorm in ("build", "test"):
                 taak = f"{vorm}-keycloak-{naam}"
                 assert taak in taken, taak
-                assert f"keycloak-migration/{naam}" in yaml.dump(taken[taak])
+                assert f"images/keycloak-zad/extensions/{naam}" in yaml.dump(taken[taak])
 
     def test_elke_module_bouwt_reproduceerbaar(self) -> None:
         """Bouwt een van de twee jars op de klok, dan is de imagelaag alsnog elke keer nieuw.
@@ -937,6 +944,11 @@ def _promoveer(tmp_path: Path, *extra: str, **env_extra: str) -> Run:
     return _draai(tmp_path, PIN, "TARGET=base", *extra, **env_extra)
 
 
+def _naar_staging(tmp_path: Path, *extra: str, **env_extra: str) -> Run:
+    """Dezelfde promotie, alleen naar de odcn-staging overlay."""
+    return _draai(tmp_path, PIN, "TARGET=staging", *extra, **env_extra)
+
+
 #: Een tag in de vorm die publish-keycloak-image uitrekent. Vast, niet van de klok: anders
 #: hangt een assertie op de tag aan het moment waarop de toets draaide.
 PROEFTAG = "2026.09.26.1432-abcdef12"
@@ -1251,6 +1263,75 @@ class TestPromoverenIsEenVerplaatsingEnGeenHerbouw:
         assert promotie.returncode != 0
         # De weg vooruit staat in de melding, en dat is de taak die pusht en pint.
         assert PUBLICEER in promotie.stderr, promotie.stderr
+
+    def test_staging_krijgt_de_tag_van_de_sandbox_en_productie_niet(self, tmp_path: Path) -> None:
+        """Eerst op staging: dezelfde tag als de sandbox, terwijl odcn op de basis blijft."""
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+
+        voor = _rendered_image(REPO_ROOT, "odcn")
+        run = _pin(tmp_path, PROEFTAG)
+        staging = _naar_staging(tmp_path)
+        assert staging.returncode == 0, staging.stderr
+
+        gespiegeld = f"{RCR_VOORVOEGSEL}{IMAGE_REPO.removeprefix('ghcr.io/')}"
+        assert _rendered_image(run.repo, "odcn-staging") == f"{gespiegeld}:{PROEFTAG}"
+        assert _rendered_image(run.repo, "odcn") == voor
+        assert run.basis_tag() == _basis_image().split(":")[-1]
+        assert isinstance(_image_entry(yaml.safe_load(run.overlay("odcn-staging")))["newTag"], str)
+
+    def test_staging_neemt_geen_tag_aan_die_niet_op_de_sandbox_draaide(self, tmp_path: Path) -> None:
+        run = _pin(tmp_path, PROEFTAG)
+        assert run.returncode == 0, run.stderr
+        voor = run.pin("odcn-staging")
+
+        staging = _naar_staging(tmp_path, "IMAGE_TAG=2026.01.01.0000-00000000")
+
+        assert staging.returncode != 0
+        assert "niet op de sandbox gedraaid" in staging.stderr
+        assert staging.pin("odcn-staging") == voor
+
+    def test_een_tweede_keer_naar_staging_is_geen_fout_en_geen_tweede_regel(self, tmp_path: Path) -> None:
+        _pin(tmp_path, PROEFTAG)
+        assert _naar_staging(tmp_path).returncode == 0
+
+        tweede = _naar_staging(tmp_path)
+
+        assert tweede.returncode == 0, tweede.stderr
+        assert f"Staging draagt {PROEFTAG} al" in tweede.stdout
+        assert tweede.overlay("odcn-staging").count("newTag:") == 1
+
+    def test_een_volgende_tag_naar_staging_vervangt_de_vorige(self, tmp_path: Path) -> None:
+        """DE VAL DIE ER STOND: de nieuwe newTag kwam onder de newName, de oude bleef eronder
+        staan, en kustomize nam de oude. Staging draaide dan stil de vorige tag."""
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+
+        volgende = "2026.09.27.0900-12345678"
+        run = _pin(tmp_path, PROEFTAG)
+        assert _naar_staging(tmp_path).returncode == 0
+        assert _pin(tmp_path, volgende).returncode == 0
+
+        tweede = _naar_staging(tmp_path)
+
+        assert tweede.returncode == 0, tweede.stderr
+        assert tweede.overlay("odcn-staging").count("newTag:") == 1
+        assert _rendered_image(run.repo, "odcn-staging").endswith(f":{volgende}")
+
+    def test_een_promotie_naar_de_basis_haalt_de_pin_van_staging_weg(self, tmp_path: Path) -> None:
+        """Anders blijft staging stil op deze tag hangen als de basis later verder gaat."""
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+
+        run = _pin(tmp_path, PROEFTAG)
+        assert _naar_staging(tmp_path).returncode == 0
+        promotie = _promoveer(tmp_path)
+        assert promotie.returncode == 0, promotie.stderr
+
+        assert promotie.pin("odcn-staging") is None
+        assert _image_entry(yaml.safe_load(run.overlay("odcn-staging")))["newName"].startswith(RCR_VOORVOEGSEL)
+        gespiegeld = f"{RCR_VOORVOEGSEL}{IMAGE_REPO.removeprefix('ghcr.io/')}"
+        assert _rendered_image(run.repo, "odcn-staging") == f"{gespiegeld}:{PROEFTAG}"
 
     def test_promoveren_raakt_alleen_de_image_regel_van_de_basis(self, tmp_path: Path) -> None:
         """De basis draagt ook de startvlaggen; een promotie hoort daar niets aan te doen."""

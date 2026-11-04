@@ -78,7 +78,7 @@ in het feature-document hierboven.
 
 De robuuste weg blijft daarom: de applicatie wist haar eigen sessie **voordat** ze de
 browser naar het end-session endpoint stuurt. Zie
-`instructions/uitloggen-in-een-applicatie.md`.
+`docs/development/uitloggen-in-een-applicatie.md`.
 
 ## Configuratie
 
@@ -128,5 +128,5 @@ reconcile. Zeven clients van voor 15-05-2026 hadden daardoor nog geen
 
 ## Gerelateerd
 
-- `instructions/uitloggen-in-een-applicatie.md` - het contract voor de applicatiekant
+- `docs/development/uitloggen-in-een-applicatie.md` - het contract voor de applicatiekant
 - `features/keycloak-always-clear-session-logout.md` - de shim en waarom de keten eindigt

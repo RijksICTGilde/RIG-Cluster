@@ -19,9 +19,33 @@ tabbladen (`PROJECT_READ`). Van links naar rechts:
 - de componenten, met geheugen en CPU als staafjes, het health-pad, de schijven, het
   metrics-pad en het aantal bijlagen;
 - de services die het project gebruikt, in de kleur van hun categorie;
-- het kader **Deployments**: klik een deployment open voor zijn componenten, met de
-  image-tag en het webadres;
 - helemaal rechts de projecten waar dit project naartoe wijst.
+
+Boven de kaart staat een keuzelijst: **Project** of een van de deployments.
+
+- **Project** toont de definitie: wat de componenten vragen aan geheugen en CPU, welke
+  services ze gebruiken en de koppelingen. Er wordt niets gemeten.
+- **Een deployment** toont alleen de componenten die erin draaien, met hun image-tag en
+  webadres. Op de services staat hoeveel deze deployment erin bewaart (database, volumes).
+  Heeft hij een backupschema, dan staat **Backups** rechts van de services die het afdekt.
+  Bij **Slaapstand** staat of deze deployment vanzelf gaat slapen, volgens
+  `SleepModeConfig.matches`, dezelfde functie als de sweeper.
+
+De graaf van een deployment komt van `kaart.json?deployment=<naam>`; een onbekende
+deployment geeft een 404.
+
+### Groottes
+
+Alleen de kaart van een deployment meet. De groottes komen uit Prometheus/Mimir, met
+hetzelfde venster als de pagina gedeelde diensten (`last_over_time(...[6h])`):
+`kubelet_volume_stats_used_bytes` en `..._capacity_bytes` voor de volumes,
+`cnpg_pg_database_size_bytes` voor de database. De namen zijn die van de PVC-manager en
+`generate_database_name`, met de generatie uit het projectbestand
+(`opi/services/zad_map/usage.py`, `usage_targets` in `project.py`).
+
+Een meting die mislukt of langer duurt dan vijf seconden kost de groottes, niet de kaart: er
+staat dan "niet gemeten", nooit nul. Buckets staan altijd op "niet gemeten", want MinIO
+wordt in productie niet gescrapet.
 
 Cross-domain koppelingen staan er in **beide richtingen**, met de naam van het andere
 project en component en de poort als label. De inkomende kant komt uit het bestand van de
@@ -83,6 +107,8 @@ en in het plan van RC-403 (paragraaf 4). Kort:
 - **Kleuren** zijn namen, geen hex: `component`, `deployment`, `team`, `project`, `web`,
   `identity`, `data`, `ops`, `link`, `gitops`, `network`, `platform`, `external`. Het
   element vertaalt ze naar de Rijkshuisstijl.
+- **Labels** van lijnen naar hetzelfde doel worden samengevoegd (de poorten van een
+  koppeling), maar alleen tussen lijnen van dezelfde kleur en stijl.
 - **Klikken**: `focus` dimt alles behalve wat erbij hoort, `expand` klapt open, `info`
   opent meteen het paneel. Een knoop met `info` krijgt een "i"-knop.
 - **Alle tekst is platte tekst**, behalve `html` in een infosectie. Dat veld krijgt
@@ -130,6 +156,7 @@ reden staat erbij.
 
 ## Afhankelijkheden
 
+- Meten: `get_metrics_connector()` (Prometheus of Grafana/Mimir, wat het cluster heeft).
 - Lezen: `get_project_store()`, `public_urls_for_deployment`,
   `ProjectFileHandler.extract_component_resources`, `merge_rules`/`to_merged_rule`
   (cross-domain) en `render_service_help`. De kaart bouwt niets na.

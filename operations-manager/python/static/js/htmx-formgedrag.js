@@ -274,4 +274,50 @@
     document.addEventListener("htmx:responseError", klaar);
     document.addEventListener("htmx:sendError", klaar);
     document.addEventListener("htmx:timeout", klaar);
+
+    /* 5. A FAILED REQUEST SAYS SO.
+     *
+     * htmx swaps nothing on a 4xx or 5xx, and the server answers htmx with JSON because htmx
+     * does not ask for text/html. A failure therefore left the screen as it was: the user
+     * clicked and nothing happened. Every failure that nothing else handles now raises a
+     * notification with the server's message; on a 5xx that message carries the reference
+     * to find the request in the logs.
+     *
+     * A handler that shows the error itself sets isError = false in beforeSwap, and htmx then
+     * fires no responseError. The confirm dialog reports on afterRequest instead
+     * (edit_modal.js), so it is skipped here.
+     *
+     * One notification at a time: a poll that keeps failing updates it instead of stacking a
+     * new one every few seconds. */
+    var GENERIC_FAILURE = "Er ging iets mis bij het verwerken van je verzoek. Probeer het over een minuut opnieuw.";
+    var UNREACHABLE = "De server is niet bereikbaar. Controleer je verbinding en probeer het opnieuw.";
+    var failureNotice = null;
+
+    function serverMessage(xhr) {
+        try {
+            var body = JSON.parse(xhr.responseText);
+            if (body && typeof body.detail === "string" && body.detail.trim()) return body.detail;
+        } catch (err) {
+            /* Not JSON: an HTML page or an empty body. */
+        }
+        return null;
+    }
+
+    function notifyFailure(e, message) {
+        var elt = e.detail && e.detail.elt;
+        if (elt && elt.closest && elt.closest("[data-confirm-action]")) return;
+        var Notification = customElements.get("nldd-notification");
+        if (!Notification || typeof Notification.show !== "function") return;
+        var options = { variant: "critical", text: "Dat is niet gelukt", supportingText: message };
+        if (failureNotice && failureNotice.element.isConnected) failureNotice.update(options);
+        else failureNotice = Notification.show(options);
+    }
+
+    document.addEventListener("htmx:responseError", function (e) {
+        var xhr = e.detail && e.detail.xhr;
+        notifyFailure(e, (xhr && serverMessage(xhr)) || GENERIC_FAILURE);
+    });
+    document.addEventListener("htmx:sendError", function (e) {
+        notifyFailure(e, UNREACHABLE);
+    });
 })();

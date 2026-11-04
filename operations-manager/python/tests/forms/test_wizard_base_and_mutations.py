@@ -1,7 +1,7 @@
 """LEVEL 2 (wizard save/round-trip) for the wizard itself: base plus mutations.
 
 The template for this file is ``tests/test_service_health_check.py``; the levels are
-described in ``instructions/wizard-tests.md``. Level 2 is the fast, browserless seam:
+described in ``docs/development/wizard-tests.md``. Level 2 is the fast, browserless seam:
 a POST goes through ``EditableFormProcessor`` (and, for a flow, the router's
 reconciliation) and must land at the right yaml path in the right shape.
 

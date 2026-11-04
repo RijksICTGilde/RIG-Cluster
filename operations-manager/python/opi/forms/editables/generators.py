@@ -12,6 +12,8 @@ import logging
 from typing import Any
 
 from opi.core import config as opi_config
+from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
+from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.publish_on_web.issuer import derive_issuer
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -195,6 +197,32 @@ class UserEnvVarsEncryptGenerator:
             return
         component["user-env-vars"] = LiteralScalarString(encrypt_age_content_sync(user_env_vars, public_key))
         logger.debug("Encrypted user-env-vars for component %s", label or "unknown")
+
+
+class RegistryPasswordsEncryptGenerator:
+    """Encrypt the image-registry tokens with the project's AGE public key.
+
+    In the create wizard the key does not exist yet while the steps are filled in, so
+    ``ProjectAgeSecretConverter`` leaves a typed token as it is. The same backstop as
+    ``UserEnvVarsEncryptGenerator``, through the converter's own write so the wizard and
+    the project page store the same form.
+
+    Must run after ``AGEKeyPairGenerator`` so the project public key exists.
+    Uses a ``_generated`` path - the return value is discarded during cleanup.
+    """
+
+    def generate(self, yaml_data: dict[str, Any]) -> Any:
+        public_key = yaml_data.get("config", {}).get("age-public-key")
+        if not public_key:
+            logger.debug("No project public key available, skipping registry token encryption")
+            return True
+
+        converter = ProjectAgeSecretConverter()
+        for registry in project_registries(yaml_data):
+            password = registry.get("password")
+            if isinstance(password, str) and password:
+                registry["password"] = converter.write(password, yaml_data)
+        return True
 
 
 class ComponentAliasesEncryptGenerator:

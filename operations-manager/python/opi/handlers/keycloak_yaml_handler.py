@@ -74,7 +74,7 @@ _HARDENING_REALM_FIELDS = (
 #: The ``smtpServer`` keys that describe a CONNECTION, and that OPI therefore removes.
 #:
 #: Not a defence -- the defence is that Keycloak's sender is replaced and ignores this whole
-#: map (``keycloak-migration/relay-email-sender/``). A realm administrator keeps
+#: map (``images/keycloak-zad/extensions/relay-email-sender/``). A realm administrator keeps
 #: ``manage-realm`` and can write these back a second after the reconcile, and it still
 #: leads nowhere.
 #:
@@ -608,7 +608,7 @@ class KeycloakYamlHandler:
         """Give the realm the MINIMAL ``smtpServer``: one key, ``from``, and no destination.
 
         Keycloak's own ``EmailSenderProvider`` is replaced on this platform
-        (``keycloak-migration/relay-email-sender/``): the relay, the credentials and the
+        (``images/keycloak-zad/extensions/relay-email-sender/``): the relay, the credentials and the
         sender come out of the POD's environment and the realm's ``smtpServer`` is ignored
         entirely. So there is nothing a realm NEEDS here -- and that is the point, because a
         realm that names a destination is a realm whose administrator can move that

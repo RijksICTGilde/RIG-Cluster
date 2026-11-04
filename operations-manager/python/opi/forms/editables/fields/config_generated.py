@@ -15,6 +15,7 @@ from opi.forms.editables.generators import (
     ComponentAliasesEncryptGenerator,
     EncryptedPrivateKeyGenerator,
     ProjectNameGenerator,
+    RegistryPasswordsEncryptGenerator,
     UserEnvVarsEncryptGenerator,
 )
 
@@ -40,6 +41,11 @@ USER_ENV_VARS_ENCRYPT_GEN_EDITABLE = Editable(
     generator=UserEnvVarsEncryptGenerator(),
 )
 
+REGISTRY_PASSWORDS_ENCRYPT_GEN_EDITABLE = Editable(
+    yaml_path="_generated/registry-passwords-encrypted",
+    generator=RegistryPasswordsEncryptGenerator(),
+)
+
 ALIASES_ENCRYPT_GEN_EDITABLE = Editable(
     yaml_path="_generated/aliases-encrypted",
     generator=ComponentAliasesEncryptGenerator(),
@@ -55,6 +61,7 @@ GENERATED_EDITABLES_PURE: list[Editable] = [
     AGE_PUBLIC_KEY_GEN_EDITABLE,
     AGE_PRIVATE_KEY_GEN_EDITABLE,
     USER_ENV_VARS_ENCRYPT_GEN_EDITABLE,
+    REGISTRY_PASSWORDS_ENCRYPT_GEN_EDITABLE,
     ALIASES_ENCRYPT_GEN_EDITABLE,
     ATTACHMENTS_RESOLVE_GEN_EDITABLE,
 ]

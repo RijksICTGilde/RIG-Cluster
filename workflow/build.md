@@ -1,4 +1,4 @@
-- UI components must use the Lord of the Components tags (`<c-*>`, NLDD-thema) as much as possible; if a component seems to be missing, add it to the list in request_for_components.md with a detailed request for it so it can be built later. See `features/lotc-bouwlijn.md`.
+- UI components must use the Lord of the Components tags (`<c-*>`, NLDD-thema) as much as possible; if a component seems to be missing, make a card for it on the ZAD project board with a detailed request so it can be built later. See `features/lotc-bouwlijn.md`.
 - **Never put a `{# ... #}` comment INSIDE a component tag.** The LOTC preprocessor parses the tag body as attributes, so the words in your comment become attribute names and rendering dies with `Duplicate attribute 'een'` - a message that points at a word, not at the comment. It has cost two reworks. Put the explanation above the tag:
 
   ```jinja

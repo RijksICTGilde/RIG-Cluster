@@ -6,7 +6,7 @@ eruitziet zoals hij eruitziet.
 ## Waarom dit telt
 
 Een sandboxdeploy pusht het image naar de registry naast het cluster en de node pullt
-het, allebei per laag (`docs/sandbox-kind-registry.md`). Wat al in de registry of op de
+het, allebei per laag (`docs/sandbox/sandbox-kind-registry.md`). Wat al in de registry of op de
 node staat gaat niet opnieuw over de leiding. Wat dit bestand regelt is hoeveel er per
 codewijziging OPNIEUW gebouwd en dus verstuurd wordt.
 

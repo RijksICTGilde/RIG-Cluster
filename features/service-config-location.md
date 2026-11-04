@@ -26,7 +26,7 @@ draagt een tweede veld het feit dat in die enum was meegelift: `shared_per_deplo
 "één voorziening voor de hele deployment" (`features/dienst-per-component-aanvinken.md`).
 
 De twee blijven bestaan (ze beantwoorden verschillende vragen) maar zijn uit elkaar
-getrokken in naam en documentatie. `instructions/services.md` heeft de regel;
+getrokken in naam en documentatie. `docs/development/services.md` heeft de regel;
 `tests/test_service_config_location.py` legt vast welke van de twee de bron van waarheid is,
 met `keycloak` als tegenvoorbeeld, en faalt als de hele catalogus ooit gelijkloopt (dan is
 samenvoegen de betere oplossing en zegt die test dat).

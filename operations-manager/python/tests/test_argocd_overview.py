@@ -192,7 +192,7 @@ async def test_twee_projecten_delen_hun_stand_niet(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_de_bevraging_bouwt_een_connector_die_snel_faalt(argo) -> None:
     """Deze module staat op een renderpad, dus geldt de regel uit
-    docs/argocd-server-herstart-elke-40-minuten.md: budget 0.
+    docs/post-mortems/argocd-server-herstart-elke-40-minuten.md: budget 0.
 
     Op het standaardbudget wacht de login hier 30 seconden met de projectpagina erachter.
     ``BEVRAGING_TIMEOUT_SECONDS`` dekt dat niet af: die grens staat alleen om de

@@ -244,6 +244,8 @@ async def handle_restore(
     create_new_deployment = payload.get("create_new_deployment", False)
     source_deployment = payload.get("source_deployment", "")
     deployment_config = payload.get("deployment_config")
+    # De deployment waarvan de nieuwe zijn config overneemt, leeg voor een lege deployment.
+    config_source = payload.get("config_source") or None
 
     try:
         if create_new_deployment:
@@ -270,6 +272,7 @@ async def handle_restore(
                     source_deployment,
                     deployment_config=deployment_config,
                     backup_run_id=backup_run_id,
+                    config_source=config_source,
                 )
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                 progress.fail_task(create_task, str(e))

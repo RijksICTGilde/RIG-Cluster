@@ -1,7 +1,7 @@
 """Een aiohttp-aanroep herhalen zolang de verbinding niet tot stand komt.
 
 Hier en niet in een connector, want twee connectors hebben hem: ArgoCD rijdt er de
-herstart van zijn eigen API-server mee uit (docs/argocd-server-herstart-elke-40-minuten.md)
+herstart van zijn eigen API-server mee uit (docs/post-mortems/argocd-server-herstart-elke-40-minuten.md)
 en de mailrelay een podwissel, en in beide gevallen kost dat verschil anders een hele
 uitrol.
 """
@@ -26,24 +26,30 @@ async def retry_on_connect_error[T](
     operation: Callable[[], Awaitable[T]],
     budget_seconds: float,
     description: str,
+    connect_errors: tuple[type[BaseException], ...] = (aiohttp.ClientConnectorError,),
 ) -> T:
     """Repeat an operation while it cannot connect, spending at most budget_seconds asleep.
 
-    Only ClientConnectorError is caught: the TCP connection was never established, so the
-    request never reached the server. Repeating it is therefore safe for any method, POST
-    included. Read timeouts and ServerDisconnectedError are not retried, because there the
-    request may already have been processed.
+    Only ClientConnectorError is caught by default: the TCP connection was never
+    established, so the request never reached the server. Repeating it is therefore safe
+    for any method, POST included. Read timeouts and ServerDisconnectedError are not
+    retried, because there the request may already have been processed.
+
+    ``connect_errors`` widens that set for a caller on another protocol: a PostgreSQL
+    connect fails with OSError (ConnectionRefusedError and gaierror are both one), never
+    with an aiohttp error. Only pass exceptions that mean the connection was never made;
+    an error on a query belongs to the caller.
 
     A budget of 0 gives exactly one attempt without sleeping. Once the budget is spent the
-    last ClientConnectorError is raised untouched, so a caller sees the same failure as
-    before this retry existed.
+    last error is raised untouched, so a caller sees the same failure as before this retry
+    existed.
     """
     slept = 0.0
     delay = _FIRST_DELAY
     while True:
         try:
             return await operation()
-        except aiohttp.ClientConnectorError as e:
+        except connect_errors as e:
             remaining = budget_seconds - slept
             if remaining <= 0:
                 logger.error(f"Unreachable after {slept:.0f}s of retries, giving up on {description}: {e}")

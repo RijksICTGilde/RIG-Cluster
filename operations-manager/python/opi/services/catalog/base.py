@@ -379,14 +379,6 @@ class ManifestContribution:
     sidecars: list[str] = field(default_factory=list)
     #: SOPS secret manifests this service needs written (RC-5 Phase 6c).
     secret_files: list[SecretFileSpec] = field(default_factory=list)
-    #: Read-only file mounts from a Secret this service owns, as
-    #: ``{name, secret_name, mount_path, sub_path}`` (RC-167). **Additive**: the loop
-    #: appends them to the ``attachment_secret_mounts`` template var, which is the one
-    #: existing way from a Secret through a volume to a ``volumeMount`` in
-    #: ``manifests/deployment.yaml.jinja``. Reusing it rather than adding a second
-    #: channel is the point; a ``template_vars`` entry would not do, because that is an
-    #: override and would drop the component's own attachment mounts.
-    secret_mounts: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -795,7 +787,7 @@ class Service(ABC):
 
     #: Whether the CONFIG of this service at the component layer is at the same time its
     #: SELECTION, so there is no separate on/off for it on a component. What follows from
-    #: it, and when to declare it: ``instructions/services.md``.
+    #: it, and when to declare it: ``docs/development/services.md``.
     component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
@@ -1779,6 +1771,6 @@ def offers_component_checkbox(service: Service) -> bool:
     """Whether a component ticks this service on and off in the per-component picker.
 
     The one place where the two declarations that take the checkbox away meet; they stay
-    separate because their consequences elsewhere differ (``instructions/services.md``).
+    separate because their consequences elsewhere differ (``docs/development/services.md``).
     """
     return service.definition.selectable_per_component and not service.component_selection_follows_config

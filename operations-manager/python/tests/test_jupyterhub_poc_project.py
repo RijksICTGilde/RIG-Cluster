@@ -1,7 +1,7 @@
 """De koppeling tussen de JupyterHub-POC en ZAD (RC-258).
 
 ``images/jupyterhub-hub/jupyterhub_config.py`` leest alles wat per project verschilt uit
-env vars, en ``projects/ideas/jupyterhub-poc.yaml`` is wat die vars vult. Dat contract is
+env vars, en ``features/jupyterhub-poc/jupyterhub-poc.yaml`` is wat die vars vult. Dat contract is
 nergens afdwingbaar: een hernoemde variabele, een andere servicenaam of een verschoven
 poort valt pas tien minuten later om in een pod op de sandbox. Deze tests meten het hier.
 """
@@ -24,7 +24,7 @@ from opi.utils.secrets import MinIOSecret
 from ruamel.yaml import YAML
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PROJECT_FILE = REPO_ROOT / "projects" / "ideas" / "jupyterhub-poc.yaml"
+PROJECT_FILE = REPO_ROOT / "features" / "jupyterhub-poc" / "jupyterhub-poc.yaml"
 HUB_CONFIG = REPO_ROOT / "images" / "jupyterhub-hub" / "jupyterhub_config.py"
 
 
@@ -116,7 +116,7 @@ def test_hub_config_starts_on_exactly_what_the_project_file_and_the_services_pro
 def test_every_user_env_var_in_the_project_file_is_one_the_hub_config_reads(key: str) -> None:
     """Een sleutel in het projectbestand die de config niet leest, is dode configuratie."""
     assert key in HUB_CONFIG.read_text(encoding="utf-8"), (
-        f"{key} staat in projects/ideas/jupyterhub-poc.yaml maar wordt door de hub niet gelezen"
+        f"{key} staat in features/jupyterhub-poc/jupyterhub-poc.yaml maar wordt door de hub niet gelezen"
     )
 
 

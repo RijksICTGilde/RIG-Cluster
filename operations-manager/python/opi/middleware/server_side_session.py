@@ -205,8 +205,7 @@ class ServerSideSessionMiddleware:
         if self.session_cookie in connection.cookies:
             raw_value = connection.cookies[self.session_cookie].encode("utf-8")
             try:
-                # max_age handhaaft het inactiviteitsvenster op de ondertekening, zoals
-                # Starlette dat op de cookie zelf deed.
+                # max_age enforces the idle window here, on the signature, not on the cookie.
                 session_id = self.signer.unsign(raw_value, max_age=self.max_age).decode("utf-8")
             except BadSignature:
                 logger.warning("Invalid session cookie signature - tampering or SECRET_KEY mismatch")
@@ -238,11 +237,11 @@ class ServerSideSessionMiddleware:
                     # Alleen bij mutatie een verse ondertekening: de cookie staat dan weer
                     # op "nu".
                     signed = self.signer.sign(session.session_id.encode("utf-8"))
-                    header_value = "{session_cookie}={data}; path={path}; {max_age}{security_flags}".format(
+                    # No Max-Age: a session cookie, gone when the browser closes.
+                    header_value = "{session_cookie}={data}; path={path}; {security_flags}".format(
                         session_cookie=self.session_cookie,
                         data=signed.decode("utf-8"),
                         path=self.path,
-                        max_age=f"Max-Age={self.max_age}; " if self.max_age else "",
                         security_flags=self.security_flags,
                     )
                     headers.append("Set-Cookie", header_value)

@@ -105,7 +105,7 @@ subproces dat OPI start erft hem niet.
 
 `scripts/secret_rotate.py` heeft de rij `operations-manager-db` (categorie `cnpg-secret`):
 het bestand gaat eerst, de CNPG-operator past de rol dan zelf aan, en OPI herstart omdat hij
-het wachtwoord als env leest. Zie `docs/wachtwoorden-roteren.md`.
+het wachtwoord als env leest. Zie `docs/operations/wachtwoorden-roteren.md`.
 
 ## Afhankelijkheden
 

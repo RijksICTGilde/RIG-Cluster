@@ -72,8 +72,8 @@ uv run pytest tests/test_lotc_icon_mapping.py tests/test_lotc_layout_rules.py -q
 uv run pytest tests/e2e/test_lotc_visual.py -m "e2e and not sandbox" -q
 ```
 
-De screenshots landen in `tests/e2e/screenshots/lotc/` en staan in de repo: ze zijn het
-resultaat waar de omzetting op beoordeeld wordt, niet een wegwerpartefact.
+De screenshots landen in `tests/e2e/screenshots/lotc/`, alleen lokaal. De set waarop de
+omzetting is beoordeeld staat in RIG-Cluster-Legacy.
 
 Draaiende applicatie:
 

@@ -42,6 +42,8 @@ _SLEUTELPAD = re.compile(
     r"\{\{\.KEY_FILE\}\}|\{\{\.KEY\}\}|security/sandbox-key\.txt|security/developer-key\.txt|security/key\.txt"
 )
 
+_TASK_AANROEP = re.compile(r"^\s*(?:\w+=\S+\s+)*task\s+([\w:-]+)")
+
 
 def _taken() -> dict[str, Any]:
     return yaml.safe_load(TASKFILE.read_text())["tasks"]
@@ -58,14 +60,23 @@ def _heeft_de_guard(taak: dict[str, Any]) -> bool:
     return False
 
 
-def _leest_rechtstreeks_een_sleutelpad(taak: dict[str, Any]) -> bool:
+def _leest_rechtstreeks_een_sleutelpad(taak: dict[str, Any], taken: dict[str, Any]) -> bool:
     """Een letterlijke shellregel in `cmds` die het pad noemt, geen doorgave aan een subtaak.
 
     Een `task: andere-taak` met `vars: {KEY_FILE: ...}` geeft het pad door aan een taak die
     zijn eigen guard draagt (zie `_generate-secrets-shared` en de taken die hem aanroepen),
-    en telt hier niet mee.
+    en telt hier niet mee. Een shellregel `CLUSTER_TYPE=x task andere-taak KEY_FILE=...` ook
+    niet, maar alleen als die andere taak zelf de guard draagt.
     """
-    return any(isinstance(cmd, str) and _SLEUTELPAD.search(cmd) for cmd in taak.get("cmds") or [])
+
+    def _doorgegeven_aan_een_bewaakte_taak(cmd: str) -> bool:
+        aanroep = _TASK_AANROEP.match(cmd)
+        return aanroep is not None and _heeft_de_guard(taken.get(aanroep.group(1)) or {})
+
+    return any(
+        isinstance(cmd, str) and _SLEUTELPAD.search(cmd) and not _doorgegeven_aan_een_bewaakte_taak(cmd)
+        for cmd in taak.get("cmds") or []
+    )
 
 
 def _draai(key_file: Path) -> subprocess.CompletedProcess[str]:
@@ -162,7 +173,7 @@ def test_elke_taak_die_een_sleutelpad_rechtstreeks_leest_heeft_de_guard() -> Non
     zonder_guard = [
         naam
         for naam, taak in taken.items()
-        if naam != "_check-key-file" and _leest_rechtstreeks_een_sleutelpad(taak) and not _heeft_de_guard(taak)
+        if naam != "_check-key-file" and _leest_rechtstreeks_een_sleutelpad(taak, taken) and not _heeft_de_guard(taak)
     ]
 
     onverwacht = sorted(set(zonder_guard) - set(GEEN_GUARD_NODIG))

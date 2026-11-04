@@ -24,7 +24,7 @@ componenten:
         - maatregel: >-
             Een upload wordt met een plafond gelezen in plaats van eerst volledig, zodat een
             grote upload de pod niet OOMKilled maakt.
-          bron: plans/invoer-eerst-schoon-dan-getoetst.md
+          bron: features/uploads-plafond-en-slot.md
           toets: operations-manager/python/tests/test_upload_ceiling.py
         - maatregel: >-
             Het aantal verbindingen dat een project op de gedeelde database opent is begrensd,
@@ -40,7 +40,7 @@ componenten:
         - maatregel: >-
             De namespace van een deployment komt uit de projectnaam en niet uit het
             projectbestand, dat door de aanvrager te bepalen is.
-          bron: plans/technische-review-bio-en-nora-bevindingen.md
+          bron: operations-manager/python/tests/test_tenant_isolation_namespace.py
           toets: operations-manager/python/tests/test_tenant_isolation_namespace.py
         - maatregel: Elke muterende route achter een CSRF-token.
           bron: features/opi-start-dicht.md
@@ -100,7 +100,7 @@ componenten:
         - maatregel: >-
             Projectbestand en realm lopen niet stil uiteen: een mislukte lezing van de realm
             geldt niet als afwezig.
-          bron: plans/keycloak-config-bewerkbaar-zonder-verlies.md
+          bron: operations-manager/python/tests/test_keycloak_drift_guards.py
           toets: operations-manager/python/tests/test_keycloak_drift_guards.py
       vertrouwelijkheid:
         - maatregel: Het realm-beheeraccount staat achter een 2-factor (OTP).
@@ -350,7 +350,7 @@ componenten:
         - maatregel: >-
             Elke weg van projectbestand naar namespace pint de namespace op de projectnaam, dus
             een opgegeven namespace van een ander project doet niets.
-          bron: plans/technische-review-bio-en-nora-bevindingen.md
+          bron: operations-manager/python/tests/test_tenant_isolation_namespace.py
           toets: operations-manager/python/tests/test_tenant_isolation_namespace.py
         - maatregel: Pod Security Standards per namespace, zodat een pod geen privileges kan opeisen.
           bron: features/pod-security-labels.md

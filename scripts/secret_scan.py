@@ -130,7 +130,7 @@ URL_CREDENTIAL_TEMPLATE_CHARACTERS = frozenset("${}<>*")
 URL_CREDENTIAL_PLACEHOLDER_WORDS = ("pass", "secret", "example", "changeme", "placeholder", "dummy", "redacted")
 
 #: The sandbox password, committed on purpose in some twenty-five places and printed in
-#: ``docs/sandbox-reference.md`` as the login for every service on a local Kind cluster. It opens
+#: ``docs/sandbox/sandbox-reference.md`` as the login for every service on a local Kind cluster. It opens
 #: nothing that outlives a ``task sandbox:destroy``, and alarming on it would put a permanent FAIL
 #: on a healthy tree: the known finding that teaches people to ignore the scan.
 COMMITTED_SANDBOX_PASSWORDS = frozenset({"admin1234"})

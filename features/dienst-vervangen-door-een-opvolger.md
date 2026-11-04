@@ -2,8 +2,8 @@
 
 Een dienst in de catalogus kan verklaren dat hij opgevolgd is door een andere. Op een
 cluster waar die opvolger er echt is verdwijnt de oude dienst voor wie hem nog niet heeft,
-terwijl elke deployment die hem al draait hem houdt. Zo kan een dienst uitfaseren zonder
-dat er iets omvalt dat er al staat.
+terwijl een project dat hem al draait hem houdt, ook op een nieuwe deployment. Zo kan een
+dienst uitfaseren zonder dat er iets omvalt dat er al staat.
 
 Eerste gebruik: `minio-storage`, opgevolgd door `seaweedfs-storage` (RC-382). MinIO
 distribueert zijn images niet meer (`docs/KNOWN-ISSUES.md`) en de proef uit RC-331 kan wat
@@ -43,13 +43,19 @@ dezelfde validatie, dus een API-aanroep krijgt dezelfde weigering als het formul
 
 ### Wat "had hem al" betekent
 
-Per DEPLOYMENT, afgemeten tegen de vorige versie van het projectbestand (`previous`, die
-`validate_project_structure` al meekrijgt) en gelezen met
+Per PROJECT: gebruikte een deployment in de vorige versie van het projectbestand
+(`previous`, die `validate_project_structure` al meekrijgt) de dienst, dan mag elke
+deployment van dat project hem gebruiken. Gelezen met
 `ProjectFileHandler.deployment_uses_service`, zodat helm-charts en helmfiles meetellen.
-Daaruit volgt:
+Per project en niet per deployment, omdat een PR-preview een verse kloon is van een
+deployment die de dienst al draaide: per deployment weigerde dat elke nieuwe preview
+(wies, `pr-803`). Daaruit volgt:
 
 - een nieuw project heeft geen vorige versie, dus elke keuze is nieuw: geweigerd;
-- een tweede deployment in een bestaand project die de dienst erbij krijgt: geweigerd;
+- een bestaand project waarin geen deployment de dienst gebruikt, en dat hem erbij krijgt:
+  geweigerd;
+- een nieuwe deployment in een project dat hem al gebruikt, zoals een PR-preview:
+  toegestaan;
 - de deployment die hem al gebruikte: toegestaan, ook bij elke volgende save, reprocess en
   replay;
 - de dienst staat in de projectlijst maar geen enkele deployment gebruikt hem: er is niets
@@ -60,8 +66,9 @@ Daaruit volgt:
 
 De kaart van een vervangen dienst is uit te vinken, en de dienstenlijst leest dan precies
 wat de kiezer aanbood (`offered_selection_values` krijgt dezelfde `project_services`-context
-als de renderer). Daarna is de dienst voor die deployment nieuw, en dus geweigerd. De
-melding op de kaart zegt dat vooraf.
+als de renderer). Gebruikt daarna geen enkele deployment van het project de dienst nog,
+dan is hij voor het project nieuw, en dus geweigerd. Zolang een andere deployment hem nog
+draait, is terugzetten wel mogelijk. De melding op de kaart zegt dat vooraf.
 
 ## Wat blijft werken
 

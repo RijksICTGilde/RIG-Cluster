@@ -41,7 +41,7 @@ kind load docker-image rig-cmp-argo-kustomize-sops:latest --name rig-sandbox
 To run locally with shell access:
 docker run --rm -it --entrypoint /bin/bash rig-cmp-argo-kustomize-sops:latest
 
-task bootstrap-argo-system CLUSTER_TYPE=sandboxed-local KEY_FILE=security/sandbox-key.txt
+CLUSTER_TYPE=sandboxed-local task bootstrap-argo-system KEY_FILE=security/sandbox-key.txt
 kubectl rollout restart deployment argocd-repo-server -n rig-system
 
 jupyterhub-hub en jupyterhub-user: de twee images van de JupyterHub-POC (RC-258). De hub is een

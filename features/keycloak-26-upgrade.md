@@ -73,6 +73,10 @@ herbouw levert een ander artefact op en dan is het bewijs van de sandbox niets w
 
 ## Het venster
 
+Eerst op staging, met hetzelfde venster: `task pin-keycloak-image TARGET=staging` in plaats
+van `TARGET=base` in stap 3, en de namespace `rig-staging-operations`. Productie blijft dan op
+de basis; de promotie naar de basis haalt de staging-pin daarna weer weg.
+
 1. **De nulmeting.** `task keycloak-telling CONTEXT=prd NAMESPACE=rig-prd-operations OUT=voor.txt`.
    Dat zijn realms, clients, gebruikers, credentials per type en gekoppelde identiteiten.
    Realmconfiguratie kan OPI hergenereren, gebruikers en koppelingen niet.
@@ -136,7 +140,7 @@ verschil en valt niet op eigen initiatief terug.
 
 ## Afhankelijkheden
 
-- `keycloak-migration/custom-mapper/` en `keycloak-migration/relay-email-sender/` (de jars)
+- `images/keycloak-zad/extensions/custom-mapper/` en `images/keycloak-zad/extensions/relay-email-sender/` (de jars)
 - `keycloak-migration/proefmigratie/` (de manifesten van de proef)
 - MinBZK/keycloak-theme (het loginthema, v1.4.2)
 - de realm-blauwdrukken: `operations-manager/python/opi/configs/keycloak/*.yaml`

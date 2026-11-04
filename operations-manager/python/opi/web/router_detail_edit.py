@@ -56,11 +56,18 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
 )
 from opi.handlers.project_file_handler import extract_attachment_catalog
+from opi.manager.clone_validation import build_restore_target_deployment
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
-from opi.web.authz import authorize, authorized_project, require_action
+from opi.web.authz import (
+    authorize,
+    authorized_project,
+    require_action,
+    require_clone_source_access,
+    require_on_any_deployment,
+)
 from opi.web.lotc_switch import render_fragment
 from opi.web.navigation_lotc import to_nldd_icon
 from opi.web.router_wizard import (
@@ -77,6 +84,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
     from opi.forms.visualizers.sections import FormSection
     from opi.forms.wizard.state import WizardState
+    from opi.services.project_service import ProjectSummary
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +249,15 @@ def _check_flow_access(request: Request, project_name: str, flow_id: str) -> Non
 
     Opening, loading, submitting or skipping a step is not a handling, so it gets no
     row; a refusal is recorded by ``require_action`` (RC-406).
+
+    De restore is de uitzondering: ``restore.run`` weegt op de bron en op het doel, en die
+    staan pas in de sessiestaat (``_authorize_restore``). Zonder deployment weegt hij tegen
+    de hoogste markering van het project, en dan kon een developer de wizard niet eens
+    openen terwijl hij tussen twee niet-productie-deployments wel mag terugzetten (RC-417).
     """
+    if flow_id == "modal-restore":
+        require_on_any_deployment(request, Action.RESTORE_RUN, project_name)
+        return
     require_action(request, _flow_action(flow_id), project_name)
 
 
@@ -249,7 +265,16 @@ def _authorize_flow(request: Request, project_name: str, flow_id: str) -> tuple[
     """The gate for the FINISHED flow, the only one that records the decision.
 
     Returns (project, user_email).
+
+    Behalve voor de restore: die legt zijn beslissing vast op de bron en het doel die hij
+    echt aanwijst, zie :func:`_check_flow_access`.
     """
+    if flow_id == "modal-restore":
+        _check_flow_access(request, project_name, flow_id)
+        project = get_project_store().get(project_name)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+        return project, str((get_current_user(request) or {}).get("email", "")).lower()
     return authorize(request, action=_flow_action(flow_id), project_name=project_name)
 
 
@@ -380,9 +405,10 @@ def _strip_attachment_content(project_data: dict[str, Any]) -> dict[str, Any]:
 def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
     """Pre-fill the components step when adding a new deployment.
 
-    Always seeds ALL project-level components. When clone-from is set,
-    images are copied from the source deployment's components. Otherwise
-    image fields are left empty.
+    Always seeds ALL project-level components. When a source deployment is chosen
+    (``config_source`` in the restore wizard, ``clone-from`` when adding a deployment),
+    images are copied from that deployment's components. Otherwise image fields are left
+    empty.
     """
 
     merged = state.get_merged_data()
@@ -394,13 +420,17 @@ def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
     if not project_components:
         return
 
+    # De restore-wizard kiest zijn bron in een eigen veld: ``clone-from`` draagt daar na het
+    # opslaan de backup-run, niet de deployment waarvan de config komt (RC-417).
+    clone_ref = str(merged.get("config_source") or "")
+
     # clone-from may be a string ("staging") or dict ({"type": ..., "reference": "staging", ...})
-    clone_from_raw = deployments[dep_idx].get("clone-from")
-    clone_ref = ""
-    if isinstance(clone_from_raw, dict):
-        clone_ref = clone_from_raw.get("reference", "")
-    elif isinstance(clone_from_raw, str):
-        clone_ref = clone_from_raw
+    if not clone_ref:
+        clone_from_raw = deployments[dep_idx].get("clone-from")
+        if isinstance(clone_from_raw, dict):
+            clone_ref = clone_from_raw.get("reference", "")
+        elif isinstance(clone_from_raw, str):
+            clone_ref = clone_from_raw
 
     # Build image lookup from the source deployment
     source_images: dict[str, str] = {}
@@ -427,6 +457,22 @@ def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
     components_section_id = f"add-deployment-components-{dep_idx}"
     seed: dict[str, Any] = {"deployments": [{} for _ in range(dep_idx)] + [{"components": seeded_components}]}
     state.store_step_data(components_section_id, seed)
+
+
+def _seed_restore_config_source(state: Any, section_id: str) -> None:
+    """Default the restore's config source to the deployment the backup was taken from.
+
+    Presence, not truth: once the step has the key, the user's own choice stands, "Geen
+    (lege deployment)" included.
+    """
+    step = dict(state.step_data.get(section_id) or {})
+    if "config_source" in step:
+        return
+    source = (state.base_data or {}).get("_source_deployment", "")
+    if not source:
+        return
+    step["config_source"] = source
+    state.store_step_data(section_id, step)
 
 
 def _determine_flow_action(flow: FormFlow, active_sections: list[FormSection]) -> str:
@@ -655,7 +701,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
     if action == "add":
         editable = _find_sequence_editable(section, seq_path)
-        items.append(_empty_sequence_item(editable))
+        items.append(_empty_sequence_item(editable, yaml_data))
     elif action == "remove":
         remove_index = int(seq_index) if seq_index not in (None, "") else -1
         if 0 <= remove_index < len(items):
@@ -699,7 +745,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
             if idx >= len(items):
                 flow_context["is_new"] = True
                 while len(items) <= idx:
-                    items.append(_empty_sequence_item(COMPONENTS_SEQUENCE))
+                    items.append(_empty_sequence_item(COMPONENTS_SEQUENCE, project_data))
                 project_data = {**project_data, kind.list_key: items}
 
         # An add flow always writes into a fresh slot at the end of the list.
@@ -974,7 +1020,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
             items = []
 
         if seq_action == "add":
-            items.append(_empty_sequence_item(editable))
+            items.append(_empty_sequence_item(editable, merged))
         elif seq_action == "remove":
             remove_index = int(seq_index) if seq_index not in (None, "") else -1
             if 0 <= remove_index < len(items):
@@ -1161,6 +1207,10 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         if next_section.section_id == "restore-target":
             _enrich_restore_target_context(state)
 
+        # Default the restore's config source to the deployment the backup was taken from
+        if flow_id == "modal-restore" and next_section.section_id.startswith("add-deployment-info-"):
+            _seed_restore_config_source(state, next_section.section_id)
+
         # Pre-fill components when navigating from info to components step
         if section_id.startswith("add-deployment-info-") and next_section.section_id.startswith(
             "add-deployment-components-"
@@ -1273,7 +1323,7 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
 @requires_sso
 async def restore_select_mode(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the restore target step when mode changes."""
-    require_action(request, Action.RESTORE_RUN, project_name)
+    require_on_any_deployment(request, Action.RESTORE_RUN, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1607,6 +1657,12 @@ async def _process_and_save_modal_edit(
     if production_marking_change(environment_before, environment_markings(existing_data)):
         authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
 
+    # Een clone-from leest de database en de buckets van de BRON, dus die bron weegt apart.
+    # Op de schrijfweg en niet op de route, om dezelfde reden als de markering hierboven:
+    # meer dan een flow kan een clone-from zetten, en tot nu toe woog alleen ``project.edit``
+    # op het project als geheel. Dezelfde poort als op de upsert (RC-417).
+    require_clone_source_access(request, project_name, before_data, existing_data)
+
     handeling = save_requires_step_up(before_data, existing_data)
     if handeling is not None and not has_fresh_step_up(request):
         log_step_up_refusal(
@@ -1645,6 +1701,95 @@ async def _process_and_save_modal_edit(
         actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
     )
     return existing_data, None
+
+
+async def _authorize_restore(
+    request: Request,
+    project_name: str,
+    wizard_token: str | None,
+    *,
+    source_deployment: str,
+    target_deployment: str,
+    deployment_config: dict[str, Any] | None,
+    config_source: str | None,
+    backup_run_id: str,
+) -> HTMLResponse | None:
+    """Weeg de restore, op de staat die hij zou opleveren. Geeft de step-up-dialoog of None.
+
+    De nieuwe deployment wordt hier gebouwd met dezelfde bouwer als de restore-taak
+    gebruikt, op een kopie van het project: pas op die NA-staat is te lezen wat er
+    geschreven wordt, en dus wat gewogen moet worden.
+
+    Raises:
+        HTTPException: 404 als het project niet bestaat, 400 als de gekozen config-bron
+            geen deployment van dit project is, 403 als de rollen te weinig openen.
+    """
+    # De bron eerst: de goedkoopste rolweging, en hij heeft de NA-staat niet nodig.
+    require_action(request, Action.RESTORE_RUN, project_name, deployment=source_deployment)
+
+    project = get_project_store().get(project_name)
+    if project is None or not project.data:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
+
+    before = project.data
+    after = before
+    if deployment_config is not None and source_deployment:
+        after = copy.deepcopy(before)
+        try:
+            new_deployment = build_restore_target_deployment(
+                after,
+                target_deployment=target_deployment,
+                backup_source=source_deployment,
+                backup_run_id=backup_run_id,
+                config_source=config_source,
+                wizard_config=deployment_config,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        after.setdefault("deployments", []).append(new_deployment)
+
+    # RESTORE_RUN weegt op de bron EN het doel, niet op de hoogste markering van het
+    # project: binnen een project met productie mag een developer tussen twee
+    # niet-productie-deployments wel terugzetten (RC-417). Het doel weegt op de NA-staat,
+    # want een nieuwe deployment heeft zijn markering nog niet in de store, en het draagt de
+    # rij: dit is de handeling, en de audit houdt er een per restore op (RC-406).
+    authorize(
+        request,
+        action=Action.RESTORE_RUN,
+        project_name=project_name,
+        deployment=target_deployment,
+        project=project.model_copy(update={"data": after}),
+    )
+
+    # De clone-from van de nieuwe deployment leest de data van de bron, dus die bron wordt
+    # apart gewogen; dezelfde poort als op de modal-opslag en op de upsert. De config-bron
+    # gaat er los bij: alleen de BACKUP-bron landt in ``clone-from``, terwijl de images en
+    # de env-vars van de config-bron meegaan naar het doel. Zonder deze weging nam een
+    # developer de env-vars van productie mee naar een eigen ontwikkeldeployment
+    # (RC-417 securityreview).
+    require_clone_source_access(
+        request, project_name, before, after, extra_sources=[config_source] if config_source else []
+    )
+
+    # De markering is geen gewone bewerking: ze bepaalt wat 'productie' is, en daarmee wat
+    # elke andere regel afdwingt. Dezelfde poort als op de modal-opslagweg.
+    if production_marking_change(environment_markings(before), environment_markings(after)):
+        authorize(request, action=Action.ENVIRONMENT_SET, project_name=project_name)
+
+    handeling = save_requires_step_up(before, after)
+    if handeling is None or has_fresh_step_up(request):
+        return None
+
+    log_step_up_refusal(
+        handeling,
+        project_name=project_name,
+        actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
+    )
+    vervolg = f"/projects/{project_name}/modal-wizard/modal-restore/confirm"
+    if wizard_token:
+        vervolg = f"{vervolg}?_wizard_token={quote(wizard_token)}"
+    dialoog = await render_step_up_dialog(request, vervolg=vervolg, handeling=handeling, vervolg_token=wizard_token)
+    return step_up_dialog_response(dialoog)
 
 
 async def _handle_backup_restore_submit(
@@ -1692,18 +1837,24 @@ async def _handle_backup_restore_submit(
         )
 
     else:  # trigger_restore
-        # Guard tegen een tussenstap die de poort mist: terugzetten is geen back-up.
-        # Without a row, like backup: ``_modal_do_submit`` already recorded the decision.
-        require_action(request, Action.RESTORE_RUN, project_name)
-
         from opi.services import RestoreMode
 
         backup_run_id = merged_data.get("backup_run_id", "")
         restore_mode = merged_data.get("restore_mode", RestoreMode.EXISTING.value)
-        source_deployment = ""
         create_new_deployment = restore_mode == RestoreMode.NEW.value
 
+        # De gekozen run bepaalt de bron: de deployment waarvan de backup is gemaakt.
+        source_deployment = ""
+        backup_items: list[Any] = []
+        if state.base_data:
+            for run in state.base_data.get("_backup_runs", []):
+                if run.get("backup_run_id") == backup_run_id:
+                    backup_items = run.get("items", [])
+                    source_deployment = run.get("deployment_name", "")
+                    break
+
         deployment_config: dict[str, Any] | None = None
+        config_source: str | None = None
         if create_new_deployment:
             # Find the new deployment index from the section ID
             # (e.g. "add-deployment-info-1" → index 1)
@@ -1712,18 +1863,24 @@ async def _handle_backup_restore_submit(
             if new_dep_idx is not None and new_dep_idx < len(deployments):
                 deployment_config = deployments[new_dep_idx]
             target_deployment = deployment_config.get("name", "") if deployment_config else ""
+            config_source = merged_data.get("config_source") or None
         else:
             target_deployment = merged_data.get("target_deployment", "")
+        if not target_deployment:
+            target_deployment = source_deployment
 
-        backup_items = []
-        if state.base_data:
-            for run in state.base_data.get("_backup_runs", []):
-                if run.get("backup_run_id") == backup_run_id:
-                    backup_items = run.get("items", [])
-                    source_deployment = run.get("deployment_name", "")
-                    if not target_deployment:
-                        target_deployment = source_deployment
-                    break
+        step_up = await _authorize_restore(
+            request,
+            project_name,
+            wizard_token,
+            source_deployment=source_deployment,
+            target_deployment=target_deployment,
+            deployment_config=deployment_config,
+            config_source=config_source,
+            backup_run_id=backup_run_id,
+        )
+        if step_up is not None:
+            return step_up
 
         task = await task_service.create_task(
             task_type=TaskType.RESTORE,
@@ -1738,6 +1895,7 @@ async def _handle_backup_restore_submit(
                 "create_new_deployment": create_new_deployment,
                 "source_deployment": source_deployment,
                 "deployment_config": deployment_config,
+                "config_source": config_source,
             },
         )
         task_id = task["task_id"]

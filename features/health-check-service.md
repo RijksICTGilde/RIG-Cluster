@@ -154,7 +154,7 @@ An `httpGet` probe counts HTTP 200-399 as healthy; there is no response-body che
 
 This service replaces the earlier component-level `probe:` block (never used by any
 project). See `features/futures/configurable-health-probes.md` for the original
-design and `instructions/services.md` for the service system.
+design and `docs/development/services.md` for the service system.
 
 A probe pointed at a port the component does not serve does not fail loudly: the
 kubelet restarts the container, which reaches `CrashLoopBackOff` just like a real

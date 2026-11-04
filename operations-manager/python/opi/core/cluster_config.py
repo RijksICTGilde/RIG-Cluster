@@ -215,9 +215,8 @@ CLUSTER_CONFIG = {
             # niet vastgezet op de Service die de stub aanmaakt. Het staat er zodat het blok
             # dezelfde vorm heeft als dat van productie.
             "passthrough_port": 8443,
-            "api_host": "vlam-api.rijksweb.nl",
+            "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "10.96.144.8",
-            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -268,8 +267,9 @@ CLUSTER_CONFIG = {
         "service_namespaces": ["rig-prd-operations", "rig-prd-backup", "rig-prd-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        # Namespace of the CloudNativePG operator (see the note in the other clusters).
-        "database_operator_namespace": "cnpg-system",
+        # Namespace of the CloudNativePG operator. ODCN installs it outside the CNPG
+        # default; tenants cannot see it, the name comes from ODC-Noord (2026-11-04).
+        "database_operator_namespace": "quattro-cloudnative-db-operator",
         "ops_egress": OPS_EGRESS,
         "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
@@ -339,18 +339,12 @@ CLUSTER_CONFIG = {
             #                     veilig op een certificaatfout in plaats van verkeerd te
             #                     bezorgen. Dit is de ene plek om hem te wijzigen.
             #
-            # ca_bundle noemt het bestand in de vlam-dienst zelf waartegen de afnemer het
-            # certificaat van VLAM verifieert. Het is een platformgegeven en geen bijlage:
-            # het is voor elke afnemer identiek, en roteren is zo een wijziging op een plek.
-            # De bundel bevat sinds 2026-09-21 TWEE ketens, want de twee adressen hebben
-            # verschillende uitgevers: rijksweb komt onder de Rijksdienst Root CA van
-            # SSC-ICT, overheid-i onder DigiCert Global Root G2. Tot die datum ontbrak dit
-            # bestand in het pakket, en dan geeft _passthrough() None terug: de doorlus
-            # heeft daardoor nooit aangestaan.
+            # Een eigen CA-bundel hoort hier sinds RC-414 niet meer bij: het certificaat
+            # van `vlam-api.overheid-i.nl` komt van DigiCert en zit in elke standaardbundel,
+            # dus de afnemer verifieert het met de certificatenlijst van zijn eigen image.
             "passthrough_port": 8443,
             "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.254.144",
-            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -453,7 +447,8 @@ CLUSTER_CONFIG = {
         "service_namespaces": ["rig-staging-operations", "rig-staging-backup", "rig-staging-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        "database_operator_namespace": "cnpg-system",
+        # Same cluster as production, so the same operator namespace.
+        "database_operator_namespace": "quattro-cloudnative-db-operator",
         "ops_egress": OPS_EGRESS,
         # Staging draait op dezelfde cluster als productie, dus dezelfde CIDRs.
         "cluster_cidrs": ODCN_CLUSTER_CIDRS,
@@ -495,9 +490,8 @@ CLUSTER_CONFIG = {
             "namespace": "vlam-wt8",
             "port": 8081,
             "passthrough_port": 8443,
-            "api_host": "vlam-api.rijksweb.nl",
+            "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.0.1",
-            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -1227,7 +1221,7 @@ def get_mail_from_address(cluster_name: str) -> str:
     It is a domain we do NOT own: mail goes out over the Rijksoverheid mail server, so it
     carries their domain. That is also the only arrangement that survives DMARC, because
     they publish ``p=reject`` and we sign nothing with DKIM, leaving SPF alignment between
-    envelope and ``From:`` as the single thing that can pass. See docs/ron-koppeling.md.
+    envelope and ``From:`` as the single thing that can pass. See docs/operations/ron-koppeling.md.
 
     Args:
         cluster_name: Name of the cluster
@@ -1853,9 +1847,8 @@ def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
     allowed to reach are BOTH derived from these, so they cannot drift apart.
 
     Since RC-167 the same entry also carries the doorlus half -- ``passthrough_port``,
-    ``api_host``, ``cluster_ip`` and ``ca_bundle``. Those four are one unit: an address
-    without the name it must be reached under, or the name without the issuer to verify
-    against, is not a usable path but three quarters of one. ``vlam_endpoint()`` derives
-    them together for that reason.
+    ``api_host`` and ``cluster_ip``. Those three are one unit: an address without the name
+    it must be reached under is not a usable path but two thirds of one.
+    ``vlam_endpoint()`` derives them together for that reason.
     """
     return get_cluster_config(cluster_name).get("vlam")

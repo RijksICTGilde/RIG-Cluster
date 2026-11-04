@@ -37,12 +37,15 @@ from opi.core.authz.engine import (
     rule_for,
 )
 from opi.core.step_up import has_fresh_step_up
+from opi.manager.clone_validation import new_or_changed_clone_sources
 from opi.services.project_leden import lid_met_naam
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles, resource_path
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from opi.core.authz.engine import Decision, Resource
     from opi.services.project_store import ProjectSummary
 
@@ -81,6 +84,7 @@ def authorize(
     project_name: str,
     deployment: str | None = None,
     component: str | None = None,
+    project: ProjectSummary | None = None,
 ) -> tuple[ProjectSummary, str]:
     """Laat deze action op dit project toe, of weiger hem. Geeft (project, e-mailadres).
 
@@ -88,10 +92,13 @@ def authorize(
     eigen antwoord voor (de dialoog), en dat antwoord gaat verloren als deze poort er een
     kale 403 van maakt.
 
+    ``project`` weegt tegen een projectstaat die de store niet heeft, zie :func:`_weigh`.
+
     Raises:
         HTTPException: 404 als het project niet bestaat, 403 als de rollen te weinig openen.
     """
-    project = get_project_store().get(project_name)
+    if project is None:
+        project = get_project_store().get(project_name)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' niet gevonden")
 
@@ -149,14 +156,20 @@ def _weigh(
     project_name: str,
     deployment: str | None = None,
     component: str | None = None,
+    project: ProjectSummary | None = None,
 ) -> tuple[Resource, Decision] | None:
     """The resource and the outcome, or ``None`` when the project does not exist.
 
     Without :func:`record_decision`: the caller decides whether this weighing is worth
     an audit row. A fresh step-up counts as present here, because it has its own answer
     and is not a refusal on the role.
+
+    ``project`` weighs against a project state the store does not hold: the restore builds
+    the deployment it is about to write, and that deployment's own marking is what decides
+    (RC-417). Omitted, the stored project is read.
     """
-    project = get_project_store().get(project_name)
+    if project is None:
+        project = get_project_store().get(project_name)
     if project is None:
         return None
     resource = build_resource(
@@ -186,7 +199,48 @@ def may(
     return weging is not None and weging[1].allowed
 
 
-def require_action(request: Request, needed: Action, project_name: str) -> None:
+def _deployment_names(project: ProjectSummary | None) -> list[str]:
+    deployments = (getattr(project, "data", None) or {}).get("deployments") or []
+    return [str(d["name"]) for d in deployments if isinstance(d, dict) and d.get("name")]
+
+
+def may_on_any_deployment(request: Request, *, action: Action, project_name: str) -> bool:
+    """Of deze action op MINSTENS EEN deployment van dit project open is.
+
+    De bodem voor een stroom die zijn deployment pas in een latere stap kiest. Zonder
+    deployment weegt een action tegen de hoogste markering van het project, en dan kan een
+    developer in een project met productie niet eens meer de restore-wizard openen terwijl
+    hij tussen twee niet-productie-deployments wel mag terugzetten (RC-417).
+    """
+    namen = _deployment_names(get_project_store().get(project_name))
+    if not namen:
+        # Zonder deployments is er geen doelwit om op te wegen, en dan geldt de weging op
+        # het project, net als bij elke andere action zonder deployment.
+        return may(request, action=action, project_name=project_name)
+    return any(may(request, action=action, project_name=project_name, deployment=naam) for naam in namen)
+
+
+def require_on_any_deployment(request: Request, needed: Action, project_name: str) -> None:
+    """403 als *needed* op geen enkele deployment van dit project open is.
+
+    De echte beslissing wordt gewogen en vastgelegd op de bron en het doel die de stroom
+    uiteindelijk aanwijst. Alleen de WEIGERING hoort hier al in de audit, en die laat
+    :func:`require_action` vastleggen op het project als geheel.
+    """
+    if may_on_any_deployment(request, action=needed, project_name=project_name):
+        return
+    require_action(request, needed, project_name)
+    raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+
+
+def require_action(
+    request: Request,
+    needed: Action,
+    project_name: str,
+    *,
+    deployment: str | None = None,
+    project: ProjectSummary | None = None,
+) -> None:
     """403 als de rollen *needed* niet openen; alleen de WEIGERING wordt vastgelegd.
 
     Voor een aanroep die zelf niets doet: een GET die een formulier herrendert, of een
@@ -194,7 +248,7 @@ def require_action(request: Request, needed: Action, project_name: str) -> None:
     herstel dat niet gebeurde, maar een geweigerde poging hoort er wel in te staan
     (``features/audit.md``).
     """
-    weging = _weigh(request, action=needed, project_name=project_name)
+    weging = _weigh(request, action=needed, project_name=project_name, deployment=deployment, project=project)
     if weging is not None:
         resource, beslissing = weging
         if beslissing.allowed:
@@ -206,6 +260,33 @@ def require_action(request: Request, needed: Action, project_name: str) -> None:
             request, action=needed, resource=resource, decision=beslissing, step_up_fresh=has_fresh_step_up(request)
         )
     raise HTTPException(status_code=403, detail=TE_SMALLE_ROL)
+
+
+def require_clone_source_access(
+    request: Request,
+    project_name: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    extra_sources: Sequence[str] = (),
+) -> None:
+    """Weeg ``deployment.clone-from`` op de BRON van elke clone-from die deze opslag zet.
+
+    Eén poort voor beide schrijfwegen uit het portaal: een deployment toevoegen met een
+    clone-from, en een restore naar een nieuwe deployment. Klonen vanaf productie is ops,
+    waar het ook naartoe gaat.
+
+    ``extra_sources`` zijn bronnen die de NA-staat niet noemt: de restore neemt de config
+    van een deployment over terwijl alleen de BACKUP-bron in ``clone-from`` landt, dus de
+    config-bron is uit het projectbestand niet terug te vinden (RC-417 securityreview).
+
+    Raises:
+        HTTPException: 403 als de rollen de bron niet openen.
+    """
+    sources = new_or_changed_clone_sources(before, after)
+    sources.extend(source for source in extra_sources if source and source not in sources)
+    for source in sources:
+        authorize(request, action=Action.DEPLOYMENT_CLONE_FROM, project_name=project_name, deployment=source)
 
 
 def _doelwit(request: Request, uit_de_query: frozenset[str], naam: str) -> str | None:

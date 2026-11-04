@@ -175,4 +175,4 @@ gedragshaak, geen instelling.
   dat een deployment uit staat, en voedt daarmee de kaart, de banner en de V2 API
 - `features/redeploy-clears-recorded-state.md` - de schrijvende tegenhanger: wat een dienst
   hier meldt, ruimt hij daar op zodra er nieuwe inhoud wordt uitgerold
-- `instructions/services.md` - alle haken die een dienst kan implementeren
+- `docs/development/services.md` - alle haken die een dienst kan implementeren

@@ -67,6 +67,7 @@ from opi.core.project_schema import (
     validate_project_schema,
 )
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
+from opi.services.approval_notifier import notify_new_approval_requests
 from opi.services.project import lid_uit
 from opi.services.project_leden import human_emails
 from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
@@ -400,6 +401,7 @@ class GitProjectStore(ProjectStore):
                 ) from last_error
 
         project = self._refresh_cache(name, data, os.path.basename(relative_path))
+        notify_new_approval_requests(name, None, data)
         logger.info("Created project '%s' (actor=%s)", name, actor)
         return project
 
@@ -499,6 +501,7 @@ class GitProjectStore(ProjectStore):
                 landed = await self._read_committed(connector, relative_path) or attempt_data
                 if refresh_cache:
                     self._refresh_cache(name, landed, os.path.basename(relative_path))
+                notify_new_approval_requests(name, before, landed)
                 return MutationResult(before=before, after=landed, ref=ref)
 
             raise ConcurrencyError(
@@ -581,6 +584,7 @@ class GitProjectStore(ProjectStore):
                 if landed is None:
                     landed = mutated
                 self._refresh_cache(name, landed, os.path.basename(relative_path))
+                notify_new_approval_requests(name, current, landed)
                 return MutationResult(before=current, after=landed, ref=ref)
 
             raise ConcurrencyError(

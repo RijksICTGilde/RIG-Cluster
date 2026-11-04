@@ -105,7 +105,7 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
-from opi.manager.clone_validation import resolve_clone_source_deployment
+from opi.manager.clone_validation import derive_deployment_from_source, resolve_clone_source_deployment
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -134,10 +134,8 @@ from opi.services.catalog.image_registries.resolution import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
-    clear_domain_name_settings,
     custom_domain_certificate_note,
     get_domain_setting,
-    pop_domain_setting,
     set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
@@ -153,7 +151,6 @@ from opi.services.project_store import ConcurrencyError, ConflictError, get_proj
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
-    deployment_runtime_keys,
     generate_missing_values,
     manifest_services,
     project_manifest_services,
@@ -170,6 +167,7 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     get_project_public_key,
 )
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.env_vars import (
     detect_circular_references,
     extract_variable_references,
@@ -185,7 +183,6 @@ from opi.utils.fs_paths import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
-    SELF_CONTAINED_FORMAT_IDS,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
@@ -275,6 +272,10 @@ logger = logging.getLogger(__name__)
 _UPSERT_CONFLICT_RETRIES = 5
 
 _EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
+
+# ArgoCD reports a CNPG cluster healthy as soon as the pod is Ready, which is before the
+# primary accepts connections. This is the budget for that gap.
+DATABASE_CONNECT_TIMEOUT_SECONDS = 180
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
@@ -630,10 +631,7 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
       replacing them. That is why they are a field of their own rather than a
       ``template_vars`` entry -- as an override, one service handing out one variable
       would wipe every variable the component itself declared.
-    * ``sidecars`` and ``secret_mounts`` are additive too. The mounts join the
-      component's own attachment mounts in ``attachment_secret_mounts`` rather than
-      replacing them -- a component that both uploads an attachment and takes a service
-      that mounts a file must keep both files.
+    * ``sidecars`` are additive too.
     """
     for contribution in contributions:
         variables.update(contribution.template_vars)
@@ -641,8 +639,6 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
             variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
         if contribution.sidecars:
             variables.setdefault("sidecars", []).extend(contribution.sidecars)
-        if contribution.secret_mounts:
-            variables.setdefault("attachment_secret_mounts", []).extend(contribution.secret_mounts)
 
 
 class ProjectManager:
@@ -2326,10 +2322,14 @@ class ProjectManager:
                     )
                     await asyncio.sleep(1)
                 else:
-                    raise RuntimeError(
+                    # The first ERROR of this sequence: the handler keeps its own give-up on
+                    # WARNING, because this loop was still going to try again.
+                    message = (
                         f"Failed to create SOPS secret in namespace {namespace} after {max_retries} attempts. "
                         "RBAC permissions may not have propagated for this namespace."
                     )
+                    logger.error(message)
+                    raise RuntimeError(message)
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
             # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
@@ -2385,6 +2385,105 @@ class ProjectManager:
             # Other errors
             logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
             return False, "unknown_error"
+
+    async def _read_database_cluster_status(self, cluster_name: str, project_name: str) -> dict[str, Any]:
+        """The CNPG Cluster status of the project's dedicated cluster.
+
+        Empty when the resource is absent or unreadable, so a caller cannot tell those
+        apart and must stay silent instead of reporting a cluster as unhealthy.
+        """
+        from opi.core.cluster_config import get_infrastructure_namespace
+        from opi.utils.naming import _sanitize_for_lowercase
+
+        cluster = await self._kubectl_connector.get_namespaced_resource(
+            "clusters.postgresql.cnpg.io",
+            f"{_sanitize_for_lowercase(project_name)}-db",
+            get_infrastructure_namespace(cluster_name, project_name),
+        )
+        if not cluster:
+            return {}
+        status = cluster.get("status", {})
+        return status if isinstance(status, dict) else {}
+
+    @staticmethod
+    def _database_cluster_phase_summary(status: dict[str, Any]) -> str:
+        """What CNPG says about the cluster, as a suffix for a message, or an empty string."""
+        parts = [f"{key}: {status[key]}" for key in ("phase", "phaseReason") if status.get(key)]
+        return f" ({', '.join(parts)})" if parts else ""
+
+    async def _wait_until_database_accepts_connections(
+        self, project_name: str, cluster_name: str, username: str, password: str
+    ) -> None:
+        """Wait until the project's PostgreSQL primary answers a superuser query.
+
+        On 3 November 2026 provisioning of pocpl-0g8 died on a ConnectionRefusedError
+        straight after ArgoCD called the infrastructure healthy, and the task failed
+        permanently.
+
+        Raises:
+            RuntimeError: If no connection was accepted within the timeout.
+        """
+        from opi.core.cluster_config import get_database_cluster_service_endpoint
+
+        host = get_database_cluster_service_endpoint(cluster_name, project_name)
+
+        async def _select_one() -> None:
+            conn = await asyncpg.connect(
+                host=host, port=5432, user=username, password=password, database="postgres", timeout=5
+            )
+            try:
+                await conn.fetchval("SELECT 1")
+            finally:
+                await conn.close()
+
+        try:
+            await retry_on_connect_error(
+                _select_one,
+                DATABASE_CONNECT_TIMEOUT_SECONDS,
+                f"PostgreSQL at {host}",
+                connect_errors=(OSError,),
+            )
+        except OSError as e:
+            summary = self._database_cluster_phase_summary(
+                await self._read_database_cluster_status(cluster_name, project_name)
+            )
+            raise RuntimeError(
+                f"Database of project '{project_name}' accepts no connections at {host} after "
+                f"{DATABASE_CONNECT_TIMEOUT_SECONDS}s{summary}: {e}"
+            ) from e
+        logger.info(f"Database of project '{project_name}' accepts connections at {host}")
+
+    async def _warn_when_database_cluster_not_ready(
+        self,
+        project_name: str,
+        cluster_name: str,
+        progress_manager: AnyTaskProgressManager | None,
+        infra_task: str | None,
+    ) -> None:
+        """Report a dedicated cluster that CNPG itself does not call Ready, without blocking.
+
+        The database answering queries is what provisioning needs; the operator reaching
+        the instances is what backup and failover need. A cluster whose Ready condition
+        stays false therefore gets a warning instead of a failure.
+        """
+        status = await self._read_database_cluster_status(cluster_name, project_name)
+        if not status:
+            return
+
+        conditions = status.get("conditions") or []
+        ready = next((c for c in conditions if isinstance(c, dict) and c.get("type") == "Ready"), None)
+        if ready and ready.get("status") == "True":
+            return
+
+        summary = self._database_cluster_phase_summary(status)
+        logger.warning(
+            f"CNPG does not report the database cluster of project '{project_name}' as Ready{summary}. "
+            f"The database accepts connections, but the operator cannot reach the instances, so backups "
+            f"and failover through the operator are not guaranteed."
+        )
+        if progress_manager and infra_task:
+            warning_step = progress_manager.add_subtask(infra_task, f"Databasecluster niet Ready volgens CNPG{summary}")
+            progress_manager.complete_task(warning_step)
 
     async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
         """
@@ -2462,6 +2561,8 @@ class ProjectManager:
         7. Wait for infrastructure application to be created by ArgoCD
         8. Refresh the infrastructure application to pick up latest changes
         9. Wait for ArgoCD to report infrastructure as Synced + Healthy
+        10. Wait until the database accepts connections, which ArgoCD does not report
+        11. Warn when CNPG itself does not call the cluster Ready
 
         Args:
             project_data: The project configuration data
@@ -2869,6 +2970,23 @@ class ProjectManager:
             logger.info(f"Infrastructure is ready for project '{project_name}'")
 
             if progress_manager and infra_task:
+                progress_manager.update_task(infra_task, "Wachten tot de database verbindingen aanneemt")
+
+            await self._wait_until_database_accepts_connections(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                username=superuser_username,
+                password=superuser_password,
+            )
+
+            await self._warn_when_database_cluster_not_ready(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                progress_manager=progress_manager,
+                infra_task=infra_task,
+            )
+
+            if progress_manager and infra_task:
                 progress_manager.complete_task(infra_task)
 
         except (TimeoutError, RuntimeError) as e:
@@ -3087,7 +3205,7 @@ class ProjectManager:
 
         De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul
         resources en meldt zich daarmee binnen een seconde Healthy. Zie
-        docs/de-serviceaccount-komt-na-de-deployment.md.
+        docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md.
 
         Args:
             app_name: Naam van de applicatie van het projectniveau.
@@ -8040,61 +8158,13 @@ class ProjectManager:
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
-                        # Clone properties from source, excluding fields that must be
-                        # unique per deployment. The backup block is not copied: backups
-                        # are an explicit per-deployment choice, and inheriting the
-                        # source's schedule made every PR preview accumulate nightly
-                        # snapshots.
-                        #
-                        # On top of those, every key a service uses for its own runtime
-                        # state about the SOURCE deployment: that state describes the
-                        # deployment it was recorded on, so it must not travel to this
-                        # one. Asked of the catalog rather than listed here, so a service
-                        # that starts recording state does not need an edit in this file.
-                        clone_exclude_keys = ["name", "components", "backup", *deployment_runtime_keys()]
+                        # One derivation for every path that builds a deployment out of an
+                        # existing one: the upsert here, and the restore to a new
+                        # deployment. The components stay out of it, because the images
+                        # come from this request.
                         new_deployment.update(
-                            {
-                                key: copy.deepcopy(value)
-                                for key, value in source_deployment.items()
-                                if key not in clone_exclude_keys
-                            }
+                            derive_deployment_from_source(source_deployment, deployment_name, requested_domain_settings)
                         )
-
-                        # A clone uses its own (target) domain setup, never the source's
-                        # hostnames, or two deployments claim the same ones. The web
-                        # address travels inside the source's `services` block, so it is
-                        # removed AFTER the copy -- excluding the old root key names would
-                        # be a silent no-op.
-                        #
-                        # The SHAPE stays, unless it leans on the name it is about to lose
-                        # (SELF_CONTAINED_FORMAT_IDS): dropping it handed the clone the
-                        # platform default of the day it was processed (RC-217). Dropped
-                        # first, so clearing the names also tidies away a service entry
-                        # that has nothing left in it.
-                        if (
-                            get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                            not in SELF_CONTAINED_FORMAT_IDS
-                        ):
-                            pop_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                        clear_domain_name_settings(new_deployment)
-
-                        # The caller's own request was written before that copy and got
-                        # overwritten by it. Write it again; it must beat the source.
-                        for setting, setting_value in requested_domain_settings.items():
-                            set_domain_setting(new_deployment, setting, setting_value)
-
-                        # When the source's subdomain matches its deployment name, it means
-                        # components share a single hostname and use paths to differentiate.
-                        # Preserve this pattern for the clone by setting subdomain to the
-                        # new deployment name.
-                        source_subdomain = get_domain_setting(source_deployment, DomainSetting.SUBDOMAIN)
-                        source_name = source_deployment.get("name")
-                        if source_subdomain and source_subdomain == source_name:
-                            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, deployment_name)
-                            logger.info(
-                                f"Source subdomain '{source_subdomain}' matches source deployment name, "
-                                f"setting cloned subdomain to '{deployment_name}'"
-                            )
 
                         # Set clone-from in dict format for proper status tracking
                         new_deployment["clone-from"] = {

@@ -29,7 +29,7 @@ from ruamel.yaml import YAML
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-EXAMPLE_PROJECT = Path(__file__).resolve().parents[3] / "projects" / "simple-example.yaml"
+EXAMPLE_PROJECT = Path(__file__).parent / "fixtures" / "projects" / "simple-example.yaml"
 
 GEWEIGERD = ["../../../../tmp/uit-de-repo", "/etc", "map\\..\\..", "..", "sub/../..", "a..b", "map\n"]
 TOEGESTAAN = ["", ".", "sub/map", "./sub", "sub/map/", ".verborgen", "v1.2"]

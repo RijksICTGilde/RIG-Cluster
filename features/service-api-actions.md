@@ -274,4 +274,4 @@ resolves, and every action carries an example.
 
 - `features/service-config-api.md` -- the generated config endpoints
 - `features/attachments-getting-started.md` -- attachments from the portal
-- `instructions/services.md` -- the service contract, config layers and roles
+- `docs/development/services.md` -- the service contract, config layers and roles

@@ -39,6 +39,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.core.project_schema import validate_project_schema
 from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.manager.clone_validation import build_restore_target_deployment
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.catalog.sleep_mode import service as sleep_service
@@ -336,6 +337,52 @@ def test_de_kloonpoging_blijft_geldig_na_migratie() -> None:
 
     handler.set_clone_status(project, "productie", True, "2026-09-17T01:00:00+00:00")
     poorten(project)
+
+
+def test_een_restore_naar_een_nieuwe_deployment_blijft_geldig() -> None:
+    """De restore bouwt een hele nieuwe deployment uit een bestaande (RC-417)."""
+    project = _basis_project()
+    project["deployments"][0]["components"][0]["user-env-vars"] = AGE_BLOCK
+    set_domain_setting(project["deployments"][0], DomainSetting.SUBDOMAIN, "productie")
+    poorten(project)
+
+    nieuw = build_restore_target_deployment(
+        project,
+        target_deployment="herstel",
+        backup_source="productie",
+        backup_run_id="20261103020000",
+        config_source="productie",
+        wizard_config={"name": "herstel", "components": [{"reference": "api", "image": "nginx:1.25"}]},
+    )
+    project["deployments"].append(nieuw)
+
+    poorten(project)
+    assert nieuw["components"][0]["user-env-vars"] == AGE_BLOCK
+    assert nieuw["clone-from"] == {
+        "type": "backup",
+        "reference": "productie",
+        "mode": "once",
+        "run": "20261103020000",
+    }
+
+
+def test_een_restore_naar_een_lege_deployment_blijft_geldig() -> None:
+    """Zonder config-bron krijgt de nieuwe deployment alleen wat de wizard ophaalde."""
+    project = _basis_project()
+    poorten(project)
+
+    nieuw = build_restore_target_deployment(
+        project,
+        target_deployment="leeg",
+        backup_source="productie",
+        backup_run_id="20261103020000",
+        config_source=None,
+        wizard_config={"name": "leeg", "components": [{"reference": "api", "image": "nginx:1.25"}]},
+    )
+    project["deployments"].append(nieuw)
+
+    poorten(project)
+    assert "user-env-vars" not in nieuw["components"][0]
 
 
 # ---------------------------------------------------------------------------

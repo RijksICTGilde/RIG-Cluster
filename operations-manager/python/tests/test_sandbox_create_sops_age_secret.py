@@ -4,7 +4,7 @@ neer, en geen sleutel meer in die namespace (RC-351).
 Sinds de CMP-plugin zich splitst in een tenant- en een platform-sidecar, leest
 ron-infrastructure de platformsleutel uit een mount in plaats van uit een secret in zijn
 eigen namespace. Een kopie van die sleutel naar rig-ron is dan een plek die bij een
-rotatie wordt vergeten (`instructions/sops-sleutel-in-het-cluster.md`).
+rotatie wordt vergeten (`docs/development/sops-sleutel-in-het-cluster.md`).
 
 De shell wordt echt gedraaid, met een `kubectl`-stub die zijn aanroepen opschrijft: een
 test op de TEKST van de taak zou niet zien of de aanroep ook echt verdwenen is.

@@ -9,8 +9,6 @@
   "prHourlyLimit": 3,
   "minimumReleaseAge": "7 days",
   "ignorePaths": [
-    "archive/**",
-    "self-service-portal/**",
     "**/node_modules/**",
     "**/.venv/**",
     "**/vendor/**",
@@ -140,7 +138,7 @@
     {
       "customType": "regex",
       "description": "De node-image van het kind-sandboxcluster",
-      "managerFilePatterns": ["/^sandboxed-local/kind-config\\.yaml$/"],
+      "managerFilePatterns": ["/^bootstrap/sandbox/kind-config\\.yaml$/"],
       "matchStrings": [
         "image:\\s*kindest/node:v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],

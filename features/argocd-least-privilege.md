@@ -30,7 +30,7 @@ Deze wijziging raakt het lokale `admin`-account niet: dat houdt zijn `login`-cap
 blijft in ArgoCD een superuser, dus `defaultPolicy: role:none` beperkt hem niet. Op
 de ODCN-clusters loopt menselijke toegang verder via SSO en de groepen uit de tabel hierboven;
 op de sandbox bestaan die groepen niet en is `admin` de enige menselijke login, met het
-wachtwoord uit `docs/sandbox-reference.md`. Alleen het account `opi` heeft geen login.
+wachtwoord uit `docs/sandbox/sandbox-reference.md`. Alleen het account `opi` heeft geen login.
 
 Gemeten op de sandbox (18-10-2026), met de policy van deze branch actief:
 

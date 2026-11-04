@@ -87,7 +87,7 @@ Stap 1, de nieuwe AppProjects en de omgezette Applications, met `default` nog zo
 het cluster staat en met prune uit:
 
 ```bash
-task bootstrap-argo-system CLUSTER_TYPE=odcn-staging KEEP_DEFAULT_APPPROJECT=true PAUSE_PRUNE=true
+CLUSTER_TYPE=odcn-staging task bootstrap-argo-system KEEP_DEFAULT_APPPROJECT=true PAUSE_PRUNE=true
 ```
 
 `KEEP_DEFAULT_APPPROJECT=true` laat alleen het AppProject `default` uit de gerenderde
@@ -106,13 +106,13 @@ kubectl get applications -n rig-staging-operations \
 Stap 2, `default` dichtzetten, pas als stap 1 groen is. Prune blijft nog uit:
 
 ```bash
-task bootstrap-argo-system CLUSTER_TYPE=odcn-staging PAUSE_PRUNE=true
+CLUSTER_TYPE=odcn-staging task bootstrap-argo-system PAUSE_PRUNE=true
 ```
 
 Stap 3, prune weer aan, als ook stap 2 groen is:
 
 ```bash
-task bootstrap-argo-system CLUSTER_TYPE=odcn-staging
+CLUSTER_TYPE=odcn-staging task bootstrap-argo-system
 ```
 
 Op productie is het dezelfde volgorde met `CLUSTER_TYPE=odcn-production` en

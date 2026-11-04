@@ -46,6 +46,8 @@ from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.services.zad_map import platform_graph, project_graph
 from opi.services.zad_map.platform import current_cluster_folder
+from opi.services.zad_map.project import usage_targets
+from opi.services.zad_map.usage import measure_usage
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -1280,7 +1282,7 @@ async def dashboard(request: Request):
             # Fail fast: het standaardbudget van 30 seconden zou hier PER deployment
             # gelden, sequentieel in een enkel verzoek, waar deze pagina eerder in
             # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
-            # opi/api/v2/router.py; zie docs/argocd-server-herstart-elke-40-minuten.md.
+            # opi/api/v2/router.py; zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
             argo_connector = create_argo_connector(connect_retry_seconds=0)
             argocd_available = await argo_connector.ensure_authenticated()
 
@@ -1382,16 +1384,18 @@ async def project_details(request: Request, project_name: str):
 @web_router.get("/projects/{project_name}/kaart.json")
 @action(Action.PROJECT_READ)
 @requires_sso
-async def project_map_json(request: Request, project_name: str) -> JSONResponse:
-    """De graaf achter het tabblad Kaart.
+async def project_map_json(request: Request, project_name: str, deployment: str | None = None) -> JSONResponse:
+    """De graaf achter het tabblad Kaart; met ``?deployment=`` die van een deployment.
 
     Een eigen route met een eigen action, zoals het metingenfragment: het tabblad laadt
     zijn plaat zelf. Leest alleen ``ProjectSummary.data``, nooit de ontsleutelde vorm.
+    Alleen de kaart van een deployment meet groottes.
     """
     try:
-        graph = project_graph(project_name)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found") from None
+        usage = await measure_usage(*usage_targets(project_name, deployment)) if deployment else None
+        graph = project_graph(project_name, deployment, usage)
+    except KeyError as missing:
+        raise HTTPException(status_code=404, detail=f"'{missing.args[0]}' not found") from None
     return JSONResponse(graph.as_json())
 
 
@@ -1745,7 +1749,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
         # does not block the page render; only the cheap availability check stays here.
         # Fail fast: op het standaardbudget wacht deze toets 30 seconden met de pagina
-        # erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+        # erachter. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
         argocd_available = False
         if not map_tab:
             try:
@@ -2427,7 +2431,7 @@ async def argocd_status_fragment(
 
     # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
     # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
-    # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    # taak. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
     # Zonder ARGOCD_TOKEN en zonder wachtwoord is er geen connector te maken. Dat hoort
     # dezelfde kaart te geven als een ArgoCD die niet antwoordt, niet een 500 in dit fragment.
     argo = None
@@ -2918,7 +2922,10 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
 
 @web_router.get("/about")
 async def about_platform() -> RedirectResponse:
-    """Over ZAD is opgegaan in de introductie; oude links blijven werken."""
+    """Over ZAD is opgegaan in de introductie; oude links blijven werken.
+
+    BEWUST ZONDER ``@requires_sso``: een redirect naar de introductie, die zelf open staat.
+    """
     return RedirectResponse(url="/introductie", status_code=301)
 
 

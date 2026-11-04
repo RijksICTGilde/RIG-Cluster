@@ -18,16 +18,32 @@ report out.
 ``composite_name_collision`` is here for the same reason: a pure function of project data
 (reading the in-memory cache of other projects). A resource name built from project
 + deployment can be built by more than one pair, so we guard against collisions.
+
+``derive_deployment_from_source`` and ``build_restore_target_deployment`` are here on the
+same ground: what a new deployment inherits from an existing one is a pure function of
+project data, and the upsert, the restore request and the restore task all need the one
+answer.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.services.catalog.publish_on_web.domain_config import (
+    DomainSetting,
+    clear_domain_name_settings,
+    get_domain_setting,
+    has_domain_setting,
+    pop_domain_setting,
+    set_domain_setting,
+)
 from opi.services.project import Project
+from opi.services.registry import deployment_runtime_keys
 from opi.services.services_enums import CloneFromType
 from opi.utils.naming import (
+    SELF_CONTAINED_FORMAT_IDS,
     generate_argocd_application_filename,
     generate_argocd_application_name,
     generate_bucket_name,
@@ -269,3 +285,214 @@ def validate_clone_readiness(project_data: dict[str, Any], deployment_name: str)
         checks.append(_check("clone_type", False, f"Unknown clone-from type '{clone_type}'. Known types: {known}"))
 
     return _report(checks)
+
+
+def _inherit_exclusions(include_components: bool) -> set[str]:
+    """What a new deployment never inherits from its source.
+
+    ``name`` is its own; ``backup`` is an explicit per-deployment choice (an inherited
+    schedule made every PR preview accumulate nightly snapshots); the runtime keys are
+    what a service recorded ABOUT the source, so they describe another deployment.
+    """
+    excluded = {"name", "backup", *deployment_runtime_keys()}
+    if not include_components:
+        excluded.add("components")
+    return excluded
+
+
+def _inherited_components(source: dict[str, Any]) -> list[dict[str, Any]]:
+    """The source's components as a starting point: the image and the env vars, nothing else.
+
+    ``user-env-vars`` travels as ciphertext. The project, and so the AGE key, is the same
+    one, so nothing is decrypted here.
+    """
+    components: list[dict[str, Any]] = []
+    for component in source.get("components") or []:
+        if not isinstance(component, dict) or not component.get("reference"):
+            continue
+        inherited: dict[str, Any] = {"reference": component["reference"]}
+        for key in ("image", "user-env-vars"):
+            if key in component:
+                inherited[key] = copy.deepcopy(component[key])
+        components.append(inherited)
+    return components
+
+
+def derive_deployment_from_source(
+    source: dict[str, Any],
+    deployment_name: str,
+    domain_settings: Mapping[DomainSetting, str] | None = None,
+    *,
+    include_components: bool = False,
+) -> dict[str, Any]:
+    """What a new deployment inherits from an existing one, under its own name.
+
+    Args:
+        source: The deployment to inherit from.
+        deployment_name: The name of the new deployment.
+        domain_settings: The web address the caller asked for; it beats the source's.
+        include_components: Also inherit the components (image and ``user-env-vars``).
+            The upsert leaves them out because the images come from its request body.
+    """
+    derived = {
+        key: copy.deepcopy(value) for key, value in source.items() if key not in _inherit_exclusions(include_components)
+    }
+    if include_components:
+        derived["components"] = _inherited_components(source)
+
+    # A clone uses its own domain setup; web addresses (hosted in services) are cleared to
+    # avoid collisions. The SHAPE stays unless it is name-dependent (SELF_CONTAINED_FORMAT_IDS).
+    if get_domain_setting(derived, DomainSetting.DOMAIN_FORMAT) not in SELF_CONTAINED_FORMAT_IDS:
+        pop_domain_setting(derived, DomainSetting.DOMAIN_FORMAT)
+    clear_domain_name_settings(derived)
+
+    for setting, value in (domain_settings or {}).items():
+        set_domain_setting(derived, setting, value)
+
+    # A source subdomain equal to its own name means the components share one hostname and
+    # differentiate by path. The new deployment keeps that pattern under its own name.
+    source_subdomain = get_domain_setting(source, DomainSetting.SUBDOMAIN)
+    if source_subdomain and source_subdomain == source.get("name"):
+        set_domain_setting(derived, DomainSetting.SUBDOMAIN, deployment_name)
+
+    return derived
+
+
+def _merge_wizard_components(
+    inherited: list[dict[str, Any]], wizard_components: list[Any] | None
+) -> list[dict[str, Any]]:
+    """The components the wizard collected, each keeping the source's env vars.
+
+    The wizard owns which components the new deployment has and which image each one runs;
+    the source owns the ``user-env-vars`` that belong with those images.
+    """
+    if not wizard_components:
+        return inherited
+    env_vars = {
+        component["reference"]: component["user-env-vars"] for component in inherited if "user-env-vars" in component
+    }
+    merged: list[dict[str, Any]] = []
+    for component in wizard_components:
+        if not isinstance(component, dict) or not component.get("reference"):
+            continue
+        entry = copy.deepcopy(component)
+        if entry["reference"] in env_vars and "user-env-vars" not in entry:
+            entry["user-env-vars"] = copy.deepcopy(env_vars[entry["reference"]])
+        merged.append(entry)
+    return merged
+
+
+def build_restore_target_deployment(
+    project_data: dict[str, Any],
+    *,
+    target_deployment: str,
+    backup_source: str,
+    backup_run_id: str,
+    config_source: str | None,
+    wizard_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The new deployment a restore writes: inherited config, the wizard's choices, clone-from.
+
+    One builder for both runs: the confirmation request builds it on a copy of the project
+    to weigh the rights on it, and the restore task builds it again to save it.
+
+    Args:
+        project_data: The project the deployment is added to.
+        target_deployment: The name of the new deployment.
+        backup_source: The deployment the backup was taken from.
+        backup_run_id: The backup run to restore.
+        config_source: The deployment whose config is inherited, or None for an empty one.
+        wizard_config: What the wizard collected (name, environment, components, web address).
+
+    Raises:
+        ValueError: if ``config_source`` or ``backup_source`` is not a deployment of this project.
+    """
+    wizard = copy.deepcopy(wizard_config) if wizard_config else {}
+    wizard.pop("clone-from", None)
+
+    if config_source:
+        source = resolve_clone_source_deployment(project_data, config_source, target_deployment)
+        domain_settings = {
+            setting: get_domain_setting(wizard, setting)
+            for setting in DomainSetting
+            if has_domain_setting(wizard, setting)
+        }
+        new_deployment = derive_deployment_from_source(
+            source, target_deployment, domain_settings, include_components=True
+        )
+        # The wizard's own web address already went into the derivation, and its ``services``
+        # block holds nothing else, so merging it here would drop the source's other services.
+        new_deployment.update({key: value for key, value in wizard.items() if key not in ("services", "components")})
+        new_deployment["components"] = _merge_wizard_components(
+            new_deployment.get("components") or [], wizard.get("components")
+        )
+        # Once more, AFTER the derivation: its "subdomain equal to the name" heuristic runs
+        # over a requested subdomain, and the restore has a web-address step where the user
+        # picks one. The upsert does lose its requested subdomain there, and that stays so.
+        for setting, value in domain_settings.items():
+            set_domain_setting(new_deployment, setting, value)
+    else:
+        new_deployment = wizard
+
+    new_deployment["name"] = target_deployment
+
+    # Only the run goes in the file: the managers look its snapshots up themselves, so no
+    # runtime Kopia data ends up in the project.
+    new_deployment["clone-from"] = {
+        "type": CloneFromType.BACKUP.value,
+        "reference": backup_source,
+        "mode": "once",
+        "run": backup_run_id,
+    }
+
+    backup_source_deployment = Project(project_data).find("deployments", name=backup_source)
+    if backup_source_deployment is None:
+        raise ValueError(f"Bron deployment '{backup_source}' niet gevonden in project")
+
+    if not new_deployment.get("cluster"):
+        new_deployment["cluster"] = (
+            backup_source_deployment.get("cluster") or (project_data.get("clusters") or [None])[0]
+        )
+    if not new_deployment.get("namespace"):
+        new_deployment["namespace"] = backup_source_deployment.get("namespace") or project_data.get("name")
+    if not new_deployment.get("repository"):
+        new_deployment["repository"] = backup_source_deployment.get("repository") or (
+            (project_data.get("repositories") or [{}])[0].get("name", "")
+        )
+
+    # Presence, not truth: a subdomain the caller stored explicitly, even as null, is a
+    # decision and stays untouched (RC-60).
+    if not has_domain_setting(new_deployment, DomainSetting.SUBDOMAIN) and get_domain_setting(
+        backup_source_deployment, DomainSetting.SUBDOMAIN, ""
+    ):
+        set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, target_deployment)
+
+    return new_deployment
+
+
+def new_or_changed_clone_sources(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """The source deployments of every ``clone-from`` this save adds or changes.
+
+    A clone-from reads the source's database and buckets into the deployment it sits on,
+    so whoever sets one is acting on the SOURCE as well. Types ``deployment`` and
+    ``backup`` both name a deployment of this project; another type names something that
+    is not a deployment, and has nothing to weigh here.
+    """
+    stored = {
+        deployment["name"]: deployment.get("clone-from")
+        for deployment in before.get("deployments") or []
+        if isinstance(deployment, dict) and deployment.get("name")
+    }
+    sources: list[str] = []
+    for deployment in after.get("deployments") or []:
+        if not isinstance(deployment, dict) or not deployment.get("name"):
+            continue
+        clone_from = deployment.get("clone-from")
+        if not isinstance(clone_from, dict) or clone_from == stored.get(deployment["name"]):
+            continue
+        if clone_from.get("type") not in (CloneFromType.DEPLOYMENT.value, CloneFromType.BACKUP.value):
+            continue
+        reference = clone_from.get("reference")
+        if isinstance(reference, str) and reference and reference not in sources:
+            sources.append(reference)
+    return sources

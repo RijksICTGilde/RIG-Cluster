@@ -396,7 +396,7 @@ def test_the_split_puts_ciphertext_on_the_inventory_side() -> None:
 
 @needs_age
 def test_a_key_inside_a_kubernetes_secret_is_a_finding() -> None:
-    """The gap this closes, on the exact manifest ``docs/sops-en-age-met-de-hand.md`` step 2 makes.
+    """The gap this closes, on the exact manifest ``docs/operations/sops-en-age-met-de-hand.md`` step 2 makes.
 
     Measured before the base64 pass existed: the same key in a ``.py`` failed the scan, and this
     manifest came back CLEAN -- while neither ``sops-secret.yaml`` nor ``sops-key.txt`` is covered

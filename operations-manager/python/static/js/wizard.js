@@ -71,6 +71,15 @@ function _sequenceDispatch(action, path, index) {
          * zodat de knop Volgende wel gewoon valideert. */
         var validatieStond = form.noValidate;
         form.noValidate = true;
+        /* The fields belong to this one request. A successful answer swaps the form out
+           and takes them along; a failed one leaves the form in place, and without this
+           every next button (Volgende, Vorige) would send the same add again. */
+        form.addEventListener('htmx:afterRequest', function () {
+            ['_seq_action', '_seq_path', '_seq_index'].forEach(function (name) {
+                var el = form.querySelector('input[name="' + name + '"]');
+                if (el) el.remove();
+            });
+        }, { once: true });
         htmx.trigger(form, 'submit');
         form.noValidate = validatieStond;
         return;

@@ -25,7 +25,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 KEYCLOAK_BASE = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller/base"
 KEYCLOAK_OVERLAYS = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller/overlays"
-PROVIDER_SRC = REPO_ROOT / "keycloak-migration/relay-email-sender/src/main/java/nl/minbzk/rig/keycloak/email"
+PROVIDER_SRC = (
+    REPO_ROOT / "images/keycloak-zad/extensions/relay-email-sender/src/main/java/nl/minbzk/rig/keycloak/email"
+)
 DOCKERFILE = REPO_ROOT / "images/keycloak-zad/Dockerfile"
 
 #: De vorm die Keycloak WEL leest. Zie ``RelayEmailSenderProviderFactoryTest`` aan de
@@ -108,7 +110,7 @@ class TestDeJarInDeImage:
         module = next(p for p in PROVIDER_SRC.parents if (p / "pom.xml").is_file())
         naam = module.name
 
-        assert f"COPY keycloak-migration/{naam} " in self._dockerfile()
+        assert f"COPY images/keycloak-zad/extensions/{naam} " in self._dockerfile()
         assert f"/bouw/{naam}/target/keycloak-relay-email-sender-" in self._dockerfile()
 
     def test_de_imagebouw_wijst_hetzelfde_provider_id_aan(self) -> None:

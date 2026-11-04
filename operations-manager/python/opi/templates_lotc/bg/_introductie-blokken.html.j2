@@ -221,3 +221,22 @@
     <c-button type="primary" label="Inloggen" icon="chevron-right" show-icon="after" href="/auth/login" />
 </c-action-group>
 {% endmacro %}
+
+{% macro versie_regel() %}
+{# Only here: the NLDD application pattern has no page footer to carry it. #}
+{% set vi = version_info() %}
+{% set versie_details = [
+    vi.branch,
+    ('gebouwd ' ~ (vi.build_date | dutch_date(include_time=False))) if vi.build_date else '',
+    'met lokale wijzigingen' if vi.dirty else '',
+] | select | list %}
+{% set versie_tekst = 'Versie: ' ~ vi.version ~ (' (' ~ versie_details | join(', ') ~ ')' if versie_details else '') %}
+{% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
+<c-paragraph size="sm">
+    {% if commit_ref %}
+        <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}" label="{{ versie_tekst }}" />
+    {% else %}
+        {{ versie_tekst }}
+    {% endif %}
+</c-paragraph>
+{% endmacro %}

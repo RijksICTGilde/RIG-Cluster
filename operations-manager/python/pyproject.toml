@@ -138,7 +138,9 @@ extension = "html.j2"
 #            te renderen (actions.html.j2).
 # T028 (spaceless in attribuut): meerdere-regel class-attributen zijn daar leesbaar.
 # J018 (url_for): de templates gebruiken bewust vaste paden; urls hebben geen namen.
-ignore = "T003,H021,H025,T027,T001,T028,J018"
+# H030/H031 (meta description/keywords): een SEO-regel; het portaal staat achter een
+#            login en wordt niet geïndexeerd.
+ignore = "T003,H021,H025,T027,T001,T028,J018,H030,H031"
 
 [tool.ruff.lint]
 select = ["I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY", "RUF", "ANN", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH"]

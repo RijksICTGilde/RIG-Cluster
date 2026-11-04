@@ -297,7 +297,7 @@ def test_deployment_attachment_sequence_add_builds_proper_item() -> None:
     path = "deployments[0]/components[0]/services/attachments/config"
     ed = _find_sequence_editable(section, path)
     assert ed is not None
-    assert _empty_sequence_item(ed) == {"provide-as": "file"}
+    assert _empty_sequence_item(ed, {}) == {"provide-as": "file"}
 
 
 def test_keycloak_additional_clients_add_resolves_virtualized_path() -> None:
@@ -324,7 +324,7 @@ def test_keycloak_additional_clients_add_resolves_virtualized_path() -> None:
     ed = _find_sequence_editable(section, rendered_path)
     assert ed is not None, "virtualized keycloak additional-clients path must resolve (add-client button)"
     # A resolved editable builds a real item, not the empty-string fallback that None produces.
-    assert _empty_sequence_item(ed) != ""
+    assert _empty_sequence_item(ed, {}) != ""
 
 
 def test_service_list_converter_preserves_attachments_data() -> None:

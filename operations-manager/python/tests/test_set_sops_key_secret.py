@@ -835,7 +835,7 @@ async def test_de_kek_gaat_naar_een_namespace_en_laat_sops_age_key_staan(
 _KEK_DOCS = (
     REPO_ROOT / "scripts" / "README.md",
     REPO_ROOT / "features" / "sops-sleutel-roteren.md",
-    REPO_ROOT / "instructions" / "sops-sleutel-in-het-cluster.md",
+    REPO_ROOT / "docs" / "development" / "sops-sleutel-in-het-cluster.md",
 )
 
 

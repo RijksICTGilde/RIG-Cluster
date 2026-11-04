@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 #: De benoemde plek in het componentformulier, direct achter het image-veld. Waarom een
-#: slot en geen anker op de knoop: zie ``instructions/services.md``.
+#: slot en geen anker op de knoop: zie ``docs/development/services.md``.
 COMPONENT_IMAGE_SLOT = "component-image"
 
 

@@ -487,7 +487,7 @@ components that OOM'd (via `apply_resource_tuning`), compacts the resource histo
 reports whether a refresh is needed. Image-pull and crash-loop handling remain inline for
 now.
 
-See `instructions/services.md` for the service system and `features/oom-kill-watcher.md`
+See `docs/development/services.md` for the service system and `features/oom-kill-watcher.md`
 for the health watcher.
 
 ## Related

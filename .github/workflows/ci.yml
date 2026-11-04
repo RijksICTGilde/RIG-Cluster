@@ -11,6 +11,8 @@ permissions:
 # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
 # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
 # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+# Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
+# (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
 env:
   HARDEN_ENDPOINTS: |
     *.actions.githubusercontent.com:443
@@ -35,13 +37,18 @@ env:
     results-receiver.actions.githubusercontent.com:443
     security.ubuntu.com:80
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -52,22 +59,29 @@ jobs:
           python-version: "3.14"
       - name: Install dependencies
         working-directory: operations-manager/python
-        run: uv sync
+        run: uv sync --all-groups
       # De secret-scan-hook roept age-keygen aan om een sleutelvormige string op geldigheid te
       # toetsen, net als de secret-scan-job in security.yml.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
 
-  test:
+  # De suite in vier delen naast elkaar; de job `test` hieronder voegt de dekking samen
+  # en draagt de naam die de branch protection vraagt.
+  test-shard:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     defaults:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -107,26 +121,59 @@ jobs:
       - name: Run tests with coverage
         env:
           LOTC_STRICT: "1"
-        run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
+          TEST_SHARDS: "4"
+          TEST_SHARD: ${{ matrix.shard }}
+        run: uv run coverage run --data-file=.coverage.${{ matrix.shard }} --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: operations-manager/python/.coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          retention-days: 1
+
+  test:
+    needs: test-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: coverage-*
+          path: operations-manager/python
+          merge-multiple: true
+      - name: Coverage samenvoegen
+        run: uv run --group test coverage combine .coverage.*
       - name: Coverage report
-        run: uv run coverage report --fail-under=71
+        run: uv run --group test coverage report --fail-under=71
       # De beveiligingskritische modules: drempel mag omhoog, niet omlaag zonder reden in de PR.
       # Zakt de dekking hier, dan is dat een bevinding.
       - name: Coverage report (beveiligingskritische modules)
-        run: uv run coverage report --fail-under=86 --include="opi/middleware/*,opi/api/user_token_auth.py,opi/api/endpoint_util.py,opi/services/project_authorization.py,opi/utils/age.py,opi/utils/sops.py,opi/utils/api_keys.py"
+        run: uv run --group test coverage report --fail-under=86 --include="opi/middleware/*,opi/api/user_token_auth.py,opi/api/endpoint_util.py,opi/services/project_authorization.py,opi/utils/age.py,opi/utils/sops.py,opi/utils/api_keys.py"
 
   # De twee Java-pakketten die images/keycloak-zad/ tot een Keycloak-image bundelt. Die
   # imagebouw draait alleen op workflow_dispatch, dus zonder deze job draaien hun toetsen
   # bij een pull request nergens. Temurin 21: dezelfde JDK-major als de bouwfase.
   keycloak-providers:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       matrix:
         module: [relay-email-sender, custom-mapper]
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
@@ -134,18 +181,19 @@ jobs:
           distribution: temurin
           java-version: "21"
       - name: Tests van ${{ matrix.module }}
-        working-directory: keycloak-migration/${{ matrix.module }}
+        working-directory: images/keycloak-zad/extensions/${{ matrix.module }}
         run: mvn -B test
 
   asvs-meetlat:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -163,13 +211,14 @@ jobs:
 
   biv-inventaris:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
@@ -186,13 +235,14 @@ jobs:
 
   license-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: operations-manager/python
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7

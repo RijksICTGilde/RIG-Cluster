@@ -27,6 +27,8 @@ env:
   # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
   # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
   # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
+  # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
   HARDEN_ENDPOINTS: |
     *.actions.githubusercontent.com:443
     *.blob.core.windows.net:443
@@ -73,12 +75,13 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       calver_tag: ${{ steps.calver.outputs.tag }}
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -102,6 +105,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'rig-backup' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -115,9 +119,9 @@ jobs:
       # niet overnemen. Zie features/image-versioning-calver.md.
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-backup
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -169,6 +173,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -182,9 +187,9 @@ jobs:
       # niet overnemen. Zie features/image-versioning-calver.md.
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-cmp-argo-kustomize-sops
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -236,6 +241,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'postgresql-with-dictionaries' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -245,9 +251,9 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/postgresql-with-dictionaries
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -299,6 +305,7 @@ jobs:
     needs: prepare
     if: inputs.image == 'keycloak-zad' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -308,9 +315,9 @@ jobs:
     env:
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/keycloak-zad
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

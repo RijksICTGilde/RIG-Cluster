@@ -201,12 +201,14 @@ async function layout(tree) {
   };
   collect(result);
 
-  // Eén label per doel, met alle poorten erin.
+  // Eén label per doel, met alle poorten erin. Alleen lijnen van dezelfde soort (kleur en
+  // stijl) delen een label: anders loopt het patroon van een regel door een poortenlijst.
   const byTarget = new Map();
   for (const e of edges) {
     if (!e.data.label) continue;
-    if (!byTarget.has(e.target)) byTarget.set(e.target, []);
-    byTarget.get(e.target).push(e);
+    const key = `${e.target}|${e.data.color}|${e.data.dashed}`;
+    if (!byTarget.has(key)) byTarget.set(key, []);
+    byTarget.get(key).push(e);
   }
   for (const group of byTarget.values()) {
     const labels = [...new Set(group.flatMap((e) => e.data.label.split(' ')))];
@@ -287,6 +289,7 @@ export async function buildGraph(doc, { expanded = new Set() } = {}) {
       color: colorOf(edge.color),
       width: 1.6,
       label: edge.label ?? '',
+      dashed: edge.style === 'dashed',
     });
   }
 

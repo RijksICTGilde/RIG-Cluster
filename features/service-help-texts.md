@@ -103,5 +103,5 @@ uv run pytest tests/test_service_help.py tests/test_service_help_markdown.py -q
 
 ## Verwant
 
-- `instructions/services.md` - het servicesysteem, en het stappenplan voor een nieuwe service
+- `docs/development/services.md` - het servicesysteem, en het stappenplan voor een nieuwe service
 - `features/service-describe-api.md` - de andere lezer van dezelfde tekst

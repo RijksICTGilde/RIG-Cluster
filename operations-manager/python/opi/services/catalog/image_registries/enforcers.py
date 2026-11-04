@@ -2,8 +2,8 @@
 
 Bij het pullen levert een te smal token ``ImagePullBackOff`` met "repository not found",
 een melding die de verkeerde kant op wijst. Getoetst wordt het tag-overzicht van een
-repository waar dit project werkelijk een image uit haalt; is die er niet, dan wordt er
-niets geweigerd.
+repository waar dit project werkelijk een image uit haalt; is die er nog niet, dan alleen
+of de registry het token accepteert.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLD
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.services_enums import ServiceType
 from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync
+from opi.utils.naming import upstream_host
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +54,18 @@ class RegistryTokenEnforcer:
             username = str(given_username) if given_username else PULL_USERNAME_PLACEHOLDER
             repository = _repository_under(str(upstream), images)
             if repository is None:
-                logger.info(
-                    f"Registry '{registry.get('name')}' heeft nog geen image in dit project; token niet getoetst"
-                )
-                continue
-            ok, reason = await connector.check_repository_access(repository, username, str(password))
+                # No image yet (the create wizard asks for the registry before the
+                # components): check that the registry accepts the token at all, so a
+                # wrong or expired token shows on this step instead of at the end.
+                ok, reason = await connector.check_login(str(upstream), username, str(password))
+                message = _login_refused_message(upstream_host(str(upstream)), bool(given_username))
+            else:
+                ok, reason = await connector.check_repository_access(repository, username, str(password))
+                message = _access_denied_message(repository, bool(given_username))
             if not ok and reason == REFUSED_DESTINATION_REASON:
                 raise FieldError(f"{_REGISTRIES_PATH}[{index}]/upstream", REFUSED_DESTINATION_REASON.capitalize())
             if not ok:
-                raise FieldError(
-                    f"{_REGISTRIES_PATH}[{index}]/password",
-                    _access_denied_message(repository, bool(given_username)),
-                )
+                raise FieldError(f"{_REGISTRIES_PATH}[{index}]/password", message)
         return value
 
 
@@ -85,6 +86,15 @@ def _access_denied_message(repository: str, has_username: bool) -> str:
             "bij Docker Hub en Quay is die wel nodig, dus vul daar je accountnaam of de naam van "
             "je robotaccount in."
         )
+    return f"{opening} {raad}"
+
+
+def _login_refused_message(host: str, has_username: bool) -> str:
+    """What the user sees when the registry does not accept the token at all."""
+    opening = f"{host} accepteert dit token niet: {UNREADABLE_REASON}."
+    raad = "Controleer of je het hele token hebt geplakt en of het nog geldig is."
+    if not has_username:
+        raad += " Bij Docker Hub en Quay is ook een gebruikersnaam nodig."
     return f"{opening} {raad}"
 
 

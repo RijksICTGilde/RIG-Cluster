@@ -22,6 +22,8 @@ env:
   # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
   # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
   # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
+  # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
   #
   # Waarom elk endpoint erbij hoort:
   #   agent.api.stepsecurity.io   harden-runner zelf, anders meldt hij niets
@@ -86,14 +88,19 @@ env:
   # renovate: datasource=github-releases depName=kubernetes-sigs/kind
   KIND_VERSION: 0.24.0
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   nuclei:
     name: Template-scan tegen een eigen doelwit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -119,6 +126,10 @@ jobs:
       # Dezelfde testserver als de E2E-suite: de echte app met gemockte externe systemen,
       # zonder cluster, database of Keycloak. Auth staat AAN, zodat de ongeauthenticeerde
       # scan het echte oppervlak achter de inlogmuur ziet.
+      # De testserver maakt bij het opstarten een AGE-sleutelpaar aan.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
       - name: Zet het doelwit op
         working-directory: operations-manager/python
         env:
@@ -127,7 +138,8 @@ jobs:
           PROJECT_REPO_PASSWORD: plain:repo-secret
         run: |
           nohup uv run python -m tests.e2e.testserver > /tmp/doelwit.log 2>&1 &
-          timeout 300 bash -c 'until curl -sf -o /dev/null http://127.0.0.1:8111/healthz; do sleep 3; done'
+          timeout 300 bash -c 'until curl -sf -o /dev/null http://127.0.0.1:8111/healthz; do sleep 3; done' \
+            || { tail -n 100 /tmp/doelwit.log; exit 1; }
 
       - name: Grendel op het doelwit
         working-directory: operations-manager/python
@@ -167,10 +179,11 @@ jobs:
   admission-audit:
     name: Admission control in waarschuwmodus
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -185,12 +198,14 @@ jobs:
       # Dit is de snelle poort, en hij faalt zodra een policy niet meer doet wat hij belooft.
       - name: Policies tegen een overtreder en een nette pod
         run: |
+          # kyverno apply eindigt met exitcode 1 zodra een resource faalt, en dat is hier de
+          # bedoeling; de telling hieronder is de toets.
           UITKOMST=$(kyverno apply \
             infrastructure/bootstrap/infrastructure/kyverno/policies/base/geen-latest-tag.yaml \
             infrastructure/bootstrap/infrastructure/kyverno/policies/base/securitycontext.yaml \
             --resource .github/aanvalsproef/overtreder-pod.yaml \
             --resource .github/aanvalsproef/tagloze-pod.yaml \
-            --resource .github/aanvalsproef/nette-pod.yaml)
+            --resource .github/aanvalsproef/nette-pod.yaml) || true
           echo "$UITKOMST"
           echo "$UITKOMST" | grep -q "pass: 5, fail: 4" \
             || { echo "verwacht 5 geslaagd en 4 gefaald: de policies meten niet meer wat ze beloven"; exit 1; }
@@ -206,13 +221,20 @@ jobs:
 
       - name: Install Kyverno
         run: |
-          kubectl apply -f "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/install.yaml"
+          # Server-side: de CRD's van Kyverno zijn te groot voor de last-applied-annotatie
+          # van een client-side apply.
+          kubectl apply --server-side -f "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/install.yaml"
           kubectl -n kyverno rollout status deployment/kyverno-admission-controller --timeout=300s
           kubectl -n kyverno rollout status deployment/kyverno-reports-controller --timeout=300s
 
       - name: Zet de policies erop
         run: |
-          kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base
+          # Een geslaagde rollout betekent nog niet dat de webhook van Kyverno al antwoordt.
+          for poging in $(seq 1 30); do
+            kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base && break
+            [ "$poging" = 30 ] && exit 1
+            sleep 5
+          done
           kubectl wait --for=condition=Ready clusterpolicy/zad-geen-latest-tag --timeout=120s
           kubectl wait --for=condition=Ready clusterpolicy/zad-securitycontext --timeout=120s
 
@@ -242,10 +264,11 @@ jobs:
   falco-regels:
     name: Runtime-detectieregels
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

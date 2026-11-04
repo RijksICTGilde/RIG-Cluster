@@ -127,10 +127,10 @@ Drie richtingen, en ze gelden voor het formulier en voor de API:
 | "Automatisch" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
 | niets kiezen | er verandert niets; afwezig BETEKENT automatisch (zie de voorrangsregel hieronder) |
 
-Dat is de val waar `instructions/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
+Dat is de val waar `docs/development/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
 een default stil een selectie), maar hier gewild, en alleen in de ene richting. De regel staat
 een keer, als `component_selection_follows_config` op de dienst; wat daaruit volgt staat in
-`instructions/services.md`.
+`docs/development/services.md`.
 
 Of het veld verschijnt volgt uit zijn eigen keuzelijst (`hidden_without_options`). Heeft het
 project geen registries, dan blijft de componentvorm zoals hij was: de toestand van 47 van de
@@ -387,7 +387,7 @@ wave 0 voor wave 1 aan), maar hij poortwacht op HEALTH, en een net aangemaakte
 kind-Application beheert nul resources en meldt zich daarmee binnen een seconde Healthy. De
 grendel gaat dus open voordat het projectniveau zijn serviceaccount heeft uitgerold. Gemeten
 op 2026-09-25, met de afgewezen alternatieven, in
-`docs/de-serviceaccount-komt-na-de-deployment.md`.
+`docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`.
 
 Wat het wel oplost is de AANMAAKVOLGORDE, in `ArgoManager.create_argocd_resources`. Die
 pusht in twee commits: eerst het projectniveau (met zijn AppProject en repository-secret),
@@ -399,7 +399,7 @@ zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten z
 Loopt die wacht vast, dan gaat de commit met de deployment-applicaties er niet meer heen en
 breekt de verwerking van het project af. Eerder was dat een waarschuwing in het log en liep
 de verwerking degraded door; waarom de afbrekende kant hier de veilige is, staat in
-`docs/de-serviceaccount-komt-na-de-deployment.md`.
+`docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`.
 
 De toets erop staat in `tests/test_project_level_ordering.py`.
 

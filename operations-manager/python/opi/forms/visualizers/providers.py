@@ -201,7 +201,7 @@ class ServiceOptionsProvider:
         """Get available service options from ServiceAdapter definitions."""
         # Imported here, not at module scope: the registry imports the catalog, whose
         # services import this forms module back. The catalog breaks the same cycle the
-        # same way (instructions/services.md, "Keep the catalog import-light").
+        # same way (docs/development/services.md, "Keep the catalog import-light").
         from opi.services.registry import get_service
 
         options: list[dict[str, Any]] = []
@@ -998,6 +998,19 @@ class DeploymentCloneFromOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         options: list[dict[str, Any]] = [{"value": "", "label": "Niet klonen"}]
+        options.extend({"value": name, "label": name} for name in self.deployment_names)
+        return options
+
+
+class RestoreConfigSourceOptionsProvider(DeploymentCloneFromOptionsProvider):
+    """Provides the deployments a restore can take its configuration from.
+
+    Same list as the clone-from picker, with an empty option that says what empty means
+    here: a restore always clones the backup, so "not cloning" is not the choice.
+    """
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options: list[dict[str, Any]] = [{"value": "", "label": "Geen (lege deployment)"}]
         options.extend({"value": name, "label": name} for name in self.deployment_names)
         return options
 
@@ -2258,6 +2271,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "BackupResourceTypesOptionsProvider": BackupResourceTypesOptionsProvider,
     "BackupDeploymentOptionsProvider": BackupDeploymentOptionsProvider,
     "DeploymentCloneFromOptionsProvider": DeploymentCloneFromOptionsProvider,
+    "RestoreConfigSourceOptionsProvider": RestoreConfigSourceOptionsProvider,
     "RootComponentOptionsProvider": RootComponentOptionsProvider,
     "BareDomainComponentOptionsProvider": BareDomainComponentOptionsProvider,
     "RepositoryOptionsProvider": RepositoryOptionsProvider,

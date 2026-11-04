@@ -132,7 +132,7 @@ Buiten scope: de sleutels per project en de zad-deployments-repo, die op de proj
 | `scripts/rewrap-project-keys.py` | `config.age-private-key` en de `age-key.txt.age`-back-ups van de platformsleutel naar de project-KEK |
 | `scripts/scan-secrets.py` | de guard: weigert een commit, een branch of een historie met een geheim |
 
-De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/sops-en-age-met-de-hand.md`.
+De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/operations/sops-en-age-met-de-hand.md`.
 
 Op de productie-overlays staat een tweede laag: `test_productie_overlay_geen_platte_secrets.py` weigert een `kind: Secret` onder `**/overlays/odcn*/` dat niet SOPS-versleuteld is. De secret-scan kan dat niet vangen (die zoekt sleutelVORMEN, en korte wachtwoorden hebben geen vorm), dus deze toets kijkt naar de documentsoort en draait in CI.
 
@@ -223,7 +223,7 @@ kubectl annotate application ron-infrastructure -n $NS argocd.argoproj.io/refres
 | de mailrelay deployt naar | `rig-ron` | `rig-prd-ron` |
 
 
-**Lees de dry-run van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie draagt er sinds RC-351 een de platformsleutel: `rig-prd-operations`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Draait er nog een cluster met de oude kopie in `rig-prd-ron`, dan komt die in de dry-run ook langs; die mag na de rotatie weg. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `instructions/sops-sleutel-in-het-cluster.md`.
+**Lees de dry-run van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie draagt er sinds RC-351 een de platformsleutel: `rig-prd-operations`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Draait er nog een cluster met de oude kopie in `rig-prd-ron`, dan komt die in de dry-run ook langs; die mag na de rotatie weg. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `docs/development/sops-sleutel-in-het-cluster.md`.
 
 De handmatige sync is er omdat de tenant-sidecar het secret bij ELKE render leest: de eerste render na de wissel is het bewijs dat het goed staat.
 

@@ -23,7 +23,7 @@ upstream (sandbox: de Mailpit-sink)
 Het middelste blok is het verschil met een standaard Keycloak. Normaal draagt **elke realm**
 zijn eigen `smtpServer`-map met host, gebruiker en wachtwoord; Keycloak heeft geen
 serverbrede SMTP-instelling. Op dit platform is die map vervangen door een eigen
-`EmailSenderProvider` (`keycloak-migration/relay-email-sender/`) die de relay, de
+`EmailSenderProvider` (`images/keycloak-zad/extensions/relay-email-sender/`) die de relay, de
 inloggegevens en het afzenderadres uit de **omgeving van de pod** leest en de map van de
 realm volledig negeert.
 
@@ -489,7 +489,7 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 
 | Onderdeel | Pad |
 |---|---|
-| De verzender (Java) | `keycloak-migration/relay-email-sender/` |
+| De verzender (Java) | `images/keycloak-zad/extensions/relay-email-sender/` |
 | De jar in de pod | `images/keycloak-zad/`, gebouwd uit de bron hierboven |
 | De vlag en de omgevingsvariabelen | `infrastructure/.../keycloak/controller/base/deployment.yaml` |
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |

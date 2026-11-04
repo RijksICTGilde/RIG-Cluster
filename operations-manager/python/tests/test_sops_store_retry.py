@@ -1,9 +1,10 @@
 """The SOPS-key store retries the transient Capsule-RBAC race on a freshly created
-namespace, and only logs an ERROR once it has genuinely given up.
+namespace, and leaves the ERROR to the caller that retries this whole call.
 
 A newly created tenant namespace's Capsule admin RoleBinding takes ~1s to
 propagate; the first apply then fails with a transient Forbidden. That must not
-raise an alert if a retry succeeds.
+raise an alert if a retry succeeds. Giving up on that same race is a WARNING too: the
+caller in project_manager calls this up to ten times and owns the final verdict.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,7 +40,7 @@ async def test_transient_forbidden_then_success_does_not_error():
 
 
 @pytest.mark.asyncio
-async def test_persistent_forbidden_errors_after_exhausting_retries():
+async def test_persistent_forbidden_warns_after_exhausting_retries():
     handler, kubectl = _handler_with(KubectlExecutionError("... is forbidden ..."))
     with (
         patch("opi.handlers.sops.asyncio.sleep", new=AsyncMock()),
@@ -49,7 +50,8 @@ async def test_persistent_forbidden_errors_after_exhausting_retries():
 
     assert ok is False
     assert kubectl.apply_manifest.await_count == 4  # _SOPS_STORE_MAX_ATTEMPTS
-    log.error.assert_called_once()
+    log.error.assert_not_called()  # the caller retries this call, so this is not the final failure
+    log.warning.assert_called()
 
 
 @pytest.mark.asyncio

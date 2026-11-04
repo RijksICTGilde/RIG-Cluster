@@ -189,7 +189,7 @@ class TestUnmetRequirements:
         ]
 
     def test_identity_survives_an_entry_that_carries_config(self) -> None:
-        """De valkuil uit instructions/services.md: op de sleutels van het dict lezen
+        """De valkuil uit docs/development/services.md: op de sleutels van het dict lezen
         laat elke dienst mét config vallen."""
         data = _project([{"name": "keycloak", "config": {"template": "standaard"}}])
         assert unmet_service_requirements(data, ["services/keycloak"]) == []

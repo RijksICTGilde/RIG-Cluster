@@ -269,7 +269,7 @@ class Editable:
 
     Off by default: an empty list usually means "the options are not known here yet", and
     a field that vanishes would be worse than an empty dropdown. See
-    ``instructions/services.md`` for why this beats a ``depends_on``.
+    ``docs/development/services.md`` for why this beats a ``depends_on``.
     """
     required: bool = False
     default: Any = None

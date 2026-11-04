@@ -3,7 +3,7 @@
 # prune-kind-registry.sh - verwijdert oude tags uit de registry naast het kind-cluster en
 # ruimt daarna de lagen op waar geen manifest meer naar verwijst.
 #
-# Wat blijft staan en waarom dit in het deploy-pad draait: docs/sandbox-kind-registry.md.
+# Wat blijft staan en waarom dit in het deploy-pad draait: docs/sandbox/sandbox-kind-registry.md.
 #
 # Omgevingsvariabelen:
 #   RETENTIE_DAGEN       tags met een image ouder dan dit aantal dagen gaan weg (standaard 2)

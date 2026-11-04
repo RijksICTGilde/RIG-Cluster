@@ -23,8 +23,7 @@ from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_t
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-EXAMPLE_PROJECT = REPO_ROOT / "projects" / "simple-example.yaml"
+EXAMPLE_PROJECT = Path(__file__).parent / "fixtures" / "projects" / "simple-example.yaml"
 
 
 def _valid_project() -> dict:

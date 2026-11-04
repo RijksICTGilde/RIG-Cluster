@@ -1,7 +1,7 @@
 """Tests voor de sandbox-build die naar de registry naast het kind-cluster pusht.
 
 De build pusht `localhost:5001/operations-manager:<commit>` en het cluster pullt die zelf;
-zie docs/sandbox-kind-registry.md. Bewaakt wordt:
+zie docs/sandbox/sandbox-kind-registry.md. Bewaakt wordt:
   1. de tag per commit, ook voor een ongecommitte wijziging (anders rolt er niets uit);
   2. dat de overlay bij elke deploy op die tag gezet wordt, ook vanuit een oude checkout;
   3. dat er op het pad van de deploy geen `kind load` van operations-manager meer zit,

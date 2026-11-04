@@ -46,7 +46,7 @@
 {% from "bg/_patterns.html.j2" import panel %}
 {% from "bg/_introductie-blokken.html.j2" import
     kop, wat_het_is, waarom, de_puzzel, dienstenraster, op_de_achtergrond,
-    op_de_voorgrond, gereedschap, aan_de_slag %}
+    op_de_voorgrond, gereedschap, aan_de_slag, versie_regel %}
 
 {% block page_title %}Introductie - Zelfservice Applicatie Deployment{% endblock %}
 
@@ -87,20 +87,5 @@
         {{ aan_de_slag() }}
     {% endcall %}
 
-    {# Only here: the NLDD application pattern has no page footer to carry it. #}
-    {% set vi = version_info() %}
-    {% set versie_details = [
-        vi.branch,
-        ('gebouwd ' ~ (vi.build_date | dutch_date(include_time=False))) if vi.build_date else '',
-        'met lokale wijzigingen' if vi.dirty else '',
-    ] | select | list %}
-    {% set versie_tekst = 'Versie: ' ~ vi.version ~ (' (' ~ versie_details | join(', ') ~ ')' if versie_details else '') %}
-    {% set commit_ref = vi.commit if vi.commit else (vi.version if vi.version != '0.1.0' else '') %}
-    <c-paragraph size="sm">
-        {% if commit_ref %}
-            <c-link href="https://github.com/RijksICTGilde/RIG-Cluster/commit/{{ commit_ref }}" label="{{ versie_tekst }}" />
-        {% else %}
-            {{ versie_tekst }}
-        {% endif %}
-    </c-paragraph>
+    {{ versie_regel() }}
 {% endblock %}

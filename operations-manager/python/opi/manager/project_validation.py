@@ -754,10 +754,11 @@ def validate_service_availability(
 
     ``Service.available_on_cluster`` is the hard one: the cluster cannot deliver the
     service at all, so nobody may have it. ``Service.replaced_on_cluster`` is the softer
-    one: the service has a successor there, so a deployment that already runs it keeps
-    it, and only a deployment that would get it NEW is refused. Which is why this rule
-    needs ``previous``, the version this save replaces; a create has none, and then every
-    choice is new.
+    one: the service has a successor there, so a project that already runs it keeps it on
+    every deployment, new ones included, and only a project that would get it NEW is
+    refused. Per project and not per deployment, because a PR preview is a fresh clone of
+    a deployment that already ran it. Which is why this rule needs ``previous``, the
+    version this save replaces; a create has none, and then every choice is new.
 
     This is the refusal that counts. Leaving a service out of the wizard's cards hides it
     from one of three roads; the API and a hand-written project file never pass a card at
@@ -800,12 +801,17 @@ def validate_service_availability(
                 # De dienst staat wel in de projectlijst maar deze deployment gebruikt hem
                 # niet, dus deze deployment krijgt er niets bij.
                 continue
-            if previous is not None and handler.deployment_uses_service(previous, str(dep_name), [name]):
+            if previous is not None and any(
+                isinstance(prev_dep, dict)
+                and handler.deployment_uses_service(previous, str(prev_dep.get("name")), [name])
+                for prev_dep in previous.get("deployments", []) or []
+            ):
                 continue
             successor = service.replaced_by.value if service.replaced_by else ""
             errors.append(
                 f"de dienst '{name}' is op cluster '{cluster}' vervangen door '{service.replacement_name()}'. "
-                f"Deployment '{dep_name}' had hem niet; gebruik '{successor}' in plaats daarvan"
+                f"Het project had hem niet, dus deployment '{dep_name}' krijgt hem niet erbij; "
+                f"gebruik '{successor}' in plaats daarvan"
             )
     return errors
 

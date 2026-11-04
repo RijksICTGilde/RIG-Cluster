@@ -44,7 +44,7 @@ Op één uitzondering: een connector die met `connect_retry_seconds=0` gebouwd i
 paden) gaat niet in die rij staan en geeft `False` terug zodra de lock bezet is. De login erachter
 kan een herstart van argocd-server uitzitten, en die wacht hoort niet in een pagina of een
 HTMX-poll. Is de lock vrij, dan logt hij in. Zie
-`docs/argocd-server-herstart-elke-40-minuten.md`.
+`docs/post-mortems/argocd-server-herstart-elke-40-minuten.md`.
 
 **Compare-and-clear bij een 401.** Een request dat een 401 krijgt mag alleen het token wissen dát
 het zelf gebruikte. Anders: request A gebruikt T1 en krijgt een 401, B heeft ondertussen al ververst

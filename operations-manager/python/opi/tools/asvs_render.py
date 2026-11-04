@@ -2,7 +2,7 @@
 
 ``architecture/asvs-5.0-eisen.yaml`` is de meetlat: de ASVS-eisen op L1 en L2, letterlijk
 uit de standaard. ``architecture/asvs-zelfbeoordeling.yaml`` is ons oordeel per eis, en
-``docs/asvs-zelfbeoordeling.md`` volgt daaruit en wordt nooit met de hand bijgewerkt.
+``docs/security/asvs-zelfbeoordeling.md`` volgt daaruit en wordt nooit met de hand bijgewerkt.
 
 Wat deze toets bewijst: elke eis op het gekozen niveau heeft precies een oordeel, en een
 oordeel dat naar een automatische toets wijst noemt een toets die echt bestaat. Een regel
@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 REPO_ROOT = Path(__file__).resolve().parents[4]
 EISEN = REPO_ROOT / "architecture" / "asvs-5.0-eisen.yaml"
 BEOORDELING = REPO_ROOT / "architecture" / "asvs-zelfbeoordeling.yaml"
-AFVINKLIJST = REPO_ROOT / "docs" / "asvs-zelfbeoordeling.md"
+AFVINKLIJST = REPO_ROOT / "docs" / "security" / "asvs-zelfbeoordeling.md"
 
 
 class Status(StrEnum):
@@ -203,8 +203,8 @@ def render(eisen: list[Eis], niveau: str, oordelen: list[Oordeel]) -> str:
         [
             "# ASVS-zelfbeoordeling van ZAD",
             "",
-            "Gegenereerd uit [architecture/asvs-zelfbeoordeling.yaml](../architecture/asvs-zelfbeoordeling.yaml)"
-            " en [architecture/asvs-5.0-eisen.yaml](../architecture/asvs-5.0-eisen.yaml) met"
+            "Gegenereerd uit [architecture/asvs-zelfbeoordeling.yaml](../../architecture/asvs-zelfbeoordeling.yaml)"
+            " en [architecture/asvs-5.0-eisen.yaml](../../architecture/asvs-5.0-eisen.yaml) met"
             " `task asvs-afvinklijst`. Bewerk dit bestand niet met de hand: een wijziging hoort in de"
             " beoordeling, en `task asvs-check` meldt het verschil.",
             "",

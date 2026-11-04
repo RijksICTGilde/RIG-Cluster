@@ -27,6 +27,8 @@ env:
   # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
   # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
   # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
+  # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
   HARDEN_ENDPOINTS: |
     *.actions.githubusercontent.com:443
     *.blob.core.windows.net:443
@@ -67,9 +69,14 @@ env:
     security.ubuntu.com:80
     tuf-repo-cdn.sigstore.dev:443
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       # Een herbouw is de nachtelijke run of een dispatch: zonder laagcache en op een
       # nightly-tag, nooit op een CalVer-nummer.
@@ -84,9 +91,9 @@ jobs:
       tags: ${{ steps.tags.outputs.tags }}
       digest: ${{ steps.push.outputs.digest }}
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -173,6 +180,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -181,9 +189,9 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -219,12 +227,13 @@ jobs:
     # Herbouw publiceert nightly-tag, geen git-tag: CalVer hoort bij een merge.
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
         with:
-          egress-policy: block
+          egress-policy: audit
           allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 

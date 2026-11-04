@@ -19,7 +19,7 @@ from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.services_enums import CleanupStrategy
 from opi.utils.yaml_util import load_yaml_from_string
-from tests.loop_meeloper import meeloper
+from tests.jsonpath_counter import count_jsonpath_compiles
 
 _GROOT_PROJECT = Path(__file__).parent / "fixtures" / "projects" / "groot-project-25-deployments.yaml"
 
@@ -573,7 +573,7 @@ class TestCleanupHoudtDeLoopNietVast:
     deployment werd voor elk cleanable service type twee keer een jsonpath met de
     deploymentnaam erin gecompileerd (7 ms per compile, honderden per project).
 
-    Zonder de fix duurt dit blok ongeveer 15 s en faalt deze toets.
+    Zonder de fix compileert dit blok een jsonpath per deployment en faalt deze toets.
     """
 
     @pytest.mark.asyncio
@@ -585,7 +585,7 @@ class TestCleanupHoudtDeLoopNietVast:
         pm._ensure_database_manager = AsyncMock()
         orchestrator = DeleteProjectManager(pm)
 
-        async with meeloper() as meting:
+        with count_jsonpath_compiles() as compiles:
             result = await orchestrator.cleanup_removed_services_from_yaml_change(
                 project_name="groot-project",
                 previous_yaml=project_data,
@@ -594,4 +594,6 @@ class TestCleanupHoudtDeLoopNietVast:
 
         assert result["deployments_checked"] == 25
         assert result["services_removed"] == 0
-        meting.eis_onder(0.2, "cleanup_removed_services_from_yaml_change op 25 deployments")
+        # Counted rather than timed: a time limit measures the machine, a compile per
+        # deployment is the cause itself.
+        assert compiles.count < 25, f"{compiles.count} jsonpath compiles for 25 deployments: one per deployment again?"
