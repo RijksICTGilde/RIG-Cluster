@@ -82,22 +82,6 @@ The full list is in [`features/README.md`](features/README.md). Key features:
 - [Namespace PostgreSQL Database](features/namespace-postgresql-database.md) - per-project database provisioning
 - [CAA Records](features/caa-records.md) - keeps our DNS zones locked to the CA we actually use
 
-## Tools
-
-All operations use [Taskfile](https://taskfile.dev). Key commands:
-
-```bash
-task sandbox:setup                    # Full sandbox setup
-task sandbox:sync                     # Sync infrastructure changes to Forgejo
-task sandbox:skaffold-dev             # Hot-reload development
-task sandbox:update-operations-manager # Rebuild and deploy Operations Manager
-task sandbox:destroy                  # Tear down sandbox
-```
-
-## Secret Management
-
-Secrets are managed with SOPS and AGE encryption. Templates in the infrastructure overlays use `@secret-gen:random:XX` annotations for automatic password generation. The sandbox uses a per-setup AGE key (`security/sandbox-key.txt`), while shared secrets (TLS certificates) use a developer AGE key distributed out-of-band.
-
 ## Working on the Platform Itself
 
 This repository holds the platform: the Operations Manager, the Kustomize for every component and the tooling around it. To change it, run a full copy on your own machine with the **sandboxed-local** setup. See the **[Getting Started Guide](docs/getting-started.md)** for step-by-step setup instructions.
@@ -113,3 +97,19 @@ task sandbox:setup
 ```
 
 You will need the developer AGE private key to decrypt the TLS certificates. Ask the ZAD developers if you don't have it.
+
+### Tools
+
+All operations use [Taskfile](https://taskfile.dev). Key commands:
+
+```bash
+task sandbox:setup                    # Full sandbox setup
+task sandbox:sync                     # Sync infrastructure changes to Forgejo
+task sandbox:skaffold-dev             # Hot-reload development
+task sandbox:update-operations-manager # Rebuild and deploy Operations Manager
+task sandbox:destroy                  # Tear down sandbox
+```
+
+### Secret Management
+
+Secrets are managed with SOPS and AGE encryption. Templates in the infrastructure overlays use `@secret-gen:random:XX` annotations for automatic password generation. The sandbox uses a per-setup AGE key (`security/sandbox-key.txt`), while shared secrets (TLS certificates) use a developer AGE key distributed out-of-band.
