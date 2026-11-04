@@ -253,3 +253,21 @@ def static_url(path: str) -> str:
     else:
         digest = cached[1]
     return f"/static/{relative_path}?v={digest}"
+
+
+# Het label en de kleur van het cluster in de kopbalk, zodat je ziet in welke omgeving je
+# werkt. Staging valt op; productie blijft rustig, want een balk die altijd alarm slaat
+# zie je na een dag niet meer.
+CLUSTER_TAGS: dict[str, tuple[str, str]] = {
+    "local": ("Local", "accent"),
+    "sandboxed-local": ("Sandbox", "accent"),
+    "odcn-staging": ("ODCN Staging", "warning"),
+    "odcn-production": ("ODCN Production", "neutral"),
+}
+
+
+def cluster_tag(cluster_manager: str) -> tuple[str, str]:
+    """Label en ``nldd-tag``-kleur voor een cluster. Een onbekend cluster toont zijn naam."""
+    if cluster_manager.startswith("sandboxed-local"):
+        return CLUSTER_TAGS["sandboxed-local"]
+    return CLUSTER_TAGS.get(cluster_manager, (cluster_manager, "neutral"))

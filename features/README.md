@@ -126,6 +126,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [De donkere weergave: waar de kleuren vandaan komen, en wat er mis kan gaan](donkere-weergave-contrast.md)
 - [De draaiende pod tonen, en de logs per pod kunnen kiezen](draaiende-pod-tonen.md)
 - [De kaart van ZAD](zad-kaart.md)
+- [De omgeving in de kopbalk](omgeving-in-de-kopbalk.md)
 - [De rvo-resten in de LOTC-templates](lotc-rvo-opruiming.md)
 - [De stijlbladen langs de componenten](lotc-stijlbladen-langs-de-componenten.md)
 - [Ephemeral Database Console](database-console.md)
