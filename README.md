@@ -4,7 +4,7 @@ ZAD (Zelfservice Applicatie Deployment) is the set of tools that together make d
 
 One declarative project file describes your deployments and the services they use (PostgreSQL, Keycloak, MinIO, Redis, mail). ZAD provisions those services, generates the credentials and manifests, and ArgoCD rolls them out.
 
-Under the hood ZAD is GitOps all the way: every change is a commit, reviewable and reversible. You just never have to write one. Click it together in the portal or script it with the CLI, and ZAD turns what you want into the technical solution that delivers it. A database, a login screen, a fresh environment for every pull request: you ask for the outcome, without needing to know Kubernetes, ArgoCD or Kustomize to get there.
+ZAD is GitOps, operated through a portal or a CLI instead of through Git. It translates functional requirements into technical solutions, so deploying an application does not require platform engineering skills.
 
 ## Using ZAD
 
