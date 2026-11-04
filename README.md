@@ -1,14 +1,20 @@
 # RIG-Cluster
 
-RIG-Cluster is a Kubernetes platform for RIG projects in ODC-Noord, supporting POC, Pilot, and Production environments.
+RIG-Cluster is the set of tools that together make deploying software for government projects easy, fast and accessible. You describe what your application needs; the platform provisions it, deploys it and keeps it running. It currently runs in ODC-Noord, but is designed to work on any Kubernetes cluster.
 
-At its core is **ZAD** (Zelfservice Applicatie Deployment) - a self-service portal where developers define what their project needs in a single declarative file. ZAD provisions the infrastructure (PostgreSQL, Keycloak, MinIO, Redis), generates credentials, creates Kubernetes deployments, and configures everything end-to-end. It integrates into CI/CD through a GitHub Action and exposes an API for controlling deployments, updating images, creating backups, spinning up feature branch environments, and cleaning up.
+At its core is **ZAD** (Zelfservice Applicatie Deployment): one declarative project file describes your deployments and the services they use (PostgreSQL, Keycloak, MinIO, Redis, mail). ZAD provisions those services, generates the credentials and manifests, and ArgoCD rolls them out.
 
-## Getting Started
+## Using ZAD
 
-The recommended way to get started is the **sandboxed-local** setup, which runs a fully self-contained cluster on your machine. See:
+There are three ways in, all on the same API:
 
-- **[Getting Started Guide](docs/getting-started.md)** - step-by-step setup instructions
+- **The portal** at [zad.rijksapps.nl](https://zad.rijksapps.nl): create a project, add deployments and services, manage members and backups.
+- **[zad-actions](https://github.com/RijksICTGilde/zad-actions)**: GitHub Actions to deploy an image from CI, spin up an environment per pull request and clean it up afterwards.
+- **[zad-cli](https://github.com/RijksICTGilde/zad-cli)** (`zadctl`): the same operations from your terminal or any other pipeline.
+
+## Working on the Platform Itself
+
+This repository holds the platform: the Operations Manager, the Kustomize for every component and the tooling around it. To change it, run a full copy on your own machine with the **sandboxed-local** setup. See the **[Getting Started Guide](docs/getting-started.md)** for step-by-step setup instructions.
 
 Quick start:
 
