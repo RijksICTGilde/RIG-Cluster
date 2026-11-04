@@ -141,13 +141,16 @@ async def test_pipeline_reports_nothing_without_a_progress_manager(monkeypatch: 
 # ---------------------------------------------------------------------------
 # The phases after the services
 #
-# Op 4 november bleef de pagina vijf minuten op "Redis-cache klaarmaken" staan
-# terwijl OPI op een push naar GitHub wachtte. Elke fase na de diensten noemt
-# zich daarom zelf.
+# On 4 November the page stayed on "Redis-cache klaarmaken" for five minutes
+# while OPI was waiting on a push to GitHub. So every phase after the services
+# names itself.
 # ---------------------------------------------------------------------------
 
 
-def _workspace(push_error: Exception | None = None, during_prepare: Callable[[], None] | None = None) -> Any:
+def _workspace(
+    push_error: Exception | list[Exception | None] | None = None,
+    during_prepare: Callable[[], None] | None = None,
+) -> Any:
     """A real GitRepoWorkspace with only the remote stubbed out.
 
     The real ``mutate_and_push`` runs, so the ``on_prepare`` and ``on_push`` hooks that
@@ -175,7 +178,7 @@ def _workspace(push_error: Exception | None = None, during_prepare: Callable[[],
 def _repository_manager(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    push_error: Exception | None = None,
+    push_error: Exception | list[Exception | None] | None = None,
     during_prepare: Callable[[], None] | None = None,
 ) -> Any:
     """A ProjectManager whose manifest round is stubbed down to its phases."""
@@ -219,10 +222,10 @@ async def test_every_manifest_phase_names_itself(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.asyncio
 async def test_fetching_the_repo_is_already_its_own_running_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    """De eerste netwerkstap van de write mag niet onder de laatste dienst vallen.
+    """The first network step of the write must not fall under the last service.
 
-    Daar laat een onbereikbare remote zich het eerst voelen: de ls-remote en de clone of
-    fetch gaan vooraf aan het genereren.
+    That is where an unreachable remote shows first: the ls-remote and the clone or
+    fetch come before the generation.
     """
     seen: list[str | None] = []
     progress = _progress()
@@ -237,7 +240,7 @@ async def test_fetching_the_repo_is_already_its_own_running_line(monkeypatch: py
 
 @pytest.mark.asyncio
 async def test_a_failing_push_is_the_failing_step_and_the_running_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Het beeld van 4 november: de huidige regel noemt de push, niet de laatste dienst."""
+    """The picture of 4 November: the running line names the push, not the last service."""
     from opi.connectors.git import GitCommandTimeoutError
 
     error = GitCommandTimeoutError(
@@ -256,6 +259,25 @@ async def test_a_failing_push_is_the_failing_step_and_the_running_line(monkeypat
     assert "kreeg geen antwoord" in push_step["error"]
     assert "github.com" in push_step["error"]
     assert progress._current_step == "Manifesten naar Git pushen - deployments"
+
+
+@pytest.mark.asyncio
+async def test_a_retried_conflict_is_not_a_failed_push_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mutate_and_push retries a conflict on the new tip; a rollout that then lands shows no red step."""
+    from opi.connectors.git_repo import GitRepoConflictError
+
+    manager, deployment = _repository_manager(monkeypatch, push_error=[GitRepoConflictError("remote moved"), None])
+    progress = _progress()
+    manager.set_progress_manager(progress)
+
+    await manager._process_repository_manifests({"name": "deployments"}, [deployment])
+
+    pushes = [(name, status) for name, status in _steps(progress) if name.startswith("Manifesten naar Git pushen")]
+    assert pushes == [
+        ("Manifesten naar Git pushen: botsing, opnieuw", TaskStatus.COMPLETED.value),
+        ("Manifesten naar Git pushen", TaskStatus.COMPLETED.value),
+    ]
+    assert all(status != TaskStatus.FAILED.value for _, status in _steps(progress))
 
 
 @pytest.mark.asyncio

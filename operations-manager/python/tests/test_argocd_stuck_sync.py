@@ -537,7 +537,7 @@ def _werkmap(order: list[str]) -> MagicMock:
 
     async def mutate_and_push(_message: str, mutate, on_prepare=None, on_push=None):  # type: ignore[no-untyped-def]
         uitkomst = await mutate()
-        # on_push omsluit alleen de write, net als in de echte werkmap.
+        # on_push wraps only the write, as in the real working copy.
         with on_push() if on_push else nullcontext():
             order.append("write")
         return uitkomst

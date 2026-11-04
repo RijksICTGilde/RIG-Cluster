@@ -67,8 +67,8 @@ GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
 # fingerprint as an ssh key.
 GIT_SIGNING_FORMAT = "openpgp"
 
-#: Timeout voor de git-commando's die het netwerk op gaan (push, fetch, ls-remote).
-#: Zonder grens is curl's connect-timeout (300s) de enige limiet.
+#: Timeout for git commands that go out over the network (push, fetch, ls-remote).
+#: Without it, curl's connect timeout (300s) is the only limit.
 GIT_PUSH_TIMEOUT_SECONDS = 60
 
 COMMIT_ACTOR_TRAILER = "Actor"
