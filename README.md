@@ -1,8 +1,8 @@
-# RIG-Cluster
+# ZAD
 
-RIG-Cluster is the set of tools that together make deploying software for government projects easy, fast and accessible. You describe what your application needs; the platform provisions it, deploys it and keeps it running. It currently runs in ODC-Noord, but is designed to work on any Kubernetes cluster.
+ZAD (Zelfservice Applicatie Deployment) is the set of tools that together make deploying software for government projects easy, fast and accessible. You describe what your application needs; the platform provisions it, deploys it and keeps it running. It currently runs in ODC-Noord, but is designed to work on any Kubernetes cluster.
 
-At its core is **ZAD** (Zelfservice Applicatie Deployment): one declarative project file describes your deployments and the services they use (PostgreSQL, Keycloak, MinIO, Redis, mail). ZAD provisions those services, generates the credentials and manifests, and ArgoCD rolls them out.
+One declarative project file describes your deployments and the services they use (PostgreSQL, Keycloak, MinIO, Redis, mail). ZAD provisions those services, generates the credentials and manifests, and ArgoCD rolls them out.
 
 ## Using ZAD
 
