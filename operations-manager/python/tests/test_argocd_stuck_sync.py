@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -534,9 +535,11 @@ class TestOpisOwnTimeOut:
 def _werkmap(order: list[str]) -> MagicMock:
     """Een werkmap die noteert wanneer hij de stap toepast en wanneer hij schrijft."""
 
-    async def mutate_and_push(_message: str, mutate):  # type: ignore[no-untyped-def]
+    async def mutate_and_push(_message: str, mutate, on_prepare=None, on_push=None):  # type: ignore[no-untyped-def]
         uitkomst = await mutate()
-        order.append("write")
+        # on_push omsluit alleen de write, net als in de echte werkmap.
+        with on_push() if on_push else nullcontext():
+            order.append("write")
         return uitkomst
 
     workspace = MagicMock()

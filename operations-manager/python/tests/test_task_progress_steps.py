@@ -11,11 +11,14 @@ the assertions run against the same structure the database and the progress
 fragment read.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.task_manager import TaskStatus
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _progress() -> Any:
@@ -133,6 +136,191 @@ async def test_pipeline_reports_nothing_without_a_progress_manager(monkeypatch: 
     manager = _project_manager(monkeypatch, process_ok=True)
 
     assert await manager.process_project_from_git("projects/test-project.yaml") is True
+
+
+# ---------------------------------------------------------------------------
+# The phases after the services
+#
+# Op 4 november bleef de pagina vijf minuten op "Redis-cache klaarmaken" staan
+# terwijl OPI op een push naar GitHub wachtte. Elke fase na de diensten noemt
+# zich daarom zelf.
+# ---------------------------------------------------------------------------
+
+
+def _workspace(push_error: Exception | None = None, during_prepare: Callable[[], None] | None = None) -> Any:
+    """A real GitRepoWorkspace with only the remote stubbed out.
+
+    The real ``mutate_and_push`` runs, so the ``on_prepare`` and ``on_push`` hooks that
+    turn the two network phases into their own step are the code under test and not a
+    stand-in for it. ``_base_ref`` stays empty, so the refresh really happens;
+    ``during_prepare`` runs inside it, where the page showed the last service before.
+    """
+    from opi.connectors.git_repo import GitCredentials, GitRepoWorkspace
+
+    async def _tip(_credentials: Any) -> str:
+        if during_prepare:
+            during_prepare()
+        return "0" * 40
+
+    repo = MagicMock()
+    repo.url = "https://github.com/RijksICTGilde/zad-staging-deployments.git"
+    repo.branch = "main"
+    repo.tip = AsyncMock(side_effect=_tip)
+    repo.materialize = AsyncMock(return_value=None)
+    workspace = GitRepoWorkspace(repo, GitCredentials(), ["prd/test-project"], project_name="test-project")
+    workspace.commit_and_push = AsyncMock(side_effect=push_error)
+    return workspace
+
+
+def _repository_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    push_error: Exception | None = None,
+    during_prepare: Callable[[], None] | None = None,
+) -> Any:
+    """A ProjectManager whose manifest round is stubbed down to its phases."""
+    from opi.manager.project_manager import ProjectManager
+
+    manager = ProjectManager(project_file_relative_path="projects/test-project.yaml")
+
+    deployment = {"name": "productie", "cluster": "local", "namespace": "test-project", "repository": "deployments"}
+    monkeypatch.setattr(manager, "get_contents", AsyncMock(return_value={"name": "test-project"}))
+    monkeypatch.setattr(
+        manager, "get_deployment_workspace", AsyncMock(return_value=_workspace(push_error, during_prepare))
+    )
+    monkeypatch.setattr(manager, "_process_deployment_manifests", AsyncMock(return_value=None))
+    monkeypatch.setattr(manager, "_process_project_manifests", AsyncMock(return_value=None))
+    monkeypatch.setattr(manager, "get_deployments", AsyncMock(return_value=[deployment]))
+    monkeypatch.setattr(manager, "_clear_blocking_sync_operations", AsyncMock(return_value=None))
+    return manager, deployment
+
+
+@pytest.mark.asyncio
+async def test_every_manifest_phase_names_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, deployment = _repository_manager(monkeypatch)
+    progress = _progress()
+    manager.set_progress_manager(progress)
+
+    await manager._process_repository_manifests({"name": "deployments"}, [deployment])
+
+    assert _steps(progress) == [
+        ("Manifesten uit Git ophalen", TaskStatus.COMPLETED.value),
+        ("Manifesten genereren", TaskStatus.COMPLETED.value),
+        ("Projectmanifesten genereren", TaskStatus.COMPLETED.value),
+        ("Manifesten naar Git pushen", TaskStatus.COMPLETED.value),
+    ]
+    assert [info.get("subject") for info in progress._subtasks.values()] == [
+        "deployments",
+        "productie",
+        None,
+        "deployments",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetching_the_repo_is_already_its_own_running_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De eerste netwerkstap van de write mag niet onder de laatste dienst vallen.
+
+    Daar laat een onbereikbare remote zich het eerst voelen: de ls-remote en de clone of
+    fetch gaan vooraf aan het genereren.
+    """
+    seen: list[str | None] = []
+    progress = _progress()
+    progress.complete_task(progress.add_task("Redis-cache klaarmaken", subject="productie"))
+    manager, deployment = _repository_manager(monkeypatch, during_prepare=lambda: seen.append(progress._current_step))
+    manager.set_progress_manager(progress)
+
+    await manager._process_repository_manifests({"name": "deployments"}, [deployment])
+
+    assert seen == ["Manifesten uit Git ophalen - deployments"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_push_is_the_failing_step_and_the_running_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Het beeld van 4 november: de huidige regel noemt de push, niet de laatste dienst."""
+    from opi.connectors.git import GitCommandTimeoutError
+
+    error = GitCommandTimeoutError(
+        "Push naar https://github.com/RijksICTGilde/zad-staging-deployments.git#main kreeg geen antwoord binnen 60s"
+    )
+    manager, deployment = _repository_manager(monkeypatch, push_error=error)
+    progress = _progress()
+    progress.complete_task(progress.add_task("Redis-cache klaarmaken", subject="productie"))
+    manager.set_progress_manager(progress)
+
+    with pytest.raises(GitCommandTimeoutError):
+        await manager._process_repository_manifests({"name": "deployments"}, [deployment])
+
+    push_step = next(info for info in progress._subtasks.values() if info["name"] == "Manifesten naar Git pushen")
+    assert push_step["status"] == TaskStatus.FAILED.value
+    assert "kreeg geen antwoord" in push_step["error"]
+    assert "github.com" in push_step["error"]
+    assert progress._current_step == "Manifesten naar Git pushen - deployments"
+
+
+@pytest.mark.asyncio
+async def test_the_manifest_phases_need_no_progress_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, deployment = _repository_manager(monkeypatch)
+
+    await manager._process_repository_manifests({"name": "deployments"}, [deployment])
+
+
+def _run_manager(monkeypatch: pytest.MonkeyPatch, *, save_error: Exception | None = None) -> Any:
+    """A ProjectManager whose process_project is stubbed down to its own two phases."""
+    from opi.manager.project_manager import ProjectManager
+
+    monkeypatch.setattr("opi.manager.project_manager.provisioning_services", list)
+    manager = ProjectManager(project_file_relative_path="projects/test-project.yaml")
+
+    monkeypatch.setattr(manager, "get_contents", AsyncMock(return_value={"name": "test-project", "deployments": []}))
+    monkeypatch.setattr(manager, "get_name", AsyncMock(return_value="test-project"))
+    monkeypatch.setattr(manager, "has_deployments_for_current_cluster", AsyncMock(return_value=True))
+    file_handler = MagicMock()
+    file_handler.reenable_components_with_changed_image.return_value = []
+    monkeypatch.setattr(manager, "_project_file_handler", file_handler)
+    monkeypatch.setattr(manager, "check_and_create_namespaces", AsyncMock())
+    monkeypatch.setattr(manager, "check_and_create_sops_secrets_in_namespaces", AsyncMock())
+    monkeypatch.setattr(manager, "_ensure_database_manager", AsyncMock())
+    monkeypatch.setattr(manager, "_process_application_manifests", AsyncMock())
+    monkeypatch.setattr(manager, "save_and_commit_project", AsyncMock(side_effect=save_error))
+    monkeypatch.setattr(manager, "_record_reconciliation", AsyncMock())
+    argo = MagicMock()
+    argo.create_argocd_resources = AsyncMock()
+    monkeypatch.setattr(manager, "_argo_manager", argo)
+    bootstrap = MagicMock()
+    bootstrap.execute_bootstrap_for_deployment = AsyncMock()
+    monkeypatch.setattr(manager, "_bootstrap_manager", bootstrap)
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_the_project_file_and_argocd_phases_name_themselves(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = _run_manager(monkeypatch)
+    progress = _progress()
+    manager.set_progress_manager(progress)
+
+    assert await manager.process_project() is True
+
+    assert _steps(progress)[-2:] == [
+        ("Projectbestand vastleggen", TaskStatus.COMPLETED.value),
+        ("ArgoCD-applicaties aanmaken", TaskStatus.COMPLETED.value),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_project_file_commit_is_the_failing_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The commit fails, so ArgoCD never starts and the running line names the commit."""
+    manager = _run_manager(monkeypatch, save_error=RuntimeError("kreeg geen antwoord binnen 60s"))
+    progress = _progress()
+    manager.set_progress_manager(progress)
+
+    assert await manager.process_project() is False
+
+    commit_step = next(info for info in progress._subtasks.values() if info["name"] == "Projectbestand vastleggen")
+    assert commit_step["status"] == TaskStatus.FAILED.value
+    assert "kreeg geen antwoord" in commit_step["error"]
+    assert "ArgoCD-applicaties aanmaken" not in _names(progress)
+    assert progress._current_step == "Projectbestand vastleggen"
 
 
 # ---------------------------------------------------------------------------

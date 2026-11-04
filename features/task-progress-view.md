@@ -72,3 +72,22 @@ autoescape ontsnapt `< > & " '` maar niet `{{`. Een stapnaam met `{{ ... }}` eri
 en stapnamen bevatten deployment- en componentnamen uit het projectbestand -- wordt dan
 uitgevoerd in plaats van getoond. Zie `render_progress_fragment()` in
 `opi/web/task_progress.py`; de test staat in `tests/test_progress_fragment_injection.py`.
+
+## Wat de huidige regel betekent
+
+De regel is de laatst GESTARTE stap, niet de laatst voltooide, dus blijft die regel tot de
+volgende stap begint. Elke fase noemt zich zelf, in deze orde: diensten, "Manifesten uit Git
+ophalen" per repository, "Manifesten genereren" per deployment, "Projectmanifesten
+genereren", "Manifesten naar Git pushen" per repository, "Projectbestand vastleggen",
+"ArgoCD-applicaties aanmaken". Faalt een fase, dan staat de foutregel bij die stap.
+
+Het ophalen en de push zijn eigen stappen omdat het netwerk ervoor nodig is. Ze starten
+binnen de write, via `on_prepare` en `on_push` van `GitRepoWorkspace.mutate_and_push`. Bij
+een botsing starten ze opnieuw.
+
+Een push, fetch of ls-remote zonder antwoord breekt af na 60s
+(`GIT_PUSH_TIMEOUT_SECONDS`) i.p.v. curl's 300s. Dat geldt voor beide git-paden: de
+deployments- en argo-repo via `GitRepo`, en de projects-repo via `GitConnector`, waar de
+push en de fetch van de rebase dezelfde grens hebben. De foutregel noemt server en repository
+zonder credentials, zegt "kreeg geen antwoord" (niet "niet gepusht"; het kan toch geland
+zijn), en volgende ronde leest de remote opnieuw.

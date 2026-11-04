@@ -19,15 +19,17 @@ import shutil
 import tarfile
 import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from opi.connectors.git import (
     EXEC_MODE,
     FILE_MODE,
+    GIT_PUSH_TIMEOUT_SECONDS,
     SYMLINK_MODE,
     FileChange,
+    GitCommandTimeoutError,
     GitPushConflictError,
     build_tree_commit,
     credential_env,
@@ -293,11 +295,15 @@ class GitRepo:
         eigen toegang, dan pas de gedeelde kopie. Een ingetrokken of verkeerd token faalt
         hier, zodat niemand via een kopie leest die een ander project vulde.
         """
-        stdout, stderr, code = await run_git(
-            ["ls-remote", self.url, f"refs/heads/{self.branch}"],
-            cwd=settings.TEMP_DIR,
-            env=credentials.env(self.url),
-        )
+        try:
+            stdout, stderr, code = await run_git(
+                ["ls-remote", self.url, f"refs/heads/{self.branch}"],
+                cwd=settings.TEMP_DIR,
+                env=credentials.env(self.url),
+                timeout=GIT_PUSH_TIMEOUT_SECONDS,
+            )
+        except GitCommandTimeoutError as error:
+            raise self._timeout_error("Opvragen van") from error
         if code != 0:
             raise RuntimeError(f"Kon {self.url}#{self.branch} niet opvragen: {' '.join(stderr.split())}")
         first = stdout.strip().split("\n", 1)[0]
@@ -371,11 +377,17 @@ class GitRepo:
         logger.info("Bare git-kopie van %s#%s klaargezet in %s", self.url, self.branch, self.path)
 
     async def _fetch(self, credentials: GitCredentials) -> bool:
-        _, stderr, code = await run_git(
-            ["fetch", "--force", "origin", f"+refs/heads/{self.branch}:refs/heads/{self.branch}"],
-            cwd=self.path,
-            env=credentials.env(self.url),
-        )
+        # A timeout propagates instead of returning False: the caller would then rebuild
+        # the copy with a clone, and that would hang on the same unreachable remote.
+        try:
+            _, stderr, code = await run_git(
+                ["fetch", "--force", "origin", f"+refs/heads/{self.branch}:refs/heads/{self.branch}"],
+                cwd=self.path,
+                env=credentials.env(self.url),
+                timeout=GIT_PUSH_TIMEOUT_SECONDS,
+            )
+        except GitCommandTimeoutError as error:
+            raise self._timeout_error("Fetch van") from error
         if code != 0:
             logger.warning("Fetch in %s mislukte: %s", self.path, " ".join(stderr.split()))
             return False
@@ -394,6 +406,15 @@ class GitRepo:
     async def _has(self, revision: str) -> bool:
         _, _, code = await run_git(["cat-file", "-e", f"{revision}^{{commit}}"], cwd=self.path)
         return code == 0
+
+    def _timeout_error(self, operation: str) -> GitCommandTimeoutError:
+        """The same timeout, named with the operation and the remote this copy belongs to.
+
+        ``self.url`` carries no credentials, so neither does the message a task shows.
+        """
+        return GitCommandTimeoutError(
+            f"{operation} {self.url}#{self.branch} kreeg geen antwoord binnen {GIT_PUSH_TIMEOUT_SECONDS}s"
+        )
 
     # ------------------------------------------------------------------
     # lezen
@@ -585,12 +606,18 @@ class GitRepo:
     async def _push(self, commit: str, credentials: GitCredentials) -> None:
         """Push één commit-object naar onze branch, geserialiseerd per (repo, branch)."""
         async with push_lock_for(self.url, self.branch):
-            with rollout_phase(PHASE_GIT_PUSH):
-                _, stderr, code = await run_git(
-                    ["push", "origin", f"{commit}:refs/heads/{self.branch}"],
-                    cwd=self.path,
-                    env=credentials.env(self.url),
-                )
+            # A timeout is not a GitPushConflictError, so ``commit`` does not retry it and
+            # the push lock stays taken for at most one timeout.
+            try:
+                with rollout_phase(PHASE_GIT_PUSH):
+                    _, stderr, code = await run_git(
+                        ["push", "origin", f"{commit}:refs/heads/{self.branch}"],
+                        cwd=self.path,
+                        env=credentials.env(self.url),
+                        timeout=GIT_PUSH_TIMEOUT_SECONDS,
+                    )
+            except GitCommandTimeoutError as error:
+                raise self._timeout_error("Push naar") from error
             if code != 0:
                 lowered = stderr.lower()
                 if any(
@@ -768,12 +795,23 @@ class GitRepoWorkspace:
             self._base_ref = result.ref
         return result
 
-    async def mutate_and_push[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
+    async def mutate_and_push[T](
+        self,
+        message: str,
+        mutate: Callable[[], Awaitable[T]],
+        on_prepare: Callable[[], AbstractContextManager[None]] | None = None,
+        on_push: Callable[[], AbstractContextManager[None]] | None = None,
+    ) -> T:
         """Pas een stap toe op de laatste stand en publiceer hem, geserialiseerd per project.
 
         Per poging: de werkmap opnieuw vullen uit de remote, ``mutate`` laten schrijven, en
         schrijven. Botst de write met een wijziging binnen dezelfde scope, dan gaat de hele
         stap opnieuw op de nieuwe stand, want alleen de aanroeper weet wat hij genereerde.
+
+        ``on_prepare`` omsluit het vullen van de werkmap (ls-remote, clone of fetch) en
+        ``on_push`` alleen de write, zodat een aanroeper die de voortgang meldt die twee
+        netwerkstappen als eigen stap kan tonen in plaats van als deel van ``mutate``.
+        Elke nieuwe poging opent ze opnieuw.
 
         De lock per (repo, project) blijft: de kustomization van het project is het bestand
         waar taken van hetzelfde project om strijden (RC-265).
@@ -787,10 +825,12 @@ class GitRepoWorkspace:
                 # zoals de PVC-hernoeming van ``handle_service_removal``, en die hoort in
                 # DEZE write mee. Pas een echte botsing gooit de map weg en begint opnieuw.
                 if attempt > 0 or not self._base_ref:
-                    await self.refresh()
+                    with on_prepare() if on_prepare else nullcontext():
+                        await self.refresh()
                 outcome = await mutate()
                 try:
-                    await self.commit_and_push(message)
+                    with on_push() if on_push else nullcontext():
+                        await self.commit_and_push(message)
                 except GitRepoConflictError as error:
                     last_error = error
                     logger.warning(
