@@ -76,8 +76,20 @@ Scope = frozenset[str] | None
 _PROJECT_WIDE_TASK_TYPES = frozenset(
     {
         "refresh_project",
-        "update_component",
+    }
+)
+
+# Task types whose scope is a LIST in the payload rather than the deployment_name column:
+# the change sits on a component or a service, and the affected deployments are resolved
+# where the task is created (``affected_deployments``). No list in the payload means the
+# change could not be narrowed, and then the scope is project-wide.
+_SCOPE_FROM_PAYLOAD_TASK_TYPES = frozenset(
+    {
+        "add_component",
         "add_service",
+        "configure_service",
+        "configure_service_values",
+        "update_component",
     }
 )
 
@@ -85,9 +97,10 @@ _PROJECT_WIDE_TASK_TYPES = frozenset(
 def scope_of(task_type: str, deployment_name: str | None, payload: dict | None) -> Scope:
     """The set of deployments a task reprocesses, or None for project-wide.
 
-    Reads the payload for add_component because its scope is a list there, not in
-    the column. Unknown task types default to project-wide: conservative, since a
-    project-wide scope is only ever superseded by another project-wide task.
+    Reads the payload for the task types whose scope is a list there rather than in the
+    column (a change on a component or a service can hit several deployments). Unknown
+    task types default to project-wide: conservative, since a project-wide scope is only
+    ever superseded by another project-wide task.
 
     Called once per task, by ``create_task``, which stores the result in
     ``async_tasks.affects_deployments``. Everything that asks about a task's scope
@@ -95,7 +108,7 @@ def scope_of(task_type: str, deployment_name: str | None, payload: dict | None) 
     """
     if task_type in _PROJECT_WIDE_TASK_TYPES:
         return None
-    if task_type == "add_component":
+    if task_type in _SCOPE_FROM_PAYLOAD_TASK_TYPES:
         names = (payload or {}).get("deployment_names") or []
         return frozenset(names) if names else None
     if deployment_name:

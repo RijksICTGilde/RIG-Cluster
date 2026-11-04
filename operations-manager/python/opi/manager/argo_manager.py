@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 from opi.connectors.argo import ArgoTransportError
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.metrics import PHASE_ARGO_WAIT_HEALTHY, PHASE_ARGO_WAIT_SYNCED, observe_rollout_phase
 from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
@@ -77,7 +78,12 @@ POLL_INTERVAL_SECONDEN = 2
 #: zo'n tien seconden), en juist op dat moment is te zien of die reconcile onze revisie had.
 #: Deze ondergrens is er alleen voor het geval de call wél meteen terugkomt, zodat het geen
 #: hete lus wordt. Er zit dus een mens op te wachten en dat mag je merken.
-UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
+#:
+#: Een seconde en niet vijf (RC-418): een verloren refresh kostte gemeten ~18 seconden, en
+#: deze grens legde daar per ronde maximaal vier seconden wachten bovenop zonder dat er iets
+#: gebeurde. De storm die hij afhoudt is nog steeds afgehouden, want de refresh zelf blijft
+#: hangen tot een reconcile klaar is en komt alleen bij uitzondering meteen terug.
+UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 1
 
 #: Hoe vaak we dat hoogstens proberen. Een refresh op de umbrella is duur, want de
 #: applicatie mist de `manifest-generate-paths`-annotatie (issue #130) en hertekent dus
@@ -1156,15 +1162,13 @@ class ArgoManager:
                     return True
 
                 # Determine whether the status reflects our refresh.
-                status_is_fresh = True
-                if refreshed_after:
-                    reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
-                    if reconciled_at <= refreshed_after:
-                        status_is_fresh = False
-                        logger.debug(
-                            f"Infrastructure '{app_name}': status is stale "
-                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after})"
-                        )
+                status_is_fresh = self.status_reflects_refresh(status_data, refreshed_after)
+                if not status_is_fresh:
+                    logger.debug(
+                        f"Infrastructure '{app_name}': status is stale "
+                        f"(reconciledAt={status_data.get('status', {}).get('reconciledAt', '')} "
+                        f"<= refreshed_after={refreshed_after})"
+                    )
 
                 if status_is_fresh:
                     # A terminal ArgoCD condition (ComparisonError etc.) means the manifests
@@ -1255,6 +1259,18 @@ class ArgoManager:
         logger.error(f"ArgoCD dashboard: {argocd_url}/applications/{app_name}")
         raise TimeoutError(error_msg)
 
+    @staticmethod
+    def status_reflects_refresh(status_data: dict[str, Any], refreshed_after: str | None) -> bool:
+        """Of deze status NA onze eigen refresh gereconcilieerd is.
+
+        Zonder dat bewijst een ``Synced`` niets over de commit die we net pushten: de status
+        kan nog van de vorige reconcile zijn. Zonder ``refreshed_after`` valt er niets te
+        vergelijken en geldt de status als vers, zoals voorheen.
+        """
+        if not refreshed_after:
+            return True
+        return str(status_data.get("status", {}).get("reconciledAt", "")) > refreshed_after
+
     async def wait_for_application_synced(
         self,
         app_name: str,
@@ -1318,6 +1334,9 @@ class ArgoManager:
         # is een leeg antwoord "hij moet nog verschijnen" en polt de lus door. Daarna is
         # hetzelfde lege antwoord "hij is weg", en dat is geen leesfout maar een einde.
         seen = False
+        # Het moment dat de sync klaar was, zodat de tijd TOT Synced en de tijd van Synced
+        # tot Healthy apart meetbaar zijn: de eerste is ArgoCD, de tweede is de pod.
+        synced_at: float | None = None
         while elapsed_time < timeout:
             await raise_if_superseded(f"waiting for ArgoCD application '{app_name}' to sync")
             try:
@@ -1338,8 +1357,13 @@ class ArgoManager:
                 sync_status = status_data.get("status", {}).get("sync", {}).get("status")
                 health_status = status_data.get("status", {}).get("health", {}).get("status")
 
+                if sync_status == "Synced" and synced_at is None:
+                    synced_at = _verstreken_sinds(start)
+                    observe_rollout_phase(PHASE_ARGO_WAIT_SYNCED, synced_at)
+
                 if sync_status == "Synced" and health_status == "Healthy":
                     logger.info(f"Application '{app_name}' is synced and healthy")
+                    observe_rollout_phase(PHASE_ARGO_WAIT_HEALTHY, _verstreken_sinds(start) - (synced_at or 0.0))
                     return True
 
                 # Staat de status al een minuut op Progressing, vraag dan zelf om een
@@ -1366,16 +1390,13 @@ class ArgoManager:
                 # If reconciledAt is still <= refreshed_after, ArgoCD
                 # hasn't processed our changes yet - don't treat errors
                 # as terminal.
-                status_is_fresh = True
-                if refreshed_after:
-                    reconciled_at = status_data.get("status", {}).get("reconciledAt", "")
-                    if reconciled_at <= refreshed_after:
-                        status_is_fresh = False
-                        logger.debug(
-                            f"Application '{app_name}': status is stale "
-                            f"(reconciledAt={reconciled_at} <= refreshed_after={refreshed_after}), "
-                            f"not evaluating terminal states yet"
-                        )
+                status_is_fresh = self.status_reflects_refresh(status_data, refreshed_after)
+                if not status_is_fresh:
+                    logger.debug(
+                        f"Application '{app_name}': status is stale "
+                        f"(reconciledAt={status_data.get('status', {}).get('reconciledAt', '')} "
+                        f"<= refreshed_after={refreshed_after}), not evaluating terminal states yet"
+                    )
 
                 if status_is_fresh:
                     # Check for a terminal ArgoCD condition (ComparisonError etc.). This is

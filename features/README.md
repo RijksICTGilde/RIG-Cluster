@@ -92,6 +92,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Eén voortgangsweergave, server-gerenderd](task-progress-view.md)
 - [Federation Routing (Cross-Cluster Task Delegation)](federation-routing.md)
 - [Laat een taak zien wat hij doet](task-steps.md)
+- [Rollout-metingen: duur per stap, fases en de bank](rollout-metingen.md)
 - [Local Cluster Federation](local-cluster-federation.md)
 - [Stapregels van een taak in het Nederlands](stapregels-in-het-nederlands.md)
 - [Taken die wijken voor een nieuwere taak (supersede)](task-supersede.md)

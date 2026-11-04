@@ -255,6 +255,20 @@ def static_url(path: str) -> str:
     return f"/static/{relative_path}?v={digest}"
 
 
+def format_step_duration(seconds: float | None) -> str:
+    """De duur van een voortgangsstap als leesbare tekst, met de komma als scheidingsteken.
+
+    Onder een minuut staat er een decimaal, omdat het verschil tussen 0,4 en 4 seconden
+    juist is wat een stap die te lang duurt verraadt. Daarboven zijn dat minuten.
+    """
+    if seconds is None:
+        return ""
+    if seconds < 60:
+        return f"{seconds:.1f}".replace(".", ",") + " s"
+    minuten, rest = divmod(int(seconds), 60)
+    return f"{minuten} min {rest} s"
+
+
 # Het label en de kleur van het cluster in de kopbalk, zodat je ziet in welke omgeving je
 # werkt. Staging valt op; productie blijft rustig, want een balk die altijd alarm slaat
 # zie je na een dag niet meer.

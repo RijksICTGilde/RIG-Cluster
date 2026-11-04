@@ -213,7 +213,13 @@ async def test_een_draaiende_backup_blokkeert_wel(orm_db) -> None:
         ("add_component", None, {"deployment_names": ["productie", "acceptatie"]}, ["acceptatie", "productie"]),
         ("add_component", None, {}, None),
         ("configure_service", None, {}, None),
-        # De drie projectbrede typen krijgen NULL, ook als er een deploymentnaam meekomt.
+        # Een wijziging op een component kan meer deployments raken; die lijst staat in de
+        # payload (RC-418), opgelost waar de taak gemaakt wordt.
+        ("configure_service", None, {"deployment_names": ["acceptatie"]}, ["acceptatie"]),
+        ("configure_service_values", None, {"deployment_names": ["acceptatie"]}, ["acceptatie"]),
+        ("update_component", None, {"deployment_names": ["productie", "acceptatie"]}, ["acceptatie", "productie"]),
+        ("add_service", None, {"deployment_names": ["productie"]}, ["productie"]),
+        # Zonder die lijst blijven ze projectbreed, ook als er een deploymentnaam meekomt.
         ("refresh_project", "pr-244", {}, None),
         ("update_component", "pr-244", {}, None),
         ("add_service", "pr-244", {}, None),

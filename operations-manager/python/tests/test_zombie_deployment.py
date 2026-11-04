@@ -215,6 +215,9 @@ def _sync_manager(monkeypatch: pytest.MonkeyPatch, open_deletes: dict[str, str])
     argo = MagicMock()
     argo.refresh_application = AsyncMock(return_value="2026-10-09T09:22:02Z")
     argo.get_application_manifests = AsyncMock(return_value=(True, ""))
+    # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
+    # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
+    argo.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
     monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo)
     # ApplicationGone is de onschuldige uitkomst (zie test_verdwenen_applicatie_tijdens_wacht):
     # de wacht stopt daar, zodat deze test de wacht meet en niet de hele uitrol erna.

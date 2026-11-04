@@ -78,6 +78,21 @@ the email allowlist it already owned.
 **Scope: the store owns `zad-projects` only.** The `zad-deployments` and `zad-argo-user-applications`
 repos keep using their own `ProjectManager` git connectors and are explicitly out of scope.
 
+Since RC-418 those connectors do have a warm copy of their own, but a different one: the store
+keeps ONE working copy that every read and write shares behind its process-wide lock, while a
+`ProjectManager` connector clones its own working tree out of a warm cache per task (see
+`WARM_CACHE_DIR` in `opi/connectors/git.py`). Two tasks therefore never share a working tree
+there, which is what `features/concurrent-write-safety-lost-update.md` requires of a repo that
+several projects write to.
+
+That warm cache is keyed on the repo URL **without** credentials, so every project on the same
+remote shares one copy. The access check is therefore per task, not per cache: a connector first
+runs `git ls-remote` with its own project's credentials, which both authorises the read and
+resolves the branch SHA, and only then touches the copy. A revoked or wrong token fails there
+instead of falling back on content another project fetched. Is the SHA already in the copy, no
+fetch follows. This is the ArgoCD repo-server's pattern (`newClientResolveRevision` before
+`checkoutRevision`).
+
 ## Usage
 
 ```python
@@ -248,9 +263,14 @@ Three things follow from this:
   carry userinfo, it is stripped from the URL and used to build the header instead.
 - `GIT_TERMINAL_PROMPT=0` is set on every invocation, so a missing or wrong credential fails
   immediately instead of blocking on a password prompt that no terminal will ever answer.
-- No clone outlives the process, so none has to be repaired: the warm copy's directory is
-  `rmtree`'d and recloned in `get_connector()`, and every other connector clones into a fresh
-  `tempfile` directory.
+- The store's warm copy does not outlive the process: its directory is `rmtree`'d and recloned in
+  `get_connector()`. A `ProjectManager` connector still gets a fresh `tempfile` working tree per
+  task; the warm cache it clones out of DOES outlive the process, and repairs itself by being
+  thrown away and rebuilt once when a git command on it fails (a leftover `index.lock`, an
+  interrupted fetch). If that fails too, the connector falls back to cloning from the remote.
+  At most `WARM_CACHE_MAX` caches are kept, least-recently-used first: `TMPDIR` is an
+  `emptyDir` (8Gi in production, 500Mi on the sandbox) and a project picks its own deployment
+  repository, so without a cap the number of caches grows with the number of distinct remotes.
 
 For SSH remotes (local and sandbox setups only; production is HTTPS) the connector uses
 `StrictHostKeyChecking=accept-new` with a fixed `UserKnownHostsFile`, so the first connection

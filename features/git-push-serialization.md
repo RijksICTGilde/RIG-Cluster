@@ -75,11 +75,12 @@ Dat kan omdat een OPI-instantie de enige schrijver is voor zijn eigen clustermap
 Distributed Model). Wat NA de push hoort (een ArgoCD-refresh, een wacht) staat buiten de
 mutatie, anders houdt de lock andere taken op voor iets dat niets meer schrijft. De
 rebase-herhaling in `push_changes` blijft voor botsingen tussen verschillende projecten;
-beide locks gebruiken dezelfde credential-vrije sleutelvorm (`_repo_lock_key`).
+beide locks gebruiken dezelfde credential-vrije sleutelvorm (`repo_lock_key`).
 
 Dit is dus aanpak B voor de argo-repo, en de goedkope helft ervan: geen warme working copy,
-maar wel een commit die aantoonbaar op de laatste stand is gebouwd. `zad-deployments` loopt
-nog op aanpak A.
+maar wel een commit die aantoonbaar op de laatste stand is gebouwd. Na RC-418 loopt ook
+`zad-deployments` op aanpak B (zie [`project-store.md`](./project-store.md) voor hoe warme
+caches werken en taak-isolatie door worktrees).
 
 ## Uitzondering
 

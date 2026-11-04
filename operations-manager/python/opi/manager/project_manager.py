@@ -7,6 +7,7 @@ import asyncio
 import base64
 import copy
 import glob
+import hashlib
 import logging
 import os
 import secrets
@@ -30,10 +31,12 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
+from opi.connectors.argo import ArgoTransportError
 from opi.connectors.git import (
     GitConnector,
     create_git_connector_for_argocd,
     create_git_connector_from_repo_config,
+    repo_lock_key,
 )
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.subdomain import (
@@ -69,6 +72,15 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.metrics import (
+    PHASE_AFTER_SYNC,
+    PHASE_ARGO_PROJECT_GATE,
+    PHASE_ARGO_UMBRELLA,
+    PHASE_GENERATE,
+    PHASE_PROVISION,
+    rollout_phase,
+    umbrella_refresh_lost_total,
+)
 from opi.core.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.task_errors import TaskInputError
@@ -323,6 +335,24 @@ def _deployment_names_for_paths(paths: Iterable[str], yaml_doc: dict[str, Any] |
     """Resolve DeepDiff paths to deployment names (falling back to the raw path), deduplicated."""
     names = [_deployment_name_for_path(path, yaml_doc) or path for path in paths]
     return list(dict.fromkeys(names))
+
+
+#: Vingerafdrukken van infrastructuur-credentials die in dit proces al met succes getoetst
+#: zijn. Zie _test_infrastructure_database_connection.
+_validated_infrastructure_credentials: set[str] = set()
+
+
+def _remote_identity(repo_config: dict[str, str]) -> tuple[str, str, str]:
+    """De remote waar een repo-config naar wijst: URL zonder credentials, branch en pad.
+
+    Het pad hoort erbij omdat de connector het gebruikt om bestandspaden op te lossen; twee
+    configs met een ander pad mogen dus geen werkboom delen.
+    """
+    return (
+        repo_lock_key(repo_config.get("url", "")),
+        repo_config.get("branch", "main"),
+        (repo_config.get("path") or "").strip("/"),
+    )
 
 
 def _resolve_deployment_filter(deployment_name: str | None, deployment_names: list[str] | None) -> list[str] | None:
@@ -650,6 +680,16 @@ class ProjectManager:
     # resolve it, and so the attribute has one documented home.
     __contents_as_read: dict[str, Any] | None = None
 
+    #: Of het PROJECTNIVEAU deze ronde veranderde, en in welke repo het staat. True zolang
+    #: het tegendeel niet gemeten is: de grendel in wait_for_project_level_application mag
+    #: alleen op bewijs worden overgeslagen. Op klasseniveau, om dezelfde reden als
+    #: hierboven: een aanroeper die __init__ overslaat moet ze toch kunnen lezen.
+    _project_level_manifests_changed: bool = True
+    _project_level_repo: str | None = None
+    #: De map in die repo waar de project-level manifests staan, zodat te bewijzen is dat
+    #: ArgoCD precies die bestanden al heeft toegepast.
+    _project_level_path: str | None = None
+
     def __init__(
         self,
         *,
@@ -671,6 +711,9 @@ class ProjectManager:
         self.__git_connector_for_argocd = None
         # each deployment has a repository, referenced by name
         self.__git_connectors_for_deployments: dict[str, GitConnector] = {}
+        # Dezelfde connectors, geindexeerd op remote, zodat twee repo-configs met dezelfde
+        # remote er een delen. Zie get_git_connector_for_deployment.
+        self.__deployment_connectors_by_remote: dict[tuple[str, str, str], GitConnector] = {}
         # Progress manager for tracking operation status
         self.__progress_manager = None
         # Private map for storing secrets that need to be created
@@ -1934,16 +1977,35 @@ class ProjectManager:
         self.__git_connectors_for_deployments[name] = git_connector
 
     async def get_git_connector_for_deployment(self, name: str, repo_config: dict[str, str]) -> GitConnector:
-        if name not in self.__git_connectors_for_deployments:
-            if "project_name" not in repo_config:
-                repo_config["project_name"] = await self.get_name()
-            self.__git_connectors_for_deployments[name] = await create_git_connector_from_repo_config(repo_config)
-        return self.__git_connectors_for_deployments[name]
+        """De connector van deze repo-config, hergebruikt per remote binnen deze taak.
+
+        Twee namen kunnen dezelfde remote zijn: "infrastructure" is dezelfde repo, branch
+        en pad als de deployments-repo (``repositories[0]``). Dat kostte twee klonen en
+        twee werkbomen per taak voor een repo die ook een keer gekloond kan worden.
+        """
+        if name in self.__git_connectors_for_deployments:
+            return self.__git_connectors_for_deployments[name]
+        if "project_name" not in repo_config:
+            repo_config["project_name"] = await self.get_name()
+        remote = _remote_identity(repo_config)
+        connector = self.__deployment_connectors_by_remote.get(remote)
+        if connector is None:
+            connector = await create_git_connector_from_repo_config(repo_config)
+            self.__deployment_connectors_by_remote[remote] = connector
+        self.__git_connectors_for_deployments[name] = connector
+        return connector
 
     async def close_git_connectors_for_deployments(self) -> None:
-        for name in self.__git_connectors_for_deployments:
-            await self.__git_connectors_for_deployments[name].close()
+        # Beide registers: een connector die via set_git_connector_for_deployment is
+        # binnengebracht staat niet in de remote-index. close() is idempotent, dus een
+        # connector die in beide staat sluiten kost niets.
+        for connector in (
+            *self.__deployment_connectors_by_remote.values(),
+            *self.__git_connectors_for_deployments.values(),
+        ):
+            await connector.close()
         self.__git_connectors_for_deployments = {}
+        self.__deployment_connectors_by_remote = {}
 
     # TODO: we may want to process a file anyway
     async def has_deployments_for_current_cluster(self) -> bool:
@@ -2365,6 +2427,16 @@ class ProjectManager:
 
         import asyncpg
 
+        # Een geslaagde toets op precies deze (host, gebruiker, wachtwoord) blijft gelden
+        # zolang het proces leeft: het secret is niet veranderd, dus de verbinding opnieuw
+        # opzetten meet hetzelfde (RC-418). Een wachtwoord dat SERVERKANT wijzigt zonder dat
+        # het secret meewijzigt valt hier buiten, maar komt bij de eerste echte
+        # databasehandeling van die ronde alsnog als auth-fout naar boven.
+        memo = hashlib.sha256(f"{host}\n{username}\n{password}".encode()).hexdigest()
+        if memo in _validated_infrastructure_credentials:
+            logger.debug("Infrastructuur-credentials voor %s@%s zijn in dit proces al getoetst", username, host)
+            return True, "success"
+
         try:
             # Create a direct connection with the superuser credentials to the postgres database
             conn = await asyncpg.connect(
@@ -2372,6 +2444,7 @@ class ProjectManager:
             )
             await conn.close()
             logger.debug(f"Infrastructure database connection test successful for {username}@{host}/postgres")
+            _validated_infrastructure_credentials.add(memo)
             return True, "success"
         except asyncpg.InvalidPasswordError as e:
             # Authentication failed - wrong password
@@ -3146,6 +3219,7 @@ class ProjectManager:
             if poging == UMBRELLA_REFRESH_MAX_POGINGEN:
                 break
 
+            umbrella_refresh_lost_total.inc()
             logger.info(
                 f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
                 "de vorige refresh is verloren gegaan, opnieuw verversen"
@@ -3180,7 +3254,10 @@ class ProjectManager:
             self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
         )
         try:
-            yield
+            # De fase wordt hier gemeten en niet in de bewaker zelf: deze wacht is wat de
+            # taak kost, en de bewaker wordt er altijd halverwege afgebroken.
+            with rollout_phase(PHASE_ARGO_UMBRELLA):
+                yield
         finally:
             bewaker.cancel()
             try:
@@ -3214,6 +3291,71 @@ class ProjectManager:
             RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
             TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
         """
+        with rollout_phase(PHASE_ARGO_PROJECT_GATE):
+            if await self._project_level_already_applied(app_name):
+                logger.info(
+                    "Projectniveau '%s' staat al Synced en Healthy op onze stand; niet opnieuw verversen", app_name
+                )
+                return
+            await self._await_project_level_application(app_name)
+
+    @staticmethod
+    async def _status_voor_een_overslag(argo_connector: ArgoConnector, app_name: str) -> dict[str, Any]:
+        """De status van een applicatie, voor een BESLISSING om werk over te slaan.
+
+        Zo'n beslissing mag nooit een taak kosten. ArgoCD antwoordt 400 zolang de
+        AppProject van een project nog niet bestaat of de applicatie er nog niet in
+        toegelaten is, en ``get_application_status`` maakt daar een RuntimeError van: dat
+        is precies de situatie waarin er niets te bewijzen valt en het volle werk hoort te
+        lopen. Gemeten op de sandbox, 4 november 2026.
+        """
+        try:
+            return await argo_connector.get_application_status(app_name) or {}
+        except (ArgoTransportError, RuntimeError, OSError) as fout:
+            logger.info("Geen status van '%s' om werk op over te slaan: %s", app_name, fout)
+            return {}
+
+    async def _render_already_proven(
+        self, argo_connector: ArgoConnector, app_name: str, reconciled_at: str | None
+    ) -> bool:
+        """Of deze applicatie na onze refresh Synced meldde, en haar render dus klopte."""
+        status_data = await self._status_voor_een_overslag(argo_connector, app_name)
+        if (status_data.get("status", {}) or {}).get("sync", {}).get("status") != "Synced":
+            return False
+        return self._argo_manager.status_reflects_refresh(status_data, reconciled_at)
+
+    async def _project_level_already_applied(self, app_name: str) -> bool:
+        """Of ArgoCD het projectniveau al heeft toegepast zoals het nu in git staat.
+
+        Drie dingen moeten kloppen, en elk ervan is bewijs en geen aanname: deze ronde
+        veranderde het projectniveau niet, de applicatie meldt Synced EN Healthy, en de
+        map met de project-level manifests is bij de revisie die ze vergeleek gelijk aan wat
+        er nu in git staat (``path_unchanged_since``). Dan staat de ServiceAccount er, en dat
+        is precies wat deze grendel beschermt. Mist een van de drie, dan loopt de grendel
+        zoals voorheen.
+
+        Zie docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md: een net
+        aangemaakte applicatie meldt zich Healthy met nul resources, dus Healthy alleen is
+        nooit genoeg. De revisie-eis is wat dat geval uitsluit: een nieuwe applicatie heeft
+        nog geen vergeleken revisie.
+        """
+        if self._project_level_manifests_changed or self._project_level_repo is None:
+            return False
+        if self._project_level_path is None:
+            return False
+        connector = self.__git_connectors_for_deployments.get(self._project_level_repo)
+        if connector is None:
+            return False
+
+        status_data = await self._status_voor_een_overslag(create_argo_connector(), app_name)
+        status = status_data.get("status", {}) or {}
+        sync = status.get("sync", {}) or {}
+        if sync.get("status") != "Synced" or (status.get("health", {}) or {}).get("status") != "Healthy":
+            return False
+        return await connector.path_unchanged_since(str(sync.get("revision") or ""), self._project_level_path)
+
+    async def _await_project_level_application(self, app_name: str) -> None:
+        """De wacht zelf; zie :meth:`wait_for_project_level_application`."""
         argo_connector = create_argo_connector()
         loop = asyncio.get_running_loop()
         einde = loop.time() + ARGOCD_HERSTEL_BUDGET_SECONDEN
@@ -3793,7 +3935,16 @@ class ProjectManager:
                         # deployments, which only render inside the CMP. A non-render failure
                         # (network, 401) must not block the deploy: log and fall through to
                         # the wait loop.
-                        render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
+                        # Een applicatie die NA onze refresh Synced meldt heeft zijn render
+                        # al gedaan: ArgoCD kan niet vergelijken zonder manifests. Dan is het
+                        # ophalen ervan (de duurste call van de lus: de hele render over de
+                        # lijn) alleen nog werk. De status-GET die dat vaststelt doet de
+                        # wachtlus hieronder toch al.
+                        if await self._render_already_proven(argo_connector, app_name, reconciled_at):
+                            logger.debug("Render van '%s' al bewezen door een verse Synced; niet ophalen", app_name)
+                            render_ok, render_detail = True, ""
+                        else:
+                            render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
                         if not render_ok and _looks_like_render_failure(render_detail):
                             from opi.services.event_interpreter import condense_render_error
 
@@ -3968,7 +4119,8 @@ class ProjectManager:
                             )
                         component_health = component_health_from_oom_failures(oom_failures)
                         try:
-                            observation = await run_after_sync_observation(project_name, dep_name, component_health)
+                            with rollout_phase(PHASE_AFTER_SYNC):
+                                observation = await run_after_sync_observation(project_name, dep_name, component_health)
                             if observation.requeue_refresh:
                                 logger.info(
                                     "OOM auto-tune committed changes for %s/%s (components: %s), queuing refresh task",
@@ -4223,7 +4375,12 @@ class ProjectManager:
                 get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
                 project_repo_connector,
             )
-            await project_repo_connector.commit_changes(f"Update project manifests for {project_name}")
+            # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel
+            # in wait_for_project_level_application niet op een nieuwe sync te wachten.
+            self._project_level_manifests_changed = await project_repo_connector.commit_changes(
+                f"Update project manifests for {project_name}"
+            )
+            self._project_level_repo = repo_config.get("name")
 
         # Vlak VOOR de push, en niet erna: ArgoCD probeert een revisie die al eens faalde niet
         # opnieuw, dus beëindigen na de push laat de blokkade staan voor precies de commit die
@@ -4419,6 +4576,9 @@ class ProjectManager:
         # Dezelfde functie als de ArgoCD-applicatie die naar deze map wijst, zodat de map
         # en de verwijzing ernaar niet uit elkaar kunnen lopen.
         project_dir = generate_project_level_manifest_path(cluster_name, project_name, repo_config.get("path", ""))
+        # Onthouden voor _project_level_already_applied: dat is de map waarvan bewezen moet
+        # worden dat ArgoCD hem al heeft toegepast.
+        self._project_level_path = project_dir
         target_path = os.path.join(await git_connector.get_working_dir(), project_dir)
         os.makedirs(target_path, exist_ok=True)
 
@@ -6039,12 +6199,16 @@ class ProjectManager:
                         clone_interrupted=current_deployment_name in interrupted_clones,
                         rotate_credentials=rotate_credentials,
                     )
-                    for provider in provisioning_services():
-                        await provider.provision(provision_ctx)
+                    with rollout_phase(PHASE_PROVISION):
+                        for provider in provisioning_services():
+                            await provider.provision(provision_ctx)
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
-            await self._process_application_manifests(deployment_names=targets, reset_running_sync=reset_running_sync)
+            with rollout_phase(PHASE_GENERATE):
+                await self._process_application_manifests(
+                    deployment_names=targets, reset_running_sync=reset_running_sync
+                )
 
             # Now update clone-from status for all deployments that had clones performed
             # (covers DB, MinIO, and PVC clones reported during manifest generation)

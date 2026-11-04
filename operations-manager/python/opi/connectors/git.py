@@ -4,6 +4,7 @@ Git connector for polling repository changes using GitPython.
 
 import asyncio
 import base64
+import hashlib
 import logging
 import os
 import re
@@ -16,6 +17,7 @@ from ruamel.yaml import YAML
 
 from opi.core.actor import Actor, get_actor
 from opi.core.config import settings
+from opi.core.metrics import PHASE_GIT_PREPARE, PHASE_GIT_PUSH, rollout_phase
 from opi.generation.manifests import CMP_ENV_NAME, CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
@@ -35,20 +37,89 @@ _push_locks: dict[str, asyncio.Lock] = {}
 _project_write_locks: dict[str, asyncio.Lock] = {}
 
 
-def _repo_lock_key(repo_url: str) -> str:
-    """Return repo URL without credentials."""
+#: Warme werkkopie per (repo, branch): een blobless kloon met historie die blijft staan en
+#: alleen nog bijgewerkt wordt met ``fetch``. Elke taak kloont daar LOKAAL van (hardlinks,
+#: geen netwerk) naar zijn eigen werkmap, dus twee taken delen nooit een working tree.
+#: Dezelfde keuze als de ProjectStore maakt voor ``zad-projects``, nu voor de deployments-
+#: en argo-repo's, die per taak drie verse netwerkklonen kostten.
+#: Blobless MET historie, want een diff per bestand heeft historie nodig (issue #159).
+#: De kopie staat op de repo-URL ZONDER credentials en wordt door alle projecten op die URL
+#: gedeeld; de toegangscontrole per taak is de ls-remote in _remote_branch_sha.
+WARM_CACHE_DIR = os.path.join(settings.TEMP_DIR, "git-warm")
+
+#: Hoeveel warme kopieen er hoogstens blijven staan. Een kopie per (repo, branch) is op
+#: productie een handvol, maar een project kiest zijn eigen deployments-repo, dus zonder
+#: grens groeit dit met het aantal verschillende remotes. TEMP_DIR is een emptyDir van 8Gi
+#: (500Mi op de sandbox), en een volle /tmp zet OPI helemaal stil.
+WARM_CACHE_MAX = 12
+
+#: Serialiseert het bijwerken van en het klonen uit een warme kopie, per (repo, branch).
+_warm_cache_locks: dict[str, asyncio.Lock] = {}
+
+#: De default branch per repo, zoals ``ls-remote --symref`` hem eenmaal meldde. Die vraag
+#: ging voor elke kloon opnieuw over het netwerk en het antwoord verandert niet binnen een
+#: procesleven.
+_remote_default_branches: dict[str, str] = {}
+
+
+def _warm_cache_key(repo_url: str, branch: str) -> str:
+    return f"{repo_lock_key(repo_url)}#{branch}"
+
+
+def _warm_cache_lock(repo_url: str, branch: str) -> asyncio.Lock:
+    """De lock die het bijwerken van en het klonen uit deze warme kopie serialiseert."""
+    return _warm_cache_locks.setdefault(_warm_cache_key(repo_url, branch), asyncio.Lock())
+
+
+def _warm_cache_path_voor_sleutel(sleutel: str) -> str:
+    """Het pad dat bij een cachesleutel hoort. Gehasht, want een repo-URL is geen mapnaam."""
+    return os.path.join(WARM_CACHE_DIR, hashlib.sha256(sleutel.encode()).hexdigest()[:16])
+
+
+def _warm_cache_path(repo_url: str, branch: str) -> str:
+    """Het vaste pad van de warme kopie van deze (repo, branch)."""
+    return _warm_cache_path_voor_sleutel(_warm_cache_key(repo_url, branch))
+
+
+def _prune_warm_caches(houden: str) -> None:
+    """Ruim de oudste warme kopieen op tot er WARM_CACHE_MAX over zijn.
+
+    Een kopie waarvan de lock op dit moment vastzit blijft staan: daar kloont een taak uit.
+    ``houden`` is de kopie die de aanroeper zelf net gaat gebruiken.
+    """
+    bezet = {_warm_cache_path_voor_sleutel(sleutel) for sleutel, lock in _warm_cache_locks.items() if lock.locked()} | {
+        houden
+    }
+    try:
+        kandidaten = [
+            pad
+            for naam in os.listdir(WARM_CACHE_DIR)
+            if (pad := os.path.join(WARM_CACHE_DIR, naam)) not in bezet and os.path.isdir(pad)
+        ]
+    except OSError:
+        return
+    if len(kandidaten) < WARM_CACHE_MAX:
+        return
+    kandidaten.sort(key=os.path.getmtime)
+    for pad in kandidaten[: len(kandidaten) - WARM_CACHE_MAX + 1]:
+        logger.info("Warme kopie %s opgeruimd: er mogen er %d staan", pad, WARM_CACHE_MAX)
+        shutil.rmtree(pad, ignore_errors=True)
+
+
+def repo_lock_key(repo_url: str) -> str:
+    """De repo-URL zonder credentials: de identiteit van een remote, voor locks en caches."""
     sanitized = re.sub(r"//[^/@]*@", "//", repo_url)  # https://user:pass@host -> https://host
     return re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
 
 
 def _push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
     """Return the shared push lock for a (repo, branch), creating it once."""
-    return _push_locks.setdefault(f"{_repo_lock_key(repo_url)}#{branch}", asyncio.Lock())
+    return _push_locks.setdefault(f"{repo_lock_key(repo_url)}#{branch}", asyncio.Lock())
 
 
 def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock:
     """De lock die schrijfacties op de projectmap van deze repo serialiseert."""
-    return _project_write_locks.setdefault(f"{_repo_lock_key(repo_url)}#{project_name or ''}", asyncio.Lock())
+    return _project_write_locks.setdefault(f"{repo_lock_key(repo_url)}#{project_name or ''}", asyncio.Lock())
 
 
 # Identity used for every commit this connector creates. Kept as constants so the
@@ -234,6 +305,10 @@ class GitConnector:
             self.__working_dir = tempfile.mkdtemp(prefix="git-repo-", dir=settings.TEMP_DIR)
             self.should_cleanup = True
             logger.debug(f"Created temporary working directory: {self.__working_dir}")
+
+        # Wie zijn eigen werkmap meebrengt is zelf de warme kopie (de ProjectStore) en kan
+        # er geen tweede onder zich hebben. Een wegwerpmap per taak kloont wel uit de cache.
+        self._use_warm_cache = working_dir is None
 
         self._repo_cloned = False
         self._fetched_in_session = False  # Track if we've fetched in this session
@@ -699,6 +774,146 @@ class GitConnector:
 
         logger.debug(f"Cloning repository to {self.__working_dir}")
 
+        with rollout_phase(PHASE_GIT_PREPARE):
+            if self._use_warm_cache and await self._clone_from_warm_cache():
+                return
+            await self._clone_into_working_dir()
+
+    async def _remote_branch_sha(self) -> str | None:
+        """De SHA van onze branch op de remote, opgevraagd met de credentials van DIT project.
+
+        Dit is de toegangscontrole voor de warme kopie, hetzelfde patroon als de ArgoCD
+        repo-server (``newClientResolveRevision`` voor ``checkoutRevision``): eerst
+        resolven met de eigen toegang, dan pas de cache. Een ingetrokken of verkeerd token
+        faalt hier, zodat niemand via een kopie leest die een ander project vulde.
+        """
+        stdout, stderr, code = await self._run_git_command(
+            ["ls-remote", self.repo_url_with_path, f"refs/heads/{self.branch}"]
+        )
+        if code != 0:
+            logger.info(
+                "ls-remote op %r mislukte, geen warme kopie: %s",
+                self.name or self._clean_repo_url,
+                " ".join(stderr.split()),
+            )
+            return None
+        eerste_regel = stdout.strip().split("\n", 1)[0]
+        return eerste_regel.split("\t", 1)[0].strip() or None
+
+    async def _clone_from_warm_cache(self) -> bool:
+        """Zet de werkmap klaar uit de warme kopie van deze repo, of geef False terug.
+
+        Twee netwerkslagen worden er een: de warme kopie wordt bijgewerkt met ``fetch``,
+        en de werkmap komt daar met een LOKALE kloon uit (hardlinks, geen overdracht). Een
+        lege repo, een onbekende branch of een beschadigde kopie geeft False, en dan loopt
+        de aanroeper de gewone klooonweg; overslaan mag nooit een taak kosten.
+
+        De kopie is van de repo-URL ZONDER credentials en wordt door alle projecten op die
+        URL gedeeld; de toegangscontrole per taak zit in ``_remote_branch_sha``.
+        """
+        revisie = await self._remote_branch_sha()
+        if not revisie:
+            return False
+
+        cache_path = _warm_cache_path(self.repo_url, self.branch)
+        async with _warm_cache_lock(self.repo_url, self.branch):
+            if not await self._ensure_warm_cache(cache_path, revisie):
+                return False
+            if not await self._clone_local(cache_path):
+                # Een kloon die hierop faalt wijst op een halve kopie (een achtergebleven
+                # index.lock, een afgebroken fetch). Weggooien en eenmaal opnieuw opbouwen.
+                logger.warning("Lokale kloon uit de warme kopie %s mislukte; kopie opnieuw opbouwen", cache_path)
+                shutil.rmtree(cache_path, ignore_errors=True)
+                if not await self._ensure_warm_cache(cache_path, revisie) or not await self._clone_local(cache_path):
+                    return False
+
+        self._repo_cloned = True
+        self._fetched_in_session = True
+        logger.info("Werkmap voor %r klaargezet uit de warme kopie", self.name or self._clean_repo_url)
+        return True
+
+    async def _ensure_warm_cache(self, cache_path: str, revisie: str) -> bool:
+        """Maak de warme kopie aan of werk hem bij tot ``revisie``.
+
+        Staat die revisie er al, dan is er geen netwerkslag nodig: alleen de branch
+        verzetten. False als deze repo geen warme kopie kan hebben.
+        """
+        os.makedirs(WARM_CACHE_DIR, exist_ok=True)
+        if not os.path.isdir(os.path.join(cache_path, ".git")):
+            _prune_warm_caches(cache_path)
+            shutil.rmtree(cache_path, ignore_errors=True)
+            os.makedirs(cache_path, exist_ok=True)
+            clone_cmd = [
+                "clone",
+                "--single-branch",
+                "--branch",
+                self.branch,
+                "--filter=blob:none",
+                self.repo_url_with_path,
+                ".",
+            ]
+            _, stderr, code = await self._run_git_command(clone_cmd, cwd=cache_path)
+            if code != 0:
+                # Een lege repo of een niet-bestaande branch: de gewone weg kent daar
+                # strategieen voor (een eerste commit maken), de warme kopie niet.
+                logger.info("Geen warme kopie voor %r: %s", self.name or self._clean_repo_url, " ".join(stderr.split()))
+                shutil.rmtree(cache_path, ignore_errors=True)
+                return False
+            # De kopie committeert nooit, dus een gc die objecten opruimt waar een lopende
+            # lokale kloon nog naar kijkt is pure winstkans op schade.
+            await self._run_git_command(["config", "gc.auto", "0"], cwd=cache_path)
+            return await self._set_warm_cache_to(cache_path, revisie, mag_opnieuw=False)
+
+        os.utime(cache_path)
+        return await self._set_warm_cache_to(cache_path, revisie, mag_opnieuw=True)
+
+    async def _set_warm_cache_to(self, cache_path: str, revisie: str, *, mag_opnieuw: bool) -> bool:
+        """Zet de branch van de warme kopie op ``revisie``, en fetch alleen als dat moet."""
+        _, _, aanwezig = await self._run_git_command(["cat-file", "-e", f"{revisie}^{{commit}}"], cwd=cache_path)
+        stappen: tuple[list[str], ...] = (
+            (["reset", "--hard", revisie],)
+            if aanwezig == 0
+            else (["fetch", "origin", self.branch], ["reset", "--hard", revisie])
+        )
+        for args in stappen:
+            _, stderr, code = await self._run_git_command(args, cwd=cache_path)
+            if code != 0:
+                logger.warning(
+                    "Warme kopie %s bijwerken mislukte op '%s': %s", cache_path, args[0], " ".join(stderr.split())
+                )
+                if not mag_opnieuw:
+                    return False
+                shutil.rmtree(cache_path, ignore_errors=True)
+                return await self._ensure_warm_cache(cache_path, revisie)
+        return True
+
+    async def _clone_local(self, cache_path: str) -> bool:
+        """Kloon de warme kopie naar de werkmap en zet origin op de echte remote.
+
+        De promisor-config hoort erbij: de kopie is blobless, dus een diff tegen een oude
+        commit heeft een blob nodig die er niet is. Zonder deze drie sleutels faalt die
+        diff met "unable to read <oid>" in plaats van hem op te halen.
+        """
+        clone_cmd = ["clone", "--single-branch", "--branch", self.branch, cache_path, "."]
+        _, stderr, code = await self._run_git_command(clone_cmd, cwd=self.__working_dir)
+        if code != 0:
+            logger.warning("Lokale kloon uit %s mislukte: %s", cache_path, " ".join(stderr.split()))
+            return False
+
+        for args in (
+            ["remote", "set-url", "origin", self.repo_url_with_path],
+            ["config", "extensions.partialClone", "origin"],
+            ["config", "remote.origin.promisor", "true"],
+            ["config", "remote.origin.partialclonefilter", "blob:none"],
+        ):
+            _, stderr, code = await self._run_git_command(args, cwd=self.__working_dir)
+            if code != 0:
+                logger.warning("Kon de werkmap niet op de echte remote zetten: %s", " ".join(stderr.split()))
+                return False
+        return True
+
+    async def _clone_into_working_dir(self) -> None:
+        """Clone the repository into the (empty) working directory, trying strategies in turn."""
         try:
             # Try to detect the remote default branch first
             remote_default_branch = await self._get_remote_default_branch()
@@ -804,6 +1019,11 @@ class GitConnector:
         Get the default branch of the remote repository.
         Returns the remote default branch name or falls back to configured branch.
         """
+        memo = _remote_default_branches.get(repo_lock_key(self.repo_url))
+        if memo is not None:
+            logger.debug("Default branch van %s al bekend: %s", self._clean_repo_url, memo)
+            return memo
+
         try:
             # Use git ls-remote to get the default branch without cloning
             ls_remote_cmd = ["ls-remote", "--symref", self.repo_url_with_path, "HEAD"]
@@ -816,6 +1036,7 @@ class GitConnector:
                     if line.startswith("ref: refs/heads/"):
                         default_branch = line.split("refs/heads/")[1].split("\t")[0]
                         logger.debug(f"Detected remote default branch: {default_branch}")
+                        _remote_default_branches[repo_lock_key(self.repo_url)] = default_branch
                         return default_branch
 
             logger.debug(f"Could not detect remote default branch, using configured: {self.branch}")
@@ -1537,12 +1758,51 @@ class GitConnector:
         logger.debug(f"Successfully added {len(files_or_paths)} files to git staging")
         return True
 
-    async def commit_changes(self, message: str) -> None:
+    async def path_unchanged_since(self, revision: str, path: str) -> bool:
+        """Of ``path`` bij ``revision`` byte-voor-byte gelijk is aan wat er nu in HEAD staat.
+
+        Zo is te bewijzen dat een ander (ArgoCD) precies deze bestanden al heeft toegepast,
+        ook als zijn revisie ouder is dan de onze: op een repo die meerdere projecten delen
+        loopt de tip altijd voor op de laatste vergelijking van EEN applicatie, en dan zegt
+        "is onze commit een voorouder" niets over onze eigen map.
+
+        Een revisie die we lokaal niet hebben, of wat er ook mis gaat, geeft False: dan is
+        er niets bewezen en doet de aanroeper zijn volle werk.
+        """
+        if not revision or not path:
+            return False
+        _, _, code = await self._run_git_command(
+            ["diff", "--quiet", revision, "HEAD", "--", path], cwd=self.__working_dir
+        )
+        return code == 0
+
+    async def _has_commits_to_push(self, target_branch: str) -> bool:
+        """Of er lokaal iets staat dat de remote-tracking ref nog niet heeft.
+
+        Een push die niets meebrengt kost een volledige verbinding en een onderhandeling,
+        en een verwerkingstaak deed er drie per ronde zonder dat er iets veranderd was.
+        Alleen een LEEG antwoord is bewijs: staat de remote verder dan wij, dan telt deze
+        lijst onze eigen commits nog steeds en pushen we zoals altijd.
+        """
+        stdout, _, code = await self._run_git_command(
+            ["rev-list", "--count", f"refs/remotes/origin/{target_branch}..HEAD"], cwd=self.__working_dir
+        )
+        if code != 0:
+            # Geen remote-tracking ref (een nieuwe branch): dan valt er niets te bewijzen.
+            return True
+        return stdout.strip() != "0"
+
+    async def commit_changes(self, message: str) -> bool:
         """
         Commit all changes in the working directory.
 
         Args:
             message: Commit message
+
+        Returns:
+            True when a commit was created, False when there was nothing to commit. Een
+            aanroeper die weet dat hij niets veranderde kan werk overslaan dat alleen voor
+            een wijziging nodig is (zie wait_for_project_level_application).
 
         Raises:
             RuntimeError: If staging or commit fails
@@ -1565,7 +1825,7 @@ class GitConnector:
         if code != 0:
             if "nothing to commit" in stdout or "nothing to commit" in stderr:
                 logger.debug("No changes to commit")
-                return
+                return False
             else:
                 server_info = self._get_server_context()
                 error_msg = f"Failed to commit changes to {server_info}: {stderr}"
@@ -1573,6 +1833,7 @@ class GitConnector:
                 raise RuntimeError(error_msg)
 
         logger.debug(f"Successfully committed changes: {message}")
+        return True
 
     # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
     async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
@@ -1604,61 +1865,70 @@ class GitConnector:
 
         target_branch = branch or self.branch
 
+        if not await self._has_commits_to_push(target_branch):
+            logger.debug("Niets te pushen naar %s: lokaal staat niets voor op de remote", target_branch)
+            return
+
         # Serialize the whole attempt (fetch+rebase+push) against every other pusher
         # to this ref in the process, so a waiter rebases onto the winner and pushes
         # without a concurrent competitor invalidating it. See _push_locks.
         async with _push_lock_for(self.repo_url, target_branch):
-            for attempt in range(max_retries):
-                push_cmd = ["push", "origin", target_branch]
-                stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
+            with rollout_phase(PHASE_GIT_PUSH):
+                await self._push_attempts(target_branch, max_retries, allow_rebase)
 
-                if code == 0:
-                    logger.debug(f"Successfully pushed changes to {target_branch}")
-                    return
+    async def _push_attempts(self, target_branch: str, max_retries: int, allow_rebase: bool) -> None:
+        """De pogingen zelf; zie :meth:`push_changes`. Loopt onder de push-lock."""
+        for attempt in range(max_retries):
+            push_cmd = ["push", "origin", target_branch]
+            stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
 
-                # Check if this is a non-fast-forward error (remote has newer commits)
-                is_non_fast_forward = (
-                    "non-fast-forward" in stderr.lower()
-                    or "failed to push some refs" in stderr.lower()
-                    or "fetch first" in stderr.lower()
-                    or "git pull" in stderr.lower()
+            if code == 0:
+                logger.debug(f"Successfully pushed changes to {target_branch}")
+                return
+
+            # Check if this is a non-fast-forward error (remote has newer commits)
+            is_non_fast_forward = (
+                "non-fast-forward" in stderr.lower()
+                or "failed to push some refs" in stderr.lower()
+                or "fetch first" in stderr.lower()
+                or "git pull" in stderr.lower()
+            )
+
+            if not is_non_fast_forward:
+                # Some other error, fail immediately
+                self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
+
+            if not allow_rebase:
+                # Hand the divergence to the caller instead of resolving it with a blind
+                # text merge. The caller re-reads, re-applies and re-validates.
+                server_info = self._get_server_context()
+                raise GitPushConflictError(
+                    f"Cannot push to {target_branch} on {server_info}: remote has moved "
+                    f"(non-fast-forward). Caller must re-read and re-apply."
                 )
 
-                if not is_non_fast_forward:
-                    # Some other error, fail immediately
-                    self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
+            # Non-fast-forward error - try to rebase and retry
+            if attempt < max_retries - 1:
+                logger.warning(
+                    f"Push rejected (non-fast-forward), attempting rebase and retry "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
 
-                if not allow_rebase:
-                    # Hand the divergence to the caller instead of resolving it with a blind
-                    # text merge. The caller re-reads, re-applies and re-validates.
+                rebase_success = await self._rebase_on_remote(target_branch)
+                if not rebase_success:
                     server_info = self._get_server_context()
                     raise GitPushConflictError(
-                        f"Cannot push to {target_branch} on {server_info}: remote has moved "
-                        f"(non-fast-forward). Caller must re-read and re-apply."
+                        f"Cannot push to {target_branch} on {server_info}: "
+                        f"Remote has conflicting changes that cannot be automatically merged."
                     )
 
-                # Non-fast-forward error - try to rebase and retry
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        f"Push rejected (non-fast-forward), attempting rebase and retry "
-                        f"(attempt {attempt + 1}/{max_retries})"
-                    )
-
-                    rebase_success = await self._rebase_on_remote(target_branch)
-                    if not rebase_success:
-                        server_info = self._get_server_context()
-                        raise GitPushConflictError(
-                            f"Cannot push to {target_branch} on {server_info}: "
-                            f"Remote has conflicting changes that cannot be automatically merged."
-                        )
-
-                    logger.info("Rebase successful, retrying push...")
-                else:
-                    # Last attempt failed
-                    server_info = self._get_server_context()
-                    raise GitPushConflictError(
-                        f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
-                    )
+                logger.info("Rebase successful, retrying push...")
+            else:
+                # Last attempt failed
+                server_info = self._get_server_context()
+                raise GitPushConflictError(
+                    f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
+                )
 
     async def commit_and_push_changes(
         self, message: str, files_or_paths: list[str] | None = None, branch: str | None = None

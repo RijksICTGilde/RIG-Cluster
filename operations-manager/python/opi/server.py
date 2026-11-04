@@ -506,6 +506,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     except Exception as e:
         logger.error(f"Error disposing ORM async engine: {e}")
 
+    # De gedeelde HTTP-sessies naar ArgoCD: een open connector zou het sluiten van de
+    # loop met een waarschuwing halen.
+    try:
+        from opi.connectors.argo import close_shared_sessions
+
+        await close_shared_sessions()
+    except Exception as e:
+        logger.error(f"Error closing shared ArgoCD sessions: {e}")
+
     stop_loop_watchdog()
 
     # Shut down OpenTelemetry tracing (flush pending spans)

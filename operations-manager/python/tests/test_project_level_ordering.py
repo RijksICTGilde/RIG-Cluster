@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -704,3 +704,128 @@ class TestDeMeldingNaastDeGrendel:
 
         assert len(melding) <= MAX_STEP_NAME
         assert clamp_step_text(melding) == melding
+
+
+class TestDeGrendelOverslaan:
+    """Wanneer de grendel mag worden overgeslagen, en vooral wanneer niet (RC-418).
+
+    De grendel kost een refresh plus een wacht op een sync, terwijl een ronde die het
+    projectniveau niet aanraakt niets heeft om op te wachten. Overslaan mag alleen op
+    bewijs, en het scenario uit de post-mortem (een nieuw project, de ServiceAccount moet
+    er eerst staan) moet hem altijd laten lopen.
+    """
+
+    @staticmethod
+    def _manager(monkeypatch: Any, *, veranderd: bool, status: dict | None, bevat: bool) -> Any:
+        from opi.manager import project_manager as pm_module
+
+        connector = AsyncMock()
+        connector.login = AsyncMock(return_value=True)
+        connector.refresh_application = AsyncMock(return_value="2026-11-04T09:00:00Z")
+        connector.get_application_status = AsyncMock(return_value=status)
+        monkeypatch.setattr(pm_module, "create_argo_connector", lambda: connector)
+
+        manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
+        manager._argo_manager = MagicMock()
+        manager._argo_manager.wait_for_application_created = AsyncMock(return_value=True)
+        manager._argo_manager.wait_for_application_synced = AsyncMock(return_value=True)
+        manager._kubectl_connector = MagicMock()
+        manager._kubectl_connector.argocd_application_exists = AsyncMock(return_value=True)
+        manager._keep_umbrella_refreshed = AsyncMock(return_value=None)
+        manager._project_level_manifests_changed = veranderd
+        manager._project_level_repo = "main-repo"
+        manager._project_level_path = "sandboxed-local/demo/project"
+        git = AsyncMock()
+        git.path_unchanged_since = AsyncMock(return_value=bevat)
+        manager._ProjectManager__git_connectors_for_deployments = {"main-repo": git}
+        return manager, connector
+
+    _SYNCED_HEALTHY: ClassVar[dict] = {
+        "status": {"sync": {"status": "Synced", "revision": "cafe"}, "health": {"status": "Healthy"}}
+    }
+
+    @pytest.mark.asyncio
+    async def test_een_ronde_die_het_projectniveau_niet_raakte_slaat_de_grendel_over(self, monkeypatch: Any) -> None:
+        manager, connector = self._manager(monkeypatch, veranderd=False, status=self._SYNCED_HEALTHY, bevat=True)
+
+        await manager.wait_for_project_level_application(PROJECT_APP)
+
+        connector.refresh_application.assert_not_awaited()
+        manager._argo_manager.wait_for_application_synced.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_een_ronde_die_het_projectniveau_wel_veranderde_loopt_de_grendel(self, monkeypatch: Any) -> None:
+        manager, connector = self._manager(monkeypatch, veranderd=True, status=self._SYNCED_HEALTHY, bevat=True)
+
+        await manager.wait_for_project_level_application(PROJECT_APP)
+
+        connector.refresh_application.assert_awaited_once_with(PROJECT_APP)
+        manager._argo_manager.wait_for_application_synced.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_een_revisie_waarin_de_projectmap_anders_is_loopt_de_grendel(self, monkeypatch: Any) -> None:
+        manager, connector = self._manager(monkeypatch, veranderd=False, status=self._SYNCED_HEALTHY, bevat=False)
+
+        await manager.wait_for_project_level_application(PROJECT_APP)
+
+        connector.refresh_application.assert_awaited_once_with(PROJECT_APP)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status",
+        [
+            None,
+            {"status": {}},
+            # Het geval uit de post-mortem: een net aangemaakte applicatie beheert nul
+            # resources en meldt zich binnen een seconde Healthy, zonder ooit gesynct te zijn.
+            {"status": {"sync": {"status": "OutOfSync"}, "health": {"status": "Healthy"}}},
+            {"status": {"sync": {"status": "Synced", "revision": "cafe"}, "health": {"status": "Progressing"}}},
+        ],
+    )
+    async def test_een_applicatie_die_niet_synced_en_healthy_is_loopt_de_grendel(
+        self, monkeypatch: Any, status: dict | None
+    ) -> None:
+        manager, connector = self._manager(monkeypatch, veranderd=False, status=status, bevat=True)
+
+        await manager.wait_for_project_level_application(PROJECT_APP)
+
+        connector.refresh_application.assert_awaited_once_with(PROJECT_APP)
+
+    @pytest.mark.asyncio
+    async def test_zonder_connector_van_de_projectniveau_repo_loopt_de_grendel(self, monkeypatch: Any) -> None:
+        """Geen werkboom om de revisie tegen te houden, dus niets te bewijzen."""
+        manager, connector = self._manager(monkeypatch, veranderd=False, status=self._SYNCED_HEALTHY, bevat=True)
+        manager._ProjectManager__git_connectors_for_deployments = {}
+
+        await manager.wait_for_project_level_application(PROJECT_APP)
+
+        connector.refresh_application.assert_awaited_once_with(PROJECT_APP)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fout",
+        [
+            # Gemeten op de sandbox, 4 november 2026: ArgoCD antwoordt 400 zolang de
+            # AppProject van het project nog niet bestaat of de applicatie er niet in
+            # toegelaten is, en get_application_status maakt daar een RuntimeError van.
+            RuntimeError("Failed to get application status: HTTP 400"),
+            OSError("connection reset"),
+        ],
+    )
+    async def test_een_statusfout_laat_de_grendel_lopen_en_faalt_de_taak_niet(
+        self, monkeypatch: Any, fout: Exception
+    ) -> None:
+        """Werk overslaan mag nooit een taak kosten: geen status is geen bewijs."""
+        manager, connector = self._manager(monkeypatch, veranderd=False, status=None, bevat=True)
+        connector.get_application_status = AsyncMock(side_effect=fout)
+
+        await manager.wait_for_project_level_application(PROJECT_APP)
+
+        connector.refresh_application.assert_awaited_once_with(PROJECT_APP)
+        manager._argo_manager.wait_for_application_synced.assert_awaited_once()
+
+    def test_een_verse_manager_gaat_ervan_uit_dat_het_projectniveau_veranderde(self) -> None:
+        """De standaard is de veilige kant: de grendel loopt tenzij het tegendeel gemeten is."""
+        from opi.manager.project_manager import ProjectManager
+
+        assert ProjectManager._project_level_manifests_changed is True

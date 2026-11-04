@@ -3149,6 +3149,18 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
     }
 
 
+def _step_duration_seconds(step: dict) -> float | None:
+    """De duur van een afgeronde stap in seconden, of None als die niet te bepalen is."""
+    started, completed = step.get("started_at"), step.get("completed_at")
+    if not started or not completed:
+        return None
+    try:
+        duur = datetime.fromisoformat(completed) - datetime.fromisoformat(started)
+    except ValueError:
+        return None
+    return max(duur.total_seconds(), 0.0)
+
+
 def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
     """Convert flat V2 subtask list to nested task hierarchy for the template."""
     main_tasks = []
@@ -3161,6 +3173,9 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
             "status": st.get("status", "pending"),
             "error": st.get("error"),
             "subject": st.get("subject"),
+            # Hoe lang de stap duurde. None voor een stap die nog loopt en voor stappen
+            # van voor RC-418, die geen tijdstempels hebben.
+            "duration_seconds": _step_duration_seconds(st),
         }
         parent = st.get("parent_id")
         if parent:

@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from opi.core.actor import actor_from_stored, set_actor
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
+from opi.core.metrics import set_rollout_task_type
 from opi.core.task_errors import (
     INTERNAL_ERROR_TYPE,
     INVALID_REQUEST_ERROR_TYPE,
@@ -35,6 +36,17 @@ if TYPE_CHECKING:
     from opi.core.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
+
+#: De wekker van de worker in dit proces, of None als er geen worker draait (de API-only
+#: rol, en elke test). Hij hoort bij de worker en niet bij de module, omdat een
+#: asyncio.Event zich aan de event loop van zijn eerste wachter bindt.
+_waker: asyncio.Event | None = None
+
+
+def notify_new_task() -> None:
+    """Wek de taakworker: er staat een nieuwe taak in de wachtrij."""
+    if _waker is not None:
+        _waker.set()
 
 
 def failure_result(message: str, error_type: str) -> dict[str, str]:
@@ -117,11 +129,17 @@ class TaskWorker:
     """
 
     def __init__(self, task_service: AsyncTaskService, cluster: str):
+        global _waker
+
         self._task_service = task_service
         self._cluster = cluster
         self._running = False
         self._semaphore = asyncio.Semaphore(settings.TASK_WORKER_CONCURRENCY)
         self._active_tasks: set[asyncio.Task] = set()
+        # De wekker waar notify_new_task aan trekt. Er is een worker per proces, dus de
+        # laatst gemaakte is de wekker die telt.
+        self._waker = asyncio.Event()
+        _waker = self._waker
 
         # Handler registry - maps TaskType to handler function
         self._handlers: dict[str, Callable] = {}
@@ -182,13 +200,16 @@ class TaskWorker:
                 # Wait for a concurrency slot before claiming
                 await self._semaphore.acquire()
 
+                # Wissen VOOR de claim: een taak die tussen de claim en het wachten bij komt
+                # zou anders de wekker missen en pas na het pollen aan de beurt zijn.
+                self._waker.clear()
                 task = await self._task_service.claim_next_task(
                     self._cluster,
                     type_concurrency_limits=self._type_concurrency_limits or None,
                 )
                 if task is None:
                     self._semaphore.release()
-                    await asyncio.sleep(settings.TASK_WORKER_POLL_INTERVAL)
+                    await self._wait_for_work()
                     continue
 
                 # Spawn task execution as a concurrent coroutine
@@ -208,6 +229,17 @@ class TaskWorker:
             logger.info("Waiting for %d active tasks to complete...", len(self._active_tasks))
             await asyncio.gather(*self._active_tasks, return_exceptions=True)
 
+    async def _wait_for_work(self) -> None:
+        """Wacht tot er een taak bij komt, en hoogstens tot de volgende poll.
+
+        De poll blijft het vangnet: een taak die een ANDER proces aanmaakt zet deze wekker
+        niet. Zonder de wekker kostte elke taak uit dit proces gemiddeld een halve
+        pollronde voordat er iets gebeurde.
+        """
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(settings.TASK_WORKER_POLL_INTERVAL):
+                await self._waker.wait()
+
     async def _run_task(self, task: dict) -> None:
         """Wrapper that executes a task and releases the semaphore when done."""
         try:
@@ -222,6 +254,7 @@ class TaskWorker:
         project_name = task.get("project_name", "")
         deployment_name = task.get("deployment_name")
 
+        set_rollout_task_type(task_type)
         fid = set_flow_id(f"task-{task_id[:8]}")
         set_actor(actor_from_stored(task.get("created_by")))
         started = time.monotonic()
