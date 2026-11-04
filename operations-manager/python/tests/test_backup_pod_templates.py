@@ -713,3 +713,29 @@ class TestEenJinjaOmgeving:
 
     def test_de_gedeelde_omgeving_kent_yaml_scalar(self) -> None:
         assert render_template_source("a: {{ v | yaml_scalar }}\n", {"v": 'x"y'}) == 'a: "x\\"y"\n'
+
+
+# ---------------------------------------------------------------------------
+# Kopia writes its config to /tmp
+# ---------------------------------------------------------------------------
+
+
+class TestKopiaConfigPath:
+    """Every template that runs kopia sets ``KOPIA_CONFIG_PATH``.
+
+    Without it kopia writes to ``$HOME/.config``. On OpenShift the pod runs with a random UID
+    and ``HOME=/``, so it fails on ``mkdir /.config: permission denied``. That is how the
+    database restore failed on staging (4 November 2026).
+    """
+
+    KOPIA_TEMPLATES = sorted(p.name for p in _MANIFESTS_DIR.glob("*.jinja") if "kopia " in p.read_text())
+
+    def test_kopia_templates_are_found(self) -> None:
+        assert "restore-database-pod.yaml.jinja" in self.KOPIA_TEMPLATES
+
+    @pytest.mark.parametrize("template", KOPIA_TEMPLATES)
+    def test_kopia_config_path_is_in_tmp(self, template: str) -> None:
+        pod = yaml.safe_load(render_template(template, {**BACKUP_CTX, **_BASE_CTX, "snapshot_id": "abc"}))
+        env = {e["name"]: e.get("value") for e in pod["spec"]["containers"][0]["env"]}
+
+        assert env.get("KOPIA_CONFIG_PATH", "").startswith("/tmp/")
