@@ -247,14 +247,13 @@ class ArgoManager:
 
     async def _mutate_and_push_argo[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
         """Write to argo-applications repo and remember the pushed commit."""
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        uitkomst = await git_connector_for_argocd.mutate_and_push(message, mutate)
-        try:
-            self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
-        except RuntimeError as e:
-            # Zonder hash valt er niets te bewijzen; de wachter gedraagt zich dan als voorheen.
-            logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
-            self.last_pushed_argo_commit = None
+        workspace = await self.project_manager.get_argo_workspace()
+        uitkomst = await workspace.mutate_and_push(message, mutate)
+        # De stand die de wachter in de umbrella moet terugzien. Landde er niets omdat die
+        # stand er al stond, dan is dat de tip waarop we bouwden: ook dan valt te bewijzen
+        # dat ArgoCD hem heeft vergeleken.
+        write = workspace.last_write
+        self.last_pushed_argo_commit = write.ref if write else None
         return uitkomst
 
     async def create_repository_secrets(
@@ -291,8 +290,8 @@ class ArgoManager:
             logger.warning(f"No deployments for cluster {settings.CLUSTER_MANAGER}")
             return
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         logger.info(
             f"Creating ArgoCD repository secrets for project: {project_name} on cluster {settings.CLUSTER_MANAGER}"
@@ -535,8 +534,8 @@ class ArgoManager:
             project_name,
         )
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
@@ -706,8 +705,8 @@ class ArgoManager:
         project_name = await self.project_manager.get_name()
         logger.debug(f"Creating ArgoCD application for project: {project_name}")
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         try:
             # Create an ArgoCD application for each deployment (filtered by cluster and optional name)
@@ -824,8 +823,8 @@ class ArgoManager:
             sync_wave=0,
         )
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
         project_dir = os.path.join(str(working_dir), generate_argocd_project_folder_path(cluster_name, project_name))
         output_filename = get_output_filename_from_template("argocd-application.yaml.jinja", app_name)
         self._write_manifest_file(project_dir, output_filename, content)
@@ -849,8 +848,8 @@ class ArgoManager:
             project_data: The project configuration data
             deployment_name: Optional deployment name (currently unused, for future filtering)
         """
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         project_name = await self.project_manager.get_name()
 
@@ -897,8 +896,8 @@ class ArgoManager:
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD infrastructure application for project: {project_name}")
 
-        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await git_connector_for_argocd.get_working_dir()
+        argo_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await argo_workspace.get_working_dir()
 
         try:
             # Get repository information (use first repository, typically main-repo)

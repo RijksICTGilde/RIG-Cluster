@@ -10,8 +10,10 @@ import glob
 import hashlib
 import logging
 import os
+import posixpath
 import secrets
 import shutil
+import tempfile
 import time
 from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
     AsyncIterator,
@@ -32,11 +34,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
 from opi.connectors.argo import ArgoTransportError
-from opi.connectors.git import (
-    GitConnector,
-    create_git_connector_for_argocd,
-    create_git_connector_from_repo_config,
-    repo_lock_key,
+from opi.connectors.git import GitConnector, repo_lock_key
+from opi.connectors.git_repo import (
+    GitRepoWorkspace,
+    argo_workspace,
+    credentials_from_repo_config,
+    get_git_repo,
+    workspace_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.subdomain import (
@@ -195,9 +199,11 @@ from opi.utils.fs_paths import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
+    RepositoryPathError,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
+    generate_cluster_manifest_folder_path,
     generate_deployment_manifest_path,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -210,6 +216,7 @@ from opi.utils.naming import (
     generate_network_policy_manifest_name,
     generate_network_policy_name,
     generate_project_level_manifest_path,
+    generate_project_manifest_folder_path,
     generate_project_realm_name,
     generate_project_service_account_name,
     generate_public_url,
@@ -708,12 +715,14 @@ class ProjectManager:
         self.__git_connector_for_project_files = git_connector_for_project_files
         # Track ownership: if connector was injected, we don't own it and shouldn't close it
         self.__owns_git_connector_for_project_files = git_connector_for_project_files is None
-        self.__git_connector_for_argocd = None
+        self.__argo_workspace: GitRepoWorkspace | None = None
         # each deployment has a repository, referenced by name
-        self.__git_connectors_for_deployments: dict[str, GitConnector] = {}
-        # Dezelfde connectors, geindexeerd op remote, zodat twee repo-configs met dezelfde
-        # remote er een delen. Zie get_git_connector_for_deployment.
-        self.__deployment_connectors_by_remote: dict[tuple[str, str, str], GitConnector] = {}
+        self.__deployment_workspaces: dict[str, GitRepoWorkspace] = {}
+        # Dezelfde werkmappen, geindexeerd op remote, zodat twee repo-configs met dezelfde
+        # remote er een delen. Zie get_deployment_workspace.
+        self.__deployment_workspaces_by_remote: dict[tuple[str, str, str], GitRepoWorkspace] = {}
+        # Wegwerpmappen die niet bij een werkmap horen; zie materialize_cluster_tree.
+        self.__scratch_dirs: list[str] = []
         # Progress manager for tracking operation status
         self.__progress_manager = None
         # Private map for storing secrets that need to be created
@@ -1895,21 +1904,16 @@ class ProjectManager:
 
         return env_vars
 
-    async def get_git_connector_for_argocd(self) -> GitConnector:
-        if self.__git_connector_for_argocd is None:
-            self.__git_connector_for_argocd = await create_git_connector_for_argocd(await self.get_name())
-            await self.__git_connector_for_argocd.ensure_repo_cloned()
-        return self.__git_connector_for_argocd
+    async def get_argo_workspace(self) -> GitRepoWorkspace:
+        """De werkmap op de argo-applications repo voor dit project, een per taak."""
+        if self.__argo_workspace is None:
+            self.__argo_workspace = argo_workspace(await self.get_name(), settings.CLUSTER_MANAGER)
+        return self.__argo_workspace
 
-    async def set_git_connector_for_argocd(self, git_connector: GitConnector) -> None:
-        if self.__git_connector_for_argocd:
-            raise Exception("git_connector_for_argocd already set")
-        self.__git_connector_for_argocd = git_connector
-
-    async def close_git_connector_for_argocd(self) -> None:
-        if self.__git_connector_for_argocd:
-            await self.__git_connector_for_argocd.close()
-            self.__git_connector_for_argocd = None
+    async def close_argo_workspace(self) -> None:
+        if self.__argo_workspace:
+            await self.__argo_workspace.close()
+            self.__argo_workspace = None
 
     def set_progress_manager(self, task_progress_manager: AnyTaskProgressManager) -> None:
         """Set the task progress manager for tracking operation status."""
@@ -1971,41 +1975,63 @@ class ProjectManager:
         else:
             progress_manager.complete_task(step_id)
 
-    async def set_git_connector_for_deployment(self, name: str, git_connector: GitConnector) -> None:
-        if name in self.__git_connectors_for_deployments:
-            raise Exception(f"git_connector_for_deployments already set for {name}")
-        self.__git_connectors_for_deployments[name] = git_connector
-
-    async def get_git_connector_for_deployment(self, name: str, repo_config: dict[str, str]) -> GitConnector:
-        """De connector van deze repo-config, hergebruikt per remote binnen deze taak.
+    async def get_deployment_workspace(self, name: str, repo_config: dict[str, str]) -> GitRepoWorkspace:
+        """De werkmap op de deployments-repo van deze config, een per remote binnen deze taak.
 
         Twee namen kunnen dezelfde remote zijn: "infrastructure" is dezelfde repo, branch
-        en pad als de deployments-repo (``repositories[0]``). Dat kostte twee klonen en
-        twee werkbomen per taak voor een repo die ook een keer gekloond kan worden.
+        en pad als de deployments-repo (``repositories[0]``). Dat is dan ook dezelfde scope
+        en dezelfde tempmap, zodat de generatie van beide in een commit kan landen.
         """
-        if name in self.__git_connectors_for_deployments:
-            return self.__git_connectors_for_deployments[name]
+        if name in self.__deployment_workspaces:
+            return self.__deployment_workspaces[name]
         if "project_name" not in repo_config:
             repo_config["project_name"] = await self.get_name()
         remote = _remote_identity(repo_config)
-        connector = self.__deployment_connectors_by_remote.get(remote)
-        if connector is None:
-            connector = await create_git_connector_from_repo_config(repo_config)
-            self.__deployment_connectors_by_remote[remote] = connector
-        self.__git_connectors_for_deployments[name] = connector
-        return connector
+        workspace = self.__deployment_workspaces_by_remote.get(remote)
+        if workspace is None:
+            workspace = workspace_from_repo_config(
+                repo_config,
+                [
+                    generate_project_manifest_folder_path(
+                        settings.CLUSTER_MANAGER, await self.get_name(), repo_config.get("path", "")
+                    )
+                ],
+                project_name=await self.get_name(),
+            )
+            self.__deployment_workspaces_by_remote[remote] = workspace
+        self.__deployment_workspaces[name] = workspace
+        return workspace
 
-    async def close_git_connectors_for_deployments(self) -> None:
-        # Beide registers: een connector die via set_git_connector_for_deployment is
-        # binnengebracht staat niet in de remote-index. close() is idempotent, dus een
-        # connector die in beide staat sluiten kost niets.
-        for connector in (
-            *self.__deployment_connectors_by_remote.values(),
-            *self.__git_connectors_for_deployments.values(),
-        ):
-            await connector.close()
-        self.__git_connectors_for_deployments = {}
-        self.__deployment_connectors_by_remote = {}
+    async def materialize_cluster_tree(self, repo_config: dict[str, str]) -> str | None:
+        """De ``{cluster}/``-boom van de deployments-repo in een wegwerpmap, alleen om te lezen.
+
+        Voor de lezers over ALLE projecten (``rendered_kinds``). De map wordt met de rest
+        van de werkmappen opgeruimd.
+        """
+        repo_path = (repo_config.get("path") or "").strip("/")
+        try:
+            cluster_path = generate_cluster_manifest_folder_path(settings.CLUSTER_MANAGER, repo_path)
+        except RepositoryPathError as e:
+            logger.error("Repositorypad '%s' valt buiten de repository, dus niet gelezen: %s", repo_path, e)
+            return None
+
+        repo = get_git_repo(repo_config["url"], repo_config.get("branch") or "main")
+        credentials = credentials_from_repo_config(repo_config)
+        scratch = tempfile.mkdtemp(prefix="git-cluster-", dir=settings.TEMP_DIR)
+        self.__scratch_dirs.append(scratch)
+        materialized = await repo.materialize([cluster_path], await repo.tip(credentials), scratch, credentials)
+        if not materialized:
+            return None
+        return os.path.join(scratch, repo_path) if repo_path else scratch
+
+    async def close_deployment_workspaces(self) -> None:
+        for workspace in self.__deployment_workspaces_by_remote.values():
+            await workspace.close()
+        for scratch in self.__scratch_dirs:
+            shutil.rmtree(scratch, ignore_errors=True)
+        self.__scratch_dirs = []
+        self.__deployment_workspaces = {}
+        self.__deployment_workspaces_by_remote = {}
 
     # TODO: we may want to process a file anyway
     async def has_deployments_for_current_cluster(self) -> bool:
@@ -2837,143 +2863,147 @@ class ProjectManager:
                 "path": main_repo.get("path", ""),
             }
 
-            # Get git connector for deployment repo
-            deployment_git_connector = await self.get_git_connector_for_deployment("infrastructure", infra_repo_config)
-            deployment_working_dir = await deployment_git_connector.get_working_dir()
+            infra_workspace = await self.get_deployment_workspace("infrastructure", infra_repo_config)
 
-            # Create infrastructure resources directory in deployment repo
-            # Path: {cluster}/{project_name}/infrastructure/
-            # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
-            infra_resources_dir = os.path.join(
-                deployment_working_dir,
-                generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
-            )
-            os.makedirs(infra_resources_dir, exist_ok=True)
+            async def _write_infrastructure_manifests() -> None:
+                """Zet de infrastructuurmap neer in de werkmap van deze ronde."""
+                deployment_working_dir = await infra_workspace.get_working_dir()
 
-            # Write manifests - secret as .to-sops.yaml for encryption
-            secret_path = os.path.join(
-                infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
-            )
-            cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
-
-            with open(secret_path, "w") as f:
-                f.write(secret_manifest)
-            with open(cluster_path, "w") as f:
-                f.write(cluster_manifest)
-
-            # Create a least-privilege baseline network policy for the
-            # infrastructure namespace. This namespace hosts the project's
-            # PostgreSQL cluster, so it must accept ingress from the project's
-            # own tenant app namespaces (where the application pods connect
-            # from) while denying everything else. It is NOT allow-all.
-            tenant_namespaces = sorted(
-                {
-                    get_prefixed_namespace(cluster_name, deployment_def["namespace"])
-                    for deployment_def in project_data.get("deployments", [])
-                    if deployment_def.get("cluster") == cluster_name and deployment_def.get("namespace")
-                }
-            )
-            logger.info(
-                f"Generating baseline network policy for infrastructure namespace: {infrastructure_namespace} "
-                f"(ingress allowed from tenant namespaces: {tenant_namespaces})"
-            )
-            network_policy_manifest = render_template(
-                "tenant-baseline-network-policy.yaml.jinja",
-                {
-                    "name": "tenant-baseline",
-                    "namespace": infrastructure_namespace,
-                    # No deployment_selector: this policy covers the whole
-                    # infrastructure namespace (CNPG operator + cluster pods,
-                    # none of which carry our `deployment:` label).
-                    "deployment_selector": None,
-                    "ops_namespace": get_namespace(cluster_name),
-                    "backup_namespace": get_backup_namespace(cluster_name),
-                    "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
-                    "ops_egress": get_ops_egress(cluster_name),
-                    "cluster_cidrs": get_cluster_cidrs(cluster_name),
-                    # The CNPG operator (in its own namespace) must reach the
-                    # dedicated cluster's pods to extract instance status, or the
-                    # Cluster never becomes Ready. The DB subsystem owns which
-                    # namespace that is; only the infra namespace needs this rule.
-                    "database_operator_namespace": database_cluster_config["database_operator_namespace"],
-                    # The project's app namespaces must reach the PostgreSQL
-                    # cluster that lives in this infrastructure namespace.
-                    "allowed_ingress_namespaces": tenant_namespaces,
-                    # Skip the "project infra" egress rule: this IS the infra
-                    # namespace, so an explicit self-rule would be redundant.
-                    "project_infra_namespace": None,
-                },
-            )
-            network_policy_path = os.path.join(infra_resources_dir, "tenant-baseline-network-policy.yaml")
-            with open(network_policy_path, "w") as f:
-                f.write(network_policy_manifest)
-            logger.info(f"Created baseline network policy for infrastructure namespace: {infrastructure_namespace}")
-
-            # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
-            if registry_name and registry_config and not registry_config.get("secretName"):
-                logger.info(
-                    f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
+                # Create infrastructure resources directory in deployment repo
+                # Path: {cluster}/{project_name}/infrastructure/
+                # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
+                infra_resources_dir = os.path.join(
+                    deployment_working_dir,
+                    generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
                 )
+                os.makedirs(infra_resources_dir, exist_ok=True)
 
-                # Decrypt registry credentials (reuse existing logic)
-                from opi.utils.secrets import RegistrySecret
+                # Write manifests - secret as .to-sops.yaml for encryption
+                secret_path = os.path.join(
+                    infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
+                )
+                cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
 
-                registry_url = registry_config.get("upstream", "")
-                username = registry_config.get("username", "")
-                password_encrypted = registry_config.get("password", "")
+                with open(secret_path, "w") as f:
+                    f.write(secret_manifest)
+                with open(cluster_path, "w") as f:
+                    f.write(cluster_manifest)
 
-                private_key = await get_decoded_project_private_key(project_data)
-                password = await decrypt_password_smart(password_encrypted, private_key)
-
-                # Create RegistrySecret instance (same as deployments)
-                registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
-
-                # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
-                registry_secret_manifest = render_template(
-                    "generic-secret.yaml.to-sops.jinja",
+                # Create a least-privilege baseline network policy for the
+                # infrastructure namespace. This namespace hosts the project's
+                # PostgreSQL cluster, so it must accept ingress from the project's
+                # own tenant app namespaces (where the application pods connect
+                # from) while denying everything else. It is NOT allow-all.
+                tenant_namespaces = sorted(
                     {
-                        "name": registry_secret_name,
+                        get_prefixed_namespace(cluster_name, deployment_def["namespace"])
+                        for deployment_def in project_data.get("deployments", [])
+                        if deployment_def.get("cluster") == cluster_name and deployment_def.get("namespace")
+                    }
+                )
+                logger.info(
+                    f"Generating baseline network policy for infrastructure namespace: {infrastructure_namespace} "
+                    f"(ingress allowed from tenant namespaces: {tenant_namespaces})"
+                )
+                network_policy_manifest = render_template(
+                    "tenant-baseline-network-policy.yaml.jinja",
+                    {
+                        "name": "tenant-baseline",
                         "namespace": infrastructure_namespace,
-                        "secret_type": "registry",
-                        "secret_k8s_type": "kubernetes.io/dockerconfigjson",
-                        "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
+                        # No deployment_selector: this policy covers the whole
+                        # infrastructure namespace (CNPG operator + cluster pods,
+                        # none of which carry our `deployment:` label).
+                        "deployment_selector": None,
+                        "ops_namespace": get_namespace(cluster_name),
+                        "backup_namespace": get_backup_namespace(cluster_name),
+                        "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                        "ops_egress": get_ops_egress(cluster_name),
+                        "cluster_cidrs": get_cluster_cidrs(cluster_name),
+                        # The CNPG operator (in its own namespace) must reach the
+                        # dedicated cluster's pods to extract instance status, or the
+                        # Cluster never becomes Ready. The DB subsystem owns which
+                        # namespace that is; only the infra namespace needs this rule.
+                        "database_operator_namespace": database_cluster_config["database_operator_namespace"],
+                        # The project's app namespaces must reach the PostgreSQL
+                        # cluster that lives in this infrastructure namespace.
+                        "allowed_ingress_namespaces": tenant_namespaces,
+                        # Skip the "project infra" egress rule: this IS the infra
+                        # namespace, so an explicit self-rule would be redundant.
+                        "project_infra_namespace": None,
                     },
                 )
+                network_policy_path = os.path.join(infra_resources_dir, "tenant-baseline-network-policy.yaml")
+                with open(network_policy_path, "w") as f:
+                    f.write(network_policy_manifest)
+                logger.info(f"Created baseline network policy for infrastructure namespace: {infrastructure_namespace}")
 
-                # Write registry secret to infrastructure directory
-                registry_secret_path = os.path.join(infra_resources_dir, sops_filenames(registry_secret_name).plaintext)
-                with open(registry_secret_path, "w") as f:
-                    f.write(registry_secret_manifest)
+                # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
+                if registry_name and registry_config and not registry_config.get("secretName"):
+                    logger.info(
+                        f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
+                    )
 
-                logger.info(
-                    f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
+                    # Decrypt registry credentials (reuse existing logic)
+                    from opi.utils.secrets import RegistrySecret
+
+                    registry_url = registry_config.get("upstream", "")
+                    username = registry_config.get("username", "")
+                    password_encrypted = registry_config.get("password", "")
+
+                    private_key = await get_decoded_project_private_key(project_data)
+                    password = await decrypt_password_smart(password_encrypted, private_key)
+
+                    # Create RegistrySecret instance (same as deployments)
+                    registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
+
+                    # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
+                    registry_secret_manifest = render_template(
+                        "generic-secret.yaml.to-sops.jinja",
+                        {
+                            "name": registry_secret_name,
+                            "namespace": infrastructure_namespace,
+                            "secret_type": "registry",
+                            "secret_k8s_type": "kubernetes.io/dockerconfigjson",
+                            "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
+                        },
+                    )
+
+                    # Write registry secret to infrastructure directory
+                    registry_secret_path = os.path.join(
+                        infra_resources_dir, sops_filenames(registry_secret_name).plaintext
+                    )
+                    with open(registry_secret_path, "w") as f:
+                        f.write(registry_secret_manifest)
+
+                    logger.info(
+                        f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
+                    )
+
+                # STEP 4: SOPS encrypt the secrets using project's SOPS key
+                logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
+                project_public_key = get_project_public_key(project_data)
+                if not project_public_key:
+                    raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
+                await asyncio.to_thread(
+                    encrypt_to_sops_files_or_fail,
+                    infra_resources_dir,
+                    project_public_key,
+                    f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
+                    private_key=await self._sops_private_key_for(project_data),
                 )
 
-            # STEP 4: SOPS encrypt the secrets using project's SOPS key
-            logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
-            project_public_key = get_project_public_key(project_data)
-            if not project_public_key:
-                raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
-            await asyncio.to_thread(
-                encrypt_to_sops_files_or_fail,
-                infra_resources_dir,
-                project_public_key,
-                f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
-                private_key=await self._sops_private_key_for(project_data),
-            )
+                # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
+                logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
+                kustomization_success = self._manifest_generator.create_kustomization_files(
+                    output_dir=infra_resources_dir,
+                    namespace=infrastructure_namespace,
+                )
+                if not kustomization_success:
+                    raise RuntimeError(f"Failed to create kustomization files for project '{project_name}'")
 
-            # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
-            logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
-            kustomization_success = self._manifest_generator.create_kustomization_files(
-                output_dir=infra_resources_dir,
-                namespace=infrastructure_namespace,
-            )
-            if not kustomization_success:
-                raise RuntimeError(f"Failed to create kustomization files for project '{project_name}'")
-
-            # Commit and push infrastructure resources to deployment repo
-            await deployment_git_connector.commit_and_push(
-                f"Add infrastructure resources for {project_name} in {cluster_name} cluster"
+            await infra_workspace.mutate_and_push(
+                f"Add infrastructure resources for {project_name} in {cluster_name} cluster",
+                _write_infrastructure_manifests,
             )
 
             logger.info(
@@ -3343,7 +3373,7 @@ class ProjectManager:
             return False
         if self._project_level_path is None:
             return False
-        connector = self.__git_connectors_for_deployments.get(self._project_level_repo)
+        connector = self.__deployment_workspaces.get(self._project_level_repo)
         if connector is None:
             return False
 
@@ -4358,38 +4388,48 @@ class ProjectManager:
         project_data = await self.get_contents()
         project_name = project_data.get("name")
 
-        project_repo_connector = await self.get_git_connector_for_deployment(repo_config["name"], repo_config)
-        # Deployments are already filtered for current cluster by caller
-        for deployment in deployments:
-            await self._process_deployment_manifests(deployment, project_repo_connector)
-            await project_repo_connector.commit_changes(f"Update manifests for {project_name}/{deployment['name']}")
-
-        # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
-        # project deployments over twee repo's heeft. Welke, beslist
-        # project_level_deployment, dezelfde functie die de applicatie gebruikt.
+        workspace = await self.get_deployment_workspace(repo_config["name"], repo_config)
         owner = project_level_deployment(await self.get_deployments(cluster_filter=True))
-        if owner is not None and owner.get("repository") == repo_config.get("name"):
-            await self._process_project_manifests(
-                repo_config,
-                str(owner["cluster"]),
-                get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
-                project_repo_connector,
-            )
-            # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel
-            # in wait_for_project_level_application niet op een nieuwe sync te wachten.
-            self._project_level_manifests_changed = await project_repo_connector.commit_changes(
-                f"Update project manifests for {project_name}"
-            )
-            self._project_level_repo = repo_config.get("name")
 
-        # Vlak VOOR de push, en niet erna: ArgoCD probeert een revisie die al eens faalde niet
-        # opnieuw, dus beëindigen na de push laat de blokkade staan voor precies de commit die
-        # hem moet oplossen. Een storing hierin houdt de push niet tegen: dit staat tussen de
-        # commits en de push, dus stranden zou de manifests gecommit en ongepusht achterlaten
-        # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
-        await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
+        async def _generate() -> None:
+            """Zet de manifests van deze repo neer in de werkmap van deze ronde."""
+            # Deployments are already filtered for current cluster by caller
+            for deployment in deployments:
+                await self._process_deployment_manifests(deployment, workspace)
 
-        await project_repo_connector.push_changes()
+            # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
+            # project deployments over twee repo's heeft. Welke, beslist
+            # project_level_deployment, dezelfde functie die de applicatie gebruikt.
+            if owner is not None and owner.get("repository") == repo_config.get("name"):
+                await self._process_project_manifests(
+                    repo_config,
+                    str(owner["cluster"]),
+                    get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
+                    workspace,
+                )
+                self._project_level_repo = repo_config.get("name")
+
+            # Vlak VOOR de write, en niet erna: ArgoCD probeert een revisie die al eens faalde
+            # niet opnieuw, dus beeindigen na de push laat de blokkade staan voor precies de
+            # commit die hem moet oplossen. Een storing hierin houdt de write niet tegen
+            # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
+            await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
+
+        names = ", ".join(str(deployment["name"]) for deployment in deployments)
+        await workspace.mutate_and_push(f"Update manifests for {project_name} ({names})", _generate)
+
+        # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel in
+        # wait_for_project_level_application niet op een nieuwe sync te wachten. Alleen de
+        # repo die het projectniveau bezit kan dat meten; voor een andere blijft het True,
+        # want die weet er niets van. De paden van de write zijn repo-relatief en
+        # genormaliseerd, en ``_project_level_path`` is dat niet (``./cluster/...`` bij een
+        # repositories[].path van '.'), dus beide kanten gaan door normpath.
+        if owner is not None and owner.get("repository") == repo_config.get("name") and self._project_level_path:
+            prefix = f"{posixpath.normpath(self._project_level_path)}/"
+            self._project_level_manifests_changed = bool(
+                workspace.last_write
+                and any(posixpath.normpath(path).startswith(prefix) for path in workspace.last_write.paths)
+            )
 
         logger.info(f"Successfully processed repository: {repo_config['name']}")
 
@@ -4563,7 +4603,7 @@ class ProjectManager:
         repo_config: dict[str, Any],
         cluster_name: str,
         namespace: str,
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
     ) -> None:
         """Schrijf het PROJECTniveau van de deployments-repo: ``<cluster>/<project>/_project/``.
 
@@ -4627,7 +4667,7 @@ class ProjectManager:
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
     ) -> None:
         """
         Process manifests for a specific deployment.
@@ -4638,7 +4678,7 @@ class ProjectManager:
 
         Args:
             deployment: Deployment configuration
-            git_connector: GitConnector for the repository
+            git_connector: de werkmap van de repository
 
         Returns:
             None
@@ -5170,7 +5210,7 @@ class ProjectManager:
     async def _process_helm_chart_deployment(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         target_path: str,
         namespace_policy_files: list[str] | None = None,
     ) -> None:
@@ -5529,7 +5569,7 @@ class ProjectManager:
     async def _process_helmfile_deployment(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         target_path: str,
         namespace_policy_files: list[str] | None = None,
     ) -> None:
@@ -5989,8 +6029,8 @@ class ProjectManager:
         self._closed = True
         for step in (
             self.close_git_connector_for_project_files,
-            self.close_git_connector_for_argocd,
-            self.close_git_connectors_for_deployments,
+            self.close_argo_workspace,
+            self.close_deployment_workspaces,
         ):
             try:
                 await step()
@@ -6330,7 +6370,7 @@ class ProjectManager:
     async def create_application_manifests(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         target_dir: str | None = None,
     ) -> list[str]:
         """
@@ -7766,7 +7806,7 @@ class ProjectManager:
     # TODO: this should be moved to manifests.py
     async def create_kustomization_file(
         self,
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         namespace: str,
         sops_files: list[str],
         regular_files: list[str],

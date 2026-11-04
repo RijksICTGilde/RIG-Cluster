@@ -21,11 +21,10 @@ Classifications:
 """
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
-from opi.connectors.git import create_git_connector_for_argocd
+from opi.connectors.git_repo import argo_repo_config, credentials_from_repo_config, get_git_repo
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.mail import MailRelayNotConfiguredError, create_mail_connector
 from opi.connectors.minio_mc import create_minio_connector
@@ -367,32 +366,31 @@ async def sweep(
     # Een map hier is een wees zodra er geen project met die naam meer bestaat. Dat is een
     # goedkope en eenduidige controle, want beide kanten komen uit dezelfde bron.
     try:
-        gitops = await create_git_connector_for_argocd("orphan-sweep")
-        await gitops.refresh_working_tree()
-        working_dir = await gitops.get_working_dir()
-        cluster_dir = os.path.join(working_dir, cluster)
+        config = argo_repo_config()
+        repo = get_git_repo(config["url"], config["branch"])
+        credentials = credentials_from_repo_config(config)
+        tip = await repo.tip(credentials)
 
         bekende_projecten = {p.get("name") for p in project_yamls if p.get("name")}
-        if os.path.isdir(cluster_dir):
-            for map_naam in sorted(os.listdir(cluster_dir)):
-                if not os.path.isdir(os.path.join(cluster_dir, map_naam)):
-                    continue
-                if map_naam in bekende_projecten:
-                    classification, reason = "expected", "belongs to an existing project"
-                else:
-                    classification, reason = (
-                        CONFIRMABLE,
-                        "no project with this name exists; the root application keeps recreating "
-                        "an Application that fails on 'app path does not exist'",
-                    )
-                report["gitops_folders"].append(
-                    {
-                        "path": f"{cluster}/{map_naam}",
-                        "project": map_naam,
-                        "classification": classification,
-                        "reason": reason,
-                    }
+        # Een projectmap bestaat alleen als er iets in staat: {cluster}/{project}/<bestand>.
+        mappen = {delen[1] for pad in await repo.list_tree(cluster, tip) if len(delen := pad.split("/")) > 2}
+        for map_naam in sorted(mappen):
+            if map_naam in bekende_projecten:
+                classification, reason = "expected", "belongs to an existing project"
+            else:
+                classification, reason = (
+                    CONFIRMABLE,
+                    "no project with this name exists; the root application keeps recreating "
+                    "an Application that fails on 'app path does not exist'",
                 )
+            report["gitops_folders"].append(
+                {
+                    "path": f"{cluster}/{map_naam}",
+                    "project": map_naam,
+                    "classification": classification,
+                    "reason": reason,
+                }
+            )
     except Exception as e:
         logger.exception("Orphan sweep: GitOps folder inventory failed")
         report["errors"].append(f"gitops folder inventory failed: {e}")

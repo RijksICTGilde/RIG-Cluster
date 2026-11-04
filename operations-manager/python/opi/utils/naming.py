@@ -1196,6 +1196,31 @@ def _under_repo_path(repo_path: str, relative: str) -> str:
     return path
 
 
+def generate_cluster_manifest_folder_path(cluster: str, repo_path: str = "") -> str:
+    """De ``{cluster}/``-boom in de deployments-repo: ``{repo_path}/{cluster}``.
+
+    De boom met de mappen van ALLE projecten eronder. Alleen de lezers over alle projecten
+    gebruiken hem (``rendered_kinds``); geschreven wordt er nooit op dit niveau.
+    """
+    return _under_repo_path(repo_path, _sanitize_for_lowercase(cluster))
+
+
+def generate_project_manifest_folder_path(cluster: str, project_name: str, repo_path: str = "") -> str:
+    """De map van een project in de deployments-repo: ``{repo_path}/{cluster}/{project}``.
+
+    Daaronder staat alles wat een taak van dit project schrijft: een map per deployment,
+    ``_project`` en ``infrastructure``. Het is daarmee de scope van een write naar die
+    repo, en de drie functies hieronder leiden hun pad hiervandaan af zodat de scope en
+    wat erin staat niet uit elkaar kunnen lopen.
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    project_clean = _sanitize_for_lowercase(project_name)
+
+    # In één keer onder de guard: een projectnaam met '..' moet de repo net zo goed niet
+    # kunnen verlaten als een clusternaam met '..'.
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}")
+
+
 def generate_deployment_manifest_path(
     cluster: str, project_name: str, deployment_name: str, repo_path: str = ""
 ) -> str:
@@ -1213,11 +1238,9 @@ def generate_deployment_manifest_path(
     Returns:
         Deployment manifest path
     """
-    cluster_clean = _sanitize_for_lowercase(cluster)
-    project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
 
-    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/{deployment_clean}")
+    return f"{generate_project_manifest_folder_path(cluster, project_name, repo_path)}/{deployment_clean}"
 
 
 def generate_project_deployment_prefix(project_name: str, deployment_name: str) -> str:
@@ -1621,10 +1644,7 @@ def generate_project_level_manifest_path(cluster: str, project_name: str, repo_p
         generate_project_level_manifest_path("production", "myproject")
         -> "production/myproject/_project"
     """
-    cluster_clean = _sanitize_for_lowercase(cluster)
-    project_clean = _sanitize_for_lowercase(project_name)
-
-    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}")
+    return f"{generate_project_manifest_folder_path(cluster, project_name, repo_path)}/{PROJECT_LEVEL_DIR}"
 
 
 def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
@@ -1649,10 +1669,7 @@ def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_
         generate_infrastructure_manifest_path("production", "myproject", "deployments")
         -> "deployments/production/myproject/infrastructure"
     """
-    project_clean = _sanitize_for_lowercase(project_name)
-    cluster_clean = _sanitize_for_lowercase(cluster)
-
-    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/infrastructure")
+    return f"{generate_project_manifest_folder_path(cluster, project_name, repo_path)}/infrastructure"
 
 
 def generate_infrastructure_argocd_application_filename(project_name: str) -> str:

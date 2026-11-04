@@ -16,8 +16,9 @@ eerder is opgeruimd.
 from __future__ import annotations
 
 import asyncio
+import shutil
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
@@ -158,17 +159,23 @@ class TestWieHetProjectniveauDraagt:
 
         gevraagd: list[str] = []
 
-        async def _connector(name: str, _config: dict[str, Any]) -> Any:
+        async def _workspace(name: str, _config: dict[str, Any]) -> Any:
             gevraagd.append(name)
-            connector = MagicMock()
-            connector.ensure_repo_cloned = AsyncMock()
-            connector.get_working_dir = AsyncMock(return_value=str(tmp_path / name))
-            connector.commit_and_push_changes = AsyncMock()
-            return connector
+
+            async def remove_and_push(relative_path: str, _message: str) -> bool:
+                folder = tmp_path / name / relative_path
+                if not folder.exists():
+                    return False
+                shutil.rmtree(folder)
+                return True
+
+            workspace = MagicMock()
+            workspace.remove_and_push = remove_and_push
+            return workspace
 
         manager = DeleteProjectManager.__new__(DeleteProjectManager)
         manager.project_manager = MagicMock()
-        manager.project_manager.get_git_connector_for_deployment = _connector
+        manager.project_manager.get_deployment_workspace = _workspace
 
         project_data = {
             "repositories": [{"name": "a", "path": ""}, {"name": "b", "path": ""}],

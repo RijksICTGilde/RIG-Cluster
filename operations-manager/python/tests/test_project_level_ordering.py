@@ -25,6 +25,7 @@ from typing import Any, ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.git_repo import WriteResult
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
@@ -57,7 +58,7 @@ def _klok_die_doorloopt(stap: float = 60.0) -> Any:
         yield
 
 
-def _argo_manager(sporen: list[str]) -> ArgoManager:
+def _argo_manager(sporen: list[str], commit_refs: tuple[str, str] = ("cafebabe", "cafebabe")) -> ArgoManager:
     """Een ArgoManager die elke stap in ``sporen`` schrijft in plaats van hem te doen.
 
     Alleen de stappen die de ordening bepalen zijn gemocked; de volgorde waarin
@@ -73,16 +74,18 @@ def _argo_manager(sporen: list[str]) -> ArgoManager:
     project_manager.wait_for_project_level_application = AsyncMock(side_effect=_wacht)
 
     git_connector = MagicMock()
+    commits = iter(commit_refs)
 
     async def _push(message: str, mutate: Any) -> Any:
-        # Dezelfde vorm als GitConnector.mutate_and_push: eerst de mutatie, dan de push.
+        # Dezelfde vorm als GitRepoWorkspace.mutate_and_push: eerst de mutatie, dan de write.
         uitkomst = await mutate()
         sporen.append("push:projectniveau" if "project-level" in message else "push:deployments")
+        git_connector.last_write = WriteResult(ref=next(commits), committed=True)
         return uitkomst
 
     git_connector.mutate_and_push = AsyncMock(side_effect=_push)
-    git_connector.get_local_commit_hash = AsyncMock(return_value="cafebabe")
-    project_manager.get_git_connector_for_argocd = AsyncMock(return_value=git_connector)
+    git_connector.last_write = None
+    project_manager.get_argo_workspace = AsyncMock(return_value=git_connector)
 
     manager = ArgoManager(project_manager)
 
@@ -158,10 +161,7 @@ class TestDeAanmaakvolgorde:
         de deployment-commit niet zag. Twee verschillende hashes, want een assertie op een
         enkele hash staat groen op de commit van fase 1."""
         sporen: list[str] = []
-        manager = _argo_manager(sporen)
-        git = await manager.project_manager.get_git_connector_for_argocd()
-        git.get_local_commit_hash = AsyncMock(side_effect=["fase1", "fase2"])
-
+        manager = _argo_manager(sporen, ("fase1", "fase2"))
         await manager.create_argocd_resources()
 
         assert manager.last_pushed_argo_commit == "fase2"
@@ -525,7 +525,7 @@ class TestWaarDeGrendelZijnNaamVandaanHaalt:
                 {"name": "productie", "cluster": "local", "namespace": "demo", "repository": "main-repo"},
             ]
         )
-        project_manager.get_git_connector_for_argocd = AsyncMock(return_value=git_connector)
+        project_manager.get_argo_workspace = AsyncMock(return_value=git_connector)
 
         resultaat = await ArgoManager(project_manager).create_project_application(
             {
@@ -737,7 +737,7 @@ class TestDeGrendelOverslaan:
         manager._project_level_path = "sandboxed-local/demo/project"
         git = AsyncMock()
         git.path_unchanged_since = AsyncMock(return_value=bevat)
-        manager._ProjectManager__git_connectors_for_deployments = {"main-repo": git}
+        manager._ProjectManager__deployment_workspaces = {"main-repo": git}
         return manager, connector
 
     _SYNCED_HEALTHY: ClassVar[dict] = {
@@ -795,7 +795,7 @@ class TestDeGrendelOverslaan:
     async def test_zonder_connector_van_de_projectniveau_repo_loopt_de_grendel(self, monkeypatch: Any) -> None:
         """Geen werkboom om de revisie tegen te houden, dus niets te bewijzen."""
         manager, connector = self._manager(monkeypatch, veranderd=False, status=self._SYNCED_HEALTHY, bevat=True)
-        manager._ProjectManager__git_connectors_for_deployments = {}
+        manager._ProjectManager__deployment_workspaces = {}
 
         await manager.wait_for_project_level_application(PROJECT_APP)
 
@@ -829,3 +829,82 @@ class TestDeGrendelOverslaan:
         from opi.manager.project_manager import ProjectManager
 
         assert ProjectManager._project_level_manifests_changed is True
+
+
+class TestWieDeGrendelMeet:
+    """Wie ``_project_level_manifests_changed`` mag zetten, en waarop (RC-422).
+
+    De meting hoort bij de repo die het projectniveau BEZIT. Een project met twee
+    repository's doet twee rondes, en de ronde van de andere repo weet niets van het
+    projectniveau: zette die de waarde ook, dan ging de grendel open op het bewijs van een
+    repo die er niet over gaat. En de paden van een write zijn repo-relatief en
+    genormaliseerd, terwijl ``_project_level_path`` dat niet is (``./cluster/...`` bij een
+    ``repositories[].path`` van '.'), dus de vergelijking gaat aan beide kanten door
+    ``normpath``.
+    """
+
+    @staticmethod
+    async def _ronde(*, repo: str, paden: list[str], project_level_path: str) -> Any:
+        from opi.manager.project_manager import ProjectManager
+
+        workspace = MagicMock()
+        workspace.get_working_dir = AsyncMock(return_value="/tmp/repo")
+
+        async def _mutate_and_push(_message: str, mutate: Any) -> None:
+            await mutate()
+
+        workspace.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
+        workspace.last_write = WriteResult(ref="cafebabe", committed=True, paths=paden)
+
+        fake = MagicMock(spec=ProjectManager)
+        fake.get_contents = AsyncMock(return_value={"name": "demo"})
+        fake.get_deployment_workspace = AsyncMock(return_value=workspace)
+        fake._process_deployment_manifests = AsyncMock()
+        fake._process_project_manifests = AsyncMock()
+        fake._clear_blocking_sync_operations = AsyncMock()
+        fake._project_level_path = project_level_path
+        fake._project_level_manifests_changed = True
+        deployments = [
+            {"name": "aap", "cluster": "sandboxed-local", "namespace": "demo", "repository": "main-repo"},
+            {"name": "noot", "cluster": "sandboxed-local", "namespace": "demo", "repository": "chart-repo"},
+        ]
+        fake.get_deployments = AsyncMock(return_value=deployments)
+
+        await ProjectManager._process_repository_manifests(
+            fake, {"name": repo}, [d for d in deployments if d["repository"] == repo]
+        )
+        return fake
+
+    @pytest.mark.asyncio
+    async def test_de_eigenaar_meet_een_ronde_die_het_projectniveau_niet_raakte(self) -> None:
+        fake = await self._ronde(
+            repo="main-repo",
+            paden=["sandboxed-local/demo/aap/deployment.yaml"],
+            project_level_path="sandboxed-local/demo/_project",
+        )
+
+        assert fake._project_level_manifests_changed is False
+
+    @pytest.mark.asyncio
+    async def test_een_pad_met_een_punt_ervoor_telt_toch_mee(self) -> None:
+        """Bij een ``repositories[].path`` van '.' begint ``_project_level_path`` met './'.
+        Zonder normpath vond de vergelijking nooit een match en leek het projectniveau
+        onveranderd, precies in de ronde die hem wel veranderde."""
+        fake = await self._ronde(
+            repo="main-repo",
+            paden=["sandboxed-local/demo/_project/serviceaccount.yaml"],
+            project_level_path="./sandboxed-local/demo/_project",
+        )
+
+        assert fake._project_level_manifests_changed is True
+
+    @pytest.mark.asyncio
+    async def test_de_ronde_van_een_andere_repo_meet_niet(self) -> None:
+        """``chart-repo`` bezit het projectniveau niet, dus zijn paden zeggen er niets over."""
+        fake = await self._ronde(
+            repo="chart-repo",
+            paden=["sandboxed-local/demo/noot/deployment.yaml"],
+            project_level_path="sandboxed-local/demo/_project",
+        )
+
+        assert fake._project_level_manifests_changed is True

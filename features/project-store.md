@@ -75,23 +75,23 @@ the store), authorization moved to `opi/services/project_authorization.py` -- wh
 the store like everything else -- and the platform-admin allowlist moved to `UserService`, next to
 the email allowlist it already owned.
 
-**Scope: the store owns `zad-projects` only.** The `zad-deployments` and `zad-argo-user-applications`
-repos keep using their own `ProjectManager` git connectors and are explicitly out of scope.
+**Scope: the store owns `zad-projects` only.** Sinds RC-422 lopen `zad-deployments` en
+`zad-argo-user-applications` op [`GitRepo`](./git-repo.md), dat de git-helft van deze store
+is, eruit gehaald en generiek gemaakt: een beheerde bare kopie per remote, commits uit
+git-objecten, en bij divergentie opnieuw lezen en toepassen.
 
-Since RC-418 those connectors do have a warm copy of their own, but a different one: the store
-keeps ONE working copy that every read and write shares behind its process-wide lock, while a
-`ProjectManager` connector clones its own working tree out of a warm cache per task (see
-`WARM_CACHE_DIR` in `opi/connectors/git.py`). Two tasks therefore never share a working tree
-there, which is what `features/concurrent-write-safety-lost-update.md` requires of a repo that
-several projects write to.
+De store zelf gaat in een eigen taak over op `GitRepo`. Hij is de kern van ZAD en moet in
+een keer goed overgaan, en dan is er van hem alleen nog domeinwerk over: YAML, validatie,
+cache en de mutate-semantiek bovenop een git-laag. Tot die tijd houdt hij zijn eigen warme
+werkkopie, en staat de gedeelde plumbing (`run_git`, `credential_env`, `build_tree_commit`)
+op een plek in `opi/connectors/git.py`.
 
-That warm cache is keyed on the repo URL **without** credentials, so every project on the same
-remote shares one copy. The access check is therefore per task, not per cache: a connector first
-runs `git ls-remote` with its own project's credentials, which both authorises the read and
-resolves the branch SHA, and only then touches the copy. A revoked or wrong token fails there
-instead of falling back on content another project fetched. Is the SHA already in the copy, no
-fetch follows. This is the ArgoCD repo-server's pattern (`newClientResolveRevision` before
-`checkoutRevision`).
+De twee repo's hebben sinds RC-422 geen werkboom meer: `GitRepo` houdt per remote een bare
+kopie, en een taak materialiseert alleen zijn eigen scope in een eigen tempmap. Twee taken
+delen daar dus nooit een werkboom, wat `features/concurrent-write-safety-lost-update.md`
+vraagt van een repo waar meerdere projecten in schrijven. De kopie staat op de URL **zonder**
+credentials en de toegangscontrole is per taak een `ls-remote` met de eigen credentials; zie
+[`git-repo.md`](./git-repo.md).
 
 ## Usage
 
@@ -264,13 +264,9 @@ Three things follow from this:
 - `GIT_TERMINAL_PROMPT=0` is set on every invocation, so a missing or wrong credential fails
   immediately instead of blocking on a password prompt that no terminal will ever answer.
 - The store's warm copy does not outlive the process: its directory is `rmtree`'d and recloned in
-  `get_connector()`. A `ProjectManager` connector still gets a fresh `tempfile` working tree per
-  task; the warm cache it clones out of DOES outlive the process, and repairs itself by being
-  thrown away and rebuilt once when a git command on it fails (a leftover `index.lock`, an
-  interrupted fetch). If that fails too, the connector falls back to cloning from the remote.
-  At most `WARM_CACHE_MAX` caches are kept, least-recently-used first: `TMPDIR` is an
-  `emptyDir` (8Gi in production, 500Mi on the sandbox) and a project picks its own deployment
-  repository, so without a cap the number of caches grows with the number of distinct remotes.
+  `get_connector()`. De bare kopieen van `GitRepo` voor de deployments- en argo-repo blijven wel
+  staan tussen processen, en herstellen zich door weggegooid en opnieuw opgebouwd te worden;
+  `git-repo.md` beschrijft die kopie en zijn grens op schijfruimte.
 
 For SSH remotes (local and sandbox setups only; production is HTTPS) the connector uses
 `StrictHostKeyChecking=accept-new` with a fixed `UserKnownHostsFile`, so the first connection

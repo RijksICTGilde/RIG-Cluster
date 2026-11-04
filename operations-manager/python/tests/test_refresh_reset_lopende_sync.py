@@ -131,16 +131,20 @@ class TestDeVlagLooptDoorDeKeten:
 
     @pytest.mark.parametrize("vlag", [True, False])
     async def test_de_repositoryronde_geeft_hem_door_aan_de_opruimronde(self, vlag: bool) -> None:
-        git = MagicMock()
-        git.get_working_dir = AsyncMock(return_value="/tmp/repo")
-        git.commit_changes = AsyncMock()
-        git.push_changes = AsyncMock()
+        async def mutate_and_push(_message: str, mutate):  # type: ignore[no-untyped-def]
+            return await mutate()
+
+        workspace = MagicMock()
+        workspace.get_working_dir = AsyncMock(return_value="/tmp/repo")
+        workspace.mutate_and_push = AsyncMock(side_effect=mutate_and_push)
+        workspace.last_write = None
 
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": PROJECT})
-        fake.get_git_connector_for_deployment = AsyncMock(return_value=git)
+        fake.get_deployment_workspace = AsyncMock(return_value=workspace)
         fake._process_deployment_manifests = AsyncMock()
         fake.get_deployments = AsyncMock(return_value=[])
+        fake._project_level_path = None
         fake._clear_blocking_sync_operations = AsyncMock()
 
         deployments = [{"name": DEPLOYMENT, "cluster": "odcn-production", "namespace": PROJECT}]

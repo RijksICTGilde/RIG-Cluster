@@ -10,7 +10,6 @@ Achtergrond: ``features/futures/verwijderpaden-in-kaart.md``, sectie 6.1 en 6.4.
 from __future__ import annotations
 
 import json
-import os
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,8 +20,11 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_argo_namespace
 from opi.manager.delete_project_manager import DeleteProjectManager, ForcedDeletion
 from opi.utils.naming import (
+    RepositoryPathError,
     generate_argocd_appproject_prefix,
     generate_argocd_project_application_name,
+    generate_cluster_manifest_folder_path,
+    generate_project_manifest_folder_path,
     get_output_filename_from_template,
 )
 from tests.test_delete_project_manager import _make_deployment, _make_project_data, _make_project_manager_mock
@@ -217,7 +219,7 @@ def _verloop_van_een_projectverwijdering(
         return uitkomst
 
     gitops.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
-    pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+    pm.get_argo_workspace = AsyncMock(return_value=gitops)
 
     argo = AsyncMock()
     argo.refresh_application = AsyncMock(return_value=True)
@@ -394,43 +396,34 @@ async def test_een_smalle_repo_maakt_de_inventaris_niet_smaller(
 
 
 # ---------------------------------------------------------------------------
-# De werkmap van de deployments-repo volgt repository.path
+# De gelezen boom in de deployments-repo volgt repository.path
 # ---------------------------------------------------------------------------
 
 
-async def _werkmap(repo_path: str) -> str | None:
-    manager, _gitops, _manifests = _delete_manager()
-    pm = manager.project_manager
-    connector = AsyncMock()
-    connector.ensure_repo_cloned = AsyncMock(return_value=None)
-    connector.get_working_dir = AsyncMock(return_value="/tmp/deploy-repo")
-    pm.get_git_connector_for_deployment = AsyncMock(return_value=connector)
-
-    project_data = {"repositories": [{"name": "main-repo", "path": repo_path}]}
-    return await manager._deployments_repo_dir(project_data, "main-repo")
-
-
-async def test_een_submap_in_de_repo_komt_in_de_werkmap_terug() -> None:
+def test_een_submap_in_de_repo_komt_in_het_gelezen_pad_terug() -> None:
     """De manifesten van een deployment kunnen in een submap van de repo staan (zoals
     het sandboxproject ``e2e76-7x2``): zonder die submap mist ``rendered_kinds`` elk
     kind dat erin staat, en dan zegt de veegactie 'compleet' over een lege meting."""
-    # safe_join resolves symlinks; on macOS /tmp is one (to /private/tmp).
-    assert await _werkmap("infra") == os.path.join(os.path.realpath("/tmp/deploy-repo"), "infra")
+    assert generate_cluster_manifest_folder_path("odcn-production", "infra") == "infra/odcn-production"
 
 
-async def test_een_lege_repo_path_laat_de_werkmap_ongewijzigd() -> None:
-    assert await _werkmap("") == "/tmp/deploy-repo"
+def test_een_lege_repo_path_laat_het_gelezen_pad_ongewijzigd() -> None:
+    assert generate_cluster_manifest_folder_path("odcn-production", "") == "odcn-production"
 
 
-async def test_een_punt_als_repo_path_laat_de_werkmap_ongewijzigd() -> None:
-    assert await _werkmap(".") == "/tmp/deploy-repo"
-
-
-async def test_een_repo_path_buiten_de_kloon_levert_geen_werkmap() -> None:
+def test_een_repo_path_buiten_de_repo_wordt_geweigerd() -> None:
     """Een bestaand projectbestand komt niet opnieuw langs ``REPOSITORY_PATH_PATTERN``
     (features/repository-pad.md), dus een pad met ``..`` moet hier dicht vallen in plaats
-    van de inventaris over een map buiten de kloon te laten oordelen."""
-    assert await _werkmap("a/../../../etc") is None
+    van de inventaris over een map buiten de repo te laten oordelen."""
+    with pytest.raises(RepositoryPathError):
+        generate_cluster_manifest_folder_path("odcn-production", "a/../../../etc")
+
+
+def test_een_projectnaam_die_de_repo_verlaat_wordt_ook_geweigerd() -> None:
+    """De scope van een write is deze map, dus cluster EN projectnaam horen samen onder
+    de containment-guard: op een naam met ``..`` zou de write buiten de repo schrijven."""
+    with pytest.raises(RepositoryPathError):
+        generate_project_manifest_folder_path("odcn-production", "../../../etc", "infra")
 
 
 # ---------------------------------------------------------------------------

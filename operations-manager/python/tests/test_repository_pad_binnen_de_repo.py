@@ -3,7 +3,7 @@
 import copy
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -170,8 +170,15 @@ class TestDeSchrijversGaanLangsHetAnker:
         )
         manager.get_progress_manager = MagicMock(return_value=None)
         manager._kubectl_connector = MagicMock(get_secret=AsyncMock(return_value=None))
-        manager.get_git_connector_for_deployment = AsyncMock(
-            return_value=MagicMock(get_working_dir=AsyncMock(return_value=str(werkmap)))
+
+        async def _mutate_and_push(_bericht: str, mutate: Any) -> Any:
+            return await mutate()
+
+        manager.get_deployment_workspace = AsyncMock(
+            return_value=MagicMock(
+                get_working_dir=AsyncMock(return_value=str(werkmap)),
+                mutate_and_push=AsyncMock(side_effect=_mutate_and_push),
+            )
         )
         project_data = {
             "name": "demo",
@@ -191,7 +198,7 @@ class TestDeSchrijversGaanLangsHetAnker:
     @pytest.mark.asyncio
     async def test_pvc_hernoemen(self, lege_werkmap: Path) -> None:
         project_manager = MagicMock()
-        project_manager.get_git_connector_for_deployment = AsyncMock(
+        project_manager.get_deployment_workspace = AsyncMock(
             return_value=MagicMock(get_working_dir=AsyncMock(return_value=str(lege_werkmap)))
         )
         project_manager.get_repository_path = AsyncMock(return_value="/etc")
@@ -208,7 +215,7 @@ class TestDeSchrijversGaanLangsHetAnker:
     async def test_argocd_applicatie(self, lege_werkmap: Path, repo_path: str, verwacht: str | None) -> None:
         project_manager = MagicMock()
         project_manager.get_name = AsyncMock(return_value="demo")
-        project_manager.get_git_connector_for_argocd = AsyncMock(
+        project_manager.get_argo_workspace = AsyncMock(
             return_value=MagicMock(get_working_dir=AsyncMock(return_value=str(lege_werkmap)))
         )
         project_manager.get_deployments = AsyncMock(
@@ -230,7 +237,7 @@ class TestDeSchrijversGaanLangsHetAnker:
     async def test_argocd_infrastructuur(self, lege_werkmap: Path) -> None:
         project_manager = MagicMock()
         project_manager.get_name = AsyncMock(return_value="demo")
-        project_manager.get_git_connector_for_argocd = AsyncMock(
+        project_manager.get_argo_workspace = AsyncMock(
             return_value=MagicMock(get_working_dir=AsyncMock(return_value=str(lege_werkmap)))
         )
         manager = ArgoManager(project_manager)

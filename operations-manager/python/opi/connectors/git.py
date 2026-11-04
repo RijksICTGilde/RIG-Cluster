@@ -4,12 +4,12 @@ Git connector for polling repository changes using GitPython.
 
 import asyncio
 import base64
-import hashlib
 import logging
 import os
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import ParseResult, urlparse, urlunparse
 
@@ -25,7 +25,7 @@ from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
 from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine
+    from collections.abc import Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 
@@ -37,73 +37,10 @@ _push_locks: dict[str, asyncio.Lock] = {}
 _project_write_locks: dict[str, asyncio.Lock] = {}
 
 
-#: Warme werkkopie per (repo, branch): een blobless kloon met historie die blijft staan en
-#: alleen nog bijgewerkt wordt met ``fetch``. Elke taak kloont daar LOKAAL van (hardlinks,
-#: geen netwerk) naar zijn eigen werkmap, dus twee taken delen nooit een working tree.
-#: Dezelfde keuze als de ProjectStore maakt voor ``zad-projects``, nu voor de deployments-
-#: en argo-repo's, die per taak drie verse netwerkklonen kostten.
-#: Blobless MET historie, want een diff per bestand heeft historie nodig (issue #159).
-#: De kopie staat op de repo-URL ZONDER credentials en wordt door alle projecten op die URL
-#: gedeeld; de toegangscontrole per taak is de ls-remote in _remote_branch_sha.
-WARM_CACHE_DIR = os.path.join(settings.TEMP_DIR, "git-warm")
-
-#: Hoeveel warme kopieen er hoogstens blijven staan. Een kopie per (repo, branch) is op
-#: productie een handvol, maar een project kiest zijn eigen deployments-repo, dus zonder
-#: grens groeit dit met het aantal verschillende remotes. TEMP_DIR is een emptyDir van 8Gi
-#: (500Mi op de sandbox), en een volle /tmp zet OPI helemaal stil.
-WARM_CACHE_MAX = 12
-
-#: Serialiseert het bijwerken van en het klonen uit een warme kopie, per (repo, branch).
-_warm_cache_locks: dict[str, asyncio.Lock] = {}
-
 #: De default branch per repo, zoals ``ls-remote --symref`` hem eenmaal meldde. Die vraag
 #: ging voor elke kloon opnieuw over het netwerk en het antwoord verandert niet binnen een
 #: procesleven.
 _remote_default_branches: dict[str, str] = {}
-
-
-def _warm_cache_key(repo_url: str, branch: str) -> str:
-    return f"{repo_lock_key(repo_url)}#{branch}"
-
-
-def _warm_cache_lock(repo_url: str, branch: str) -> asyncio.Lock:
-    """De lock die het bijwerken van en het klonen uit deze warme kopie serialiseert."""
-    return _warm_cache_locks.setdefault(_warm_cache_key(repo_url, branch), asyncio.Lock())
-
-
-def _warm_cache_path_voor_sleutel(sleutel: str) -> str:
-    """Het pad dat bij een cachesleutel hoort. Gehasht, want een repo-URL is geen mapnaam."""
-    return os.path.join(WARM_CACHE_DIR, hashlib.sha256(sleutel.encode()).hexdigest()[:16])
-
-
-def _warm_cache_path(repo_url: str, branch: str) -> str:
-    """Het vaste pad van de warme kopie van deze (repo, branch)."""
-    return _warm_cache_path_voor_sleutel(_warm_cache_key(repo_url, branch))
-
-
-def _prune_warm_caches(houden: str) -> None:
-    """Ruim de oudste warme kopieen op tot er WARM_CACHE_MAX over zijn.
-
-    Een kopie waarvan de lock op dit moment vastzit blijft staan: daar kloont een taak uit.
-    ``houden`` is de kopie die de aanroeper zelf net gaat gebruiken.
-    """
-    bezet = {_warm_cache_path_voor_sleutel(sleutel) for sleutel, lock in _warm_cache_locks.items() if lock.locked()} | {
-        houden
-    }
-    try:
-        kandidaten = [
-            pad
-            for naam in os.listdir(WARM_CACHE_DIR)
-            if (pad := os.path.join(WARM_CACHE_DIR, naam)) not in bezet and os.path.isdir(pad)
-        ]
-    except OSError:
-        return
-    if len(kandidaten) < WARM_CACHE_MAX:
-        return
-    kandidaten.sort(key=os.path.getmtime)
-    for pad in kandidaten[: len(kandidaten) - WARM_CACHE_MAX + 1]:
-        logger.info("Warme kopie %s opgeruimd: er mogen er %d staan", pad, WARM_CACHE_MAX)
-        shutil.rmtree(pad, ignore_errors=True)
 
 
 def repo_lock_key(repo_url: str) -> str:
@@ -112,12 +49,12 @@ def repo_lock_key(repo_url: str) -> str:
     return re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
 
 
-def _push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
+def push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
     """Return the shared push lock for a (repo, branch), creating it once."""
     return _push_locks.setdefault(f"{repo_lock_key(repo_url)}#{branch}", asyncio.Lock())
 
 
-def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock:
+def project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock:
     """De lock die schrijfacties op de projectmap van deze repo serialiseert."""
     return _project_write_locks.setdefault(f"{repo_lock_key(repo_url)}#{project_name or ''}", asyncio.Lock())
 
@@ -187,7 +124,7 @@ def _authority(parsed: ParseResult) -> str:
     return parsed.netloc.rsplit("@", 1)[-1]
 
 
-def _strip_url_credentials(url: str) -> str:
+def strip_url_credentials(url: str) -> str:
     """Geef een http(s)-URL terug zonder userinfo. Andere vormen blijven ongewijzigd."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -217,6 +154,228 @@ def _cmp_env_paths_added_or_modified(status_output: str) -> list[str]:
             continue
         touched.append(path)
     return sorted(touched)
+
+
+def credential_env(repo_url: str, username: str | None, password: str | None) -> dict[str, str]:
+    """Git-config in de omgeving die de Basic-auth-header aan één basis-URL bindt.
+
+    Via de omgeving in plaats van via de URL, zodat het wachtwoord niet in een
+    procesargument, in .git/config of in een logregel belandt (BIO2 5.17, 8.12). De
+    sleutel noemt scheme, host en poort van de repo-URL, dus git stuurt de header alleen
+    daarheen en niet mee na een redirect naar een andere host.
+    """
+    parsed = urlparse(repo_url)
+    if parsed.scheme not in ("http", "https"):
+        return {}
+
+    username = username or parsed.username
+    password = password or parsed.password
+    if not username or not password:
+        return {}
+
+    token = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": f"http.{parsed.scheme}://{_authority(parsed)}/.extraHeader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token}",
+    }
+
+
+async def run_git(
+    args: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    stdin: str | bytes | None = None,
+) -> tuple[str, str, int]:
+    """Run one git command and return (stdout, stderr, exit code), stdout as text.
+
+    The single place where this process spawns git: it installs the child environment,
+    refuses an interactive credential prompt, points gpg at the imported signing key and
+    masks credentials in the log line.
+    """
+    stdout, stderr, code = await _spawn_git(args, cwd=cwd, env=env, stdin=stdin)
+    return stdout.decode("utf-8").strip(), stderr, code
+
+
+async def run_git_bytes(
+    args: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    stdin: str | bytes | None = None,
+) -> tuple[bytes, str, int]:
+    """As :func:`run_git`, but with stdout unchanged, for blob content."""
+    return await _spawn_git(args, cwd=cwd, env=env, stdin=stdin)
+
+
+async def _spawn_git(
+    args: list[str],
+    *,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    stdin: str | bytes | None = None,
+) -> tuple[bytes, str, int]:
+    from opi.core.metrics import track_subprocess_memory
+
+    cmd = ["git", *args]
+    logger.debug(f"Running Git command: {_obfuscate_git_command(' '.join(cmd))} in {cwd}")
+
+    cmd_env = child_env()
+    # Geen interactieve vraag om een wachtwoord: een ontbrekende credential moet
+    # falen, niet wachten op een terminal die er niet is.
+    cmd_env["GIT_TERMINAL_PROMPT"] = "0"
+    signing = get_git_signing_identity()
+    if signing:
+        # git geeft zijn eigen omgeving door aan gpg, dus hiermee vindt gpg de
+        # geimporteerde sleutel. Een wrapper via gpg.program is daarvoor niet nodig.
+        cmd_env["GNUPGHOME"] = signing.gnupg_home
+    if env:
+        cmd_env.update(env)
+
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=cmd_env,
+        cwd=cwd,
+    )
+    payload = stdin.encode("utf-8") if isinstance(stdin, str) else stdin
+    async with track_subprocess_memory("git"):
+        stdout, stderr = await process.communicate(payload)
+    return stdout, stderr.decode("utf-8").strip(), process.returncode or 0
+
+
+#: De drie bestandsmodi die een tree kan bevatten. Een gewoon bestand, een uitvoerbaar
+#: bestand en een symlink (waarvan de "inhoud" het doelpad is).
+FILE_MODE = "100644"
+EXEC_MODE = "100755"
+SYMLINK_MODE = "120000"
+
+
+@dataclass(frozen=True)
+class FileChange:
+    """De nieuwe stand van een pad in een commit: inhoud en modus."""
+
+    content: bytes
+    mode: str = FILE_MODE
+
+
+def _reject_unrepresentable_paths(changes: dict[str, FileChange | None]) -> None:
+    """Weiger een pad dat de ``--index-info``-stroom van :func:`build_tree_commit` zou splitsen.
+
+    Die stroom is een regel per pad, dus een nieuwe regel IN een pad maakt er een tweede
+    index-regel van, en die noemt zijn eigen modus, blob en pad. Een aanroeper die alleen
+    binnen zijn eigen scope mag schrijven (``GitRepo.write_dir``) zou daarmee toch een pad
+    daarbuiten kunnen zetten: de scope-controle kijkt naar de sleutel, git naar de regels.
+    Zulke namen komen niet uit de generatie maar uit een gekopieerde helm- of
+    helmfile-boom, en die is van de gebruiker.
+    """
+    broken = sorted(path for path in changes if "\n" in path or "\r" in path)
+    if broken:
+        shown = ", ".join(repr(path) for path in broken)
+        raise ValueError(f"Pad met een regeleinde kan niet gecommit worden: {shown}")
+
+
+async def build_tree_commit(
+    *,
+    cwd: str,
+    changes: dict[str, FileChange | None],
+    message: str,
+    parent: str | None,
+    actor: Actor | None = None,
+    env: dict[str, str] | None = None,
+) -> str | None:
+    """Bouw een commit uit git-objecten, met een eigen index en zonder werkboom.
+
+    Elke aanroep krijgt zijn EIGEN index (``GIT_INDEX_FILE``), dus twee gelijktijdige
+    schrijvers zien elkaars staging nooit en een fout laat niets achter. De commit kan per
+    constructie geen pad bevatten dat de aanroeper niet noemde, anders dan bij ``add -A``.
+
+    Args:
+        cwd: de repository (een werkboom of een bare repo)
+        changes: pad in de repo -> nieuwe stand, of None om het pad te verwijderen
+        message: commitbericht
+        parent: de ouder; None maakt een root-commit
+        actor: de handelende partij, die als trailer in de commit komt
+        env: extra omgeving voor de git-commando's
+
+    Returns:
+        De nieuwe commit-sha, of None als de tree gelijk is aan die van de ouder.
+    """
+    index_fd, index_path = tempfile.mkstemp(prefix="git-index-", dir=settings.TEMP_DIR)
+    os.close(index_fd)
+    os.unlink(index_path)  # git wants to create it itself
+    command_env = {**(env or {}), "GIT_INDEX_FILE": index_path}
+
+    def check(code: int, stderr: str, operation: str) -> None:
+        if code != 0:
+            raise RuntimeError(f"Failed to {operation} in {cwd}: {stderr}")
+
+    try:
+        if parent:
+            _, stderr, code = await run_git(["read-tree", parent], cwd=cwd, env=command_env)
+            check(code, stderr, f"read-tree {parent}")
+
+        # Alle paden in EEN update-index: --index-info werkt ook in een bare repo, waar
+        # --force-remove weigert ("must be run in a work tree"), en het is een subproces
+        # in plaats van een per pad.
+        _reject_unrepresentable_paths(changes)
+        index_lines: list[str] = []
+        for file_path, change in changes.items():
+            if change is None:
+                index_lines.append(f"0 {'0' * 40}\t{file_path}")
+                continue
+
+            blob, stderr, code = await run_git(["hash-object", "-w", "--stdin"], cwd=cwd, stdin=change.content)
+            check(code, stderr, f"hash-object for {file_path}")
+            index_lines.append(f"{change.mode} {blob.strip()}\t{file_path}")
+
+        if index_lines:
+            _, stderr, code = await run_git(
+                ["update-index", "--add", "--index-info"],
+                cwd=cwd,
+                env=command_env,
+                stdin="\n".join(index_lines) + "\n",
+            )
+            check(code, stderr, f"update-index for {len(index_lines)} path(s)")
+
+        tree, stderr, code = await run_git(["write-tree"], cwd=cwd, env=command_env)
+        check(code, stderr, "write-tree")
+        tree = tree.strip()
+
+        if parent:
+            parent_tree, _, code = await run_git(["rev-parse", f"{parent}^{{tree}}"], cwd=cwd, env=env)
+            if code == 0 and parent_tree.strip() == tree:
+                logger.debug("build_tree_commit: tree unchanged, nothing to commit")
+                return None
+
+        # commit-tree reads the identity from the environment first, and this container
+        # can have GIT_AUTHOR_NAME set to an empty string, which git rejects. Pass it
+        # explicitly so the commit never depends on ambient environment.
+        identity = {
+            **(env or {}),
+            "GIT_AUTHOR_NAME": GIT_COMMIT_AUTHOR_NAME,
+            "GIT_AUTHOR_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
+            "GIT_COMMITTER_NAME": GIT_COMMIT_AUTHOR_NAME,
+            "GIT_COMMITTER_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
+        }
+        commit_args = ["commit-tree", tree]
+        signing = get_git_signing_identity()
+        if signing:
+            commit_args = ["-c", f"gpg.format={GIT_SIGNING_FORMAT}", *commit_args, f"-S{signing.fingerprint}"]
+        if parent:
+            commit_args += ["-p", parent]
+        commit_args += ["-m", _with_actor_trailer(message, actor)]
+        commit, stderr, code = await run_git(commit_args, cwd=cwd, env=identity)
+        check(code, stderr, "commit-tree")
+
+        logger.debug(f"Built commit {commit.strip()} for {len(changes)} path(s) without a working tree")
+        return commit.strip()
+    finally:
+        if os.path.exists(index_path):
+            os.unlink(index_path)
 
 
 class GitPushConflictError(RuntimeError):
@@ -306,10 +465,6 @@ class GitConnector:
             self.should_cleanup = True
             logger.debug(f"Created temporary working directory: {self.__working_dir}")
 
-        # Wie zijn eigen werkmap meebrengt is zelf de warme kopie (de ProjectStore) en kan
-        # er geen tweede onder zich hebben. Een wegwerpmap per taak kloont wel uit de cache.
-        self._use_warm_cache = working_dir is None
-
         self._repo_cloned = False
         self._fetched_in_session = False  # Track if we've fetched in this session
         self._closed = False
@@ -317,7 +472,7 @@ class GitConnector:
 
         # Initialize URL parsing immediately (synchronous)
         self.url_config = self._parse_git_url(self.repo_url)
-        self._clean_repo_url = _strip_url_credentials(self.repo_url)
+        self._clean_repo_url = strip_url_credentials(self.repo_url)
 
         logger.debug("GitConnector initialization completed")
 
@@ -435,29 +590,8 @@ class GitConnector:
         return repo_path
 
     def _credential_env(self) -> dict[str, str]:
-        """Git-config in de omgeving die de Basic-auth-header aan één basis-URL bindt.
-
-        Via de omgeving in plaats van via de URL, zodat het wachtwoord niet in een
-        procesargument, in .git/config of in een logregel belandt (BIO2 5.17, 8.12). De
-        sleutel noemt scheme, host en poort van de eigen repo-URL, dus git stuurt de header
-        alleen daarheen en niet mee na een redirect naar een andere host.
-        """
-        if not self.url_config or self.url_config.get("scheme") not in ("http", "https"):
-            return {}
-
-        parsed = urlparse(self.repo_url)
-        username = self.username or parsed.username
-        password = self._decrypted_password or parsed.password
-        if not username or not password:
-            return {}
-
-        authority = _authority(parsed)
-        token = base64.b64encode(f"{username}:{password}".encode()).decode()
-        return {
-            "GIT_CONFIG_COUNT": "1",
-            "GIT_CONFIG_KEY_0": f"http.{parsed.scheme}://{authority}/.extraHeader",
-            "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token}",
-        }
+        """De git-config in de omgeving die deze connector aan zijn remote authenticeert."""
+        return credential_env(self.repo_url, self.username, self._decrypted_password)
 
     @property
     def ssh_port(self) -> int:
@@ -509,87 +643,47 @@ class GitConnector:
     async def _run_git_command(
         self, args: list[str], env: dict[str, str] | None = None, cwd: str | None = None, stdin: str | None = None
     ) -> tuple[str, str, int]:
-        """
-        Run a Git command directly with subprocess.
-
-        This is a lightweight alternative to cloning the full repository.
+        """Run a git command in this connector's working directory, with its credentials.
 
         Args:
             args: List of Git command arguments
-            env: Optional environment variables
+            env: Optional environment variables, applied last
             cwd: Optional working directory
             stdin: Optional text piped to the command's stdin (used by ``hash-object --stdin``)
 
         Returns:
             Tuple of (stdout, stderr, return_code)
         """
-        cmd = ["git", *args]
-        cmd_str = " ".join(cmd)
         working_dir = cwd or self.__working_dir
-        logger.debug(f"Running Git command: {_obfuscate_git_command(cmd_str)} in {working_dir}")
+        cmd_env = {**self._credential_env(), **self._ssh_env(), **(env or {})}
+        stdout, stderr, code = await run_git(args, cwd=working_dir, env=cmd_env, stdin=stdin)
 
-        # Set up environment
-        cmd_env = child_env()
-        # Geen interactieve vraag om een wachtwoord: een ontbrekende credential moet
-        # falen, niet wachten op een terminal die er niet is.
-        cmd_env["GIT_TERMINAL_PROMPT"] = "0"
-        cmd_env.update(self._credential_env())
-        if env:
-            cmd_env.update(env)
+        if code != 0:
+            # Include git server context in error message
+            logger.debug(f"Git command failed with code {code} for {self._get_server_context()}: {stderr}")
+        else:
+            logger.debug("Git command succeeded")
 
-        signing = get_git_signing_identity()
-        if signing:
-            # git geeft zijn eigen omgeving door aan gpg, dus hiermee vindt gpg de
-            # geïmporteerde sleutel. Een wrapper via gpg.program is daarvoor niet nodig.
-            cmd_env["GNUPGHOME"] = signing.gnupg_home
+        return stdout, stderr, code
 
-        # Configure SSH if using SSH URL and credentials are provided
-        if (
+    def _ssh_env(self) -> dict[str, str]:
+        """GIT_SSH_COMMAND for an ssh remote with a key, empty for everything else."""
+        if not (
             self.url_config
             and self.url_config.get("needs_auth")
             and self.url_config.get("scheme") == "ssh"
             and self.ssh_key_path
         ):
-            ssh_cmd = f"ssh -i {self.ssh_key_path}"
+            return {}
 
-            # Add port if not default
-            port = self.url_config.get("port", 22)
-            if port != 22:
-                ssh_cmd += f" -p {port}"
-
-            # accept-new vertrouwt een onbekende host eenmalig en legt hem vast, zodat een
-            # gewijzigde hostsleutel daarna een fout geeft in plaats van stil door te gaan.
-            ssh_cmd += f" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={SSH_KNOWN_HOSTS_PATH}"
-
-            logger.debug(f"Using SSH command: {ssh_cmd}")
-            cmd_env["GIT_SSH_COMMAND"] = ssh_cmd
-
-        # Create process
-        from opi.core.metrics import track_subprocess_memory
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=cmd_env,
-            cwd=working_dir,
-        )
-
-        # Wait for command to complete, tracking memory delta
-        async with track_subprocess_memory("git"):
-            stdout, stderr = await process.communicate(stdin.encode("utf-8") if stdin is not None else None)
-        stdout_str = stdout.decode("utf-8").strip()
-        stderr_str = stderr.decode("utf-8").strip()
-
-        if process.returncode != 0:
-            # Include git server context in error message
-            server_info = self._get_server_context()
-            logger.debug(f"Git command failed with code {process.returncode} for {server_info}: {stderr_str}")
-        else:
-            logger.debug("Git command succeeded")
-
-        return stdout_str, stderr_str, process.returncode or 0
+        ssh_cmd = f"ssh -i {self.ssh_key_path}"
+        port = self.url_config.get("port", 22)
+        if port != 22:
+            ssh_cmd += f" -p {port}"
+        # accept-new vertrouwt een onbekende host eenmalig en legt hem vast, zodat een
+        # gewijzigde hostsleutel daarna een fout geeft in plaats van stil door te gaan.
+        ssh_cmd += f" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={SSH_KNOWN_HOSTS_PATH}"
+        return {"GIT_SSH_COMMAND": ssh_cmd}
 
     def _check_git_command_result(self, code: int, stderr: str, operation: str) -> None:
         """
@@ -775,142 +869,7 @@ class GitConnector:
         logger.debug(f"Cloning repository to {self.__working_dir}")
 
         with rollout_phase(PHASE_GIT_PREPARE):
-            if self._use_warm_cache and await self._clone_from_warm_cache():
-                return
             await self._clone_into_working_dir()
-
-    async def _remote_branch_sha(self) -> str | None:
-        """De SHA van onze branch op de remote, opgevraagd met de credentials van DIT project.
-
-        Dit is de toegangscontrole voor de warme kopie, hetzelfde patroon als de ArgoCD
-        repo-server (``newClientResolveRevision`` voor ``checkoutRevision``): eerst
-        resolven met de eigen toegang, dan pas de cache. Een ingetrokken of verkeerd token
-        faalt hier, zodat niemand via een kopie leest die een ander project vulde.
-        """
-        stdout, stderr, code = await self._run_git_command(
-            ["ls-remote", self.repo_url_with_path, f"refs/heads/{self.branch}"]
-        )
-        if code != 0:
-            logger.info(
-                "ls-remote op %r mislukte, geen warme kopie: %s",
-                self.name or self._clean_repo_url,
-                " ".join(stderr.split()),
-            )
-            return None
-        eerste_regel = stdout.strip().split("\n", 1)[0]
-        return eerste_regel.split("\t", 1)[0].strip() or None
-
-    async def _clone_from_warm_cache(self) -> bool:
-        """Zet de werkmap klaar uit de warme kopie van deze repo, of geef False terug.
-
-        Twee netwerkslagen worden er een: de warme kopie wordt bijgewerkt met ``fetch``,
-        en de werkmap komt daar met een LOKALE kloon uit (hardlinks, geen overdracht). Een
-        lege repo, een onbekende branch of een beschadigde kopie geeft False, en dan loopt
-        de aanroeper de gewone klooonweg; overslaan mag nooit een taak kosten.
-
-        De kopie is van de repo-URL ZONDER credentials en wordt door alle projecten op die
-        URL gedeeld; de toegangscontrole per taak zit in ``_remote_branch_sha``.
-        """
-        revisie = await self._remote_branch_sha()
-        if not revisie:
-            return False
-
-        cache_path = _warm_cache_path(self.repo_url, self.branch)
-        async with _warm_cache_lock(self.repo_url, self.branch):
-            if not await self._ensure_warm_cache(cache_path, revisie):
-                return False
-            if not await self._clone_local(cache_path):
-                # Een kloon die hierop faalt wijst op een halve kopie (een achtergebleven
-                # index.lock, een afgebroken fetch). Weggooien en eenmaal opnieuw opbouwen.
-                logger.warning("Lokale kloon uit de warme kopie %s mislukte; kopie opnieuw opbouwen", cache_path)
-                shutil.rmtree(cache_path, ignore_errors=True)
-                if not await self._ensure_warm_cache(cache_path, revisie) or not await self._clone_local(cache_path):
-                    return False
-
-        self._repo_cloned = True
-        self._fetched_in_session = True
-        logger.info("Werkmap voor %r klaargezet uit de warme kopie", self.name or self._clean_repo_url)
-        return True
-
-    async def _ensure_warm_cache(self, cache_path: str, revisie: str) -> bool:
-        """Maak de warme kopie aan of werk hem bij tot ``revisie``.
-
-        Staat die revisie er al, dan is er geen netwerkslag nodig: alleen de branch
-        verzetten. False als deze repo geen warme kopie kan hebben.
-        """
-        os.makedirs(WARM_CACHE_DIR, exist_ok=True)
-        if not os.path.isdir(os.path.join(cache_path, ".git")):
-            _prune_warm_caches(cache_path)
-            shutil.rmtree(cache_path, ignore_errors=True)
-            os.makedirs(cache_path, exist_ok=True)
-            clone_cmd = [
-                "clone",
-                "--single-branch",
-                "--branch",
-                self.branch,
-                "--filter=blob:none",
-                self.repo_url_with_path,
-                ".",
-            ]
-            _, stderr, code = await self._run_git_command(clone_cmd, cwd=cache_path)
-            if code != 0:
-                # Een lege repo of een niet-bestaande branch: de gewone weg kent daar
-                # strategieen voor (een eerste commit maken), de warme kopie niet.
-                logger.info("Geen warme kopie voor %r: %s", self.name or self._clean_repo_url, " ".join(stderr.split()))
-                shutil.rmtree(cache_path, ignore_errors=True)
-                return False
-            # De kopie committeert nooit, dus een gc die objecten opruimt waar een lopende
-            # lokale kloon nog naar kijkt is pure winstkans op schade.
-            await self._run_git_command(["config", "gc.auto", "0"], cwd=cache_path)
-            return await self._set_warm_cache_to(cache_path, revisie, mag_opnieuw=False)
-
-        os.utime(cache_path)
-        return await self._set_warm_cache_to(cache_path, revisie, mag_opnieuw=True)
-
-    async def _set_warm_cache_to(self, cache_path: str, revisie: str, *, mag_opnieuw: bool) -> bool:
-        """Zet de branch van de warme kopie op ``revisie``, en fetch alleen als dat moet."""
-        _, _, aanwezig = await self._run_git_command(["cat-file", "-e", f"{revisie}^{{commit}}"], cwd=cache_path)
-        stappen: tuple[list[str], ...] = (
-            (["reset", "--hard", revisie],)
-            if aanwezig == 0
-            else (["fetch", "origin", self.branch], ["reset", "--hard", revisie])
-        )
-        for args in stappen:
-            _, stderr, code = await self._run_git_command(args, cwd=cache_path)
-            if code != 0:
-                logger.warning(
-                    "Warme kopie %s bijwerken mislukte op '%s': %s", cache_path, args[0], " ".join(stderr.split())
-                )
-                if not mag_opnieuw:
-                    return False
-                shutil.rmtree(cache_path, ignore_errors=True)
-                return await self._ensure_warm_cache(cache_path, revisie)
-        return True
-
-    async def _clone_local(self, cache_path: str) -> bool:
-        """Kloon de warme kopie naar de werkmap en zet origin op de echte remote.
-
-        De promisor-config hoort erbij: de kopie is blobless, dus een diff tegen een oude
-        commit heeft een blob nodig die er niet is. Zonder deze drie sleutels faalt die
-        diff met "unable to read <oid>" in plaats van hem op te halen.
-        """
-        clone_cmd = ["clone", "--single-branch", "--branch", self.branch, cache_path, "."]
-        _, stderr, code = await self._run_git_command(clone_cmd, cwd=self.__working_dir)
-        if code != 0:
-            logger.warning("Lokale kloon uit %s mislukte: %s", cache_path, " ".join(stderr.split()))
-            return False
-
-        for args in (
-            ["remote", "set-url", "origin", self.repo_url_with_path],
-            ["config", "extensions.partialClone", "origin"],
-            ["config", "remote.origin.promisor", "true"],
-            ["config", "remote.origin.partialclonefilter", "blob:none"],
-        ):
-            _, stderr, code = await self._run_git_command(args, cwd=self.__working_dir)
-            if code != 0:
-                logger.warning("Kon de werkmap niet op de echte remote zetten: %s", " ".join(stderr.split()))
-                return False
-        return True
 
     async def _clone_into_working_dir(self) -> None:
         """Clone the repository into the (empty) working directory, trying strategies in turn."""
@@ -1106,28 +1065,6 @@ class GitConnector:
         except Exception as e:
             logger.warning(f"Error ensuring correct branch: {e}")
             # Don't raise here, as the repository might still be usable
-
-    async def refresh_working_tree(self) -> None:
-        """Bring the local checkout in line with the remote branch.
-
-        ``ensure_repo_cloned`` is niet genoeg voor wie een BESLISSING neemt op wat er wel
-        of niet op schijf staat. Twee redenen, allebei gemeten:
-
-        - hij ververst hooguit EEN keer per proces (``_fetched_in_session``), en een
-          connector wordt gecached op de project-manager. Een langlopende pod kijkt dus
-          naar een checkout die willekeurig oud kan zijn;
-        - ``git fetch`` verplaatst alleen de remote refs en raakt de werkboom niet aan.
-          ``os.path.exists`` ziet daarna nog steeds de oude toestand.
-
-        Dat kostte vijf verweesde ArgoCD-mappen: het opruimen van een project keek met
-        ``os.path.exists`` in zo'n verouderde kloon, concludeerde "niet aanwezig", en liet
-        de map in de repo staan terwijl het projectbestand wel verdween.
-
-        Alles wat op de aanwezigheid van een pad afgaat, hoort dit eerst aan te roepen.
-        """
-        await self.ensure_repo_cloned()
-        await self._pull_latest()
-        self._fetched_in_session = True
 
     async def _fetch_latest(self) -> None:
         """Fetch the latest changes from the repository."""
@@ -1581,14 +1518,6 @@ class GitConnector:
 
         logger.info(f"Successfully committed and pushed all changes: {message}")
 
-    async def mutate_and_push[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
-        """Apply mutation on latest state, serially: reset, mutate, commit, push."""
-        async with _project_write_lock(self.repo_url, self.project_name):
-            await self.reset_to_remote()
-            uitkomst = await mutate()
-            await self.commit_and_push(message)
-            return uitkomst
-
     async def write_file_without_commit(self, file_path: str, content: str) -> None:
         """
         Create or update a file in the Git repository without committing changes.
@@ -1872,7 +1801,7 @@ class GitConnector:
         # Serialize the whole attempt (fetch+rebase+push) against every other pusher
         # to this ref in the process, so a waiter rebases onto the winner and pushes
         # without a concurrent competitor invalidating it. See _push_locks.
-        async with _push_lock_for(self.repo_url, target_branch):
+        async with push_lock_for(self.repo_url, target_branch):
             with rollout_phase(PHASE_GIT_PUSH):
                 await self._push_attempts(target_branch, max_retries, allow_rebase)
 
@@ -1929,39 +1858,6 @@ class GitConnector:
                 raise GitPushConflictError(
                     f"Failed to push changes to {target_branch} on {server_info} after {max_retries} attempts: {stderr}"
                 )
-
-    async def commit_and_push_changes(
-        self, message: str, files_or_paths: list[str] | None = None, branch: str | None = None
-    ) -> bool:
-        """
-        Add, commit, and push changes in one operation.
-
-        Args:
-            message: Commit message
-            files_or_paths: Optional list of files to add (defaults to ["."] for all changes)
-            branch: Branch to push to (defaults to configured branch)
-
-        Returns:
-            True if all operations were successful, False otherwise
-        """
-        await self.ensure_repo_cloned()
-
-        # Check if there are changes first
-        if not await self.has_changes():
-            logger.info("No changes to commit and push")
-            return True
-
-        # Add files
-        files_to_add = files_or_paths or ["."]
-        if not await self.add_files(files_to_add):
-            return False
-
-        # Commit and push changes
-        await self.commit_changes(message)
-        await self.push_changes(branch)
-
-        logger.info(f"Successfully committed and pushed changes: {message}")
-        return True
 
     async def get_previous_file_content(self, file_path: str, commits_back: int = 1) -> str | None:
         """
@@ -2158,10 +2054,9 @@ class GitConnector:
     ) -> str | None:
         """Build a commit object directly, without touching the working tree or shared index.
 
-        Uses git's low-level object commands so a write never materialises a file in the
-        shared working copy. Every operation gets its OWN index (``GIT_INDEX_FILE``), so
-        two concurrent writers can never see each other's staged state, and a failure
-        leaves nothing behind: the temporary index is simply discarded.
+        Thin wrapper around :func:`build_tree_commit`: it resolves the paths against this
+        connector's ``repo_path`` and defaults the parent to HEAD. The plumbing itself is
+        shared with :class:`opi.connectors.git_repo.GitRepo`.
 
         This deliberately replaces the ``write file`` + ``git add -A`` + ``commit`` path for
         project files. ``git add -A`` stages *everything* in the working tree, which on a
@@ -2181,78 +2076,20 @@ class GitConnector:
         await self.ensure_repo_cloned()
 
         if parent is None:
-            stdout, _, code = await self._run_git_command(["rev-parse", "HEAD"], cwd=self.__working_dir)
+            stdout, _, code = await self._run_git_command(["rev-parse", "HEAD"])
             parent = stdout.strip() if code == 0 else None
 
-        index_fd, index_path = tempfile.mkstemp(prefix="git-index-", dir=settings.TEMP_DIR)
-        os.close(index_fd)
-        os.unlink(index_path)  # git wants to create it itself
-        index_env = {"GIT_INDEX_FILE": index_path}
-
-        try:
-            if parent:
-                _, stderr, code = await self._run_git_command(
-                    ["read-tree", parent], env=index_env, cwd=self.__working_dir
-                )
-                self._check_git_command_result(code, stderr, f"read-tree {parent}")
-
-            for file_path, content in changes.items():
-                clean_path = self._get_full_path(file_path)
-                if content is None:
-                    _, stderr, code = await self._run_git_command(
-                        ["update-index", "--force-remove", clean_path], env=index_env, cwd=self.__working_dir
-                    )
-                    self._check_git_command_result(code, stderr, f"update-index --force-remove {clean_path}")
-                    continue
-
-                blob, stderr, code = await self._run_git_command(
-                    ["hash-object", "-w", "--stdin"], cwd=self.__working_dir, stdin=content
-                )
-                self._check_git_command_result(code, stderr, f"hash-object for {clean_path}")
-
-                _, stderr, code = await self._run_git_command(
-                    ["update-index", "--add", "--cacheinfo", f"100644,{blob.strip()},{clean_path}"],
-                    env=index_env,
-                    cwd=self.__working_dir,
-                )
-                self._check_git_command_result(code, stderr, f"update-index --add {clean_path}")
-
-            tree, stderr, code = await self._run_git_command(["write-tree"], env=index_env, cwd=self.__working_dir)
-            self._check_git_command_result(code, stderr, "write-tree")
-            tree = tree.strip()
-
-            if parent:
-                parent_tree, _, code = await self._run_git_command(
-                    ["rev-parse", f"{parent}^{{tree}}"], cwd=self.__working_dir
-                )
-                if code == 0 and parent_tree.strip() == tree:
-                    logger.debug("build_commit: tree unchanged, nothing to commit")
-                    return None
-
-            # commit-tree reads the identity from the environment first, and this container
-            # can have GIT_AUTHOR_NAME set to an empty string, which git rejects. Pass it
-            # explicitly so the commit never depends on ambient environment.
-            identity = {
-                "GIT_AUTHOR_NAME": GIT_COMMIT_AUTHOR_NAME,
-                "GIT_AUTHOR_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
-                "GIT_COMMITTER_NAME": GIT_COMMIT_AUTHOR_NAME,
-                "GIT_COMMITTER_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
-            }
-            commit_args = ["commit-tree", tree]
-            signing = get_git_signing_identity()
-            if signing:
-                commit_args = ["-c", f"gpg.format={GIT_SIGNING_FORMAT}", *commit_args, f"-S{signing.fingerprint}"]
-            if parent:
-                commit_args += ["-p", parent]
-            commit_args += ["-m", _with_actor_trailer(message, actor)]
-            commit, stderr, code = await self._run_git_command(commit_args, env=identity, cwd=self.__working_dir)
-            self._check_git_command_result(code, stderr, "commit-tree")
-
-            logger.debug(f"Built commit {commit.strip()} for {len(changes)} path(s) without a working tree")
-            return commit.strip()
-        finally:
-            if os.path.exists(index_path):
-                os.unlink(index_path)
+        return await build_tree_commit(
+            cwd=await self.get_working_dir(),
+            changes={
+                self._get_full_path(path): None if content is None else FileChange(content.encode("utf-8"))
+                for path, content in changes.items()
+            },
+            message=message,
+            parent=parent,
+            actor=actor,
+            env=self._credential_env(),
+        )
 
     async def set_branch_ref(self, commit: str, branch: str | None = None) -> None:
         """Point the local branch at ``commit``.
@@ -2549,11 +2386,10 @@ async def start_monitoring_task(
     return task
 
 
-# TODO: replace factory method with direct calls to the GitConnector?
 async def create_git_connector_from_repo_config(
     repo_config: dict[str, Any], full_history: bool = False, working_dir: str | None = None
 ) -> GitConnector:
-    connector = GitConnector(
+    return GitConnector(
         repo_url=repo_config["url"],
         repo_path=repo_config.get("path"),
         branch=repo_config["branch"],
@@ -2565,28 +2401,9 @@ async def create_git_connector_from_repo_config(
         full_history=full_history,
         working_dir=working_dir,
     )
-    return connector
 
 
-async def create_git_connector_for_argocd(project_name: str) -> GitConnector:
-    """
-    Create a GitConnector for the GitOps (Argo) repository.
-
-    Returns:
-        Configured GitConnector instance
-    """
-    gitops_repo_config = {
-        "url": settings.GIT_ARGO_APPLICATIONS_URL,
-        "branch": settings.GIT_ARGO_APPLICATIONS_BRANCH,
-        "password": settings.GIT_ARGO_APPLICATIONS_PASSWORD,
-        "username": settings.GIT_ARGO_APPLICATIONS_USERNAME,
-        "project_name": project_name,
-        "name": "argo",
-    }
-
-    return await create_git_connector_from_repo_config(gitops_repo_config)
-
-
+# TODO: replace factory method with direct calls to the GitConnector?
 async def create_git_connector_for_project_files(
     project_name: str, full_history: bool = True, working_dir: str | None = None
 ) -> GitConnector:

@@ -13,7 +13,7 @@ while pushes to different repos still run concurrently.
 import asyncio
 
 import pytest
-from opi.connectors.git import GitConnector, _push_lock_for, _push_locks
+from opi.connectors.git import GitConnector, _push_locks, push_lock_for
 
 
 @pytest.fixture(autouse=True)
@@ -24,10 +24,10 @@ def _clear_push_locks():
 
 
 def test_lock_key_is_credential_free_and_stable() -> None:
-    with_creds = _push_lock_for("https://user:secret@forge/rig/zad-deployments.git", "main")
-    without = _push_lock_for("https://forge/rig/zad-deployments.git", "main")
-    other_repo = _push_lock_for("https://forge/rig/zad-projects.git", "main")
-    other_branch = _push_lock_for("https://forge/rig/zad-deployments.git", "dev")
+    with_creds = push_lock_for("https://user:secret@forge/rig/zad-deployments.git", "main")
+    without = push_lock_for("https://forge/rig/zad-deployments.git", "main")
+    other_repo = push_lock_for("https://forge/rig/zad-projects.git", "main")
+    other_branch = push_lock_for("https://forge/rig/zad-deployments.git", "dev")
 
     assert with_creds is without, "same repo must share one lock regardless of embedded credentials"
     assert with_creds is not other_repo, "different repos must not share a lock"

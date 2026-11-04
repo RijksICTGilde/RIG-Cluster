@@ -38,7 +38,7 @@ minuten ("3 min 5 s").
 
 | fase | wat erin zit |
 |---|---|
-| `git_prepare` | het klaarzetten van een working copy (clone of worktree uit de warme cache) |
+| `git_prepare` | het klaarzetten van de git-staat: de bare kopie bijwerken (RC-422), voorheen een clone of een worktree uit de warme cache |
 | `generate` | de manifests genereren en wegschrijven |
 | `provision` | database, opslag, Keycloak, Redis, mail per deployment |
 | `git_push` | de push naar een repo, inclusief rebase-pogingen |

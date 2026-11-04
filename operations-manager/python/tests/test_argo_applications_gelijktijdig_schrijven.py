@@ -17,7 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from opi.connectors.git import GitConnector, _project_write_locks, _push_locks
+from opi.connectors.git import _project_write_locks, _push_locks
+from opi.connectors.git_repo import GitCredentials, GitRepoWorkspace, get_git_repo, reset_git_repos
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,16 +37,14 @@ def _schone_locks():
 
 
 @pytest.fixture(autouse=True)
-def _file_url_wordt_begrepen(monkeypatch: pytest.MonkeyPatch) -> None:
-    """GitConnector kent ``file://`` niet; git wel, en dat is wat hier getoetst wordt."""
-    echte = GitConnector._parse_git_url
+def _eigen_kopiemap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Elke test zijn eigen beheerde kopieen, zodat ze elkaar niet zien."""
+    import opi.connectors.git_repo as module
 
-    def _parse(self: GitConnector, url: str) -> dict:
-        if url.startswith("file://"):
-            return {"scheme": "file", "host": None, "port": None, "user": None, "path": url[7:], "needs_auth": False}
-        return echte(self, url)
-
-    monkeypatch.setattr(GitConnector, "_parse_git_url", _parse)
+    monkeypatch.setattr(module, "GIT_REPOS_DIR", str(tmp_path / "git-repos"))
+    reset_git_repos()
+    yield
+    reset_git_repos()
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -95,37 +94,35 @@ def remote(tmp_path: Path) -> Path:
     _git(seed, "add", "-A")
     _git(seed, "commit", "-m", "seed")
     _git(seed, "push", "origin", "main")
+    _git(bare, "config", "uploadpack.allowFilter", "true")
+    _git(bare, "config", "uploadpack.allowAnySHA1InWant", "true")
     return bare
 
 
-def _connector(remote: Path, werkmap: Path) -> GitConnector:
-    werkmap.mkdir(parents=True, exist_ok=True)
-    return GitConnector(
-        repo_url=f"file://{remote}",
-        branch="main",
-        working_dir=str(werkmap),
+def _werkmap(remote: Path) -> GitRepoWorkspace:
+    """De werkmap van één taak op de projectmap, zoals de argo-manager die maakt."""
+    return GitRepoWorkspace(
+        get_git_repo(str(remote), "main"),
+        GitCredentials(),
+        [f"{CLUSTER}/{PROJECT}"],
         project_name=PROJECT,
         name="argo",
     )
 
 
-async def _taak(
-    remote: Path,
-    tmp_path: Path,
-    naam: str,
-    bericht: str,
-    mutatie: Callable[[str], None],
-) -> None:
-    """Eén taak met zijn eigen kloon, zoals een delete- of create-taak die krijgt."""
-    connector = _connector(remote, tmp_path / f"werk-{naam}")
-    await connector.ensure_repo_cloned()
-    projectmap = os.path.join(await connector.get_working_dir(), CLUSTER, PROJECT)
+async def _taak(remote: Path, bericht: str, mutatie: Callable[[str], None]) -> None:
+    """Eén taak met zijn eigen werkmap, zoals een delete- of create-taak die krijgt."""
+    werkmap = _werkmap(remote)
 
     async def _mutate() -> None:
+        projectmap = os.path.join(await werkmap.get_working_dir(), CLUSTER, PROJECT)
         mutatie(projectmap)
         _herbouw_kustomization(projectmap)
 
-    await connector.mutate_and_push(bericht, _mutate)
+    try:
+        await werkmap.mutate_and_push(bericht, _mutate)
+    finally:
+        await werkmap.close()
 
 
 def _verwijder(bestand: str) -> Callable[[str], None]:
@@ -154,11 +151,11 @@ def _bestanden_in_remote(remote: Path) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_acht_gelijktijdige_deletes_landen_alle_acht(remote: Path, tmp_path: Path) -> None:
+async def test_acht_gelijktijdige_deletes_landen_alle_acht(remote: Path) -> None:
     namen = [f"pr-{n}.yaml" for n in range(60, 68)]
 
     await asyncio.gather(
-        *(_taak(remote, tmp_path, naam, f"Delete ArgoCD application for '{naam}'", _verwijder(naam)) for naam in namen)
+        *(_taak(remote, f"Delete ArgoCD application for '{naam}'", _verwijder(naam)) for naam in namen)
     )
 
     log = _git(remote, "log", "--format=%s", "main")
@@ -172,10 +169,10 @@ async def test_acht_gelijktijdige_deletes_landen_alle_acht(remote: Path, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_een_create_en_een_delete_tegelijk_in_een_project(remote: Path, tmp_path: Path) -> None:
+async def test_een_create_en_een_delete_tegelijk_in_een_project(remote: Path) -> None:
     await asyncio.gather(
-        _taak(remote, tmp_path, "create", "Added ArgoCD resources for project nd-j7s", _voeg_toe("pr-70.yaml")),
-        _taak(remote, tmp_path, "delete", "Delete ArgoCD application for 'pr-69.yaml'", _verwijder("pr-69.yaml")),
+        _taak(remote, "Added ArgoCD resources for project nd-j7s", _voeg_toe("pr-70.yaml")),
+        _taak(remote, "Delete ArgoCD application for 'pr-69.yaml'", _verwijder("pr-69.yaml")),
     )
 
     log = _git(remote, "log", "--format=%s", "main")
@@ -189,9 +186,9 @@ async def test_een_create_en_een_delete_tegelijk_in_een_project(remote: Path, tm
 
 
 @pytest.mark.asyncio
-async def test_de_mutatie_ziet_de_stand_van_de_vorige_taak(remote: Path, tmp_path: Path) -> None:
-    """De kern: binnen de lock gaat ``reset_to_remote`` voor, dus de tweede taak beslist op
-    wat de eerste net gepusht heeft en niet op zijn eigen kloon van daarvoor."""
+async def test_de_mutatie_ziet_de_stand_van_de_vorige_taak(remote: Path) -> None:
+    """De kern: binnen de lock wordt de werkmap eerst opnieuw gevuld, dus de tweede taak
+    beslist op wat de eerste net gepusht heeft en niet op een stand van daarvoor."""
     gezien: list[list[str]] = []
 
     def _noteer_en_verwijder(bestand: str) -> Callable[[str], None]:
@@ -202,9 +199,7 @@ async def test_de_mutatie_ziet_de_stand_van_de_vorige_taak(remote: Path, tmp_pat
         return _doe
 
     namen = [f"pr-{n}.yaml" for n in range(60, 64)]
-    await asyncio.gather(
-        *(_taak(remote, tmp_path, naam, f"delete {naam}", _noteer_en_verwijder(naam)) for naam in namen)
-    )
+    await asyncio.gather(*(_taak(remote, f"delete {naam}", _noteer_en_verwijder(naam)) for naam in namen))
 
     aantallen = [len(stand) for stand in gezien]
     assert aantallen == [10, 9, 8, 7], f"elke taak hoort de vorige verwijdering te zien, zag {aantallen}"

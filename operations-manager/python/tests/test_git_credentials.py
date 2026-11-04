@@ -4,7 +4,7 @@ import base64
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.git import GitConnector, _obfuscate_git_command, _strip_url_credentials
+from opi.connectors.git import GitConnector, _obfuscate_git_command, strip_url_credentials
 
 WACHTWOORD = "zeer-geheim-token"
 
@@ -93,8 +93,8 @@ async def test_een_ipv6_literal_houdt_zijn_blokhaken():
 
 
 def test_strip_url_credentials_laat_ssh_met_rust():
-    assert _strip_url_credentials("ssh://git@example.com/repo.git") == "ssh://git@example.com/repo.git"
-    assert _strip_url_credentials("git@example.com:zad/repo.git") == "git@example.com:zad/repo.git"
+    assert strip_url_credentials("ssh://git@example.com/repo.git") == "ssh://git@example.com/repo.git"
+    assert strip_url_credentials("git@example.com:zad/repo.git") == "git@example.com:zad/repo.git"
 
 
 @pytest.mark.parametrize(
