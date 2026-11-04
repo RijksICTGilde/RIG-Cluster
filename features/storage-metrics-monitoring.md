@@ -173,7 +173,7 @@ curl http://localhost:9000/minio/v2/metrics/cluster | grep minio_bucket_usage
 
 ## SeaweedFS Bucket Metrics
 
-**Note:** SeaweedFS runs alongside MinIO on every cluster: `sandboxed-local`, `odcn-staging` and `odcn-production`. It does not replace MinIO; a project picks one of the two.
+**Note:** SeaweedFS runs on every cluster: `sandboxed-local`, `odcn-staging` and `odcn-production`. It replaces MinIO (RC-382): a new project gets SeaweedFS, a project that already has MinIO keeps it until it is migrated.
 
 ### Available Metrics
 
