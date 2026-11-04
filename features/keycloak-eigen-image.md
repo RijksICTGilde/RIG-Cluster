@@ -148,7 +148,7 @@ en de odcn-overlay blijven staan, dus een proef in de sandbox is geen uitrol naa
 taak drukt af wat je moet committen, welk deploycommando erbij hoort, en hoe je terugrolt. Hij
 is ook los aan te roepen, bijvoorbeeld om een tag van CI op de sandbox te zetten:
 `task pin-keycloak-image IMAGE_TAG=<tag>`. Met `TARGET=base` schrijft dezelfde taak de basis,
-en dat is de promotie; zie hieronder.
+en dat is de promotie; met `TARGET=staging` alleen de odcn-staging overlay. Zie hieronder.
 
 ### Het pakket moet publiek staan
 
@@ -252,11 +252,12 @@ taak:
 ```bash
 task publish-keycloak-image              # bouwt, pusht, pint de sandbox-overlay
 task sandbox:sync                        # rol uit en toets op de sandbox
+task pin-keycloak-image TARGET=staging   # zet die tag eerst alleen op staging
 task pin-keycloak-image TARGET=base      # zet die tag in de basis, zonder herbouw
 git commit ...                           # een bewuste wijziging in git
 ```
 
-Er hoort geen `IMAGE_TAG` bij `TARGET=base`: de tag komt uit de sandbox-overlay, want de basis
+Er hoort geen `IMAGE_TAG` bij `TARGET=staging` of `TARGET=base`: de tag komt uit de sandbox-overlay, want de basis
 mag alleen een tag dragen die op de sandbox is getoetst. Geef je er toch een mee, dan moet het
 die tag zijn; een andere wordt geweigerd.
 
@@ -268,6 +269,7 @@ Geen van beide tags wordt met de hand geschreven, en dat is de hele borging:
 |---|---|---|
 | sandbox-overlay | `task pin-keycloak-image` | pas nadat de tag zonder inlog terug te lezen was |
 | basis | `task pin-keycloak-image TARGET=base` | door de tag uit de sandbox-overlay over te nemen, zonder te bouwen |
+| odcn-staging-overlay | `task pin-keycloak-image TARGET=staging` | door de tag uit de sandbox-overlay over te nemen; een promotie naar de basis haalt hem weer weg |
 | odcn-overlay | niemand | hij draagt geen eigen tag en erft die van de basis |
 
 De promotie weigert een `-dirty`tag: die hoort bij bron die niet in git staat, en dan is op
