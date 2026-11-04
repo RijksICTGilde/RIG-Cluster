@@ -167,6 +167,7 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     get_project_public_key,
 )
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.env_vars import (
     detect_circular_references,
     extract_variable_references,
@@ -271,6 +272,10 @@ logger = logging.getLogger(__name__)
 _UPSERT_CONFLICT_RETRIES = 5
 
 _EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
+
+# ArgoCD reports a CNPG cluster healthy as soon as the pod is Ready, which is before the
+# primary accepts connections. This is the budget for that gap.
+DATABASE_CONNECT_TIMEOUT_SECONDS = 180
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
@@ -2317,10 +2322,14 @@ class ProjectManager:
                     )
                     await asyncio.sleep(1)
                 else:
-                    raise RuntimeError(
+                    # The first ERROR of this sequence: the handler keeps its own give-up on
+                    # WARNING, because this loop was still going to try again.
+                    message = (
                         f"Failed to create SOPS secret in namespace {namespace} after {max_retries} attempts. "
                         "RBAC permissions may not have propagated for this namespace."
                     )
+                    logger.error(message)
+                    raise RuntimeError(message)
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
             # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
@@ -2376,6 +2385,105 @@ class ProjectManager:
             # Other errors
             logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
             return False, "unknown_error"
+
+    async def _read_database_cluster_status(self, cluster_name: str, project_name: str) -> dict[str, Any]:
+        """The CNPG Cluster status of the project's dedicated cluster.
+
+        Empty when the resource is absent or unreadable, so a caller cannot tell those
+        apart and must stay silent instead of reporting a cluster as unhealthy.
+        """
+        from opi.core.cluster_config import get_infrastructure_namespace
+        from opi.utils.naming import _sanitize_for_lowercase
+
+        cluster = await self._kubectl_connector.get_namespaced_resource(
+            "clusters.postgresql.cnpg.io",
+            f"{_sanitize_for_lowercase(project_name)}-db",
+            get_infrastructure_namespace(cluster_name, project_name),
+        )
+        if not cluster:
+            return {}
+        status = cluster.get("status", {})
+        return status if isinstance(status, dict) else {}
+
+    @staticmethod
+    def _database_cluster_phase_summary(status: dict[str, Any]) -> str:
+        """What CNPG says about the cluster, as a suffix for a message, or an empty string."""
+        parts = [f"{key}: {status[key]}" for key in ("phase", "phaseReason") if status.get(key)]
+        return f" ({', '.join(parts)})" if parts else ""
+
+    async def _wait_until_database_accepts_connections(
+        self, project_name: str, cluster_name: str, username: str, password: str
+    ) -> None:
+        """Wait until the project's PostgreSQL primary answers a superuser query.
+
+        On 3 November 2026 provisioning of pocpl-0g8 died on a ConnectionRefusedError
+        straight after ArgoCD called the infrastructure healthy, and the task failed
+        permanently.
+
+        Raises:
+            RuntimeError: If no connection was accepted within the timeout.
+        """
+        from opi.core.cluster_config import get_database_cluster_service_endpoint
+
+        host = get_database_cluster_service_endpoint(cluster_name, project_name)
+
+        async def _select_one() -> None:
+            conn = await asyncpg.connect(
+                host=host, port=5432, user=username, password=password, database="postgres", timeout=5
+            )
+            try:
+                await conn.fetchval("SELECT 1")
+            finally:
+                await conn.close()
+
+        try:
+            await retry_on_connect_error(
+                _select_one,
+                DATABASE_CONNECT_TIMEOUT_SECONDS,
+                f"PostgreSQL at {host}",
+                connect_errors=(OSError,),
+            )
+        except OSError as e:
+            summary = self._database_cluster_phase_summary(
+                await self._read_database_cluster_status(cluster_name, project_name)
+            )
+            raise RuntimeError(
+                f"Database of project '{project_name}' accepts no connections at {host} after "
+                f"{DATABASE_CONNECT_TIMEOUT_SECONDS}s{summary}: {e}"
+            ) from e
+        logger.info(f"Database of project '{project_name}' accepts connections at {host}")
+
+    async def _warn_when_database_cluster_not_ready(
+        self,
+        project_name: str,
+        cluster_name: str,
+        progress_manager: AnyTaskProgressManager | None,
+        infra_task: str | None,
+    ) -> None:
+        """Report a dedicated cluster that CNPG itself does not call Ready, without blocking.
+
+        The database answering queries is what provisioning needs; the operator reaching
+        the instances is what backup and failover need. A cluster whose Ready condition
+        stays false therefore gets a warning instead of a failure.
+        """
+        status = await self._read_database_cluster_status(cluster_name, project_name)
+        if not status:
+            return
+
+        conditions = status.get("conditions") or []
+        ready = next((c for c in conditions if isinstance(c, dict) and c.get("type") == "Ready"), None)
+        if ready and ready.get("status") == "True":
+            return
+
+        summary = self._database_cluster_phase_summary(status)
+        logger.warning(
+            f"CNPG does not report the database cluster of project '{project_name}' as Ready{summary}. "
+            f"The database accepts connections, but the operator cannot reach the instances, so backups "
+            f"and failover through the operator are not guaranteed."
+        )
+        if progress_manager and infra_task:
+            warning_step = progress_manager.add_subtask(infra_task, f"Databasecluster niet Ready volgens CNPG{summary}")
+            progress_manager.complete_task(warning_step)
 
     async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
         """
@@ -2453,6 +2561,8 @@ class ProjectManager:
         7. Wait for infrastructure application to be created by ArgoCD
         8. Refresh the infrastructure application to pick up latest changes
         9. Wait for ArgoCD to report infrastructure as Synced + Healthy
+        10. Wait until the database accepts connections, which ArgoCD does not report
+        11. Warn when CNPG itself does not call the cluster Ready
 
         Args:
             project_data: The project configuration data
@@ -2858,6 +2968,23 @@ class ProjectManager:
             )
 
             logger.info(f"Infrastructure is ready for project '{project_name}'")
+
+            if progress_manager and infra_task:
+                progress_manager.update_task(infra_task, "Wachten tot de database verbindingen aanneemt")
+
+            await self._wait_until_database_accepts_connections(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                username=superuser_username,
+                password=superuser_password,
+            )
+
+            await self._warn_when_database_cluster_not_ready(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                progress_manager=progress_manager,
+                infra_task=infra_task,
+            )
 
             if progress_manager and infra_task:
                 progress_manager.complete_task(infra_task)

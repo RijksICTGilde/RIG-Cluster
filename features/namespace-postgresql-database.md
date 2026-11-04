@@ -160,6 +160,39 @@ When using `namespace-postgresql-database`, the Operations Manager creates:
    - `<project>-db-r` (read endpoint)
    - `<project>-db-ro` (read-only endpoint)
 
+## What OPI Waits For
+
+Provisioning a dedicated cluster is a two-stage wait, in this order:
+
+1. **ArgoCD reports the infrastructure application Synced and Healthy.** The health of a CNPG
+   `Cluster` comes from a Lua check in the ArgoCD CR, which calls the cluster healthy as soon
+   as `status.readyInstances` equals `spec.instances`, so as soon as the pod is Ready.
+2. **The database accepts connections.** OPI connects to `<project>-db-rw` with the superuser
+   and runs `SELECT 1`, retrying for at most 180 seconds. Stage 1 is reached before the primary
+   listens: on 3 November 2026 provisioning of a new project died on a `ConnectionRefusedError`
+   right after the healthy signal, and the task failed permanently. Databases and roles are
+   created only after this stage.
+
+If no connection is accepted within those 180 seconds, the task fails with a message naming the
+host, plus the cluster's `status.phase` and `status.phaseReason` when CNPG published them.
+
+### The warning "databasecluster niet Ready volgens CNPG"
+
+After the wait, OPI reads the `Cluster` resource and checks its `Ready` condition. When that
+condition is not `True`, the task logs a warning (with phase and phaseReason) and continues.
+
+That warning means: **the database works, but the CNPG operator cannot reach the pods.** The
+application connects over the `-rw` service, which is unaffected, so provisioning and the
+application are fine. What is not guaranteed is everything the operator does on top of a
+running instance: backups, failover and switchover.
+
+The usual cause is the network policy. The generated `tenant-baseline` policy in the
+infrastructure namespace allows ingress from the operator's namespace, and which namespace that
+is comes from `database_operator_namespace` per cluster in `opi/core/cluster_config.py`. If that
+value does not match the namespace the operator actually runs in, the operator cannot scrape
+instance status on port 8000. The cluster then stays at `Ready=False` with
+`phase: Instance Status Extraction Error: HTTP communication issue`.
+
 ## Troubleshooting
 
 ### Database Not Ready
