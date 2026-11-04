@@ -266,6 +266,10 @@
         }
     }
 
+    /* Ruimte onder de laatste regel, zodat er ook in een volle editor iets is om op te
+       klikken. Hoort bij enterOnEmptyLastLine. */
+    var emptyLastLineRoom = EditorView.theme({ ".cm-content": { paddingBottom: "1.5rem" } });
+
     function enterOnEmptyLastLine(view) {
         var byPointer = false;
         view.dom.addEventListener("mousedown", function (event) {
@@ -378,6 +382,7 @@
             zadTheme,
             syntaxHighlighting(zadHighlight)
         );
+        if (masked) extensions.push(emptyLastLineRoom);
 
         var view = new EditorView({
             doc: textarea.value,
