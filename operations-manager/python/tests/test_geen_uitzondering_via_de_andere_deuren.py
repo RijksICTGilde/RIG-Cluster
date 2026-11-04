@@ -114,6 +114,25 @@ class TestDeSjabloonDeur:
         assert "Probeer het over een minuut opnieuw." in antwoord.text
         assert not LEKT.search(antwoord.text), "de meetdienst staat op het scherm"
 
+    def test_een_niet_beschikbare_backend_geeft_de_melding_en_een_200(
+        self, fragmentclient: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Een metingsbron die zichzelf niet beschikbaar noemt is een stand, geen storing.
+
+        Dan hoort er geen kenmerk bij en ook geen lege grafiek, maar de melding zelf.
+        """
+        from opi.connectors import prometheus
+
+        async def _niet_beschikbaar() -> object:
+            return MagicMock(is_connected=False)
+
+        monkeypatch.setattr(prometheus, "get_metrics_connector", _niet_beschikbaar)
+
+        antwoord = fragmentclient.get(f"/projects/details/{PROJECT}/resource-usage", follow_redirects=False)
+
+        assert antwoord.status_code == 200, antwoord.text
+        assert "Metrics zijn op dit moment niet beschikbaar." in antwoord.text
+
     def test_de_kaart_noemt_het_kenmerk(self, fragmentclient: TestClient) -> None:
         """Zonder kenmerk is 'niet op te halen' een doodlopende weg voor wie het meldt."""
         antwoord = fragmentclient.get(f"/projects/details/{PROJECT}/resource-usage", follow_redirects=False)

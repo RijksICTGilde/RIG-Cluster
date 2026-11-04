@@ -2333,12 +2333,14 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
 
     if namespaces:
         ns_regex = "|".join(namespaces)
-        try:
-            from opi.connectors.prometheus import get_metrics_connector
+        # Boven de try, want de except hieronder noemt deze fouten.
+        from opi.connectors.grafana_prometheus import GrafanaConnectionError
+        from opi.connectors.prometheus import PrometheusConnectionError, get_metrics_connector
 
+        try:
             prom = await get_metrics_connector()
             if not prom.is_connected:
-                ctx["usage_error"] = "Prometheus is niet beschikbaar"
+                ctx["usage_error"] = "Metrics zijn op dit moment niet beschikbaar."
             else:
 
                 async def _scalar(promql: str) -> float:
@@ -2373,6 +2375,11 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
                         [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
                     ),
                 }
+        except (GrafanaConnectionError, PrometheusConnectionError) as fout:
+            # De metingsbron viel weg TIJDENS de bevraging. Dezelfde melding als hierboven,
+            # want voor de lezer is het hetzelfde: er is nu niets te meten.
+            logger.warning("Metrics niet beschikbaar voor %s: %s", project_name, fout)
+            ctx["usage_error"] = "Metrics zijn op dit moment niet beschikbaar."
         except Exception:
             # De melding van de metingslaag ging tot nu toe onbewerkt het sjabloon in en
             # kwam er op regel 40 letterlijk uit: bij een onbereikbare Prometheus stond

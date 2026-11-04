@@ -282,6 +282,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Capsule Proxy Prometheus Discovery](capsule-proxy-prometheus-discovery.md)
 - [Een handmatig gezette resource-waarde wint van de auto-tuner](handmatig-gezette-resources.md)
 - [Log watcher](log-watcher.md)
+- [Metrics: graceful degradation en herstel op de achtergrond](metrics-graceful-degradation.md)
 - [Metrics Scraper Service](metrics-scraper.md)
 - [OOM Kill Watcher - Fire-and-Forget Auto-Tune](oom-kill-watcher.md)
 - [OOM-kills tijdens runtime: de pod-watch](oom-pod-watch.md)

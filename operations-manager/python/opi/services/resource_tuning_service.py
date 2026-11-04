@@ -945,12 +945,9 @@ async def observe_recent_oom_kills(
     if not component_refs:
         return []
 
-    try:
-        connector = await get_metrics_connector()
-    except Exception as e:
-        logger.warning(f"No metrics connector for the OOM check on {deployment_name}: {e}")
-        return []
+    connector = await get_metrics_connector()
     if not connector.is_connected:
+        logger.info(f"No metrics for the OOM check on {deployment_name}, reporting nothing")
         return []
 
     namespace = get_prefixed_namespace(cluster, base_namespace)
@@ -1043,10 +1040,9 @@ async def apply_resource_tuning(
     Raises:
         RuntimeError: If the metrics backend is unavailable.
     """
-    try:
-        connector = await get_metrics_connector()
-    except Exception as e:
-        raise RuntimeError(f"Metrics backend unavailable: {e}") from e
+    connector = await get_metrics_connector()
+    if not connector.is_connected:
+        raise RuntimeError("Metrics backend unavailable")
 
     kubectl = KubectlConnector()
     changes: list[dict[str, str]] = []

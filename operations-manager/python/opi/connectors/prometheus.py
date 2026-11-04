@@ -18,7 +18,7 @@ from typing import Any
 # arguments. The submodule path resolves to the class itself.
 from prometheus_api_client.prometheus_connect import PrometheusConnect
 
-from opi.connectors.grafana_prometheus import _parse_query_time
+from opi.connectors.grafana_prometheus import _parse_query_time, close_grafana_connector
 from opi.core.config import settings
 from opi.utils.naming import generate_unique_name
 
@@ -71,14 +71,9 @@ class PrometheusConnector:
         """Return the configured Prometheus URL."""
         return self._prometheus_url
 
-    def reconnect(self) -> bool:
-        """Kept for backward compatibility with startup code. Always returns True.
-
-        There is no persistent connection - PrometheusConnect is a stateless HTTP
-        client. Queries will succeed or fail on their own.
-        """
-        PrometheusConnector.is_connected = True
-        return True
+    def start_probe(self) -> None:
+        """No-op: there is nothing to probe. Keeps the shape of the Grafana connector,
+        which get_metrics_connector() returns in its place."""
 
     def _ensure_connected(self) -> None:
         """Kept for backward compatibility. No-op - there is no connection to check."""
@@ -1069,3 +1064,8 @@ async def get_metrics_connector() -> Any:
     else:
         logger.info("Using direct Prometheus connector (METRICS_BACKEND=prometheus)")
         return create_prometheus_connector()
+
+
+async def close_metrics_connector() -> None:
+    """Release the metrics connector's resources at shutdown."""
+    await close_grafana_connector()

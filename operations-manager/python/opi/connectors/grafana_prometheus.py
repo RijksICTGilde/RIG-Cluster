@@ -7,7 +7,9 @@ This is used in ODCN production where direct Prometheus access is not available.
 """
 
 import asyncio
+import contextlib
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -17,9 +19,12 @@ from opi.core.config import settings
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
 
 logger = logging.getLogger(__name__)
+
+#: Waits between recovery probes; the last one repeats until the backend answers.
+RECOVERY_DELAYS = (5.0, 10.0, 20.0, 40.0, 60.0)
 
 
 class GrafanaConnectionError(Exception):
@@ -62,7 +67,10 @@ class GrafanaPrometheusConnector:
     _token: str | None
     _datasource_uid: str | None
     _datasource_type: str
-    _client: httpx.AsyncClient | None
+    _client: httpx.AsyncClient
+    _recovery_task: asyncio.Task[None] | None
+    _recovery_delays: tuple[float, ...]
+    _unavailable_since: float | None
 
     def __new__(cls) -> GrafanaPrometheusConnector:
         """Implement singleton pattern."""
@@ -81,28 +89,105 @@ class GrafanaPrometheusConnector:
         self._token = settings.GRAFANA_TOKEN
         self._datasource_uid = settings.GRAFANA_DATASOURCE_UID
         self._datasource_type = "prometheus"
-        self._client = None
+        # One client for the whole process. A client per attempt leaked a connection
+        # pool per request for as long as Grafana was unreachable.
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0))
+        self._recovery_task = None
+        self._recovery_delays = RECOVERY_DELAYS
+        self._unavailable_since = None
+        # Unavailable until a probe says otherwise, so a page right after the boot says
+        # "not available" instead of claiming metrics it never fetched.
+        GrafanaPrometheusConnector.is_connected = False
 
         logger.debug(f"Initializing GrafanaPrometheusConnector with URL: {self._grafana_url}")
 
         if not self._token:
             logger.warning("GRAFANA_TOKEN not set - Grafana connector will not work")
-            GrafanaPrometheusConnector.is_connected = False
 
-    async def connect(self) -> None:
-        """Perform async initialization: discover datasource and test connection."""
+    def start_probe(self) -> None:
+        """Probe the backend in the background. Called once at startup."""
+        self._start_recovery(immediate=True)
+
+    async def aclose(self) -> None:
+        """Stop the recovery task and close the HTTP client."""
+        if self._recovery_task is not None:
+            self._recovery_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._recovery_task
+            self._recovery_task = None
+        await self._client.aclose()
+
+    def _mark_available(self) -> None:
+        """Record that the backend answered. Logs the transition only."""
         if GrafanaPrometheusConnector.is_connected:
             return
+
+        GrafanaPrometheusConnector.is_connected = True
+        if self._unavailable_since is None:
+            logger.info("Grafana metrics are available")
+        else:
+            logger.info("Grafana metrics are available again after %.0fs", time.monotonic() - self._unavailable_since)
+        self._unavailable_since = None
+
+    def _mark_unavailable(self, reason: str) -> None:
+        """Record a backend failure and keep one recovery task running until it answers.
+
+        The reason holds a status code or an exception type, never headers or the
+        request: the service account token must stay out of the logs.
+        """
+        if GrafanaPrometheusConnector.is_connected or self._unavailable_since is None:
+            logger.warning("Grafana metrics are unavailable: %s", reason)
+            self._unavailable_since = time.monotonic()
+        else:
+            logger.debug("Grafana metrics still unavailable: %s", reason)
+
+        GrafanaPrometheusConnector.is_connected = False
+        self._start_recovery()
+
+    def _start_recovery(self, *, immediate: bool = False) -> None:
+        """Start the recovery task unless one is already running."""
         if not self._token:
             return
+        if self._recovery_task is not None and not self._recovery_task.done():
+            return
+        self._recovery_task = asyncio.create_task(self._recover(immediate=immediate))
 
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0))
+    async def _recover(self, *, immediate: bool) -> None:
+        """Probe until the backend answers, then stop.
 
-        if not self._datasource_uid:
-            await self._discover_datasource()
+        No attempt limit: giving up would leave the pod without metrics until someone
+        restarts it, which is what the ten-attempt version did on 4 November 2026.
+        """
+        if immediate and await self._probe():
+            return
 
-        await self._test_connection()
-        logger.debug("GrafanaPrometheusConnector initialized")
+        for delay in self._backoff():
+            await asyncio.sleep(delay)
+            # A query may have restored the status while this task was waiting.
+            if GrafanaPrometheusConnector.is_connected or await self._probe():
+                return
+
+    def _backoff(self) -> Iterator[float]:
+        """The recovery waits, with the last one repeating forever."""
+        yield from self._recovery_delays
+        while True:
+            yield self._recovery_delays[-1]
+
+    async def _probe(self) -> bool:
+        """One availability check: find the datasource if needed, then query ``up``."""
+        try:
+            if not self._datasource_uid:
+                await self._discover_datasource()
+            if not self._datasource_uid:
+                self._mark_unavailable("no prometheus or mimir datasource in Grafana")
+                return False
+            await self._execute_query("up", instant=True)
+        except Exception as e:
+            # Broad on purpose, against the house rule: anything escaping here kills the
+            # recovery task, and a dead recovery task is the failure this replaces.
+            logger.debug("Grafana probe failed: %s", e)
+            return False
+        return True
 
     def _get_headers(self) -> dict[str, str]:
         """Get HTTP headers with Bearer token authentication."""
@@ -111,80 +196,64 @@ class GrafanaPrometheusConnector:
             "Content-Type": "application/json",
         }
 
+    async def _request(
+        self, method: str, path: str, json_body: dict[str, Any] | None = None, *, mark_available: bool = True
+    ) -> httpx.Response:
+        """One call to Grafana, with the availability bookkeeping around it.
+
+        A transport error, a 5xx or a 401/403 says the backend is unreachable or the
+        token is wrong: that flips the status and starts the recovery task. Only a 2xx
+        marks it available; any other status is the query's own problem and leaves the
+        status alone. Datasource discovery passes ``mark_available=False``: a datasource
+        list says nothing about whether metrics can be queried.
+        """
+        try:
+            resp = await self._client.request(
+                method, f"{self._grafana_url}{path}", headers=self._get_headers(), json=json_body
+            )
+        except httpx.TransportError as e:
+            self._mark_unavailable(f"{type(e).__name__}: {e}")
+            raise GrafanaConnectionError(f"Grafana is unreachable: {type(e).__name__}") from e
+
+        if resp.status_code >= 500 or resp.status_code in (401, 403):
+            self._mark_unavailable(f"HTTP {resp.status_code}")
+            raise GrafanaConnectionError(f"Grafana answered HTTP {resp.status_code}")
+
+        if resp.is_success and mark_available:
+            self._mark_available()
+        return resp
+
     async def _discover_datasource(self) -> None:
         """Auto-discover the Prometheus/Mimir datasource UID."""
-        if self._client is None:
-            return
-
         logger.debug("Auto-discovering Prometheus/Mimir datasource...")
 
-        try:
-            url = f"{self._grafana_url}/api/datasources"
-            resp = await self._client.get(url, headers=self._get_headers())
+        # Failures go to debug: the probe reports them through _mark_unavailable, which
+        # logs the transition only.
+        resp = await self._request("GET", "/api/datasources", mark_available=False)
+        if resp.status_code != 200:
+            logger.debug(f"Failed to fetch datasources: {resp.status_code}")
+            return
 
-            if resp.status_code != 200:
-                logger.warning(f"Failed to fetch datasources: {resp.status_code}")
+        for ds in resp.json():
+            ds_type = ds.get("type", "")
+            if ds_type in ("prometheus", "mimir"):
+                self._datasource_uid = ds.get("uid")
+                self._datasource_type = ds_type
+                logger.info(
+                    f"Auto-discovered datasource: {ds.get('name')} (type: {ds_type}, uid: {self._datasource_uid})"
+                )
                 return
 
-            datasources = resp.json()
-            for ds in datasources:
-                ds_type = ds.get("type", "")
-                if ds_type in ("prometheus", "mimir"):
-                    self._datasource_uid = ds.get("uid")
-                    self._datasource_type = ds_type
-                    logger.info(
-                        f"Auto-discovered datasource: {ds.get('name')} (type: {ds_type}, uid: {self._datasource_uid})"
-                    )
-                    return
-
-            logger.warning("No Prometheus/Mimir datasource found in Grafana")
-
-        except httpx.HTTPError as e:
-            logger.warning(f"Error discovering datasource: {e}")
-
-    async def _test_connection(self) -> bool:
-        """Test the connection to Grafana and the Prometheus datasource."""
-        if not self._datasource_uid:
-            logger.warning("No datasource UID configured - cannot test connection")
-            GrafanaPrometheusConnector.is_connected = False
-            return False
-
-        try:
-            result = await self._execute_query("up", instant=True)
-            if result is not None:
-                GrafanaPrometheusConnector.is_connected = True
-                logger.info("Grafana Prometheus connection successful")
-                return True
-            else:
-                GrafanaPrometheusConnector.is_connected = False
-                logger.warning("Grafana connection test returned no result")
-                return False
-
-        except Exception as e:
-            GrafanaPrometheusConnector.is_connected = False
-            logger.warning(f"Grafana connection failed: {e}")
-            return False
-
-    async def reconnect(self) -> bool:
-        """Attempt to reconnect to Grafana."""
-        if GrafanaPrometheusConnector.is_connected:
-            logger.debug("Grafana already connected, skipping reconnect")
-            return True
-
-        logger.info(f"Attempting to reconnect to Grafana at {self._grafana_url}")
-
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0))
-
-        if not self._datasource_uid:
-            await self._discover_datasource()
-
-        return await self._test_connection()
+        logger.debug("No Prometheus/Mimir datasource found in Grafana")
 
     def _ensure_connected(self) -> None:
-        """Ensure Grafana is connected, raise error if not."""
-        if not GrafanaPrometheusConnector.is_connected or self._client is None:
-            raise GrafanaConnectionError("Grafana is not connected")
+        """Refuse a query while the backend is known to be unavailable.
+
+        Without this every caller would wait out the client timeouts again during an
+        outage, with a page or a job behind it.
+        """
+        if not GrafanaPrometheusConnector.is_connected:
+            raise GrafanaConnectionError("Grafana metrics are not available")
 
     def _build_query_obj(
         self, ref_id: str, query: str, instant: bool, step: str = "5m", datasource_uid: str | None = None
@@ -262,13 +331,8 @@ class GrafanaPrometheusConnector:
         Returns:
             Dictionary mapping refId to list of metric results in Prometheus API format
         """
-        if self._client is None:
-            raise GrafanaConnectionError("HTTP client not initialized")
-
         if not queries:
             return {}
-
-        url = f"{self._grafana_url}/api/ds/query"
 
         query_objects = [
             self._build_query_obj(ref_id, query, instant, step, datasource_uid) for ref_id, query in queries.items()
@@ -287,20 +351,15 @@ class GrafanaPrometheusConnector:
             payload["from"] = str(int(end_time.timestamp() * 1000) - 60_000)
             payload["to"] = str(int(end_time.timestamp() * 1000))
 
-        try:
-            resp = await self._client.post(url, headers=self._get_headers(), json=payload)
+        resp = await self._request("POST", "/api/ds/query", payload)
 
-            if resp.status_code != 200:
-                logger.error(f"Grafana query failed: {resp.status_code} - {resp.text[:500]}")
-                raise GrafanaQueryError(f"Query failed with status {resp.status_code}")
+        if resp.status_code != 200:
+            logger.error(f"Grafana query failed: {resp.status_code} - {resp.text[:500]}")
+            raise GrafanaQueryError(f"Query failed with status {resp.status_code}")
 
-            grafana_result = resp.json()
-            self._log_response_problems(grafana_result, queries)
-            return self._convert_batch_grafana_response(grafana_result, queries.keys(), instant)
-
-        except httpx.HTTPError as e:
-            logger.error(f"Grafana request error: {e}")
-            raise GrafanaQueryError(f"Request failed: {e}") from e
+        grafana_result = resp.json()
+        self._log_response_problems(grafana_result, queries)
+        return self._convert_batch_grafana_response(grafana_result, queries.keys(), instant)
 
     def _log_response_problems(self, grafana_result: dict[str, Any], queries: dict[str, str]) -> None:
         """
@@ -457,6 +516,8 @@ class GrafanaPrometheusConnector:
 
         try:
             return await self._execute_query(query, instant=True, datasource_uid=datasource_uid, end_time=eval_time)
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to execute custom query: {e}")
             raise GrafanaQueryError(f"Failed to execute custom query: {e}") from e
@@ -476,6 +537,8 @@ class GrafanaPrometheusConnector:
 
         try:
             return await self._execute_query(query, instant=True)
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query CPU usage: {e}")
             raise GrafanaQueryError(f"Failed to query CPU usage: {e}") from e
@@ -493,6 +556,8 @@ class GrafanaPrometheusConnector:
 
         try:
             return await self._execute_query(query, instant=True)
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query memory usage: {e}")
             raise GrafanaQueryError(f"Failed to query memory usage: {e}") from e
@@ -510,6 +575,8 @@ class GrafanaPrometheusConnector:
             if result and len(result) > 0:
                 return int(float(result[0]["value"][1]))
             return 0
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query pod count: {e}")
             raise GrafanaQueryError(f"Failed to query pod count: {e}") from e
@@ -527,6 +594,8 @@ class GrafanaPrometheusConnector:
 
         try:
             return await self._execute_query(query, instant=True)
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query pod restarts: {e}")
             raise GrafanaQueryError(f"Failed to query pod restarts: {e}") from e
@@ -544,6 +613,8 @@ class GrafanaPrometheusConnector:
 
         try:
             return await self._execute_query(query, instant=True)
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query network receive: {e}")
             raise GrafanaQueryError(f"Failed to query network receive: {e}") from e
@@ -561,6 +632,8 @@ class GrafanaPrometheusConnector:
 
         try:
             return await self._execute_query(query, instant=True)
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to query network transmit: {e}")
             raise GrafanaQueryError(f"Failed to query network transmit: {e}") from e
@@ -606,6 +679,8 @@ class GrafanaPrometheusConnector:
             if ns_result:
                 overview["namespace_count"] = int(float(ns_result[0]["value"][1]))
 
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to get cluster overview: {e}")
             raise GrafanaQueryError(f"Failed to get cluster overview: {e}") from e
@@ -635,6 +710,8 @@ class GrafanaPrometheusConnector:
                 end_time=end_dt,
                 step=step,
             )
+        except GrafanaConnectionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to execute range query: {e}")
             raise GrafanaQueryError(f"Failed to execute range query: {e}") from e
@@ -1071,8 +1148,12 @@ class GrafanaPrometheusConnector:
 
 
 async def create_grafana_prometheus_connector() -> GrafanaPrometheusConnector:
-    """Create and return a GrafanaPrometheusConnector instance."""
+    """Return the GrafanaPrometheusConnector singleton. Does no I/O."""
     logger.debug("Creating GrafanaPrometheusConnector")
-    connector = GrafanaPrometheusConnector()
-    await connector.connect()
-    return connector
+    return GrafanaPrometheusConnector()
+
+
+async def close_grafana_connector() -> None:
+    """Release the connector's resources at shutdown, if it was ever built."""
+    if GrafanaPrometheusConnector._instance is not None:
+        await GrafanaPrometheusConnector._instance.aclose()

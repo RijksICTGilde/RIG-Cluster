@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.connectors.grafana_prometheus import GrafanaConnectionError, GrafanaQueryError
 from opi.core import capacity_watcher
 from opi.core.capacity_watcher import HIGH, OK, WARNING, CapacityWatcher, Quota, evaluate
 
@@ -71,3 +72,25 @@ async def test_notifies_once_per_level_and_rearms(monkeypatch: pytest.MonkeyPatc
 
 def test_memory_is_shown_in_gib() -> None:
     assert capacity_watcher._format(_q("memory-limits", 200 * GIB, 240 * GIB)) == "200 van 240 GiB"
+
+
+@pytest.mark.parametrize("fout", [GrafanaConnectionError("niet beschikbaar"), GrafanaQueryError("status 500")])
+async def test_tick_slaat_de_ronde_over_zonder_metrics(fout: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een storing in de metingsbron is een overgeslagen ronde, geen crash van de watcher."""
+    watcher = CapacityWatcher()
+    send = AsyncMock()
+    monkeypatch.setattr(watcher, "_send", send)
+    monkeypatch.setattr(watcher, "_fetch", AsyncMock(side_effect=fout))
+
+    await watcher.tick()
+
+    send.assert_not_awaited()
+
+
+async def test_tick_laat_andere_fouten_door(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Alleen de twee metingsfouten worden afgevangen; een andere fout moet zichtbaar blijven."""
+    watcher = CapacityWatcher()
+    monkeypatch.setattr(watcher, "_fetch", AsyncMock(side_effect=RuntimeError("iets anders")))
+
+    with pytest.raises(RuntimeError, match="iets anders"):
+        await watcher.tick()

@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from opi.connectors.grafana_prometheus import (
+    GrafanaConnectionError,
     GrafanaPrometheusConnector,
-    GrafanaQueryError,
 )
 
 
@@ -31,9 +31,14 @@ def connector():
         c._datasource_uid = "test-uid"
         c._datasource_type = "prometheus"
         c._client = AsyncMock(spec=httpx.AsyncClient)
+        c._recovery_task = None
+        c._recovery_delays = (0.01,)
+        c._unavailable_since = None
         GrafanaPrometheusConnector.is_connected = True
         GrafanaPrometheusConnector._instance = c
-        return c
+        yield c
+        if c._recovery_task is not None:
+            c._recovery_task.cancel()
 
 
 def make_grafana_response(ref_results: dict) -> dict:
@@ -77,7 +82,7 @@ class TestExecuteBatchQueries:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = response
-        connector._client.post = AsyncMock(return_value=mock_resp)
+        connector._client.request = AsyncMock(return_value=mock_resp)
 
         results = await connector._execute_batch_queries(
             queries={"A": "up"},
@@ -90,7 +95,7 @@ class TestExecuteBatchQueries:
         assert results["A"][0]["value"][1] == "0.5"
 
         # Verify only 1 HTTP request was made
-        assert connector._client.post.call_count == 1
+        assert connector._client.request.call_count == 1
 
     @pytest.mark.asyncio
     async def test_multiple_queries_single_request(self, connector):
@@ -104,7 +109,7 @@ class TestExecuteBatchQueries:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = response
-        connector._client.post = AsyncMock(return_value=mock_resp)
+        connector._client.request = AsyncMock(return_value=mock_resp)
 
         results = await connector._execute_batch_queries(
             queries={"cpu": "rate(cpu[5m])", "memory": "container_memory"},
@@ -117,10 +122,10 @@ class TestExecuteBatchQueries:
         assert len(results["memory"]) == 1
 
         # Only 1 HTTP call for 2 queries
-        assert connector._client.post.call_count == 1
+        assert connector._client.request.call_count == 1
 
         # Verify payload contains both queries
-        call_kwargs = connector._client.post.call_args
+        call_kwargs = connector._client.request.call_args
         payload = call_kwargs.kwargs["json"]
         assert len(payload["queries"]) == 2
         ref_ids = {q["refId"] for q in payload["queries"]}
@@ -131,7 +136,7 @@ class TestExecuteBatchQueries:
         """Empty queries dict should return empty results without HTTP call."""
         results = await connector._execute_batch_queries(queries={}, instant=True)
         assert results == {}
-        connector._client.post.assert_not_called()
+        connector._client.request.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_range_batch_queries(self, connector):
@@ -145,7 +150,7 @@ class TestExecuteBatchQueries:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = response
-        connector._client.post = AsyncMock(return_value=mock_resp)
+        connector._client.request = AsyncMock(return_value=mock_resp)
 
         start = datetime(2026, 1, 1, tzinfo=UTC)
         end = datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
@@ -159,7 +164,7 @@ class TestExecuteBatchQueries:
         )
 
         # Verify from/to are timestamps in ms
-        call_kwargs = connector._client.post.call_args
+        call_kwargs = connector._client.request.call_args
         payload = call_kwargs.kwargs["json"]
         assert payload["from"] == str(int(start.timestamp() * 1000))
         assert payload["to"] == str(int(end.timestamp() * 1000))
@@ -169,18 +174,20 @@ class TestExecuteBatchQueries:
         assert "memory" in results
 
     @pytest.mark.asyncio
-    async def test_http_error_raises(self, connector):
-        """HTTP errors should raise GrafanaQueryError."""
+    async def test_server_error_raises_connection_error(self, connector):
+        """A 5xx is the backend failing, not the query: it flips the availability."""
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         mock_resp.text = "Internal Server Error"
-        connector._client.post = AsyncMock(return_value=mock_resp)
+        connector._client.request = AsyncMock(return_value=mock_resp)
 
-        with pytest.raises(GrafanaQueryError, match="status 500"):
+        with pytest.raises(GrafanaConnectionError, match="HTTP 500"):
             await connector._execute_batch_queries(
                 queries={"A": "up"},
                 instant=True,
             )
+
+        assert GrafanaPrometheusConnector.is_connected is False
 
     @pytest.mark.asyncio
     async def test_missing_ref_id_in_response(self, connector):
@@ -194,7 +201,7 @@ class TestExecuteBatchQueries:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = response
-        connector._client.post = AsyncMock(return_value=mock_resp)
+        connector._client.request = AsyncMock(return_value=mock_resp)
 
         results = await connector._execute_batch_queries(
             queries={"cpu": "rate(cpu[5m])", "memory": "memory_bytes"},
@@ -220,7 +227,7 @@ class TestComponentMetricsBatching:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = batch_response
-        connector._client.post = AsyncMock(return_value=mock_resp)
+        connector._client.request = AsyncMock(return_value=mock_resp)
 
         result = await connector.get_component_metrics("test-ns", "my-pod", "6h")
 
@@ -230,7 +237,7 @@ class TestComponentMetricsBatching:
 
         # 1 batch call for CPU + memory, then 3 sequential HTTP request metric attempts
         # (all return empty from the same mock, so all 3 are tried)
-        assert connector._client.post.call_count == 4
+        assert connector._client.request.call_count == 4
 
     @pytest.mark.asyncio
     async def test_http_requests_metric_tried_sequentially(self, connector):
@@ -247,7 +254,7 @@ class TestComponentMetricsBatching:
 
         call_count = 0
 
-        async def mock_post(url, headers=None, json=None):
+        async def mock_request(method, url, headers=None, json=None):
             nonlocal call_count
             call_count += 1
             mock_resp = MagicMock()
@@ -260,7 +267,7 @@ class TestComponentMetricsBatching:
                 mock_resp.json.return_value = http_found
             return mock_resp
 
-        connector._client.post = mock_post
+        connector._client.request = mock_request
 
         result = await connector.get_component_metrics("test-ns", "my-pod", "6h")
 
@@ -311,7 +318,7 @@ class TestComponentMetricsTimeseriesBatching:
 
         call_count = 0
 
-        async def mock_post(url, headers=None, json=None):
+        async def mock_request(method, url, headers=None, json=None):
             nonlocal call_count
             call_count += 1
             mock_resp = MagicMock()
@@ -323,7 +330,7 @@ class TestComponentMetricsTimeseriesBatching:
                 mock_resp.json.return_value = instant_response
             return mock_resp
 
-        connector._client.post = mock_post
+        connector._client.request = mock_request
 
         result = await connector.get_component_metrics_timeseries("test-ns", "my-pod", 60, 5)
 

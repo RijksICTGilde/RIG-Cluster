@@ -156,9 +156,8 @@ async def _run_sanitize(
     project_data = await project_manager.get_contents()
     file_handler = ProjectFileHandler()
 
-    try:
-        connector = await get_metrics_connector()
-    except Exception:
+    connector = await get_metrics_connector()
+    if not connector.is_connected:
         connector = None
         logger.warning("Metrics backend unavailable, sanitize will use kubectl only")
 
