@@ -124,7 +124,7 @@
     {
      "name": "git",
      "file": "opi/connectors/git.py",
-     "uses": 6
+     "uses": 5
     }
    ],
    "services": [],
@@ -132,6 +132,10 @@
     {
      "file": "features/git-push-serialization.md",
      "title": "Git push-serialisatie per repo"
+    },
+    {
+     "file": "features/git-repo.md",
+     "title": "GitRepo: één beheerde repo per remote"
     }
    ]
   },
