@@ -473,6 +473,14 @@
         if (button) button.text = inst.masked ? "Toon waarden" : "Verberg waarden";
     }
 
+    /* Voor een volle editor, waar onder de tekst geen ruimte meer is om te klikken. */
+    function addKvLine(editorId) {
+        var inst = _instances[editorId];
+        if (!inst) return;
+        moveToEmptyLastLine(inst.view);
+        inst.view.focus();
+    }
+
     /**
      * Destroy a CodeMirror KV editor instance and restore the textarea.
      */
@@ -497,5 +505,6 @@
     window.initKvEditors = initKvEditors;
     window.switchKvLanguage = switchKvLanguage;
     window.toggleKvMask = toggleKvMask;
+    window.addKvLine = addKvLine;
     window.destroyKvEditor = destroyKvEditor;
 })();
