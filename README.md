@@ -14,22 +14,6 @@ There are three ways in, all on the same API:
 - **[zad-actions](https://github.com/RijksICTGilde/zad-actions)**: GitHub Actions to deploy an image from CI, spin up an environment per pull request and clean it up afterwards.
 - **[zad-cli](https://github.com/RijksICTGilde/zad-cli)** (`zadctl`): the same operations from your terminal or any other pipeline.
 
-## Working on the Platform Itself
-
-This repository holds the platform: the Operations Manager, the Kustomize for every component and the tooling around it. To change it, run a full copy on your own machine with the **sandboxed-local** setup. See the **[Getting Started Guide](docs/getting-started.md)** for step-by-step setup instructions.
-
-Quick start:
-
-```bash
-# Install required tools
-brew install go-task kind kubectl kustomize sops age ksops pwgen jq yq rsync skaffold
-
-# Run the setup (interactive, takes ~5-10 minutes)
-task sandbox:setup
-```
-
-You will need the developer AGE private key to decrypt the TLS certificates. Ask the ZAD developers if you don't have it.
-
 ## Architecture
 
 The platform uses a GitOps approach with ArgoCD. The Operations Manager (ZAD) drives three Git repositories:
@@ -113,3 +97,19 @@ task sandbox:destroy                  # Tear down sandbox
 ## Secret Management
 
 Secrets are managed with SOPS and AGE encryption. Templates in the infrastructure overlays use `@secret-gen:random:XX` annotations for automatic password generation. The sandbox uses a per-setup AGE key (`security/sandbox-key.txt`), while shared secrets (TLS certificates) use a developer AGE key distributed out-of-band.
+
+## Working on the Platform Itself
+
+This repository holds the platform: the Operations Manager, the Kustomize for every component and the tooling around it. To change it, run a full copy on your own machine with the **sandboxed-local** setup. See the **[Getting Started Guide](docs/getting-started.md)** for step-by-step setup instructions.
+
+Quick start:
+
+```bash
+# Install required tools
+brew install go-task kind kubectl kustomize sops age ksops pwgen jq yq rsync skaffold
+
+# Run the setup (interactive, takes ~5-10 minutes)
+task sandbox:setup
+```
+
+You will need the developer AGE private key to decrypt the TLS certificates. Ask the ZAD developers if you don't have it.
