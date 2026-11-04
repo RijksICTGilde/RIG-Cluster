@@ -267,8 +267,9 @@ CLUSTER_CONFIG = {
         "service_namespaces": ["rig-prd-operations", "rig-prd-backup", "rig-prd-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        # Namespace of the CloudNativePG operator (see the note in the other clusters).
-        "database_operator_namespace": "cnpg-system",
+        # Namespace of the CloudNativePG operator. ODCN installs it outside the CNPG
+        # default; tenants cannot see it, the name comes from ODC-Noord (2026-11-04).
+        "database_operator_namespace": "quattro-cloudnative-db-operator",
         "ops_egress": OPS_EGRESS,
         "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
@@ -446,7 +447,8 @@ CLUSTER_CONFIG = {
         "service_namespaces": ["rig-staging-operations", "rig-staging-backup", "rig-staging-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
-        "database_operator_namespace": "cnpg-system",
+        # Same cluster as production, so the same operator namespace.
+        "database_operator_namespace": "quattro-cloudnative-db-operator",
         "ops_egress": OPS_EGRESS,
         # Staging draait op dezelfde cluster als productie, dus dezelfde CIDRs.
         "cluster_cidrs": ODCN_CLUSTER_CIDRS,
