@@ -342,10 +342,42 @@ API-server de CR met `quantity path did not resolve to any value`. De CRD heeft 
 van 10 op staan, maar een structural-schema-default wordt alleen gezet als het bovenliggende
 `quota` aanwezig is, dus het sjabloon schrijft hem altijd expliciet.
 
-De waarde is 3 GiB per private registry: clusterconfig (`quota_limit_gib`) met een terugval in
-`backends.py`. Bewust niet de CRD-default van 10, want tien per registry telt in het
-clustertotaal te snel op. Hele gibibytes, want `limitGiB` is een integer. Nog niet per project
-instelbaar; wordt het dat, dan blijft dit de default waar een project niets zegt.
+De standaard is 3 GiB per private registry: clusterconfig (`quota_limit_gib`) met een terugval
+in `backends.py`. Bewust niet de CRD-default van 10, want tien per registry telt in het
+clustertotaal te snel op. Hele gibibytes, want `limitGiB` is een integer.
+
+Een registry kan een eigen quota krijgen met `quota-gib` in het projectbestand:
+
+```yaml
+- name: image-registries
+  config:
+    registries:
+      - display-name: NLDD GitHub
+        upstream: ghcr.io/nederlandsedigitaledienst
+        quota-gib: 10
+```
+
+Tot en met 5 kiest een project dat zelf. Daarboven, tot het maximum van 20, is het een aanvraag
+die een platformbeheerder goedkeurt op de goedkeuringspagina. Tot dan krijgt de organisatie 5,
+of de laatst goedgekeurde waarde; een afwijzing houdt hem daar. Verlagen binnen een goedgekeurde
+waarde vraagt niets. De regels zijn die van het dagbudget van send-email, met een besluit per
+registry (`config_item_value_approval` in `opi/services/catalog/approval.py`, de quota in
+`image_registries/quota.py`).
+
+Het besluit staat niet op de registry zelf maar ernaast, in `quota-gib-approval` met de
+registrynaam als sleutel. `PLATFORM_MANAGED` beschermt alleen velden op het bovenste niveau van
+een configblok: op de registry kon een project zijn eigen goedkeuring schrijven.
+
+De grens van 20 staat als `le` op het model en niet als `IntegerSetting`, omdat
+`config_settings` niet in een lijst kijkt.
+
+### Wie tags mag verwijderen
+
+De operator maakt per organisatie drie teams, gekoppeld aan de OIDC-groepen
+`<klant>-<tenant>-<niveau>-group`. Zonder `authorization.teamSync.authLevels` krijgen ze alle
+drie de rol Member, en dan kan niemand in de RCR-interface een tag verwijderen als de cache
+tegen zijn quota loopt. Het sjabloon zet daarom `admin` op `Admin`; `developer` en `viewer`
+blijven Member.
 
 ## Het projectniveau in de deployments-repo
 

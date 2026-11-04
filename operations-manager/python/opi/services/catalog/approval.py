@@ -942,3 +942,211 @@ def deployment_value_approval(
         last_approved_value=_last_approved_value,
         ensure_requested=_ensure_requested,
     )
+
+
+class _ItemApprovalState(_ApprovalState):
+    """The block of ONE item from a list in the service's project config.
+
+    The blocks do not live on the item itself but together under one config field, keyed
+    by item name: ``<field>-approval: {<item>: {...}}``. On the item the block would be
+    unprotected, because ``PLATFORM_MANAGED`` only covers top-level fields of a config
+    block, and a project could then write its own approval.
+    """
+
+    def __init__(self, service: str, map_key: str, item_name: str) -> None:
+        super().__init__(service, item_name)
+        self.map_key = map_key
+
+    def service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
+        """The collection of blocks instead of the config, so reading stays shared."""
+        blocks = super().service_config(project_data).get(self.map_key)
+        return blocks if isinstance(blocks, dict) else {}
+
+    def write(
+        self,
+        project_data: dict[str, Any],
+        fields: dict[str, Any],
+        history_entry: dict[str, Any] | None = None,
+    ) -> None:
+        """Update this item's block, creating it (and the collection) when needed."""
+        entry = self.entry(project_data)
+        if entry is None:
+            return
+        config = self._config_holder(entry, self.service).get("config")
+        if not isinstance(config, dict):
+            return
+        blocks = config.setdefault(self.map_key, {})
+        if not isinstance(blocks, dict):
+            return
+        block = blocks.setdefault(self.config_key, {})
+        block.update(fields)
+        history = block.setdefault("history", [])
+        if history_entry is not None and isinstance(history, list):
+            history.append(history_entry)
+
+    def clear(self, project_data: dict[str, Any]) -> None:
+        """Remove this item's block, and the collection once it is empty."""
+        config = super().service_config(project_data)
+        blocks = config.get(self.map_key)
+        if not isinstance(blocks, dict):
+            return
+        blocks.pop(self.config_key, None)
+        if not blocks:
+            config.pop(self.map_key, None)
+
+
+@dataclass(frozen=True)
+class ConfigItemValueApproval:
+    """Same as :class:`ConfigValueApproval`, but per item of a list in the project config.
+
+    Attributes:
+        spec: the :class:`ApprovalSpec` for ``config_approvals(ConfigLayer.PROJECT)``.
+        is_approved: THE GATE: does this item ask for a decision, and is it there?
+        last_approved_value: the last value an administrator approved for this item.
+        ensure_requested: records the request of every item and removes the blocks of
+            items that no longer exist. State-shaped, so idempotent.
+    """
+
+    spec: ApprovalSpec
+    is_approved: Callable[[dict[str, Any], str], bool]
+    last_approved_value: Callable[[dict[str, Any], str], str]
+    ensure_requested: Callable[[dict[str, Any]], None]
+
+
+def config_item_value_approval(
+    service_type: ServiceType,
+    *,
+    field: str,
+    label: str,
+    item_names: Callable[[dict[str, Any]], list[str]],
+    activity: Callable[[str, Any], str],
+    consequence: Callable[[dict[str, Any], str], str],
+    requested_value: Callable[[dict[str, Any], str], str],
+    subject: Callable[[dict[str, Any], str, str], str] | None = None,
+    approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
+) -> ConfigItemValueApproval:
+    """Approval of a value on ONE item of a list in the project config.
+
+    Where :func:`deployment_value_approval` gives a decision per deployment, this gives one
+    per item, e.g. per registry of image-registries. The rules are shared
+    (``_status_of_value``, ``_record_value``, ``_ensure_value_requested``); only where the
+    block lives differs, see :class:`_ItemApprovalState`.
+
+    The state lives at ``services/[<service>]/config/<field>-approval/<item>``. Mark
+    ``<field>-approval`` as ``PLATFORM_MANAGED`` in the config model.
+
+    Args:
+        service_type: the service that owns the list.
+        field: the key of the value on the item.
+        label: the heading of the request on the approvals page.
+        item_names: the names of the items the project has now.
+        activity: what the decision is about, given item and value, as a sentence subject.
+        consequence: what happens for this item in the meantime.
+        requested_value: the requested value of ONE item as text, empty for no request.
+        subject: what the request is called on the approvals page; defaults to ``activity``.
+        approver: who may decide.
+    """
+    map_key = f"{field}{VALUE_APPROVAL_SUFFIX}"
+    service = service_type.value
+    selection = _ApprovalState(service, map_key)
+
+    def _state(item_name: str) -> _ItemApprovalState:
+        return _ItemApprovalState(service, map_key, item_name)
+
+    def _requested(project_data: dict[str, Any], item_name: str) -> Any:
+        return requested_value(project_data, item_name) or None
+
+    def _subject(project_data: dict[str, Any], item_name: str, value: Any) -> str:
+        if subject is not None:
+            return subject(project_data, item_name, str(value))
+        return activity(item_name, value)
+
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+        """The CHECK, with the item in ``value``: the pair (item, value), as per deployment."""
+        item_name, item_value = value
+        return _status_of_value(_state(item_name), project_data, item_value)
+
+    def _is_approved(project_data: dict[str, Any], item_name: str) -> bool:
+        value = _requested(project_data, item_name)
+        return value is not None and _status_of(project_data, (item_name, value)) is ApprovalStatus.APPROVED
+
+    def _last_approved_value(project_data: dict[str, Any], item_name: str) -> str:
+        last = (_state(item_name).read(project_data) or {}).get(LAST_APPROVED_KEY)
+        return "" if last is None else str(last)
+
+    def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+        """The LIST. One entry per list item with an open or decided request."""
+        items: list[ApprovalItem] = []
+        project_name = project_data.get("name", "")
+        for item_name in item_names(project_data):
+            block = _state(item_name).read(project_data)
+            value = _requested(project_data, item_name)
+            if block is None or "value" not in block or value is None:
+                continue
+            items.append(
+                _value_item(
+                    field=field,
+                    block=block,
+                    value=value,
+                    subject=_subject(project_data, item_name, value),
+                    # Same separator as per deployment: an item name never contains a ``/``.
+                    name=f"{project_name}{DEPLOYMENT_ITEM_SEPARATOR}{item_name}",
+                )
+            )
+        return items
+
+    def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+        item_name = str(item.get("name", "")).partition(DEPLOYMENT_ITEM_SEPARATOR)[2]
+        if not item_name:
+            return
+        _record_value(_state(item_name), project_data, _requested(project_data, item_name), item, history_entry)
+
+    def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
+        if not selection.selected(project_data):
+            return []
+        notices: list[ApprovalNotice] = []
+        for item_name in item_names(project_data):
+            value = _requested(project_data, item_name)
+            if value is None:
+                continue
+            status = _status_of(project_data, (item_name, value))
+            if status is ApprovalStatus.APPROVED:
+                continue
+            notices.append(
+                _notice(
+                    _state(item_name),
+                    project_data,
+                    subject=_subject(project_data, item_name, value),
+                    status=status,
+                    text=_notice_text(activity(item_name, value), consequence(project_data, item_name), status),
+                )
+            )
+        return notices
+
+    def _ensure_requested(project_data: dict[str, Any]) -> None:
+        if not selection.selected(project_data):
+            return
+        names = item_names(project_data)
+        for item_name in names:
+            _ensure_value_requested(_state(item_name), project_data, _requested(project_data, item_name))
+        # A removed item's block would hand a later item with the same name a decision
+        # that was not about it.
+        for orphan in [name for name in _state("").service_config(project_data) if name not in names]:
+            _state(orphan).clear(project_data)
+
+    return ConfigItemValueApproval(
+        spec=ApprovalSpec(
+            key=field,
+            label=label,
+            approver=approver,
+            status_of=_status_of,
+            list_items=_items,
+            record=_record,
+            notices_for=_notices,
+            # Enabling the service asks nothing; only a value above the free range does.
+            requires_approval_for=lambda _config: False,
+        ),
+        is_approved=_is_approved,
+        last_approved_value=_last_approved_value,
+        ensure_requested=_ensure_requested,
+    )

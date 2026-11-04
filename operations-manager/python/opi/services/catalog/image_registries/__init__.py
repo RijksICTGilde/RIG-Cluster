@@ -38,6 +38,7 @@ from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
+from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL
 from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.image_registries.visualizers import (
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from opi.forms.visualizers.visualizer import EditableVisualizer
+    from opi.services.catalog.approval import ApprovalSpec
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +123,12 @@ class ImageRegistriesService(Service):
         if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
             return [DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE]
         return []
+
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
+        return [QUOTA_APPROVAL.spec] if layer is ConfigLayer.PROJECT else []
+
+    def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
+        QUOTA_APPROVAL.ensure_requested(project_data)
 
     # --- component- en deployment-componentniveau -------------------------------------
 

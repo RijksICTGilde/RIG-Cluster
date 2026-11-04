@@ -1,5 +1,61 @@
 {
   "$defs": {
+    "QuotaApproval": {
+      "additionalProperties": true,
+      "description": "Whether a platform administrator approved the quota of one registry.\n\nSame shape as the value approvals of send-email. Written by the approval flow\n(``opi/services/approvals.py``).",
+      "properties": {
+        "approved-value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The last approved quota, which keeps applying while a new request is open.",
+          "title": "Approved-Value"
+        },
+        "history": {
+          "description": "Verdict history: one {date, status, by, message} entry per decision.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "requested, approved or denied.",
+          "title": "Status"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The quota this verdict is about.",
+          "title": "Value"
+        }
+      },
+      "title": "QuotaApproval",
+      "type": "object"
+    },
     "RegistryEntry": {
       "additionalProperties": false,
       "description": "E\u00e9n private registry van het project.",
@@ -47,6 +103,21 @@
           "description": "Het token dat leesrecht op de packages geeft, AGE-versleuteld opgeslagen.",
           "title": "Password"
         },
+        "quota-gib": {
+          "anyOf": [
+            {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Opslagquota in GiB van de proxy-cache van deze registry in RCR. Laat hem weg voor de standaard van het cluster. Tot en met 5 kies je zelf; daarboven, tot 20, is het een aanvraag die een platformbeheerder goedkeurt. Tot dan geldt 5, of de laatst goedgekeurde waarde.",
+          "title": "Quota-Gib"
+        },
         "secretName": {
           "anyOf": [
             {
@@ -92,6 +163,23 @@
   "additionalProperties": false,
   "description": "Projectniveau: de lijst private registries.",
   "properties": {
+    "quota-gib-approval": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/QuotaApproval"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Per registry name: whether the requested quota is approved. Written by the platform. Here and not on the registry itself, because only a field at this level is protected against writes.",
+      "title": "Quota-Gib-Approval",
+      "x-platform-managed": true
+    },
     "registries": {
       "description": "De private registries van dit project, met hun upstream en inloggegevens.",
       "items": {

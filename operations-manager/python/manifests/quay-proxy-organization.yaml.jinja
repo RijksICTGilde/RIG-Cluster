@@ -20,6 +20,18 @@ spec:
   suffix: "{{ suffix }}"
   quota:
     limitGiB: {{ quota_limit_gib }}
+  # authLevels explicitly: left out, the operator gives all three teams the role Member,
+  # and then nobody in the project can delete a tag when the cache runs into its quota.
+  authorization:
+    teamSync:
+      enabled: true
+      authLevels:
+        - name: admin
+          role: Admin
+        - name: developer
+          role: Member
+        - name: viewer
+          role: Member
   # Expliciet uit: bij true is de organisatie niet te verwijderen, en dan laat het
   # uitzetten van de dienst een organisatie achter die niemand meer opruimt.
   preventDeletion: false

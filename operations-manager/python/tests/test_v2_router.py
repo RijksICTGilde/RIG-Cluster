@@ -367,6 +367,9 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
         # proza is geen regel. Ze komen uit ``CloneState``, dus elke dienst die dat
         # meemengt staat hier, op elke laag waar dat model dienstdoet.
         assert declared == {
+            # The verdict per registry on a quota above the free range, kept beside the
+            # registries because a field inside a list item is not protected.
+            "image-registries": ["quota-gib-approval"],
             "keycloak": ["realms"],
             "minio-storage": ["generation", "revisions"],
             "persistent-storage": ["generation", "revisions"],
@@ -404,6 +407,7 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
         # ook die draagt een platform-managed veld in een blok waar een PUT op zit, en dat
         # is precies het geval dat de weigering moet dekken.
         assert with_a_put == {
+            ("image-registries", "project"),
             ("keycloak", "project"),
             ("minio-storage", "project"),
             ("postgresql-database", "project"),
