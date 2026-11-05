@@ -20,6 +20,7 @@ from opi.core.task_errors import (
     NOT_FOUND_ERROR_TYPE,
     TaskInputError,
 )
+from opi.core.task_rollout import first_phase
 from opi.core.task_supersede import (
     RunningTask,
     TaskSuperseded,
@@ -299,6 +300,8 @@ class TaskWorker:
                 project_name=project_name,
                 task_service=self._task_service,
             )
+            if phase := first_phase(task_type):
+                progress.begin_phase(phase)
 
             # Bind this task's identity and deployment scope so the ArgoCD waits
             # deep in the call chain can give way to a newer task that will redo

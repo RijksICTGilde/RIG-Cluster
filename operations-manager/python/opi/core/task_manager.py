@@ -113,6 +113,8 @@ class TaskProgressManager:
         self.project_id = project_id
         self.project_name = project_name
         self.tasks: dict[str, Task] = {}  # Local tasks for this project only
+        # The open phase, if any: steps added while it is open become its children.
+        self._phase_id: str | None = None
 
         # Create project info
         _projects[project_id] = ProjectInfo(
@@ -136,14 +138,19 @@ class TaskProgressManager:
         task_id = str(uuid.uuid4())
         name = clamp_step_text(name)
         subject = clamp_step_text(subject) if subject else subject
-        task = Task(id=task_id, name=name, status=TaskStatus.RUNNING, subject=subject)
+        task = Task(id=task_id, name=name, status=TaskStatus.RUNNING, parent_id=self._phase_id, subject=subject)
         self.tasks[task_id] = task
         logger.info(f"Project {self.project_id}: Added task: {name} ({task_id})")
         self.update_current_step(format_step_line(name, subject))
         return task_id
 
     def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
-        """Add a subtask and start it immediately. Returns subtask ID."""
+        """Add a subtask and start it immediately. Returns subtask ID.
+
+        One level of nesting: a subtask of a step inside a phase goes under the phase.
+        """
+        parent = self.tasks.get(parent_task_id)
+        parent_task_id = (parent.parent_id if parent else None) or parent_task_id
         subtask_id = str(uuid.uuid4())
         name = clamp_step_text(name)
         subject = clamp_step_text(subject) if subject else subject
@@ -152,6 +159,31 @@ class TaskProgressManager:
         logger.info(f"Project {self.project_id}: Added subtask: {name} ({subtask_id}) under {parent_task_id}")
         self.update_current_step(format_step_line(name, subject))
         return subtask_id
+
+    def begin_phase(self, name: str, collapse: bool = True) -> str:
+        """Close the open phase and open ``name``; see PersistentTaskProgressManager.begin_phase."""
+        self._close_phase(TaskStatus.COMPLETED)
+        existing = next((t for t in self.tasks.values() if t.name == name and t.parent_id is None), None)
+        if existing is not None:
+            existing.status = TaskStatus.RUNNING
+            existing.completed_at = None
+            self.update_current_step(name)
+            self._phase_id = existing.id
+            return existing.id
+        phase_id = self.add_task(name)
+        self._phase_id = phase_id
+        return phase_id
+
+    @property
+    def current_phase(self) -> str | None:
+        return self._phase_id
+
+    def _close_phase(self, status: TaskStatus) -> None:
+        phase = self.tasks.get(self._phase_id) if self._phase_id else None
+        if phase is not None and phase.status == TaskStatus.RUNNING:
+            phase.status = status
+            phase.completed_at = datetime.now(tz=UTC)
+        self._phase_id = None
 
     def update_task(self, task_id: str, message: str, subject: str | None = None) -> None:
         """Update a task's name, and its subject when one is given.
@@ -191,12 +223,14 @@ class TaskProgressManager:
 
     def complete_project(self) -> None:
         """Mark the entire project as completed."""
+        self._close_phase(TaskStatus.COMPLETED)
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.COMPLETED
             _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def fail_project(self, error: str) -> None:
         """Mark the entire project as failed."""
+        self._close_phase(TaskStatus.FAILED)
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
             _projects[self.project_id].error = error

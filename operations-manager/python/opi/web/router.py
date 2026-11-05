@@ -3125,7 +3125,7 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
         template_status = "failed"
 
     subtasks = task.get("subtasks") or []
-    task_hierarchy = _build_task_hierarchy(subtasks)
+    task_hierarchy = _build_task_hierarchy(subtasks, template_status)
 
     error = task.get("error_message")
     component_failures = None
@@ -3146,6 +3146,7 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
         "current_step": stap_label(task.get("current_step"))
         or ("Details niet meer beschikbaar" if details_purged else "Verwerking gestart..."),
         "tasks": task_hierarchy,
+        "total_duration_seconds": _total_duration_seconds(subtasks) if template_status == "completed" else None,
         "status": template_status,
         "error": error,
         "component_failures": component_failures,
@@ -3168,8 +3169,22 @@ def _step_duration_seconds(step: dict) -> float | None:
     return max(duur.total_seconds(), 0.0)
 
 
-def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
-    """Convert flat V2 subtask list to nested task hierarchy for the template."""
+def _total_duration_seconds(subtasks: list[dict]) -> float | None:
+    """From the first step's start to the last step's end, or None without timestamps."""
+    started = [st["started_at"] for st in subtasks if st.get("started_at")]
+    completed = [st["completed_at"] for st in subtasks if st.get("completed_at")]
+    if not started or not completed:
+        return None
+    return _step_duration_seconds({"started_at": min(started), "completed_at": max(completed)})
+
+
+def _build_task_hierarchy(subtasks: list[dict], task_status: str = "running") -> list[dict]:
+    """Convert flat V2 subtask list to nested task hierarchy for the template.
+
+    A completed phase (``collapse``) without a failed step shows no steps: they only
+    matter while it runs or when one failed. A phase still marked running in a task that
+    already ended shows the task's outcome, since a handler that raised never closed it.
+    """
     main_tasks = []
     children: dict[str, list] = {}
     for st in subtasks:
@@ -3180,18 +3195,19 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
             "status": st.get("status", "pending"),
             "error": st.get("error"),
             "subject": st.get("subject"),
-            # Hoe lang de stap duurde. None voor een stap die nog loopt en voor stappen
-            # van voor RC-418, die geen tijdstempels hebben.
-            "duration_seconds": _step_duration_seconds(st),
         }
         parent = st.get("parent_id")
         if parent:
             children.setdefault(parent, []).append(entry)
         else:
-            task_entry = {**entry, "id": st.get("id", ""), "subtasks": []}
+            task_entry = {**entry, "id": st.get("id", ""), "collapse": st.get("collapse", False), "subtasks": []}
             main_tasks.append(task_entry)
     for mt in main_tasks:
-        mt["subtasks"] = children.get(mt["id"], [])
+        steps = children.get(mt["id"], [])
+        if mt["status"] == "running" and task_status != "running" and mt["collapse"]:
+            mt["status"] = task_status
+        folded = mt["collapse"] and mt["status"] == "completed" and all(s["status"] != "failed" for s in steps)
+        mt["subtasks"] = [] if folded else steps
     return main_tasks
 
 

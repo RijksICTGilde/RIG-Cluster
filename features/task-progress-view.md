@@ -50,7 +50,7 @@ volgbaar -- het project staat dan niet (meer) in de store.
 
 - een voortgangsbalk, met het percentage naast de huidige stap;
 - de stappen en substappen met een vinkje, kruis, pijl of klok;
-- de duur van een stap die klaar is (zie [rollout-metingen](./rollout-metingen.md));
+- na afloop de totale duur, "Klaar in ..." (geen duur per stap: dat was ruis);
 - de foutregel van een stap of substap die mislukte;
 - bij mislukken: de uitleg per component uit `partials/_component_failures.html.j2`;
 - een afsluitknop, als de aanroeper er een meegeeft.
@@ -83,6 +83,16 @@ toepassen"), "Configuratie ophalen" per repository, "Deploymentconfiguratie opst
 deployment, "Projectbrede configuratie opstellen", "Configuratie publiceren" per repository,
 "Projectbestand bijwerken", "Uitrol klaarzetten", "Uitrollen". Faalt een fase, dan staat de
 foutregel bij die stap.
+
+**Een uitrol toont drie fases.** "Wijziging controleren en opslaan" (bij een refresh
+"Projectbestand controleren"), "Kubernetes-bestanden bijwerken in Git" en "Uitrollen". De
+task worker opent de eerste (`first_phase` in `opi/core/task_rollout.py`), `process_project`
+de tweede en de ArgoCD-wacht is de derde. Een stap die start terwijl een fase open is, valt
+eronder (`begin_phase` op de progress manager); de aanroepen zelf weten niets van fases. Een
+geslaagde fase klapt dicht, een lopende of mislukte staat open met zijn stappen
+(`_build_task_hierarchy` in `opi/web/router.py`). "Uitrollen" klapt niet dicht: de regels per
+deployment eronder zijn de uitkomst. Taken zonder fase (verwijderen, backup, slaapstand)
+tonen hun stappen plat, zoals voorheen.
 
 **Elke regel is werk dat echt gebeurt.** Er zijn geen containerstappen die alleen andere
 stappen omsluiten: de pagina toont één niveau nesting, dus zo'n stap stond tussen de echte

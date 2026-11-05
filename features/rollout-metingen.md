@@ -14,7 +14,7 @@ versnelling eraan is af te lezen en een wijziging die niets oplevert opvalt.
 
 Drie dingen horen bij elkaar:
 
-1. **Duur per stap** in de taakvoortgang.
+1. **Tijdstempels per stap** in de taakvoortgang, met de totale duur op de pagina.
 2. **Een Prometheus-histogram per fase** van een rollout, met het taaktype als label.
 3. **Een bank** die een vast stel scenario's op de sandbox meet en als tabel meldt.
 
@@ -22,10 +22,10 @@ Drie dingen horen bij elkaar:
 
 Elke stap in de voortgang legt zijn begin- en eindtijd vast
 (`opi/core/persistent_task_progress.py`, in de `subtasks`-kolom van de taak, dus zonder
-migratie). De voortgangsweergave zet de duur op de tweede regel van de stap, naast het
-onderwerp en de eventuele fout (`progress_step_detail` in
-`opi/templates_lotc/widgets/_macros.html.j2`). Een stap die nog loopt heeft geen duur, en
-een stap van voor deze wijziging ook niet: die mist de tijdstempels.
+migratie). De voortgangsweergave toont die niet meer per stap: negen van de veertien stappen
+stonden op 0,0 of 0,1 s, en dat maakte de lijst lang en rommelig. Na afloop staat alleen de
+totale duur onder de lijst, "Klaar in 17,3 s" (`_total_duration_seconds` in
+`opi/web/router.py`). Voor de duur per fase zijn het histogram en de bank hieronder er.
 
 De opmaak staat in `format_step_duration` (`opi/core/template_helpers.py`), beschikbaar als
 het Jinja-filter `stapduur`. Onder een minuut met een decimaal ("12,5 s"), daarboven in

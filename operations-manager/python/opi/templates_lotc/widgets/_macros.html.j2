@@ -262,7 +262,6 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% macro progress_step_detail(step, show_errors=True) %}
 {%- set parts = [] -%}
 {%- if step.subject %}{% set _ = parts.append(step.subject) %}{% endif -%}
-{%- if step.duration_seconds is defined and step.duration_seconds is not none %}{% set _ = parts.append(step.duration_seconds | stapduur) %}{% endif -%}
 {%- if show_errors and step.error %}{% set _ = parts.append(step.error) %}{% endif -%}
 {{- parts | join(' - ') -}}
 {% endmacro %}
