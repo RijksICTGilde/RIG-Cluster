@@ -12,7 +12,6 @@
     - status: str ("running", "completed", "failed")
   Optional:
     - tasks: list of task dicts (name, status, subtasks)
-    - total_duration_seconds: float | None (shown as "Klaar in ..." once completed)
     - error: str | None
     - component_failures: list of failure dicts (component, deployment, failure_type, message, logs) | None
     - project_name: str | None (for linking to detail page)
@@ -56,10 +55,6 @@
     {% endif %}
 
     {{ progress_task_list(tasks) }}
-
-    {% if status == "completed" and total_duration_seconds is defined and total_duration_seconds is not none %}
-    <p class="edit-progress-step">Klaar in {{ total_duration_seconds | stapduur }}</p>
-    {% endif %}
 
     {# De vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
        zonder klikafhandeling op het scherm: de dialoog ging niet dicht en de pagina

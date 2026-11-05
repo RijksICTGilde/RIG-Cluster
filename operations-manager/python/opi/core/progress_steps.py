@@ -14,15 +14,6 @@ else under ``opi/``.
 """
 
 # ----------------------------------------------------------------------
-# Phases: the few lines a rollout shows once it is done. Every step that starts
-# while a phase is open lands under it (``begin_phase`` on the progress manager).
-# ----------------------------------------------------------------------
-PHASE_CHECK_AND_SAVE = "Wijziging controleren en opslaan"
-PHASE_CHECK = "Projectbestand controleren"
-PHASE_KUBERNETES_FILES = "Kubernetes-bestanden bijwerken in Git"
-# The rollout phase is the ArgoCD wait itself: its per-deployment rows are its children.
-
-# ----------------------------------------------------------------------
 # Rollout: reading the project file, provisioning, publishing, deploying
 # ----------------------------------------------------------------------
 PROJECT_FILE_FETCH = "Projectbestand ophalen"
@@ -79,8 +70,7 @@ def deleted_deployments_cleanup(count: int) -> str:
 
 
 def waiting_for_applications(count: int) -> str:
-    """The subject of the rollout phase while ArgoCD still has applications to sync."""
-    return f"wacht op {count} applicatie(s)"
+    return f"Wachten tot {count} applicatie(s) gesynchroniseerd zijn"
 
 
 def running_sync_terminated(deployment_names: list[str]) -> str:
