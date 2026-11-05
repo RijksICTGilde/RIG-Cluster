@@ -256,6 +256,10 @@ form.is-bezig {
     height: 0.85em;
     height: 1.2cap;
     width: auto;
+    /* De PNG heeft onder het huisje 8,5 van 284 px lege rand; zonder deze schuif staat het
+       huisje boven de onderkant van Z en D. Een negatieve marge helpt niet: flex lijnt een
+       img uit op de onderkant van zijn border box. */
+    translate: 0 3%;
 }
 
 /* Het woordmerk in de kopbalk, even hoog als het losse logo dat er stond. */
