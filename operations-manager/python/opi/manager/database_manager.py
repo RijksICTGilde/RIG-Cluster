@@ -303,6 +303,7 @@ class DatabaseManager:
                 database=db_database,
                 schemas=all_schemas,
                 connection_limit=connection_limit,
+                db_host=db_host,
                 rotate_password=rotate_password,
             )
 
@@ -479,6 +480,7 @@ class DatabaseManager:
         database: str,
         schemas: list[str],
         connection_limit: int,
+        db_host: str,
         rotate_password: bool = False,
     ) -> tuple[str, str]:
         """Ensure a persistent read-only role exists for the deployment's database.
@@ -489,7 +491,8 @@ class DatabaseManager:
         list. The read-only database console (and read-only application use) connect as
         this role, so writes are impossible server-side and the console can browse every
         schema. Its password is kept stable across syncs by reusing the value already
-        stored in the deployment's database secret.
+        stored in the deployment's database secret, and it is only set again when that
+        value no longer logs in, like the main user in ``_resolve_database_credentials``.
 
         Args:
             schemas: The deployment's schemas, primary first; must be non-empty.
@@ -505,16 +508,23 @@ class DatabaseManager:
         # Reuse the stored read-only password to avoid churning the secret (and
         # any consumer of it) on every reprocess; generate one only if absent.
         ro_password = ""
+        reused = False
         if not rotate_password:
             existing = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
             ro_password = existing.ro_password if existing and existing.ro_password else ""
+            reused = bool(ro_password)
         if not ro_password:
             ro_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
 
         create_result = await self.postgres_connector.create_user(
             username=ro_username, password=ro_password, connection_limit=connection_limit
         )
-        if create_result["status"] == "exists":
+        if create_result["status"] == "exists" and not (
+            reused
+            and await self._test_database_connection(
+                username=ro_username, password=ro_password, database=database, schema=schemas[0], host=db_host
+            )
+        ):
             await self.postgres_connector.update_user_password(username=ro_username, new_password=ro_password)
         await self._reconcile_connection_limit(ro_username, connection_limit)
 
@@ -1838,6 +1848,9 @@ class DatabaseManager:
         Returns:
             True if the server accepts the credentials, False if it rejects them or the
             database does not exist yet (a fresh generation reaches this before phase 2).
+            A missing CONNECT privilege also counts as True: PostgreSQL checks it only after
+            the password is accepted, and the read-only role gets its CONNECT later on a clone
+            target (RC-285).
 
         Raises:
             Exception: Any other connection failure. De aanroeper leest False als
@@ -1855,6 +1868,9 @@ class DatabaseManager:
             )
             await conn.close()
             logger.debug(f"Connection test successful for {username}@{host}/{database}")
+            return True
+        except asyncpg.InsufficientPrivilegeError:
+            logger.debug(f"Credentials accepted for {username}@{host}, CONNECT on {database} not granted")
             return True
         except (asyncpg.InvalidAuthorizationSpecificationError, asyncpg.InvalidCatalogNameError) as e:
             logger.debug(f"Database connection test failed for user {username}: {e}")
@@ -2387,6 +2403,7 @@ class DatabaseManager:
                     database=target_database,
                     schemas=all_schemas,
                     connection_limit=connection_limit,
+                    db_host=db_host,
                 )
                 database_secret = DatabaseSecret(
                     host=self._db_host,
