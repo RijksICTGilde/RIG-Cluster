@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core import progress_steps
 from opi.manager import project_manager as project_manager_module
 from opi.manager.project_manager import DATABASE_CONNECT_TIMEOUT_SECONDS, ProjectManager
 from opi.services.postgres_scope import project_uses_dedicated_postgres
@@ -145,7 +146,7 @@ class TestClusterReadyWarning:
         log.warning.assert_called_once()
         assert "unable to receive the status" in log.warning.call_args.args[0]
         progress.add_subtask.assert_called_once()
-        assert "niet Ready" in progress.add_subtask.call_args.args[1]
+        assert progress.add_subtask.call_args.args[1].startswith(progress_steps.database_not_ready(""))
         progress.complete_task.assert_called_once_with("sub")
 
     @pytest.mark.asyncio

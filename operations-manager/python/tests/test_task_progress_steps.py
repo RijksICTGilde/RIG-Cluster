@@ -11,10 +11,12 @@ the assertions run against the same structure the database and the progress
 fragment read.
 """
 
+import itertools
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core import progress_steps
 from opi.core.task_manager import TaskStatus
 
 if TYPE_CHECKING:
@@ -50,7 +52,7 @@ def _names(progress: Any) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _project_manager(monkeypatch: pytest.MonkeyPatch, *, process_ok: bool, migrated: bool = False) -> Any:
+def _project_manager(monkeypatch: pytest.MonkeyPatch, *, process_ok: bool | None, migrated: bool = False) -> Any:
     """A ProjectManager whose collaborators are stubbed out around the steps."""
     from opi.manager.project_manager import ProjectManager
 
@@ -72,7 +74,8 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, process_ok: bool, migra
     monkeypatch.setattr(manager, "get_git_connector_for_project_files", AsyncMock(return_value=MagicMock()))
     monkeypatch.setattr("opi.manager.project_manager.validate_project_schema", lambda *a, **k: None)
     monkeypatch.setattr(manager, "save_and_commit_project", AsyncMock(return_value=True))
-    monkeypatch.setattr(manager, "process_project", AsyncMock(return_value=process_ok))
+    if process_ok is not None:
+        monkeypatch.setattr(manager, "process_project", AsyncMock(return_value=process_ok))
     # No deployments in scope: the ArgoCD wait has nothing to poll and finishes.
     monkeypatch.setattr(manager, "get_deployments", AsyncMock(return_value=[]))
     monkeypatch.setattr(manager, "get_name", AsyncMock(return_value="test-project"))
@@ -90,26 +93,52 @@ async def test_pipeline_names_its_steps_and_completes_them(monkeypatch: pytest.M
     assert await manager.process_project_from_git("projects/test-project.yaml", task_progress_manager=progress) is True
 
     assert _steps(progress) == [
-        ("Projectbestand ophalen en controleren", TaskStatus.COMPLETED.value),
-        ("Diensten en manifesten bijwerken", TaskStatus.COMPLETED.value),
-        ("Wachten tot ArgoCD gesynchroniseerd is", TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_VALIDATE, TaskStatus.COMPLETED.value),
+        (progress_steps.ROLLOUT, TaskStatus.COMPLETED.value),
     ]
 
 
 @pytest.mark.asyncio
-async def test_pipeline_marks_the_failing_step_and_claims_no_sync(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failed run must not show a green ArgoCD step for a sync that never ran."""
+async def test_a_failed_run_keeps_its_reason_and_claims_no_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed run must not show a green ArgoCD step for a sync that never ran.
+
+    The phases of ``process_project`` name their own failure, so there is no container
+    step left to fail here. The reason has to survive anyway: it is what the task shows.
+    """
     manager = _project_manager(monkeypatch, process_ok=False)
     progress = _progress()
 
     assert await manager.process_project_from_git("projects/test-project.yaml", task_progress_manager=progress) is False
 
     assert _steps(progress) == [
-        ("Projectbestand ophalen en controleren", TaskStatus.COMPLETED.value),
-        ("Diensten en manifesten bijwerken", TaskStatus.FAILED.value),
+        (progress_steps.PROJECT_FILE_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_VALIDATE, TaskStatus.COMPLETED.value),
+    ]
+    assert progress_steps.ROLLOUT not in _names(progress)
+    assert manager.get_processing_error()
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_fails_the_schema_fails_the_validation_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fetching and validating are two steps, so the page says which of the two broke."""
+    from opi.core.project_schema import ProjectSchemaError
+
+    manager = _project_manager(monkeypatch, process_ok=True)
+    monkeypatch.setattr(
+        "opi.manager.project_manager.validate_project_schema",
+        lambda *a, **k: (_ for _ in ()).throw(ProjectSchemaError("components[0].name is verplicht")),
+    )
+    progress = _progress()
+
+    assert await manager.process_project_from_git("projects/test-project.yaml", task_progress_manager=progress) is False
+
+    assert _steps(progress) == [
+        (progress_steps.PROJECT_FILE_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_VALIDATE, TaskStatus.FAILED.value),
     ]
     failed = [info for info in progress._subtasks.values() if info["status"] == TaskStatus.FAILED.value]
-    assert failed[0]["error"]
+    assert "verplicht" in failed[0]["error"]
 
 
 @pytest.mark.asyncio
@@ -119,13 +148,13 @@ async def test_migration_step_only_appears_when_the_file_was_migrated(
     plain = _project_manager(monkeypatch, process_ok=True)
     progress_plain = _progress()
     await plain.process_project_from_git("projects/test-project.yaml", task_progress_manager=progress_plain)
-    assert "Projectbestand bijwerken naar de nieuwste vorm" not in _names(progress_plain)
+    assert progress_steps.PROJECT_FILE_MIGRATE not in _names(progress_plain)
 
     migrating = _project_manager(monkeypatch, process_ok=True, migrated=True)
     progress_migrating = _progress()
     await migrating.process_project_from_git("projects/test-project.yaml", task_progress_manager=progress_migrating)
-    assert _steps(progress_migrating)[1] == (
-        "Projectbestand bijwerken naar de nieuwste vorm",
+    assert _steps(progress_migrating)[2] == (
+        progress_steps.PROJECT_FILE_MIGRATE,
         TaskStatus.COMPLETED.value,
     )
 
@@ -141,7 +170,7 @@ async def test_pipeline_reports_nothing_without_a_progress_manager(monkeypatch: 
 # ---------------------------------------------------------------------------
 # The phases after the services
 #
-# On 4 November the page stayed on "Redis-cache klaarmaken" for five minutes
+# On 4 November the page stayed on the last service step for five minutes
 # while OPI was waiting on a push to GitHub. So every phase after the services
 # names itself.
 # ---------------------------------------------------------------------------
@@ -207,10 +236,10 @@ async def test_every_manifest_phase_names_itself(monkeypatch: pytest.MonkeyPatch
     await manager._process_repository_manifests({"name": "deployments"}, [deployment])
 
     assert _steps(progress) == [
-        ("Manifesten uit Git ophalen", TaskStatus.COMPLETED.value),
-        ("Manifesten genereren", TaskStatus.COMPLETED.value),
-        ("Projectmanifesten genereren", TaskStatus.COMPLETED.value),
-        ("Manifesten naar Git pushen", TaskStatus.COMPLETED.value),
+        (progress_steps.CONFIG_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.DEPLOYMENT_CONFIG_BUILD, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_CONFIG_BUILD, TaskStatus.COMPLETED.value),
+        (progress_steps.CONFIG_PUBLISH, TaskStatus.COMPLETED.value),
     ]
     assert [info.get("subject") for info in progress._subtasks.values()] == [
         "deployments",
@@ -229,13 +258,13 @@ async def test_fetching_the_repo_is_already_its_own_running_line(monkeypatch: py
     """
     seen: list[str | None] = []
     progress = _progress()
-    progress.complete_task(progress.add_task("Redis-cache klaarmaken", subject="productie"))
+    progress.complete_task(progress.add_task(progress_steps.CACHE_CONFIG_APPLY, subject="productie"))
     manager, deployment = _repository_manager(monkeypatch, during_prepare=lambda: seen.append(progress._current_step))
     manager.set_progress_manager(progress)
 
     await manager._process_repository_manifests({"name": "deployments"}, [deployment])
 
-    assert seen == ["Manifesten uit Git ophalen - deployments"]
+    assert seen == [f"{progress_steps.CONFIG_FETCH} - deployments"]
 
 
 @pytest.mark.asyncio
@@ -248,17 +277,17 @@ async def test_a_failing_push_is_the_failing_step_and_the_running_line(monkeypat
     )
     manager, deployment = _repository_manager(monkeypatch, push_error=error)
     progress = _progress()
-    progress.complete_task(progress.add_task("Redis-cache klaarmaken", subject="productie"))
+    progress.complete_task(progress.add_task(progress_steps.CACHE_CONFIG_APPLY, subject="productie"))
     manager.set_progress_manager(progress)
 
     with pytest.raises(GitCommandTimeoutError):
         await manager._process_repository_manifests({"name": "deployments"}, [deployment])
 
-    push_step = next(info for info in progress._subtasks.values() if info["name"] == "Manifesten naar Git pushen")
+    push_step = next(info for info in progress._subtasks.values() if info["name"] == progress_steps.CONFIG_PUBLISH)
     assert push_step["status"] == TaskStatus.FAILED.value
     assert "kreeg geen antwoord" in push_step["error"]
     assert "github.com" in push_step["error"]
-    assert progress._current_step == "Manifesten naar Git pushen - deployments"
+    assert progress._current_step == f"{progress_steps.CONFIG_PUBLISH} - deployments"
 
 
 @pytest.mark.asyncio
@@ -272,10 +301,10 @@ async def test_a_retried_conflict_is_not_a_failed_push_step(monkeypatch: pytest.
 
     await manager._process_repository_manifests({"name": "deployments"}, [deployment])
 
-    pushes = [(name, status) for name, status in _steps(progress) if name.startswith("Manifesten naar Git pushen")]
+    pushes = [(name, status) for name, status in _steps(progress) if name.startswith(progress_steps.CONFIG_PUBLISH)]
     assert pushes == [
-        ("Manifesten naar Git pushen: botsing, opnieuw", TaskStatus.COMPLETED.value),
-        ("Manifesten naar Git pushen", TaskStatus.COMPLETED.value),
+        (progress_steps.retried_step(progress_steps.CONFIG_PUBLISH), TaskStatus.COMPLETED.value),
+        (progress_steps.CONFIG_PUBLISH, TaskStatus.COMPLETED.value),
     ]
     assert all(status != TaskStatus.FAILED.value for _, status in _steps(progress))
 
@@ -324,8 +353,8 @@ async def test_the_project_file_and_argocd_phases_name_themselves(monkeypatch: p
     assert await manager.process_project() is True
 
     assert _steps(progress)[-2:] == [
-        ("Projectbestand vastleggen", TaskStatus.COMPLETED.value),
-        ("ArgoCD-applicaties aanmaken", TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_UPDATE, TaskStatus.COMPLETED.value),
+        (progress_steps.ROLLOUT_PREPARE, TaskStatus.COMPLETED.value),
     ]
 
 
@@ -338,11 +367,13 @@ async def test_a_failing_project_file_commit_is_the_failing_step(monkeypatch: py
 
     assert await manager.process_project() is False
 
-    commit_step = next(info for info in progress._subtasks.values() if info["name"] == "Projectbestand vastleggen")
+    commit_step = next(
+        info for info in progress._subtasks.values() if info["name"] == progress_steps.PROJECT_FILE_UPDATE
+    )
     assert commit_step["status"] == TaskStatus.FAILED.value
     assert "kreeg geen antwoord" in commit_step["error"]
-    assert "ArgoCD-applicaties aanmaken" not in _names(progress)
-    assert progress._current_step == "Projectbestand vastleggen"
+    assert progress_steps.ROLLOUT_PREPARE not in _names(progress)
+    assert progress._current_step == progress_steps.PROJECT_FILE_UPDATE
 
 
 # ---------------------------------------------------------------------------
@@ -399,9 +430,9 @@ async def test_sleep_task_names_every_step_it_takes(monkeypatch: pytest.MonkeyPa
 
     assert result["changed"] is True
     assert _steps(progress) == [
-        ("Deployment in slaapstand zetten", TaskStatus.COMPLETED.value),
-        ("Projectgegevens ophalen", TaskStatus.COMPLETED.value),
-        ("Slaaptoestand vastleggen in git", TaskStatus.COMPLETED.value),
+        (progress_steps.SLEEP_HEADING, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_DATA_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.SLEEP_STATE_COMMIT, TaskStatus.COMPLETED.value),
     ]
     # The reprocessing gets the same progress manager, so the manifest and ArgoCD
     # work names itself on this task instead of running behind a bare bar.
@@ -425,9 +456,9 @@ async def test_wake_task_names_its_own_commit_step(monkeypatch: pytest.MonkeyPat
     )
 
     assert _names(progress) == [
-        "Deployment wekken",
-        "Projectgegevens ophalen",
-        "Wektoestand vastleggen in git",
+        progress_steps.WAKE_HEADING,
+        progress_steps.PROJECT_DATA_FETCH,
+        progress_steps.WAKE_STATE_COMMIT,
     ]
 
 
@@ -446,12 +477,12 @@ async def test_noop_says_so_instead_of_ticking_off_work_it_skipped(
 
     assert result["changed"] is False
     assert _steps(progress) == [
-        ("Deployment in slaapstand zetten", TaskStatus.COMPLETED.value),
-        ("Projectgegevens ophalen", TaskStatus.COMPLETED.value),
-        ("Geen wijziging nodig, de deployment is al sleeping", TaskStatus.COMPLETED.value),
+        (progress_steps.SLEEP_HEADING, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_DATA_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.sleep_no_change("sleeping"), TaskStatus.COMPLETED.value),
     ]
     # Nothing was committed and nothing was reprocessed, so no step claims it was.
-    assert "Slaaptoestand vastleggen in git" not in _names(progress)
+    assert progress_steps.SLEEP_STATE_COMMIT not in _names(progress)
     reprocess.assert_not_awaited()
 
 
@@ -468,7 +499,7 @@ async def test_a_deployment_without_sleep_mode_reports_that_it_did_nothing(
         {"project_name": "test-project", "deployment_name": "dev", "direction": "sleep"}, progress
     )
 
-    assert _names(progress)[-1] == "Slaapstand geldt niet voor deze deployment, er is niets gewijzigd"
+    assert _names(progress)[-1] == progress_steps.SLEEP_OUT_OF_SCOPE
 
 
 @pytest.mark.asyncio
@@ -491,7 +522,7 @@ async def test_a_deployment_outside_the_match_is_slept_like_any_other(
     )
 
     assert result["changed"] is True
-    assert _names(progress)[-1] == "Slaaptoestand vastleggen in git"
+    assert _names(progress)[-1] == progress_steps.SLEEP_STATE_COMMIT
 
 
 # ---------------------------------------------------------------------------
@@ -560,3 +591,74 @@ async def test_failure_marks_the_step_failed(monkeypatch: pytest.MonkeyPatch) ->
     assert steps["Deployment in slaapstand zetten"] == TaskStatus.FAILED.value
     # The step that did finish keeps its honest result.
     assert steps["Slaaptoestand vastleggen in git"] == TaskStatus.COMPLETED.value
+
+
+# ---------------------------------------------------------------------------
+# A refresh from end to end
+# ---------------------------------------------------------------------------
+
+
+def _refresh_manager(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """A ProjectManager that runs the real pipeline AND the real process_project.
+
+    Only the outside world is stubbed: git, the cluster, ArgoCD and the manifest
+    generation. The steps are the code under test, so what the test asserts is the
+    order a refresh really produces. The phases whose own collaborator is stubbed out
+    (the namespaces, the services, the manifest round) report no step here; they have
+    their own tests above.
+    """
+    manager = _project_manager(monkeypatch, process_ok=None)
+    monkeypatch.setattr("opi.manager.project_manager.provisioning_services", list)
+    monkeypatch.setattr(manager, "has_deployments_for_current_cluster", AsyncMock(return_value=True))
+    file_handler = manager._project_file_handler
+    file_handler.reenable_components_with_changed_image = MagicMock(return_value=[])
+    file_handler.set_clone_status = MagicMock()
+    monkeypatch.setattr(manager, "check_and_create_namespaces", AsyncMock())
+    monkeypatch.setattr(manager, "check_and_create_sops_secrets_in_namespaces", AsyncMock())
+    monkeypatch.setattr(manager, "_ensure_database_manager", AsyncMock())
+    monkeypatch.setattr(manager, "_process_application_manifests", AsyncMock())
+    monkeypatch.setattr(manager, "_record_reconciliation", AsyncMock())
+    argo = MagicMock()
+    argo.create_argocd_resources = AsyncMock()
+    monkeypatch.setattr(manager, "_argo_manager", argo)
+    bootstrap = MagicMock()
+    bootstrap.execute_bootstrap_for_deployment = AsyncMock()
+    monkeypatch.setattr(manager, "_bootstrap_manager", bootstrap)
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_names_its_steps_in_order_and_nests_none_of_them(
+    monkeypatch: pytest.MonkeyPatch, stub_platform_repo_sync: None
+) -> None:
+    from opi.core.task_handlers_operations import handle_refresh_project
+
+    manager = _refresh_manager(monkeypatch)
+    project = MagicMock()
+    project.filename = "test-project.yaml"
+    store = MagicMock()
+    store.get.return_value = project
+    store.reconcile = AsyncMock()
+    monkeypatch.setattr("opi.core.task_handlers_operations.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.manager.project_manager.create_project_manager", lambda *a, **k: manager)
+
+    progress = _progress()
+    result = await handle_refresh_project({"project_name": "test-project"}, progress)
+
+    assert result["status"] == "success"
+    assert _steps(progress) == [
+        (progress_steps.PROJECT_LOOKUP, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_FETCH, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_VALIDATE, TaskStatus.COMPLETED.value),
+        (progress_steps.PROJECT_FILE_UPDATE, TaskStatus.COMPLETED.value),
+        (progress_steps.ROLLOUT_PREPARE, TaskStatus.COMPLETED.value),
+        (progress_steps.ROLLOUT, TaskStatus.COMPLETED.value),
+    ]
+    # Een refresh maakt niets aan: wat er al is wordt gecontroleerd of bijgewerkt.
+    assert not [name for name in _names(progress) if "aanmaken" in name.lower()]
+    # Geen containerstap: een stap op het hoogste niveau is afgerond voordat de volgende
+    # begint, dus er staat geen regel open die alleen andere regels omsluit.
+    top_level = [info for info in progress._subtasks.values() if info["parent_id"] is None]
+    for earlier, later in itertools.pairwise(top_level):
+        assert earlier["completed_at"] is not None
+        assert earlier["completed_at"] <= later["started_at"]

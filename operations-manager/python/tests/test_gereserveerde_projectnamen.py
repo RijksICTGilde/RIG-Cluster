@@ -106,7 +106,7 @@ class TestWeigeringBijDeTaak:
     @staticmethod
     def _progress() -> MagicMock:
         progress = MagicMock()
-        progress.add_task.side_effect = lambda name: f"task-{name}"
+        progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
         return progress
 
     async def test_een_nieuw_project_met_een_gereserveerde_naam_faalt(self) -> None:

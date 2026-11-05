@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_redis_server
 from opi.core.config import settings
 from opi.services import ServiceType
@@ -72,7 +73,7 @@ class RedisManager:
         progress_manager = self.project_manager.get_progress_manager()
         redis_task = None
         if progress_manager:
-            redis_task = progress_manager.add_task("Redis-cache klaarmaken", subject=deployment_name)
+            redis_task = progress_manager.add_task(steps.CACHE_CONFIG_APPLY, subject=deployment_name)
 
         try:
             uses_namespace_redis = self._project_uses_namespace_redis(project_data)

@@ -100,4 +100,4 @@ class TestProcessingFailureMessage:
         assert result is False
         error = pm.get_processing_error() or ""
         assert "log" not in error.lower(), error
-        assert error == "Bijwerken van diensten en manifesten is mislukt"
+        assert error == "Het verwerken van het project is mislukt"

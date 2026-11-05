@@ -14,12 +14,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from opi.core import progress_steps as steps
+
 logger = logging.getLogger(__name__)
 
 #: How each direction is named on the page, as a heading and as an outcome.
 _STEPS = {
-    "sleep": ("Deployment in slaapstand zetten", "Deployment slaapt"),
-    "wake": ("Deployment wekken", "Deployment is gewekt"),
+    "sleep": (steps.SLEEP_HEADING, steps.SLEEP_DONE),
+    "wake": (steps.WAKE_HEADING, steps.WAKE_DONE),
 }
 
 
@@ -62,7 +64,7 @@ async def handle_sleep_transition(payload: dict[str, Any], progress: Any) -> dic
         progress.fail_project(str(exc))
         raise
     progress.complete_task(heading)
-    progress.update_current_step(done if result.changed else f"Geen wijziging nodig, deployment is al {result.state}")
+    progress.update_current_step(done if result.changed else steps.sleep_no_change(result.state))
 
     logger.info(
         "sleep-mode task %s for %s/%s: changed=%s state=%s",

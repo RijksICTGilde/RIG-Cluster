@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any
 
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
@@ -54,8 +55,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # ------------------------------------------------------------------
     # Step 1: Validation
     # ------------------------------------------------------------------
-    validate_task = progress.add_task("Project validatie")
-    progress.update_current_step("Projectnaam controleren")
+    validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
 
     if not validate_project_name(project_name):
         error_msg = f"Invalid project name format: {project_name}"
@@ -85,18 +85,17 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # Step 2: YAML content
     # ------------------------------------------------------------------
     if pre_built_yaml is not None:
-        # Path 2: wizard-provided YAML -- just verify we have content.
-        yaml_task = progress.add_task("YAML configuratie controleren")
+        # Path 2: wizard-provided YAML. No step: nothing is checked here, and the
+        # validation happens in "Projectbestand valideren" during processing.
         logger.debug(
             "Using pre-built YAML content for %s (%d chars)",
             project_name,
             len(pre_built_yaml),
         )
         yaml_content = pre_built_yaml
-        progress.complete_task(yaml_task)
     else:
         # Path 1: generate YAML from the request payload.
-        yaml_task = progress.add_task("YAML configuratie genereren")
+        yaml_task = progress.add_task(steps.PROJECT_FILE_BUILD)
         try:
             # generate_self_service_project_yaml expects an object with attributes.
             # Build a lightweight namespace from the payload so it can use attribute
@@ -125,8 +124,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # ------------------------------------------------------------------
     # Step 3: Git operations
     # ------------------------------------------------------------------
-    git_task = progress.add_task("Git repository operaties")
-    progress.update_current_step("Projectbestand naar Git pushen")
+    git_task = progress.add_task(steps.PROJECT_FILE_SAVE)
 
     try:
         from opi.utils.yaml_util import load_yaml_from_string
@@ -231,7 +229,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     if not rollout_requested(payload):
         await project_manager.close()
         note_rollout_skipped(progress)
-        progress.update_current_step(f"Project {project_name} aangemaakt")
+        progress.update_current_step(steps.PROJECT_SAVED)
         progress.complete_project()
         elapsed_time = time.time() - start_time
         return {
@@ -252,9 +250,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             if dep_name := dep.get("name", ""):
                 reset_oom_tune_attempts(project_name, dep_name)
 
-    deploy_task = progress.add_task("Project uitrollen")
-    progress.update_current_step("Project uitrollen")
-
     # Hier stond dat het aanmaken "door een bekende bug in ArgoCD een paar minuten kan
     # duren, excuus daarvoor". Die zin zette de verwachting meteen op minuten, en dat is
     # op de sandbox niet meer waar: op 14 augustus 2026 duurde het aanmaken van een heel
@@ -272,15 +267,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # met de app-status erbij. Hier staat daarom alleen nog waarom een nieuw project langer
     # duurt, en wat een time-out betekent.
     if payload.get("is_new_project", False):
-        notice = progress.add_subtask(
-            deploy_task,
-            "Een nieuw project wordt in twee stappen uitgerold: eerst het projectniveau, dat "
-            "elke deployment nodig heeft, en daarna de deployments zelf. Daarom duurt dit "
-            "langer dan een wijziging op een bestaand project. Loopt het wachten op het "
-            "projectniveau in een time-out, dan stopt het uitrollen daar: het project is "
-            "opgeslagen, de deployments zijn niet uitgerold.",
-        )
-        progress.complete_task(notice)
+        progress.complete_task(progress.add_task(steps.NEW_PROJECT_NOTICE))
 
     try:
         try:
@@ -293,7 +280,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
         if processing_result:
             # ArgoCD monitoring
-            monitor_task = progress.add_subtask(deploy_task, "ArgoCD en de uitrol volgen")
+            monitor_task = progress.add_task(steps.ROLLOUT_CHECK)
             await _monitor_argocd_and_deployment(
                 _task_id="",  # not used by the monitor helper
                 project_name=project_name,
@@ -304,8 +291,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 deployment_names=deployment_names or ([deployment_name] if deployment_name else None),
             )
 
-            progress.complete_task(deploy_task)
-
             # Schedule fire-and-forget OOM watcher for each deployment
             from opi.core.config import settings as app_settings
             from opi.services.oom_watcher import schedule_oom_check
@@ -315,7 +300,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                     if dep_name := dep.get("name", ""):
                         schedule_oom_check(project_name, dep_name)
 
-            progress.update_current_step(f"Project {project_name} succesvol geimplementeerd")
+            progress.update_current_step(steps.PROJECT_DEPLOYED)
             progress.complete_project()
 
             elapsed_time = time.time() - start_time
@@ -342,7 +327,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             return result
         else:
             error_msg = project_manager.get_processing_error() or "Project processing failed"
-            progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)
             component_failures = project_manager.get_component_failures()
             return {
@@ -365,7 +349,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
     except Exception as exc:
         error_msg = f"Failed deployment: {exc}"
-        progress.fail_task(deploy_task, error_msg)
         progress.fail_project(error_msg)
         return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
@@ -400,8 +383,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 1: Validation
         # ------------------------------------------------------------------
-        validate_task = progress.add_task("Deployment validatie")
-        progress.update_current_step("Project- en deploymentnaam controleren")
+        validate_task = progress.add_task(steps.NAMES_CHECK)
 
         if not validate_project_name(project_name):
             error_msg = (
@@ -437,8 +419,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 2: Upsert deployment in project YAML
         # ------------------------------------------------------------------
-        upsert_task = progress.add_task("Deployment aanmaken of bijwerken")
-        progress.update_current_step(f"Deployment '{deployment_name}' aanmaken of bijwerken")
+        upsert_task = progress.add_task(steps.DEPLOYMENT_SAVE, subject=deployment_name)
 
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(
@@ -491,9 +472,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             succeeded = True
             processing: dict[str, Any] = skipped_processing()
         else:
-            deploy_task = progress.add_task("Deployment verwerken")
-            progress.update_current_step(f"Deployment '{deployment_name}' verwerken")
-
             processing_result = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
@@ -514,8 +492,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                     progress.update_component_web_address(url_name, url_value)
 
             if processing_result:
-                progress.complete_task(deploy_task)
-
                 # Schedule fire-and-forget OOM watcher
                 from opi.core.config import settings
                 from opi.services.oom_watcher import schedule_oom_check
@@ -529,7 +505,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                     )
             else:
                 processing_error = project_manager.get_processing_error() or "Deployment processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
             succeeded = bool(processing_result)
@@ -613,7 +588,7 @@ async def handle_delete_project(payload: dict, progress: Any) -> dict:
 
     logger.info(f"Task: deleting project {project_name}")
 
-    delete_task = progress.add_task(f"Project '{project_name}' verwijderen")
+    delete_task = progress.add_task(steps.PROJECT_DELETE, subject=project_name)
     project_manager = create_project_manager()
     # Attach the progress manager so the delete names its own steps (infrastructure,
     # Keycloak, ArgoCD, namespaces, remeasurement) instead of one long-running task.

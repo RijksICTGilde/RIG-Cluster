@@ -16,6 +16,7 @@ from opi.api.v2.models import (
     PendingRolloutResponse,
     error_category_for,
 )
+from opi.core import progress_steps
 from opi.core.async_task_service import TaskType
 from pydantic import BaseModel, Field
 
@@ -605,8 +606,8 @@ def _waiting_step(waiting_for: dict | None) -> str | None:
     """
     if not waiting_for:
         return None
-    waarop = waiting_for.get("deployment_name") or "hele project"
-    return f"Wacht op {waiting_for.get('task_type', '?')} ({waarop})"
+    waarop = waiting_for.get("deployment_name") or progress_steps.WAITING_WHOLE_PROJECT
+    return progress_steps.waiting_for_task(str(waiting_for.get("task_type", "?")), waarop)
 
 
 def task_response_from_dict(task: dict) -> dict:

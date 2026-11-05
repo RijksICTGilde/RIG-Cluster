@@ -17,7 +17,7 @@ PM_PATH = "opi.manager.project_manager.ProjectManager"
 
 def _progress() -> MagicMock:
     progress = MagicMock()
-    progress.add_task.side_effect = lambda name: f"task-{name}"
+    progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
     return progress
 
 
@@ -226,6 +226,28 @@ async def test_attachment_delete_completes() -> None:
     # secret and the mount stay on the cluster and the pod keeps the file it started with.
     pm.process_project_from_git.assert_awaited_once()
     assert pm.process_project_from_git.await_args.args[0] == "projects/demo.yaml"
+
+
+async def test_a_failed_rollout_after_removal_fails_the_project_without_a_container_step() -> None:
+    """The reprocessing after a successful removal has no container step to fail.
+
+    Only ``fail_project`` is left to carry the reason; the phases inside
+    ``process_project_from_git`` name their own failure.
+    """
+    from opi.services.catalog.attachments.task import handle_delete_attachment
+
+    progress = _progress()
+    pm = AsyncMock()
+    pm.remove_attachment = AsyncMock(return_value={"success": True, "changed": True})
+    pm.process_project_from_git = AsyncMock(return_value=False)
+    pm.get_processing_error = MagicMock(return_value="git kapot")
+
+    with patch(PM_PATH, return_value=pm), pytest.raises(RuntimeError, match="git kapot"):
+        await handle_delete_attachment({"project_name": "demo", "attachment_id": "keystore"}, progress)
+
+    progress.fail_project.assert_called_once_with("git kapot")
+    # The remove step itself succeeded, so it is the only task that may fail.
+    progress.fail_task.assert_not_called()
 
 
 async def test_an_attachment_that_was_not_there_processes_nothing() -> None:

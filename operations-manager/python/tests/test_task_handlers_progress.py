@@ -8,6 +8,7 @@ process_project_from_git where applicable.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core import progress_steps
 
 PM_PATH = "opi.manager.project_manager.ProjectManager"
 CREATE_PM_PATH = "opi.manager.project_manager.create_project_manager"
@@ -21,8 +22,8 @@ def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
 def _make_progress():
     """Create a mock progress manager with all expected methods."""
     progress = MagicMock()
-    progress.add_task.side_effect = lambda name: f"task-{name}"
-    progress.add_subtask.side_effect = lambda parent, name: f"subtask-{name}"
+    progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
+    progress.add_subtask.side_effect = lambda parent, name, subject=None: f"subtask-{name}"
     progress.complete_task = MagicMock()
     progress.fail_task = MagicMock()
     progress.fail_project = MagicMock()
@@ -60,8 +61,8 @@ class TestHandleUpdateImage:
             result = await handle_update_image(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Projectgegevens ophalen")
-        progress.add_task.assert_any_call("Image van web bijwerken naar registry.example.com/web:v2")
+        progress.add_task.assert_any_call(progress_steps.PROJECT_DATA_FETCH)
+        progress.add_task.assert_any_call(progress_steps.IMAGE_UPDATE, subject="web naar registry.example.com/web:v2")
         assert progress.complete_task.call_count == 2
         assert result["component"] == "web"
 
@@ -194,8 +195,8 @@ class TestHandleCloneDatabase:
             result = await handle_clone_database(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Projectgegevens ophalen")
-        progress.add_task.assert_any_call("Database kopiëren van mydb via een directe verbinding")
+        progress.add_task.assert_any_call(progress_steps.PROJECT_DATA_FETCH)
+        progress.add_task.assert_any_call(progress_steps.DATABASE_CLONE, subject="mydb via een directe verbinding")
         assert progress.complete_task.call_count == 2
         assert result["rows_copied"] == 100
 
@@ -268,7 +269,7 @@ class TestHandleCloneDatabase:
         with patch(PM_PATH, return_value=mock_pm):
             await handle_clone_database(payload, progress)
 
-        progress.add_task.assert_any_call("Database kopiëren van mydb via een Chisel-tunnel")
+        progress.add_task.assert_any_call(progress_steps.DATABASE_CLONE, subject="mydb via een Chisel-tunnel")
 
 
 # ---------------------------------------------------------------------------
@@ -310,8 +311,8 @@ class TestHandleCloneBucket:
             result = await handle_clone_bucket(payload, progress)
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Projectgegevens ophalen")
-        progress.add_task.assert_any_call("Bucket mybucket kopiëren")
+        progress.add_task.assert_any_call(progress_steps.PROJECT_DATA_FETCH)
+        progress.add_task.assert_any_call(progress_steps.BUCKET_CLONE, subject="mybucket")
         assert progress.complete_task.call_count == 2
         assert result["objects_copied"] == 42
 
@@ -442,10 +443,9 @@ class TestHandleRefreshDeployment:
             rotate_credentials=frozenset(),
         )
 
-        assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Project opzoeken en wijzigingen uit git ophalen")
-        progress.add_task.assert_any_call("Deployment dev opnieuw verwerken")
-        assert progress.complete_task.call_count == 2
+        assert progress.add_task.call_count == 1
+        progress.add_task.assert_any_call(progress_steps.PROJECT_LOOKUP)
+        assert progress.complete_task.call_count == 1
 
         # Web addresses reported
         progress.update_component_web_address.assert_called_once_with("web", "https://web.example.com")
@@ -508,7 +508,9 @@ class TestHandleRefreshDeployment:
             result = await handle_refresh_deployment(payload, progress)
 
         assert result["status"] == "failed"
-        progress.fail_task.assert_called_once()
+        # De herverwerking had geen eigen containerstap meer om te laten falen; de reden
+        # staat op het project, en de stappen binnen de pijplijn falen zichzelf.
+        progress.fail_task.assert_not_called()
         progress.fail_project.assert_called_once()
 
     @pytest.mark.asyncio
@@ -561,7 +563,7 @@ class TestRefreshGitSyncFails:
         ):
             await getattr(handlers, handler_name)(payload, progress)
 
-        step = "task-Project opzoeken en wijzigingen uit git ophalen"
+        step = f"task-{progress_steps.PROJECT_LOOKUP}"
         failed = [call.args for call in progress.fail_task.call_args_list]
         assert any(args[0] == step and "niet bereikbaar" in args[1] for args in failed), failed
 
@@ -628,7 +630,7 @@ class TestHandleUpsertDeployment:
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
-    async def test_processing_failed_marks_deploy_task_failed(self, payload):
+    async def test_processing_failed_fails_the_project(self, payload):
         from opi.core.task_handlers_project import handle_upsert_deployment
 
         progress = _make_progress()
@@ -656,7 +658,7 @@ class TestHandleUpsertDeployment:
         ):
             result = await handle_upsert_deployment(payload, progress)
 
-        progress.fail_task.assert_called_once()
+        progress.fail_task.assert_not_called()
         progress.fail_project.assert_called()
         assert result["status"] == "failed"
 

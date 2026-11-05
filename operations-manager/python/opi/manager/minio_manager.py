@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
 from opi.connectors.minio_mc import MinioConnector, MinioExecutionError, create_minio_connector
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
@@ -283,7 +284,7 @@ class MinioManager:
         progress_manager = self.project_manager.get_progress_manager()
         minio_task = None
         if progress_manager:
-            minio_task = progress_manager.add_task("MinIO-opslag klaarmaken", subject=deployment_name)
+            minio_task = progress_manager.add_task(steps.STORAGE_CONFIG_APPLY, subject=deployment_name)
 
         try:
             minio_connector = create_minio_connector()

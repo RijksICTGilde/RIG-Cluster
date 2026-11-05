@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from opi.connectors.kubectl import create_kubectl_connector
+from opi.core import progress_steps as steps
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.backup_tasks import (
     _create_deployment_from_source,
@@ -50,7 +51,7 @@ async def handle_backup(
     trigger = payload.get("trigger", "scheduled")
 
     # Task 1: Resolve project and deployment info
-    resolve_task = progress.add_task("Project en deployment opzoeken")
+    resolve_task = progress.add_task(steps.PROJECT_DEPLOYMENT_LOOKUP)
     try:
         _project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
             project_name, deployment_name
@@ -62,7 +63,7 @@ async def handle_backup(
     progress.complete_task(resolve_task)
 
     # Task 2: Run backups
-    backup_task = progress.add_task("Backup uitvoeren")
+    backup_task = progress.add_task(steps.BACKUP_RUN)
 
     backup_run_id = generate_backup_run_id()
     project_file_handler = create_project_file_handler()
@@ -71,7 +72,7 @@ async def handle_backup(
 
     # PVC backup
     if "pvc" in resource_types:
-        pvc_subtask = progress.add_subtask(backup_task, "PVC backup")
+        pvc_subtask = progress.add_subtask(backup_task, steps.PVC_BACKUP)
         try:
             backup_manager = create_backup_manager()
             app_results = await backup_manager.backup_project_deployment(
@@ -103,7 +104,7 @@ async def handle_backup(
     if "database" in resource_types and project_file_handler.deployment_uses_service(
         project_data, deployment_name, database_service_types
     ):
-        db_subtask = progress.add_subtask(backup_task, "Database backup")
+        db_subtask = progress.add_subtask(backup_task, steps.DATABASE_BACKUP)
         try:
             kubectl = create_kubectl_connector()
             db_components = project_file_handler.get_components_using_service(
@@ -163,7 +164,7 @@ async def handle_backup(
     if "minio" in resource_types and project_file_handler.deployment_uses_service(
         project_data, deployment_name, minio_service_types
     ):
-        minio_subtask = progress.add_subtask(backup_task, "Objectopslag backup")
+        minio_subtask = progress.add_subtask(backup_task, steps.OBJECT_STORAGE_BACKUP)
         try:
             kubectl = create_kubectl_connector()
             minio_components = project_file_handler.get_components_using_service(
@@ -256,7 +257,7 @@ async def handle_restore(
                     f"Backup-run '{backup_run_id}' is niet gevonden bij project '{project_name}', "
                     "dus er valt niets terug te zetten"
                 )
-                lookup_task = progress.add_task("Backup-run opzoeken")
+                lookup_task = progress.add_task(steps.BACKUP_RUN_LOOKUP)
                 progress.fail_task(lookup_task, msg)
                 progress.fail_project(msg)
                 return {"success": False, "error": msg}
@@ -264,7 +265,7 @@ async def handle_restore(
             pvc_items = [item for item in backup_items if item.get("resource_type") == "pvc"]
 
             # Step 1: Create new deployment
-            create_task = progress.add_task("Deployment aanmaken")
+            create_task = progress.add_task(steps.DEPLOYMENT_CREATE)
             try:
                 await _create_deployment_from_source(
                     project_name,
@@ -282,7 +283,7 @@ async def handle_restore(
 
             # Step 2: Pre-create PVCs
             if pvc_items:
-                pvc_task = progress.add_task("PVC data herstellen")
+                pvc_task = progress.add_task(steps.PVC_RESTORE)
                 try:
                     await _pre_restore_pvcs(
                         project_name=project_name,
@@ -302,19 +303,16 @@ async def handle_restore(
             # Database and minio data is restored by their respective managers
             # during provisioning (clone-from type "backup", which names the run).
             # PVC data was pre-restored in step 2.
-            infra_task = progress.add_task("Infrastructuur aanmaken en data herstellen")
             try:
                 await _provision_deployment_infrastructure(project_name, target_deployment, progress)
             except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
-                progress.fail_task(infra_task, str(e))
                 progress.fail_project(str(e))
                 return {"success": False, "error": str(e)}
-            progress.complete_task(infra_task)
             progress.complete_project()
 
         else:
             # Existing deployment restore
-            resolve_task = progress.add_task("Project en deployment opzoeken")
+            resolve_task = progress.add_task(steps.PROJECT_DEPLOYMENT_LOOKUP)
             try:
                 project, project_data, app_namespace, current_cluster = await _resolve_deployment_info(
                     project_name, target_deployment
@@ -325,7 +323,7 @@ async def handle_restore(
                 return {"success": False, "error": str(e)}
             progress.complete_task(resolve_task)
 
-            restore_task = progress.add_task("Backup herstellen")
+            restore_task = progress.add_task(steps.BACKUP_RESTORE)
             all_success = await restore_items_with_progress(
                 backup_items=backup_items,
                 project_name=project_name,
@@ -343,14 +341,11 @@ async def handle_restore(
                 # Re-provision infrastructure to update credentials and regenerate manifests.
                 # The restore may have changed database passwords (new versioned database),
                 # so process_project_from_git ensures K8s secrets match the actual credentials.
-                infra_task = progress.add_task("Manifesten bijwerken")
                 try:
                     await _provision_deployment_infrastructure(project_name, target_deployment, progress)
-                    progress.complete_task(infra_task)
                 except (ValueError, RuntimeError, KeyError, OSError, ConnectionError) as e:
                     logger.exception("Failed to re-provision after restore for %s/%s", project_name, target_deployment)
-                    progress.fail_task(infra_task, str(e))
-                    progress.fail_project(f"Herstel gelukt maar manifesten bijwerken mislukt: {e}")
+                    progress.fail_project(f"Herstel gelukt maar configuratie bijwerken mislukt: {e}")
                     return {"success": False, "error": str(e)}
 
                 progress.complete_project()

@@ -12,6 +12,7 @@ the sync path or poll an async task.
 import logging
 from typing import Any
 
+from opi.core import progress_steps as steps
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.services.oom_watcher import reset_oom_tune_attempts
 
@@ -44,7 +45,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
     )
 
     # Task 1: Initialize project
-    init_task = progress.add_task("Projectgegevens ophalen")
+    init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
 
     from opi.manager.project_manager import ProjectManager
 
@@ -56,7 +57,7 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
 
     # Task 2: Update component image
     rollout = rollout_requested(payload)
-    update_task = progress.add_task(f"Image van {component_name} bijwerken naar {image}")
+    update_task = progress.add_task(steps.IMAGE_UPDATE, subject=f"{component_name} naar {image}")
     try:
         result = await project_manager.update_image_and_regenerate(
             deployment_name=deployment_name,
@@ -109,7 +110,7 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
     logger.info(f"Task: deleting deployment {project_name}/{deployment_name}")
 
     # Task 1: Initialize project manager
-    init_task = progress.add_task("Projectgegevens ophalen")
+    init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
 
     from opi.manager.project_manager import create_project_manager
 

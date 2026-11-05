@@ -8,6 +8,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from opi.core import progress_steps as steps
+
 if TYPE_CHECKING:
     from opi.core.task_manager import TaskProgressManager
 
@@ -51,8 +53,6 @@ async def _monitor_argocd_and_deployment(
         from opi.connectors.argo import create_argo_connector
 
         argo_connector = create_argo_connector()
-
-        argo_subtask = task_progress_manager.add_subtask(monitor_task, "Wachten op ArgoCD sync voltooiing")
 
         # Direct beginnen met kijken, zonder voorslaap. De vaste sleep(5)+sleep(8) die hier
         # stonden ("give ArgoCD time to pick up" / "allow syncs to propagate") stammen uit de
@@ -107,9 +107,7 @@ async def _monitor_argocd_and_deployment(
                 logger.warning(f"Error checking ArgoCD apps (attempt {attempt + 1}): {e}")
                 await asyncio.sleep(2)
 
-        if argo_synced:
-            task_progress_manager.complete_task(argo_subtask)
-        else:
+        if not argo_synced:
             # Neither outcome below is a failure of this deploy, so neither is logged
             # as an error: the change was committed, pushed and picked up by ArgoCD
             # before we ever got here, and failing the step fed the log watcher, which
@@ -134,24 +132,13 @@ async def _monitor_argocd_and_deployment(
                     project_name,
                     detail,
                 )
-                task_progress_manager.complete_task(argo_subtask)
-                notice = task_progress_manager.add_subtask(
-                    monitor_task,
-                    f"Let op: de deployment is uitgerold, maar draait niet gezond: {detail}. "
-                    "Dat ligt aan de applicatie zelf (bijvoorbeeld een image dat niet gepulld kan "
-                    "worden of een pod die crasht), niet aan het uitrollen.",
-                )
+                notice = task_progress_manager.add_subtask(monitor_task, steps.unhealthy_after_rollout(detail))
                 task_progress_manager.complete_task(notice)
             else:
                 logger.warning(
                     "ArgoCD had not finished syncing %s within the wait window; still: %s", project_name, detail
                 )
-                task_progress_manager.complete_task(argo_subtask)
-                notice = task_progress_manager.add_subtask(
-                    monitor_task,
-                    f"ArgoCD was nog niet klaar met synchroniseren binnen de wachttijd: {detail}. "
-                    "De wijziging is wel gepubliceerd; ArgoCD rondt dit zelf af.",
-                )
+                notice = task_progress_manager.add_subtask(monitor_task, steps.sync_not_finished(detail))
                 task_progress_manager.complete_task(notice)
 
         task_progress_manager.complete_task(monitor_task)

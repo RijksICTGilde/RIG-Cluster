@@ -49,7 +49,7 @@ def _schone_generatiestaat():
 
 def _make_progress() -> MagicMock:
     progress = MagicMock()
-    progress.add_task.side_effect = lambda name: f"task-{name}"
+    progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
     progress.add_subtask.side_effect = lambda parent, name, **kwargs: f"subtask-{name}"
     return progress
 

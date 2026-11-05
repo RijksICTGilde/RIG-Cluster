@@ -76,15 +76,31 @@ uitgevoerd in plaats van getoond. Zie `render_progress_fragment()` in
 ## Wat de huidige regel betekent
 
 De regel is de laatst GESTARTE stap, niet de laatst voltooide, dus blijft die regel tot de
-volgende stap begint. Elke fase noemt zich zelf, in deze orde: diensten, "Manifesten uit Git
-ophalen" per repository, "Manifesten genereren" per deployment, "Projectmanifesten
-genereren", "Manifesten naar Git pushen" per repository, "Projectbestand vastleggen",
-"ArgoCD-applicaties aanmaken". Faalt een fase, dan staat de foutregel bij die stap.
+volgende stap begint. Elke fase noemt zich zelf, in deze orde: "Projectbestand ophalen",
+"Projectbestand valideren", de diensten ("Databaseconfiguratie toepassen",
+"Opslagconfiguratie toepassen", "Inlogconfiguratie toepassen", "Cacheconfiguratie
+toepassen"), "Configuratie ophalen" per repository, "Deploymentconfiguratie opstellen" per
+deployment, "Projectbrede configuratie opstellen", "Configuratie publiceren" per repository,
+"Projectbestand bijwerken", "Uitrol klaarzetten", "Uitrollen". Faalt een fase, dan staat de
+foutregel bij die stap.
+
+**Elke regel is werk dat echt gebeurt.** Er zijn geen containerstappen die alleen andere
+stappen omsluiten: de pagina toont één niveau nesting, dus zo'n stap stond tussen de echte
+stappen in met een vinkje dat pas aan het eind kwam. Mislukt een verwerking zonder dat een
+eigen stap faalde, dan staat de reden bovenaan de pagina, via `fail_project`.
+
+**Alle stapteksten staan in `opi/core/progress_steps.py`.** Wie een stap toevoegt, zet zijn
+tekst daar en geeft de constante mee; het variabele deel (een deployment, component of
+repository) gaat als `subject` mee, niet in de naam.
+`tests/test_progress_step_texts.py` scant `opi/` en faalt op een letterlijke staptekst
+ergens anders. De teksten zijn gewone taal en kloppen voor een nieuw en een bestaand
+project: "inrichten", "toepassen", "opstellen", "opslaan", "publiceren", niet "aanmaken"
+voor iets dat al kan bestaan.
 
 Het ophalen en de push zijn eigen stappen omdat het netwerk ervoor nodig is. Ze starten
 binnen de write, via `on_prepare` en `on_push` van `GitRepoWorkspace.mutate_and_push`. Bij
 een botsing starten ze opnieuw. De push-stap van de poging die botste staat dan als
-"Manifesten naar Git pushen: botsing, opnieuw" afgerond, niet als mislukt: een uitrol die bij
+"Configuratie publiceren: botsing, opnieuw" afgerond, niet als mislukt: een uitrol die bij
 de volgende poging landt, toont geen rode stap.
 
 Een push, fetch of ls-remote zonder antwoord breekt af na 60s

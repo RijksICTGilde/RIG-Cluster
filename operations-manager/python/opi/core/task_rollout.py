@@ -17,6 +17,8 @@ refuse ``rollout=false`` with an explanation instead of ignoring it.
 
 from typing import Any
 
+from opi.core.progress_steps import SKIPPED_STEP_DETAIL, SKIPPED_STEP_LABEL
+
 PAYLOAD_KEY = "rollout"
 
 # Task types whose rollout may be deferred: they only write to the project file, and a
@@ -93,12 +95,19 @@ SKIPPED_MESSAGE = (
     "Call POST /api/v2/projects/{project_name}/:refresh to roll it out."
 )
 
-# Shown as a task step, so the progress view says what did not happen instead of just
-# missing a step.
-SKIPPED_STEP_LABEL = "Uitrol overgeslagen (rollout=false)"
-SKIPPED_STEP_DETAIL = (
-    "Wijziging staat in het projectbestand. Verwerk hem met 'Project herverwerken' wanneer je zover bent."
-)
+__all__ = [
+    "DEFERRABLE_TASK_TYPES",
+    "NON_DEFERRABLE_REASONS",
+    "PAYLOAD_KEY",
+    "PROCESSING_TASK_TYPES",
+    "SKIPPED_MESSAGE",
+    "SKIPPED_REASON",
+    "SKIPPED_STEP_DETAIL",
+    "SKIPPED_STEP_LABEL",
+    "note_rollout_skipped",
+    "rollout_requested",
+    "skipped_processing",
+]
 
 
 def rollout_requested(payload: dict) -> bool:
