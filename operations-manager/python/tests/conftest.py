@@ -219,6 +219,9 @@ def mock_settings() -> Any:
         # Zelfde reden: opi/utils/client_ip.py vergelijkt TRUSTED_PROXY_HOPS met een int
         # (`hops > 0`), en een kale MagicMock geeft daar dezelfde TypeError.
         mock_settings.TRUSTED_PROXY_HOPS = 0
+        # Echte lege strings: create_app() toetst ze als X.Y.Z voor de zadctl-versiecheck.
+        mock_settings.ZADCTL_MIN_VERSION = ""
+        mock_settings.ZADCTL_RECOMMENDED_VERSION = ""
         yield mock_settings
 
 
