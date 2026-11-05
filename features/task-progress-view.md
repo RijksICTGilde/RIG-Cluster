@@ -83,7 +83,9 @@ genereren", "Manifesten naar Git pushen" per repository, "Projectbestand vastleg
 
 Het ophalen en de push zijn eigen stappen omdat het netwerk ervoor nodig is. Ze starten
 binnen de write, via `on_prepare` en `on_push` van `GitRepoWorkspace.mutate_and_push`. Bij
-een botsing starten ze opnieuw.
+een botsing starten ze opnieuw. De push-stap van de poging die botste staat dan als
+"Manifesten naar Git pushen: botsing, opnieuw" afgerond, niet als mislukt: een uitrol die bij
+de volgende poging landt, toont geen rode stap.
 
 Een push, fetch of ls-remote zonder antwoord breekt af na 60s
 (`GIT_PUSH_TIMEOUT_SECONDS`) i.p.v. curl's 300s. Dat geldt voor beide git-paden: de

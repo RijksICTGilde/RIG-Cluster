@@ -887,12 +887,12 @@ async def test_the_first_tip_clones_and_does_not_fetch(remote: Path, git_calls: 
 
 
 # ---------------------------------------------------------------------------
-# Time-out op het netwerk
+# Network timeout
 # ---------------------------------------------------------------------------
 
 
 class _HangingProcess:
-    """Een git-proces dat nooit antwoordt, en onthoudt dat het is afgeschoten."""
+    """A git process that never answers, and remembers that it was killed."""
 
     def __init__(self) -> None:
         self.killed = False
@@ -911,10 +911,10 @@ class _HangingProcess:
 
 
 def _hang_on(subcommand: str, monkeypatch: pytest.MonkeyPatch) -> tuple[list[_HangingProcess], Callable[[], int]]:
-    """Laat alleen ``git <subcommand>`` hangen; de rest is een echt git-proces.
+    """Make only ``git <subcommand>`` hang; everything else is a real git process.
 
-    Zo loopt de hele keten echt: klonen, ls-remote, de commit bouwen, en pas de ene
-    netwerkstap die we willen laten vastlopen hangt.
+    So the whole chain really runs: cloning, ls-remote, building the commit, and only the
+    one network step we want to stall hangs.
     """
     import opi.connectors.git as git_module
 
@@ -968,18 +968,22 @@ async def test_een_push_zonder_antwoord_faalt_snel_en_schiet_het_proces_af(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("_korte_timeout")
 async def test_na_een_push_time_out_landt_een_volgende_write_wel(
     remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """De lock van (repo, branch) is na een time-out vrij, dus de volgende taak komt erdoor."""
+    """The (repo, branch) lock is free after a timeout, so the next task gets through."""
+    import opi.connectors.git_repo as module
+
     repo = _repo(remote)
     werk = tmp_path / "werk"
     base = await repo.tip(ANON)
     await repo.materialize(["prd/alfa"], base, str(werk), ANON)
     (werk / "prd" / "alfa" / "nieuw.yaml").write_text("x\n")
 
+    # The short timeout only while the push hangs: the second, real push must not race
+    # 50ms, which a slower machine loses.
     with monkeypatch.context() as hangend:
+        hangend.setattr(module, "GIT_PUSH_TIMEOUT_SECONDS", 0.05)
         _hang_on("push", hangend)
         with pytest.raises(GitCommandTimeoutError):
             await _write(repo, ["prd/alfa"], werk, "alfa bijwerken", base)
@@ -995,7 +999,7 @@ async def test_na_een_push_time_out_landt_een_volgende_write_wel(
 async def test_een_fetch_zonder_antwoord_bouwt_de_kopie_niet_opnieuw_op(
     remote: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Een hangende fetch is geen beschadigde kopie: opnieuw klonen zou weer hangen."""
+    """A hanging fetch is not a damaged copy: cloning again would hang as well."""
     repo = _repo(remote)
     await repo.tip(ANON)
     hanging, _ = _hang_on("fetch", monkeypatch)
@@ -1010,7 +1014,7 @@ async def test_een_fetch_zonder_antwoord_bouwt_de_kopie_niet_opnieuw_op(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_korte_timeout")
 async def test_een_ls_remote_zonder_antwoord_faalt_snel(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """De netwerkstap van een sync is ls-remote, dus die krijgt dezelfde grens."""
+    """The network step of a sync is ls-remote, so it gets the same limit."""
     repo = _repo(remote)
     hanging, _ = _hang_on("ls-remote", monkeypatch)
 

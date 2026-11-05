@@ -37,6 +37,7 @@ from opi.connectors import create_argo_connector
 from opi.connectors.argo import ArgoTransportError
 from opi.connectors.git import GitConnector, repo_lock_key
 from opi.connectors.git_repo import (
+    GitRepoConflictError,
     GitRepoWorkspace,
     argo_workspace,
     credentials_from_repo_config,
@@ -1977,13 +1978,24 @@ class ProjectManager:
             progress_manager.complete_task(step_id)
 
     @contextmanager
-    def _step(self, name: str, subject: str | None = None) -> Iterator[None]:
-        """Report one step around a block of work, failing it with the raised reason."""
+    def _step(self, name: str, subject: str | None = None, retried_on: type[Exception] | None = None) -> Iterator[None]:
+        """Report one step around a block of work, failing it with the raised reason.
+
+        ``retried_on`` is an error the caller retries itself: it closes the step as
+        "retried" instead of failed, so a rollout that succeeds on the next attempt shows
+        no red step. The error still propagates to the retry loop.
+        """
         step_id = self._begin_step(name, subject)
         try:
             yield
         except Exception as e:
-            self._end_step(step_id, str(e))
+            if retried_on is not None and isinstance(e, retried_on):
+                progress_manager = self.get_progress_manager()
+                if progress_manager is not None and step_id is not None:
+                    progress_manager.update_task(step_id, f"{name}: botsing, opnieuw")
+                self._end_step(step_id)
+            else:
+                self._end_step(step_id, str(e))
             raise
         self._end_step(step_id)
 
@@ -4430,14 +4442,17 @@ class ProjectManager:
             await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
 
         names = ", ".join(str(deployment["name"]) for deployment in deployments)
-        # Het ophalen en de push elk een eigen stap, zodat een hangend of mislukt netwerk op
-        # de voortgangspagina bij die fase staat en niet bij de laatste dienst of het laatste
-        # manifest. Het ophalen zit in mutate_and_push zelf, want dat hoort binnen de lock.
+        # Fetching and pushing each get their own step, so a hanging or failing remote shows
+        # up on the progress page at that phase, not at the last service or manifest. The
+        # fetch lives inside mutate_and_push because it belongs under the lock. A conflict
+        # is retried there, so it does not fail the push step.
         await workspace.mutate_and_push(
             f"Update manifests for {project_name} ({names})",
             _generate,
             on_prepare=lambda: self._step("Manifesten uit Git ophalen", subject=str(repo_config["name"])),
-            on_push=lambda: self._step("Manifesten naar Git pushen", subject=str(repo_config["name"])),
+            on_push=lambda: self._step(
+                "Manifesten naar Git pushen", subject=str(repo_config["name"]), retried_on=GitRepoConflictError
+            ),
         )
 
         # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel in
@@ -6328,8 +6343,8 @@ class ProjectManager:
                     enforce_validation=False,
                 )
 
-            # De wacht op het projectniveau valt hierbinnen, dus de regel noemt ArgoCD
-            # zolang die wacht loopt.
+            # The wait for the project level happens inside, so the line names ArgoCD for
+            # as long as that wait runs.
             with self._step("ArgoCD-applicaties aanmaken"):
                 await self._argo_manager.create_argocd_resources(deployment_names=targets)
 

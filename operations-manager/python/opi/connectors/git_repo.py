@@ -842,10 +842,10 @@ class GitRepoWorkspace:
         schrijven. Botst de write met een wijziging binnen dezelfde scope, dan gaat de hele
         stap opnieuw op de nieuwe stand, want alleen de aanroeper weet wat hij genereerde.
 
-        ``on_prepare`` omsluit het vullen van de werkmap (een clone als de kopie er nog niet is) en
-        ``on_push`` alleen de write, zodat een aanroeper die de voortgang meldt die twee
-        netwerkstappen als eigen stap kan tonen in plaats van als deel van ``mutate``.
-        Elke nieuwe poging opent ze opnieuw.
+        ``on_prepare`` wraps filling the working copy (a clone when there is no copy yet) and
+        ``on_push`` only the write, so a caller that reports progress can show those two
+        network phases as their own step instead of as part of ``mutate``. Every new
+        attempt opens them again.
 
         De lock per (repo, project) blijft: de kustomization van het project is het bestand
         waar taken van hetzelfde project om strijden (RC-265).
