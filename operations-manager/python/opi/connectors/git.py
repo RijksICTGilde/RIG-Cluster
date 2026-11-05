@@ -67,6 +67,10 @@ GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
 # fingerprint as an ssh key.
 GIT_SIGNING_FORMAT = "openpgp"
 
+#: Timeout voor de git-commando's die het netwerk op gaan (push, fetch, ls-remote).
+#: Zonder grens is curl's connect-timeout (300s) de enige limiet.
+GIT_PUSH_TIMEOUT_SECONDS = 60
+
 COMMIT_ACTOR_TRAILER = "Actor"
 """Git-trailer voor wie de commit startte. Auteur/committer blijft OPI; trailer zodat git
 het kan uitlezen (``git log --format=%(trailers:key=Actor,valueonly)``).
@@ -187,14 +191,18 @@ async def run_git(
     cwd: str,
     env: dict[str, str] | None = None,
     stdin: str | bytes | None = None,
+    timeout: float | None = None,
 ) -> tuple[str, str, int]:
     """Run one git command and return (stdout, stderr, exit code), stdout as text.
 
     The single place where this process spawns git: it installs the child environment,
     refuses an interactive credential prompt, points gpg at the imported signing key and
     masks credentials in the log line.
+
+    With ``timeout`` the command is killed and raises :class:`GitCommandTimeoutError` when
+    it does not finish in time. Without it the command waits indefinitely.
     """
-    stdout, stderr, code = await _spawn_git(args, cwd=cwd, env=env, stdin=stdin)
+    stdout, stderr, code = await _spawn_git(args, cwd=cwd, env=env, stdin=stdin, timeout=timeout)
     return stdout.decode("utf-8").strip(), stderr, code
 
 
@@ -215,6 +223,7 @@ async def _spawn_git(
     cwd: str,
     env: dict[str, str] | None = None,
     stdin: str | bytes | None = None,
+    timeout: float | None = None,
 ) -> tuple[bytes, str, int]:
     from opi.core.metrics import track_subprocess_memory
 
@@ -242,8 +251,15 @@ async def _spawn_git(
         cwd=cwd,
     )
     payload = stdin.encode("utf-8") if isinstance(stdin, str) else stdin
-    async with track_subprocess_memory("git"):
-        stdout, stderr = await process.communicate(payload)
+    try:
+        async with track_subprocess_memory("git"):
+            stdout, stderr = await asyncio.wait_for(process.communicate(payload), timeout=timeout)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise GitCommandTimeoutError(
+            f"{_obfuscate_git_command(' '.join(cmd))} got no response within {timeout}s"
+        ) from None
     return stdout, stderr.decode("utf-8").strip(), process.returncode or 0
 
 
@@ -376,6 +392,15 @@ async def build_tree_commit(
     finally:
         if os.path.exists(index_path):
             os.unlink(index_path)
+
+
+class GitCommandTimeoutError(RuntimeError):
+    """A git command got no response within its timeout and was killed.
+
+    Says "got no response", not "not pushed": a push that is killed after the timeout may
+    still have landed server-side. That is safe, because the next rollout reads the remote
+    again and the commits are idempotent.
+    """
 
 
 class GitPushConflictError(RuntimeError):
@@ -641,7 +666,12 @@ class GitConnector:
         logger.debug("Git user identity configured successfully")
 
     async def _run_git_command(
-        self, args: list[str], env: dict[str, str] | None = None, cwd: str | None = None, stdin: str | None = None
+        self,
+        args: list[str],
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        stdin: str | None = None,
+        timeout: float | None = None,
     ) -> tuple[str, str, int]:
         """Run a git command in this connector's working directory, with its credentials.
 
@@ -650,13 +680,21 @@ class GitConnector:
             env: Optional environment variables, applied last
             cwd: Optional working directory
             stdin: Optional text piped to the command's stdin (used by ``hash-object --stdin``)
+            timeout: Optional limit in seconds for a command that goes out over the network.
+                Without it the command waits indefinitely, as every caller did before.
 
         Returns:
             Tuple of (stdout, stderr, return_code)
+
+        Raises:
+            GitCommandTimeoutError: When ``timeout`` passes before the command finishes.
         """
         working_dir = cwd or self.__working_dir
         cmd_env = {**self._credential_env(), **self._ssh_env(), **(env or {})}
-        stdout, stderr, code = await run_git(args, cwd=working_dir, env=cmd_env, stdin=stdin)
+        try:
+            stdout, stderr, code = await run_git(args, cwd=working_dir, env=cmd_env, stdin=stdin, timeout=timeout)
+        except GitCommandTimeoutError as error:
+            raise self._timeout_error(args, timeout) from error
 
         if code != 0:
             # Include git server context in error message
@@ -665,6 +703,16 @@ class GitConnector:
             logger.debug("Git command succeeded")
 
         return stdout, stderr, code
+
+    def _timeout_error(self, args: list[str], timeout: float | None) -> GitCommandTimeoutError:
+        """The timeout named with the operation and the server this connector talks to.
+
+        Obfuscated and context-based, so no credentials reach the message a task shows.
+        """
+        return GitCommandTimeoutError(
+            f"git {_obfuscate_git_command(' '.join(args))} on {self._get_server_context()} "
+            f"got no response within {timeout}s"
+        )
 
     def _ssh_env(self) -> dict[str, str]:
         """GIT_SSH_COMMAND for an ssh remote with a key, empty for everything else."""
@@ -1133,7 +1181,9 @@ class GitConnector:
 
             # First fetch the latest from remote
             fetch_cmd = ["fetch", "origin", target_branch]
-            stdout, stderr, code = await self._run_git_command(fetch_cmd, cwd=self.__working_dir)
+            stdout, stderr, code = await self._run_git_command(
+                fetch_cmd, cwd=self.__working_dir, timeout=GIT_PUSH_TIMEOUT_SECONDS
+            )
             self._check_git_command_result(code, stderr, f"fetch origin/{target_branch}")
 
             # Rebase on the remote branch
@@ -1809,7 +1859,12 @@ class GitConnector:
         """De pogingen zelf; zie :meth:`push_changes`. Loopt onder de push-lock."""
         for attempt in range(max_retries):
             push_cmd = ["push", "origin", target_branch]
-            stdout, stderr, code = await self._run_git_command(push_cmd, cwd=self.__working_dir)
+            # A timeout is not a non-fast-forward, so GitCommandTimeoutError leaves this
+            # loop at once: no rebase, no retry, and the push lock stays taken for at most
+            # one timeout.
+            stdout, stderr, code = await self._run_git_command(
+                push_cmd, cwd=self.__working_dir, timeout=GIT_PUSH_TIMEOUT_SECONDS
+            )
 
             if code == 0:
                 logger.debug(f"Successfully pushed changes to {target_branch}")

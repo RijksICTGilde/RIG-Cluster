@@ -19,8 +19,9 @@ from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated anno
     AsyncIterator,
     Awaitable,
     Callable,
+    Iterator,
 )
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -1954,7 +1955,7 @@ class ProjectManager:
     # gets no step at all rather than a green check it did not earn.
     # ------------------------------------------------------------------
 
-    def _begin_step(self, name: str) -> str | None:
+    def _begin_step(self, name: str, subject: str | None = None) -> str | None:
         """Start a named progress step for the running task.
 
         Returns the step id, or None when no progress manager is attached (the
@@ -1963,7 +1964,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         if progress_manager is None:
             return None
-        return progress_manager.add_task(name)
+        return progress_manager.add_task(name, subject=subject)
 
     def _end_step(self, step_id: str | None, error: str | None = None) -> None:
         """Close a step started with :meth:`_begin_step`: completed, or failed with a reason."""
@@ -1974,6 +1975,17 @@ class ProjectManager:
             progress_manager.fail_task(step_id, error)
         else:
             progress_manager.complete_task(step_id)
+
+    @contextmanager
+    def _step(self, name: str, subject: str | None = None) -> Iterator[None]:
+        """Report one step around a block of work, failing it with the raised reason."""
+        step_id = self._begin_step(name, subject)
+        try:
+            yield
+        except Exception as e:
+            self._end_step(step_id, str(e))
+            raise
+        self._end_step(step_id)
 
     async def get_deployment_workspace(self, name: str, repo_config: dict[str, str]) -> GitRepoWorkspace:
         """De werkmap op de deployments-repo van deze config, een per remote binnen deze taak.
@@ -4395,18 +4407,20 @@ class ProjectManager:
             """Zet de manifests van deze repo neer in de werkmap van deze ronde."""
             # Deployments are already filtered for current cluster by caller
             for deployment in deployments:
-                await self._process_deployment_manifests(deployment, workspace)
+                with self._step("Manifesten genereren", subject=str(deployment["name"])):
+                    await self._process_deployment_manifests(deployment, workspace)
 
             # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
             # project deployments over twee repo's heeft. Welke, beslist
             # project_level_deployment, dezelfde functie die de applicatie gebruikt.
             if owner is not None and owner.get("repository") == repo_config.get("name"):
-                await self._process_project_manifests(
-                    repo_config,
-                    str(owner["cluster"]),
-                    get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
-                    workspace,
-                )
+                with self._step("Projectmanifesten genereren"):
+                    await self._process_project_manifests(
+                        repo_config,
+                        str(owner["cluster"]),
+                        get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
+                        workspace,
+                    )
                 self._project_level_repo = repo_config.get("name")
 
             # Vlak VOOR de write, en niet erna: ArgoCD probeert een revisie die al eens faalde
@@ -4416,7 +4430,15 @@ class ProjectManager:
             await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
 
         names = ", ".join(str(deployment["name"]) for deployment in deployments)
-        await workspace.mutate_and_push(f"Update manifests for {project_name} ({names})", _generate)
+        # Het ophalen en de push elk een eigen stap, zodat een hangend of mislukt netwerk op
+        # de voortgangspagina bij die fase staat en niet bij de laatste dienst of het laatste
+        # manifest. Het ophalen zit in mutate_and_push zelf, want dat hoort binnen de lock.
+        await workspace.mutate_and_push(
+            f"Update manifests for {project_name} ({names})",
+            _generate,
+            on_prepare=lambda: self._step("Manifesten uit Git ophalen", subject=str(repo_config["name"])),
+            on_push=lambda: self._step("Manifesten naar Git pushen", subject=str(repo_config["name"])),
+        )
 
         # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel in
         # wait_for_project_level_application niet op een nieuwe sync te wachten. Alleen de
@@ -6299,13 +6321,17 @@ class ProjectManager:
             # three-way merges our mutations with whatever landed in between.
             self.__contents_as_read = self._process_run[1]
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
-            await self.save_and_commit_project(
-                project_data,
-                f"Process project {project_name}{scope}",
-                enforce_validation=False,
-            )
+            with self._step("Projectbestand vastleggen"):
+                await self.save_and_commit_project(
+                    project_data,
+                    f"Process project {project_name}{scope}",
+                    enforce_validation=False,
+                )
 
-            await self._argo_manager.create_argocd_resources(deployment_names=targets)
+            # De wacht op het projectniveau valt hierbinnen, dus de regel noemt ArgoCD
+            # zolang die wacht loopt.
+            with self._step("ArgoCD-applicaties aanmaken"):
+                await self._argo_manager.create_argocd_resources(deployment_names=targets)
 
             await self._record_reconciliation(project_name, deployments, project_wide, read_started)
 

@@ -850,7 +850,9 @@ class TestWieDeGrendelMeet:
         workspace = MagicMock()
         workspace.get_working_dir = AsyncMock(return_value="/tmp/repo")
 
-        async def _mutate_and_push(_message: str, mutate: Any) -> None:
+        # on_prepare en on_push zijn de haken voor de voortgangsstappen om het ophalen en
+        # de push heen; die stappen doet deze test niet, dus alleen de mutate loopt.
+        async def _mutate_and_push(_message: str, mutate: Any, on_prepare: Any = None, on_push: Any = None) -> None:
             await mutate()
 
         workspace.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)

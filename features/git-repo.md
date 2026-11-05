@@ -117,11 +117,14 @@ vorige ciphertext op schijf nodig, de prunes globben de map, en de kustomization
 een glob gebouwd.
 
 - `get_working_dir()` materialiseert bij eerste gebruik;
-- `mutate_and_push(message, mutate)` doet de stap onder de lock per (repo, project) en
-  schrijft hem weg. De eerste poging neemt de werkmap zoals hij is, want een eerdere stap
-  van dezelfde taak kan er al iets in hebben gezet dat nog niet gecommit is (de
-  PVC-hernoeming van `handle_service_removal`). Pas een echte botsing gooit de map weg en
-  begint opnieuw;
+- `mutate_and_push(message, mutate, on_prepare=None, on_push=None)` doet de stap onder de
+  lock per (repo, project) en schrijft hem weg. De eerste poging neemt de werkmap zoals hij
+  is, want een eerdere stap van dezelfde taak kan er al iets in hebben gezet dat nog niet
+  gecommit is (de PVC-hernoeming van `handle_service_removal`). Pas een echte botsing gooit
+  de map weg en begint opnieuw. `on_prepare` en `on_push` zijn optionele context managers om
+  het vullen van de werkmap (ls-remote, clone of fetch) en om alleen de write heen, zodat een
+  aanroeper die twee netwerkstappen als eigen voortgangsstap kan melden (zie
+  [voortgangspagina](task-progress-view.md));
 - `remove_and_push(path, message)` voor een verwijdering: de beslissing valt binnen de lock,
   op de stand die de werkmap dan heeft;
 - `last_write` is het resultaat van de laatste write via deze werkmap. `mutate_and_push`
@@ -154,6 +157,12 @@ De plumbing die beide gebruiken staat op één plek in `git.py`: `run_git`,
 `credential_env`, `build_tree_commit`, `strip_url_credentials` en de locks
 (`push_lock_for`, `project_write_lock`).
 
+`run_git` geeft optionele `timeout`. De push, de fetch en de ls-remote van `GitRepo` gebruiken
+`GIT_PUSH_TIMEOUT_SECONDS` (60s); zonder grens is curl 300s de enige limiet, en houdt
+dat ook de push-lock bezet. Een `GitCommandTimeoutError` is geen `GitPushConflictError`,
+dus geen retry; de fout gaat direct naar de aanroeper en noemt de remote zonder credentials.
+Een afgeschoten push kan toch geland zijn; volgende ronde leest de remote opnieuw.
+
 ## Tests
 
 `tests/test_git_repo.py`, tegen echte git-repo's op schijf, want wat hier mis kan gaan is
@@ -164,6 +173,11 @@ dat een ronde zonder wijziging niets pusht, dat er geen credential in de kopie s
 een tweede lezing op dezelfde SHA geen fetch doet, dat een onbruikbare kopie zich
 herstelt, dat een bestandsnaam met niet-ASCII bytes een write overleeft, en dat een kopie
 die in gebruik is de opruiming overleeft.
+
+De sectie "Time-out op het netwerk" laat alleen het ene netwerkcommando hangen (een
+nep-subprocess voor `push` of `fetch`, de rest echt git) en toetst dat het proces wordt
+afgeschoten, dat de melding de remote noemt, dat er geen nieuwe poging komt en dat de
+push-lock daarna vrij is.
 
 `test_commit_leest_opnieuw_op_de_nieuwe_tip_na_een_afgewezen_push` bootst de mutate-lus van
 de ProjectStore na bovenop `GitRepo.commit`: lezen, aanpassen, en een externe write er

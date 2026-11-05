@@ -13,7 +13,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from opi.connectors.git import EXEC_MODE, SYMLINK_MODE, FileChange, GitPushConflictError
+from opi.connectors.git import (
+    EXEC_MODE,
+    SYMLINK_MODE,
+    FileChange,
+    GitCommandTimeoutError,
+    GitPushConflictError,
+    push_lock_for,
+    run_git,
+)
 from opi.connectors.git_repo import (
     GitCredentials,
     GitRepo,
@@ -24,7 +32,7 @@ from opi.connectors.git_repo import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 GIT = shutil.which("git") or "/usr/bin/git"
 
@@ -727,3 +735,148 @@ async def test_een_pad_met_een_regeleinde_kan_niet_buiten_de_scope_schrijven(rem
 
     assert _git(remote, "rev-parse", "main") == base
     assert _git(remote, "cat-file", "blob", "main:prd/beta/kustomization.yaml") == "name: beta"
+
+
+# ---------------------------------------------------------------------------
+# Time-out op het netwerk
+# ---------------------------------------------------------------------------
+
+
+class _HangingProcess:
+    """Een git-proces dat nooit antwoordt, en onthoudt dat het is afgeschoten."""
+
+    def __init__(self) -> None:
+        self.killed = False
+        self.returncode: int | None = None
+
+    async def communicate(self, _stdin: bytes | None = None) -> tuple[bytes, bytes]:
+        await asyncio.sleep(3600)
+        raise AssertionError("onbereikbaar")
+
+    def kill(self) -> None:
+        self.killed = True
+
+    async def wait(self) -> int:
+        self.returncode = -9
+        return self.returncode
+
+
+def _hang_on(subcommand: str, monkeypatch: pytest.MonkeyPatch) -> tuple[list[_HangingProcess], Callable[[], int]]:
+    """Laat alleen ``git <subcommand>`` hangen; de rest is een echt git-proces.
+
+    Zo loopt de hele keten echt: klonen, ls-remote, de commit bouwen, en pas de ene
+    netwerkstap die we willen laten vastlopen hangt.
+    """
+    import opi.connectors.git as git_module
+
+    hanging: list[_HangingProcess] = []
+    echt = git_module.asyncio.create_subprocess_exec
+    aantal = 0
+
+    async def fake_exec(*cmd: str, **kwargs: object):
+        nonlocal aantal
+        if subcommand in cmd:
+            aantal += 1
+            process = _HangingProcess()
+            hanging.append(process)
+            return process
+        return await echt(*cmd, **kwargs)
+
+    monkeypatch.setattr(git_module.asyncio, "create_subprocess_exec", fake_exec)
+    return hanging, lambda: aantal
+
+
+@pytest.fixture
+def _korte_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import opi.connectors.git_repo as module
+
+    monkeypatch.setattr(module, "GIT_PUSH_TIMEOUT_SECONDS", 0.05)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_korte_timeout")
+async def test_een_push_zonder_antwoord_faalt_snel_en_schiet_het_proces_af(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(remote)
+    werk = tmp_path / "werk"
+    base = await repo.tip(ANON)
+    await repo.materialize(["prd/alfa"], base, str(werk), ANON)
+    (werk / "prd" / "alfa" / "nieuw.yaml").write_text("x\n")
+    hanging, pushes = _hang_on("push", monkeypatch)
+
+    with pytest.raises(GitCommandTimeoutError) as gevangen:
+        await _write(repo, ["prd/alfa"], werk, "alfa bijwerken", base)
+
+    melding = str(gevangen.value)
+    assert melding.startswith("Push naar ")
+    assert f"{remote}#main" in melding
+    assert "0.05s" in melding
+    assert pushes() == 1, "een push die niet antwoordt wordt niet opnieuw geprobeerd"
+    assert hanging[0].killed, "het hangende git-proces moet worden afgeschoten"
+    assert not push_lock_for(str(remote), "main").locked(), "de push-lock moet daarna vrij zijn"
+    assert _git(remote, "rev-parse", "main") == base
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_korte_timeout")
+async def test_na_een_push_time_out_landt_een_volgende_write_wel(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """De lock van (repo, branch) is na een time-out vrij, dus de volgende taak komt erdoor."""
+    repo = _repo(remote)
+    werk = tmp_path / "werk"
+    base = await repo.tip(ANON)
+    await repo.materialize(["prd/alfa"], base, str(werk), ANON)
+    (werk / "prd" / "alfa" / "nieuw.yaml").write_text("x\n")
+
+    with monkeypatch.context() as hangend:
+        _hang_on("push", hangend)
+        with pytest.raises(GitCommandTimeoutError):
+            await _write(repo, ["prd/alfa"], werk, "alfa bijwerken", base)
+
+    resultaat = await _write(repo, ["prd/alfa"], werk, "alfa bijwerken")
+
+    assert resultaat.committed
+    assert "prd/alfa/nieuw.yaml" in _paths_in(remote)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_korte_timeout")
+async def test_een_fetch_zonder_antwoord_bouwt_de_kopie_niet_opnieuw_op(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Een hangende fetch is geen beschadigde kopie: opnieuw klonen zou weer hangen."""
+    repo = _repo(remote)
+    await repo.tip(ANON)
+    # Een revisie die de kopie niet heeft, dus ensure() moet fetchen.
+    ontbrekend = "0" * 40
+    hanging, _ = _hang_on("fetch", monkeypatch)
+
+    with pytest.raises(GitCommandTimeoutError, match=r"^Fetch van "):
+        await repo.ensure(ontbrekend, ANON)
+
+    assert hanging[0].killed
+    assert os.path.isdir(repo.path), "de kopie blijft staan"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_korte_timeout")
+async def test_een_ls_remote_zonder_antwoord_faalt_snel(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """De eerste netwerkstap van een write is ls-remote, dus die krijgt dezelfde grens."""
+    repo = _repo(remote)
+    hanging, _ = _hang_on("ls-remote", monkeypatch)
+
+    with pytest.raises(GitCommandTimeoutError, match=r"^Opvragen van "):
+        await repo.tip(ANON)
+
+    assert hanging[0].killed
+
+
+@pytest.mark.asyncio
+async def test_een_commando_zonder_time_out_wacht_gewoon_af(remote: Path) -> None:
+    stdout, stderr, code = await run_git(["ls-remote", str(remote), "refs/heads/main"], cwd=str(remote))
+
+    assert code == 0
+    assert "refs/heads/main" in stdout
+    assert stderr == ""

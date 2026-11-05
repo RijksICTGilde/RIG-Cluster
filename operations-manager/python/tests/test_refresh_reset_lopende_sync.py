@@ -131,7 +131,9 @@ class TestDeVlagLooptDoorDeKeten:
 
     @pytest.mark.parametrize("vlag", [True, False])
     async def test_de_repositoryronde_geeft_hem_door_aan_de_opruimronde(self, vlag: bool) -> None:
-        async def mutate_and_push(_message: str, mutate):  # type: ignore[no-untyped-def]
+        # on_prepare en on_push zijn de haken waarmee de aanroeper het ophalen en de push
+        # als eigen voortgangsstap meldt; die stappen doet deze test niet.
+        async def mutate_and_push(_message: str, mutate, on_prepare=None, on_push=None):  # type: ignore[no-untyped-def]
             return await mutate()
 
         workspace = MagicMock()
