@@ -23,6 +23,7 @@ The docs grew organically; this is the split we are holding from here on.
 | Folder | Contains | Written for |
 |---|---|---|
 | `docs/development/` | How to work in the code: contracts, hooks, step-by-step | Whoever changes the code |
+| `docs/instructions/` | Short instructions for a single file or artefact, such as a generated file that lives in git: what it is, how it is made, what to do when it is stale | Whoever (agent or human) runs into that file |
 | `features/` | What a built feature is and why it exists, per feature; `features/README.md` is the index | Whoever needs to understand a subsystem |
 | `docs/` (the rest) | Operating the platform: `sandbox/`, `operations/`, `keycloak/`, `security/`, `post-mortems/` | Whoever runs it |
 | `architecture/` | System-level overviews and decision records | Whoever needs the big picture |

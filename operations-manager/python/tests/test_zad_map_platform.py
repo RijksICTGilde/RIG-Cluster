@@ -19,6 +19,7 @@ from opi.tools.zad_map_platform import ROOT, as_text, build
 def test_checked_in_file_matches_the_repo() -> None:
     assert PLATFORM_JSON.read_text() == as_text(build(ROOT)), (
         "platform.json loopt achter op de repo. Bijwerken: uv run python -m opi.tools.zad_map_platform"
+        " (zie docs/instructions/platform-json.md)"
     )
 
 
