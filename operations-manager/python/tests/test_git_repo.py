@@ -1230,13 +1230,13 @@ async def test_a_credential_in_the_stderr_stays_out_of_the_message(
     _fail_git(
         monkeypatch,
         "push",
-        "fatal: unable to access 'https://git:geheimpje@host/repo.git/': Connection refused",
+        "fatal: unable to access 'https://git:secret-token@host/repo.git/': Connection refused",
     )
 
     with pytest.raises(GitRemoteUnavailableError) as caught:
         await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
 
-    assert "geheimpje" not in redact_text(f"{type(caught.value).__name__}: {caught.value}")
+    assert "secret-token" not in redact_text(f"{type(caught.value).__name__}: {caught.value}")
 
 
 @pytest.mark.asyncio
