@@ -467,10 +467,10 @@ async def test_path_unchanged_since_vergelijkt_byte_voor_byte(remote: Path, tmp_
     (werk / "prd" / "alfa" / "nieuw.yaml").write_text("x\n")
     nieuw = (await _write(repo, ["prd/alfa"], werk, "nieuw bestand", oud)).ref
 
-    assert await repo.path_unchanged_since(oud, "prd/alfa/kustomization.yaml", nieuw, ANON) is True
-    assert await repo.path_unchanged_since(oud, "prd/alfa/nieuw.yaml", nieuw, ANON) is False
-    assert await repo.path_unchanged_since("0" * 40, "prd/alfa/kustomization.yaml", nieuw, ANON) is False
-    assert await repo.path_unchanged_since(oud, "", nieuw, ANON) is False
+    assert await repo.path_unchanged_since(oud, "prd/alfa/kustomization.yaml", nieuw) is True
+    assert await repo.path_unchanged_since(oud, "prd/alfa/nieuw.yaml", nieuw) is False
+    assert await repo.path_unchanged_since("0" * 40, "prd/alfa/kustomization.yaml", nieuw) is False
+    assert await repo.path_unchanged_since(oud, "", nieuw) is False
 
 
 @pytest.mark.asyncio
@@ -745,6 +745,14 @@ async def test_een_pad_met_een_regeleinde_kan_niet_buiten_de_scope_schrijven(rem
 # ---------------------------------------------------------------------------
 
 
+def _subcommand(args: list[str]) -> str:
+    """The git subcommand, past any leading ``-c key=value`` options."""
+    index = 0
+    while args[index] == "-c":
+        index += 2
+    return args[index]
+
+
 @pytest.fixture
 def git_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """The git subcommands GitRepo runs, in order."""
@@ -754,7 +762,7 @@ def git_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     real = module.run_git
 
     async def count(args: list[str], **kwargs: object) -> tuple[str, str, int]:
-        calls.append(args[0])
+        calls.append(_subcommand(args))
         return await real(args, **kwargs)  # type: ignore[arg-type]
 
     monkeypatch.setattr(module, "run_git", count)
@@ -1070,8 +1078,8 @@ def _fail_git(
     calls: list[str] = []
 
     async def fake(args: list[str], **kwargs: object) -> tuple[str, str, int]:
-        calls.append(args[0])
-        if args[0] == subcommand and (times is None or calls.count(subcommand) <= times):
+        calls.append(_subcommand(args))
+        if _subcommand(args) == subcommand and (times is None or calls.count(subcommand) <= times):
             return "", stderr, 128
         return await real(args, **kwargs)  # type: ignore[arg-type]
 

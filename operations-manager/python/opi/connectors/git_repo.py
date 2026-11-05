@@ -70,6 +70,12 @@ GIT_REPOS_MAX_BYTES = 1024 * 1024 * 1024
 #: Dezelfde grens als ``MAX_MUTATION_ATTEMPTS`` van de ProjectStore.
 MAX_WRITE_ATTEMPTS = 5
 
+#: The environment for every git command that must stay off the network. The copy is
+#: blobless, and git fetches a missing blob from the promisor remote by itself, without the
+#: credentials that only clone, fetch and push carry: that broke every write on the sandbox.
+#: With this set, a missing blob is an error at once instead of an unauthenticated request.
+OFFLINE_ENV = {"GIT_NO_LAZY_FETCH": "1"}
+
 #: Serialiseert het bijwerken van één kopie, en houdt hem tegen de opruiming vast.
 _repo_locks: dict[str, asyncio.Lock] = {}
 
@@ -272,7 +278,7 @@ class RepoAt:
         return await self.repo.entries(prefix, self.ref)
 
     async def changed_paths(self, since: str, prefix: str = "") -> list[str]:
-        return await self.repo.changed_paths(since, self.ref, prefix, self._credentials)
+        return await self.repo.changed_paths(since, self.ref, prefix)
 
 
 BuildChanges = Callable[[RepoAt], Awaitable[dict[str, FileChange | None]]]
@@ -443,7 +449,7 @@ class GitRepo:
         return revision
 
     async def _local_tip(self) -> str | None:
-        stdout, _, code = await run_git(["rev-parse", f"refs/heads/{self.branch}"], cwd=self.path)
+        stdout, _, code = await run_git(["rev-parse", f"refs/heads/{self.branch}"], cwd=self.path, env=OFFLINE_ENV)
         return stdout.strip() if code == 0 else None
 
     async def _recreate(self, credentials: GitCredentials) -> None:
@@ -454,7 +460,7 @@ class GitRepo:
     async def _is_repo(self) -> bool:
         if not os.path.isdir(self.path):
             return False
-        _, _, code = await run_git(["rev-parse", "--git-dir"], cwd=self.path)
+        _, _, code = await run_git(["rev-parse", "--git-dir"], cwd=self.path, env=OFFLINE_ENV)
         return code == 0
 
     async def _create(self, credentials: GitCredentials) -> None:
@@ -495,7 +501,7 @@ class GitRepo:
         await self._with_retry(clone, "kloon van")
         # The copy never commits in a worktree, so a gc that prunes objects a running write
         # is looking at is pure risk of damage with nothing gained.
-        await run_git(["config", "gc.auto", "0"], cwd=self.path)
+        await run_git(["config", "gc.auto", "0"], cwd=self.path, env=OFFLINE_ENV)
         logger.info(
             "Bare git-kopie van %s#%s klaargezet in %s in %.1fs",
             self.url,
@@ -605,14 +611,25 @@ class GitRepo:
     # ------------------------------------------------------------------
 
     async def read_file(self, path: str, ref: str, credentials: GitCredentials | None = None) -> bytes | None:
-        """De inhoud van één pad op ``ref``, of None als het er niet staat."""
+        """The content of one path on ``ref``, or None when it is not there.
+
+        A blob this copy does not have is fetched from the remote with ``credentials``. If
+        that fails it raises: "could not read" is not "not there", and a caller that took it
+        for absent would write or delete on a false premise.
+        """
         async with self._in_use():
-            stdout, _, code = await run_git_bytes(
-                ["cat-file", "blob", f"{ref}:{path}"],
+            oid = await self._object_id(ref, path)
+            if oid is None:
+                return None
+            stdout, stderr, code = await run_git_bytes(
+                ["cat-file", "blob", oid],
                 cwd=self.path,
                 env=(credentials or GitCredentials()).env(self.url),
             )
-        return stdout if code == 0 else None
+        if code != 0:
+            detail = " ".join(stderr.split())
+            raise RuntimeError(f"Kon {path} op {ref[:8]} niet lezen uit {self.url}: {_detail(detail)}")
+        return stdout
 
     async def list_tree(self, prefix: str = "", ref: str = "HEAD") -> list[str]:
         """Alle bestandspaden onder ``prefix`` op ``ref``. Geen blobs nodig."""
@@ -620,7 +637,7 @@ class GitRepo:
         if prefix:
             args += ["--", prefix]
         async with self._in_use():
-            stdout, _, code = await run_git(args, cwd=self.path)
+            stdout, _, code = await run_git(args, cwd=self.path, env=OFFLINE_ENV)
         if code != 0:
             return []
         return _split_nul(stdout)
@@ -631,7 +648,7 @@ class GitRepo:
         if prefix:
             args += ["--", prefix]
         async with self._in_use():
-            stdout, _, code = await run_git(args, cwd=self.path)
+            stdout, _, code = await run_git(args, cwd=self.path, env=OFFLINE_ENV)
         if code != 0:
             return {}
         found: dict[str, tuple[str, str]] = {}
@@ -644,9 +661,7 @@ class GitRepo:
             found[path] = (mode, sha.strip())
         return found
 
-    async def changed_paths(
-        self, old_ref: str, new_ref: str, prefix: str = "", credentials: GitCredentials | None = None
-    ) -> list[str]:
+    async def changed_paths(self, old_ref: str, new_ref: str, prefix: str = "") -> list[str]:
         """De paden die tussen twee revisies wijzigden, eventueel beperkt tot ``prefix``.
 
         ``--no-renames`` om twee redenen. Een hernoeming met inhoudswijziging laat het
@@ -659,16 +674,12 @@ class GitRepo:
         if prefix:
             args += ["--", prefix]
         async with self._in_use():
-            stdout, stderr, code = await run_git(
-                args, cwd=self.path, env=(credentials or GitCredentials()).env(self.url)
-            )
+            stdout, stderr, code = await run_git(args, cwd=self.path, env=OFFLINE_ENV)
         if code != 0:
             raise RuntimeError(f"git diff {old_ref[:8]}..{new_ref[:8]} op {self.url} faalde (exit {code}): {stderr}")
         return _split_nul(stdout)
 
-    async def path_unchanged_since(
-        self, revision: str, path: str, ref: str, credentials: GitCredentials | None = None
-    ) -> bool:
+    async def path_unchanged_since(self, revision: str, path: str, ref: str) -> bool:
         """Of ``path`` op ``revision`` byte-voor-byte gelijk is aan wat er op ``ref`` staat.
 
         Zo is te bewijzen dat een ander (ArgoCD) precies deze bestanden al heeft toegepast,
@@ -684,7 +695,7 @@ class GitRepo:
             _, _, code = await run_git(
                 ["diff", "--quiet", revision, ref, "--", path],
                 cwd=self.path,
-                env=(credentials or GitCredentials()).env(self.url),
+                env=OFFLINE_ENV,
             )
         return code == 0
 
@@ -702,7 +713,7 @@ class GitRepo:
         """
         async with self._in_use():
             env = (credentials or GitCredentials()).env(self.url)
-            present = [path for path in paths if await self._path_exists(ref, path, env)]
+            present = [path for path in paths if await self._object_id(ref, path) is not None]
             if not present:
                 return []
 
@@ -710,9 +721,17 @@ class GitRepo:
             handle, archive = tempfile.mkstemp(prefix="git-archive-", suffix=".tar", dir=settings.TEMP_DIR)
             os.close(handle)
             try:
-                _, stderr, code = await run_git(
-                    ["archive", "--format=tar", "-o", archive, ref, "--", *present], cwd=self.path, env=env
-                )
+                # The clone's limit: on a fresh copy this fetches every blob under the paths,
+                # and a whole cluster tree (materialize_cluster_tree) is a bulk transfer too.
+                try:
+                    _, stderr, code = await run_git(
+                        ["archive", "--format=tar", "-o", archive, ref, "--", *present],
+                        cwd=self.path,
+                        env=env,
+                        timeout=GIT_CLONE_TIMEOUT_SECONDS,
+                    )
+                except GitCommandTimeoutError as error:
+                    raise self._timeout_error("Uitpakken uit", GIT_CLONE_TIMEOUT_SECONDS) from error
                 if code != 0:
                     raise RuntimeError(
                         f"Kon {present} op {ref} niet uitpakken uit {self.url}: {' '.join(stderr.split())}"
@@ -723,9 +742,16 @@ class GitRepo:
                     os.unlink(archive)
         return present
 
-    async def _path_exists(self, ref: str, path: str, env: dict[str, str]) -> bool:
-        _, _, code = await run_git(["cat-file", "-e", f"{ref}:{path}"], cwd=self.path, env=env)
-        return code == 0
+    async def _object_id(self, ref: str, path: str) -> str | None:
+        """The object of ``path`` on ``ref``, or None when the path is not there.
+
+        Resolved from the trees alone, which a blobless copy has in full. ``cat-file -e``
+        checked the blob itself, so a blob it could not fetch looked like an absent path.
+        """
+        stdout, _, code = await run_git(
+            ["rev-parse", "--verify", "--quiet", f"{ref}:{path}"], cwd=self.path, env=OFFLINE_ENV
+        )
+        return stdout.strip() if code == 0 else None
 
     # ------------------------------------------------------------------
     # schrijven
@@ -764,7 +790,7 @@ class GitRepo:
 
                 _guard_changes(changes, self.url)
                 commit = await build_tree_commit(
-                    cwd=self.path, changes=changes, message=message, parent=parent, actor=actor
+                    cwd=self.path, changes=changes, message=message, parent=parent, actor=actor, env=OFFLINE_ENV
                 )
                 if commit is None:
                     return WriteResult(ref=parent, committed=False)
@@ -812,16 +838,19 @@ class GitRepo:
 
             # Move our own ref along, so the next reader finds this commit without a
             # fetch. It is the remote tip by definition now.
-            await run_git(["update-ref", f"refs/heads/{self.branch}", commit], cwd=self.path)
+            await run_git(["update-ref", f"refs/heads/{self.branch}", commit], cwd=self.path, env=OFFLINE_ENV)
 
     async def _push_once(self, commit: str, credentials: GitCredentials) -> None:
         """One attempt. Tells a collision, a refusal by the server and an outage apart."""
         try:
             with rollout_phase(PHASE_GIT_PUSH):
+                # pack.window=0: delta compression reads the old version of each changed
+                # file as a base, and on a blobless copy that is a fetch of blobs we never
+                # had. A push carries one project's manifests, so the pack stays small.
                 _, stderr, code = await run_git(
-                    ["push", "origin", f"{commit}:refs/heads/{self.branch}"],
+                    ["-c", "pack.window=0", "push", "origin", f"{commit}:refs/heads/{self.branch}"],
                     cwd=self.path,
-                    env=credentials.env(self.url),
+                    env={**credentials.env(self.url), **OFFLINE_ENV},
                     timeout=GIT_PUSH_TIMEOUT_SECONDS,
                 )
         except GitCommandTimeoutError as error:
@@ -1098,7 +1127,7 @@ class GitRepoWorkspace:
         """
         if not self._base_ref:
             return False
-        return await self.repo.path_unchanged_since(revision, path, self._base_ref, self.credentials)
+        return await self.repo.path_unchanged_since(revision, path, self._base_ref)
 
     async def close(self) -> None:
         """Gooi de werkmap weg. De beheerde kopie blijft staan."""

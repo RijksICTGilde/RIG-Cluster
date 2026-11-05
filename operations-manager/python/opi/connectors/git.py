@@ -364,7 +364,10 @@ async def build_tree_commit(
             )
             check(code, stderr, f"update-index for {len(index_lines)} path(s)")
 
-        tree, stderr, code = await run_git(["write-tree"], cwd=cwd, env=command_env)
+        # --missing-ok: the entries we did not touch come from the parent's tree, so their
+        # blobs are on the remote, and a blobless copy need not have them. Without it,
+        # write-tree checks each blob of every rewritten folder and fetches the missing ones.
+        tree, stderr, code = await run_git(["write-tree", "--missing-ok"], cwd=cwd, env=command_env)
         check(code, stderr, "write-tree")
         tree = tree.strip()
 
