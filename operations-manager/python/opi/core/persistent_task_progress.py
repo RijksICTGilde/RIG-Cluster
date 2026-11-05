@@ -53,6 +53,8 @@ class PersistentTaskProgressManager:
         self._web_addresses: dict[str, str] = {}
         self._namespace: str | None = None
         self._project_failure: str | None = None
+        # The open phase, if any: steps added while it is open become its children.
+        self._phase_id: str | None = None
         self._dirty: bool = False
         self._background_tasks: set[asyncio.Task] = set()
         self._flush_task: asyncio.Task | None = None
@@ -123,6 +125,7 @@ class PersistentTaskProgressManager:
                 "error": redact_text(info["error"]) if info.get("error") else None,
                 "parent_id": info.get("parent_id"),
                 "subject": info.get("subject"),
+                "collapse": info.get("collapse", False),
                 "started_at": info.get("started_at"),
                 "completed_at": info.get("completed_at"),
             }
@@ -202,7 +205,7 @@ class PersistentTaskProgressManager:
             "name": name,
             "status": TaskStatus.RUNNING.value,
             "error": None,
-            "parent_id": None,
+            "parent_id": self._phase_id,
             "subject": subject,
             "started_at": _now_iso(),
             "completed_at": None,
@@ -212,7 +215,12 @@ class PersistentTaskProgressManager:
         return task_id
 
     def add_subtask(self, parent_task_id: str, name: str, subject: str | None = None) -> str:
-        """Add a subtask under a parent task. Returns subtask ID."""
+        """Add a subtask under a parent task. Returns subtask ID.
+
+        The page shows one level of nesting, so a subtask of a step that already sits in a
+        phase goes under the phase, next to that step.
+        """
+        parent_task_id = self._subtasks.get(parent_task_id, {}).get("parent_id") or parent_task_id
         subtask_id = str(uuid.uuid4())
         name = clamp_step_text(name)
         subject = clamp_step_text(subject) if subject else subject
@@ -234,6 +242,39 @@ class PersistentTaskProgressManager:
         )
         self.update_current_step(format_step_line(name, subject))
         return subtask_id
+
+    def begin_phase(self, name: str, collapse: bool = True) -> str:
+        """Close the open phase and open ``name``; later steps land under it. Returns its ID.
+
+        ``collapse`` folds the phase's steps away once it completed without a failure;
+        a phase whose children are its outcome (the rollout per deployment) passes False.
+        Opening a phase that already exists reopens it instead of adding a second line.
+        """
+        self._close_phase(TaskStatus.COMPLETED)
+        existing = next(
+            (i for i, info in self._subtasks.items() if info["name"] == name and info.get("parent_id") is None),
+            None,
+        )
+        if existing is not None:
+            self._subtasks[existing].update(status=TaskStatus.RUNNING.value, completed_at=None)
+            self.update_current_step(name)
+            self._phase_id = existing
+            return existing
+        phase_id = self.add_task(name)
+        self._subtasks[phase_id]["collapse"] = collapse
+        self._phase_id = phase_id
+        return phase_id
+
+    @property
+    def current_phase(self) -> str | None:
+        return self._phase_id
+
+    def _close_phase(self, status: TaskStatus) -> None:
+        if self._phase_id is not None and self._subtasks[self._phase_id]["status"] == TaskStatus.RUNNING.value:
+            self._subtasks[self._phase_id]["status"] = status.value
+            self._subtasks[self._phase_id]["completed_at"] = _now_iso()
+            self._mark_dirty()
+        self._phase_id = None
 
     def update_task(self, task_id: str, message: str, subject: str | None = None) -> None:
         """Update a task's name, and its subject when one is given.
@@ -323,6 +364,7 @@ class PersistentTaskProgressManager:
         updates the legacy in-memory dict.
         """
         self.mark_legacy_completed()
+        self._close_phase(TaskStatus.COMPLETED)
 
         self._current_step = "Done"
         self._mark_dirty()
@@ -370,6 +412,7 @@ class PersistentTaskProgressManager:
         error = redact_text(error)
         self._project_failure = error
         self.mark_legacy_failed(error)
+        self._close_phase(TaskStatus.FAILED)
 
         # Zonder de fouttekst: current_step hoort bij de kop en blijft 90 dagen staan,
         # terwijl de tekst zelf bij de werkgegevens hoort (RC-282). Het detail staat in

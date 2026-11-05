@@ -628,10 +628,11 @@ def _refresh_manager(monkeypatch: pytest.MonkeyPatch) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_a_refresh_names_its_steps_in_order_and_nests_none_of_them(
+async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     monkeypatch: pytest.MonkeyPatch, stub_platform_repo_sync: None
 ) -> None:
     from opi.core.task_handlers_operations import handle_refresh_project
+    from opi.core.task_rollout import first_phase
 
     manager = _refresh_manager(monkeypatch)
     project = MagicMock()
@@ -643,22 +644,36 @@ async def test_a_refresh_names_its_steps_in_order_and_nests_none_of_them(
     monkeypatch.setattr("opi.manager.project_manager.create_project_manager", lambda *a, **k: manager)
 
     progress = _progress()
+    # What the task worker does before it calls the handler.
+    progress.begin_phase(first_phase("refresh_project"))
     result = await handle_refresh_project({"project_name": "test-project"}, progress)
 
     assert result["status"] == "success"
-    assert _steps(progress) == [
-        (progress_steps.PROJECT_LOOKUP, TaskStatus.COMPLETED.value),
-        (progress_steps.PROJECT_FILE_FETCH, TaskStatus.COMPLETED.value),
-        (progress_steps.PROJECT_FILE_VALIDATE, TaskStatus.COMPLETED.value),
-        (progress_steps.PROJECT_FILE_UPDATE, TaskStatus.COMPLETED.value),
-        (progress_steps.ROLLOUT_PREPARE, TaskStatus.COMPLETED.value),
+    by_id = progress._subtasks
+    phases = [(info["name"], info["status"]) for info in by_id.values() if info["parent_id"] is None]
+    assert phases == [
+        (progress_steps.PHASE_CHECK, TaskStatus.COMPLETED.value),
+        (progress_steps.PHASE_KUBERNETES_FILES, TaskStatus.COMPLETED.value),
         (progress_steps.ROLLOUT, TaskStatus.COMPLETED.value),
+    ]
+
+    def steps_under(phase_name: str) -> list[str]:
+        [phase_id] = [i for i, info in by_id.items() if info["name"] == phase_name and info["parent_id"] is None]
+        return [info["name"] for info in by_id.values() if info["parent_id"] == phase_id]
+
+    assert steps_under(progress_steps.PHASE_CHECK) == [
+        progress_steps.PROJECT_LOOKUP,
+        progress_steps.PROJECT_FILE_FETCH,
+        progress_steps.PROJECT_FILE_VALIDATE,
+    ]
+    assert steps_under(progress_steps.PHASE_KUBERNETES_FILES) == [
+        progress_steps.PROJECT_FILE_UPDATE,
+        progress_steps.ROLLOUT_PREPARE,
     ]
     # Een refresh maakt niets aan: wat er al is wordt gecontroleerd of bijgewerkt.
     assert not [name for name in _names(progress) if "aanmaken" in name.lower()]
-    # Geen containerstap: een stap op het hoogste niveau is afgerond voordat de volgende
-    # begint, dus er staat geen regel open die alleen andere regels omsluit.
-    top_level = [info for info in progress._subtasks.values() if info["parent_id"] is None]
+    # Phases follow each other: one is closed before the next one starts.
+    top_level = [info for info in by_id.values() if info["parent_id"] is None]
     for earlier, later in itertools.pairwise(top_level):
         assert earlier["completed_at"] is not None
         assert earlier["completed_at"] <= later["started_at"]

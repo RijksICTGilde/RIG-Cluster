@@ -17,7 +17,7 @@ refuse ``rollout=false`` with an explanation instead of ignoring it.
 
 from typing import Any
 
-from opi.core.progress_steps import SKIPPED_STEP_DETAIL, SKIPPED_STEP_LABEL
+from opi.core.progress_steps import PHASE_CHECK, PHASE_CHECK_AND_SAVE, SKIPPED_STEP_DETAIL, SKIPPED_STEP_LABEL
 
 PAYLOAD_KEY = "rollout"
 
@@ -104,10 +104,23 @@ __all__ = [
     "SKIPPED_REASON",
     "SKIPPED_STEP_DETAIL",
     "SKIPPED_STEP_LABEL",
+    "first_phase",
     "note_rollout_skipped",
     "rollout_requested",
     "skipped_processing",
 ]
+
+
+def first_phase(task_type: str) -> str | None:
+    """The phase a processing task opens with, so its own checks and save land under it.
+
+    Restore opens none: it starts by restoring data, not by checking a change.
+    """
+    if task_type in ("refresh_project", "refresh_deployment"):
+        return PHASE_CHECK
+    if task_type in PROCESSING_TASK_TYPES and task_type != "restore":
+        return PHASE_CHECK_AND_SAVE
+    return None
 
 
 def rollout_requested(payload: dict) -> bool:

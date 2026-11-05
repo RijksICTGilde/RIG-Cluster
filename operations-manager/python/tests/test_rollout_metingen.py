@@ -20,7 +20,7 @@ from opi.core.metrics import (
     set_rollout_task_type,
 )
 from opi.core.template_helpers import format_step_duration
-from opi.web.router import _build_task_hierarchy, _step_duration_seconds
+from opi.web.router import _build_task_hierarchy, _step_duration_seconds, _total_duration_seconds
 
 
 def _progress() -> Any:
@@ -78,8 +78,8 @@ class TestStapTijdstempels:
         assert progress._subtasks[child]["completed_at"]
 
 
-class TestDuurInDeWeergave:
-    def test_de_duur_van_een_afgeronde_stap_staat_in_de_weergave(self) -> None:
+class TestDurationInTheView:
+    def test_a_step_shows_no_duration(self) -> None:
         subtasks = [
             {
                 "id": "a",
@@ -90,16 +90,17 @@ class TestDuurInDeWeergave:
             }
         ]
         [stap] = _build_task_hierarchy(subtasks)
-        assert stap["duration_seconds"] == pytest.approx(12.5)
+        assert "duration_seconds" not in stap
 
-    def test_een_stap_die_nog_loopt_heeft_geen_duur(self) -> None:
-        subtasks = [{"id": "a", "name": "Bezig", "status": "running", "started_at": "2026-11-04T10:00:00+00:00"}]
-        [stap] = _build_task_hierarchy(subtasks)
-        assert stap["duration_seconds"] is None
+    def test_the_total_runs_from_the_first_start_to_the_last_end(self) -> None:
+        subtasks = [
+            {"id": "a", "started_at": "2026-11-04T10:00:00+00:00", "completed_at": "2026-11-04T10:00:02+00:00"},
+            {"id": "b", "started_at": "2026-11-04T10:00:02+00:00", "completed_at": "2026-11-04T10:00:17.500000+00:00"},
+        ]
+        assert _total_duration_seconds(subtasks) == pytest.approx(17.5)
 
-    def test_een_stap_van_voor_de_tijdstempels_heeft_geen_duur(self) -> None:
-        [stap] = _build_task_hierarchy([{"id": "a", "name": "Oud", "status": "completed"}])
-        assert stap["duration_seconds"] is None
+    def test_without_timestamps_there_is_no_total(self) -> None:
+        assert _total_duration_seconds([{"id": "a", "status": "completed"}]) is None
 
     def test_een_onleesbaar_tijdstempel_levert_geen_fout_op(self) -> None:
         assert _step_duration_seconds({"started_at": "gisteren", "completed_at": "vandaag"}) is None

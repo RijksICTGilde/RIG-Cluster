@@ -280,7 +280,9 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
         if processing_result:
             # ArgoCD monitoring
-            monitor_task = progress.add_task(steps.ROLLOUT_CHECK)
+            # The final check belongs to the rollout phase; its own line only said the same
+            # as "uitgerold en gezond" right above it.
+            monitor_task = progress.current_phase or progress.add_task(steps.ROLLOUT_CHECK)
             await _monitor_argocd_and_deployment(
                 _task_id="",  # not used by the monitor helper
                 project_name=project_name,

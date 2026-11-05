@@ -1968,6 +1968,13 @@ class ProjectManager:
             return None
         return progress_manager.add_task(name, subject=subject)
 
+    def _begin_phase(self, name: str, collapse: bool = True) -> str | None:
+        """Open a phase: the steps that follow land under it. See ``begin_phase``."""
+        progress_manager = self.get_progress_manager()
+        if progress_manager is None:
+            return None
+        return progress_manager.begin_phase(name, collapse=collapse)
+
     def _end_step(self, step_id: str | None, error: str | None = None) -> None:
         """Close a step started with :meth:`_begin_step`: completed, or failed with a reason."""
         progress_manager = self.get_progress_manager()
@@ -3749,7 +3756,9 @@ class ProjectManager:
             )
 
             progress_manager = self.get_progress_manager()
-            argo_task = self._begin_step(steps.ROLLOUT)
+            # The rollout phase is this step itself, kept open: its rows per deployment are
+            # the outcome, not detail.
+            argo_task = self._begin_phase(steps.ROLLOUT, collapse=False)
 
             argo_connector = create_argo_connector()
 
@@ -4074,7 +4083,9 @@ class ProjectManager:
 
                 pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
                 if progress_manager and argo_task and pending_apps:
-                    progress_manager.update_task(argo_task, steps.waiting_for_applications(len(pending_apps)))
+                    progress_manager.update_task(
+                        argo_task, steps.ROLLOUT, subject=steps.waiting_for_applications(len(pending_apps))
+                    )
                 outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
                 synced_deployment_count = len(outcomes)
 
@@ -4160,7 +4171,9 @@ class ProjectManager:
                     if oom_failures:
                         oom_names = ", ".join(f.component_reference or f.component_name for f in oom_failures)
                         if progress_manager and argo_task:
-                            progress_manager.update_task(argo_task, steps.tuning_memory(oom_names, app_name))
+                            progress_manager.update_task(
+                                argo_task, steps.ROLLOUT, subject=steps.tuning_memory(oom_names, app_name)
+                            )
                         component_health = component_health_from_oom_failures(oom_failures)
                         try:
                             with rollout_phase(PHASE_AFTER_SYNC):
@@ -6199,6 +6212,8 @@ class ProjectManager:
             #     return False
 
             # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
+
+            self._begin_phase(steps.PHASE_KUBERNETES_FILES)
 
             # Create namespaces first (always first task)
             # TODO: move methods to a kubernetes manager?
@@ -9994,7 +10009,7 @@ class ProjectManager:
 
         # 8. Trigger ArgoCD sync
         logger.info("Triggering ArgoCD sync for updated deployment")
-        sync_step = self._begin_step(steps.ROLLOUT)
+        sync_step = self._begin_phase(steps.ROLLOUT, collapse=False)
         try:
             argo_connector = create_argo_connector()
 
