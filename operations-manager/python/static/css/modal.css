@@ -242,6 +242,14 @@
     border-top: 1px solid var(--rvo-color-grijs-200);
 }
 
+/* "Klaar in ..." on the left of the bar, on one line with the button. */
+.edit-progress-duration {
+    margin-right: auto;
+    align-self: center;
+    font-size: 0.9375rem;
+    color: var(--rvo-color-grijs-700);
+}
+
 .edit-section-actions {
     display: flex;
     justify-content: flex-end;
