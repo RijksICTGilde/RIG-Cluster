@@ -33,7 +33,7 @@
                 <c-section-head title="Acties" icon="gear" />
                 <c-cluster gap="sm">
                     {% set images_bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Images bewerken - " ~ deployment.name ~ "')" %}
-                    {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment herverwerken')" %}
+                    {% set herverwerken = "openConfirmAction('/projects/" ~ project.name ~ "/actions/refresh-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment herverwerken')" %}
                     <c-button type="secondary" size="sm" show-icon="before" icon="pencil"
                               label="Images bewerken" @click="{{ images_bewerken }}" />
                     <c-button type="secondary" size="sm" show-icon="before" icon="refresh"
@@ -51,7 +51,7 @@
                        is een raadsel, "Deployment bewerken" niet. #}
                     {% set deployment_bewerken = "openEditModal('modal-edit-deployment-" ~ original_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ "')" %}
                     {% set webadres = "openEditModal('modal-edit-domain-" ~ original_index ~ "', 'Webadres bewerken - " ~ deployment.name ~ "')" %}
-                    {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment verwijderen')" %}
+                    {% set verwijderen = "openConfirmAction('/projects/" ~ project.name ~ "/actions/delete-deployment/confirm?target=" ~ (deployment.name | urlencode) ~ "', 'Deployment verwijderen')" %}
                     <c-button type="secondary" size="sm" show-icon="before" icon="pencil"
                               label="Deployment bewerken" @click="{{ deployment_bewerken }}" />
                     <c-button type="secondary" size="sm" show-icon="before" icon="globe"
@@ -62,7 +62,7 @@
                     {% for action in deployment_service_actions.get(deployment.name, []) if action.visible %}
                     {% set doel = action.modal_endpoint if action.modal_endpoint else "/projects/" ~ project.name ~ "/deployments/" ~ deployment.name ~ "/actions/" ~ (action | deployment_action_key) ~ "/confirm" %}
                     {% set titel = action.modal_title if action.modal_endpoint else action.label %}
-                    {% set dienstactie = "openServiceModal('" ~ doel ~ "', '" ~ titel ~ "')" %}
+                    {% set dienstactie = ("openServiceModal('" if action.modal_endpoint else "openConfirmAction('") ~ doel ~ "', '" ~ titel ~ "')" %}
                     <c-button type="{{ action.kind }}" size="sm" show-icon="before" icon="{{ action.icon | nldd_icon }}"
                               label="{{ action.label }}" @click="{{ dienstactie }}" />
                     {% endfor %}

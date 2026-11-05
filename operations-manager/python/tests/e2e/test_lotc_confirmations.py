@@ -54,19 +54,21 @@ def _wait_for_request(recorded: list[tuple[str, str]], timeout: float = 10.0) ->
 
 
 def _open(page: Page, app_server: str, trigger: str, *, tab: str = "project") -> None:
-    """Klik een gevaarlijke actie aan en wacht tot de dialoog zijn bevestiging draagt."""
+    """Click a dangerous action and wait for the confirmation dialog to ask.
+
+    The question is the page's own confirmation dialog; the shared modal stays closed
+    until it is answered (it then shows the progress).
+    """
     page.goto(f"{app_server}{project_tab_url(PROJECT, tab)}")
     page.wait_for_load_state("networkidle")
 
     page.locator(f"nldd-button:has-text('{trigger}')").first.click()
-    page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
-    page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
+    page.locator("#bevestiging-dialoog").wait_for(state="visible", timeout=10000)
+    assert page.locator("#edit-section-modal.is-open").count() == 0, "the modal opened before the question"
 
 
 def _confirm(page: Page) -> None:
-    # Onder NLDD is de knop een <nldd-button>, geen <button>: op de klasse zoeken en
-    # niet op de tagnaam, want de tagnaam is precies wat het thema bepaalt.
-    page.locator("#edit-section-inner [data-confirm-action] .confirm-action-submit").first.click()
+    page.locator("#bevestiging-doorgaan").click()
 
 
 @pytest.mark.parametrize(
@@ -93,16 +95,13 @@ def test_de_bevestiging_wijst_naar_dezelfde_actie(
 
 
 def test_de_dialoog_sluit_met_annuleren(app_server: str, auth_page: Page) -> None:
-    """Annuleren hangt aan closeEditModal(); zonder dat scherm je de pagina af.
-
-    Een bevestiging heeft de vorm van <nldd-modal-dialog> en dus geen kop met sluitknop
-    (static/css/modal.css): Annuleren is de weg naar buiten.
-    """
+    """Cancel closes the question and opens nothing else."""
     _open(auth_page, app_server, "Project herverwerken")
 
-    auth_page.locator("#edit-section-inner [data-confirm-action] nldd-button[text='Annuleren']").click()
+    auth_page.locator("#bevestiging-annuleren").click()
 
-    auth_page.locator("#edit-section-modal.is-open").wait_for(state="detached", timeout=5000)
+    auth_page.locator("#bevestiging-dialoog").wait_for(state="hidden", timeout=5000)
+    assert auth_page.locator("#edit-section-modal.is-open").count() == 0
     assert auth_page.evaluate("document.body.style.overflow") != "hidden"
 
 

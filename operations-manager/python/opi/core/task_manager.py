@@ -160,7 +160,7 @@ class TaskProgressManager:
         self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
-    def begin_phase(self, name: str, collapse: bool = True) -> str:
+    def begin_phase(self, name: str) -> str:
         """Close the open phase and open ``name``; see PersistentTaskProgressManager.begin_phase."""
         self._close_phase(TaskStatus.COMPLETED)
         existing = next((t for t in self.tasks.values() if t.name == name and t.parent_id is None), None)

@@ -1,4 +1,4 @@
-"""Phases: a rollout shows a few lines once done, its steps only while they matter."""
+"""Phases: a rollout groups its steps under a few lines, and keeps them once done."""
 
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -68,34 +68,22 @@ def test_a_failed_task_fails_its_open_phase() -> None:
     assert progress._subtasks[phase]["status"] == FAILED
 
 
-def _phase(status: str, collapse: bool = True) -> dict:
-    return {"id": "f", "name": "Fase", "status": status, "parent_id": None, "collapse": collapse}
+def _phase(status: str) -> dict:
+    return {"id": "f", "name": "Fase", "status": status, "parent_id": None}
 
 
 def _step(status: str) -> dict:
     return {"id": "s", "name": "Stap", "status": status, "parent_id": "f"}
 
 
-def test_a_completed_phase_folds_its_steps_away() -> None:
+def test_a_completed_phase_keeps_its_steps() -> None:
     [phase] = _build_task_hierarchy([_phase(COMPLETED), _step(COMPLETED)], "completed")
-
-    assert phase["subtasks"] == []
-
-
-def test_a_running_phase_shows_its_steps() -> None:
-    [phase] = _build_task_hierarchy([_phase(RUNNING), _step(RUNNING)])
 
     assert [s["name"] for s in phase["subtasks"]] == ["Stap"]
 
 
-def test_a_phase_with_a_failed_step_stays_open() -> None:
-    [phase] = _build_task_hierarchy([_phase(COMPLETED), _step(FAILED)], "failed")
-
-    assert [s["status"] for s in phase["subtasks"]] == [FAILED]
-
-
-def test_a_phase_whose_steps_are_its_outcome_stays_open() -> None:
-    [phase] = _build_task_hierarchy([_phase(COMPLETED, collapse=False), _step(COMPLETED)], "completed")
+def test_a_running_phase_shows_its_steps() -> None:
+    [phase] = _build_task_hierarchy([_phase(RUNNING), _step(RUNNING)])
 
     assert [s["name"] for s in phase["subtasks"]] == ["Stap"]
 

@@ -219,8 +219,8 @@ def click_deployment_action(page: Page, label: str) -> None:
 
     De bevestiging is een MODAL en geen ``window.confirm``. Hier stond
     ``page.once("dialog", accept)``, en dat wachtte op een native dialoog die nooit komt:
-    de actieknop opent de gedeelde dialoog met bg/_action-confirm.html.j2, en pas de knop
-    daarin (``.confirm-action-submit``) doet de POST. Gevolg was dat de klik niets deed en
+    de actieknop stelt de vraag in ``#bevestiging-dialoog``, en pas "ja" daarin
+    (``#bevestiging-doorgaan``) doet de POST. Gevolg was dat de klik niets deed en
     de test meldde dat de deployment niet ging slapen - terwijl er nooit iets verstuurd is.
 
     De POST commit naar git en herverwerkt (enkele seconden), dus de aanroeper polt daarna
@@ -232,7 +232,7 @@ def click_deployment_action(page: Page, label: str) -> None:
     verstuurd is.
     """
     deployment_action(page, label).first.click()
-    bevestig = page.locator(f"{_MODAL} .confirm-action-submit, {_INNER} .confirm-action-submit")
+    bevestig = page.locator("#bevestiging-doorgaan")
     try:
         bevestig.first.wait_for(state="visible", timeout=10000)
     except PlaywrightError as fout:

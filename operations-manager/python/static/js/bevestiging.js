@@ -12,8 +12,12 @@
         return element && element.closest ? element.closest('[data-bevestig]') : null;
     }
 
-    /* Stel de vraag; doorgaan() loopt alleen na een klik op de bevestigknop. */
-    window.vraagBevestiging = function (vraag, uitleg, knoplabel, doorgaan) {
+    /* Stel de vraag; doorgaan() loopt alleen na een klik op de bevestigknop.
+
+       options.destructive (default true): false for a reversible action, which then gets
+       a plain dialog and a primary button instead of the alert form.
+       options.explainOnly: no action at all, only the explanation and a close button. */
+    window.vraagBevestiging = function (vraag, uitleg, knoplabel, doorgaan, options) {
         var venster = document.getElementById('bevestiging-dialoog');
         var ja = document.getElementById('bevestiging-doorgaan');
         var nee = document.getElementById('bevestiging-annuleren');
@@ -24,9 +28,16 @@
 
         if (opruimen) opruimen();
 
+        var destructive = !options || options.destructive !== false;
+        var explainOnly = !!(options && options.explainOnly);
         venster.setAttribute('text', vraag || 'Weet je het zeker?');
         venster.setAttribute('supporting-text', uitleg || '');
+        venster.setAttribute('variant', destructive || explainOnly ? 'alert' : '');
         ja.setAttribute('text', knoplabel || 'Doorgaan');
+        ja.setAttribute('appearance', destructive ? 'destructive' : 'primary');
+        ja.style.display = explainOnly ? 'none' : '';
+        nee.setAttribute('text', explainOnly ? 'Sluiten' : 'Annuleren');
+        nee.setAttribute('appearance', destructive || explainOnly ? 'primary' : 'secondary');
 
         function los() {
             ja.removeEventListener('click', bevestig);

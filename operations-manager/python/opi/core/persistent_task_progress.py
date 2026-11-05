@@ -125,7 +125,6 @@ class PersistentTaskProgressManager:
                 "error": redact_text(info["error"]) if info.get("error") else None,
                 "parent_id": info.get("parent_id"),
                 "subject": info.get("subject"),
-                "collapse": info.get("collapse", False),
                 "started_at": info.get("started_at"),
                 "completed_at": info.get("completed_at"),
             }
@@ -243,11 +242,9 @@ class PersistentTaskProgressManager:
         self.update_current_step(format_step_line(name, subject))
         return subtask_id
 
-    def begin_phase(self, name: str, collapse: bool = True) -> str:
+    def begin_phase(self, name: str) -> str:
         """Close the open phase and open ``name``; later steps land under it. Returns its ID.
 
-        ``collapse`` folds the phase's steps away once it completed without a failure;
-        a phase whose children are its outcome (the rollout per deployment) passes False.
         Opening a phase that already exists reopens it instead of adding a second line.
         """
         self._close_phase(TaskStatus.COMPLETED)
@@ -261,7 +258,6 @@ class PersistentTaskProgressManager:
             self._phase_id = existing
             return existing
         phase_id = self.add_task(name)
-        self._subtasks[phase_id]["collapse"] = collapse
         self._phase_id = phase_id
         return phase_id
 

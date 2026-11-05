@@ -1,76 +1,40 @@
 {#
-  De ene bevestiging voor een onomkeerbare actie.
+  The one confirmation for an irreversible action: a service's own DeploymentAction
+  (sleep, wake) and the dangerous project actions (delete a project, deployment,
+  component or attachment, reprocess).
 
-  Overname van project-details/action-confirm.html.j2. Alles wat vraagt voordat het doet
-  rendert hierdoor: de eigen DeploymentAction van een dienst (slapen, wekken) en de
-  gevaarlijke projectacties (project, deployment, component of bijlage verwijderen,
-  opnieuw verwerken).
+  Expects: action (DeploymentAction or ProjectAction), key, message. Optional:
+  blocked_reason. The endpoint comes from the action itself, server-side; this template
+  never sees a URL from the request.
 
-  Verwacht: action (DeploymentAction of ProjectAction), key, message. Optioneel:
-  blocked_reason. Het endpoint wordt server-side uit de actie zelf ingevuld; dit template
-  ziet nooit een URL uit het verzoek.
+  Nothing here is shown. openConfirmAction() in static/js/edit_modal.js puts this fragment
+  in the still-closed shared modal, asks the question in the page's confirmation dialog
+  (bg/_bevestiging.html.j2), and opens the modal only after "yes", with the progress. The
+  question used to live in the modal itself, which then jumped from wide to narrow and
+  back.
 
-  WAT ONVERANDERD MOET BLIJVEN
-
-  De CSRF-header staat op de OMHULLENDE div en niet op de knop: htmx erft hem van een
-  voorouder, en dat is precies de reden dat hij daar staat. Bij roos kwam daar nog een
-  tweede reden bij (een <c-button> gaf attribuutwaarden in dubbele quotes terug en sloopte
-  daarmee de JSON); die geldt hier niet meer, maar de plek blijft dezelfde omdat het
-  gedrag hetzelfde moet blijven.
-
-  Bij bevestigen antwoordt het endpoint met het voortgangsfragment en wisselt htmx dat in
-  deze dialoog in - de vraag wordt de lopende taak. Vandaar hx-target="this" en
-  hx-swap="innerHTML" op de wikkel.
-
-  WAAROM NLDD DIRECT EN GEEN <c-modal-dialog>
-
-  De inhoud heeft de vormgeving van <nldd-modal-dialog>: die tekent zelf ook een
-  <nldd-inline-dialog>. De schil eromheen blijft de gedeelde modal, omdat
-  <nldd-modal-dialog> zich met Escape en de backdrop altijd laat sluiten, ook terwijl de
-  taak loopt die deze vraag start. De step-up schrijft bovendien vast in
-  #edit-section-inner.
-
-  Zolang de schil deze vraag toont, neemt hij de maat en de vorm van <nldd-modal-dialog>
-  aan (static/css/modal.css); zodra de voortgang de vraag vervangt, is hij weer breed.
-
-  Annuleren roept closeEditModal() aan van die schil: de dialoog moet dicht en de pagina
-  eronder moet blijven staan, daar is geen href voor.
+  The CSRF header sits on the WRAPPER, not on the element with hx-post: htmx inherits it
+  from an ancestor. The JS only starts the POST (htmx.trigger "confirmed") and never reads
+  the token.
 #}
 <div data-confirm-action="{{ key }}"
-     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
-     hx-target="this"
-     hx-swap="innerHTML">
-    {# Verwijderen is onomkeerbaar. Volgens de NLDD-richtlijn is de uitweg dan de primary
-       knop en de actie zelf destructive. Bij een omkeerbare actie is de actie primary. #}
-    {% set destructief = action.kind in ('warning', 'warning-subtle') %}
-    {# De default slot blijft leeg: dan is de dialoog een vraag en geen taak, en zet NLDD
-       icoon, tekst en knoppen gecentreerd en de knoppen onder elkaar, zoals
-       <nldd-modal-dialog> dat doet. De foutplek staat daarom onder de dialoog. #}
-    <nldd-inline-dialog text="{{ blocked_reason or message }}"
-                        {% if destructief or blocked_reason %}variant="alert"{% endif %}>
-        {# Een geblokkeerde actie heeft niets te bevestigen; de dialoog legt dan alleen uit
-           waarom (de server weigert hem ook). #}
-        {% if blocked_reason %}
-            <nldd-button slot="actions" appearance="primary" text="Sluiten" onclick="closeEditModal()"></nldd-button>
-        {% else %}
-            <nldd-button slot="actions"
-                         appearance="{{ 'primary' if destructief else 'secondary' }}"
-                         text="Annuleren"
-                         onclick="closeEditModal()"></nldd-button>
-            {# Het icoon draagt een ROOS-naam; nldd_icon zet hem om en laat de plek leeg
-               als NLDD er geen tegenhanger voor heeft. #}
-            <nldd-button slot="actions"
-                         appearance="{{ 'destructive' if destructief else 'primary' }}"
-                         text="{{ action.label }}"
-                         start-icon="{{ action.icon | default('', true) | nldd_icon }}"
-                         class="confirm-action-submit"
-                         hx-post="{{ action.endpoint }}"
-                         hx-disabled-elt="this"></nldd-button>
-        {% endif %}
-    </nldd-inline-dialog>
+     data-question="{{ blocked_reason or message }}"
+     data-button="{{ action.label }}"
+     {% if action.kind in ('warning', 'warning-subtle') %}data-destructive{% endif %}
+     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
+    {# A blocked action has nothing to confirm: no POST, only the explanation (the server
+       refuses it as well). #}
+    {% if not blocked_reason %}
+    <div class="confirm-action-submit"
+         hx-post="{{ action.endpoint }}"
+         hx-trigger="confirmed"
+         hx-target="#edit-section-inner"
+         hx-swap="innerHTML"></div>
+    {% endif %}
+    <div class="edit-section-loading">
+        <c-paragraph>Starten...</c-paragraph>
+    </div>
 
-    {# De plek waar de modal-schil een foutmelding in schrijft als de POST mislukt.
-       Blijft een kale div met dezelfde id en dezelfde klassen: hij hoort bij die schil,
-       niet bij deze omzetting. #}
+    {# Where the modal shell writes the error when the POST fails. #}
     <div id="confirm-action-error" class="edit-section-error is-hidden"></div>
 </div>

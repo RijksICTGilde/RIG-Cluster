@@ -242,21 +242,43 @@ def test_the_csrf_header_is_not_an_attribute_of_a_component_button() -> None:
         assert "hx-headers" not in button
 
 
-def test_the_dialog_swaps_the_running_task_in_and_offers_a_way_out() -> None:
-    """The question is replaced by the progress of the task it started.
+def test_the_question_and_the_progress_are_two_windows() -> None:
+    """The question is asked in the page's confirmation dialog; the modal opens after it.
 
-    These endpoints commit to git and then reprocess, ArgoCD sync included. As an inline
-    call the dialog sat unchanged for tens of seconds, which reads as a button that did
-    nothing; the endpoints now answer with the shared progress fragment and it swaps in
-    here, so there is something to follow.
+    The question used to be the modal's content, so the modal opened wide with "Laden...",
+    shrank to the question and grew again for the progress. The fragment now only carries
+    the question and a POST that the dialog's "yes" starts; its answer, the progress,
+    goes into the shared modal.
     """
     html = _fragment(FAKE_ACTION)
 
-    assert 'hx-target="this"' in html
-    assert 'hx-swap="innerHTML"' in html
     assert 'data-confirm-action="fake-key"' in html
-    assert "closeEditModal()" in html
+    assert f'data-question="{FAKE_ACTION.confirm_message}"' in html
+    assert 'hx-trigger="confirmed"' in html
+    assert 'hx-target="#edit-section-inner"' in html
     assert 'id="confirm-action-error"' in html
+
+
+def test_the_page_script_never_handles_the_csrf_token() -> None:
+    """The POST is htmx's, from inside the fragment, so the header is inherited from the
+    wrapper the server rendered. The script only triggers it."""
+    modal_js = (_STATIC_ROOT / "js" / "edit_modal.js").read_text(encoding="utf-8")
+    confirm_js = (_STATIC_ROOT / "js" / "bevestiging.js").read_text(encoding="utf-8")
+
+    for script in (modal_js, confirm_js):
+        assert "X-CSRF-Token" not in script
+        assert "csrf_token" not in script
+    assert "htmx.trigger(submit, 'confirmed')" in modal_js
+
+
+def test_a_blocked_action_offers_nothing_to_post() -> None:
+    template = templates.env.get_template("bg/_action-confirm.html.j2")
+    html = template.render(
+        request=_request(), action=FAKE_ACTION, key="fake-key", message="m", blocked_reason="Kan niet."
+    )
+
+    assert "hx-post" not in html
+    assert 'data-question="Kan niet."' in html
 
 
 def test_sleeping_and_waking_run_as_followable_tasks() -> None:
@@ -292,7 +314,7 @@ def test_the_page_no_longer_confirms_in_the_browser_dialog() -> None:
     assert "window.confirm(" not in modal_js or "niet-opgeslagen wijzigingen" in modal_js
 
 
-def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
+def test_the_button_opens_the_confirmation() -> None:
     """Rendered through the app env, so the component handling of the click is exercised:
     the URL must come out intact.
 
@@ -314,5 +336,5 @@ def test_the_button_opens_the_confirmation_in_the_shared_modal() -> None:
     )
 
     expected = f"/projects/{PROJECT}/deployments/{DEPLOYMENT}/actions/cache-legen/confirm"
-    assert f"openServiceModal(&#39;{expected}&#39;" in html
+    assert f"openConfirmAction(&#39;{expected}&#39;" in html
     assert FAKE_ACTION.endpoint not in html, "the endpoint belongs in the confirmation, not on the page"

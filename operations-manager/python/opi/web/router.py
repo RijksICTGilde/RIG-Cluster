@@ -3181,9 +3181,8 @@ def _total_duration_seconds(subtasks: list[dict]) -> float | None:
 def _build_task_hierarchy(subtasks: list[dict], task_status: str = "running") -> list[dict]:
     """Convert flat V2 subtask list to nested task hierarchy for the template.
 
-    A completed phase (``collapse``) without a failed step shows no steps: they only
-    matter while it runs or when one failed. A phase still marked running in a task that
-    already ended shows the task's outcome, since a handler that raised never closed it.
+    A step with steps under it that is still marked running in a task that already ended
+    shows the task's outcome, since a handler that raised never closed its phase.
     """
     main_tasks = []
     children: dict[str, list] = {}
@@ -3200,14 +3199,12 @@ def _build_task_hierarchy(subtasks: list[dict], task_status: str = "running") ->
         if parent:
             children.setdefault(parent, []).append(entry)
         else:
-            task_entry = {**entry, "id": st.get("id", ""), "collapse": st.get("collapse", False), "subtasks": []}
+            task_entry = {**entry, "id": st.get("id", ""), "subtasks": []}
             main_tasks.append(task_entry)
     for mt in main_tasks:
-        steps = children.get(mt["id"], [])
-        if mt["status"] == "running" and task_status != "running" and mt["collapse"]:
+        mt["subtasks"] = children.get(mt["id"], [])
+        if mt["subtasks"] and mt["status"] == "running" and task_status != "running":
             mt["status"] = task_status
-        folded = mt["collapse"] and mt["status"] == "completed" and all(s["status"] != "failed" for s in steps)
-        mt["subtasks"] = [] if folded else steps
     return main_tasks
 
 

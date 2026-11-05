@@ -123,3 +123,23 @@ async def test_de_standaard_wacht_nog_steeds_op_gezondheid(monkeypatch: pytest.M
     assert geslaagd is True, manager.get_processing_error()
     wacht.assert_awaited_once()
     assert wacht.await_args.kwargs["app_name"] == "wies-pr-689"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_rollout_no_longer_says_it_is_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The wait sets "wacht op N applicatie(s)" as the rollout's subject; done, it goes."""
+    from opi.core import progress_steps
+
+    manager, _, wacht = _project_manager(monkeypatch)
+    progress = _progress()
+    subjects: list[str | None] = []
+    wacht.side_effect = lambda **_: subjects.extend(
+        info["subject"] for info in progress._subtasks.values() if info["name"] == progress_steps.ROLLOUT
+    )
+
+    assert await manager.process_project_from_git("projects/wies.yaml", task_progress_manager=progress) is True
+
+    assert subjects == [progress_steps.waiting_for_applications(1)]
+    [rollout] = [info for info in progress._subtasks.values() if info["name"] == progress_steps.ROLLOUT]
+    assert rollout["status"] == "completed"
+    assert not rollout["subject"]

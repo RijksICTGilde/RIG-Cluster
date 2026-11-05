@@ -1968,12 +1968,12 @@ class ProjectManager:
             return None
         return progress_manager.add_task(name, subject=subject)
 
-    def _begin_phase(self, name: str, collapse: bool = True) -> str | None:
+    def _begin_phase(self, name: str) -> str | None:
         """Open a phase: the steps that follow land under it. See ``begin_phase``."""
         progress_manager = self.get_progress_manager()
         if progress_manager is None:
             return None
-        return progress_manager.begin_phase(name, collapse=collapse)
+        return progress_manager.begin_phase(name)
 
     def _end_step(self, step_id: str | None, error: str | None = None) -> None:
         """Close a step started with :meth:`_begin_step`: completed, or failed with a reason."""
@@ -3756,9 +3756,8 @@ class ProjectManager:
             )
 
             progress_manager = self.get_progress_manager()
-            # The rollout phase is this step itself, kept open: its rows per deployment are
-            # the outcome, not detail.
-            argo_task = self._begin_phase(steps.ROLLOUT, collapse=False)
+            # The rollout phase is this step itself: its rows per deployment land under it.
+            argo_task = self._begin_phase(steps.ROLLOUT)
 
             argo_connector = create_argo_connector()
 
@@ -4274,6 +4273,8 @@ class ProjectManager:
                 # alert on every push. Complete the task and report the reason instead.
                 logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
                 if progress_manager and argo_task:
+                    # The wait is over: its subject ("wacht op ...") would otherwise stay.
+                    progress_manager.update_task(argo_task, steps.ROLLOUT, subject="")
                     progress_manager.complete_task(argo_task)
                     # Een TELLING, geen aaneenschakeling. Hier stond "; ".join(health_warnings),
                     # en die waarschuwingen dragen elk de volledige kubelet-tekst: voor een
@@ -4313,6 +4314,7 @@ class ProjectManager:
                 else:
                     logger.info("All ArgoCD applications are refreshed and rendered; health was not awaited")
                 if progress_manager and argo_task:
+                    progress_manager.update_task(argo_task, steps.ROLLOUT, subject="")
                     progress_manager.complete_task(argo_task)
                 return True
         except Exception as e:
@@ -10009,7 +10011,7 @@ class ProjectManager:
 
         # 8. Trigger ArgoCD sync
         logger.info("Triggering ArgoCD sync for updated deployment")
-        sync_step = self._begin_phase(steps.ROLLOUT, collapse=False)
+        sync_step = self._begin_phase(steps.ROLLOUT)
         try:
             argo_connector = create_argo_connector()
 

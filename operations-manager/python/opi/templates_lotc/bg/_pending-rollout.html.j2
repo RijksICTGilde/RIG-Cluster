@@ -34,7 +34,7 @@
     {% if can('project.refresh') %}
     <br />
     {# Zelfde vorm als de andere knoppen op deze pagina. #}
-    {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+    {% set herverwerken = "openConfirmAction('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
     <c-button size="sm" label="Nu verwerken" icon="refresh" show-icon="before"
               @click="{{ herverwerken }}" />
     {% endif %}
