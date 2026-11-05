@@ -124,7 +124,7 @@
     {
      "name": "git",
      "file": "opi/connectors/git.py",
-     "uses": 5
+     "uses": 6
     }
    ],
    "services": [],
