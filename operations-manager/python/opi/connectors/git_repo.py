@@ -67,7 +67,8 @@ MAX_WRITE_ATTEMPTS = 5
 _repo_locks: dict[str, asyncio.Lock] = {}
 
 #: Hoeveel taken er op dit moment uit een kopie lezen of erin schrijven. Houdt hem tegen
-#: de opruiming vast, ook buiten :meth:`GitRepo.ensure`, waar de lock niet vastzit.
+#: de opruiming vast, ook buiten :meth:`GitRepo.tip` en :meth:`GitRepo.fetch`, waar de
+#: lock niet vastzit.
 _repo_users: dict[str, int] = {}
 
 #: De kopieen van dit proces, per (remote, branch).
@@ -115,8 +116,8 @@ def get_git_repo(url: str, branch: str = "main") -> GitRepo:
     """De beheerde kopie van deze (remote, branch), procesbreed en lui aangemaakt.
 
     De sleutel is de URL ZONDER credentials: alle projecten op dezelfde remote delen één
-    kopie. De toegangscontrole per taak is de ``ls-remote`` met de credentials van de
-    aanroeper in :meth:`GitRepo.resolve`.
+    kopie. Dat mag omdat er maar één partij toegang heeft tot deze repo's; zie
+    :meth:`GitRepo.resolve`.
     """
     key = _repo_key(url, branch)
     repo = _repos.get(key)
@@ -288,12 +289,16 @@ class GitRepo:
     # ------------------------------------------------------------------
 
     async def resolve(self, credentials: GitCredentials) -> str | None:
-        """De SHA van onze branch op de remote, met de credentials van de AANROEPER.
+        """The SHA of our branch on the remote (``ls-remote``), only for :meth:`sync`.
 
-        Dit is de toegangscontrole, hetzelfde patroon als de ArgoCD repo-server
-        (``newClientResolveRevision`` voor ``checkoutRevision``): eerst resolven met de
-        eigen toegang, dan pas de gedeelde kopie. Een ingetrokken of verkeerd token faalt
-        hier, zodat niemand via een kopie leest die een ander project vulde.
+        Not an access check per caller, as it was until RC-423: only one party has access
+        to these repos. Every URL that reaches this comes from the OPI settings. The argo
+        repo uses the platform token, and a project file's ``repositories[].url`` is
+        written from ``PROJECT_REPO_URL`` on creation and is ``readonly_on_edit`` after
+        that, which ``process_json_submission`` enforces server-side. The password such a
+        file carries is a copy of that same platform token. This call checked the same
+        credentials every time and could not stop anything. Should per-project credentials
+        ever arrive, the copy must be keyed per credential identity, not per remote.
         """
         try:
             stdout, stderr, code = await run_git(
@@ -310,37 +315,63 @@ class GitRepo:
         return first.split("\t", 1)[0].strip() or None
 
     async def tip(self, credentials: GitCredentials) -> str:
-        """De remote tip, met de objecten ervan lokaal aanwezig."""
-        revision = await self.resolve(credentials)
-        if revision is None:
-            raise RuntimeError(f"{self.url}#{self.branch} heeft geen branch {self.branch}")
-        await self.ensure(revision, credentials)
-        return revision
+        """The tip of our branch in the LOCAL copy, without network.
 
-    async def ensure(self, revision: str, credentials: GitCredentials) -> None:
-        """Zorg dat ``revision`` in de kopie staat, en fetch alleen als dat moet."""
+        Our own writes are write-through (the ``update-ref`` in :meth:`_push`), so the
+        local ref is the state this task should build on. A commit from outside comes in
+        through :meth:`sync` or through a rejected push, as with the ProjectStore.
+        """
         async with _repo_lock(self._key):
             with rollout_phase(PHASE_GIT_PREPARE):
-                await self._ensure_locked(revision, credentials)
+                return await self._tip_locked(credentials)
 
-    async def _ensure_locked(self, revision: str, credentials: GitCredentials) -> None:
+    async def sync(self, credentials: GitCredentials) -> str:
+        """Pull in outside changes: one ``ls-remote``, and a fetch only when they differ.
+
+        The equivalent of ``GitProjectStore.reconcile`` for these repos.
+        """
+        local = await self.tip(credentials)
+        remote = await self.resolve(credentials)
+        if remote is None:
+            # The orphan sweep decides on removals from what sync returns; a branch that
+            # vanished from the remote must not pass for the current state.
+            raise RuntimeError(f"{self.url} has no branch {self.branch}")
+        if remote == local:
+            return local
+        fetched = await self.fetch(credentials)
+        logger.info("Fetched external change(s) in %s: %s..%s", self, local[:8], fetched[:8])
+        return fetched
+
+    async def fetch(self, credentials: GitCredentials) -> str:
+        """Bring in the remote state of our branch and return the new local tip."""
+        async with _repo_lock(self._key):
+            with rollout_phase(PHASE_GIT_PREPARE):
+                if await self._is_repo() and not await self._fetch(credentials):
+                    await self._recreate(credentials)
+                return await self._tip_locked(credentials)
+
+    async def _tip_locked(self, credentials: GitCredentials) -> str:
         if not await self._is_repo():
             await self._create(credentials)
-        elif await self._has(revision):
-            os.utime(self.path)
-            return
+        revision = await self._local_tip()
+        if revision is None:
+            # A half-written or damaged copy (a leftover index.lock, an aborted clone)
+            # heals by throwing it away and building it again; that must never cost a task.
+            await self._recreate(credentials)
+            revision = await self._local_tip()
+            if revision is None:
+                raise RuntimeError(f"{self.url}#{self.branch} has no branch {self.branch} after a fresh copy")
+        os.utime(self.path)
+        return revision
 
-        if not await self._fetch(credentials) or not await self._has(revision):
-            # Een halve of beschadigde kopie (een achtergebleven index.lock, een
-            # afgebroken fetch) herstelt zich door hem weg te gooien en opnieuw op te
-            # bouwen; dat mag nooit een taak kosten.
-            logger.warning("Git-kopie %s is onbruikbaar; opnieuw opbouwen", self.path)
-            shutil.rmtree(self.path, ignore_errors=True)
-            await self._create(credentials)
-            if not await self._has(revision):
-                raise RuntimeError(
-                    f"Revisie {revision} staat na een verse kopie van {self.url} nog niet in {self.path}"
-                )
+    async def _local_tip(self) -> str | None:
+        stdout, _, code = await run_git(["rev-parse", f"refs/heads/{self.branch}"], cwd=self.path)
+        return stdout.strip() if code == 0 else None
+
+    async def _recreate(self, credentials: GitCredentials) -> None:
+        logger.warning("Git-kopie %s is onbruikbaar; opnieuw opbouwen", self.path)
+        shutil.rmtree(self.path, ignore_errors=True)
+        await self._create(credentials)
 
     async def _is_repo(self) -> bool:
         if not os.path.isdir(self.path):
@@ -402,10 +433,6 @@ class GitRepo:
             yield
         finally:
             _repo_users[self._key] -= 1
-
-    async def _has(self, revision: str) -> bool:
-        _, _, code = await run_git(["cat-file", "-e", f"{revision}^{{commit}}"], cwd=self.path)
-        return code == 0
 
     def _timeout_error(self, operation: str) -> GitCommandTimeoutError:
         """The same timeout, named with the operation and the remote this copy belongs to.
@@ -561,7 +588,8 @@ class GitRepo:
         moeten veranderen. Weigert de remote de push (non-fast-forward), dan wordt
         ``build_changes`` OPNIEUW aangeroepen op de nieuwe tip: opnieuw lezen, opnieuw
         toepassen, begrensd door :data:`MAX_WRITE_ATTEMPTS`. Dezelfde lus als
-        ``GitProjectStore.mutate``, en hier generiek.
+        ``GitProjectStore.mutate``, en hier generiek. Er wordt alleen gefetcht als de
+        nieuwe tip niet van een write van dit proces zelf komt.
 
         De commit wordt als los object gepusht naar ``refs/heads/<branch>``, dus de remote
         doet zelf de compare-and-swap en er is geen lokale ref om na een mislukte push
@@ -587,11 +615,17 @@ class GitRepo:
                     await self._push(commit, credentials)
                 except GitPushConflictError as error:
                     last_error = error
+                    # If the local ref moved meanwhile, another task in this process
+                    # pushed and its tip is already here: retry without network.
+                    moved = await self._local_tip() not in (None, parent)
+                    if not moved:
+                        await self.fetch(credentials)
                     logger.warning(
-                        "Push naar %s afgewezen (%d/%d); opnieuw lezen en toepassen: %s",
+                        "Push naar %s afgewezen (%d/%d); opnieuw lezen en toepassen%s: %s",
                         self,
                         attempt + 1,
                         MAX_WRITE_ATTEMPTS,
+                        "" if moved else " na een fetch",
                         message,
                     )
                     continue
@@ -766,7 +800,7 @@ class GitRepoWorkspace:
         return self._base_ref
 
     async def refresh(self) -> str:
-        """Vul de werkmap (opnieuw) met de scope op de laatste stand van de remote."""
+        """Vul de werkmap (opnieuw) met de scope op de laatste stand van de kopie."""
         if not self._working_dir:
             self._working_dir = tempfile.mkdtemp(prefix="git-scope-", dir=settings.TEMP_DIR)
         else:
@@ -804,11 +838,11 @@ class GitRepoWorkspace:
     ) -> T:
         """Pas een stap toe op de laatste stand en publiceer hem, geserialiseerd per project.
 
-        Per poging: de werkmap opnieuw vullen uit de remote, ``mutate`` laten schrijven, en
+        Per poging: de werkmap opnieuw vullen uit de kopie, ``mutate`` laten schrijven, en
         schrijven. Botst de write met een wijziging binnen dezelfde scope, dan gaat de hele
         stap opnieuw op de nieuwe stand, want alleen de aanroeper weet wat hij genereerde.
 
-        ``on_prepare`` omsluit het vullen van de werkmap (ls-remote, clone of fetch) en
+        ``on_prepare`` omsluit het vullen van de werkmap (een clone als de kopie er nog niet is) en
         ``on_push`` alleen de write, zodat een aanroeper die de voortgang meldt die twee
         netwerkstappen als eigen stap kan tonen in plaats van als deel van ``mutate``.
         Elke nieuwe poging opent ze opnieuw.
@@ -922,6 +956,28 @@ def argo_repo_config() -> dict[str, Any]:
         "password": settings.GIT_ARGO_APPLICATIONS_PASSWORD,
         "name": "argo",
     }
+
+
+def deployments_repo_config() -> dict[str, Any]:
+    """The repo config of the shared deployments repo, from the settings."""
+    return {
+        "url": settings.PROJECT_REPO_URL,
+        "branch": settings.PROJECT_REPO_BRANCH,
+        "username": settings.PROJECT_REPO_USERNAME,
+        "password": settings.PROJECT_REPO_PASSWORD,
+        "name": "deployments",
+    }
+
+
+async def sync_platform_repos() -> None:
+    """Pull in outside changes in the deployments repo and the argo repo.
+
+    For a refresh, which means "use what is in git now". Costs one ``ls-remote``
+    per repo when nothing changed.
+    """
+    for config in (deployments_repo_config(), argo_repo_config()):
+        repo = get_git_repo(config["url"], config["branch"])
+        await repo.sync(credentials_from_repo_config(config))
 
 
 def argo_workspace(project_name: str, cluster: str) -> GitRepoWorkspace:

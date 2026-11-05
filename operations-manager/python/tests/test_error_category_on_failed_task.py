@@ -22,6 +22,11 @@ from opi.api.task_models import TASK_RESULT_MODELS, task_response_from_dict
 from opi.api.v2.models import ErrorCategory, error_category_for
 
 
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
+
+
 def _failed(error_type: str | None, **extra: object) -> dict:
     return task_response_from_dict(
         {

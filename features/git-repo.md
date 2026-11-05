@@ -40,10 +40,11 @@ tegen 1642 pushes.
 --single-branch --filter=blob:none`) met `gc.auto 0`. Geen werkboom, dus geen gedeelde
 staat tussen taken.
 
-Bijwerken gaat zoals de ArgoCD repo-server het doet: eerst `ls-remote` met de credentials
-van de **aanroeper** (dat is de toegangscontrole per taak, en het levert de SHA), dan
-`cat-file -e`, en alleen als die revisie er niet staat een `fetch`. Een kapotte of half
-bijgewerkte kopie wordt weggegooid en opnieuw opgebouwd; dat mag nooit een taak kosten.
+De kopie is de **waarheid** waar een taak op bouwt, zoals bij de
+[ProjectStore](project-store.md). `tip()` is een `rev-parse` op de lokale
+`refs/heads/<branch>`, dus lezen en schrijven gaan het netwerk niet op. Een kapotte of
+half bijgewerkte kopie wordt weggegooid en opnieuw opgebouwd; dat mag nooit een taak
+kosten. Zie [Bijwerken](#bijwerken) voor wanneer er wel netwerk aan te pas komt.
 
 De grens is er een op **ruimte** en niet op aantal (`GIT_REPOS_MAX_BYTES`, 1Gi): de kopieën
 verschillen een orde in omvang, en `TEMP_DIR` is een emptyDir van 8Gi op productie. De minst
@@ -57,9 +58,19 @@ staan, zolang die operatie loopt.
 omgeving zet. Nooit in de URL, nooit in `.git/config`, nooit in een procesargument
 (BIO2 5.17, 8.12). De kopie op schijf staat op de URL **zonder** userinfo.
 
-Alle projecten op dezelfde remote delen dus één kopie, en wie leest moet zelf toegang
-hebben: een ingetrokken of verkeerd token faalt op de `ls-remote` voordat er iets uit de
-kopie komt.
+Alle projecten op dezelfde remote delen dus één kopie. Tot RC-423 deed elke lees- en
+schrijfactie eerst een `ls-remote` met de credentials van de aanroeper, als
+toegangscontrole per taak naar het patroon van de ArgoCD repo-server. Die controle hield
+niets tegen: er is maar één partij met toegang tot deze twee repo's. Elke URL die bij een
+kopie terechtkomt komt uit de instellingen van OPI. De argo-repo gebruikt het
+platformtoken, en de `url` van een repository in een projectbestand wordt bij aanmaak uit
+`PROJECT_REPO_URL` geschreven en is daarna `readonly_on_edit`, wat
+`process_json_submission` aan de serverkant afdwingt. Het wachtwoord dat zo'n bestand
+draagt is een kopie van datzelfde platformtoken. Elke aanroep toetste dus dezelfde
+credentials.
+
+Komen er ooit credentials **per project**, dan is die controle niet genoeg: dan moet de
+kopie per credential-identiteit gesleuteld worden en niet alleen per (remote, branch).
 
 ### Lezen
 
@@ -108,6 +119,34 @@ geen toegevoegde of gewijzigde `.cmp-env`. Op de set en niet op een walk of een 
 status`, zodat een onaangeroerd bestand van een ander project deze commit niet ophoudt en
 een verwijdering juist wel mag.
 
+### Bijwerken
+
+Op het gewone pad doet een taak **geen enkele** `ls-remote` en geen `fetch`. Dat kan,
+omdat de lokale ref altijd de stand is waarop gebouwd hoort te worden:
+
+1. **Eigen writes zijn write-through.** Na een geslaagde push verzet `_push` de lokale ref
+   naar die commit, die per definitie de remote tip is.
+2. **Een verouderde kopie wordt door de push gevangen.** De remote weigert een commit die
+   niet op zijn laatste stand gebouwd is; dan wordt er gefetcht en gaat de hele write
+   opnieuw op de nieuwe stand.
+3. Is de lokale ref intussen verschoven ten opzichte van de `parent` van deze poging, dan
+   pushte een **andere taak in dit proces** en staat die tip hier al: dan wordt er niet
+   gefetcht. Dat is het gewone geval bij gelijktijdige taken van verschillende projecten,
+   want `project_write_lock` is per (repo, project).
+4. **`sync(credentials)`** haalt wijzigingen van buiten op: één `ls-remote`, en alleen bij
+   verschil een `fetch`, met een regel op INFO over wat er binnenkwam. Het equivalent van
+   `GitProjectStore.reconcile`. Aangeroepen bij een refresh van een project of een
+   deployment (`sync_platform_repos`, naast de reconcile van de store) en één keer per
+   orphan sweep, die over verwijderen beslist en dat niet op een verouderde stand hoort te
+   doen.
+
+Er is **geen poll**. Bij de ProjectStore is die er zodat ingetrokken toegang binnen 300s
+werkt; voor manifests is er geen zo'n reden. Het gevolg is bewust: een handmatige wijziging
+in de deployments-repo blijft staan zolang niemand refresht, ook als er intussen een
+rollout van een ander project draait, want die ziet dat bestand op de lokale stand
+ongewijzigd. De eerstvolgende refresh van het project haalt hem op en zet hem terug naar
+wat ZAD genereert.
+
 ### De werkmap van een taak
 
 `GitRepoWorkspace` is wat de managers in handen hebben. Hij materialiseert de scope van
@@ -121,10 +160,9 @@ een glob gebouwd.
   lock per (repo, project) en schrijft hem weg. De eerste poging neemt de werkmap zoals hij
   is, want een eerdere stap van dezelfde taak kan er al iets in hebben gezet dat nog niet
   gecommit is (de PVC-hernoeming van `handle_service_removal`). Pas een echte botsing gooit
-  de map weg en begint opnieuw. `on_prepare` en `on_push` zijn optionele context managers om
-  het vullen van de werkmap (ls-remote, clone of fetch) en om alleen de write heen, zodat een
-  aanroeper die twee netwerkstappen als eigen voortgangsstap kan melden (zie
-  [voortgangspagina](task-progress-view.md));
+  de map weg en begint opnieuw. `on_prepare` omsluit het vullen van de werkmap en `on_push`
+  omsluit alleen de write, zodat een aanroeper die twee netwerkstappen als eigen voortgangsstap
+  kan melden (zie [voortgangspagina](task-progress-view.md));
 - `remove_and_push(path, message)` voor een verwijdering: de beslissing valt binnen de lock,
   op de stand die de werkmap dan heeft;
 - `last_write` is het resultaat van de laatste write via deze werkmap. `mutate_and_push`
@@ -174,10 +212,18 @@ een tweede lezing op dezelfde SHA geen fetch doet, dat een onbruikbare kopie zic
 herstelt, dat een bestandsnaam met niet-ASCII bytes een write overleeft, en dat een kopie
 die in gebruik is de opruiming overleeft.
 
+Over het bijwerken, met een telling van de git-subcommando's: dat twee writes na elkaar
+geen netwerk doen, dat een externe commit door de afgewezen push gevangen wordt met precies
+één fetch, dat een gelijktijdige eigen write zonder fetch landt, dat `sync` alleen fetcht
+als de remote verder is, en dat de eerste `tip()` kloont en niet fetcht.
+`tests/test_refresh_reconciles_first.py` dekt dat een refresh beide manifest-repo's synct
+voordat hij het project opzoekt.
+
 De sectie "Time-out op het netwerk" laat alleen het ene netwerkcommando hangen (een
-nep-subprocess voor `push` of `fetch`, de rest echt git) en toetst dat het proces wordt
-afgeschoten, dat de melding de remote noemt, dat er geen nieuwe poging komt en dat de
-push-lock daarna vrij is.
+nep-subprocess voor `push`, `fetch` of `ls-remote`, de rest echt git) en toetst dat het
+proces wordt afgeschoten, dat de melding de remote noemt, dat er geen nieuwe poging komt en
+dat de push-lock daarna vrij is. De fetch-grens hangt aan `fetch()` en die van de ls-remote
+aan `sync()`, want dat zijn sinds RC-423 de paden die het netwerk op gaan.
 
 `test_commit_leest_opnieuw_op_de_nieuwe_tip_na_een_afgewezen_push` bootst de mutate-lus van
 de ProjectStore na bovenop `GitRepo.commit`: lezen, aanpassen, en een externe write er

@@ -411,7 +411,7 @@ class TestGitopsFolderInventory:
 
     @pytest.mark.asyncio
     async def test_de_inventaris_leest_de_laatste_stand(self, tmp_path) -> None:
-        """Zonder de remote tip wordt er geoordeeld op een stand die willekeurig oud kan zijn."""
+        """Zonder een sync wordt er geoordeeld op een stand die willekeurig oud kan zijn."""
         repo = AsyncMock()
         repo.list_tree = AsyncMock(return_value=[])
 
@@ -421,6 +421,6 @@ class TestGitopsFolderInventory:
         ):
             await sweep([], cluster="sandboxed-local")
 
-        repo.tip.assert_awaited()
+        repo.sync.assert_awaited()
         assert repo.list_tree.await_args is not None
-        assert repo.list_tree.await_args.args[1] == repo.tip.return_value
+        assert repo.list_tree.await_args.args[1] == repo.sync.return_value

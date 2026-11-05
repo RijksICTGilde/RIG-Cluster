@@ -280,7 +280,7 @@ async def test_het_oude_pad_van_een_hernoeming_blijft_een_gewijzigd_pad(remote: 
     repo = _repo(remote)
     base = await repo.tip(ANON)
     _hernoem_extern(remote, tmp_path, "prd/alfa/kustomization.yaml", "prd/alfa/nieuw.yaml", "name: alfa\nextra: 1\n")
-    tip = await repo.tip(ANON)
+    tip = await repo.sync(ANON)
 
     gewijzigd = await repo.changed_paths(base, tip, "prd/alfa")
 
@@ -297,7 +297,7 @@ async def test_een_conflict_wordt_ook_gezien_op_een_echt_blobless_kopie(remote: 
     (werk / "prd" / "alfa" / "kustomization.yaml").write_text("onze versie\n")
 
     _hernoem_extern(remote, tmp_path, "prd/alfa/kustomization.yaml", "prd/alfa/nieuw.yaml", "name: alfa\nextra: 1\n")
-    await repo.tip(ANON)
+    await repo.sync(ANON)
     # De blob van het hernoemde bestand is er niet: rename-detectie zou hem bij de
     # promisor-remote moeten ophalen, zonder credentials.
     assert _blobs_ontbreken(repo, remote, "prd/alfa/nieuw.yaml")
@@ -319,7 +319,7 @@ async def test_gewijzigde_paden_vragen_geen_blob_bij_de_promisor_remote(remote: 
     repo = _blobless_repo(remote)
     base = await repo.tip(ANON)
     _hernoem_extern(remote, tmp_path, "prd/alfa/kustomization.yaml", "prd/alfa/nieuw.yaml", "name: alfa\nextra: 1\n")
-    tip = await repo.tip(ANON)
+    tip = await repo.sync(ANON)
     _git(Path(repo.path), "remote", "set-url", "origin", f"file://{tmp_path}/weg.git")
 
     gewijzigd = await repo.changed_paths(base, tip, "prd/alfa")
@@ -428,7 +428,7 @@ async def test_een_tweede_materialize_op_dezelfde_sha_doet_geen_fetch(remote: Pa
 
     module.GitRepo._fetch = tel_fetch  # type: ignore[method-assign]
     try:
-        await repo.ensure(sha, ANON)
+        await repo.tip(ANON)
         await repo.materialize(["prd/alfa"], sha, str(tmp_path / "tweede"), ANON)
     finally:
         module.GitRepo._fetch = echte_fetch  # type: ignore[method-assign]
@@ -738,6 +738,155 @@ async def test_een_pad_met_een_regeleinde_kan_niet_buiten_de_scope_schrijven(rem
 
 
 # ---------------------------------------------------------------------------
+# The local tip is the truth: when the network is involved at all
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def git_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The git subcommands GitRepo runs, in order."""
+    import opi.connectors.git_repo as module
+
+    calls: list[str] = []
+    real = module.run_git
+
+    async def count(args: list[str], **kwargs: object) -> tuple[str, str, int]:
+        calls.append(args[0])
+        return await real(args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(module, "run_git", count)
+    return calls
+
+
+def _commit_outside(remote: Path, tmp_path: Path, path: str, content: str) -> str:
+    """A commit that lands on the remote outside ZAD, like a manual change."""
+    outside = tmp_path / f"outside-{path.replace('/', '-')}"
+    _git(tmp_path, "clone", "-q", str(remote), str(outside))
+    (outside / path).parent.mkdir(parents=True, exist_ok=True)
+    (outside / path).write_text(content)
+    _git(outside, "add", "-A")
+    _git(outside, "commit", "-qm", f"outside: {path}")
+    _git(outside, "push", "-q", "origin", "main")
+    return _git(remote, "rev-parse", "main")
+
+
+@pytest.mark.asyncio
+async def test_two_writes_in_a_row_touch_no_network(remote: Path, tmp_path: Path, git_calls: list[str]) -> None:
+    """The ordinary path: nothing from outside, so no ls-remote and no fetch."""
+    repo = _repo(remote)
+    werk = tmp_path / "werk"
+    base = await repo.tip(ANON)
+    await repo.materialize(["prd/alfa"], base, str(werk), ANON)
+    git_calls.clear()
+
+    (werk / "prd" / "alfa" / "eerste.yaml").write_text("x: 1\n")
+    assert (await _write(repo, ["prd/alfa"], werk, "eerste")).committed
+    (werk / "prd" / "alfa" / "tweede.yaml").write_text("x: 2\n")
+    assert (await _write(repo, ["prd/alfa"], werk, "tweede")).committed
+
+    assert "ls-remote" not in git_calls
+    assert "fetch" not in git_calls
+
+
+@pytest.mark.asyncio
+async def test_a_commit_from_outside_is_caught_by_the_push(remote: Path, tmp_path: Path, git_calls: list[str]) -> None:
+    """Without an ls-remote per write, the rejected push is the catch, with exactly one fetch."""
+    repo = _repo(remote)
+    werk = tmp_path / "werk"
+    base = await repo.tip(ANON)
+    await repo.materialize(["prd/alfa"], base, str(werk), ANON)
+    outside = _commit_outside(remote, tmp_path, "prd/beta/extern.yaml", "extern: true\n")
+    git_calls.clear()
+
+    (werk / "prd" / "alfa" / "onze.yaml").write_text("onze: true\n")
+    result = await _write(repo, ["prd/alfa"], werk, "onze wijziging")
+
+    assert result.committed
+    assert git_calls.count("fetch") == 1
+    assert "ls-remote" not in git_calls
+    assert outside in _git(remote, "rev-list", "main")
+    assert _paths_in(remote) == [
+        "prd/alfa/kustomization.yaml",
+        "prd/alfa/onze.yaml",
+        "prd/beta/extern.yaml",
+        "prd/beta/kustomization.yaml",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_write_of_our_own_lands_without_a_fetch(remote: Path, git_calls: list[str]) -> None:
+    """Two projects build on the same tip: after the other one pushed, its tip is already local."""
+    repo = _repo(remote)
+    await repo.tip(ANON)
+    git_calls.clear()
+    other_landed = False
+
+    async def other_project(_at: RepoAt) -> dict[str, FileChange | None]:
+        return {"prd/beta/ander.yaml": FileChange(b"ander: true\n")}
+
+    async def build_changes(at: RepoAt) -> dict[str, FileChange | None]:
+        nonlocal other_landed
+        if not other_landed:
+            other_landed = True
+            # A write of ANOTHER project, in this process, right between read and push.
+            await repo.commit(other_project, message="ander project", actor=None, credentials=ANON)
+        return {"prd/alfa/onze.yaml": FileChange(b"onze: true\n")}
+
+    result = await repo.commit(build_changes, message="ons project", actor=None, credentials=ANON)
+
+    assert result.committed
+    assert "fetch" not in git_calls
+    assert "ls-remote" not in git_calls
+    assert _paths_in(remote) == [
+        "prd/alfa/kustomization.yaml",
+        "prd/alfa/onze.yaml",
+        "prd/beta/ander.yaml",
+        "prd/beta/kustomization.yaml",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sync_fetches_only_when_the_remote_moved_ahead(
+    remote: Path, tmp_path: Path, git_calls: list[str]
+) -> None:
+    repo = _repo(remote)
+    base = await repo.tip(ANON)
+    git_calls.clear()
+
+    assert await repo.sync(ANON) == base
+    assert git_calls.count("ls-remote") == 1
+    assert "fetch" not in git_calls
+
+    outside = _commit_outside(remote, tmp_path, "prd/beta/extern.yaml", "extern: true\n")
+    git_calls.clear()
+
+    assert await repo.sync(ANON) == outside
+    assert git_calls.count("fetch") == 1
+    assert await repo.tip(ANON) == outside
+
+
+@pytest.mark.asyncio
+async def test_sync_raises_when_the_remote_branch_is_gone(remote: Path) -> None:
+    repo = _repo(remote)
+    await repo.tip(ANON)
+    _git(remote, "update-ref", "-d", "refs/heads/main")
+
+    with pytest.raises(RuntimeError, match="has no branch main"):
+        await repo.sync(ANON)
+
+
+@pytest.mark.asyncio
+async def test_the_first_tip_clones_and_does_not_fetch(remote: Path, git_calls: list[str]) -> None:
+    repo = _repo(remote)
+
+    sha = await repo.tip(ANON)
+
+    assert sha == _git(remote, "rev-parse", "main")
+    assert "clone" in git_calls
+    assert "fetch" not in git_calls
+
+
+# ---------------------------------------------------------------------------
 # Time-out op het netwerk
 # ---------------------------------------------------------------------------
 
@@ -844,17 +993,15 @@ async def test_na_een_push_time_out_landt_een_volgende_write_wel(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_korte_timeout")
 async def test_een_fetch_zonder_antwoord_bouwt_de_kopie_niet_opnieuw_op(
-    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    remote: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Een hangende fetch is geen beschadigde kopie: opnieuw klonen zou weer hangen."""
     repo = _repo(remote)
     await repo.tip(ANON)
-    # Een revisie die de kopie niet heeft, dus ensure() moet fetchen.
-    ontbrekend = "0" * 40
     hanging, _ = _hang_on("fetch", monkeypatch)
 
     with pytest.raises(GitCommandTimeoutError, match=r"^Fetch van "):
-        await repo.ensure(ontbrekend, ANON)
+        await repo.fetch(ANON)
 
     assert hanging[0].killed
     assert os.path.isdir(repo.path), "de kopie blijft staan"
@@ -863,12 +1010,12 @@ async def test_een_fetch_zonder_antwoord_bouwt_de_kopie_niet_opnieuw_op(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_korte_timeout")
 async def test_een_ls_remote_zonder_antwoord_faalt_snel(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """De eerste netwerkstap van een write is ls-remote, dus die krijgt dezelfde grens."""
+    """De netwerkstap van een sync is ls-remote, dus die krijgt dezelfde grens."""
     repo = _repo(remote)
     hanging, _ = _hang_on("ls-remote", monkeypatch)
 
     with pytest.raises(GitCommandTimeoutError, match=r"^Opvragen van "):
-        await repo.tip(ANON)
+        await repo.sync(ANON)
 
     assert hanging[0].killed
 

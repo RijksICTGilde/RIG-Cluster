@@ -369,7 +369,8 @@ async def sweep(
         config = argo_repo_config()
         repo = get_git_repo(config["url"], config["branch"])
         credentials = credentials_from_repo_config(config)
-        tip = await repo.tip(credentials)
+        # This sweep decides on removals, so it must not read a stale state.
+        tip = await repo.sync(credentials)
 
         bekende_projecten = {p.get("name") for p in project_yamls if p.get("name")}
         # Een projectmap bestaat alleen als er iets in staat: {cluster}/{project}/<bestand>.

@@ -10,6 +10,7 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 import logging
 from typing import Any
 
+from opi.connectors.git_repo import sync_platform_repos
 from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
 from opi.core.actor import get_actor
 from opi.core.cluster_config import get_prefixed_namespace
@@ -354,13 +355,17 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     project_manager = None
     try:
         # Task 1: Look up project
-        lookup_task = progress.add_task("Project opzoeken")
+        lookup_task = progress.add_task("Project opzoeken en wijzigingen uit git ophalen")
         logger.info(
             "Deployment refresh request for: %s/%s (force_clone=%s)",
             project_name,
             deployment_name,
             force_clone,
         )
+
+        # Same reason as on a project refresh: whatever was committed to the manifest
+        # repos outside ZAD belongs in the state we generate from.
+        await sync_platform_repos()
 
         project = get_project_store().get(project_name)
 
@@ -539,6 +544,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         # actually means "use what is in git right now". Costs one ls-remote when
         # nothing changed; a fetch and a targeted re-read when it did.
         await get_project_store().reconcile()
+        await sync_platform_repos()
 
         project = get_project_store().get(project_name)
 

@@ -19,7 +19,7 @@ ervan op de plekken waar mensen zitten te wachten.
 
 | Actie | Stappen die je ziet |
 |---|---|
-| Deployment of project herverwerken | Project opzoeken; Projectbestand ophalen en controleren; (Projectbestand bijwerken naar de nieuwste vorm); (Verwijderde deployments opruimen); Diensten en manifesten bijwerken; Wachten tot ArgoCD gesynchroniseerd is (met per deployment een regel over waar hij op wacht) |
+| Deployment of project herverwerken | Project opzoeken en wijzigingen uit git ophalen; Projectbestand ophalen en controleren; (Projectbestand bijwerken naar de nieuwste vorm); (Verwijderde deployments opruimen); Diensten en manifesten bijwerken; Wachten tot ArgoCD gesynchroniseerd is (met per deployment een regel over waar hij op wacht) |
 | Deployment in slaapstand zetten / wekken | Projectgegevens ophalen; Slaap- of wektoestand vastleggen in git; daarna dezelfde stappen van het herverwerken |
 | Image bijwerken | Projectgegevens ophalen; Nieuwe image vastleggen in het projectbestand; Diensten en manifesten bijwerken; ArgoCD laten uitrollen |
 | Database of bucket klonen | Projectgegevens ophalen; Database/bucket kopiëren (met bron en verbindingswijze in de naam) |

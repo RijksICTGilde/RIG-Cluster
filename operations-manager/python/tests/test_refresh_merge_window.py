@@ -45,6 +45,11 @@ from opi.services.project_reconciliation_service import record_reconciliation
 REFRESH_PAYLOAD = {"project_name": "p1", "force_clone": False}
 
 
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
+
+
 def _svc(cluster: str = "c1") -> AsyncTaskService:
     return AsyncTaskService(cluster=cluster)
 

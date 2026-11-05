@@ -315,6 +315,20 @@ def mock_cluster_config() -> Any:
         yield mock
 
 
+@pytest.fixture
+def stub_platform_repo_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a refresh handler's git sync out of a test that does not measure it.
+
+    ``handle_refresh_project`` and ``handle_refresh_deployment`` pull in external commits
+    in the deployments repo and the argo repo (RC-423), and that is real network.
+    """
+
+    async def nothing() -> None:
+        return None
+
+    monkeypatch.setattr("opi.core.task_handlers_operations.sync_platform_repos", nothing)
+
+
 @pytest.fixture(autouse=True)
 def reset_kubectl_singleton() -> Any:
     """Reset KubectlConnector singleton between tests."""

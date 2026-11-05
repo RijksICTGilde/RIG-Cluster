@@ -42,6 +42,11 @@ APP = "dd-mco-pr-68"
 ARGO_NS = "rig-prd-operations"
 
 
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
+
+
 def _application(age_seconds: int) -> dict[str, Any]:
     """Een Application met een lopende, nog AANGEHECHTE sync van ``age_seconds`` oud."""
     started = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat().replace("+00:00", "Z")

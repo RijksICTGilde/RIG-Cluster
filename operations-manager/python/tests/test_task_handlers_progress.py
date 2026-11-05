@@ -13,6 +13,11 @@ PM_PATH = "opi.manager.project_manager.ProjectManager"
 CREATE_PM_PATH = "opi.manager.project_manager.create_project_manager"
 
 
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
+
+
 def _make_progress():
     """Create a mock progress manager with all expected methods."""
     progress = MagicMock()
@@ -438,7 +443,7 @@ class TestHandleRefreshDeployment:
         )
 
         assert progress.add_task.call_count == 2
-        progress.add_task.assert_any_call("Project opzoeken")
+        progress.add_task.assert_any_call("Project opzoeken en wijzigingen uit git ophalen")
         progress.add_task.assert_any_call("Deployment dev opnieuw verwerken")
         assert progress.complete_task.call_count == 2
 

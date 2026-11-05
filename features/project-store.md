@@ -90,8 +90,8 @@ De twee repo's hebben sinds RC-422 geen werkboom meer: `GitRepo` houdt per remot
 kopie, en een taak materialiseert alleen zijn eigen scope in een eigen tempmap. Twee taken
 delen daar dus nooit een werkboom, wat `features/concurrent-write-safety-lost-update.md`
 vraagt van een repo waar meerdere projecten in schrijven. De kopie staat op de URL **zonder**
-credentials en de toegangscontrole is per taak een `ls-remote` met de eigen credentials; zie
-[`git-repo.md`](./git-repo.md).
+credentials en wordt gedeeld door alle projecten op dezelfde remote; zie
+[`git-repo.md`](./git-repo.md) voor hoe die kopie bijgewerkt wordt.
 
 ## Usage
 
