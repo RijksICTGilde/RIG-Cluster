@@ -444,6 +444,45 @@ class GitPushConflictError(RuntimeError):
     """
 
 
+#: Markers that mean the remote moved under us, so the write must be redone on its tip.
+#: "cannot lock ref" is one: the server holds the ref at a commit we did not build on.
+_COLLISION_MARKERS = (
+    "non-fast-forward",
+    "fetch first",
+    "incorrect old value",
+    "cannot lock ref",
+)
+
+#: A push the server refused itself, with the reason in brackets behind it.
+_REJECTION_REASON = re.compile(r"!\s+\[[a-z ]*rejected\][^(\n]*\(([^)]*)\)")
+
+#: Userinfo in a URL inside free text. The task service's ``redact_text`` does not know
+#: this shape, and ``strip_url_credentials`` only works on a bare URL.
+_URL_USERINFO = re.compile(r"(?i)(https?://)[^\s/@'\"]+@")
+
+
+def git_stderr_detail(stderr: str) -> str:
+    """Git's stderr as a single line, with no credentials in a URL left in it."""
+    return _URL_USERINFO.sub(r"\1", " ".join(stderr.split()))
+
+
+def is_git_push_collision(stderr: str) -> bool:
+    """Whether the server refused the push because the ref moved under us.
+
+    "failed to push some refs" does not count: git prints that line on EVERY refusal, a
+    hook or a protected branch included. "cannot lock ref" does: the server has the ref at
+    another commit than the one we built on, which is exactly a collision.
+    """
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _COLLISION_MARKERS)
+
+
+def git_push_rejection_reason(stderr: str) -> str:
+    """The reason the server gave for a refusal, or the whole stderr if it gave none."""
+    match = _REJECTION_REASON.search(stderr)
+    return git_stderr_detail(match.group(1) if match else stderr)
+
+
 class GitConnector:
     """Connector for interacting with Git repositories using GitPython."""
 
@@ -1901,16 +1940,16 @@ class GitConnector:
                 logger.debug(f"Successfully pushed changes to {target_branch}")
                 return
 
-            # Check if this is a non-fast-forward error (remote has newer commits)
-            is_non_fast_forward = (
-                "non-fast-forward" in stderr.lower()
-                or "failed to push some refs" in stderr.lower()
-                or "fetch first" in stderr.lower()
-                or "git pull" in stderr.lower()
-            )
-
-            if not is_non_fast_forward:
-                # Some other error, fail immediately
+            if not is_git_push_collision(stderr):
+                # The server refused the push for its own reason (a hook, a protected
+                # branch): rebasing onto its tip changes nothing, so it would refuse the
+                # retry just as well. Anything else is not a push verdict at all.
+                if "rejected" in stderr.lower():
+                    server_info = self._get_server_context()
+                    raise GitPushRejectedError(
+                        f"De git-server weigerde de push naar {target_branch} op {server_info}: "
+                        f"{git_push_rejection_reason(stderr)}."
+                    )
                 self._check_git_command_result(code, stderr, f"push changes to {target_branch}")
 
             if not allow_rebase:
