@@ -653,7 +653,7 @@ async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     phases = [(info["name"], info["status"]) for info in by_id.values() if info["parent_id"] is None]
     assert phases == [
         (progress_steps.PHASE_CHECK, TaskStatus.COMPLETED.value),
-        (progress_steps.PHASE_CONFIGURATION, TaskStatus.COMPLETED.value),
+        (progress_steps.PHASE_KUBERNETES_FILES, TaskStatus.COMPLETED.value),
         (progress_steps.ROLLOUT, TaskStatus.COMPLETED.value),
     ]
 
@@ -666,7 +666,7 @@ async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
         progress_steps.PROJECT_FILE_FETCH,
         progress_steps.PROJECT_FILE_VALIDATE,
     ]
-    assert steps_under(progress_steps.PHASE_CONFIGURATION) == [
+    assert steps_under(progress_steps.PHASE_KUBERNETES_FILES) == [
         progress_steps.PROJECT_FILE_UPDATE,
         progress_steps.ROLLOUT_PREPARE,
     ]

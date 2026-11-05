@@ -19,7 +19,7 @@ else under ``opi/``.
 # ----------------------------------------------------------------------
 PHASE_CHECK_AND_SAVE = "Wijziging controleren en opslaan"
 PHASE_CHECK = "Projectbestand controleren"
-PHASE_CONFIGURATION = "Configuratie bijwerken"
+PHASE_KUBERNETES_FILES = "Kubernetes-bestanden bijwerken in Git"
 # The rollout phase is the ArgoCD wait itself: its per-deployment rows are its children.
 
 # ----------------------------------------------------------------------

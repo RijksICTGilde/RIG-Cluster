@@ -85,7 +85,7 @@ deployment, "Projectbrede configuratie opstellen", "Configuratie publiceren" per
 foutregel bij die stap.
 
 **Een uitrol toont drie fases.** "Wijziging controleren en opslaan" (bij een refresh
-"Projectbestand controleren"), "Configuratie bijwerken" en "Uitrollen". De
+"Projectbestand controleren"), "Kubernetes-bestanden bijwerken in Git" en "Uitrollen". De
 task worker opent de eerste (`first_phase` in `opi/core/task_rollout.py`), `process_project`
 de tweede en de ArgoCD-wacht is de derde. Een stap die start terwijl een fase open is, valt
 eronder (`begin_phase` op de progress manager); de aanroepen zelf weten niets van fases. Een

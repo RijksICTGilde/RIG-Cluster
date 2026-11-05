@@ -6213,7 +6213,7 @@ class ProjectManager:
 
             # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
 
-            self._begin_phase(steps.PHASE_CONFIGURATION)
+            self._begin_phase(steps.PHASE_KUBERNETES_FILES)
 
             # Create namespaces first (always first task)
             # TODO: move methods to a kubernetes manager?
