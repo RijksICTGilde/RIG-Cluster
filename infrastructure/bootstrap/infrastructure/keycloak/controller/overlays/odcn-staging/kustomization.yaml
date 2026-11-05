@@ -75,4 +75,4 @@ patches:
 images:
   - name: ghcr.io/rijksictgilde/zad/keycloak-zad
     newName: rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad
-    newTag: "2026.11.02.0856-4c759a27"
+    newTag: "2026.11.05.1202-b39d5977"
