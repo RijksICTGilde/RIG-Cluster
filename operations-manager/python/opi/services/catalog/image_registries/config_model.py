@@ -190,8 +190,10 @@ class RegistryEntry(BaseModel):
 class QuotaApproval(BaseModel):
     """Whether a platform administrator approved the quota of one registry.
 
-    Same shape as the value approvals of send-email. Written by the approval flow
-    (``opi/services/approvals.py``).
+    Same shape as the value approvals of send-email, but ``value`` and ``status`` stay
+    optional: lowering back to an already approved quota leaves a block with only
+    ``approved-value``, which send-email's required fields would reject. Written by the
+    approval flow (``opi/services/approvals.py``).
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)

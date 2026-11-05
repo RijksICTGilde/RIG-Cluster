@@ -2,7 +2,7 @@
   "$defs": {
     "QuotaApproval": {
       "additionalProperties": true,
-      "description": "Whether a platform administrator approved the quota of one registry.\n\nSame shape as the value approvals of send-email. Written by the approval flow\n(``opi/services/approvals.py``).",
+      "description": "Whether a platform administrator approved the quota of one registry.\n\nSame shape as the value approvals of send-email, but ``value`` and ``status`` stay\noptional: lowering back to an already approved quota leaves a block with only\n``approved-value``, which send-email's required fields would reject. Written by the\napproval flow (``opi/services/approvals.py``).",
       "properties": {
         "approved-value": {
           "anyOf": [

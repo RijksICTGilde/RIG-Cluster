@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
+from opi.connectors.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
 from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
@@ -401,6 +402,25 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
     return await _do_submit(request, wizard_token, user, project_name)
 
 
+def _redeploy_scope(project_data: dict[str, Any], items: list[Any]) -> list[str] | None:
+    """The deployments this verdict has to redeploy; ``None`` means the whole project.
+
+    A decision on a domain or subdomain only affects the deployments publishing on it. A
+    decision on a value in the PROJECT config (a registry quota) belongs to no deployment,
+    and the project manifests are only generated in a round that does at least one
+    deployment: a scope of zero landed such a verdict in the project file and never in the
+    cluster. An empty list still means zero deployments, not all of them.
+    """
+    affected: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict) or item.get("status", "skip") == "skip":
+            continue
+        if item.get("type") not in DOMAIN_ITEM_TYPES:
+            return None
+        affected.update(find_deployments_for_domain_item(project_data, item))
+    return sorted(affected)
+
+
 def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> dict[str, Any]:
     """Rebuild ``_approval_items`` from the project, keeping the submitted verdicts.
 
@@ -467,20 +487,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
             if section.post_merge:
                 section.post_merge(existing_data, merged_data)
 
-        # Determine which deployment(s) are actually affected by this approval so
-        # the redeploy can be scoped to just those, instead of reprocessing the
-        # whole project. Any non-skip decision (approved OR denied) on a domain or
-        # subdomain redeploys every deployment referencing it. An empty result
-        # means no current deployment uses the decided domain(s): the status is
-        # still persisted, but nothing is redeployed.
-        from opi.connectors.subdomain import find_deployments_for_domain_item
-
-        affected_deployments: set[str] = set()
-        for item in merged_data.get("_approval_items", []):
-            if not isinstance(item, dict) or item.get("status", "skip") == "skip":
-                continue
-            affected_deployments.update(find_deployments_for_domain_item(existing_data, item))
-        deployment_names = sorted(affected_deployments)
+        deployment_names = _redeploy_scope(existing_data, merged_data.get("_approval_items", []))
 
         # Strip transient keys that should not persist to YAML
         existing_data.pop("_admin_email", None)
@@ -540,9 +547,9 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         max_attempts=1,
     )
     logger.info(
-        "Domain approval for %s scoped redeploy to deployment(s): %s",
+        "Approval for %s scoped redeploy to deployment(s): %s",
         project_name,
-        deployment_names or "(none affected)",
+        "(whole project)" if deployment_names is None else deployment_names or "(none affected)",
     )
     task_id = str(task["task_id"])
 

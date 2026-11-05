@@ -51,11 +51,24 @@ Beide getallen gaan over **items**, niet over groepen: er wordt eerst gefilterd 
 (`filter_op_status`) en daarna pas gegroepeerd, zodat er geen groepskop boven een lege
 tabel komt te staan en de teller met de lijst blijft kloppen.
 
+## Wat een oordeel opnieuw uitrolt
+
+Na het opslaan van een besluit volgt een `create_project`-taak. De scope komt uit
+`_redeploy_scope` (`opi/web/router_approvals.py`):
+
+- een besluit over een **domein of subdomein** rolt alleen de deployments opnieuw uit die op
+  dat adres publiceren (`find_deployments_for_domain_item`);
+- een besluit over een **waarde in de projectconfig** (het quota van een registry) is aan geen
+  deployment toe te wijzen, dus dan gaat het hele project opnieuw. De projectmanifesten worden
+  namelijk alleen gegenereerd in een ronde die ten minste een deployment doet, en een scope van
+  nul deployments liet zo'n oordeel wel in het projectbestand landen en nooit in het cluster.
+
 ## Een nieuwe dienst met goedkeuring erop
 
 Niets. Een dienst die een `ApprovalSpec` met een `list_items` declareert verschijnt vanzelf
 met een eigen groep; zie `docs/development/services.md` ("Approvals"). Geef het item wel een
-`subject`, anders staat er wat de terugval ervan maakt.
+`subject`, anders staat er wat de terugval ervan maakt. Rolt het oordeel iets uit dat niet aan
+een deployment hangt, kijk dan ook naar `_redeploy_scope` hierboven.
 
 ## De proefopstelling
 

@@ -368,6 +368,14 @@ Het besluit staat niet op de registry zelf maar ernaast, in `quota-gib-approval`
 registrynaam als sleutel. `PLATFORM_MANAGED` beschermt alleen velden op het bovenste niveau van
 een configblok: op de registry kon een project zijn eigen goedkeuring schrijven.
 
+Daarnaast vergelijkt `validate_approval_decisions` bij elke opslagactie de goedgekeurde waarde
+met de vorige versie van het projectbestand: `approved-value` mag niet verschijnen of wijzigen
+buiten de goedkeuringsroute. Dat dekt de stand die geen aanvraag op de goedkeuringspagina heeft
+en dus geen statuspoort kent, namelijk een blok met alleen een `approved-value`. Die stand is
+wel legitiem, want het platform schrijft hem zelf als een registry terugkomt op de laatst
+goedgekeurde waarde; alleen de waarde mag niet bewegen. Dezelfde regel geldt voor het
+afzenderadres en het dagbudget van send-email.
+
 De grens van 20 staat als `le` op het model en niet als `IntegerSetting`, omdat
 `config_settings` niet in een lijst kijkt.
 
@@ -378,6 +386,12 @@ De operator maakt per organisatie drie teams, gekoppeld aan de OIDC-groepen
 drie de rol Member, en dan kan niemand in de RCR-interface een tag verwijderen als de cache
 tegen zijn quota loopt. Het sjabloon zet daarom `admin` op `Admin`; `developer` en `viewer`
 blijven Member.
+
+Het admin-team is geen groep per project: het is de clusterbrede tenantgroep
+`rig-prd-admin-group`, waarin alleen het platformteam zit. `Admin` geeft dat team dus
+platformbeheer over de organisaties van alle projecten. Projectleden kunnen zelf geen tags
+verwijderen; wie dat nodig heeft, vraagt het aan het platformteam. Een projectgebonden
+groep met de rol Admin kan pas zodra ODC-Noord zo'n groep levert.
 
 ## Het projectniveau in de deployments-repo
 

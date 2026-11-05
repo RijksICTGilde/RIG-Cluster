@@ -121,6 +121,12 @@ class ApprovalSpec:
             granted -- including the consequence, which only the service knows. Returns
             an empty list when there is nothing to report. ``None`` for a spec whose
             state has no visible effect on a deployment.
+        approved_values: The MEMORY ("wat staat er goedgekeurd?"). Every last-approved
+            value this spec has stored, keyed by the identity of the thing it belongs to
+            (empty string for a project-wide value, otherwise the deployment or item
+            name). ``validate_approval_decisions`` compares it across a save: such a
+            value may only appear or change on the approval route. ``None`` for a spec
+            that keeps no approved value.
     """
 
     key: str
@@ -131,6 +137,7 @@ class ApprovalSpec:
     record: Callable[[dict[str, Any], ApprovalItem, dict[str, Any]], None] | None = None
     notices_for: Callable[[dict[str, Any], dict[str, Any]], list[ApprovalNotice]] | None = None
     requires_approval_for: Callable[[Any], bool] | None = None
+    approved_values: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
     def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:
         """The approval status of ``value`` given the current project state."""
@@ -152,11 +159,10 @@ class ApprovalSpec:
 
 
 class _ApprovalState:
-    """Het goedkeuringsblok van een dienst: waar het staat, en hoe je het leest en schrijft.
+    """The approval block of a service: where it lives, and how to read and write it.
 
-    Het blok hangt onder de config van de dienst zelf, op een vaste sleutel, en draagt
-    ``status`` en ``history``. De vormen hieronder delen deze toegang zodat lezen,
-    aanmaken en aanvullen maar op een plek staan.
+    The block hangs under the service config at a fixed key and carries ``status`` and
+    ``history``. The forms below share this access so read, create, and update live in one place.
     """
 
     def __init__(
@@ -167,35 +173,49 @@ class _ApprovalState:
     ) -> None:
         self.service = service
         self.config_key = config_key
-        #: Waar de dienstenlijst staat die het BLOK draagt. Standaard het project zelf; een
-        #: goedkeuring op de deploymentlaag geeft hier de deployment, zodat lezen en
-        #: schrijven in diens eigen ``services`` landt. De SELECTIE van de dienst blijft een
-        #: vraag aan het project: een deployment kiest de dienst niet.
+        #: Where the services list carrying the BLOCK lives. Defaults to the project itself; an
+        #: approval at the deployment layer passes the deployment here, so read and write hit its
+        #: own ``services``. The service SELECTION stays a query to the project: a deployment
+        #: does not pick the service.
         self._holder = holder or (lambda project_data: project_data)
 
     def selected(self, project_data: dict[str, Any]) -> bool:
-        """Of het project de dienst uberhaupt in zijn dienstenlijst heeft staan."""
+        """Whether the service appears in the project's services list at all."""
         return self.service in [service_entry_name(entry) for entry in project_data.get("services", []) or []]
 
     def entry(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """De service-entry van deze dienst, als hij als dict bij de houder staat."""
+        """The service entry of this service, if it stands as a dict with the holder."""
         for entry in self._holder(project_data).get("services", []) or []:
             if service_entry_name(entry) == self.service and isinstance(entry, dict):
                 return entry
         return None
 
     def service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
-        """De projectconfig van de dienst, leeg als hij er niet is."""
+        """The project config of this service, empty if it is not there."""
         config = service_entry_config(self.entry(project_data))
         return config if isinstance(config, dict) else {}
 
+    def _block_holder(self, project_data: dict[str, Any], *, create: bool) -> dict[str, Any] | None:
+        """The dict the block ITSELF lives in, created when ``create``.
+
+        Overridable: a block that sits one level deeper (one per item of a list) only has to
+        bend this, so that reading, writing and clearing stay shared.
+        """
+        if not create:
+            return self.service_config(project_data)
+        entry = self.entry(project_data) or self._promote_bare_entry(project_data)
+        if entry is None:
+            return None
+        config = self._config_holder(entry, self.service).setdefault("config", {})
+        return config if isinstance(config, dict) else None
+
     def read(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """Het opgeslagen blok, of None als er nooit iets is aangevraagd."""
-        block = self.service_config(project_data).get(self.config_key)
+        """The stored block, or None if nothing has been requested."""
+        block = (self._block_holder(project_data, create=False) or {}).get(self.config_key)
         return block if isinstance(block, dict) else None
 
     def status(self, project_data: dict[str, Any]) -> ApprovalStatus:
-        """De opgeslagen status, NONE zolang er geen blok of geen geldige status is."""
+        """The stored status, NONE while there is no block or no valid status."""
         block = self.read(project_data)
         if block is None:
             return ApprovalStatus.NONE
@@ -205,18 +225,18 @@ class _ApprovalState:
             return ApprovalStatus.NONE
 
     def last_verdict(self, project_data: dict[str, Any]) -> dict[str, Any]:
-        """Het laatste oordeel uit de history, leeg als er nog geen is."""
+        """The last verdict from history, empty if there is none."""
         history = (self.read(project_data) or {}).get("history") or []
         last = history[-1] if isinstance(history, list) and history else None
         return last if isinstance(last, dict) else {}
 
     def _promote_bare_entry(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """Maak van een kale-string-entry de recordvorm, zodat er een config is om naar te schrijven.
+        """Make a bare-string entry into record form so there is a config to write into.
 
-        Een dienst met alleen optionele config blijft als kale string in de lijst staan en
-        heeft dan geen plek voor het blok; de schrijver returnde dan stil en de aanvraag
-        verdween. Promoveren naar de recordvorm is wat ``set_service_config`` ook doet: de
-        selectie is een set op naam, de vorm van de entry is bijzaak.
+        A service with only optional config stays as a bare string in the list and has no
+        place for the block; the writer would return silently and the request vanish.
+        Promoting to record form is what ``set_service_config`` does: selection is a set by
+        name, entry form is incidental.
         """
         services = self._holder(project_data).get("services")
         if not isinstance(services, list):
@@ -230,14 +250,14 @@ class _ApprovalState:
 
     @staticmethod
     def _config_holder(entry: dict[str, Any], service: str) -> dict[str, Any]:
-        """Het dict waar de CONFIG van deze dienst in hangt.
+        """The dict the CONFIG of this service lives in.
 
-        Voor de recordvorm (``{"name": "send-email", "config": ...}``) is dat de entry
-        zelf; voor de legacy enkelsleutelvorm (``{"send-email": {"config": ...}}``) is dat
-        de binnenste dict. Zonder dat onderscheid zet de schrijver het goedkeuringsblok
-        NAAST de dienst in plaats van erin: de lezer vindt het dan niet, en de entry wordt
-        een tweesleuteldict waar ``service_entry_name`` juist voor waarschuwt. Gemeten op de
-        deploymentlaag, waar het formulier een entry in de legacy vorm aanmaakt.
+        For record form (``{"name": "send-email", "config": ...}``) it is the entry itself;
+        for legacy single-key form (``{"send-email": {"config": ...}}``) it is the inner dict.
+        Without that distinction, the writer puts the approval block BESIDE the service instead
+        of inside it: the reader does not find it, and the entry becomes a two-key dict that
+        ``service_entry_name`` warns of. Measured at deployment level, where the form creates
+        an entry in legacy form.
         """
         inner = entry.get(service)
         if service in entry and isinstance(inner, dict) and "name" not in entry and "reference" not in entry:
@@ -250,14 +270,9 @@ class _ApprovalState:
         fields: dict[str, Any],
         history_entry: dict[str, Any] | None = None,
     ) -> None:
-        """Vul het blok aan, en maak het aan als het er nog niet is."""
-        entry = self.entry(project_data)
-        if entry is None:
-            entry = self._promote_bare_entry(project_data)
-        if entry is None:
-            return
-        config = self._config_holder(entry, self.service).setdefault("config", {})
-        if not isinstance(config, dict):
+        """Fill the block, and create it if it does not exist."""
+        config = self._block_holder(project_data, create=True)
+        if config is None:
             return
         block = config.setdefault(self.config_key, {})
         if not isinstance(block, dict):
@@ -268,12 +283,12 @@ class _ApprovalState:
             history.append(history_entry)
 
     def clear(self, project_data: dict[str, Any]) -> None:
-        """Haal het blok weg, zodat een volgende aanvraag weer bij nul begint."""
-        self.service_config(project_data).pop(self.config_key, None)
+        """Remove the block so a next request starts from zero."""
+        (self._block_holder(project_data, create=False) or {}).pop(self.config_key, None)
 
 
 def _notice_text(activity: str, consequence: str, status: ApprovalStatus) -> str:
-    """De drie zinnen voor de aanvrager, op een plek zodat ze niet uit elkaar lopen."""
+    """The three sentences for the requester, in one place so they stay together."""
     if status is ApprovalStatus.DENIED:
         return f"{activity} is afgewezen. {consequence}".rstrip()
     if status is ApprovalStatus.REQUESTED:
@@ -289,7 +304,7 @@ def _notice(
     status: ApprovalStatus,
     text: str,
 ) -> ApprovalNotice:
-    """De mededeling aan de aanvrager, aangevuld met het laatste oordeel."""
+    """The notice to the requester, filled with the last verdict."""
     verdict = state.last_verdict(project_data)
     return {
         "subject": subject,
@@ -301,26 +316,26 @@ def _notice(
     }
 
 
-#: Wat er in de lijst staat als ONDERWERP van een goedkeuring die over de dienst zelf gaat.
-#: Er is er per project maar een, en waar het over gaat is niet een waarde maar de dienst:
-#: "mag dit project deze dienst gebruiken".
+#: What appears in the list as the SUBJECT of an approval about the service itself.
+#: There is one per project, and what it is about is not a value but the service:
+#: "may this project use this service".
 SERVICE_USE_SUBJECT = "Gebruik van de dienst"
 
 
 @dataclass(frozen=True)
 class ServiceUseApproval:
-    """De complete vorm van "ja, dit project mag deze dienst gebruiken".
+    """The complete form of 'yes, this project may use this service'.
 
-    Wat :func:`service_use_approval` teruggeeft. Drie dingen, en niet meer, want dat is
-    precies wat een dienst met deze vorm nodig heeft:
+    What :func:`service_use_approval` returns. Three things, no more, because that is
+    exactly what a service with this form needs:
 
     Attributes:
-        spec: de :class:`ApprovalSpec` voor ``config_approvals()`` -- lezen, lijsten,
-            vastleggen en de mededeling aan de aanvrager.
-        is_approved: DE POORT. Alles wat de dienst aanzet hangt hieraan, zodat de
-            onderdelen het nooit oneens kunnen zijn.
-        ensure_requested: de dienst aanzetten IS de aanvraag; dit legt hem vast.
-            Toestandsvormig en dus idempotent.
+        spec: the :class:`ApprovalSpec` for ``config_approvals()`` -- read, list, record
+            and notice to requester.
+        is_approved: THE GATE. Everything that turns the service on hangs on this, so the
+            parts never disagree.
+        ensure_requested: turning on the service IS the request; this records it. State-shaped
+            and thus idempotent.
     """
 
     spec: ApprovalSpec
@@ -336,13 +351,12 @@ def service_use_approval(
     consequence: str,
     approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
 ) -> ServiceUseApproval:
-    """De booleaanse goedkeuring: mag dit project deze dienst gebruiken, ja of nee.
+    """The boolean approval: may this project use this service, yes or no.
 
-    Deze vorm komt vaker terug dan bij een dienst alleen, en hij is met de hand ongeveer
-    negentig regels: de status lezen, het item voor de beheerpagina, het oordeel
-    vastleggen, de mededeling aan de aanvrager en de aanvraag zelf. De tweede dienst die
-    hem nodig heeft kopieert dat, en vanaf dat moment lopen de twee uit elkaar. Vandaar
-    een declaratie.
+    This form appears more often than in one service, and hand-written is about ninety
+    lines: read status, item for approval page, record verdict, notice to requester, and
+    the request itself. The second service that needs it copies that, and from then on the
+    two drift apart. Hence a declaration.
 
     De toestand staat onder de dienst zelf, op ``services/[<dienst>]/config/approval``,
     met ``status`` en ``history``. Er is er EEN per project: wat wordt goedgekeurd is
@@ -510,6 +524,31 @@ def _ensure_value_requested(state: _ApprovalState, data: dict[str, Any], value: 
     state.write(data, fields)
 
 
+def _stored_approved_values(
+    states: list[tuple[str, _ApprovalState]],
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """THE MEMORY on a value: what each block has standing as approved.
+
+    Only ``_record_value`` may make this value appear or change, and that runs on the
+    approval route alone. A block holding nothing but an ``approved-value`` is a
+    legitimate state too (back to the last approved value), so its mere presence says
+    nothing; the COMPARISON with the previous version does. Without that comparison a
+    hand-written ``approved-value`` counts as approved while no item ever stood on the
+    approvals page, because ``_items`` only lists a block that carries a ``value``.
+
+    The identity is the name within the project (empty for a project-wide value), not
+    ``<project>/<name>``: within one project file that is unambiguous, and it does not
+    shift when the project is renamed.
+    """
+    values: dict[str, Any] = {}
+    for name, state in states:
+        block = state.read(data) or {}
+        if LAST_APPROVED_KEY in block:
+            values[name] = block[LAST_APPROVED_KEY]
+    return values
+
+
 def _value_item(
     *,
     field: str,
@@ -650,6 +689,10 @@ def config_value_approval(
         last = _last_approved(project_data)
         return "" if last is None else str(last)
 
+    def _approved_values(project_data: dict[str, Any]) -> dict[str, Any]:
+        """THE MEMORY. One project-wide value, under the empty identity."""
+        return _stored_approved_values([("", state)], project_data)
+
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
         """De LIJST. Een item zolang er een aanvraag open staat of is beoordeeld."""
         block = state.read(project_data)
@@ -703,6 +746,7 @@ def config_value_approval(
             list_items=_items,
             record=_record,
             notices_for=_notices,
+            approved_values=_approved_values,
             requires_approval_for=(
                 (lambda config: required_when(config if isinstance(config, dict) else {}))
                 if required_when is not None
@@ -858,6 +902,10 @@ def deployment_value_approval(
         last = (_state(deployment_name).read(project_data) or {}).get(LAST_APPROVED_KEY)
         return "" if last is None else str(last)
 
+    def _approved_values(project_data: dict[str, Any]) -> dict[str, Any]:
+        """THE MEMORY, per deployment."""
+        return _stored_approved_values([(name, _state(name)) for name in _deployment_names(project_data)], project_data)
+
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
         """De LIJST. Een item per deployment met een open of beoordeelde aanvraag."""
         items: list[ApprovalItem] = []
@@ -936,6 +984,7 @@ def deployment_value_approval(
             list_items=_items,
             record=_record,
             notices_for=_notices,
+            approved_values=_approved_values,
         ),
         is_approved=_is_approved,
         approved_value=_approved_value,
@@ -945,53 +994,31 @@ def deployment_value_approval(
 
 
 class _ItemApprovalState(_ApprovalState):
-    """The block of ONE item from a list in the service's project config.
+    """The approval block of ONE item from a list in the service's project config.
 
-    The blocks do not live on the item itself but together under one config field, keyed
-    by item name: ``<field>-approval: {<item>: {...}}``. On the item the block would be
-    unprotected, because ``PLATFORM_MANAGED`` only covers top-level fields of a config
-    block, and a project could then write its own approval.
+    The blocks live together under one config field keyed by item name
+    (``<field>-approval: {<item>: {...}}``) instead of on the item itself. On the item the
+    block would be unprotected, because ``PLATFORM_MANAGED`` only covers top-level fields
+    of a config block, and a project could then write its own approval.
     """
 
     def __init__(self, service: str, map_key: str, item_name: str) -> None:
         super().__init__(service, item_name)
         self.map_key = map_key
 
-    def service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
-        """The collection of blocks instead of the config, so reading stays shared."""
-        blocks = super().service_config(project_data).get(self.map_key)
-        return blocks if isinstance(blocks, dict) else {}
-
-    def write(
-        self,
-        project_data: dict[str, Any],
-        fields: dict[str, Any],
-        history_entry: dict[str, Any] | None = None,
-    ) -> None:
-        """Update this item's block, creating it (and the collection) when needed."""
-        entry = self.entry(project_data)
-        if entry is None:
-            return
-        config = self._config_holder(entry, self.service).get("config")
-        if not isinstance(config, dict):
-            return
-        blocks = config.setdefault(self.map_key, {})
-        if not isinstance(blocks, dict):
-            return
-        block = blocks.setdefault(self.config_key, {})
-        block.update(fields)
-        history = block.setdefault("history", [])
-        if history_entry is not None and isinstance(history, list):
-            history.append(history_entry)
+    def _block_holder(self, project_data: dict[str, Any], *, create: bool) -> dict[str, Any] | None:
+        """The collection of blocks, one level below the service config."""
+        holder = super()._block_holder(project_data, create=create)
+        if holder is None:
+            return None
+        blocks = holder.setdefault(self.map_key, {}) if create else holder.get(self.map_key)
+        return blocks if isinstance(blocks, dict) else None
 
     def clear(self, project_data: dict[str, Any]) -> None:
         """Remove this item's block, and the collection once it is empty."""
-        config = super().service_config(project_data)
-        blocks = config.get(self.map_key)
-        if not isinstance(blocks, dict):
-            return
-        blocks.pop(self.config_key, None)
-        if not blocks:
+        super().clear(project_data)
+        config = super()._block_holder(project_data, create=False)
+        if config is not None and config.get(self.map_key) == {}:
             config.pop(self.map_key, None)
 
 
@@ -1048,6 +1075,7 @@ def config_item_value_approval(
     """
     map_key = f"{field}{VALUE_APPROVAL_SUFFIX}"
     service = service_type.value
+    #: The service itself: whether it is selected, and the collection of blocks as a whole.
     selection = _ApprovalState(service, map_key)
 
     def _state(item_name: str) -> _ItemApprovalState:
@@ -1073,6 +1101,12 @@ def config_item_value_approval(
     def _last_approved_value(project_data: dict[str, Any], item_name: str) -> str:
         last = (_state(item_name).read(project_data) or {}).get(LAST_APPROVED_KEY)
         return "" if last is None else str(last)
+
+    def _approved_values(project_data: dict[str, Any]) -> dict[str, Any]:
+        """THE MEMORY, per STORED block, so a block of an unknown item counts too."""
+        return _stored_approved_values(
+            [(name, _state(name)) for name in selection.read(project_data) or {}], project_data
+        )
 
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
         """The LIST. One entry per list item with an open or decided request."""
@@ -1131,7 +1165,7 @@ def config_item_value_approval(
             _ensure_value_requested(_state(item_name), project_data, _requested(project_data, item_name))
         # A removed item's block would hand a later item with the same name a decision
         # that was not about it.
-        for orphan in [name for name in _state("").service_config(project_data) if name not in names]:
+        for orphan in [name for name in selection.read(project_data) or {} if name not in names]:
             _state(orphan).clear(project_data)
 
     return ConfigItemValueApproval(
@@ -1143,6 +1177,7 @@ def config_item_value_approval(
             list_items=_items,
             record=_record,
             notices_for=_notices,
+            approved_values=_approved_values,
             # Enabling the service asks nothing; only a value above the free range does.
             requires_approval_for=lambda _config: False,
         ),

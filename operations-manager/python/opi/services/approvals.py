@@ -78,6 +78,25 @@ def collect_approval_items(project_data: dict[str, Any]) -> list[ApprovalItem]:
     return items
 
 
+def collect_approved_values(project_data: dict[str, Any]) -> dict[tuple[str, str, str], Any]:
+    """Every last-approved value stored in ``project_data``, keyed by its identity.
+
+    The identity is (service, spec key, name within the project), the same routing tags
+    :func:`collect_approval_items` adds. Used by ``validate_approval_decisions`` to
+    compare a save against the version it replaces: a last-approved value may only
+    appear or change on the approval route. Specs that keep no approved value (a service
+    approval, publish-on-web's domains) contribute none.
+    """
+    values: dict[tuple[str, str, str], Any] = {}
+    for service in approval_services():
+        for spec in service.approval_specs():
+            if spec.approved_values is None:
+                continue
+            for name, value in spec.approved_values(project_data).items():
+                values[(service.service_type.value, spec.key, name)] = value
+    return values
+
+
 def ensure_approval_requests(project_data: dict[str, Any]) -> None:
     """Make sure everything ``project_data`` asks for and has not been granted is REQUESTED.
 

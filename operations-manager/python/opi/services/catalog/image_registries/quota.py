@@ -11,16 +11,12 @@ from typing import Any
 
 from opi.services.catalog.approval import config_item_value_approval
 from opi.services.catalog.image_registries.config_model import QUOTA_FIELD, QUOTA_FREE_MAX_GIB
-from opi.services.catalog.image_registries.resolution import project_registries
+from opi.services.catalog.image_registries.resolution import find_registry, project_registries
 from opi.services.services_enums import ServiceType
 
 
-def _registry(project_data: dict[str, Any], name: str) -> dict[str, Any]:
-    return next((r for r in project_registries(project_data) if r.get("name") == name), {})
-
-
 def _chosen(project_data: dict[str, Any], name: str) -> int | None:
-    value = _registry(project_data, name).get(QUOTA_FIELD)
+    value = (find_registry(project_data, name) or {}).get(QUOTA_FIELD)
     # bool is an int in Python, and true is not a quota anyone meant to write.
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -52,7 +48,7 @@ def _requested(project_data: dict[str, Any], name: str) -> str:
 
 
 def effective_quota_gib(project_data: dict[str, Any], name: str, cluster_default: int) -> int:
-    """THE GATE on the write path: the ``limitGiB`` the organization of this registry gets."""
+    """The ``limitGiB`` the organization of this registry receives on the write path."""
     chosen = _chosen(project_data, name)
     if chosen is None:
         return cluster_default

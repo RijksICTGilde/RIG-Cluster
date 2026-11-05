@@ -21,7 +21,9 @@ spec:
   quota:
     limitGiB: {{ quota_limit_gib }}
   # authLevels explicitly: left out, the operator gives all three teams the role Member,
-  # and then nobody in the project can delete a tag when the cache runs into its quota.
+  # and then nobody can delete a tag when the cache runs into its quota. The admin team is
+  # the cluster-wide tenant group rig-prd-admin-group (platform management only, not a group
+  # per project), so Admin here grants platform management over every project's organization.
   authorization:
     teamSync:
       enabled: true
