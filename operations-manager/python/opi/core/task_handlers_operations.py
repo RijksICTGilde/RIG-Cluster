@@ -303,6 +303,22 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
+async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects: bool = False) -> None:
+    """Pick up outside changes, and fail the step when git does not cooperate.
+
+    Without this the step stayed open while the task had already failed, and the user read
+    nowhere what went wrong. The message is the connector's, so the user sees whether it is
+    the platform's doing.
+    """
+    try:
+        if reconcile_projects:
+            await get_project_store().reconcile()
+        await sync_platform_repos()
+    except RuntimeError as exc:
+        progress.fail_task(task_id, f"{type(exc).__name__}: {exc}")
+        raise
+
+
 async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     """Handle async deployment refresh task.
 
@@ -365,7 +381,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
 
         # Same reason as on a project refresh: whatever was committed to the manifest
         # repos outside ZAD belongs in the state we generate from.
-        await sync_platform_repos()
+        await _sync_or_fail_step(progress, lookup_task)
 
         project = get_project_store().get(project_name)
 
@@ -543,8 +559,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         # Pick up anything committed outside ZAD before reprocessing, so "refresh"
         # actually means "use what is in git right now". Costs one ls-remote when
         # nothing changed; a fetch and a targeted re-read when it did.
-        await get_project_store().reconcile()
-        await sync_platform_repos()
+        await _sync_or_fail_step(progress, lookup_task, reconcile_projects=True)
 
         project = get_project_store().get(project_name)
 

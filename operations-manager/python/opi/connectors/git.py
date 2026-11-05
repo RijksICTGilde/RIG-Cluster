@@ -71,6 +71,13 @@ GIT_SIGNING_FORMAT = "openpgp"
 #: Without it, curl's connect timeout (300s) is the only limit.
 GIT_PUSH_TIMEOUT_SECONDS = 60
 
+#: Own limit for a clone: a blobless bare clone may take a while, but not forever.
+#: The platform repos are cloned at startup, so no live action waits for one.
+GIT_CLONE_TIMEOUT_SECONDS = 300
+
+#: How long a network step to the remote may be retried before the task fails.
+GIT_RETRY_BUDGET_SECONDS = 15
+
 COMMIT_ACTOR_TRAILER = "Actor"
 """Git-trailer voor wie de commit startte. Auteur/committer blijft OPI; trailer zodat git
 het kan uitlezen (``git log --format=%(trailers:key=Actor,valueonly)``).
@@ -400,6 +407,27 @@ class GitCommandTimeoutError(RuntimeError):
     Says "got no response", not "not pushed": a push that is killed after the timeout may
     still have landed server-side. That is safe, because the next rollout reads the remote
     again and the commits are idempotent.
+    """
+
+
+class GitRemoteUnavailableError(RuntimeError):
+    """The git server could not be reached: DNS, the connection itself, or a 5xx.
+
+    Retried (see ``GitRepo._with_retry``), because the call never arrived at the server or
+    was cut off halfway. ``detail`` is git's stderr, so the message after the last attempt
+    can still name it.
+    """
+
+    def __init__(self, message: str, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
+class GitPushRejectedError(RuntimeError):
+    """The git server refused the push for its own reason: a hook, a protected branch.
+
+    Not the same as :class:`GitPushConflictError`: nothing moved, so reading again and
+    pushing again yields the same refusal.
     """
 
 

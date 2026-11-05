@@ -30,6 +30,7 @@ from tenacity import (
 
 from opi.api.endpoint_util import controleer_handelingen
 from opi.bootstrap.keycloak_setup import setup_keycloak
+from opi.connectors.git_repo import warm_platform_repos
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
 from opi.connectors.mail import MailRelayError
@@ -945,6 +946,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # readiness er niet op wacht.
     if readiness.projects.ready and not skip_checks:
         app.state.cmp_key_reader_task = asyncio.create_task(ensure_cmp_key_readers())
+
+    # Phase 2d: warm up bare copies of deployments and argo repos in the background.
+    # A clone costs minutes; without this the first writing task pays for it.
+    app.state.git_warm_task = asyncio.create_task(warm_platform_repos())
 
     # Resolve which image this pod runs, so /version can say who is answering.
     await _resolve_running_image()

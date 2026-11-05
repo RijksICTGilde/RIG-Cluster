@@ -19,6 +19,8 @@ from opi.connectors.git import (
     FileChange,
     GitCommandTimeoutError,
     GitPushConflictError,
+    GitPushRejectedError,
+    GitRemoteUnavailableError,
     push_lock_for,
     run_git,
 )
@@ -29,6 +31,7 @@ from opi.connectors.git_repo import (
     RepoAt,
     get_git_repo,
     reset_git_repos,
+    warm_platform_repos,
 )
 
 if TYPE_CHECKING:
@@ -1031,3 +1034,328 @@ async def test_een_commando_zonder_time_out_wacht_gewoon_af(remote: Path) -> Non
     assert code == 0
     assert "refs/heads/main" in stdout
     assert stderr == ""
+
+
+# ---------------------------------------------------------------------------
+# Outages: what is retried, what is not, and what the user reads
+# ---------------------------------------------------------------------------
+
+_DNS_FAILURE = "fatal: unable to access 'https://host/repo.git/': Could not resolve host: host"
+_REJECTION = (
+    " ! [remote rejected] main -> main (pre-receive hook declined)\n"
+    "error: failed to push some refs to 'https://host/repo.git'"
+)
+_REF_COLLISION = (
+    " ! [remote rejected] main -> main (cannot lock ref 'refs/heads/main': is at aaa but expected bbb)\n"
+    "error: failed to push some refs to 'https://host/repo.git'"
+)
+_AUTH_FAILURE = "remote: Invalid username or password\nfatal: Authentication failed for 'https://host/repo.git/'"
+
+
+def _fail_git(
+    monkeypatch: pytest.MonkeyPatch,
+    subcommand: str,
+    stderr: str,
+    *,
+    times: int | None = None,
+) -> list[str]:
+    """Make ``git <subcommand>`` fail with this stderr; every other command really runs.
+
+    ``times`` limits it to the first n calls, so recovery after an outage can be measured.
+    The returned list is every git subcommand GitRepo ran, in order.
+    """
+    import opi.connectors.git_repo as module
+
+    real = module.run_git
+    calls: list[str] = []
+
+    async def fake(args: list[str], **kwargs: object) -> tuple[str, str, int]:
+        calls.append(args[0])
+        if args[0] == subcommand and (times is None or calls.count(subcommand) <= times):
+            return "", stderr, 128
+        return await real(args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(module, "run_git", fake)
+    return calls
+
+
+@pytest.fixture
+def _short_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retry budget that allows exactly one retry, without really waiting."""
+    import opi.connectors.git_repo as module
+
+    monkeypatch.setattr(module, "GIT_RETRY_BUDGET_SECONDS", 0.01)
+
+
+async def _ready_to_write(repo: GitRepo, work: Path) -> str:
+    """Materialize the scope and put one new file in it, ready for a write."""
+    base = await repo.tip(ANON)
+    await repo.materialize(["prd/alfa"], base, str(work), ANON)
+    (work / "prd" / "alfa" / "nieuw.yaml").write_text("x\n")
+    return base
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_a_brief_outage_does_not_cost_a_task(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first push trips over DNS, the second lands: the commit arrives all the same."""
+    repo = _repo(remote)
+    work = tmp_path / "work"
+    base = await _ready_to_write(repo, work)
+    calls = _fail_git(monkeypatch, "push", _DNS_FAILURE, times=1)
+
+    result = await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
+
+    assert result.committed
+    assert calls.count("push") == 2, "exactly one retry"
+    assert "prd/alfa/nieuw.yaml" in _paths_in(remote)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_a_lasting_outage_names_the_platform_and_the_stderr(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(remote)
+    work = tmp_path / "work"
+    base = await _ready_to_write(repo, work)
+    _fail_git(monkeypatch, "push", _DNS_FAILURE)
+
+    with pytest.raises(GitRemoteUnavailableError) as caught:
+        await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
+
+    message = str(caught.value)
+    assert "is niet bereikbaar, ook niet na herhalen" in message
+    assert "Dit ligt aan het platform, niet aan het project" in message
+    assert "Could not resolve host" in message
+    assert _git(remote, "rev-parse", "main") == base
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_an_unreachable_remote_keeps_the_warm_copy(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rebuilding belongs to a broken copy, not to an unreachable remote."""
+    repo = _repo(remote)
+    await repo.tip(ANON)
+    calls = _fail_git(monkeypatch, "fetch", _DNS_FAILURE)
+
+    with pytest.raises(GitRemoteUnavailableError):
+        await repo.fetch(ANON)
+
+    assert os.path.isdir(repo.path), "the copy stays in place"
+    assert "clone" not in calls, "a clone would run into the same wall"
+
+
+@pytest.mark.asyncio
+async def test_fetch_on_a_broken_copy_rebuilds_it(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A generic fetch failure (no network, no auth) keeps throwing the copy away."""
+    repo = _repo(remote)
+    await repo.tip(ANON)
+    calls = _fail_git(monkeypatch, "fetch", "error: unable to read refs: index.lock")
+
+    sha = await repo.fetch(ANON)
+
+    assert sha == _git(remote, "rev-parse", "main")
+    assert "clone" in calls, "the broken copy is built again"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_a_rejection_by_the_server_is_not_retried(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "failed to push some refs" alone is no collision: git prints it on every refusal."""
+    repo = _repo(remote)
+    work = tmp_path / "work"
+    base = await _ready_to_write(repo, work)
+    calls = _fail_git(monkeypatch, "push", _REJECTION)
+
+    with pytest.raises(GitPushRejectedError) as caught:
+        await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
+
+    assert "pre-receive hook declined" in str(caught.value)
+    assert calls.count("push") == 1
+    assert "fetch" not in calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_a_ref_that_cannot_be_locked_is_a_collision(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``cannot lock ref`` arrives as ``[remote rejected]`` but means the remote moved."""
+    repo = _repo(remote)
+    work = tmp_path / "work"
+    base = await _ready_to_write(repo, work)
+    calls = _fail_git(monkeypatch, "push", _REF_COLLISION)
+
+    with pytest.raises(GitPushConflictError) as caught:
+        await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
+
+    assert "de remote is verder" in str(caught.value)
+    assert calls.count("fetch") >= 1, "a collision is retried on the new tip"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_refused_credentials_are_not_retried(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(remote)
+    work = tmp_path / "work"
+    base = await _ready_to_write(repo, work)
+    calls = _fail_git(monkeypatch, "push", _AUTH_FAILURE)
+
+    with pytest.raises(RuntimeError) as caught:
+        await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
+
+    assert not isinstance(caught.value, GitRemoteUnavailableError)
+    assert "weigert de inloggegevens van OPI" in str(caught.value)
+    assert calls.count("push") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_a_credential_in_the_stderr_stays_out_of_the_message(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the URL shape from the stderr; ``redact_text`` does not know URL userinfo."""
+    from opi.utils.logging_redact import redact_text
+
+    repo = _repo(remote)
+    work = tmp_path / "work"
+    base = await _ready_to_write(repo, work)
+    _fail_git(
+        monkeypatch,
+        "push",
+        "fatal: unable to access 'https://git:geheimpje@host/repo.git/': Connection refused",
+    )
+
+    with pytest.raises(GitRemoteUnavailableError) as caught:
+        await _write(repo, ["prd/alfa"], work, "alfa bijwerken", base)
+
+    assert "geheimpje" not in redact_text(f"{type(caught.value).__name__}: {caught.value}")
+
+
+@pytest.mark.asyncio
+async def test_an_unclassified_failure_does_not_blame_the_platform(
+    remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Network, auth and collisions each have their own wording; anything else may just as
+    well be caused by what the project had us write, so it gets no "platform" claim."""
+    repo = _repo(remote)
+    _fail_git(monkeypatch, "clone", "fatal: repository not found")
+
+    with pytest.raises(RuntimeError) as caught:
+        await repo.tip(ANON)
+
+    message = str(caught.value)
+    assert "repository not found" in message
+    assert "ligt aan het platform" not in message
+
+
+@pytest.mark.asyncio
+async def test_a_clone_without_an_answer_leaves_no_half_copy(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import opi.connectors.git_repo as module
+
+    monkeypatch.setattr(module, "GIT_CLONE_TIMEOUT_SECONDS", 0.05)
+    repo = _repo(remote)
+    hanging, clones = _hang_on("clone", monkeypatch)
+
+    with pytest.raises(GitCommandTimeoutError, match=r"^Klonen van "):
+        await repo.tip(ANON)
+
+    assert clones() == 1, "a clone that does not answer is not tried again"
+    assert hanging[0].killed
+    assert not os.path.isdir(repo.path), "the half-finished copy is cleaned up"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_cloning_retries_after_a_brief_outage(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The clone runs through the same retry as push and fetch, not only the timeout."""
+    repo = _repo(remote)
+    calls = _fail_git(monkeypatch, "clone", _DNS_FAILURE, times=1)
+
+    await repo.tip(ANON)
+
+    assert calls.count("clone") == 2, "exactly one retry"
+    assert os.path.isdir(repo.path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_cloning_cleans_up_the_half_copy_after_a_lasting_outage(
+    remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _repo(remote)
+    _fail_git(monkeypatch, "clone", _DNS_FAILURE)
+
+    with pytest.raises(GitRemoteUnavailableError):
+        await repo.tip(ANON)
+
+    assert not os.path.isdir(repo.path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_short_budget")
+async def test_resolve_retries_after_a_brief_outage(remote: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``resolve`` (ls-remote in ``sync``) retries just like the writing calls."""
+    repo = _repo(remote)
+    calls = _fail_git(monkeypatch, "ls-remote", _DNS_FAILURE, times=1)
+
+    sha = await repo.resolve(ANON)
+
+    assert sha is not None
+    assert calls.count("ls-remote") == 2, "exactly one retry"
+
+
+# ---------------------------------------------------------------------------
+# Warming up the platform repos at startup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_warm_platform_repos_warms_both_despite_one_failing(
+    remote: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A broken config only logs; the other platform repo is still cloned."""
+    import opi.connectors.git_repo as module
+
+    broken = {
+        "url": str(tmp_path / "does-not-exist.git"),
+        "branch": "main",
+        "username": None,
+        "password": None,
+        "name": "deployments",
+    }
+    working = {"url": str(remote), "branch": "main", "username": None, "password": None, "name": "argo"}
+    monkeypatch.setattr(module, "deployments_repo_config", lambda: broken)
+    monkeypatch.setattr(module, "argo_repo_config", lambda: working)
+    caplog.set_level("WARNING")
+
+    await warm_platform_repos()
+
+    assert any("niet vooraf klaarzetten" in record.message for record in caplog.records)
+    assert os.path.isdir(_repo(remote).path), "the working repo was still warmed up"
+
+
+@pytest.mark.asyncio
+async def test_warm_platform_repos_survives_an_undecryptable_password(
+    remote: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An AGE password without a key raises ValueError, which must only log as well."""
+    import opi.connectors.git_repo as module
+
+    broken = {"url": str(remote), "branch": "main", "username": "git", "password": "age:niettedecrypten"}
+    working = {"url": str(remote), "branch": "main", "username": None, "password": None, "name": "argo"}
+    monkeypatch.setattr(module, "deployments_repo_config", lambda: broken)
+    monkeypatch.setattr(module, "argo_repo_config", lambda: working)
+    caplog.set_level("WARNING")
+
+    await warm_platform_repos()
+
+    assert any("niet vooraf klaarzetten" in record.message for record in caplog.records)
+    assert os.path.isdir(_repo(remote).path), "the second repo was still warmed up"

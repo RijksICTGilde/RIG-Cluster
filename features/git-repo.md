@@ -196,10 +196,77 @@ De plumbing die beide gebruiken staat op één plek in `git.py`: `run_git`,
 (`push_lock_for`, `project_write_lock`).
 
 `run_git` geeft optionele `timeout`. De push, de fetch en de ls-remote van `GitRepo` gebruiken
-`GIT_PUSH_TIMEOUT_SECONDS` (60s); zonder grens is curl 300s de enige limiet, en houdt
-dat ook de push-lock bezet. Een `GitCommandTimeoutError` is geen `GitPushConflictError`,
-dus geen retry; de fout gaat direct naar de aanroeper en noemt de remote zonder credentials.
-Een afgeschoten push kan toch geland zijn; volgende ronde leest de remote opnieuw.
+`GIT_PUSH_TIMEOUT_SECONDS` (60s) en de kloon `GIT_CLONE_TIMEOUT_SECONDS` (300s, want een
+blobless bare kloon van de deployments-repo mag ruim duren); zonder grens is curl 300s de
+enige limiet, en houdt dat ook de push-lock of de repo-lock bezet. Een
+`GitCommandTimeoutError` is geen `GitPushConflictError`, dus geen retry; de fout gaat direct
+naar de aanroeper en noemt de remote zonder credentials. Een afgeschoten push kan toch
+geland zijn; volgende ronde leest de remote opnieuw.
+
+## Storingen
+
+Een korte storing van de git-server hoort geen taak te kosten, en een melding hoort te
+zeggen of het aan het project of aan het platform ligt.
+
+| Wat | Wordt herhaald? | Wat er met de kopie gebeurt |
+|---|---|---|
+| Netwerkstoring (DNS, geweigerde of verbroken verbinding, 5xx, TLS-handshake) | ja, `GIT_RETRY_BUDGET_SECONDS` (15s, pauzes 1, 2, 4, 8) | blijft staan |
+| Time-out op een git-commando | nee | blijft staan; een halve kloon wordt opgeruimd |
+| Weigering door de server (hook, beschermde branch) | nee | blijft staan |
+| Geweigerde inloggegevens (401, 403, "authentication failed") | nee | blijft staan |
+| Botsing (`non-fast-forward`, `fetch first`, `incorrect old value`, `cannot lock ref`) | ja, via de lus in `commit` | fetch, en de hele write opnieuw |
+| Kapotte kopie (`index.lock`, ontbrekende objecten, een fetch die om een andere reden faalt) | n.v.t. | weggegooid en opnieuw gekloond |
+
+De indeling gebeurt op de stderr van git (`is_git_network_failure`, `is_git_auth_failure`
+in `git_repo.py`). `ls-remote`, `fetch` en `clone` lezen alleen, dus een herhaling kan op de
+remote niets anders achterlaten. De push herhaalt BINNEN `push_lock_for`, die dus maximaal
+het budget plus de time-outs bezet blijft: hij zet één commit zonder force op de branch, dus
+een poging die toch landde geeft "Everything up-to-date" en een remote die ergens anders
+staat weigert hem als non-fast-forward.
+
+`"failed to push some refs"` alleen is GEEN botsing meer: git print die regel bij elke
+weigering, ook bij een pre-receive hook. Dat kostte vijf pogingen met een fetch en een
+melding die de verkeerde oorzaak noemde. Zo'n weigering is nu een `GitPushRejectedError`
+met de reden van de server erin.
+
+`cannot lock ref` komt ook als `[remote rejected]` binnen, maar is wel een botsing: de
+server houdt de ref op een commit waar wij niet op gebouwd hebben, en opnieuw lezen en
+opnieuw schrijven helpt dan wel.
+
+Een mislukte fetch bouwt de kopie alleen opnieuw op als de kopie zelf het probleem is. Bij
+een onbereikbare remote of een geweigerde inlog zou die kloon tegen dezelfde muur lopen en
+was de warme kopie ook kwijt.
+
+Elke melding begint met één zin over wat er gebeurde, bij welke repo en branch, en of het
+aan het platform ligt; de stderr van git volgt na `Detail:`. "Dit ligt aan het platform"
+staat er alleen bij een netwerkstoring, een geweigerde inlog en een time-out: een git-fout
+die niet in te delen is kan net zo goed komen van wat het project liet schrijven.
+Bijvoorbeeld:
+
+```
+De git-server van https://git.example.nl/rig-admin/zad-deployments#main is niet bereikbaar,
+ook niet na herhalen gedurende 15s. Dit ligt aan het platform, niet aan het project; probeer
+het later opnieuw. Detail: fatal: unable to access ...: Could not resolve host: git.example.nl
+```
+
+`self.url` bevat geen credentials, en een URL met userinfo die git zelf in zijn stderr zet
+verliest die in `_detail`; `redact_text` van de taakservice kent die vorm niet.
+
+De INFO-regel van een gelande commit noemt de duur en het aantal pogingen, en
+`retry_on_connect_error` logt elke herhaling op WARNING. Er is geen aparte metric: het
+histogram `rollout_phase_seconds` meet `git_prepare` en `git_push` al, ook als ze falen.
+
+Faalt `sync_platform_repos()` in een refresh, dan faalt de stap "Project opzoeken en
+wijzigingen uit git ophalen" met diezelfde melding, in plaats van open te blijven staan
+terwijl de taak al gefaald was.
+
+## Warme kopieen bij het opstarten
+
+`warm_platform_repos()` zet bij het opstarten van OPI de bare kopie van de deployments- en
+de argo-repo klaar, op de achtergrond. Een kloon van de deployments-repo kost minuten;
+zonder dit betaalt de eerste taak die schrijft daarvoor. Een mislukte warm-up blokkeert het
+opstarten niet en laat het niet falen, maar logt alleen. De logregel
+`Bare git-kopie ... klaargezet` noemt hoe lang de kloon duurde.
 
 ## Tests
 
@@ -211,6 +278,15 @@ dat een ronde zonder wijziging niets pusht, dat er geen credential in de kopie s
 een tweede lezing op dezelfde SHA geen fetch doet, dat een onbruikbare kopie zich
 herstelt, dat een bestandsnaam met niet-ASCII bytes een write overleeft, en dat een kopie
 die in gebruik is de opruiming overleeft.
+
+Over storingen, met een `run_git` die een stderr en een exitcode naspeelt: dat een korte
+storing geen taak kost, dat een blijvende storing het platform en de stderr noemt, dat een
+onbereikbare remote de warme kopie laat staan en geen kloon probeert, dat een weigering van
+de server en een geweigerde inlog niet herhaald worden, dat `cannot lock ref` ondanks
+`[remote rejected]` wel een botsing is, dat een credential in de stderr niet
+in de melding komt, dat een kloon zonder antwoord geen halve kopie achterlaat, dat een kloon
+en een `ls-remote` dezelfde herhaling krijgen als push en fetch, en dat een kapotte kopie
+(een fetch-fout die geen netwerk of inlog is) nog steeds opnieuw wordt opgebouwd.
 
 Over het bijwerken, met een telling van de git-subcommando's: dat twee writes na elkaar
 geen netwerk doen, dat een externe commit door de afgewezen push gevangen wordt met precies

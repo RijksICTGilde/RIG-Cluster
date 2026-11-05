@@ -15,9 +15,11 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import shutil
 import tarfile
 import tempfile
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
@@ -26,11 +28,15 @@ from typing import TYPE_CHECKING, Any
 from opi.connectors.git import (
     EXEC_MODE,
     FILE_MODE,
+    GIT_CLONE_TIMEOUT_SECONDS,
     GIT_PUSH_TIMEOUT_SECONDS,
+    GIT_RETRY_BUDGET_SECONDS,
     SYMLINK_MODE,
     FileChange,
     GitCommandTimeoutError,
     GitPushConflictError,
+    GitPushRejectedError,
+    GitRemoteUnavailableError,
     build_tree_commit,
     credential_env,
     project_write_lock,
@@ -44,6 +50,7 @@ from opi.core.config import settings
 from opi.core.metrics import PHASE_GIT_PREPARE, PHASE_GIT_PUSH, rollout_phase
 from opi.generation.manifests import CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import generate_argocd_project_folder_path, generate_infrastructure_argocd_folder_path
 from opi.utils.sops import TO_SOPS_SUFFIX
 
@@ -271,6 +278,71 @@ class RepoAt:
 BuildChanges = Callable[[RepoAt], Awaitable[dict[str, FileChange | None]]]
 
 
+#: Markers in git's stderr that mean the remote was never reached or dropped us halfway.
+_NETWORK_MARKERS = (
+    "could not resolve host",
+    "failed to connect to",
+    "connection refused",
+    "connection timed out",
+    "connection reset",
+    "early eof",
+    "unexpected disconnect",
+    "rpc failed",
+    "the requested url returned error: 5",
+    "gnutls_handshake() failed",
+    "ssl_connect",
+    "tls connection was non-properly terminated",
+)
+
+#: Markers that mean the server refused our credentials. Repeating that changes nothing.
+_AUTH_MARKERS = (
+    "authentication failed",
+    "the requested url returned error: 401",
+    "the requested url returned error: 403",
+)
+
+#: Markers that mean the remote moved under us, so the write must be redone on its tip.
+#: "cannot lock ref" is one: the server holds the ref at a commit we did not build on.
+_COLLISION_MARKERS = (
+    "non-fast-forward",
+    "fetch first",
+    "incorrect old value",
+    "cannot lock ref",
+)
+
+#: A push the server refused itself, with the reason in brackets behind it.
+_REJECTION_REASON = re.compile(r"!\s+\[[a-z ]*rejected\][^(\n]*\(([^)]*)\)")
+
+#: Userinfo in a URL inside free text. The task service's ``redact_text`` does not know
+#: this shape, and ``strip_url_credentials`` only works on a bare URL.
+_URL_USERINFO = re.compile(r"(?i)(https?://)[^\s/@'\"]+@")
+
+
+def is_git_network_failure(stderr: str) -> bool:
+    """Whether a failed git call could not reach the remote, so repeating it may help."""
+    lowered = stderr.lower()
+    if any(marker in lowered for marker in _AUTH_MARKERS):
+        return False
+    return any(marker in lowered for marker in _NETWORK_MARKERS)
+
+
+def is_git_auth_failure(stderr: str) -> bool:
+    """Whether the remote refused our credentials."""
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _AUTH_MARKERS)
+
+
+def _detail(stderr: str) -> str:
+    """Git's stderr as a single line, with no credentials in a URL left in it."""
+    return _URL_USERINFO.sub(r"\1", " ".join(stderr.split()))
+
+
+def _rejection_reason(stderr: str) -> str:
+    """The reason the server gave for a refusal, or the whole stderr if it gave none."""
+    match = _REJECTION_REASON.search(stderr)
+    return _detail(match.group(1) if match else stderr)
+
+
 class GitRepo:
     """De beheerde kopie van één (remote, branch). Bewaart nooit credentials."""
 
@@ -300,17 +372,23 @@ class GitRepo:
         credentials every time and could not stop anything. Should per-project credentials
         ever arrive, the copy must be keyed per credential identity, not per remote.
         """
-        try:
-            stdout, stderr, code = await run_git(
-                ["ls-remote", self.url, f"refs/heads/{self.branch}"],
-                cwd=settings.TEMP_DIR,
-                env=credentials.env(self.url),
-                timeout=GIT_PUSH_TIMEOUT_SECONDS,
-            )
-        except GitCommandTimeoutError as error:
-            raise self._timeout_error("Opvragen van") from error
-        if code != 0:
-            raise RuntimeError(f"Kon {self.url}#{self.branch} niet opvragen: {' '.join(stderr.split())}")
+
+        async def ls_remote() -> str:
+            try:
+                stdout, stderr, code = await run_git(
+                    ["ls-remote", self.url, f"refs/heads/{self.branch}"],
+                    cwd=settings.TEMP_DIR,
+                    env=credentials.env(self.url),
+                    timeout=GIT_PUSH_TIMEOUT_SECONDS,
+                )
+            except GitCommandTimeoutError as error:
+                raise self._timeout_error("Opvragen van", GIT_PUSH_TIMEOUT_SECONDS) from error
+            if code != 0:
+                raise self._remote_error("Opvragen van", stderr)
+            return stdout
+
+        # Read-only, so a retry cannot leave anything else behind on the remote.
+        stdout = await self._with_retry(ls_remote, "ls-remote op")
         first = stdout.strip().split("\n", 1)[0]
         return first.split("\t", 1)[0].strip() or None
 
@@ -380,47 +458,80 @@ class GitRepo:
         return code == 0
 
     async def _create(self, credentials: GitCredentials) -> None:
-        """Een bare blobless kloon MET historie: een diff per bestand heeft historie nodig."""
+        """A bare blobless clone WITH history: a per-file diff needs history."""
         os.makedirs(GIT_REPOS_DIR, exist_ok=True)
         _prune_repos(self.path)
         shutil.rmtree(self.path, ignore_errors=True)
-        os.makedirs(self.path, exist_ok=True)
-        _, stderr, code = await run_git(
-            [
-                "clone",
-                "--bare",
-                "--single-branch",
-                "--branch",
-                self.branch,
-                "--filter=blob:none",
-                self.url,
-                ".",
-            ],
-            cwd=self.path,
-            env=credentials.env(self.url),
-        )
-        if code != 0:
-            shutil.rmtree(self.path, ignore_errors=True)
-            raise RuntimeError(f"Kon {self.url}#{self.branch} niet klonen: {' '.join(stderr.split())}")
-        # De kopie committeert nooit in een werkboom, dus een gc die objecten opruimt waar
-        # een lopende write naar kijkt is pure kans op schade zonder winst.
+
+        async def clone() -> None:
+            # Every attempt starts with an empty directory: the previous one cleaned up its
+            # half-finished copy.
+            os.makedirs(self.path, exist_ok=True)
+            try:
+                _, stderr, code = await run_git(
+                    [
+                        "clone",
+                        "--bare",
+                        "--single-branch",
+                        "--branch",
+                        self.branch,
+                        "--filter=blob:none",
+                        self.url,
+                        ".",
+                    ],
+                    cwd=self.path,
+                    env=credentials.env(self.url),
+                    timeout=GIT_CLONE_TIMEOUT_SECONDS,
+                )
+            except GitCommandTimeoutError as error:
+                shutil.rmtree(self.path, ignore_errors=True)
+                raise self._timeout_error("Klonen van", GIT_CLONE_TIMEOUT_SECONDS) from error
+            if code != 0:
+                shutil.rmtree(self.path, ignore_errors=True)
+                raise self._remote_error("Klonen van", stderr)
+
+        # Read-only, and a half-finished copy is cleaned up before the next attempt.
+        started = time.monotonic()
+        await self._with_retry(clone, "kloon van")
+        # The copy never commits in a worktree, so a gc that prunes objects a running write
+        # is looking at is pure risk of damage with nothing gained.
         await run_git(["config", "gc.auto", "0"], cwd=self.path)
-        logger.info("Bare git-kopie van %s#%s klaargezet in %s", self.url, self.branch, self.path)
+        logger.info(
+            "Bare git-kopie van %s#%s klaargezet in %s in %.1fs",
+            self.url,
+            self.branch,
+            self.path,
+            time.monotonic() - started,
+        )
 
     async def _fetch(self, credentials: GitCredentials) -> bool:
-        # A timeout propagates instead of returning False: the caller would then rebuild
-        # the copy with a clone, and that would hang on the same unreachable remote.
-        try:
-            _, stderr, code = await run_git(
-                ["fetch", "--force", "origin", f"+refs/heads/{self.branch}:refs/heads/{self.branch}"],
-                cwd=self.path,
-                env=credentials.env(self.url),
-                timeout=GIT_PUSH_TIMEOUT_SECONDS,
-            )
-        except GitCommandTimeoutError as error:
-            raise self._timeout_error("Fetch van") from error
-        if code != 0:
-            logger.warning("Fetch in %s mislukte: %s", self.path, " ".join(stderr.split()))
+        """Fetch our branch. False means: the copy is unusable, build it again.
+
+        An unreachable remote, a timeout and refused credentials are raised instead of
+        returning False: the caller would rebuild the copy with a clone, which runs into
+        the same wall and costs the warm copy as well.
+        """
+
+        async def fetch_once() -> str | None:
+            try:
+                _, stderr, code = await run_git(
+                    ["fetch", "--force", "origin", f"+refs/heads/{self.branch}:refs/heads/{self.branch}"],
+                    cwd=self.path,
+                    env=credentials.env(self.url),
+                    timeout=GIT_PUSH_TIMEOUT_SECONDS,
+                )
+            except GitCommandTimeoutError as error:
+                raise self._timeout_error("Fetch van", GIT_PUSH_TIMEOUT_SECONDS) from error
+            if code == 0:
+                return None
+            if is_git_network_failure(stderr) or is_git_auth_failure(stderr):
+                raise self._remote_error("Fetch van", stderr)
+            return _detail(stderr)
+
+        # Read-only, so a retry cannot leave anything else behind on the remote.
+        failure = await self._with_retry(fetch_once, "fetch van")
+        if failure is not None:
+            logger.warning("Fetch in %s mislukte: %s", self.path, failure)
             return False
         os.utime(self.path)
         return True
@@ -434,14 +545,60 @@ class GitRepo:
         finally:
             _repo_users[self._key] -= 1
 
-    def _timeout_error(self, operation: str) -> GitCommandTimeoutError:
+    def _timeout_error(self, operation: str, timeout: float) -> GitCommandTimeoutError:
         """The same timeout, named with the operation and the remote this copy belongs to.
 
         ``self.url`` carries no credentials, so neither does the message a task shows.
         """
         return GitCommandTimeoutError(
-            f"{operation} {self.url}#{self.branch} kreeg geen antwoord binnen {GIT_PUSH_TIMEOUT_SECONDS}s"
+            f"{operation} {self.url}#{self.branch} kreeg geen antwoord binnen {timeout}s. "
+            f"Dit ligt aan het platform, niet aan het project."
         )
+
+    def _remote_error(self, operation: str, stderr: str) -> RuntimeError:
+        """A failed git call to our remote, as one readable sentence.
+
+        The stderr follows as detail. ``self.url`` carries no credentials, and a URL with
+        userinfo in git's stderr loses it in :func:`_detail`.
+        """
+        detail = _detail(stderr)
+        if is_git_network_failure(stderr):
+            return GitRemoteUnavailableError(
+                f"De git-server van {self.url}#{self.branch} is niet bereikbaar. "
+                f"Dit ligt aan het platform, niet aan het project. Detail: {detail}",
+                detail,
+            )
+        if is_git_auth_failure(stderr):
+            return RuntimeError(
+                f"De git-server van {self.url}#{self.branch} weigert de inloggegevens van OPI. "
+                f"Dit ligt aan het platform, niet aan het project. Detail: {detail}"
+            )
+        # No "this is the platform" here: an unclassified git failure can just as well
+        # come from what the project had us write.
+        return RuntimeError(f"{operation} {self.url}#{self.branch} mislukte. Detail: {detail}")
+
+    async def _with_retry[T](self, operation: Callable[[], Awaitable[T]], description: str) -> T:
+        """Retry a network step to our remote for as long as it is unreachable.
+
+        Comply or explain: ``retry_on_connect_error`` only retries failures where the
+        connection never came up. For git it may be wider, and why is stated at each call
+        next to the operation itself. A timeout is NOT retried (RC-421) and a collision
+        runs through the loop in :meth:`commit`, not through here.
+        """
+        try:
+            return await retry_on_connect_error(
+                operation,
+                budget_seconds=GIT_RETRY_BUDGET_SECONDS,
+                description=f"{description} {self.url}#{self.branch}",
+                connect_errors=(GitRemoteUnavailableError,),
+            )
+        except GitRemoteUnavailableError as error:
+            raise GitRemoteUnavailableError(
+                f"De git-server van {self.url}#{self.branch} is niet bereikbaar, ook niet na herhalen "
+                f"gedurende {GIT_RETRY_BUDGET_SECONDS}s. Dit ligt aan het platform, niet aan het project; "
+                f"probeer het later opnieuw. Detail: {error.detail}",
+                error.detail,
+            ) from error
 
     # ------------------------------------------------------------------
     # lezen
@@ -596,6 +753,7 @@ class GitRepo:
         terug te zetten.
         """
         async with self._in_use():
+            started = time.monotonic()
             last_error: Exception | None = None
             for attempt in range(MAX_WRITE_ATTEMPTS):
                 parent = await self.tip(credentials)
@@ -630,7 +788,15 @@ class GitRepo:
                     )
                     continue
 
-                logger.info("Commit %s naar %s geland voor %d pad(en): %s", commit[:8], self, len(changes), message)
+                logger.info(
+                    "Commit %s naar %s geland voor %d pad(en) in %.1fs na %d poging(en): %s",
+                    commit[:8],
+                    self,
+                    len(changes),
+                    time.monotonic() - started,
+                    attempt + 1,
+                    message,
+                )
                 return WriteResult(ref=commit, committed=True, paths=sorted(changes))
 
             raise GitPushConflictError(
@@ -638,34 +804,44 @@ class GitRepo:
             )
 
     async def _push(self, commit: str, credentials: GitCredentials) -> None:
-        """Push één commit-object naar onze branch, geserialiseerd per (repo, branch)."""
+        """Push one commit object to our branch, serialized per (repo, branch)."""
         async with push_lock_for(self.url, self.branch):
-            # A timeout is not a GitPushConflictError, so ``commit`` does not retry it and
-            # the push lock stays taken for at most one timeout.
-            try:
-                with rollout_phase(PHASE_GIT_PUSH):
-                    _, stderr, code = await run_git(
-                        ["push", "origin", f"{commit}:refs/heads/{self.branch}"],
-                        cwd=self.path,
-                        env=credentials.env(self.url),
-                        timeout=GIT_PUSH_TIMEOUT_SECONDS,
-                    )
-            except GitCommandTimeoutError as error:
-                raise self._timeout_error("Push naar") from error
-            if code != 0:
-                lowered = stderr.lower()
-                if any(
-                    marker in lowered
-                    for marker in ("non-fast-forward", "fetch first", "failed to push some refs", "incorrect old value")
-                ):
-                    raise GitPushConflictError(
-                        f"Push naar {self.url}#{self.branch} afgewezen, de remote is verder: {' '.join(stderr.split())}"
-                    )
-                raise RuntimeError(f"Push naar {self.url}#{self.branch} mislukte: {' '.join(stderr.split())}")
+            # Retrying inside the lock keeps it at most as long as the retry budget.
+            # One commit without force lands exactly once, re-runs say "up-to-date", a moved ref says non-fast-forward.
+            await self._with_retry(lambda: self._push_once(commit, credentials), "push naar")
 
-            # De eigen ref meeverzetten, zodat de volgende lezer deze commit zonder fetch
-            # vindt. Hij is nu per definitie de remote tip.
+            # Move our own ref along, so the next reader finds this commit without a
+            # fetch. It is the remote tip by definition now.
             await run_git(["update-ref", f"refs/heads/{self.branch}", commit], cwd=self.path)
+
+    async def _push_once(self, commit: str, credentials: GitCredentials) -> None:
+        """One attempt. Tells a collision, a refusal by the server and an outage apart."""
+        try:
+            with rollout_phase(PHASE_GIT_PUSH):
+                _, stderr, code = await run_git(
+                    ["push", "origin", f"{commit}:refs/heads/{self.branch}"],
+                    cwd=self.path,
+                    env=credentials.env(self.url),
+                    timeout=GIT_PUSH_TIMEOUT_SECONDS,
+                )
+        except GitCommandTimeoutError as error:
+            raise self._timeout_error("Push naar", GIT_PUSH_TIMEOUT_SECONDS) from error
+        if code == 0:
+            return
+
+        lowered = stderr.lower()
+        # "failed to push some refs" does not count: git prints that line on EVERY refusal,
+        # a hook or a protected branch included. "cannot lock ref" does: the server has the
+        # ref at another commit than the one we built on, which is exactly a collision.
+        if any(marker in lowered for marker in _COLLISION_MARKERS):
+            raise GitPushConflictError(
+                f"Push naar {self.url}#{self.branch} afgewezen, de remote is verder: {_detail(stderr)}"
+            )
+        if is_git_network_failure(stderr) or is_git_auth_failure(stderr):
+            raise self._remote_error("Push naar", stderr)
+        raise GitPushRejectedError(
+            f"De git-server weigerde de push naar {self.url}#{self.branch}: {_rejection_reason(stderr)}."
+        )
 
     async def write_dir(
         self,
@@ -852,6 +1028,7 @@ class GitRepoWorkspace:
         """
         self.last_write = None
         async with project_write_lock(self.repo.url, self.project_name):
+            started = time.monotonic()
             last_error: Exception | None = None
             for attempt in range(MAX_WRITE_ATTEMPTS):
                 # De eerste poging neemt de werkmap zoals hij is. Een eerdere stap van
@@ -875,6 +1052,16 @@ class GitRepoWorkspace:
                         MAX_WRITE_ATTEMPTS,
                     )
                     continue
+                if self.last_write is not None and self.last_write.committed:
+                    logger.info(
+                        "'%s' op %s toegepast in %.1fs na %d poging(en)",
+                        message,
+                        self.repo,
+                        time.monotonic() - started,
+                        attempt + 1,
+                    )
+                else:
+                    logger.debug("'%s' liet %s ongewijzigd", message, self.repo)
                 return outcome
 
             raise GitRepoConflictError(
@@ -978,6 +1165,22 @@ async def sync_platform_repos() -> None:
     for config in (deployments_repo_config(), argo_repo_config()):
         repo = get_git_repo(config["url"], config["branch"])
         await repo.sync(credentials_from_repo_config(config))
+
+
+async def warm_platform_repos() -> None:
+    """Warm up bare copies of deployments and argo repos at startup.
+
+    A clone costs minutes; without this the first writing task pays for it.
+    A failure only logs: the first task clones it itself then.
+    """
+    for config in (deployments_repo_config(), argo_repo_config()):
+        repo = get_git_repo(config["url"], config["branch"])
+        try:
+            await repo.tip(credentials_from_repo_config(config))
+        # ValueError too: an undecryptable repo password comes from
+        # credentials_from_repo_config, and must not cost the other repo its warm-up.
+        except (RuntimeError, OSError, ValueError) as exc:
+            logger.warning("Kon de git-kopie van %s niet vooraf klaarzetten: %s", repo, exc)
 
 
 def argo_workspace(project_name: str, cluster: str) -> GitRepoWorkspace:

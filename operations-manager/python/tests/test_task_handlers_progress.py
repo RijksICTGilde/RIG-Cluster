@@ -533,6 +533,39 @@ class TestHandleRefreshDeployment:
         progress.fail_project.assert_called_once()
 
 
+class TestRefreshGitSyncFails:
+    """An unreachable git server must fail the step instead of leaving it open.
+
+    The autouse fixture stubs ``sync_platform_repos``; it is deliberately replaced here
+    with one that fails.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("handler_name", ["handle_refresh_project", "handle_refresh_deployment"])
+    async def test_an_unreachable_git_server_fails_the_step(self, handler_name, monkeypatch):
+        import opi.core.task_handlers_operations as handlers
+        from opi.connectors.git import GitRemoteUnavailableError
+
+        async def unreachable() -> None:
+            raise GitRemoteUnavailableError("De git-server van repo#main is niet bereikbaar.")
+
+        monkeypatch.setattr(handlers, "sync_platform_repos", unreachable)
+        mock_store = MagicMock()
+        mock_store.reconcile = AsyncMock()
+        progress = _make_progress()
+        payload = {"project_name": "test-project", "deployment_name": "dev"}
+
+        with (
+            patch("opi.core.task_handlers_operations.get_project_store", return_value=mock_store),
+            pytest.raises(GitRemoteUnavailableError),
+        ):
+            await getattr(handlers, handler_name)(payload, progress)
+
+        step = "task-Project opzoeken en wijzigingen uit git ophalen"
+        failed = [call.args for call in progress.fail_task.call_args_list]
+        assert any(args[0] == step and "niet bereikbaar" in args[1] for args in failed), failed
+
+
 # ---------------------------------------------------------------------------
 # handle_upsert_deployment
 # ---------------------------------------------------------------------------
