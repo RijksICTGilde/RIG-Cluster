@@ -200,17 +200,46 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {% endmacro %}
 
 {#
-  De takenlijst: een ``nldd-list`` met per regel een ``nldd-step-cell`` (het spoor met een
-  stip per stap) en een ``nldd-text-cell``. Een taak op het hoogste niveau, bij een uitrol
-  een fase, krijgt een grote stip met een vinkje of een kruis; een subtaak een kleine
-  (``level="minor"``). De step-cell kent alleen past, current en future: een mislukte stap
-  is ``current`` met een kruis en rode tekst, want daar is de taak gebleven.
+  De statusiconen gaan door ``nldd_icon``. De ROOS-namen (vinkje, kruis) staan niet in de
+  NLDD-woordenschat en renderen daar leeg - stil, want een onbekende naam levert geen
+  fout op. De kleuren zijn weg: dat is de ROOS-woordenschat (groen, hemelblauw) en NLDD
+  doet er niets mee. Zie tests/test_lotc_icon_mapping.py voor de vertaaltabel.
 
-  Hiervoor stond er een ``c-list`` met icoon- en spacercellen. Die las als een kale lijst
-  vinkjes, niet als een verloop; de step-cell is de NLDD-component hiervoor.
+  Dit levert de NAAM en niet een <c-icon>: de naam gaat als attribuut een cel in.
+#}
+{% macro task_status_icon_name(status) %}
+{%- if status == "completed" -%}{{ 'vinkje' | nldd_icon }}
+{%- elif status == "failed" -%}{{ 'kruis' | nldd_icon }}
+{%- else -%}{{ 'klok' | nldd_icon }}
+{%- endif -%}
+{% endmacro %}
 
-  ``show_errors`` staat uit voor de wizardmodal, die de foutregels van een taak bewust
-  niet toont.
+{#
+  De takenlijst met per taak een icoon en per taak zijn subtaken. ``show_errors`` staat
+  uit voor de wizardmodal, die de foutregels van een taak bewust niet toont.
+
+  DIT IS EEN LIJST MET EEN STATUS PER REGEL, en het thema heeft daar componenten voor:
+  ``c-list`` met per regel een ``c-list-item``, daarin een ``c-icon-cell`` en een
+  ``c-text-cell``. Een cel is wat een regel naast elkaar zet; dat hoeft geen stijlblad
+  meer te doen.
+
+  Hier stond het met de hand: een ``div.edit-progress-task-item`` waarvan de
+  ``display: flex`` in static/css/modal.css stond. Gemeten in een browser: op elke pagina
+  die dat stijlblad NIET laadt viel het pictogram boven de tekst, en dat waren de
+  voortgangspagina en de wizardmodal. Er stond ook een tweede, met de hand gemaakte versie
+  van dezelfde lijst in de bg-fragmenten (``c-cluster`` + ``c-paragraph``); die viel om
+  omdat een ``<c-paragraph>`` een blok is en in een cluster op de volgende regel breekt.
+  Alle vier de sjablonen roepen nu deze macro aan.
+
+  De inspringing van een subtaak en de ruimte tussen het pictogram en de naam zijn allebei
+  een ``c-spacer-cell``: het thema levert die juist om binnen een regel ruimte te maken.
+  Een lijstregel zet zijn cellen tegen elkaar aan, dus zonder die van 8 raakt de naam het
+  pictogram. Het onderwerp en de fout van een taak zijn de ``supporting-text`` van de
+  cel - de tweede regel onder de naam, waar ze horen. Zie ``progress_step_detail``.
+
+  ``dividers`` staat er NIET bij. Gemeten: ``dividers="never"`` tekent dezelfde lijnen
+  tussen de regels als ``always``, dus het attribuut zou hier iets beloven wat niet
+  gebeurt. Staat als bevinding in request_for_components.md.
 #}
 {#
   De tweede regel van een stap: waarvoor hij loopt, en zijn fout.
@@ -221,6 +250,10 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
   (``subject``) en niet erin, zodat de weergave kan kiezen; hier is dat de regel onder
   de naam. Loopt een stap een keer per project, dan heeft hij geen onderwerp en blijft
   de regel weg.
+
+  De DUUR staat op dezelfde regel, voor een stap die klaar is. Een rollout duurt tien
+  keer zo lang als de sync eronder, en zonder duur per stap is uit de lijst niet te zien
+  waar die tijd zit. Een stap die nog loopt heeft er geen.
 
   Fout en onderwerp delen die tweede regel. Ze sluiten elkaar niet uit -- een mislukte
   stap hoort nog steeds te zeggen voor welke deployment hij mislukte -- dus staan ze
@@ -233,29 +266,37 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
 {{- parts | join(' - ') -}}
 {% endmacro %}
 
-{% macro progress_step_row(step, minor, position, show_errors) %}
-{%- set step_status = {"completed": "past", "running": "current", "failed": "current"}.get(step.status, "future") -%}
-{#- In the dot, so the bare glyph: the circled variants that ``nldd_icon`` gives draw a ring inside the ring. -#}
-{%- set icon = "check-mark" if step.status == "completed" else ("close" if step.status == "failed" else "") -%}
-{%- set detail = progress_step_detail(step, show_errors) | trim -%}
-<nldd-list-item size="sm">
-    <nldd-step-cell size="md" status="{{ step_status }}" position="{{ position }}"{% if minor %} level="minor"{% elif icon %} icon="{{ icon | nldd_icon | trim }}"{% endif %}></nldd-step-cell>
-    <nldd-text-cell size="sm"{% if step.status == "failed" %} color="critical"{% elif minor %} color="secondary"{% endif %}{% if detail %} supporting-text="{{ detail }}"{% endif %}>{{ step.name }}</nldd-text-cell>
-</nldd-list-item>
-{%- endmacro %}
+{#- The status cell of a task row. A running task gets a spinning nldd-progress-circle
+    instead of a static icon. No hx-preserve to keep it turning across the 2s polls: a
+    circle that htmx moves loses its drawing (nldd-progress-circle does not restart its
+    arc after a disconnect), and its spot stayed empty. A fresh one per poll stays visible. -#}
+{% macro progress_status_cell(status) %}
+{%- if status == "running" -%}
+<nldd-icon-cell size="20"><nldd-progress-circle indeterminate size="20" value-display="none" accessible-label="Bezig"></nldd-progress-circle></nldd-icon-cell>
+{%- else -%}
+<c-icon-cell size="20" icon="{{ task_status_icon_name(status) | trim }}"/>
+{%- endif -%}
+{% endmacro %}
 
 {% macro progress_task_list(tasks, show_errors=True) %}
 {% if tasks %}
-{%- set rows = [] -%}
-{%- for task in tasks -%}
-{%- set _ = rows.append((task, False)) -%}
-{%- for subtask in task.subtasks or [] %}{% set _ = rows.append((subtask, True)) %}{% endfor -%}
-{%- endfor -%}
-<nldd-list appearance="simple" dividers="never" accessible-label="Voortgang per taak">
-    {% for step, minor in rows %}
-    {{ progress_step_row(step, minor, "only" if rows | length == 1 else ("first" if loop.first else ("last" if loop.last else "between")), show_errors) }}
+<c-list appearance="simple" accessible-label="Voortgang per taak">
+    {% for task in tasks %}
+    <c-list-item size="sm">
+        {{ progress_status_cell(task.status) }}
+        <c-spacer-cell size="8"/>
+        <c-text-cell size="sm" supporting-text="{{ progress_step_detail(task, show_errors) | trim }}">{{ task.name }}</c-text-cell>
+    </c-list-item>
+    {% for subtask in task.subtasks or [] %}
+    <c-list-item size="sm">
+        <c-spacer-cell size="24"/>
+        {{ progress_status_cell(subtask.status) }}
+        <c-spacer-cell size="8"/>
+        <c-text-cell size="sm" supporting-text="{{ progress_step_detail(subtask, show_errors) | trim }}">{{ subtask.name }}</c-text-cell>
+    </c-list-item>
     {% endfor %}
-</nldd-list>
+    {% endfor %}
+</c-list>
 {% endif %}
 {% endmacro %}
 
