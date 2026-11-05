@@ -29,6 +29,8 @@ import logging
 import os
 from pathlib import Path
 
+from opi.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 APP_NAME = "ZAD"
@@ -69,6 +71,12 @@ def get_version_info() -> dict[str, object]:
         # there is no pod and the field stays empty.
         "pod": os.environ.get("POD_NAME", ""),
         "image": get_running_image(),
+        "clients": {
+            "zadctl": {
+                "minimum": settings.ZADCTL_MIN_VERSION or None,
+                "recommended": settings.ZADCTL_RECOMMENDED_VERSION or None,
+            }
+        },
     }
     try:
         if _VERSION_FILE.is_file():

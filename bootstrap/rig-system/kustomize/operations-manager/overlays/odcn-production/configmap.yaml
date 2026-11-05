@@ -103,3 +103,9 @@ data:
     # Sleep-mode itself stays off in production (cluster default) until validated; this is
     # declared so the waker pulls correctly once a project opts in.
     SLEEP_MODE_WAKER_IMAGE=rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker:latest
+
+    # Welke zadctl-versies deze API bedient (X.Y.Z, leeg is uit). Hoog het minimum op bij een
+    # API-wijziging waar oudere zadctl-versies aantoonbaar stuk op gaan; die krijgen dan 426.
+    # Zie features/zadctl-versiecheck.md.
+    ZADCTL_MIN_VERSION=
+    ZADCTL_RECOMMENDED_VERSION=
