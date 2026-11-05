@@ -47,6 +47,8 @@ Only one console can be active per deployment at a time.
 - **Read-only** provisions an ephemeral PostgreSQL role with `CONNECT` + `USAGE`
   + `SELECT` only (plus default privileges), dropped at teardown. This is the
   real boundary; the tool's own read-only flag is only a convenience hint.
+- Read-only reads the role's password from the deployment's database secret, so a
+  deployment provisioned before RC-426 gets it at its next reprocess.
 
 ## Lifecycle
 

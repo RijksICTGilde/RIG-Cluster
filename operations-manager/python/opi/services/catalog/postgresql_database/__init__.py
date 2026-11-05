@@ -199,22 +199,14 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         if creds is None:
             logger.warning(f"Deployment '{ctx.deployment_name}' uses PostgreSQL but no database credentials found")
             return []
-        # host is already resolved by database_manager (namespace-specific or shared).
-        secret = DatabaseSecret(
-            host=creds.host,
-            port=creds.port,
-            username=creds.username,
-            password=creds.password,
-            database=creds.database,
-            schema=creds.schema,
-            extra_schemas=creds.extra_schemas,
-        )
+        # The stored secret is used as-is: database_manager already resolved the host
+        # (namespace-specific or shared), and rebuilding it drops any field not listed.
         return [
             SecretFileSpec(
                 secret_name=DatabaseSecret.get_secret_name(ctx.deployment_name),
-                secret_pairs=secret.to_k8s_secret_data(),
+                secret_pairs=creds.to_k8s_secret_data(),
                 secret_type="database",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
                 resolve_aliases=True,
-                register_secret=secret,
+                register_secret=creds,
             )
         ]

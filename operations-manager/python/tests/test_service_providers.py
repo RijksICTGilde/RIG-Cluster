@@ -411,9 +411,6 @@ def _fake_creds():
         port=5432,
         username="u",
         password="p",
-        database="d",
-        schema="s",
-        extra_schemas=[],
         access_key="ak",
         secret_key="sk",
         bucket_name="bucket",
@@ -422,8 +419,22 @@ def _fake_creds():
     )
 
 
+def _fake_db_creds() -> DatabaseSecret:
+    # The secret database_manager stores in the deployment map, read-only role included.
+    return DatabaseSecret(
+        host="db.host",
+        port=5432,
+        username="u",
+        password="p",
+        database="d",
+        schema="s",
+        ro_username="u_ro",
+        ro_password="p_ro",
+    )
+
+
 def test_postgres_build_secret_file():
-    creds = _fake_creds()
+    creds = _fake_db_creds()
     ctx = _manifest_ctx(get_secret=lambda dep, t, cls: creds if t == "database" else None)
     specs = get_service(ServiceType.POSTGRESQL_DATABASE).build_secret_files(ctx)
     assert len(specs) == 1
@@ -433,10 +444,20 @@ def test_postgres_build_secret_file():
     assert spec.resolve_aliases is True
     # postgres is the only service that re-registers its secret in the deployment map.
     assert isinstance(spec.register_secret, DatabaseSecret)
-    expected = DatabaseSecret(
-        host="db.host", port=5432, username="u", password="p", database="d", schema="s"
-    ).to_k8s_secret_data()
-    assert spec.secret_pairs == expected
+    assert spec.secret_pairs == creds.to_k8s_secret_data()
+
+
+def test_postgres_build_secret_file_keeps_readonly_role():
+    """The database console needs the read-only role, so it must survive into the secret."""
+    creds = _fake_db_creds()
+    ctx = _manifest_ctx(get_secret=lambda dep, t, cls: creds if t == "database" else None)
+    spec = get_service(ServiceType.POSTGRESQL_DATABASE).build_secret_files(ctx)[0]
+    assert spec.secret_pairs["DATABASE_SERVER_USER_RO"] == "u_ro"
+    assert spec.secret_pairs["DATABASE_PASSWORD_RO"] == "p_ro"
+    assert spec.secret_pairs["APP_DATABASE_USER_RO"] == "u_ro"
+    assert spec.secret_pairs["APP_DATABASE_PASSWORD_RO"] == "p_ro"
+    assert spec.register_secret.ro_username == "u_ro"
+    assert spec.register_secret.ro_password == "p_ro"
 
 
 def test_minio_build_secret_file_uses_cluster_host():
