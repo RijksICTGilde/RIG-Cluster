@@ -69,6 +69,7 @@ INCLUDES: dict[Role, frozenset[Role]] = {
     Role.DEVELOPER: frozenset({Role.VIEWER}),
     Role.OPS: frozenset({Role.DEVELOPER}),
     Role.ADMIN: frozenset({Role.VIEWER}),
+    Role.DEVELOPER_CI: frozenset({Role.VIEWER}),
 }
 
 

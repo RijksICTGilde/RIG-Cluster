@@ -24,10 +24,12 @@ from opi.api.user_token_auth import (
 )
 from opi.core.actor import set_actor
 from opi.core.audit_trail import capture_fields
-from opi.core.authz.actions import Action, action_of, deployment_of
+from opi.core.authz.actions import Action, action_of, deployment_of, marking_if_absent_of, weighed_action_of
 from opi.core.authz.engine import RuleError, rule_for
 from opi.core.config import settings
+from opi.core.project_environment import DEFAULT_ENVIRONMENT, Omgeving, effective_environment
 from opi.manager.run_support import find_deployment
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_store import get_project_store
 from opi.services.services_enums import CloneFromType
@@ -189,7 +191,9 @@ async def _weeg(
         path=resource_path(project_name, deployment, component),
         deployment=deployment,
         component=component,
+        marking_if_absent=marking_if_absent_of(endpoint, route_kwargs or {}),
     )
+    gevraagde = weighed_action_of(endpoint, route_kwargs or {}) or gevraagde
 
     try:
         beslis(principaal, project=project, handeling=gevraagde, resource=resource, request=request)
@@ -275,6 +279,49 @@ def deployment_in_body(deployment_data: Any = None, **_: Any) -> str | None:
     return str(naam) if naam else None
 
 
+def marking_in_body(deployment_data: Any = None, **_: Any) -> str:
+    """The marking a deployment created by this upsert gets: the body's, or the default.
+
+    Creating one on production still needs ``environment.set``, weighed separately.
+    """
+    return str(getattr(deployment_data, "environment", None) or DEFAULT_ENVIRONMENT)
+
+
+def default_marking(**_: Any) -> str:
+    """The marking of a deployment without one, for a delete of a deployment that is gone.
+
+    Deleting nothing touches nothing, so the route may answer with its own 404 instead of a
+    403 that breaks ``zad deployment delete --ignore-not-found``.
+    """
+    return DEFAULT_ENVIRONMENT.value
+
+
+def image_only_upsert(project_name: str = "", deployment_data: Any = None, **_: Any) -> Action | None:
+    """``deployment.image-replace`` for an upsert that only replaces images, else None.
+
+    On an existing deployment the upsert updates the images of the components it already
+    runs and adds any others; it never removes one. With only known components, no clone,
+    the same marking and no domain change, nothing but images moves, which is what
+    ``ops-ci`` may do on every deployment. The deploy action always sends an upsert, so
+    without this ``ops-ci`` could not deploy to production through it.
+    """
+    if deployment_data is None:
+        return None
+    doel = _deployment_van(project_name, deployment_data.deploymentName)
+    if doel is None or deployment_data.cloneFrom or deployment_data.forceClone:
+        return None
+    if deployment_data.environment is not None and Omgeving(deployment_data.environment) is not effective_environment(
+        doel
+    ):
+        return None
+    if _changes_domain(doel, deployment_data):
+        return None
+    running = {c.get("reference") for c in doel.get("components") or [] if isinstance(c, dict)}
+    if any(c.reference not in running for c in deployment_data.components):
+        return None
+    return Action.DEPLOYMENT_IMAGE_REPLACE
+
+
 def eis_doelwitten_uit_de_upsertbody(request: Request, project_name: str, deployment_data: Any) -> None:
     """Toets de doelwitten in een upsert-body die de routepoort niet ziet.
 
@@ -286,7 +333,9 @@ def eis_doelwitten_uit_de_upsertbody(request: Request, project_name: str, deploy
     (``opi/manager/database_manager.py``); de bron staat dan in het projectbestand en
     weegt daar. Het domeindrietal verzet de hostnaam van een BESTAANDE deployment, en die
     kan door de goedkeuring per project dezelfde zijn als die van productie; een nieuwe
-    deployment krijgt zijn domeinvelden mee uit ``deployment.write``.
+    deployment krijgt zijn domeinvelden mee uit ``deployment.write``. A field that repeats
+    the stored value moves nothing; otherwise every repeated pipeline deploy that sends
+    ``subdomain`` gets a 403.
 
     Raises:
         HTTPException: 403 als het bewijsmiddel een van deze handelingen niet opent.
@@ -299,13 +348,20 @@ def eis_doelwitten_uit_de_upsertbody(request: Request, project_name: str, deploy
         eis_handeling(
             request, project_name, Action.DEPLOYMENT_CLONE_FROM, deployment=_bron_deployment(opgeslagen_kloon)
         )
-    verzet_domein = (
-        deployment_data.domain_format is not None
-        or deployment_data.subdomain is not None
-        or deployment_data.base_domain is not None
-    )
-    if verzet_domein and doel is not None:
+    if doel is not None and _changes_domain(doel, deployment_data):
         eis_handeling(request, project_name, Action.DEPLOYMENT_DOMAIN_SET)
+
+
+def _changes_domain(deployment: dict[str, Any], deployment_data: Any) -> bool:
+    """Whether the body sends a domain field that differs from what the deployment stores."""
+    return any(
+        value is not None and value != get_domain_setting(deployment, setting)
+        for setting, value in (
+            (DomainSetting.DOMAIN_FORMAT, deployment_data.domain_format),
+            (DomainSetting.SUBDOMAIN, deployment_data.subdomain),
+            (DomainSetting.BASE_DOMAIN, deployment_data.base_domain),
+        )
+    )
 
 
 def _deployment_van(project_name: str, deployment_name: str) -> dict[str, Any] | None:

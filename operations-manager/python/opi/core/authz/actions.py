@@ -184,6 +184,58 @@ def deployment_of(endpoint: Any, route_kwargs: dict[str, Any]) -> str | None:
     return resolve(**route_kwargs) if resolve is not None else None
 
 
+#: Marker on a route that may name a deployment that does not exist (yet), with the
+#: function that gives the marking such a deployment is weighed against.
+ABSENT_MARKING_ATTR = "zad_absent_marking"
+
+
+def marking_if_absent(resolve: Callable[..., str]) -> Callable[[F], F]:
+    """Say which marking a deployment this route names, but that does not exist, weighs as.
+
+    Without it such a deployment weighs as the HIGHEST marking of the project, which is
+    right for a route that only reads or changes what exists. A route that creates a
+    deployment, or deletes one that is already gone, would otherwise need ops in every
+    project with production.
+    """
+
+    def mark(func: F) -> F:
+        setattr(func, ABSENT_MARKING_ATTR, resolve)
+        return func
+
+    return mark
+
+
+def marking_if_absent_of(endpoint: Any, route_kwargs: dict[str, Any]) -> str | None:
+    """The marking this route gives a deployment that does not exist, or None."""
+    resolve = getattr(endpoint, ABSENT_MARKING_ATTR, None)
+    return resolve(**route_kwargs) if resolve is not None else None
+
+
+#: Marker on a route whose request can amount to a narrower action than the one it
+#: declares, with the function that recognises that request.
+WEIGHED_ACTION_ATTR = "zad_weighed_action"
+
+
+def weighed_action_from(resolve: Callable[..., Action | None]) -> Callable[[F], F]:
+    """Say which action this request really performs, when that differs from the route's.
+
+    *resolve* returns None to keep the declared action. The declared action stays what the
+    startup check and the matrix see; only the decision on this one request changes.
+    """
+
+    def mark(func: F) -> F:
+        setattr(func, WEIGHED_ACTION_ATTR, resolve)
+        return func
+
+    return mark
+
+
+def weighed_action_of(endpoint: Any, route_kwargs: dict[str, Any]) -> Action | None:
+    """The action this request is weighed as instead of the declared one, or None."""
+    resolve = getattr(endpoint, WEIGHED_ACTION_ATTR, None)
+    return resolve(**route_kwargs) if resolve is not None else None
+
+
 #: Markering op een route die een doelwit in de QUERY draagt, met de namen die daar
 #: gelezen mogen worden.
 QUERY_TARGETS_ATTR = "zad_query_targets"

@@ -60,8 +60,8 @@ portaal, dus een token opent nooit meer dan zijn eigenaar op het scherm kan.
 | `developer` | bouwen op alles wat niet productie is |
 | `ops` | hetzelfde op productie, en de OTAP-markering |
 | `admin` | leden, rollen, tokens, service accounts, project verwijderen |
-| `developer-ci` | voor een pijplijn: deployments die niet productie zijn |
-| `ops-ci` | voor een pijplijn: image vervangen op elke deployment |
+| `developer-ci` | voor een pijplijn: deployments die niet productie zijn aanmaken, bijwerken en verwijderen; leest als `viewer` |
+| `ops-ci` | voor een pijplijn: image vervangen op elke deployment, en de afloop teruglezen |
 | iets anders | niets |
 
 De volledige tabel staat op `/rollen` en wordt uit de regels in de code gelezen;

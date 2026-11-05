@@ -5,9 +5,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import (
+    default_marking,
     deployment_in_body,
     eis_doelwitten_uit_de_upsertbody,
     eis_handeling,
+    image_only_upsert,
+    marking_in_body,
     validate_api_token,
 )
 from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
@@ -28,7 +31,7 @@ from opi.connectors.subdomain import (
     SubdomainValidationError,
 )
 from opi.core.auth_decorators import requires_step_up
-from opi.core.authz.actions import Action, action, deployment_from
+from opi.core.authz.actions import Action, action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_environment import Omgeving
@@ -894,6 +897,8 @@ api_router: APIRouter = APIRouter(
 )
 @action(Action.DEPLOYMENT_WRITE)
 @deployment_from(deployment_in_body)
+@marking_if_absent(marking_in_body)
+@weighed_action_from(image_only_upsert)
 @validate_api_token
 @requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
 async def upsert_deployment(
@@ -2309,6 +2314,7 @@ async def delete_project(
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
 @action(Action.DEPLOYMENT_DELETE)
+@marking_if_absent(default_marking)
 @validate_api_token
 @requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_project_deployment(

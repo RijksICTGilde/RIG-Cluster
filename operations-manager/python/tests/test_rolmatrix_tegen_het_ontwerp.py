@@ -24,11 +24,9 @@ from opi.core.authz.matrix import COLUMNS, rows
 ONTWERP: dict[tuple[str, str], tuple[str, ...]] = {
     # rij 1: project, deployments, logs, taken, back-ups lezen
     **{
-        (naam, ""): ("v", "v", "v", "v", "", "")
+        (naam, ""): ("v", "v", "v", "v", "v", "")
         for naam in (
-            "project.read",
             "project.list",
-            "deployment.read",
             "component.read",
             "service.read",
             "database.schema-read",
@@ -37,11 +35,12 @@ ONTWERP: dict[tuple[str, str], tuple[str, ...]] = {
             "logs.read",
             "subdomain.read",
             "cluster.read",
-            "task.read",
             "sleep.read",
             "token.read",
         )
     },
+    # row 1b: what a pipeline reads back after a deploy
+    **{(naam, ""): ("v", "v", "v", "v", "v", "v") for naam in ("project.read", "deployment.read", "task.read")},
     # rij 2 en 3: deployment aanmaken of wijzigen
     **{
         (naam, scope): cellen

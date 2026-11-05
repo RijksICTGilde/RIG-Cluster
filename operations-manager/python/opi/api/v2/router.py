@@ -15,9 +15,12 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Respon
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import (
+    default_marking,
     deployment_in_body,
     eis_doelwitten_uit_de_upsertbody,
     eis_handeling,
+    image_only_upsert,
+    marking_in_body,
     validate_api_token,
 )
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
@@ -101,7 +104,7 @@ from opi.connectors.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.core.auth_decorators import get_current_user, requires_step_up
-from opi.core.authz.actions import Action, deployment_from
+from opi.core.authz.actions import Action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.authz.actions import action as action_marker
 from opi.core.authz.engine import Role
 from opi.core.cluster_config import (
@@ -1155,6 +1158,8 @@ def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
 )
 @action_marker(Action.DEPLOYMENT_WRITE)
 @deployment_from(deployment_in_body)
+@marking_if_absent(marking_in_body)
+@weighed_action_from(image_only_upsert)
 @validate_api_token
 @requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
 async def upsert_deployment_v2(
@@ -1574,6 +1579,7 @@ async def rotate_project_key_v2(
     },
 )
 @action_marker(Action.DEPLOYMENT_DELETE)
+@marking_if_absent(default_marking)
 @validate_api_token
 @requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_deployment_v2(

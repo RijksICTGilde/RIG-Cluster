@@ -134,6 +134,7 @@ def build_resource(
     path: str,
     deployment: str | None = None,
     component: str | None = None,
+    marking_if_absent: str | None = None,
 ) -> Resource:
     """De resource waarop een aanroep werkt, uit één lezing van het projectbestand.
 
@@ -144,6 +145,9 @@ def build_resource(
 
     Zonder project (een route die er geen heeft, of een onbekend project) blijft alles op
     de standaardmarkering staan, en geeft de route zelf zijn 404.
+
+    *marking_if_absent* is the marking of a named deployment that does not exist, for a
+    route that declared one with :func:`opi.core.authz.actions.marking_if_absent`.
     """
     data: dict[str, Any] = (getattr(project, "data", None) or {}) if project is not None else {}
     heeft_productie = project_has_production(data)
@@ -151,7 +155,9 @@ def build_resource(
         project=project_name,
         path=path,
         deployment=deployment,
-        environment=deployment_marking(data, deployment) or highest_environment(data).value,
+        environment=deployment_marking(data, deployment)
+        or (marking_if_absent if deployment else None)
+        or highest_environment(data).value,
         component=component,
         component_in_production=component_in_production(data, component) if component else heeft_productie,
         project_has_production=heeft_productie,
