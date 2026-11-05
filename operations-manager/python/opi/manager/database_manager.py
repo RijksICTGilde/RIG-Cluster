@@ -18,6 +18,7 @@ from opi.connectors.postgres import (
     PostgresValidationError,
     create_postgres_connector,
 )
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.manager.backup.runs import clone_backup_items
@@ -177,7 +178,7 @@ class DatabaseManager:
         progress_manager = self.project_manager.get_progress_manager()
         database_task = None
         if progress_manager:
-            database_task = progress_manager.add_task("Database klaarmaken", subject=deployment_name)
+            database_task = progress_manager.add_task(steps.DATABASE_CONFIG_APPLY, subject=deployment_name)
 
         try:
             # Determine placement: a dedicated (project-scoped) cluster or the shared
@@ -391,7 +392,7 @@ class DatabaseManager:
         logger.info(f"Connection limit {outcome}")
         progress_manager = self.project_manager.get_progress_manager()
         if progress_manager:
-            progress_manager.complete_task(progress_manager.add_task("Connectielimiet", subject=outcome))
+            progress_manager.complete_task(progress_manager.add_task(steps.CONNECTION_LIMIT, subject=outcome))
 
     def _resolve_extra_schemas(
         self, project_data: dict[str, Any], project_name: str, deployment_name: str
@@ -457,7 +458,7 @@ class DatabaseManager:
             logger.info(f"Clone takes along the application schemas of {source_database}: {', '.join(discovered)}")
             if progress_manager:
                 progress_manager.complete_task(
-                    progress_manager.add_task("Kloon", subject=f"ook {', '.join(discovered)}")
+                    progress_manager.add_task(steps.CLONE, subject=f"ook {', '.join(discovered)}")
                 )
         if public_objects:
             objects = ", ".join(public_objects)
@@ -467,7 +468,7 @@ class DatabaseManager:
             )
             if progress_manager:
                 progress_manager.complete_task(
-                    progress_manager.add_task("Kloon", subject=f"public gaat niet mee: {objects}")
+                    progress_manager.add_task(steps.CLONE, subject=f"public gaat niet mee: {objects}")
                 )
 
     async def _ensure_readonly_user(

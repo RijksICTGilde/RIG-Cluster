@@ -1,9 +1,9 @@
 """Een stap in de voortgang zegt waarvoor hij loopt.
 
 Bij het aanmaken van een project met twee deployments stonden dezelfde drie stappen
-twee keer onder elkaar -- "Database klaarmaken", "MinIO-opslag klaarmaken",
-"Redis-cache klaarmaken" -- zonder dat er iets bij stond waaraan je zag welke
-deployment aan de beurt was. Wie keek of het opschoot, kon niet zien waar hij was.
+twee keer onder elkaar -- de database-, opslag- en cacheconfiguratie -- zonder dat er
+iets bij stond waaraan je zag welke deployment aan de beurt was. Wie keek of het
+opschoot, kon niet zien waar hij was.
 
 Een stap draagt daarom nu een ONDERWERP naast zijn naam: de deploymentnaam. Naast, niet
 erin, zodat de weergave kan kiezen hoe het toont en de naam bruikbaar blijft om op te
@@ -11,9 +11,9 @@ groeperen. Een stap die een keer per project loopt heeft geen onderwerp, want da
 de lijst alleen langer.
 
 De tweede helft van hetzelfde: de helft van de regels was Engels ("Creating MinIO
-storage resources" tussen "Database klaarmaken"), en dat viel op als iets dat vergeten
-was. De scan onderaan dit bestand meet dat op de bron van alle stapnamen tegelijk, zodat
-een nieuwe Engelse regel er niet ongemerkt bij komt.
+storage resources" tussen de Nederlandse regels), en dat viel op als iets dat vergeten
+was. De scan onderaan dit bestand meet dat op ``opi/core/progress_steps.py``, waar sinds
+RC-428 elke stapnaam staat, zodat een nieuwe Engelse regel er niet ongemerkt bij komt.
 """
 
 import ast
@@ -23,6 +23,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core import progress_steps
 from opi.core.task_manager import TaskStatus, format_step_line
 
 OPI_ROOT = pathlib.Path(__file__).resolve().parents[1] / "opi"
@@ -61,10 +62,10 @@ def test_step_without_subject_is_unchanged() -> None:
     """Een stap die een keer per project loopt krijgt geen onderwerp."""
     progress = _progress()
 
-    progress.add_task("Project aanmaken")
+    progress.add_task(progress_steps.ROLLOUT_PREPARE)
 
-    assert _rows(progress) == [("Project aanmaken", None)]
-    assert progress._current_step == "Project aanmaken"
+    assert _rows(progress) == [(progress_steps.ROLLOUT_PREPARE, None)]
+    assert progress._current_step == progress_steps.ROLLOUT_PREPARE
 
 
 def test_subject_is_stored_next_to_the_name_not_inside_it() -> None:
@@ -87,7 +88,7 @@ def test_the_running_line_joins_name_and_subject() -> None:
 
 def test_a_subtask_carries_its_subject_too() -> None:
     progress = _progress()
-    parent = progress.add_task("Project uitrollen")
+    parent = progress.add_task(progress_steps.ROLLOUT)
 
     progress.add_subtask(parent, "Wachten op de uitrol", subject="acceptatie")
 
@@ -153,8 +154,8 @@ async def test_two_deployments_are_told_apart_by_their_subject() -> None:
         await manager.create_resources_for_deployment(project_data, {"name": name, "cluster": "local"})
 
     assert _rows(progress) == [
-        ("Redis-cache klaarmaken", "productie"),
-        ("Redis-cache klaarmaken", "acceptatie"),
+        (progress_steps.CACHE_CONFIG_APPLY, "productie"),
+        (progress_steps.CACHE_CONFIG_APPLY, "acceptatie"),
     ]
     # En de stap zelf blijft gewoon lopen en afronden.
     assert all(info["status"] == TaskStatus.COMPLETED.value for info in progress._subtasks.values())
@@ -245,26 +246,30 @@ def test_a_subject_is_shown_not_executed(layout: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+STEP_TEXT_MODULE = OPI_ROOT / "core" / "progress_steps.py"
+
+
 def _step_literals() -> list[tuple[str, str]]:
-    """Elke letterlijke stapnaam in opi/, als (bestand, tekst).
+    """Elke stapnaam uit de staptekstmodule, als (bestand, tekst).
 
     Op de BRON en niet op een lijst in de test: een nieuwe Engelse regel komt er
     daardoor niet ongemerkt bij, en een verwijderde stap laat de scan niet omvallen.
+    ``test_progress_step_texts.py`` bewaakt dat er buiten deze module geen stapnaam staat.
     """
+    tree = ast.parse(STEP_TEXT_MODULE.read_text(encoding="utf-8"))
     found: list[tuple[str, str]] = []
-    for path in OPI_ROOT.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr not in STEP_CALLS:
-                continue
-            # add_subtask zet de bovenliggende taak voorop; de naam is dan het tweede
-            # argument. Alleen letterlijke teksten zijn hier te beoordelen.
+    # De waarde van een constante en de tekst die een functie teruggeeft. Docstrings
+    # blijven buiten de scan: die zijn Engels, net als de rest van de code.
+    for node in ast.walk(tree):
+        values = []
+        if isinstance(node, ast.Assign) or (isinstance(node, ast.Return) and node.value is not None):
+            values = [node.value]
+        for value in values:
+            parts = value.values if isinstance(value, ast.JoinedStr) else [value]
             found.extend(
-                (str(path.relative_to(OPI_ROOT)), arg.value)
-                for arg in node.args
-                if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                (STEP_TEXT_MODULE.name, part.value)
+                for part in parts
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
             )
     return found
 
@@ -295,35 +300,3 @@ def test_no_english_left_in_the_progress_lines() -> None:
     ]
 
     assert offenders == []
-
-
-def _deploy_step_names(relative_path: str) -> set[str]:
-    """De namen van de herverwerkingsstap in een handlerbestand.
-
-    Het anker is de toewijzing: elk van deze stappen heet in de bron ``deploy_task``,
-    en dat is wat "dezelfde stap" hier betekent. Een van de zeven anders vertalen komt
-    er daardoor uit, ook als die vertaling keurig Nederlands is.
-    """
-    tree = ast.parse((OPI_ROOT / relative_path).read_text(encoding="utf-8"))
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
-            continue
-        targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        if "deploy_task" not in targets:
-            continue
-        for arg in node.value.args:
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                names.add(arg.value)
-    return names
-
-
-def test_processing_a_project_is_called_the_same_thing_everywhere() -> None:
-    """Twee vertalingen van dezelfde stap lezen op het scherm als twee dingen."""
-    assert _deploy_step_names("core/task_handlers_components.py") == {
-        "Project verwerken",
-        "Deployment verwerken",
-    }
-    # In dit bestand heet de uitrol bij het aanmaken ook deploy_task; die staat er
-    # naast en hoort een eigen naam te houden.
-    assert "Deployment verwerken" in _deploy_step_names("core/task_handlers_project.py")

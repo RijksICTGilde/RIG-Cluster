@@ -14,6 +14,7 @@ from opi.api.restore_router import (
     _restore_database_with_versioning,
     _restore_pvc_with_versioning,
 )
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
 from opi.handlers.project_file_handler import (
@@ -59,7 +60,7 @@ async def restore_items_with_progress(
         reference_name = item.get("storage_name") or item.get("reference_name", "")
 
         label = f"{resource_type.upper()}: {component_name or reference_name}"
-        subtask = progress.add_subtask(restore_task_id, f"Herstellen {label}")
+        subtask = progress.add_subtask(restore_task_id, steps.RESTORE_ITEM, subject=label)
 
         try:
             await _restore_single_resource(
@@ -237,7 +238,7 @@ async def _pre_restore_pvcs(
         source_generation = item.get("generation", 0)
 
         label = f"PVC: {component_name}/{storage_name}"
-        subtask = task_progress.add_subtask(pvc_task_id, f"Herstellen {label}")
+        subtask = task_progress.add_subtask(pvc_task_id, steps.RESTORE_ITEM, subject=label)
 
         # Source PVC name: from original deployment (what the backup was tagged with)
         source_unique_name = generate_unique_name(source_deployment, component_name)

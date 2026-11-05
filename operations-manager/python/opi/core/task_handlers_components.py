@@ -9,6 +9,7 @@ They have NO dependency on FastAPI Request objects.
 import logging
 from typing import Any
 
+from opi.core import progress_steps as steps
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 1: Validation
         # ------------------------------------------------------------------
-        validate_task = progress.add_task("Component validatie")
-        progress.update_current_step("Project- en componentnaam controleren")
+        validate_task = progress.add_task(steps.NAMES_CHECK)
 
         if not validate_project_name(project_name):
             error_msg = (
@@ -69,8 +69,7 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 2: Add component to project YAML
         # ------------------------------------------------------------------
-        add_task = progress.add_task("Component toevoegen")
-        progress.update_current_step(f"Component '{component_name}' toevoegen")
+        add_task = progress.add_task(steps.COMPONENT_ADD, subject=component_name)
 
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
@@ -116,9 +115,6 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
             succeeded = True
             processing: dict[str, Any] = skipped_processing()
         else:
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken om Kubernetes-resources aan te maken")
-
             # Scope the reprocess to the deployments the component was added to, so it
             # doesn't regenerate (and re-commit) every other deployment's manifests.
             processing_success = await project_manager.process_project_from_git(
@@ -136,11 +132,8 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
                         "urls": dep_result.urls,
                     }
 
-            if processing_success:
-                progress.complete_task(deploy_task)
-            else:
+            if not processing_success:
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
             succeeded = bool(processing_success)
@@ -202,8 +195,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
 
     try:
-        validate_task = progress.add_task("Component validatie")
-        progress.update_current_step("Projectnaam controleren")
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
         if not validate_project_name(project_name):
             error_msg = (
                 "Invalid project name format. Must start with lowercase letter, "
@@ -219,8 +211,7 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             }
         progress.complete_task(validate_task)
 
-        update_task = progress.add_task("Component bijwerken")
-        progress.update_current_step(f"Component '{component_name}' bijwerken")
+        update_task = progress.add_task(steps.COMPONENT_UPDATE, subject=component_name)
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
 
@@ -256,19 +247,14 @@ async def handle_update_component(payload: dict, progress: Any) -> dict:
             succeeded = True
             processing: dict[str, Any] = skipped_processing()
         else:
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken om Kubernetes-resources opnieuw te genereren")
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
                 deployment_names=payload.get("deployment_names"),
             )
 
-            if processing_success:
-                progress.complete_task(deploy_task)
-            else:
+            if not processing_success:
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
             succeeded = bool(processing_success)
@@ -329,8 +315,7 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
         # ------------------------------------------------------------------
         # Step 1: Validation
         # ------------------------------------------------------------------
-        validate_task = progress.add_task("Component validatie")
-        progress.update_current_step("Namen controleren")
+        validate_task = progress.add_task(steps.NAMES_CHECK)
 
         if not validate_project_name(project_name):
             error_msg = (
@@ -365,8 +350,9 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
         # ------------------------------------------------------------------
         # Step 2: Add component to deployment
         # ------------------------------------------------------------------
-        add_task = progress.add_task("Component aan deployment toevoegen")
-        progress.update_current_step(f"Component '{component_name}' toevoegen aan deployment '{deployment_name}'")
+        add_task = progress.add_task(
+            steps.COMPONENT_ADD_TO_DEPLOYMENT, subject=f"{component_name} aan {deployment_name}"
+        )
 
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
@@ -401,9 +387,6 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
             succeeded = True
             processing: dict[str, Any] = skipped_processing()
         else:
-            deploy_task = progress.add_task("Deployment verwerken")
-            progress.update_current_step(f"Deployment '{deployment_name}' verwerken")
-
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
@@ -418,11 +401,8 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
                     "urls": dep_result.urls,
                 }
 
-            if processing_success:
-                progress.complete_task(deploy_task)
-            else:
+            if not processing_success:
                 processing_error = project_manager.get_processing_error() or "Deployment processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
             succeeded = bool(processing_success)
@@ -491,8 +471,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 1: Validation
         # ------------------------------------------------------------------
-        validate_task = progress.add_task("Dienst validatie")
-        progress.update_current_step("Projectnaam controleren")
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
 
         if not validate_project_name(project_name):
             error_msg = (
@@ -513,8 +492,7 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
         # ------------------------------------------------------------------
         # Step 2: Add service
         # ------------------------------------------------------------------
-        add_task = progress.add_task("Dienst toevoegen")
-        progress.update_current_step(f"Dienst '{service_name}' toevoegen")
+        add_task = progress.add_task(steps.SERVICE_ADD, subject=service_name)
 
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
@@ -549,9 +527,6 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
             note_rollout_skipped(progress)
             processing = skipped_processing()
         elif result.get("services_added") or result.get("components_updated"):
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken om de diensten klaar te zetten")
-
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
@@ -560,11 +535,9 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
 
             if processing_success:
                 processing = {"status": "completed"}
-                progress.complete_task(deploy_task)
             else:
                 processing = {"status": "failed"}
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
         # ------------------------------------------------------------------
@@ -624,8 +597,7 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
 
     try:
-        validate_task = progress.add_task("Dienstconfiguratie validatie")
-        progress.update_current_step("Projectnaam controleren")
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
         if not validate_project_name(project_name):
             error_msg = (
                 "Invalid project name format. Must start with lowercase letter, "
@@ -642,8 +614,7 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             }
         progress.complete_task(validate_task)
 
-        write_task = progress.add_task("Dienstconfiguratie schrijven")
-        progress.update_current_step(f"Dienst '{service_name}' instellen op {target}")
+        write_task = progress.add_task(steps.SERVICE_CONFIG_SAVE, subject=f"{service_name} op {target}")
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
 
@@ -690,8 +661,6 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             note_rollout_skipped(progress)
             processing = skipped_processing()
         elif changed:
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken om de dienstconfiguratie bij te trekken")
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
@@ -699,11 +668,9 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             )
             if processing_success:
                 processing = {"status": "completed"}
-                progress.complete_task(deploy_task)
             else:
                 processing = {"status": "failed"}
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
         succeeded = processing["status"] != "failed"
@@ -792,8 +759,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
         }
 
     try:
-        validate_task = progress.add_task("Waarden-validatie")
-        progress.update_current_step("Projectnaam controleren")
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
         if not validate_project_name(project_name):
             error_msg = (
                 "Invalid project name format. Must start with lowercase letter, "
@@ -804,8 +770,7 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
             return failure(error_msg, "invalid_project_name")
         progress.complete_task(validate_task)
 
-        write_task = progress.add_task("Waarden schrijven")
-        progress.update_current_step(f"{operation} van de waarden van '{service_name}' toepassen op {target}")
+        write_task = progress.add_task(steps.VALUES_SAVE, subject=f"{operation} van {service_name} op {target}")
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
 
@@ -831,8 +796,6 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
             note_rollout_skipped(progress)
             processing = skipped_processing()
         elif changed:
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken om de nieuwe waarden bij te trekken")
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path,
                 task_progress_manager=progress,
@@ -840,11 +803,9 @@ async def handle_configure_service_values(payload: dict, progress: Any) -> dict:
             )
             if processing_success:
                 processing = {"status": "completed"}
-                progress.complete_task(deploy_task)
             else:
                 processing = {"status": "failed"}
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
         succeeded = processing["status"] != "failed"
@@ -908,8 +869,7 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
         }
 
     try:
-        validate_task = progress.add_task("Schema-validatie")
-        progress.update_current_step("Projectnaam controleren")
+        validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
         if not validate_project_name(project_name):
             error_msg = (
                 "Invalid project name format. Must start with lowercase letter, "
@@ -920,8 +880,7 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
             return failure(error_msg, "invalid_project_name")
         progress.complete_task(validate_task)
 
-        write_task = progress.add_task("Schema schrijven")
-        progress.update_current_step(f"{operation} van schema '{postfix}' toepassen")
+        write_task = progress.add_task(steps.DATABASE_SCHEMAS_UPDATE, subject=f"{operation} van {postfix}")
         project_file_relative_path = f"projects/{project_name}.yaml"
         project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
 
@@ -941,18 +900,14 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
             note_rollout_skipped(progress)
             processing = skipped_processing()
         elif changed:
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken om de schemalijst bij te trekken")
             processing_success = await project_manager.process_project_from_git(
                 project_file_relative_path, task_progress_manager=progress
             )
             if processing_success:
                 processing = {"status": "completed"}
-                progress.complete_task(deploy_task)
             else:
                 processing = {"status": "failed"}
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, processing_error)
                 progress.fail_project(processing_error)
 
         succeeded = processing["status"] != "failed"
@@ -1009,7 +964,7 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
 
     logger.info(f"Task: deleting component {component_name} from {project_name}")
 
-    remove_task = progress.add_task(f"Component '{component_name}' verwijderen")
+    remove_task = progress.add_task(steps.COMPONENT_REMOVE, subject=component_name)
     # Mutate through the single ProjectManager path: it reads fresh contents from Git,
     # then saves and commits, so a lagging read cache can never overwrite newer Git state.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")

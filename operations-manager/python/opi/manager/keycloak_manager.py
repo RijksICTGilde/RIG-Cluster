@@ -18,6 +18,7 @@ from opi.connectors.keycloak import (
     legacy_restricted_flow_alias,
     role_gate_flow_alias,
 )
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import (
     get_ingress_postfix,
     get_keycloak_demo_users,
@@ -273,7 +274,7 @@ class KeycloakManager:
         progress_manager = self.project_manager.get_progress_manager()
         keycloak_task = None
         if progress_manager:
-            keycloak_task = progress_manager.add_task("Keycloak-SSO klaarmaken", subject=deployment_name)
+            keycloak_task = progress_manager.add_task(steps.LOGIN_CONFIG_APPLY, subject=deployment_name)
 
         try:
             # Handle external keycloak (credentials from Kubernetes secret)

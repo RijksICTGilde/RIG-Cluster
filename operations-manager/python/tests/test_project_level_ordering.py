@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.git_repo import WriteResult
+from opi.core import progress_steps
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
@@ -618,8 +619,8 @@ def _voortgang() -> MagicMock:
     Zo staat in de assertie welke taak een substap draagt, en dat is hier de vraag.
     """
     voortgang = MagicMock()
-    voortgang.add_task.side_effect = lambda naam: f"taak:{naam}"
-    voortgang.add_subtask.side_effect = lambda _ouder, naam: f"substap:{naam}"
+    voortgang.add_task.side_effect = lambda naam, subject=None: f"taak:{naam}"
+    voortgang.add_subtask.side_effect = lambda _ouder, naam, subject=None: f"substap:{naam}"
     return voortgang
 
 
@@ -634,10 +635,13 @@ class TestDeMeldingNaastDeGrendel:
     Deze toetsen staan daarom op de tekst NAAST de faaltak: los van elkaar is de tekst
     groen (het is maar een string) en is de faaltak groen (hij faalt netjes). Alleen samen
     valt de tegenspraak om.
+
+    Sinds RC-428 is er geen containerstap "Project uitrollen" meer: de uitleg is een eigen
+    afgeronde stap en de time-out komt via ``fail_project`` binnen. De tegenspraak zit dan
+    in dezelfde TAAK in plaats van in dezelfde stap, en dat is wat hieronder staat.
     """
 
     TIME_OUT = "Timeout waiting for application 'demo-project' to be synced and healthy after 240s"
-    UITROL = "taak:Project uitrollen"
 
     async def _een_aanmaak_die_op_de_grendel_strandt(self, monkeypatch: Any) -> MagicMock:
         """De aanmaaktaak van een nieuw project, met de grendel in een time-out.
@@ -675,15 +679,19 @@ class TestDeMeldingNaastDeGrendel:
         eigen taak, dan is dit geen tegenspraak meer en mag de tekst weer wat anders zeggen."""
         voortgang = await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
 
-        voortgang.fail_task.assert_called_once_with(self.UITROL, self.TIME_OUT)
-        assert [aanroep.args[0] for aanroep in voortgang.add_subtask.call_args_list] == [self.UITROL]
+        voortgang.fail_project.assert_called_once_with(self.TIME_OUT)
+        assert [aanroep.args[0] for aanroep in voortgang.add_task.call_args_list] == [
+            progress_steps.PROJECT_NAME_CHECK,
+            progress_steps.PROJECT_FILE_SAVE,
+            progress_steps.NEW_PROJECT_NOTICE,
+        ]
 
     @pytest.mark.asyncio
     async def test_de_melding_spreekt_de_time_out_niet_tegen(self, monkeypatch: Any) -> None:
         """Wat de tekst moet zeggen is wat de grendel doet: hij stopt de uitrol. Wat hij niet
         meer mag zeggen is dat het project er dan vrijwel zeker gewoon staat."""
         voortgang = await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
-        (melding,) = [aanroep.args[1] for aanroep in voortgang.add_subtask.call_args_list]
+        melding = progress_steps.NEW_PROJECT_NOTICE
 
         assert "stopt het uitrollen" in melding
         assert "de deployments zijn niet uitgerold" in melding
@@ -699,8 +707,8 @@ class TestDeMeldingNaastDeGrendel:
         juist de laatste: wat een time-out betekent."""
         from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
 
-        voortgang = await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
-        (melding,) = [aanroep.args[1] for aanroep in voortgang.add_subtask.call_args_list]
+        await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
+        melding = progress_steps.NEW_PROJECT_NOTICE
 
         assert len(melding) <= MAX_STEP_NAME
         assert clamp_step_text(melding) == melding

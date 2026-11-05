@@ -29,6 +29,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
+from opi.core import progress_steps
 from opi.core.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.manager.project_manager import ProjectManager
 from opi.server import app
@@ -354,7 +355,7 @@ class TestDeTaakuitkomst:
             manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
-        assert manager._begin_step.call_args.args[0] == f"Lopende sync afgebroken: {DEPLOYMENT}"
+        assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
         manager._end_step.assert_called_once_with("stap-1")
 
     async def test_een_gewone_push_meldt_een_vastgelopen_sync_ook(self) -> None:
@@ -368,7 +369,7 @@ class TestDeTaakuitkomst:
             manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
         )
 
-        assert manager._begin_step.call_args.args[0] == f"Lopende sync afgebroken: {DEPLOYMENT}"
+        assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
         assert manager._terminated_sync_operations == [DEPLOYMENT]
 
     async def test_zonder_afgebroken_sync_komt_er_geen_stap(self) -> None:

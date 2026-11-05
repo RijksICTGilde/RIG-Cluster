@@ -69,7 +69,7 @@ async def test_all_healthy_completes_without_notices() -> None:
     progress = await _run([_app("wies-main"), _app("wies-pr-1")])
 
     assert progress.failed == []
-    assert progress.subtasks == ["Wachten op ArgoCD sync voltooiing"], "no notice when everything is fine"
+    assert progress.subtasks == [], "no notice when everything is fine"
 
 
 async def test_a_crashing_tenant_app_is_not_our_failure(caplog) -> None:
@@ -111,7 +111,7 @@ async def test_another_deployments_broken_app_does_not_block_this_one() -> None:
     )
 
     assert progress.failed == []
-    assert progress.subtasks == ["Wachten op ArgoCD sync voltooiing"], "pr-478 is out of scope for this task"
+    assert progress.subtasks == [], "pr-478 is out of scope for this task"
 
 
 async def test_without_scope_every_app_still_counts() -> None:

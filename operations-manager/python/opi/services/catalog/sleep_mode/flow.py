@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from opi.core import progress_steps
 from opi.services.catalog.sleep_mode.api_models import DISABLED
 
 logger = logging.getLogger(__name__)
@@ -165,11 +166,11 @@ async def wake(
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
     try:
-        steps.begin("Projectgegevens ophalen")
+        steps.begin(progress_steps.PROJECT_DATA_FETCH)
         project_data = await project_manager.get_contents()
         deployment = _find_deployment(project_data, deployment_name)
         if deployment is None:
-            steps.failed(f"Deployment '{deployment_name}' bestaat niet in dit project")
+            steps.failed(progress_steps.deployment_not_in_project(deployment_name))
             raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
         if presented_token is not None:
@@ -181,7 +182,7 @@ async def wake(
         # deadline, and waking is the manual half. A deployment slept by hand outside the
         # scope must be wakeable by hand too, or the button that put it there strands it.
         if config is None:
-            steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
+            steps.note(progress_steps.SLEEP_OUT_OF_SCOPE)
             # ``disabled``, not the stored state: sleep-mode does not apply here, and
             # ``/status`` already says exactly that for this same case. Reporting the
             # stored ``awake`` would make one word mean two things across the two
@@ -191,10 +192,10 @@ async def wake(
         waking_timeout = timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
         if not service.begin_wake(project_data, deployment_name, now, waking_timeout):
             new = sleep_state.read(project_data, deployment_name)
-            steps.note(f"Geen wijziging nodig, de deployment is al {new.state}")
+            steps.note(progress_steps.sleep_no_change(new.state))
             return WakeResult(changed=False, state=new.state)
 
-        steps.begin("Wektoestand vastleggen in git")
+        steps.begin(progress_steps.WAKE_STATE_COMMIT)
         await project_manager.save_and_commit_project(
             project_data, f"sleep-mode: wake {deployment_name} in {project_name}"
         )
@@ -255,7 +256,7 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
 
     current = sleep_state.read(project_data, deployment_name)
     if current.state != sleep_state.STATE_WAKING:
-        steps.note(f"Geen wijziging nodig, de deployment is al {current.state}")
+        steps.note(progress_steps.sleep_no_change(current.state))
         return WakeResult(changed=False, state=current.state)
 
     # ``begin_wake`` always stamps this deadline; the fallback only keeps the loop
@@ -264,7 +265,7 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
         datetime.now(UTC) + timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
     )
 
-    steps.begin("Wachten tot de applicatie opgestart is")
+    steps.begin(progress_steps.WAIT_FOR_APP)
     while not await app_is_ready(project_data, deployment, config):
         if datetime.now(UTC) >= deadline:
             message = (
@@ -287,10 +288,10 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
             fresh, deployment_name, datetime.now(UTC), config.sleep_after_wake_delta
         ):
             # The sweeper or a second wake finished it first; nothing left to write.
-            steps.note(f"Geen wijziging nodig, de deployment is al {state_now}")
+            steps.note(progress_steps.sleep_no_change(state_now))
             return WakeResult(changed=False, state=state_now)
 
-        steps.begin("Wektoestand afronden in git")
+        steps.begin(progress_steps.WAKE_STATE_FINISH)
         try:
             await project_manager.save_and_commit_project(
                 fresh, f"sleep-mode: finish wake {deployment_name} in {project_name}"
@@ -302,7 +303,7 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
                 project_name,
                 deployment_name,
             )
-            steps.failed("Het projectbestand werd gelijktijdig gewijzigd")
+            steps.failed(progress_steps.PROJECT_FILE_CHANGED_CONCURRENTLY)
             raise
         steps.done()
         # The waker is gone now, so this application can become Healthy; that wait is
@@ -349,18 +350,18 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
     try:
-        steps.begin("Projectgegevens ophalen")
+        steps.begin(progress_steps.PROJECT_DATA_FETCH)
         project_data = await project_manager.get_contents()
         deployment = _find_deployment(project_data, deployment_name)
         if deployment is None:
-            steps.failed(f"Deployment '{deployment_name}' bestaat niet in dit project")
+            steps.failed(progress_steps.deployment_not_in_project(deployment_name))
             raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
         # Same as in ``wake``: enabled is the gate, ``match`` is the sweeper's scope.
         if config is None:
-            steps.note("Slaapstand geldt niet voor deze deployment, er is niets gewijzigd")
+            steps.note(progress_steps.SLEEP_OUT_OF_SCOPE)
             # Sleep-mode does not apply at all here, so the state is ``disabled``.
             return WakeResult(changed=False, state=DISABLED)
 
@@ -374,10 +375,10 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 
         if not service.to_sleeping(project_data, deployment_name, encrypted_token):
             new = sleep_state.read(project_data, deployment_name)
-            steps.note(f"Geen wijziging nodig, de deployment is al {new.state}")
+            steps.note(progress_steps.sleep_no_change(new.state))
             return WakeResult(changed=False, state=new.state)
 
-        steps.begin("Slaaptoestand vastleggen in git")
+        steps.begin(progress_steps.SLEEP_STATE_COMMIT)
         await project_manager.save_and_commit_project(
             project_data, f"sleep-mode: sleep {deployment_name} in {project_name}"
         )
