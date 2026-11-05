@@ -73,15 +73,15 @@ def test_de_iconen_van_de_takenlijst_bestaan_in_de_nldd_woordenschat() -> None:
     welke kant het op loopt verschilt per versie; de meting staat in
     ``opi/web/nldd_iconen.py``.
 
-    De namen staan sinds de takenlijst op lijstcomponenten staat als ``icon=`` op een
-    ``nldd-icon-cell``; het pictogram zelf zit in de schaduwboom van dat component.
+    De namen staan als ``icon=`` op de ``nldd-step-cell`` van een taak; het pictogram zelf
+    zit in de schaduwboom van dat component.
     """
     rendered = render_progress_fragment(
         _request(),
         _context(tasks=[{"name": "a", "status": s, "subtasks": []} for s in ("completed", "failed", "running", "")]),
     )
 
-    namen = set(re.findall(r'<nldd-icon-cell[^>]*\bicon="([^"]+)"', rendered))
+    namen = set(re.findall(r'<nldd-step-cell[^>]*\bicon="([^"]+)"', rendered))
     assert namen, "geen enkel icoon in de takenlijst"
     woordenschat = nldd_icon_names()
     assert namen <= woordenschat, f"onbekende iconnamen: {sorted(namen - woordenschat)}"

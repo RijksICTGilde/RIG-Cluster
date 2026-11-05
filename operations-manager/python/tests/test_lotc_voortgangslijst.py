@@ -75,7 +75,7 @@ def test_lijst_komt_uit_de_gedeelde_macro(sjabloon: str) -> None:
     assert "<nldd-list " in html, f"{sjabloon} rendert geen lijst"
     # drie regels: een taak, zijn subtaak, en de tweede taak
     assert html.count("<nldd-list-item") == 3, f"{sjabloon} toont niet elke taak en subtaak"
-    assert html.count("<nldd-icon-cell") == 3, f"{sjabloon} mist een statuspictogram"
+    assert html.count("<nldd-step-cell") == 3, f"{sjabloon} mist een stip op het spoor"
     assert "Project bijwerken" in html
     assert "YAML wegschrijven" in html
 
@@ -88,14 +88,22 @@ def test_geen_eigen_opmaak_meer(sjabloon: str) -> None:
         assert klasse not in html, f"{sjabloon} hangt nog aan .{klasse}"
 
 
-def test_subtaak_springt_in_met_een_cel() -> None:
-    """De inspringing is een spacer-cel van het thema en geen padding uit een stijlblad."""
+def test_a_subtask_gets_the_small_dot() -> None:
+    """A subtask is a minor row on the same track, not an indented row of its own."""
     html = _render("bg/_task-progress.html.j2")
     regels = [regel for regel in html.split("<nldd-list-item") if "nldd-text-cell" in regel]
     subtaak = next(regel for regel in regels if "YAML wegschrijven" in regel)
     hoofdtaak = next(regel for regel in regels if "Project bijwerken" in regel)
-    assert 'size="24"' in subtaak, "de subtaak springt niet in"
-    assert 'size="24"' not in hoofdtaak, "de hoofdtaak springt ten onrechte in"
+    assert 'level="minor"' in subtaak
+    assert 'level="minor"' not in hoofdtaak
+
+
+def test_a_failed_step_is_where_the_track_stops() -> None:
+    html = _render("bg/_task-progress.html.j2")
+    regel = next(r for r in html.split("<nldd-list-item") if "Uitrollen" in r)
+    assert 'status="current"' in regel
+    assert 'icon="close"' in regel
+    assert 'color="critical"' in regel
 
 
 def test_de_foutregel_hangt_onder_zijn_taak() -> None:
