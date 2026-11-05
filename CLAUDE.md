@@ -12,7 +12,9 @@ Think and act as a Principal Engineer. Be a critical thinker - do not agree with
 
 ## Woordenlijst
 
-Nederlandse prose met Engelse vaktermen. Verzin geen Nederlandse vertaling voor een term die het team in het Engels gebruikt: dat leest als een ander begrip en is niet terug te zoeken. Geldt voor code, commentaar, documenten, commitberichten en antwoorden in de chat.
+**Code is Engels**: namen, commentaar, docstrings en testnamen, ook in een module of testbestand dat nog Nederlands is. Bestaande Nederlandse code wordt niet met terugwerkende kracht omgezet en ook niet vertaald als je hem toevallig raakt.
+
+Nederlandse prose met Engelse vaktermen. Verzin geen Nederlandse vertaling voor een term die het team in het Engels gebruikt: dat leest als een ander begrip en is niet terug te zoeken. Geldt voor documenten, commitberichten, teksten die de gebruiker ziet en antwoorden in de chat.
 
 Gebruik de rechterkolom, nooit de linker:
 
