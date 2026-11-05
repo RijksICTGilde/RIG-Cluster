@@ -51,6 +51,27 @@ verschillen een orde in omvang, en `TEMP_DIR` is een emptyDir van 8Gi op product
 recent gebruikte verdwijnt eerst; een kopie waar een taak uit leest of in schrijft blijft
 staan, zolang die operatie loopt.
 
+### Netwerk alleen waar het hoort
+
+Een blobless kopie mist de inhoud van bijna elk bestand. Git haalt een ontbrekende blob
+uit zichzelf bij de remote op (een lazy fetch), ook midden in een commando dat lokaal
+lijkt, en dan zonder credentials: die krijgen alleen clone, fetch, push en `ls-remote`
+mee. Op de sandbox liet dat elke write falen na een externe wijziging van een bestand
+buiten een projectmap, met `could not read Username`. Daarom:
+
+- elk lokaal commando draait met `GIT_NO_LAZY_FETCH=1` (`OFFLINE_ENV`). Een ontbrekende
+  blob is dan meteen een fout, nooit een stil verzoek zonder inlog;
+- `write-tree --missing-ok` in `build_tree_commit`: de bestanden die een write niet
+  aanraakt komen uit de tree van de ouder, dus hun blobs staan op de remote en hoeven niet
+  lokaal te zijn;
+- de push draait met `pack.window=0`: deltacompressie zou de oude versie van elk
+  gewijzigd bestand als basis lezen, en die heeft de kopie niet. Een push draagt de
+  manifesten van één project, dus de pack blijft klein;
+- of een pad bestaat volgt uit de trees (`rev-parse <ref>:<pad>`), die een blobless kopie
+  volledig heeft. Alleen lezen dat echt inhoud nodig heeft (`read_file`, `materialize`)
+  haalt blobs op, met credentials. Lukt dat niet, dan is dat een fout en geen "het
+  bestand staat er niet".
+
 ### Credentials
 
 `GitRepo` bewaart er geen. Elke methode die het netwerk op gaat krijgt een
@@ -294,6 +315,16 @@ geen netwerk doen, dat een externe commit door de afgewezen push gevangen wordt 
 als de remote verder is, en dat de eerste `tip()` kloont en niet fetcht.
 `tests/test_refresh_reconciles_first.py` dekt dat een refresh beide manifest-repo's synct
 voordat hij het project opzoekt.
+
+`tests/test_git_repo_authenticated_remote.py` draait tegen een remote over HTTP die inloggen
+eist (`git http-backend` achter Basic auth, `tests/git_http_remote.py`), met een echt
+blobless kopie. Een remote als pad op schijf vraagt nooit om credentials, en git negeert
+`--filter` bij een lokale kloon, dus daar ontbreekt nooit een blob en valt een verzoek
+zonder inlog niet op. Getoetst: dat een externe commit op een bestand in de root de
+volgende write niet breekt, dat een externe commit in de eigen projectmap blijft staan,
+dat een commit op een verse kopie de onaangeroerde buren houdt en alleen de push zelf naar
+de remote stuurt, dat `read_file` en `materialize` op een verse kopie de inhoud brengen,
+en dat `read_file` een fout geeft als de inhoud niet op te halen is.
 
 De sectie "Time-out op het netwerk" laat alleen het ene netwerkcommando hangen (een
 nep-subprocess voor `push`, `fetch` of `ls-remote`, de rest echt git) en toetst dat het
