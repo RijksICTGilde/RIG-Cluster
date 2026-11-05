@@ -342,9 +342,11 @@ API-server de CR met `quantity path did not resolve to any value`. De CRD heeft 
 van 10 op staan, maar een structural-schema-default wordt alleen gezet als het bovenliggende
 `quota` aanwezig is, dus het sjabloon schrijft hem altijd expliciet.
 
-De standaard is 3 GiB per private registry: clusterconfig (`quota_limit_gib`) met een terugval
-in `backends.py`. Bewust niet de CRD-default van 10, want tien per registry telt in het
-clustertotaal te snel op. Hele gibibytes, want `limitGiB` is een integer.
+De standaard is 10 GiB per private registry op productie: clusterconfig (`quota_limit_gib`) met
+een terugval van 3 in `backends.py`. Het was 3, maar een proxy-cache bewaart elke tag die hij
+ophaalt en liep daarmee binnen een paar builds vol (pocpl-0g8, november 2026). Elke organisatie
+telt mee in `rig-quay-storage-quota` (`kubectl get gcq`). Hele gibibytes, want `limitGiB` is een
+integer.
 
 Een registry kan een eigen quota krijgen met `quota-gib` in het projectbestand:
 
@@ -354,11 +356,11 @@ Een registry kan een eigen quota krijgen met `quota-gib` in het projectbestand:
     registries:
       - display-name: NLDD GitHub
         upstream: ghcr.io/nederlandsedigitaledienst
-        quota-gib: 10
+        quota-gib: 15
 ```
 
-Tot en met 5 kiest een project dat zelf. Daarboven, tot het maximum van 20, is het een aanvraag
-die een platformbeheerder goedkeurt op de goedkeuringspagina. Tot dan krijgt de organisatie 5,
+Tot en met 10 kiest een project dat zelf. Daarboven, tot het maximum van 20, is het een aanvraag
+die een platformbeheerder goedkeurt op de goedkeuringspagina. Tot dan krijgt de organisatie 10,
 of de laatst goedgekeurde waarde; een afwijzing houdt hem daar. Verlagen binnen een goedgekeurde
 waarde vraagt niets. De regels zijn die van het dagbudget van send-email, met een besluit per
 registry (`config_item_value_approval` in `opi/services/catalog/approval.py`, de quota in

@@ -44,7 +44,7 @@ AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+
 QUOTA_FIELD = "quota-gib"
 
 #: Up to and including this value a project picks the quota itself; above it is a request.
-QUOTA_FREE_MAX_GIB = 5
+QUOTA_FREE_MAX_GIB = 10
 
 #: The ceiling. An ``le`` on the model rather than an ``IntegerSetting``: ``config_settings``
 #: cannot look inside a list, and the quota is per registry.

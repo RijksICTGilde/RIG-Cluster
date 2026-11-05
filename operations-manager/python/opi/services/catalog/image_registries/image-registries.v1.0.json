@@ -115,7 +115,7 @@
             }
           ],
           "default": null,
-          "description": "Opslagquota in GiB van de proxy-cache van deze registry in RCR. Laat hem weg voor de standaard van het cluster. Tot en met 5 kies je zelf; daarboven, tot 20, is het een aanvraag die een platformbeheerder goedkeurt. Tot dan geldt 5, of de laatst goedgekeurde waarde.",
+          "description": "Opslagquota in GiB van de proxy-cache van deze registry in RCR. Laat hem weg voor de standaard van het cluster. Tot en met 10 kies je zelf; daarboven, tot 20, is het een aanvraag die een platformbeheerder goedkeurt. Tot dan geldt 10, of de laatst goedgekeurde waarde.",
           "title": "Quota-Gib"
         },
         "secretName": {
