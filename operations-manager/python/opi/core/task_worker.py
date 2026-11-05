@@ -19,6 +19,7 @@ from opi.core.task_errors import (
     INVALID_REQUEST_ERROR_TYPE,
     NOT_FOUND_ERROR_TYPE,
     TaskInputError,
+    platform_failure_category,
 )
 from opi.core.task_rollout import first_phase
 from opi.core.task_supersede import (
@@ -439,8 +440,9 @@ class TaskWorker:
                 # ``result`` leeg en heeft een client alleen een fouttekst: geen type, geen
                 # categorie, dus niet te onderscheiden van een taaktype dat er niets over
                 # zegt. Het type is ``internal_error``, want dit is de tak waar we het niet
-                # weten, en dat komt bij de client aan als "niet toe te schrijven".
-                result=failure_result(error_message, INTERNAL_ERROR_TYPE),
+                # weten, en dat komt bij de client aan als "niet toe te schrijven" -- tenzij
+                # de uitzondering zelf een platformstoring is, en dan zegt de categorie dat.
+                result={**failure_result(error_message, INTERNAL_ERROR_TYPE), **platform_failure_category(e)},
             )
 
         finally:

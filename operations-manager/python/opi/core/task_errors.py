@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from opi.api.v2.models import ErrorCategory
+from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.connectors.mail import MailRelayUnavailableError
 
 if TYPE_CHECKING:
@@ -61,18 +62,31 @@ class TaskInputError(Exception):
         self.error_type = error_type
 
 
-def platform_failure_fields(project_manager: ProjectManager) -> dict[str, str]:
-    """``error_category: InternalError`` als deze mislukking van het PLATFORM kwam.
+#: Uitzonderingen die zeggen: het PLATFORM struikelde, niet het project. Een onbereikbare
+#: mailrelay, een git-server die niet antwoordt en een git-commando dat afloopt horen hier
+#: alle drie: er is niets aan het project te repareren, en de melding zegt dat ook al.
+PLATFORM_FAILURES: tuple[type[BaseException], ...] = (
+    MailRelayUnavailableError,
+    GitRemoteUnavailableError,
+    GitCommandTimeoutError,
+)
+
+
+def platform_failure_category(exception: BaseException | None) -> dict[str, str]:
+    """``error_category: InternalError`` als deze fout van het platform kwam.
 
     ``processing_failed`` valt bij een client op "niet toe te schrijven", en dat is eerlijk
     zolang een component dat niet gezond wordt ook aan het image van de gebruiker kan
-    liggen. Een onbereikbare mailrelay is dat niet: er is dan niets aan het project te
-    repareren, en de melding stuurde de gebruiker daar wel naartoe.
+    liggen. Een storing uit :data:`PLATFORM_FAILURES` is dat niet.
 
     ``_with_error_category`` laat een categorie die de handler zelf zet staan, dus dit is
     het enige dat de handler hoeft te doen.
     """
-    exception = project_manager.get_processing_exception()
-    if isinstance(exception, MailRelayUnavailableError):
+    if isinstance(exception, PLATFORM_FAILURES):
         return {"error_category": ErrorCategory.InternalError.value}
     return {}
+
+
+def platform_failure_fields(project_manager: ProjectManager) -> dict[str, str]:
+    """Dezelfde categorie, voor een handler die de uitzondering uit de manager leest."""
+    return platform_failure_category(project_manager.get_processing_exception())

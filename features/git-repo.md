@@ -239,7 +239,10 @@ zeggen of het aan het project of aan het platform ligt.
 | Kapotte kopie (`index.lock`, ontbrekende objecten, een fetch die om een andere reden faalt) | n.v.t. | weggegooid en opnieuw gekloond |
 
 De indeling gebeurt op de stderr van git (`is_git_network_failure`, `is_git_auth_failure`
-in `git_repo.py`). `ls-remote`, `fetch` en `clone` lezen alleen, dus een herhaling kan op de
+in `git_repo.py`). De indeling van een PUSH-uitkomst staat in `git.py`
+(`is_git_push_collision`, `git_push_rejection_reason`), naast de twee uitzonderingen zelf,
+en geldt voor beide schrijfwegen: `GitRepo` en de `GitConnector` van de ProjectStore. Daar
+stond hij eerst in `git_repo.py`, maar `git.py` kan daar niet uit importeren. `ls-remote`, `fetch` en `clone` lezen alleen, dus een herhaling kan op de
 remote niets anders achterlaten. De push herhaalt BINNEN `push_lock_for`, die dus maximaal
 het budget plus de time-outs bezet blijft: hij zet één commit zonder force op de branch, dus
 een poging die toch landde geeft "Everything up-to-date" en een remote die ergens anders
@@ -248,7 +251,8 @@ staat weigert hem als non-fast-forward.
 `"failed to push some refs"` alleen is GEEN botsing meer: git print die regel bij elke
 weigering, ook bij een pre-receive hook. Dat kostte vijf pogingen met een fetch en een
 melding die de verkeerde oorzaak noemde. Zo'n weigering is nu een `GitPushRejectedError`
-met de reden van de server erin.
+met de reden van de server erin, en dat geldt ook voor de push van de `GitConnector`: geen
+rebase, geen nieuwe poging, ook niet met `allow_rebase=True`.
 
 `cannot lock ref` komt ook als `[remote rejected]` binnen, maar is wel een botsing: de
 server houdt de ref op een commit waar wij niet op gebouwd hebben, en opnieuw lezen en
@@ -261,7 +265,9 @@ was de warme kopie ook kwijt.
 Elke melding begint met één zin over wat er gebeurde, bij welke repo en branch, en of het
 aan het platform ligt; de stderr van git volgt na `Detail:`. "Dit ligt aan het platform"
 staat er alleen bij een netwerkstoring, een geweigerde inlog en een time-out: een git-fout
-die niet in te delen is kan net zo goed komen van wat het project liet schrijven.
+die niet in te delen is kan net zo goed komen van wat het project liet schrijven. Een taak
+die op `GitRemoteUnavailableError` of `GitCommandTimeoutError` faalt zegt hetzelfde in zijn
+`error_category`: `InternalError`, via `PLATFORM_FAILURES` in `core/task_errors.py`.
 Bijvoorbeeld:
 
 ```
@@ -331,6 +337,12 @@ nep-subprocess voor `push`, `fetch` of `ls-remote`, de rest echt git) en toetst 
 proces wordt afgeschoten, dat de melding de remote noemt, dat er geen nieuwe poging komt en
 dat de push-lock daarna vrij is. De fetch-grens hangt aan `fetch()` en die van de ls-remote
 aan `sync()`, want dat zijn sinds RC-423 de paden die het netwerk op gaan.
+
+`tests/test_git_push_rejection.py` toetst de push van de `GitConnector` tegen diezelfde
+remote, met een echte pre-receive hook die weigert: dat een weigering de reden van de server
+noemt en één poging kost, met en zonder `allow_rebase`, dat hij geen `GitPushConflictError`
+is, dat een echte botsing dat wel is en met rebase op de nieuwe tip landt, en dat een
+weigering een mutatie van de ProjectStore laat falen zonder dat er iets landt.
 
 `test_commit_leest_opnieuw_op_de_nieuwe_tip_na_een_afgewezen_push` bootst de mutate-lus van
 de ProjectStore na bovenop `GitRepo.commit`: lezen, aanpassen, en een externe write er

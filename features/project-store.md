@@ -25,6 +25,7 @@ window.
 | Write serialization | A per-repo `asyncio.Lock`. Same-project writers queue; each re-reads the previous winner's result. |
 | Mutations | A *change function* applied to freshly-read state, validated on the FINAL state, then committed and pushed. |
 | External writes | A non-fast-forward push means HEAD moved: reset to remote, re-read, re-apply, re-validate, retry (bounded). Pushes use `allow_rebase=False` so divergence always reaches the store. |
+| Refusal by the server | A refusal (a pre-receive hook, a protected branch) is NOT a collision: reading and writing again yields the same refusal. The mutation fails with the reason the server gave (`GitPushRejectedError`), the branch ref moves back, and there is no resync. See `features/git-repo.md`. |
 | Durability | The push is the ack. The cache is updated only after a successful push, from what actually landed. |
 | Rollback | A failed push moves the branch ref back. Nothing was written to disk, so there is nothing to clean up. |
 

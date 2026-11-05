@@ -15,7 +15,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import re
 import shutil
 import tarfile
 import tempfile
@@ -39,6 +38,9 @@ from opi.connectors.git import (
     GitRemoteUnavailableError,
     build_tree_commit,
     credential_env,
+    git_push_rejection_reason,
+    git_stderr_detail,
+    is_git_push_collision,
     project_write_lock,
     push_lock_for,
     repo_lock_key,
@@ -307,22 +309,6 @@ _AUTH_MARKERS = (
     "the requested url returned error: 403",
 )
 
-#: Markers that mean the remote moved under us, so the write must be redone on its tip.
-#: "cannot lock ref" is one: the server holds the ref at a commit we did not build on.
-_COLLISION_MARKERS = (
-    "non-fast-forward",
-    "fetch first",
-    "incorrect old value",
-    "cannot lock ref",
-)
-
-#: A push the server refused itself, with the reason in brackets behind it.
-_REJECTION_REASON = re.compile(r"!\s+\[[a-z ]*rejected\][^(\n]*\(([^)]*)\)")
-
-#: Userinfo in a URL inside free text. The task service's ``redact_text`` does not know
-#: this shape, and ``strip_url_credentials`` only works on a bare URL.
-_URL_USERINFO = re.compile(r"(?i)(https?://)[^\s/@'\"]+@")
-
 
 def is_git_network_failure(stderr: str) -> bool:
     """Whether a failed git call could not reach the remote, so repeating it may help."""
@@ -336,17 +322,6 @@ def is_git_auth_failure(stderr: str) -> bool:
     """Whether the remote refused our credentials."""
     lowered = stderr.lower()
     return any(marker in lowered for marker in _AUTH_MARKERS)
-
-
-def _detail(stderr: str) -> str:
-    """Git's stderr as a single line, with no credentials in a URL left in it."""
-    return _URL_USERINFO.sub(r"\1", " ".join(stderr.split()))
-
-
-def _rejection_reason(stderr: str) -> str:
-    """The reason the server gave for a refusal, or the whole stderr if it gave none."""
-    match = _REJECTION_REASON.search(stderr)
-    return _detail(match.group(1) if match else stderr)
 
 
 class GitRepo:
@@ -532,7 +507,7 @@ class GitRepo:
                 return None
             if is_git_network_failure(stderr) or is_git_auth_failure(stderr):
                 raise self._remote_error("Fetch van", stderr)
-            return _detail(stderr)
+            return git_stderr_detail(stderr)
 
         # Read-only, so a retry cannot leave anything else behind on the remote.
         failure = await self._with_retry(fetch_once, "fetch van")
@@ -565,9 +540,9 @@ class GitRepo:
         """A failed git call to our remote, as one readable sentence.
 
         The stderr follows as detail. ``self.url`` carries no credentials, and a URL with
-        userinfo in git's stderr loses it in :func:`_detail`.
+        userinfo in git's stderr loses it in :func:`git_stderr_detail`.
         """
-        detail = _detail(stderr)
+        detail = git_stderr_detail(stderr)
         if is_git_network_failure(stderr):
             return GitRemoteUnavailableError(
                 f"De git-server van {self.url}#{self.branch} is niet bereikbaar. "
@@ -628,7 +603,7 @@ class GitRepo:
             )
         if code != 0:
             detail = " ".join(stderr.split())
-            raise RuntimeError(f"Kon {path} op {ref[:8]} niet lezen uit {self.url}: {_detail(detail)}")
+            raise RuntimeError(f"Kon {path} op {ref[:8]} niet lezen uit {self.url}: {git_stderr_detail(detail)}")
         return stdout
 
     async def list_tree(self, prefix: str = "", ref: str = "HEAD") -> list[str]:
@@ -858,18 +833,14 @@ class GitRepo:
         if code == 0:
             return
 
-        lowered = stderr.lower()
-        # "failed to push some refs" does not count: git prints that line on EVERY refusal,
-        # a hook or a protected branch included. "cannot lock ref" does: the server has the
-        # ref at another commit than the one we built on, which is exactly a collision.
-        if any(marker in lowered for marker in _COLLISION_MARKERS):
+        if is_git_push_collision(stderr):
             raise GitPushConflictError(
-                f"Push naar {self.url}#{self.branch} afgewezen, de remote is verder: {_detail(stderr)}"
+                f"Push naar {self.url}#{self.branch} afgewezen, de remote is verder: {git_stderr_detail(stderr)}"
             )
         if is_git_network_failure(stderr) or is_git_auth_failure(stderr):
             raise self._remote_error("Push naar", stderr)
         raise GitPushRejectedError(
-            f"De git-server weigerde de push naar {self.url}#{self.branch}: {_rejection_reason(stderr)}."
+            f"De git-server weigerde de push naar {self.url}#{self.branch}: {git_push_rejection_reason(stderr)}."
         )
 
     async def write_dir(
