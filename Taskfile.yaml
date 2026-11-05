@@ -2259,6 +2259,7 @@ tasks:
         KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_URL="http://localhost:{{.LOKAAS_SINK_PORT}}" \
         KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_SMTP="{{.LOKAAS_SINK}}:1025" \
           uv run pytest tests/integration/test_keycloak_image_providers.py \
+            tests/integration/test_keycloak_image_thema.py \
             tests/integration/test_keycloak_image_mail.py \
             tests/integration/test_keycloak_admin_api.py -m requires_infra -q
     silent: false

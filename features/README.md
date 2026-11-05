@@ -164,6 +164,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Keycloak auto-link of pre-created users to their SSO identity](keycloak-auto-link.md)
 - [Keycloak Domain Migration](keycloak-domain-migration.md)
 - [Keycloak logout-pad per component](keycloak-logout-path.md)
+- [Het Keycloak-thema in NLDD](keycloak-nldd-thema.md)
 - [Keycloak Metrics](keycloak-metrics.md)
 - [Keycloak Realm Roles](keycloak-realm-roles.md)
 - [Keycloak Realm-Admin Shared OTP](keycloak-realm-admin-otp.md)

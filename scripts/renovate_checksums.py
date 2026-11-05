@@ -217,8 +217,10 @@ def _arg_sommen(inhoud: str, toegevoegd: list[str] | None) -> list[tuple[str, st
 def _literale_sommen(inhoud: str, toegevoegd: list[str] | None) -> list[tuple[str, str]]:
     """Wat er aan een uitgeschreven som in een RUN-instructie moet veranderen.
 
-    Die vorm staat in images/keycloak-zad/Dockerfile: daar is de versie bewust geen ARG, dus
-    is er ook geen ARG om de som in te zetten. De instructie moet dan precies een URL noemen.
+    Die vorm komt voor waar de versie bewust geen ARG is, en er dus ook geen ARG is om de
+    som in te zetten. De instructie moet dan precies een URL noemen. Sinds RC-424 gebruikt
+    geen Dockerfile in deze repo hem nog; de vorm blijft omdat de volgende die hem nodig
+    heeft er niets voor hoeft te bouwen.
     """
     wijzigingen: list[tuple[str, str]] = []
     for instructie in instructies(inhoud):

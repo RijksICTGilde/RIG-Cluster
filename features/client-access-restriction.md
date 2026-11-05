@@ -214,22 +214,22 @@ The default error message is `${accessDeniedNoPermission}`. The `${...}` syntax 
 
 ### Adding Custom Messages to Theme
 
-In the [keycloak-theme](https://github.com/MinBZK/keycloak-theme) repository:
+Since RC-424 the theme lives in this repository, not in the MinBZK one. Add the key to
+**both** message bundles under `images/keycloak-zad/theme/nl-design-system/login/messages/`:
 
-1. Add to `src/main/resources/theme/nl-design-system/login/messages/messages_en.properties`:
+1. `messages_en.properties`:
    ```properties
    accessDeniedNoPermission=You do not have permission to access this application. Please contact the administrator to request access.
    ```
 
-2. Add to `src/main/resources/theme/nl-design-system/login/messages/messages_nl.properties`:
+2. `messages_nl.properties`:
    ```properties
    accessDeniedNoPermission=Je hebt geen toegang tot deze applicatie. Neem contact op met de beheerder om toegang aan te vragen.
    ```
 
-3. Build and release a new version of the theme
-
-4. Update the theme version and its sha256 in `images/keycloak-zad/Dockerfile`, then build and pin a
-   new image tag (see [Een eigen Keycloak-image](./keycloak-eigen-image.md))
+3. Rebuild the Keycloak image and pin a new image tag (see
+   [Een eigen Keycloak-image](./keycloak-eigen-image.md)). There is no theme version or
+   sha256 in `images/keycloak-zad/Dockerfile` any more: the theme is built from this repo.
 
 ## Complete Example
 
@@ -332,7 +332,7 @@ This approach was chosen because Keycloak's built-in conditional sub-flows don't
 
 - Keycloak 21.0.0+
 - Custom RequireClientRoleAuthenticator SPI (included in keycloak-saml-nameid-mapper JAR)
-- nl-design-system theme with custom error messages
+- the `nl-design-system` theme in `images/keycloak-zad/theme/` (`features/keycloak-nldd-thema.md`)
 
 ## Related Documentation
 

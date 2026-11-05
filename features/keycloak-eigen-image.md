@@ -11,14 +11,15 @@ Bron: `images/keycloak-zad/Dockerfile`. Image: `ghcr.io/rijksictgilde/zad/keyclo
 |---|---|
 | `keycloak-relay-email-sender` | `images/keycloak-zad/extensions/relay-email-sender/`, gebouwd tijdens de imagebouw |
 | `keycloak-saml-nameid-mapper` (vier SPI's) | `images/keycloak-zad/extensions/custom-mapper/`, gebouwd tijdens de imagebouw |
-| `keycloak-nl-design-system` (thema) | release van MinBZK, opgehaald tijdens de imagebouw, op sha256 gecontroleerd |
+| `nl-design-system` (thema) | `images/keycloak-zad/theme/`, gebouwd tijdens de imagebouw; zie `keycloak-nldd-thema.md` |
 
 De twee eigen jars komen dus uit de bron in deze repo. Een jar kan daarmee niet meer uit de
 pas lopen met de code ernaast; dat is wat de byte-voor-byte-vergelijking op de ingecheckte
 jar bewaakte, en die jar staat niet meer in git.
 
-Het thema blijft extern. Het verschil is wanneer: hapert GitHub, dan faalt de BOUW, en dat
-is iets anders dan een pod die niet opkomt.
+Sinds RC-424 geldt dat ook voor het thema: dat staat in `images/keycloak-zad/theme/` en
+wordt tijdens de imagebouw gebouwd. Er wordt niets meer van buiten opgehaald behalve de
+NLDD-assets van npm, en die zijn met een lockfile gepind.
 
 ## Waarom niet ophalen bij het starten
 
@@ -193,8 +194,8 @@ Hij start daarnaast TWEE SMTP-sinks (mailpit) op dat netwerk: een als de relay u
 podomgeving, een als de bestemming die een projectbeheerder in zijn realm zou kunnen zetten.
 Zo meet hij ook dat de post door onze eigen verzender gaat en niet naar de `smtpServer` van
 de realm (`features/keycloak-mail.md`), dat de idp-telling van `/rig-metrics` een echte
-federated-identity koppeling telt, en dat de inlogpagina met het nl-design-system-thema
-rendert.
+federated-identity koppeling telt, en dat elke pagina van het NLDD-thema rendert en niets
+buiten de eigen host ophaalt (`tests/integration/test_keycloak_image_thema.py`).
 
 Als derde draait hij de ADMIN-API ZOALS OPI HEM GEBRUIKT
 (`tests/integration/test_keycloak_admin_api.py`, RC-413). Elke methode van

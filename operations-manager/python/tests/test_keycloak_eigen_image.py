@@ -5,6 +5,7 @@ met opzet: wat hier fout kan gaan, gaat stil fout, en meestal pas bij de eerste 
 een wijziging.
 """
 
+import json
 import os
 import re
 import shutil
@@ -100,11 +101,9 @@ def _bouwfase_namen() -> set[str]:
     return namen
 
 
-def _thema_jar() -> str:
-    """De naam waaronder de Dockerfile het thema van MinBZK wegschrijft."""
-    match = re.search(r"\bcurl .*?-o (\S+)", _dockerfile())
-    assert match is not None, "de Dockerfile haalt het thema niet op"
-    return match.group(1)
+def _thema_bron() -> Path:
+    """De map waar het thema in deze repo staat."""
+    return REPO_ROOT / "images/keycloak-zad/theme"
 
 
 def _basis_container() -> dict:
@@ -194,17 +193,58 @@ class TestDeImageIsHetArtefact:
             assert versie is not None, pom
             assert versie.group(1) == basis, f"{pom.relative_to(REPO_ROOT)} bouwt tegen {versie.group(1)}"
 
-    def test_het_thema_wordt_op_checksum_gecontroleerd(self) -> None:
-        """Het thema blijft een externe download, maar tijdens de BOUW.
+    def test_het_thema_komt_uit_deze_repo_en_niet_van_een_release(self) -> None:
+        """Sinds RC-424 is het thema bron in deze repo, geen jar van MinBZK.
 
-        Zonder controle is een gewijzigd of half binnengehaald bestand pas zichtbaar op het
-        inlogscherm van een draaiend cluster. Waarom de som uitgeschreven staat en niet in een
-        ARG: zie de Dockerfile.
+        Komt die download terug, dan draait het inlogscherm weer op een artefact dat buiten
+        deze repo wordt gebouwd, en is de ROOS-opmaak terug zonder dat de code hier wijzigt.
         """
         tekst = _dockerfile()
-        assert "keycloak-nl-design-system.jar" in tekst
-        assert "sha256sum -c" in tekst
-        assert re.search(r'"[0-9a-f]{64}  keycloak-nl-design-system\.jar"', tekst), tekst
+        assert "MinBZK/keycloak-theme" not in tekst, tekst
+        assert "keycloak-nl-design-system.jar" not in tekst, tekst
+        assert (_thema_bron() / "nl-design-system/login/template.ftl").is_file()
+
+    def test_de_assets_van_het_thema_staan_op_een_gepinde_versie_met_lockfile(self) -> None:
+        """Een bereik in plaats van een versie laat de bouw op een andere NLDD landen.
+
+        `npm ci` weigert zonder lockfile, en de lockfile draagt de integriteitssom van elke
+        tarball: dat samen maakt de bouw reproduceerbaar.
+        """
+        manifest = json.loads((_thema_bron() / "package.json").read_text())
+        versie = manifest["dependencies"]["@nldd/design-system"]
+        assert re.fullmatch(r"\d+\.\d+\.\d+", versie), versie
+
+        lockfile = json.loads((_thema_bron() / "package-lock.json").read_text())
+        vergrendeld = lockfile["packages"]["node_modules/@nldd/design-system"]
+        assert vergrendeld["version"] == versie, (vergrendeld["version"], versie)
+        assert vergrendeld["integrity"].startswith("sha512-"), vergrendeld
+
+        assert "npm ci" in _dockerfile()
+
+    def test_het_thema_haalt_bij_het_renderen_niets_buiten_de_image_op(self) -> None:
+        """De inlogpagina is de plek waar een derde partij het minst mag meekijken.
+
+        Een CDN-URL in een sjabloon valt niet op zolang de bouwmachine en de browser er wel
+        bij kunnen; op een afgesloten cluster is het een pagina zonder opmaak.
+        """
+        for pad in sorted(_thema_bron().rglob("*")):
+            if pad.suffix not in (".ftl", ".properties", ".css"):
+                continue
+            tekst = pad.read_text()
+            assert "http://" not in tekst, pad
+            for regel in tekst.splitlines():
+                if regel.lstrip().startswith("#") or regel.lstrip().startswith("<#--"):
+                    continue
+                assert "https://" not in regel, (pad, regel)
+
+    def test_het_thema_draagt_geen_roos_meer(self) -> None:
+        """De wissel is pas af als de klassen van het oude design system weg zijn."""
+        for pad in sorted(_thema_bron().rglob("*")):
+            if pad.suffix not in (".ftl", ".properties", ".css", ".json"):
+                continue
+            tekst = pad.read_text()
+            for naald in ("rvo-", "utrecht-", "nl-rvo"):
+                assert naald not in tekst, (pad, naald)
 
     def test_de_providers_worden_ingebakken(self) -> None:
         """Zonder deze stap doet de pod de augmentatie bij elke start alsnog (gemeten)."""
@@ -214,19 +254,33 @@ class TestDeImageIsHetArtefact:
         """Bouwen is niet hetzelfde als meeleveren: de eindfase moet ze ook overnemen.
 
         Alleen de verzender heeft een canarie, en die dekt zijn eigen jar: landt die ergens
-        anders, dan lost het provider-id niet op en faalt `kc.sh build`. Voor de andere twee
-        bouwt de image gewoon door: de SAML-mapper is dan stil weg, en het inlogscherm draait
-        zonder nl-design-system.
+        anders, dan lost het provider-id niet op en faalt `kc.sh build`. Voor de SAML-mapper
+        bouwt de image gewoon door en is hij stil weg.
         """
-        overgenomen = _overgenomen_uit_de_bouw()
-        assert overgenomen, "de eindfase neemt niets uit de bouwfase over"
+        overgenomen = {b: d for b, d in _overgenomen_uit_de_bouw().items() if b.endswith(".jar")}
+        assert overgenomen, "de eindfase neemt geen enkele jar uit de bouwfase over"
         for bron, doel in overgenomen.items():
             assert doel.rstrip("/") == "/opt/keycloak/providers", (bron, doel)
 
         bronnen = " ".join(overgenomen)
         for naam in _module_namen():
             assert f"/{naam}/target/" in bronnen, naam
-        assert f"/{_thema_jar()}" in bronnen, _thema_jar()
+
+    def test_de_assets_van_het_thema_landen_in_de_themamap(self) -> None:
+        """Landen ze ergens anders, dan laadt de pagina ze niet en valt de opmaak weg.
+
+        De bron in de repo en de bundel uit de node-fase horen in dezelfde themamap: de
+        sjablonen verwijzen naar `resourcesCommonPath/nldd`, en dat is de map `common` van
+        dit thema.
+        """
+        tekst = _eindfase()
+        assert "COPY images/keycloak-zad/theme/nl-design-system /opt/keycloak/themes/nl-design-system" in tekst
+
+        assets = next(
+            (d for b, d in _overgenomen_uit_de_bouw().items() if b.endswith("/nldd")),
+            None,
+        )
+        assert assets == "/opt/keycloak/themes/nl-design-system/common/resources/nldd", assets
 
     def test_de_bouwfase_draait_niet_per_doelarchitectuur(self) -> None:
         """De jars zijn architectuuronafhankelijk, de image gaat naar amd64 en arm64.

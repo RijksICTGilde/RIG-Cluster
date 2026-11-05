@@ -113,7 +113,7 @@ def test_een_som_die_al_klopt_laat_het_bestand_met_rust(tmp_path: Path) -> None:
 
 
 def _dockerfile_met_uitgeschreven_som(tmp_path: Path) -> tuple[Path, str]:
-    url = "https://github.com/MinBZK/keycloak-theme/releases/download/v1.4.3/thema.jar"
+    url = "https://github.com/een-project/een-gereedschap/releases/download/v1.4.3/thema.jar"
     pad = tmp_path / "Dockerfile"
     pad.write_text(
         "FROM maven:3.10-eclipse-temurin-21\n"
@@ -126,7 +126,7 @@ def _dockerfile_met_uitgeschreven_som(tmp_path: Path) -> tuple[Path, str]:
 
 
 def test_een_uitgeschreven_som_zonder_arg_wordt_ook_bijgewerkt(tmp_path: Path) -> None:
-    """De vorm van images/keycloak-zad: de versie staat in de URL en niet als ARG."""
+    """De vorm waarin de versie in de URL staat en niet als ARG; zie _literale_sommen."""
     jar = b"de jar van het thema"
     pad, _ = _dockerfile_met_uitgeschreven_som(tmp_path)
 

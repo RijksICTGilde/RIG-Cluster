@@ -1,0 +1,17 @@
+/* Wat NLDD niet zelf tekent. De componenten brengen hun eigen opmaak mee, dus dit blijft
+   beperkt tot de losse elementen die wij in hun slots zetten. */
+
+/* De <h1> staat in de slot van nldd-title voor de semantiek; de typografie komt van het
+   component, de marge van de browser moet eraf. */
+nldd-title h1 {
+	margin: 0;
+	font: inherit;
+	color: inherit;
+}
+
+/* De QR-code van de OTP-instelpagina: een data-URI zonder eigen afmeting in de opmaak. */
+#kc-totp-secret-qr-code {
+	display: block;
+	width: 200px;
+	height: 200px;
+}

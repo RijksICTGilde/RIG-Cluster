@@ -65,7 +65,7 @@ herbouw levert een ander artefact op en dan is het bewijs van de sandbox niets w
 - logout via `always-clear-session-logout`;
 - `GET /realms/master/rig-metrics` met het token: metrieken, en de foutgauge op `0`;
 - client access restriction (`RequireClientRoleAuthenticator`);
-- de inlog- en accountpagina's renderen met `nl-design-system`;
+- de inlog- en accountpagina's renderen met `nl-design-system` (`keycloak-nldd-thema.md`);
 - de opstartbootstrap van OPI loopt schoon (realm create/update, met de audit-instellingen);
 - de invite-flow en een realm uit de wizard;
 - de vier mailmetingen, met de tegenproef. Een bevestigingsmail die aankomt is NIET genoeg:
@@ -142,7 +142,7 @@ verschil en valt niet op eigen initiatief terug.
 
 - `images/keycloak-zad/extensions/custom-mapper/` en `images/keycloak-zad/extensions/relay-email-sender/` (de jars)
 - `keycloak-migration/proefmigratie/` (de manifesten van de proef)
-- MinBZK/keycloak-theme (het loginthema, v1.4.2)
+- `images/keycloak-zad/theme/` (het loginthema, sinds RC-424 in deze repo; `keycloak-nldd-thema.md`)
 - de realm-blauwdrukken: `operations-manager/python/opi/configs/keycloak/*.yaml`
 - de connector: `operations-manager/python/opi/connectors/keycloak.py` (`create_realm`)
 - de overlays: `infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/`

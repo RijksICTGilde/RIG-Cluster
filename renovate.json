@@ -114,17 +114,6 @@
     },
     {
       "customType": "regex",
-      "description": "De jar van het NL-design-thema. De versie staat uitgeschreven in de URL en niet als ARG, zodat --build-arg de checksumcontrole niet kan omzeilen",
-      "managerFilePatterns": ["/^images/keycloak-zad/Dockerfile$/"],
-      "matchStrings": [
-        "MinBZK/keycloak-theme/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+)/"
-      ],
-      "depNameTemplate": "MinBZK/keycloak-theme",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>.+)$"
-    },
-    {
-      "customType": "regex",
       "description": "task kent de asdf-manager niet",
       "managerFilePatterns": ["/^\\.tool-versions$/"],
       "matchStrings": [

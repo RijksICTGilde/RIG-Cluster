@@ -301,8 +301,9 @@ Drie dingen om te weten:
 - **Een taal is pas beschikbaar als login-, account- EN emailthema hem ondersteunen.** Voor
   `nl` is dat het geval: Keycloak levert `messages_nl.properties` mee in zijn base/email-thema.
 
-**`emailTheme` blijft leeg.** Het MinBZK-thema levert geen bruikbaar mailthema (waargenomen:
-kale Engelse tekst met dat thema geladen). Eigen mailsjablonen zijn een eigen taak, met een
+**`emailTheme` blijft leeg.** `nl-design-system` levert geen mailthema (zie
+`features/keycloak-nldd-thema.md`); met het MinBZK-thema dat er tot RC-424 stond kwam er
+kale Engelse tekst uit (waargenomen). Eigen mailsjablonen zijn een eigen taak, met een
 echte ontwerpvraag eronder - zie `plans/mail-vervolgpunten.md`.
 
 ### Wanneer het landt

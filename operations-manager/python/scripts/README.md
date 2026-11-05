@@ -21,6 +21,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Tool | What it does |
 |---|---|
 | `keycloak_flow_tool.py` | Inspect/rebuild the ZAD **auto-link first-broker-login flow** on a live realm (`inspect <realm>`, `rebuild <realm> [--confirm-link]`, `inspect-all`). Rebuilds with explicit execution priorities so `idp-create-user-if-unique` precedes the handle-existing subflow (see `features/keycloak-auto-link.md`). Needs `KEYCLOAK_ADMIN_PASSWORD` (optional `KEYCLOAK_URL`, `KEYCLOAK_ADMIN_USER`). |
+| `keycloak_thema_shots.py` | Zet elke pagina van het NLDD-loginthema op de foto, in nl en en, op bureaublad- en telefoonbreedte, tegen de testcontainer van `task test-keycloak-image`. Doorloopt de flows met Playwright, dus hij meet tegelijk dat de NLDD-invoervelden hun waarde posten. Vraagt `--wachtwoord`, het adminwachtwoord dat die taak per ronde toont. Zie `features/keycloak-nldd-thema.md`. |
 
 ## Mail
 
