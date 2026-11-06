@@ -81,6 +81,7 @@ async def test_ensure_master_service_account_client_creates_and_grants_admin() -
     assert payload["clientId"] == "opi-admin-service"
     assert payload["secret"] == "sekret"
     assert payload["serviceAccountsEnabled"] is True
+    assert payload["attributes"]["client.use.lightweight.access.token.enabled"] == "true"
     assert payload["standardFlowEnabled"] is False
     assert payload["directAccessGrantsEnabled"] is False
 
@@ -101,6 +102,8 @@ async def test_ensure_master_service_account_client_updates_when_present() -> No
 
     conn.admin.update_client.assert_called_once()
     conn.admin.create_client.assert_not_called()
+    payload = conn.admin.update_client.call_args.kwargs["payload"]
+    assert payload["attributes"]["client.use.lightweight.access.token.enabled"] == "true"
 
 
 async def test_connection_works_true_then_false() -> None:
