@@ -4381,6 +4381,9 @@ class KeycloakConnector:
             "implicitFlowEnabled": False,
             "directAccessGrantsEnabled": False,
             "serviceAccountsEnabled": True,
+            # The master 'admin' role puts every realm in the token. With 39 realms that is
+            # 25 kB, and the ODCN router answers such a request with a bare 400.
+            "attributes": {"client.use.lightweight.access.token.enabled": "true"},
         }
 
         existing = next((c for c in self.admin.get_clients() if c.get("clientId") == client_id), None)
