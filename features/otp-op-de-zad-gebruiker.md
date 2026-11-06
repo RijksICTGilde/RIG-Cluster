@@ -47,7 +47,7 @@ mechanisme.
 
 ### Het venster
 
-Een geslaagde step-up dekt standaard tien minuten (`STEP_UP_WINDOW_MINUTES`). Het venster
+Een geslaagde step-up dekt standaard vijf minuten (`STEP_UP_WINDOW_MINUTES`). Het venster
 **schuift niet mee**: een handeling leest de stempel en zet hem nooit opnieuw, dus na het
 venster is het voorbij, hoeveel handelingen er intussen ook langskwamen. Eén instelling
 voor alles: een langer venster dekt ook de verwijderacties en de tokenhandelingen langer.

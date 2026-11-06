@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     SESSION_ABSOLUTE_MAX_SECONDS: int = 43200  # 12 hours
 
     # How long one step-up code counts. The same window opens platform admin rights.
-    STEP_UP_WINDOW_MINUTES: int = 10
+    STEP_UP_WINDOW_MINUTES: int = 5
 
     # Mislukte authenticatiepogingen per minuut op de sleutelpaden, apart geteld per client
     # en per aangeboden sleutel. Boven de grens volgt een 429. Zie
