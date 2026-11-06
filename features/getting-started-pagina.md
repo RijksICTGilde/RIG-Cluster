@@ -26,4 +26,4 @@ Alles wat ergens anders thuishoort: alle opdrachten van zadctl, alle invoerwaard
 
 ## Afhankelijkheden
 
-`/cli`, `/actions` en `/services` voor de verdieping, en het publieke image `ghcr.io/minbzk/base-images/hello-world`, dat op poort 8080 luistert.
+`/services` en de repositories `zad-cli` en `zad-actions` voor de verdieping, en het publieke image `ghcr.io/minbzk/base-images/hello-world`, dat op poort 8080 luistert.

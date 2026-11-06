@@ -48,14 +48,14 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         {"label": "Getting started", "link": "/getting-started", "icon": "uitvoering"},
         # De kaart van het platform: wat er draait en waar ZAD mee praat.
         {"label": "Platform", "link": "/platform", "icon": "wolk"},
-        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
-        {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
         # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
         # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
         {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
+        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
+        {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         # In the sidebar and not in a page footer: the NLDD application pattern has no footer.
         {"label": "Beveiligingsbeleid", "link": "/security", "icon": "schild-met-vinkje-erop"},
     ]

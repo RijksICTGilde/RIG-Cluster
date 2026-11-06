@@ -3,6 +3,7 @@
 import re
 from typing import TYPE_CHECKING
 
+from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.registry import SERVICE_DEFINITIONS
 from opi.web.router import getting_started
 
@@ -32,6 +33,12 @@ def test_named_env_vars_exist_in_the_catalog(test_client: TestClient) -> None:
 
     assert {"DATABASE_SERVER_FULL", "DATABASE_SERVER_HOST", "DATABASE_PASSWORD", "PUBLIC_HOST"} <= named
     assert named <= known
+
+
+def test_postgres_list_is_complete(test_client: TestClient) -> None:
+    html = test_client.get("/getting-started").text
+
+    assert {variable.value.name for variable in DatabaseVariables} <= set(re.findall(r"\bDATABASE_[A-Z_]+\b", html))
 
 
 def test_named_service_exists_in_the_catalog(test_client: TestClient) -> None:

@@ -37,6 +37,26 @@
     Kies hem bij je component onder Gebruikte services. Zonder koppeling start je component zonder deze env vars, en daar krijg je geen melding van.
 </c-alert>
 
+<c-heading type="h3" size="6" label="Waar vind je de env vars?" />
+<c-paragraph>
+    Op <c-link href="/services" label="Services overzicht" /> staan bij elke service de namen van zijn env vars, met uitleg. Vanaf de opdrachtregel krijg je ze met <c-code>zadctl service describe postgresql-database</c-code>.
+</c-paragraph>
+<c-paragraph>PostgreSQL levert bijvoorbeeld:</c-paragraph>
+<nldd-rich-text><table>
+    <thead><tr><th>Env var</th><th>Inhoud</th></tr></thead>
+    <tbody>
+        <tr><td><code>DATABASE_SERVER_HOST</code></td><td>Hostnaam van de server</td></tr>
+        <tr><td><code>DATABASE_SERVER_PORT</code></td><td>Poort van de server</td></tr>
+        <tr><td><code>DATABASE_DB</code></td><td>Naam van de database</td></tr>
+        <tr><td><code>DATABASE_SCHEMA</code></td><td>Naam van het schema</td></tr>
+        <tr><td><code>DATABASE_SERVER_USER</code></td><td>Gebruikersnaam</td></tr>
+        <tr><td><code>DATABASE_PASSWORD</code></td><td>Wachtwoord</td></tr>
+        <tr><td><code>DATABASE_SERVER_USER_RO</code></td><td>Gebruikersnaam van de read-only gebruiker</td></tr>
+        <tr><td><code>DATABASE_PASSWORD_RO</code></td><td>Wachtwoord van de read-only gebruiker</td></tr>
+        <tr><td><code>DATABASE_SERVER_FULL</code></td><td>De volledige connectiestring</td></tr>
+    </tbody>
+</table></nldd-rich-text>
+
 <c-heading type="h3" size="6" label="Python" />
 <nldd-code-viewer language="python">import os
 import psycopg
@@ -54,15 +74,18 @@ var conn = DriverManager.getConnection(url,
     System.getenv("DATABASE_SERVER_USER"), System.getenv("DATABASE_PASSWORD"));</nldd-code-viewer>
 
 <c-paragraph size="sm">
-    Elke service levert zijn eigen env vars: de namen staan op <c-link href="/services" label="Services overzicht" /> bij de service. Verwacht je applicatie een andere naam, dan leg je dat vast met een alias, zoals <c-code>POSTGRES_HOST: $DATABASE_SERVER_HOST</c-code>. Eigen instellingen zet je bij je component onder Omgevingsvariabelen.
+    Verwacht je applicatie een andere naam, dan leg je dat vast met een alias, zoals <c-code>POSTGRES_HOST: $DATABASE_SERVER_HOST</c-code>. Eigen instellingen zet je bij je component onder Omgevingsvariabelen.
 </c-paragraph>
 {% endmacro %}
 
 {% macro image_uitrollen() %}
+<c-paragraph>Hiervoor heb je een token van je project nodig. Die maak je aan op het tabblad Team van je project, onder Leden en tokens.</c-paragraph>
+
 <c-heading type="h3" size="6" label="Met zadctl" />
-<nldd-code-viewer language="bash">zadctl login
-zadctl project use
+<nldd-code-viewer language="bash">export ZAD_API_KEY=jouw-token
+export ZAD_PROJECT_ID=my-project
 zadctl deployment update-image staging --component web --image ghcr.io/org/app:v1.3</nldd-code-viewer>
+<c-paragraph size="sm">Meer info: <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" /></c-paragraph>
 
 <c-heading type="h3" size="6" label="Met een GitHub Action" />
 <nldd-code-viewer language="yaml">- uses: RijksICTGilde/zad-actions/deploy@v4
@@ -72,14 +95,5 @@ zadctl deployment update-image staging --component web --image ghcr.io/org/app:v
     deployment-name: staging
     component: web
     image: ghcr.io/org/app:v1.3</nldd-code-viewer>
-<c-paragraph size="sm">Maak de token aan op het tabblad Team van je project, onder Leden en tokens, en zet hem in de secrets van je repository.</c-paragraph>
-{% endmacro %}
-
-{% macro waar_vind_je_wat() %}
-<c-columns columns="1" md="2" gap="md">
-    <c-shortcut icon="folder" title="Mijn projecten" desc="Je componenten, deployments, logs en team." cta="Naar je projecten" href="/projects" />
-    <c-shortcut icon="rectangle-stack" title="Services overzicht" desc="Wat elke service doet en welke env vars hij levert." cta="Naar de services" href="/services" />
-    <c-shortcut icon="terminal" title="ZAD CLI" desc="zadctl installeren, en waar alle opdrachten staan." cta="Naar de CLI" href="/cli" />
-    <c-shortcut icon="chevron-left-forward-slash-chevron-right" title="ZAD Actions" desc="Uitrollen vanuit je GitHub-pipeline, ook per pull request." cta="Naar de Actions" href="/actions" />
-</c-columns>
+<c-paragraph size="sm">Zet de token in de secrets van je repository, niet in de workflow zelf. Meer info: <c-link href="https://github.com/RijksICTGilde/zad-actions" label="zad-actions op GitHub" target="_blank" /></c-paragraph>
 {% endmacro %}

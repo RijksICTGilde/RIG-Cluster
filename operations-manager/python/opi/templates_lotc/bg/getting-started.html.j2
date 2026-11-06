@@ -1,8 +1,8 @@
 {#
   Getting started: the shortest route to something running, and how services reach your code.
 
-  Less is more: anything longer belongs on /cli, /actions, /services or in the repositories
-  of zadctl and zad-actions, which keep their own documentation. See bg/cli.html.j2 for how
+  Less is more: anything longer belongs on /services or in the repositories of zadctl and
+  zad-actions, which keep their own documentation. See bg/cli.html.j2 for how
   a manual in this portal went stale.
 
   Public like /introductie: it is for people who do not have access yet.
@@ -10,7 +10,7 @@
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
 {% from "bg/_getting-started-blokken.html.j2" import
-    begrippen, hello_world, services_gebruiken, image_uitrollen, waar_vind_je_wat %}
+    begrippen, hello_world, services_gebruiken, image_uitrollen %}
 
 {% block page_title %}Getting started - Zelfservice Applicatie Deployment{% endblock %}
 
@@ -34,9 +34,5 @@
 
     {% call panel("Een nieuwe image uitrollen", "arrow-up-arrow-down") %}
         {{ image_uitrollen() }}
-    {% endcall %}
-
-    {% call panel("Waar vind je wat", "search") %}
-        {{ waar_vind_je_wat() }}
     {% endcall %}
 {% endblock %}
