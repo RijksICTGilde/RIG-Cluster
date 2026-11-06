@@ -26,6 +26,7 @@ Ontwerpen voor werk dat nog niet gebouwd is, staan niet hier: die horen een kaar
 - [Eén schema per schemaversie](project-schema-versions.md)
 - [Gelijktijdig schrijven aan hetzelfde projectbestand](concurrent-write-safety-lost-update.md)
 - [Gereserveerde projectnamen](gereserveerde-projectnamen.md)
+- [Getting started-pagina](getting-started-pagina.md)
 - [Git push-serialisatie per repo](git-push-serialization.md)
 - [GitRepo: een beheerde repo per remote](git-repo.md)
 - [Health Check Service](health-check-service.md)
