@@ -31,7 +31,7 @@ def test_named_env_vars_exist_in_the_catalog(test_client: TestClient) -> None:
 
     named = set(re.findall(r"\b(?:DATABASE|PUBLIC)_[A-Z_]+\b", html))
 
-    assert {"DATABASE_SERVER_FULL", "DATABASE_SERVER_HOST", "DATABASE_PASSWORD", "PUBLIC_HOST"} <= named
+    assert {"DATABASE_SERVER_FULL", "DATABASE_SERVER_HOST", "DATABASE_PASSWORD"} <= named
     assert named <= known
 
 

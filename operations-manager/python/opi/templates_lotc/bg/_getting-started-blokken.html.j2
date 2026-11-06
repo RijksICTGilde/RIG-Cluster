@@ -8,9 +8,9 @@
 
 {% macro begrippen() %}
 <nldd-rich-text><dl>
-    <dt>Project</dt><dd>Alles van je applicatie bij elkaar, met je team.</dd>
-    <dt>Component</dt><dd>Een container image die draait, bijvoorbeeld web of api.</dd>
-    <dt>Deployment</dt><dd>Een omgeving waarin je componenten draaien, bijvoorbeeld staging of production.</dd>
+    <dt>Project</dt><dd>Alles van je applicatie bij elkaar.</dd>
+    <dt>Component</dt><dd>Een container image die draait, bijvoorbeeld een website, frontend of backend api.</dd>
+    <dt>Deployment</dt><dd>Een omgeving waarin je componenten draaien, bijvoorbeeld test, staging of productie.</dd>
     <dt>Service</dt><dd>Iets dat het platform voor je regelt, zoals een database of een webadres.</dd>
 </dl></nldd-rich-text>
 {% endmacro %}
@@ -19,14 +19,13 @@
 <c-paragraph>Start de wizard via <c-link href="/forms/wizard/start" label="Nieuw project" /> en vul dit in:</c-paragraph>
 <nldd-rich-text><ol>
     <li>Kies bij de services <strong>Publiceren op het web</strong>, dan krijgt je applicatie een webadres.</li>
-    <li>Voeg een component <strong>web</strong> toe, met de image hieronder en inbound poort <strong>8080</strong>.</li>
+    <li>
+        Voeg een component <strong>web</strong> toe, met de image hieronder en inbound poort <strong>8080</strong>.
+        <nldd-code-viewer language="bash">ghcr.io/minbzk/base-images/hello-world:latest</nldd-code-viewer>
+    </li>
     <li>Maak een deployment <strong>staging</strong> en rond de wizard af.</li>
 </ol></nldd-rich-text>
-<nldd-code-viewer language="bash">ghcr.io/minbzk/base-images/hello-world:latest</nldd-code-viewer>
-<c-paragraph size="sm">Het webadres staat daarna bij je deployment. Je eigen image moet als gewone gebruiker draaien, niet als root.</c-paragraph>
-<c-paragraph size="sm">
-    Dat adres kun je later altijd wijzigen. Services die ervan afhangen, zoals Keycloak, worden dan automatisch bijgewerkt. Alleen extra redirect URI's die je zelf hebt ingevoerd pas je zelf aan, en een <c-link href="/eigen-domein" label="eigen domein" /> keurt een beheerder eerst goed. Lees het adres in je code dus uit <c-code>PUBLIC_HOST</c-code> en zet het er niet vast in.
-</c-paragraph>
+<c-paragraph size="sm">Een webadres staat bij je deployment. Dat adres kun je later altijd wijzigen. Services die ervan afhangen, zoals Keycloak, worden dan automatisch bijgewerkt. Voor gebruik van subdomeinen of een <c-link href="/eigen-domein" label="eigen domein" /> geldt een goedkeuringsprocedure.</c-paragraph>
 {% endmacro %}
 
 {% macro services_gebruiken() %}

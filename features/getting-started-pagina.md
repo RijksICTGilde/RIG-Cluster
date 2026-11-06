@@ -6,7 +6,7 @@ Een korte pagina voor wie nieuw is op ZAD: hoe het in elkaar zit, hoe je een hel
 
 De pagina staat op `/getting-started`, in de zijkolom onder Platform, en is ook te bereiken vanaf `/introductie`. Hij is publiek, net als de introductie, omdat hij juist bedoeld is voor wie nog geen toegang heeft.
 
-De pagina vermeldt dat een webadres later te wijzigen is. Dat klopt omdat de redirect URI's van de Keycloak-client (`KeycloakManager`, via `get_deployment_hostnames`) en de callback van de Authorization Wall bij elke verwerking uit de actuele hostnamen volgen. Zelf ingevoerde `additional_redirect_uris` veranderen niet mee, en dat staat er ook bij.
+De pagina vermeldt dat een webadres later te wijzigen is. Dat klopt omdat de redirect URI's van de Keycloak-client (`KeycloakManager`, via `get_deployment_hostnames`) en de callback van de Authorization Wall bij elke verwerking uit de actuele hostnamen volgen. Zelf ingevoerde `additional_redirect_uris` veranderen niet mee.
 
 ## Configuratie
 
