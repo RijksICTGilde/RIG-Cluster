@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.core.step_up import StepUpAction
+from opi.services.api_step_up_service import sso_session_credential
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 if TYPE_CHECKING:
@@ -192,6 +193,18 @@ def test_met_een_verse_step_up_lukt_de_handeling(
 
     assert response.status_code in (200, 201)
     diensten[ROUTES[naam][3]].assert_awaited_once()
+
+
+def test_ending_a_step_up_clears_it_for_this_sso_session(test_client: TestClient, platformbeheerder_token: Any) -> None:
+    """De DELETE op ``/api/v2/step-up`` (``end_step_up``) had tot nu toe geen enkele toets."""
+    with (
+        patch("opi.services.api_step_up_service.ApiStepUpService.is_fresh", AsyncMock(return_value=False)),
+        patch("opi.services.api_step_up_service.ApiStepUpService.clear", AsyncMock()) as clear,
+    ):
+        response = test_client.delete("/api/v2/step-up", headers=platformbeheerder_token["headers_gewone_gebruiker"])
+
+    assert response.status_code == 204
+    clear.assert_awaited_once_with(sso_session_credential("sso-sessie-1"))
 
 
 def test_de_leesroute_vraagt_geen_step_up(test_client: TestClient, platformbeheerder_token: Any) -> None:

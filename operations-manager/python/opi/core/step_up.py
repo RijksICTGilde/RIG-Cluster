@@ -43,9 +43,8 @@ STEP_UP_WINDOW = timedelta(minutes=settings.STEP_UP_WINDOW_MINUTES)
 #: De sessiesleutel met het moment van de laatste geslaagde step-up.
 STEP_UP_SESSION_KEY = "step_up_at"
 
-#: Whether the caller of this request has a fresh step-up. Service-layer checks have no
-#: request to read it from. False by default, so a worker or a forgotten entry point never
-#: holds platform admin rights.
+#: Whether caller has a fresh step-up. Service-layer has no request. Default False
+#: prevents accidental admin rights for workers or forgotten entry points.
 step_up_fresh: ContextVar[bool] = ContextVar("step_up_fresh", default=False)
 
 

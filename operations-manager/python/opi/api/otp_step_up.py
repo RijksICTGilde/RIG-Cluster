@@ -13,7 +13,8 @@ Of de aanroeper de handeling MAG blijft hier buiten: dat is de autorisatie van d
 zelf, en met de eigenaar van het token als aanroeper is die al gesteld voordat dit draait.
 De step-up antwoordt alleen op "is het echt hij, nu".
 
-Geen venster zoals in het portaal: een API-aanroep draagt zijn eigen bewijs, per verzoek.
+Hetzelfde venster als in het portaal, sinds RC-431: een call activeert de step-up
+(``opi/api/step_up_router.py``) en elke aanroep daarna draagt hem tot het venster om is.
 """
 
 from __future__ import annotations
@@ -209,6 +210,19 @@ def _problem(
         enroll_url=OTP_ENROLL_PATH if cause is StepUpCause.FACTOR_MISSING else None,
         blocked_until=blocked_until,
     )
+
+
+#: De 403 zoals hij in de OpenAPI staat, hier en niet per route: zo bestaat er één
+#: beschrijving van dit antwoord, voor de routes die hem opleggen (``opi/server.py``) en
+#: voor de step-up-call die hem zelf teruggeeft (``opi/api/step_up_router.py``).
+STEP_UP_403_RESPONSE: dict[str, object] = {
+    "description": (
+        "Deze handeling vraagt een verse 2-factor. Het antwoord heeft type "
+        f"'{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en 'remedy' wat er "
+        f"moet gebeuren. Activeer een step-up met '{STEP_UP_PATH}' en herhaal de aanroep."
+    ),
+    "content": {STEP_UP_PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/StepUpProblem"}}},
+}
 
 
 def step_up_problem_response(probleem: StepUpProblem) -> JSONResponse:

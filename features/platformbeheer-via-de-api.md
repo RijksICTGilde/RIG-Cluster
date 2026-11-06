@@ -44,13 +44,13 @@ hij legitimeert een project, geen persoon.
 
 ## De routes
 
-`action` is de waarde die een weigering in het problem-detail noemt; een leesroute heeft er
-geen, want hij vraagt geen OTP.
+`action` is de waarde die een weigering in het problem-detail noemt. Een leesroute vraagt
+geen eigen handeling maar wel een step-up, en noemt daarom `elevate`.
 
-| Route | Wat hij doet | OTP | `action` |
+| Route | Wat hij doet | step-up | `action` |
 |---|---|---|---|
-| `GET /api/v2/admin/marked-for-deletion` | de resources die voor verwijdering gemarkeerd staan | nee | |
-| `GET /api/v2/admin/orphans/report` | het wezenrapport, zonder mutaties | nee | |
+| `GET /api/v2/admin/marked-for-deletion` | de resources die voor verwijdering gemarkeerd staan | ja | `elevate` |
+| `GET /api/v2/admin/orphans/report` | het wezenrapport, zonder mutaties | ja | `elevate` |
 | `POST /api/v2/admin/cleanup/trigger` | de opruiming van verlopen markeringen starten | ja | `cleanup-start` |
 | `POST /api/v2/admin/reconciliation/trigger` | een volledige reconciliatie starten | ja | `reconciliation-start` |
 | `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` | een markering intrekken | ja | `marking-revoke` |
@@ -81,7 +81,9 @@ was, `reason` waarom ze een step-up vraagt, `remedy` wat er moet gebeuren.
 
 Sinds RC-409 geldt hetzelfde voor gebruikersbeheer in het PORTAAL (`/admin/users/*`): die
 vijf wijzigende routes droegen de step-up nog niet, en vragen nu een verse code zoals de
-API-tegenhangers. De leesroutes (de lijst en de twee formulieren) niet.
+API-tegenhangers. De leesroutes (de lijst en de twee formulieren) vragen geen eigen
+handeling, maar wel verhoogde rechten: `require_platform_admin` stuurt zonder step-up door
+naar de popup.
 
 In het portaal komt die vraag als dialoog, en dat stelt een eis aan de pagina. De
 weigering rendert de dialoog alleen op een HX-Request en werpt anders een 403, dus de vijf
@@ -117,5 +119,5 @@ De twee federatieroutes geven **404** als de federatie op deze instantie uit sta
 - `opi/core/step_up.py` en `opi/api/otp_step_up.py`: de step-up en het problem-detail (RC-332)
 - `opi/services/step_up_conditions.py`: `vraagt_altijd_step_up`, de conditie van de beheerroutes (sinds RC-387 ook van de ledenroutes, vandaar de naam)
 - `tests/test_platformbeheer_via_de_api.py`: de guard op de routes en op de oude sleutel
-- `tests/test_platformbeheer_step_up.py`: per route de 403, de geslaagde aanroep en de hergebruikte code
+- `tests/test_platformbeheer_step_up.py`: per route de 403 zonder step-up, de geslaagde aanroep met step-up, en de projectsleutel die er niet aan toekomt
 - `tests/test_step_up_routes.py`: de lijst van routes die een step-up dragen, en hun OpenAPI

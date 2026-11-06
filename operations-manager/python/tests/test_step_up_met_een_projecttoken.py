@@ -31,7 +31,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
-from opi.api.step_up_router import StepUpRequest, activate_token_step_up
+from opi.api.step_up_router import StepUpRequest, StepUpWindow, activate_token_step_up, end_token_step_up
 from opi.core.leden import LidSoort
 from opi.core.step_up import StepUpAction
 from opi.services.api_step_up_service import personal_token_credential
@@ -198,6 +198,9 @@ async def test_a_personal_token_activates_a_step_up_for_itself() -> None:
     response, service = await _activate({"X-API-Key": TOKEN_MENS})
 
     assert response.status_code == 200
+    # Het antwoord zoals de OpenAPI het belooft: de route geeft een eigen Response terug,
+    # dus FastAPI toetst de vorm niet.
+    StepUpWindow.model_validate_json(response.body)
     service.record.assert_awaited_once_with(personal_token_credential(TOKEN_MENS), LID)
 
 
@@ -213,5 +216,35 @@ async def test_a_wrong_code_records_nothing_for_a_personal_token() -> None:
 async def test_a_service_account_token_cannot_activate_a_step_up() -> None:
     with pytest.raises(HTTPException) as refused:
         await _activate({"X-API-Key": TOKEN_BOUWSTRAAT})
+
+    assert refused.value.status_code == 403
+
+
+async def _end(headers: dict[str, str]) -> tuple[Any, Any]:
+    """Through the real gate, like ``_activate``: ``end_token_step_up`` had no toets at all."""
+    project = _project()
+    service = MagicMock(is_fresh=AsyncMock(return_value=False), clear=AsyncMock())
+    store = MagicMock(get=MagicMock(return_value=project))
+    with (
+        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.api.endpoint_util.ApiStepUpService", return_value=service),
+        patch("opi.api.step_up_router.ApiStepUpService", return_value=service),
+    ):
+        response = await end_token_step_up(request=_verzoek(headers), project_name="demo")
+    return response, service
+
+
+@pytest.mark.asyncio
+async def test_a_personal_token_ends_the_step_up_for_itself() -> None:
+    response, service = await _end({"X-API-Key": TOKEN_MENS})
+
+    assert response.status_code == 204
+    service.clear.assert_awaited_once_with(personal_token_credential(TOKEN_MENS))
+
+
+@pytest.mark.asyncio
+async def test_a_service_account_token_cannot_end_a_step_up() -> None:
+    with pytest.raises(HTTPException) as refused:
+        await _end({"X-API-Key": TOKEN_BOUWSTRAAT})
 
     assert refused.value.status_code == 403

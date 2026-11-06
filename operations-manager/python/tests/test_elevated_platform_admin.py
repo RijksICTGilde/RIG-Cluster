@@ -183,6 +183,12 @@ def test_the_sidebar_shows_admin_items_with_a_step_up(users: UserService) -> Non
         ("/\\evil.example", "/"),
         ("https://evil.example", "/"),
         ("", "/"),
+        # A browser removes these before it parses, so '/<TAB>/host' is '//host' to it.
+        ("/\t/evil.example", "/"),
+        ("/\n/evil.example", "/"),
+        ("/\r/evil.example", "/"),
+        ("/\t\\evil.example", "/"),
+        ("/admin\tusers", "/adminusers"),
     ],
 )
 def test_the_return_path_stays_on_this_site(value: str, expected: str) -> None:
@@ -324,6 +330,37 @@ def _elevate_request(code: str, terug: str) -> Any:
     return request
 
 
+async def test_a_plain_visit_to_the_popup_route_redirects_to_the_dashboard() -> None:
+    """``elevate_form`` had no toets: a bare GET (no HX-Request) takes the browser along."""
+    request = MagicMock()
+    request.headers = {}
+
+    response = await router_step_up.elevate_form.__wrapped__(request, terug="/admin/users")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/dashboard?verhoog=%2Fadmin%2Fusers"
+
+
+async def test_a_plain_visit_cannot_be_sent_off_this_site() -> None:
+    request = MagicMock()
+    request.headers = {}
+
+    response = await router_step_up.elevate_form.__wrapped__(request, terug="https://evil.example")
+
+    assert response.headers["location"] == "/dashboard?verhoog=%2F"
+
+
+async def test_an_htmx_visit_to_the_popup_route_returns_the_popup_content() -> None:
+    request = MagicMock()
+    request.headers = {"HX-Request": "true"}
+
+    with patch.object(router_step_up, "_elevate_content", AsyncMock(return_value="content")) as content:
+        response = await router_step_up.elevate_form.__wrapped__(request, terug="/admin/users")
+
+    assert response == "content"
+    content.assert_awaited_once_with(request, "/admin/users")
+
+
 async def test_a_valid_code_activates_and_returns_to_the_page() -> None:
     request = _elevate_request("123456", "/admin/users")
     with (
@@ -336,6 +373,20 @@ async def test_a_valid_code_activates_and_returns_to_the_page() -> None:
 
     assert response.headers["HX-Redirect"] == "/admin/users"
     assert "step_up_at" in request.session
+
+
+async def test_the_redirect_header_cannot_leave_this_site() -> None:
+    """A tab in ``terug`` reaches the browser as '//evil.example', so it may not get there."""
+    request = _elevate_request("123456", "/\t/evil.example")
+    with (
+        patch.object(router_step_up, "UserOtpService") as otp,
+        patch.object(router_step_up, "record_step_up_attempt", AsyncMock()),
+        patch.object(router_step_up, "client_ip", return_value="10.0.0.1"),
+    ):
+        otp.return_value.verify = AsyncMock(return_value=OtpVerification.OK)
+        response = await router_step_up.elevate.__wrapped__(request)
+
+    assert response.headers["HX-Redirect"] == "/"
 
 
 async def test_a_wrong_code_activates_nothing() -> None:

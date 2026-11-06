@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import validate_api_token
-from opi.api.otp_step_up import STEP_UP_PATH, step_up_problem_response, verify_step_up_code
+from opi.api.otp_step_up import STEP_UP_403_RESPONSE, STEP_UP_PATH, step_up_problem_response, verify_step_up_code
 from opi.api.params import ProjectNamePath
 from opi.api.user_token_auth import validate_user_token
 from opi.core.authz.actions import Action, action
@@ -27,12 +27,26 @@ class StepUpRequest(BaseModel):
     code: str = Field(..., description="A code from the authenticator of the caller")
 
 
+class StepUpWindow(BaseModel):
+    """Tot wanneer de step-up geldt, zoals de activering hem teruggeeft."""
+
+    valid_until: str = Field(..., description="Einde van het venster in ISO 8601; het schuift niet mee")
+
+
+#: Wat een activeringsroute aan fouten kan geven, zoals een client het in de OpenAPI leest.
+_GEEN_SESSIE = "Dit token heeft geen SSO-sessie om een step-up aan te hangen"
+_ACTIVEER_ANTWOORDEN: dict[int | str, dict[str, object]] = {
+    400: {"description": _GEEN_SESSIE},
+    403: STEP_UP_403_RESPONSE,
+}
+
+
 async def _activate(request: Request, code: str, *, project_name: str = "") -> Response:
     email = request.state.user["email"]
     credential = request.state.step_up_credential
     if not credential:
         logger.warning("Step-up refused for %s: the token has no sid claim", email)
-        raise HTTPException(status_code=400, detail="Dit token heeft geen SSO-sessie om een step-up aan te hangen")
+        raise HTTPException(status_code=400, detail=_GEEN_SESSIE)
 
     probleem = await verify_step_up_code(request, code, project_name=project_name)
     if probleem is not None:
@@ -52,7 +66,12 @@ async def _end(request: Request) -> Response:
     return Response(status_code=204)
 
 
-@step_up_api_router.post(STEP_UP_PATH.removeprefix("/api/v2"))
+@step_up_api_router.post(
+    STEP_UP_PATH.removeprefix("/api/v2"),
+    response_model=StepUpWindow,
+    response_class=JSONResponse,
+    responses=_ACTIVEER_ANTWOORDEN,
+)
 @action(Action.STEP_UP_VERIFY)
 @validate_user_token
 async def activate_step_up(request: Request, body: StepUpRequest) -> Response:
@@ -72,7 +91,12 @@ async def end_step_up(request: Request) -> Response:
     return await _end(request)
 
 
-@step_up_api_router.post("/projects/{project_name}/step-up")
+@step_up_api_router.post(
+    "/projects/{project_name}/step-up",
+    response_model=StepUpWindow,
+    response_class=JSONResponse,
+    responses=_ACTIVEER_ANTWOORDEN,
+)
 @action(Action.TOKEN_STEP_UP)
 @validate_api_token
 async def activate_token_step_up(request: Request, project_name: ProjectNamePath, body: StepUpRequest) -> Response:

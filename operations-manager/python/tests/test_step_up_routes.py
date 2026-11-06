@@ -8,7 +8,9 @@ Een eigen lijst en niet de route-enumeratie van RC-295: die is nog niet gemerged
 binnen, dan kan deze test erop aansluiten.
 
 Het tweede deel toetst de documentatie: een client hoort de header en de 403 in de
-OpenAPI te vinden in plaats van ze te ontdekken door een aanroep te verliezen.
+OpenAPI te vinden in plaats van ze te ontdekken door een aanroep te verliezen. Dat geldt
+ook voor de routes die een step-up ACTIVEREN: die vragen er geen, maar antwoorden met
+hetzelfde problem-detail zodra de code niet klopt.
 """
 
 from __future__ import annotations
@@ -68,6 +70,14 @@ ROUTES_MET_STEP_UP = {
     ): StepUpAction.ENV_VARS_MANAGE,
 }
 
+#: De activeringsroutes: die VRAGEN geen step-up, ze geven er een. Een weigering van de
+#: code is hetzelfde problem-detail, dus hij hoort in de OpenAPI te staan (RC-431). De
+#: DELETE-routes staan er niet bij: die toetsen geen code en geven dit antwoord nooit.
+ROUTES_DIE_EEN_STEP_UP_ANTWOORDEN = {
+    ("POST", "/api/v2/step-up"),
+    ("POST", "/api/v2/projects/{project_name}/step-up"),
+}
+
 #: De routes die ALLEEN lezen en dus geen step-up dragen (RC-377, RC-387).
 BEHEERROUTES_ZONDER_STEP_UP = {
     ("GET", "/api/v2/admin/marked-for-deletion"),
@@ -118,7 +128,7 @@ def test_elke_step_up_route_in_de_api_is_gedocumenteerd(app: Any) -> None:
     assert "StepUpProblem" in document["components"]["schemas"]
 
     ongedocumenteerd = []
-    for methode, pad in ROUTES_MET_STEP_UP:
+    for methode, pad in set(ROUTES_MET_STEP_UP) | ROUTES_DIE_EEN_STEP_UP_ANTWOORDEN:
         if not pad.startswith("/api/"):
             continue
         operatie = document["paths"][pad][methode.lower()]
@@ -127,7 +137,18 @@ def test_elke_step_up_route_in_de_api_is_gedocumenteerd(app: Any) -> None:
         if schema.get("$ref") != "#/components/schemas/StepUpProblem":
             ongedocumenteerd.append(f"{methode} {pad}")
 
+    for methode, pad in ROUTES_DIE_EEN_STEP_UP_ANTWOORDEN:
+        antwoorden = document["paths"][pad][methode.lower()]["responses"]
+        if "400" not in antwoorden:
+            ongedocumenteerd.append(f"{methode} {pad} (de 400 van een token zonder SSO-sessie)")
+        # Zonder response_model documenteert FastAPI hier de HTML-vorm van de app, en dan
+        # vindt een client valid_until nergens.
+        geslaagd = antwoorden.get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
+        if geslaagd.get("$ref") != "#/components/schemas/StepUpWindow":
+            ongedocumenteerd.append(f"{methode} {pad} (het venster dat de 200 teruggeeft)")
+
+    ongedocumenteerd.sort()
     assert ongedocumenteerd == [], (
-        "Deze step-up-routes documenteren de 403 niet. Een client die op "
+        "Deze step-up-routes documenteren hun antwoord niet. Een client die op "
         "dit document afgaat verliest daardoor een aanroep zonder te weten waarom:\n  " + "\n  ".join(ongedocumenteerd)
     )
