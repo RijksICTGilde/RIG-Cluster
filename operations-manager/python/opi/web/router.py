@@ -259,7 +259,10 @@ async def introductie(request: Request):
 
 @web_router.get("/getting-started", response_class=HTMLResponse)
 async def getting_started(request: Request):
-    """The first steps on ZAD. Public, like /introductie: it is for people without access yet."""
+    """The first steps on ZAD.
+
+    BEWUST ZONDER ``@requires_sso``: public like /introductie, it is for people without access yet.
+    """
     return _wegwijzer(request, "getting-started.html.j2", "bg/getting-started.html.j2", "/getting-started")
 
 
