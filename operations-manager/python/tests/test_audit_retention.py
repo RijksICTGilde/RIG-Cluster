@@ -43,6 +43,29 @@ async def _leg_neer(dagen_oud: int, naam: str) -> None:
         )
 
 
+async def _leg_step_up_neer(dagen_oud: int, naam: str) -> None:
+    """Zoals ``record_step_up_attempt`` hem schrijft: geen project, dus geen subject."""
+    async with session_scope() as db:
+        db.add(
+            NotificationEvent(
+                source=audit.event_source(),
+                type=audit.TYPE_PERFORMED,
+                subject=None,
+                time=datetime.now(UTC) - timedelta(days=dagen_oud),
+                category=audit.CATEGORY,
+                severity=audit.SEVERITY_ALLOWED,
+                cluster="local",
+                project=None,
+                actor="beheer@rijksoverheid.nl",
+                actor_kind=ActorKind.USER.value,
+                origin="10.0.0.9",
+                summary="platform: step-up.verify",
+                dedup_key=f"audit:{naam}:-:allowed",
+                data={"action": naam},
+            )
+        )
+
+
 async def _leg_andere_soort_neer(dagen_oud: int, naam: str) -> None:
     """Een gebeurtenis van een soort die de audit niet schrijft, met een eigen termijn."""
     async with session_scope() as db:
@@ -105,6 +128,24 @@ async def test_de_scheduler_draait_een_ronde(orm_db: None) -> None:
     await _leg_neer(91, "oud")
 
     assert await AuditRetentionScheduler().run_once() == {"pseudonymized": 1, "deleted": 0}
+
+
+async def test_een_step_up_rij_zonder_project_wordt_net_zo_gezweept(orm_db: None) -> None:
+    """RC-431, punt 7: ``record_step_up_attempt`` schrijft zonder project; de lus filtert
+    niet op project, dus dat verandert niets aan pseudonimiseren of opruimen."""
+    await _leg_step_up_neer(91, "oud")
+    await _leg_step_up_neer(366, "stokoud")
+
+    rijen = await _rijen()
+    assert rijen["oud"].project is None
+
+    uitkomst = await audit.run_retention()
+
+    rijen = await _rijen()
+    assert rijen["oud"].actor is None
+    assert rijen["oud"].origin is None
+    assert "stokoud" not in rijen
+    assert uitkomst == {"pseudonymized": 1, "deleted": 1}
 
 
 async def test_stoppen_zonder_gestart_te_zijn_is_veilig() -> None:

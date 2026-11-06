@@ -62,8 +62,8 @@ def get_current_user(request) -> dict[str, Any] | None:
     de bearer-decorators uit een geverifieerd SSO-token, en ``handhaaf`` uit een
     persoonlijk API-token (RC-322). Een gevulde waarde zegt dus WIE de aanroeper is en
     NIET dat hij een browserflow doorliep: hang er geen controle aan die een sessie of
-    een tweede factor veronderstelt. Een step-up hoort op ``@requires_step_up``, dat de
-    code per verzoek tegen deze persoon toetst.
+    een tweede factor veronderstelt. Een step-up hoort op ``@requires_step_up``, dat het
+    venster van deze persoon leest.
 
     Args:
         request: The FastAPI/Starlette request object
@@ -120,7 +120,7 @@ def elevate_url(terug: str) -> str:
 
 #: Markering op een route die zich voor een step-up heeft aangemeld, met de
 #: :class:`~opi.core.step_up.StepUpAction` als waarde. ``tests/test_step_up_routes.py``
-#: leest hem, en ``custom_openapi`` documenteert de header en de 403 eruit: zonder
+#: leest hem, en ``custom_openapi`` documenteert de 403 eruit: zonder
 #: markering zou een route die de decorator kwijtraakt stilzwijgend weer open staan.
 REQUIRES_STEP_UP = "zad_requires_step_up"
 
@@ -137,8 +137,8 @@ def requires_step_up(
     verlaagt. ``actie`` draagt de teksten voor de dialoog, de log en de client.
 
     Twee wegen, omdat er twee soorten aanroepers zijn: het portaal heeft een sessie en
-    krijgt een dialoog, de API heeft die niet en draagt de code van de eigenaar van het
-    token per verzoek mee.
+    krijgt een dialoog, de API leest het venster dat de aanroeper met
+    ``POST /api/v2/step-up`` opende.
 
     ``velden`` noemt de formuliervelden die de herhaling in het portaal moet meesturen:
     de dialoog neemt de plaats in van het formulier, dus zonder die velden zou een

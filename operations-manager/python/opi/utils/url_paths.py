@@ -16,13 +16,19 @@ from typing import Any
 SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*\Z")
 
 
+#: The characters the URL parser removes before it parses, so the prefix check below has
+#: to remove them first: a browser reads '/<TAB>/host' as '//host', another domain.
+_REMOVED_BY_THE_URL_PARSER = str.maketrans({"\t": None, "\n": None, "\r": None})
+
+
 def local_redirect_path(value: str, default: str = "/") -> str:
     """This value as a redirect target on this site, or ``default``.
 
     ``//host`` and ``/\\host`` are another domain to a browser, not a path.
     """
-    if value.startswith("/") and not value.startswith(("//", "/\\")):
-        return value
+    cleaned = value.translate(_REMOVED_BY_THE_URL_PARSER)
+    if cleaned.startswith("/") and not cleaned.startswith(("//", "/\\")):
+        return cleaned
     return default
 
 

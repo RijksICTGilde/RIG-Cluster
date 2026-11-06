@@ -10,7 +10,7 @@
                 </nldd-button-group>
             </form>
         {% elif geregistreerd %}
-            <c-paragraph>Vul je 2-factor code in. De beheer rechten gelden {{ venster_minuten }} minuten.</c-paragraph>
+            <c-paragraph>Vul je 2-factor code in. Verhoogde rechten gelden {{ venster_minuten }} minuten.</c-paragraph>
             {# novalidate: de server valideert de code en meldt in het Nederlands. #}
             <form id="verhoog-form" autocomplete="off" novalidate
                   hx-post="/step-up/elevate" hx-target="#verhoog-inhoud" hx-swap="innerHTML">

@@ -21,12 +21,7 @@ from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
-from opi.api.otp_step_up import (
-    STEP_UP_PATH,
-    STEP_UP_PROBLEM_MEDIA_TYPE,
-    STEP_UP_PROBLEM_TYPE,
-    StepUpProblem,
-)
+from opi.api.otp_step_up import STEP_UP_403_RESPONSE, StepUpProblem
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
@@ -616,26 +611,20 @@ def create_app() -> FastAPI:
         schemas.update(envelop.pop("$defs", {}))
         schemas["ProblemDetail"] = envelop
 
-        # De step-up, op dezelfde manier uit de route zelf gelezen: welke routes een verse
-        # tweede factor vragen staat in hun decorator, en een client hoort de header en de
-        # 403 in dit document te vinden in plaats van ze te ontdekken (RC-332).
+        # Verzamel routes die step-up vragen: die met @requires_step_up of @requires_platform_admin_token.
+        # Clients lezen de 403 in dit document in plaats van er langs.
         step_up_operations = {
             (route.path, method.lower())
             for route in app.routes
-            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_STEP_UP, None)
+            if getattr(route, "endpoint", None) is not None
+            and any(
+                getattr(route.endpoint, marker, None) for marker in (REQUIRES_STEP_UP, REQUIRES_PLATFORM_ADMIN_TOKEN)
+            )
             for method in getattr(route, "methods", None) or []
         }
         step_up_schema = StepUpProblem.model_json_schema(ref_template="#/components/schemas/{model}")
         schemas.update(step_up_schema.pop("$defs", {}))
         schemas["StepUpProblem"] = step_up_schema
-        step_up_403 = {
-            "description": (
-                "Deze handeling vraagt een verse 2-factor. Het antwoord "
-                f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
-                f"'remedy' wat er moet gebeuren. Activeer een step-up met '{STEP_UP_PATH}' en herhaal de aanroep."
-            ),
-            "content": {STEP_UP_PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/StepUpProblem"}}},
-        }
         vijf_xx = {
             "description": (
                 "Er ging iets mis aan onze kant. Het lag niet aan je verzoek, dus opnieuw "
@@ -655,7 +644,7 @@ def create_app() -> FastAPI:
                 method["security"] = [{scheme: []}]
                 method.setdefault("responses", {})["5XX"] = vijf_xx
                 if (path, verb) in step_up_operations:
-                    method["responses"]["403"] = step_up_403
+                    method["responses"]["403"] = STEP_UP_403_RESPONSE
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})

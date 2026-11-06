@@ -120,6 +120,29 @@ async def test_een_projectactie_zonder_deployment_heeft_het_project_als_subject(
     assert rij.deployment is None
 
 
+async def test_een_step_up_poging_heeft_geen_project_en_geen_subject(orm_db: None) -> None:
+    """``record_step_up_attempt`` (``opi/services/audit.py``): geen project, dus ``_subject``
+    geeft ``None`` en de rij komt niet via ``list_actions`` bij een project terecht."""
+    await audit.record_step_up_attempt("beheer@rijksoverheid.nl", allowed=True, cause=None, origin="10.0.0.9")
+
+    (rij,) = await _rows()
+    assert rij.project is None
+    assert rij.subject is None
+    assert rij.data["action"] == "step-up.verify"
+    assert rij.actor == "beheer@rijksoverheid.nl"
+    assert await audit.list_actions("demo") == []
+
+
+async def test_een_geweigerde_step_up_is_denied_met_de_reden(orm_db: None) -> None:
+    await audit.record_step_up_attempt(
+        "beheer@rijksoverheid.nl", allowed=False, cause="code-invalid", origin="10.0.0.9"
+    )
+
+    (rij,) = await _rows()
+    assert rij.type == audit.TYPE_DENIED
+    assert rij.data["cause"] == "code-invalid"
+
+
 async def test_een_kapotte_sessie_gooit_niet_en_telt_op(orm_db: None, monkeypatch: pytest.MonkeyPatch) -> None:
     voor = audit.write_failures()
 

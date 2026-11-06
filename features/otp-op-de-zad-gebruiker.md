@@ -126,8 +126,14 @@ curl -X DELETE "https://zad.rijksapps.nl/api/v2/projects/mijnproject/productie" 
 Het antwoord noemt `valid_until`. `DELETE` op dezelfde route beëindigt de step-up eerder. De
 toestand hoort bij één bewijsmiddel: een SSO-token bij zijn inlogsessie (de
 `sid`-claim, die een token-refresh overleeft) en een persoonlijk token bij zijn eigen hash. Een
-code in de ene sessie opent dus geen ander token van dezelfde persoon, en een gelekt token kan
-niet meeliften op de step-up van zijn eigenaar. De toestand staat in de tabel `api_step_ups`.
+code in de ene sessie opent dus geen ander token van dezelfde persoon.
+
+Wat dat beschermt verschilt per bewijsmiddel. Een gelekt **persoonlijk token** kan niet
+meeliften op de step-up van zijn eigenaar: die hangt aan de hash van het token dat de code
+gaf, dus een ander token van dezelfde persoon staat erbuiten. Een gelekt **SSO-token** wel: dat
+hangt aan de `sid` van de inlogsessie, dus elk token uit diezelfde sessie draagt de step-up tot
+het venster om is. Daarom is dat venster kort en schuift het niet mee. De toestand staat in de
+tabel `api_step_ups`.
 
 De code wordt getoetst tegen de **eigenaar van het token**. Er is geen manier om de code van
 iemand anders aan een aanroep te hangen. Een **service account** en de oude **projectsleutel**
@@ -160,10 +166,10 @@ blijft 401.
 `principal-kind-not-allowed` (de projectsleutel). `code-invalid` dekt zowel een verkeerde
 als een al gebruikte code: `detail` zegt nooit welk deel van een code fout was.
 
-Elke route met `@requires_step_up` documenteert dit in de OpenAPI: `X-ZAD-OTP` als
-optionele header en de 403 met het schema `StepUpProblem`. Dat wordt uit de markering op
-de route afgeleid (`custom_openapi` in `opi/server.py`), en
-`tests/test_step_up_routes.py` faalt als een step-up-route die documentatie mist.
+Elke route met `@requires_step_up` documenteert dit in de OpenAPI: de 403 met het schema
+`StepUpProblem`. Dat wordt uit de markering op de route afgeleid (`custom_openapi` in
+`opi/server.py`), en `tests/test_step_up_routes.py` faalt als een step-up-route die
+documentatie mist.
 
 ### Loggen
 
