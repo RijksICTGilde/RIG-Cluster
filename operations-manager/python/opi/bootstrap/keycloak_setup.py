@@ -452,18 +452,12 @@ class KeycloakSetup:
                 await self.kubectl.apply_manifest(manifest_file_path)
                 logger.info("Successfully updated operations-manager-keycloak secret")
 
-                # Update the current settings if they're not already set
-                if not settings.OIDC_CLIENT_ID:
-                    settings.OIDC_CLIENT_ID = client_info["client_id"]
-                    logger.info(f"Updated settings.OIDC_CLIENT_ID: {client_info['client_id']}")
-
-                if not settings.OIDC_CLIENT_SECRET:
-                    settings.OIDC_CLIENT_SECRET = client_info["client_secret"]
-                    logger.info("Updated settings.OIDC_CLIENT_SECRET")
-
-                if not settings.OIDC_DISCOVERY_URL:
-                    settings.OIDC_DISCOVERY_URL = client_info["discovery_url"]
-                    logger.info(f"Updated settings.OIDC_DISCOVERY_URL: {client_info['discovery_url']}")
+                # Also when already set: on a first start the values come from the ConfigMap, whose
+                # discovery URL names another realm. This secret only reaches the env on a restart.
+                settings.OIDC_CLIENT_ID = client_info["client_id"]
+                settings.OIDC_CLIENT_SECRET = client_info["client_secret"]
+                settings.OIDC_DISCOVERY_URL = client_info["discovery_url"]
+                logger.info(f"Updated OIDC settings for client '{client_info['client_id']}'")
 
                 return True
 
