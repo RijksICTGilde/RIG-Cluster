@@ -40,7 +40,7 @@ spec:
           #
           # Is er nog nooit gepromoveerd, dan staat hier het woord promoveer-eerst en geen
           # tag: een verzonnen versienummer zou eruitzien als een image die te halen valt.
-          image: ghcr.io/rijksictgilde/zad/keycloak-zad:2026.10.30.1552-ce33c478
+          image: ghcr.io/rijksictgilde/zad/keycloak-zad:2026.11.05.1202-b39d5977
           # DE VLAG DIE DE EIGEN VERZENDER AANWIJST. Zonder hem verstuurt de
           # standaardprovider, en die leest de smtpServer van de realm - de weg waarlangs
           # een projectbeheerder de post naar een eigen luisteraar kan sturen.
