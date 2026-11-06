@@ -433,7 +433,7 @@ class Settings(BaseSettings):
 
     # Default shared realm configuration
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
-    KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
+    KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "ZAD"
 
     # Bootstrap configuration type: "default", "local", "sandbox" or "staging"
     # - "default": Production setup with direct SSO-Rijk integration
