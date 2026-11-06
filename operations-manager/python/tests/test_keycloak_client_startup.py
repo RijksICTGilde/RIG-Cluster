@@ -1,5 +1,6 @@
 """OPI's check on its own OIDC client, on a fresh install and on an existing cluster."""
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,6 @@ from opi.core import startup as core_startup
 from opi.core.config import settings
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials, validate_oidc_credentials
 from opi.core.readiness import ReadinessState
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pathlib import Path
