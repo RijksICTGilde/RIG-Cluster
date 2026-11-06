@@ -13,6 +13,7 @@ from opi.core.authz.actions import Action
 from opi.core.authz.engine import (
     COMPONENT_IN_PRODUCTION,
     COMPONENT_NOT_IN_PRODUCTION,
+    HUMAN_ONLY,
     NON_PRODUCTION,
     PRODUCTION,
     PROJECT_WITH_PRODUCTION,
@@ -282,6 +283,16 @@ rule(Action.WIZARD_USE, label="De aanmaakwizard gebruiken", section=PORTAL, audi
 rule(Action.PROJECT_CREATE, label="Een project aanmaken", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.ACCOUNT_OTP, label="De eigen 2-factor inrichten", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.STEP_UP_VERIFY, label="Een step-up-code bevestigen", section=PORTAL, audience=Audience.SIGNED_IN)
+# Elke mens met een rol op dit project. Een service account heeft geen factor om te toetsen.
+# Leesactie, want activeren verandert niets aan het project: anders mag een viewer zijn eigen
+# step-up niet, en die heeft hem nodig om zijn eigen env-vars te lezen.
+rule(
+    Action.TOKEN_STEP_UP,
+    label="Een step-up activeren met een persoonlijk token",
+    section=PORTAL,
+    read=True,
+    grants=[Grant(Role.VIEWER, requires=HUMAN_ONLY), Grant(Role.ADMIN, requires=HUMAN_ONLY)],
+)
 rule(Action.TOOLS_USE, label="Het versleutelgereedschap gebruiken", section=PORTAL, audience=Audience.SIGNED_IN)
 
 

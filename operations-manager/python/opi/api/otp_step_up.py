@@ -23,17 +23,17 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from fastapi.responses import JSONResponse
+from opi.core.step_up import StepUpAction
 from opi.services.user_otp_service import OtpVerification, UserOtpService
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from opi.core.step_up import StepUpAction
     from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
-#: De code uit de authenticator van de aanroeper. De enige header die hierbij hoort.
-OTP_CODE_HEADER = "X-ZAD-OTP"
+#: Waar een SSO-token zijn step-up activeert. Een persoonlijk token doet dat per project.
+STEP_UP_PATH = "/api/v2/step-up"
 
 #: Waaraan een client (de zad-cli voorop) dit antwoord herkent en om een code vraagt.
 STEP_UP_PROBLEM_TYPE = "urn:zad:step-up-required"
@@ -74,7 +74,6 @@ class StepUpProblem(BaseModel):
     action: str = Field(..., description="De handeling die een step-up vraagt, bijvoorbeeld 'deployment-delete'")
     reason: str = Field(..., description="Waarom deze handeling er een vraagt, bijvoorbeeld dat ze productie raakt")
     remedy: str = Field(..., description="Wat de aanroeper moet doen om de handeling alsnog uit te voeren")
-    otp_header: str = Field(default=OTP_CODE_HEADER, description="De header waarin de code hoort")
     enroll_url: str | None = Field(
         default=None, description="Waar de aanroeper zijn 2-factor inricht; alleen bij 'factor-missing'"
     )
@@ -86,24 +85,26 @@ class StepUpProblem(BaseModel):
 _DETAIL = {
     # Niet "raakt productie": sinds RC-377 vraagt ook platformbeheer een step-up. Waarom
     # DEZE aanroep er een vraagt staat in ``reason``.
-    StepUpCause.OTP_MISSING: "Deze handeling vraagt een verse code uit je 2-factor.",
+    StepUpCause.OTP_MISSING: "Deze handeling vraagt een verse step-up met je 2-factor.",
     StepUpCause.FACTOR_MISSING: "Je hebt nog geen 2-factor ingericht, en deze handeling vraagt er een.",
-    StepUpCause.CODE_INVALID: "De meegestuurde code is niet aanvaard.",
+    StepUpCause.CODE_INVALID: "De code is niet aanvaard.",
     StepUpCause.BLOCKED: "Je 2-factor is tijdelijk geblokkeerd na te veel mislukte pogingen.",
     StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED: (
         "Deze handeling vraagt een verse 2-factor, en de sleutel waarmee je aanroept hoort bij geen gebruiker."
     ),
 }
 
+_ACTIVATE = (
+    f"POST {STEP_UP_PATH} met een SSO-token, of POST /api/v2/projects/{{project}}/step-up met een persoonlijk token"
+)
+
 _REMEDY = {
-    StepUpCause.OTP_MISSING: f"Stuur '{OTP_CODE_HEADER}' mee met een code uit je authenticator en herhaal de aanroep.",
-    StepUpCause.FACTOR_MISSING: (
-        f"Richt je 2-factor in op '{OTP_ENROLL_PATH}' en herhaal de aanroep met '{OTP_CODE_HEADER}'."
-    ),
-    StepUpCause.CODE_INVALID: f"Wacht op een nieuwe code in je authenticator en herhaal de aanroep met '{OTP_CODE_HEADER}'.",
+    StepUpCause.OTP_MISSING: f"Activeer een step-up met je code ({_ACTIVATE}) en herhaal de aanroep.",
+    StepUpCause.FACTOR_MISSING: f"Richt je 2-factor in op '{OTP_ENROLL_PATH}' en activeer daarna een step-up.",
+    StepUpCause.CODE_INVALID: "Wacht op een nieuwe code in je authenticator en probeer het opnieuw.",
     StepUpCause.BLOCKED: "Probeer het opnieuw zodra de blokkade voorbij is; 'blocked_until' zegt wanneer.",
     StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED: (
-        "Met een projectsleutel kan dit niet: gebruik een persoonlijk token en stuur je eigen code mee."
+        "Met een projectsleutel of service account kan dit niet: gebruik een persoonlijk token en activeer een step-up."
     ),
 }
 
@@ -150,32 +151,52 @@ async def verify_api_step_up(
     actie: StepUpAction,
     doelwit: str,
 ) -> StepUpProblem | None:
-    """Toets de step-up van deze aanroep; geef ``None`` als hij door mag.
+    """Toets of deze aanroeper een verse step-up heeft; geef ``None`` als hij door mag.
 
     Bij een weigering is de uitkomst het problem-detail dat de client terugkrijgt, zodat
     hij weet welke handeling het was, waarom ze een step-up vraagt en wat er moet gebeuren.
     """
     email = _token_owner(request)
-    code = (request.headers.get(OTP_CODE_HEADER) or "").strip()
-
-    uitkomst = await _cause(email, code)
-    if uitkomst is None:
+    if email is not None and getattr(request.state, "step_up_fresh", False) is True:
         logger.info(
-            "Step-up geaccepteerd om %s: doel '%s', project '%s', door %s",
+            "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
             actie.phrase,
             doelwit,
             project_name,
             email,
         )
         return None
+    cause = StepUpCause.OTP_MISSING if email is not None else StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED
+    return _problem(request, cause, None, project_name=project_name, actie=actie, doelwit=doelwit)
 
+
+async def verify_step_up_code(request: Request, code: str, *, project_name: str = "") -> StepUpProblem | None:
+    """Toets de code van de step-up-call; geef ``None`` als hij klopt, anders het problem-detail."""
+    email = _token_owner(request)
+    uitkomst = await _cause(email, code.strip())
+    if uitkomst is None:
+        return None
     cause, blocked_until = uitkomst
+    return _problem(
+        request, cause, blocked_until, project_name=project_name, actie=StepUpAction.ELEVATE, doelwit=email or ""
+    )
+
+
+def _problem(
+    request: Request,
+    cause: StepUpCause,
+    blocked_until: str | None,
+    *,
+    project_name: str,
+    actie: StepUpAction,
+    doelwit: str,
+) -> StepUpProblem:
     logger.warning(
         "Step-up geweigerd om %s: doel '%s', project '%s', door %s, reden %s",
         actie.phrase,
         doelwit,
         project_name,
-        email or "een sleutel zonder gebruiker",
+        _token_owner(request) or "een sleutel zonder gebruiker",
         cause.value,
     )
     return StepUpProblem(

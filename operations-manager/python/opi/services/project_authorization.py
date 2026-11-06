@@ -13,6 +13,7 @@ reach a project file.
 import logging
 from typing import TYPE_CHECKING
 
+from opi.core.step_up import is_elevated_admin
 from opi.services.project_leden import human_members
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES
 from opi.services.project_store import get_project_store
@@ -41,12 +42,12 @@ def get_project_users(project_name: str) -> list[ProjectUser] | None:
 
 
 def is_user_authorized_for_project(project_name: str, user_email: str, audit: bool = True) -> bool:
-    """Check whether a user may access a project. Platform admins always may.
+    """Check whether a user may access a project. An elevated platform admin always may.
 
     Geef ``audit=False`` mee in een lijst die dit per project vraagt: de INFO-regel moet
     het spoor zijn van een geopend project, niet van elk project op het platform.
     """
-    if get_user_service().is_platform_admin(user_email):
+    if is_elevated_admin(get_user_service(), user_email):
         if audit:
             # INFO, anders is er met LOG_LEVEL=INFO in productie geen spoor van een
             # platformbeheerder die een project opent waar hij geen lid van is.
@@ -73,7 +74,7 @@ def get_user_roles_for_project(project_name: str, user_email: str) -> list[str]:
     Leeg betekent "geen rol hier". Voor een beslissing: gebruik
     :func:`opi.web.authz.authorize`; dit is de lezing die een pagina in zijn context zet.
     """
-    if get_user_service().is_platform_admin(user_email):
+    if is_elevated_admin(get_user_service(), user_email):
         return sorted(rol.value for rol in PLATFORM_ADMIN_ROLES)
 
     users = get_project_users(project_name)

@@ -29,9 +29,13 @@ from typing import Any
 from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from fastapi import HTTPException
+from opi.api.otp_step_up import step_up_problem_response, verify_api_step_up
 from opi.connectors.keycloak import fetch_jwks, fetch_oidc_metadata
 from opi.core.actor import set_actor, user_actor
+from opi.core.auth_decorators import REQUIRES_STEP_UP
 from opi.core.config import settings
+from opi.core.step_up import StepUpAction, step_up_fresh
+from opi.services.api_step_up_service import ApiStepUpService, sso_session_credential
 from opi.services.user_service import get_user_service
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
@@ -263,6 +267,12 @@ async def _authenticate_bearer(request: Request, route_name: str) -> dict[str, A
     logger.debug("Bearer authentication successful for route %s (user: %s)", route_name, user["email"])
     request.state.user = user
     set_actor(user_actor(user["email"]))
+    sid = claims.get("sid")
+    credential = sso_session_credential(sid) if isinstance(sid, str) and sid else None
+    fresh = credential is not None and await ApiStepUpService().is_fresh(credential, user["email"])
+    request.state.step_up_credential = credential
+    request.state.step_up_fresh = fresh
+    step_up_fresh.set(fresh)
     return user
 
 
@@ -293,6 +303,13 @@ def validate_platform_admin_token(func: Callable[..., Any]) -> Callable[..., Any
         if not get_user_service().is_platform_admin(user["email"]):
             logger.warning("Platform admin refused for route %s (user: %s)", func.__name__, user["email"])
             raise HTTPException(status_code=403, detail="Alleen platformbeheerders hebben toegang")
+        # A changing route declares its own step-up, with its own action in the refusal.
+        if getattr(func, REQUIRES_STEP_UP, None) is None:
+            probleem = await verify_api_step_up(
+                request, project_name="", actie=StepUpAction.ELEVATE, doelwit=user["email"]
+            )
+            if probleem is not None:
+                return step_up_problem_response(probleem)
         return await func(*args, request=request, **kwargs)
 
     setattr(wrapper, REQUIRES_PLATFORM_ADMIN_TOKEN, True)

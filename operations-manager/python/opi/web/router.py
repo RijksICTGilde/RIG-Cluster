@@ -17,7 +17,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
-from opi.core.step_up import StepUpAction
+from opi.core.step_up import StepUpAction, is_elevated_admin
 from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import is_projectbeheerder
 from opi.services.argocd_operation import (
@@ -51,6 +51,7 @@ from opi.services.zad_map.usage import measure_usage
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
+from opi.utils.url_paths import local_redirect_path
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.authz import enforce_route_action, may
 from opi.web.lotc_switch import (
@@ -1722,7 +1723,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             "user_roles": user_roles,
             # Voor de link naar de rolmatrix op de Team-kaart: die pagina is voor
             # platformbeheerders, dus een lid krijgt er geen link naartoe die 403 geeft.
-            "is_platform_admin": get_user_service().is_platform_admin(user_email),
+            "is_platform_admin": is_elevated_admin(get_user_service(), user_email),
             "services": services_with_info,
             "clusters": project_data.get("clusters", []),
             "components": project_data_decrypted.get("components", []),
@@ -2921,7 +2922,7 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
     """
     from opi.web.lotc_switch import SCHEME_COOKIE, SCHEMES
 
-    bestemming = terug if terug.startswith("/") and not terug.startswith("//") else "/"
+    bestemming = local_redirect_path(terug)
     antwoord = RedirectResponse(url=bestemming, status_code=303)
     antwoord.set_cookie(
         SCHEME_COOKIE,

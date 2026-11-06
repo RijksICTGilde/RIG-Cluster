@@ -41,7 +41,7 @@ houdt dat vast.
 - De step-up is die van RC-332: `StepUpAction.ENV_VARS_MANAGE` met
   `@requires_step_up(vraagt_altijd_step_up, ...)` op de GET én de POST van
   `opi/web/router_env_vars.py`. De opslag toetst de stempel dus opnieuw, ook als het
-  venster al openstond. Het venster van vijf minuten schuift niet mee.
+  venster al openstond. Het venster schuift niet mee.
 - De herhaalstap van de step-up-dialoog kent sinds RC-388 ook een GET als methode: het
   verborgen veld `vervolg_methode` reist mee in `bg/_step-up.html.j2`,
   `router_step_up.py` normaliseert het naar GET/POST en `bg/_step-up-herhalen.html.j2`

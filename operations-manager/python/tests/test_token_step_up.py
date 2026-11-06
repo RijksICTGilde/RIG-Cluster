@@ -12,11 +12,12 @@ routes dragen een body en een pad met het lid erin, en dat is waar de weigering 
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.api.otp_step_up import OTP_CODE_HEADER, STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
+from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.core.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
 
@@ -94,8 +95,12 @@ def otp() -> Iterator[dict[str, Any]]:
         return OtpVerification.OK if code == "123456" else OtpVerification.INVALID
 
     dienst = MagicMock(verify=AsyncMock(side_effect=_verify), status=AsyncMock(return_value=OtpStatus(registered=True)))
-    with patch("opi.api.otp_step_up.UserOtpService", return_value=dienst):
-        yield {"headers": {OTP_CODE_HEADER: "123456"}, "getoetst": getoetst}
+    with (
+        patch("opi.api.otp_step_up.UserOtpService", return_value=dienst),
+        patch("opi.api.step_up_router.record_step_up_attempt", AsyncMock()),
+        patch("opi.services.api_step_up_service.ApiStepUpService.record", AsyncMock(return_value=datetime.now(UTC))),
+    ):
+        yield {"getoetst": getoetst}
 
 
 @pytest.fixture
@@ -105,7 +110,10 @@ def zonder_factor() -> Iterator[None]:
         verify=AsyncMock(return_value=OtpVerification.NOT_REGISTERED),
         status=AsyncMock(return_value=OtpStatus(registered=False)),
     )
-    with patch("opi.api.otp_step_up.UserOtpService", return_value=dienst):
+    with (
+        patch("opi.api.otp_step_up.UserOtpService", return_value=dienst),
+        patch("opi.api.step_up_router.record_step_up_attempt", AsyncMock()),
+    ):
         yield
 
 
@@ -130,7 +138,6 @@ def test_zonder_otp_weigert_de_route_met_het_problem_detail(
 
     assert probleem["cause"] == StepUpCause.OTP_MISSING.value
     assert probleem["action"] == ROUTES[naam][4].value
-    assert probleem["otp_header"] == OTP_CODE_HEADER
     assert PROJECT in probleem["reason"]
     if naam != "service-account-add":
         # Het lid zit in het pad, dus is het doelwit: de reden noemt hem, niet alleen het
@@ -140,60 +147,51 @@ def test_zonder_otp_weigert_de_route_met_het_problem_detail(
     diensten[ROUTES[naam][3]].assert_not_awaited()
 
 
-@pytest.mark.parametrize("naam", sorted(ROUTES))
-def test_een_foute_code_weigert_de_route(
-    naam: str,
-    test_client: TestClient,
-    platformbeheerder_token: Any,
-    otp: dict[str, Any],
-    diensten: dict[str, AsyncMock],
+def test_a_wrong_code_activates_no_step_up(
+    test_client: TestClient, platformbeheerder_token: Any, otp: dict[str, Any]
 ) -> None:
-    headers = platformbeheerder_token["headers_gewone_gebruiker"] | {OTP_CODE_HEADER: "000000"}
+    response = test_client.post(
+        "/api/v2/step-up", json={"code": "000000"}, headers=platformbeheerder_token["headers_gewone_gebruiker"]
+    )
 
-    probleem = _probleem(_aanroep(test_client, naam, headers))
-
-    assert probleem["cause"] == StepUpCause.CODE_INVALID.value
-    diensten[ROUTES[naam][3]].assert_not_awaited()
+    assert _probleem(response)["cause"] == StepUpCause.CODE_INVALID.value
 
 
-@pytest.mark.parametrize("naam", sorted(ROUTES))
-def test_zonder_ingerichte_factor_wijst_de_weigering_de_weg(
-    naam: str, test_client: TestClient, platformbeheerder_token: Any, zonder_factor: None
+def test_without_a_factor_the_activation_shows_the_way(
+    test_client: TestClient, platformbeheerder_token: Any, zonder_factor: None
 ) -> None:
-    headers = platformbeheerder_token["headers_gewone_gebruiker"] | {OTP_CODE_HEADER: "123456"}
+    response = test_client.post(
+        "/api/v2/step-up", json={"code": "123456"}, headers=platformbeheerder_token["headers_gewone_gebruiker"]
+    )
 
-    probleem = _probleem(_aanroep(test_client, naam, headers))
-
+    probleem = _probleem(response)
     assert probleem["cause"] == StepUpCause.FACTOR_MISSING.value
     assert probleem["enroll_url"] == "/account/otp"
 
 
-@pytest.mark.parametrize("naam", sorted(ROUTES))
-def test_met_een_geldige_code_lukt_de_handeling(
-    naam: str,
-    test_client: TestClient,
-    platformbeheerder_token: Any,
-    otp: dict[str, Any],
-    diensten: dict[str, AsyncMock],
-) -> None:
-    headers = platformbeheerder_token["headers_gewone_gebruiker"] | otp["headers"]
-
-    response = _aanroep(test_client, naam, headers)
-
-    assert response.status_code in (200, 201)
-    diensten[ROUTES[naam][3]].assert_awaited_once()
-
-
-def test_de_code_wordt_tegen_de_eigenaar_van_het_bearertoken_getoetst(
+def test_the_code_is_checked_against_the_owner_of_the_bearer_token(
     test_client: TestClient, platformbeheerder_token: Any, otp: dict[str, Any]
 ) -> None:
-    """Niet tegen het lid in het pad: de code bewijst de AANROEPER, niet het doelwit."""
-    headers = platformbeheerder_token["headers_gewone_gebruiker"] | otp["headers"]
-
-    response = _aanroep(test_client, "token-revoke", headers)
+    response = test_client.post(
+        "/api/v2/step-up", json={"code": "123456"}, headers=platformbeheerder_token["headers_gewone_gebruiker"]
+    )
 
     assert response.status_code == 200
     assert otp["getoetst"] == [("iemand@example.test", "123456")]
+
+
+@pytest.mark.parametrize("naam", sorted(ROUTES))
+def test_met_een_verse_step_up_lukt_de_handeling(
+    naam: str,
+    test_client: TestClient,
+    platformbeheerder_token: Any,
+    verse_otp: dict[str, Any],
+    diensten: dict[str, AsyncMock],
+) -> None:
+    response = _aanroep(test_client, naam, platformbeheerder_token["headers_gewone_gebruiker"])
+
+    assert response.status_code in (200, 201)
+    diensten[ROUTES[naam][3]].assert_awaited_once()
 
 
 def test_de_leesroute_vraagt_geen_step_up(test_client: TestClient, platformbeheerder_token: Any) -> None:

@@ -29,7 +29,6 @@ from alembic.runtime.environment import EnvironmentContext
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
-from opi.api.otp_step_up import OTP_CODE_HEADER
 from opi.core.db import Base
 
 # Load every app module with the real settings before any test patches them. A module first
@@ -356,6 +355,34 @@ def reset_readiness_state() -> Any:
     yield
     # Clean up after test
     readiness_module._state = None
+
+
+@pytest.fixture(autouse=True)
+def elevated_by_default() -> Any:
+    """A test of what a platform admin may do starts elevated; a test of the opposite says so.
+
+    ``tests/test_elevated_platform_admin.py`` covers the admin without a step-up. The state
+    is only set here for calls that skip the middleware, which sets it on every request.
+    """
+    from opi.core.step_up import step_up_fresh
+
+    token = step_up_fresh.set(True)
+    yield
+    step_up_fresh.reset(token)
+
+
+@pytest.fixture
+def api_step_up() -> Any:
+    """The bearer token of this test carries a fresh step-up, for a token with a ``sid``."""
+    with patch("opi.services.api_step_up_service.ApiStepUpService.is_fresh", AsyncMock(return_value=True)):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def no_api_step_up() -> Any:
+    """No API caller has a step-up unless a test gives it one, and no test needs the table for that."""
+    with patch("opi.services.api_step_up_service.ApiStepUpService.is_fresh", AsyncMock(return_value=False)):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -793,6 +820,7 @@ def platformbeheerder_token() -> Iterator[dict[str, Any]]:
     """
     claims = {
         "sub": "beheerder-1",
+        "sid": "sso-sessie-1",
         "email": PLATFORMBEHEERDER_EMAIL,
         "email_verified": True,
         "preferred_username": "beheerder",
@@ -838,5 +866,8 @@ def verse_otp() -> Iterator[dict[str, Any]]:
         verify=AsyncMock(side_effect=_verify),
         status=AsyncMock(return_value=OtpStatus(registered=True)),
     )
-    with patch("opi.api.otp_step_up.UserOtpService", return_value=service):
-        yield {"headers": {OTP_CODE_HEADER: OTP_CODE}, "code": OTP_CODE}
+    with (
+        patch("opi.api.otp_step_up.UserOtpService", return_value=service),
+        patch("opi.services.api_step_up_service.ApiStepUpService.is_fresh", AsyncMock(return_value=True)),
+    ):
+        yield {"headers": {}, "code": OTP_CODE}

@@ -34,6 +34,7 @@ from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.session_guard import valid_session_user
+from opi.core.step_up import session_step_up_until, step_up_fresh
 from opi.manager.run_support import LABEL_RUN
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
@@ -346,6 +347,9 @@ async def stream_logs(
             return
 
         # === AUTHORIZATION ===
+
+        # Checked once, on connecting: the stream outlives the window, like any open page.
+        step_up_fresh.set(session_step_up_until(session) is not None)
 
         # Check if user has access to this project
         if not is_user_authorized_for_project(project_name, user_email):

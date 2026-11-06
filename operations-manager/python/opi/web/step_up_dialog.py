@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user
+from opi.core.step_up import STEP_UP_WINDOW
 from opi.services.user_otp_service import UserOtpService
 
 if TYPE_CHECKING:
@@ -88,6 +89,7 @@ async def render_step_up_dialog(
             "vervolg_token": vervolg_token or "",
             "vervolg_velden": json.dumps(vervolg_velden or {}, sort_keys=True),
             "vervolg_methode": methode,
+            "venster_minuten": int(STEP_UP_WINDOW.total_seconds() // 60),
         },
     )
 

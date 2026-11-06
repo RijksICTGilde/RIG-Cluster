@@ -132,7 +132,6 @@ async def test_zonder_otp_weigert_de_route_met_het_problem_detail(naam, platform
     assert probleem["type"] == STEP_UP_PROBLEM_TYPE
     assert probleem["cause"] == StepUpCause.OTP_MISSING.value
     assert probleem["action"] == actie.value
-    assert probleem["otp_header"] == "X-ZAD-OTP"
     assert probleem["reason"]
     assert probleem["remedy"]
 
@@ -149,21 +148,6 @@ async def test_met_de_eigen_code_van_de_beheerder_slaagt_de_route(naam, platform
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("naam", sorted(WIJZIGENDE_ROUTES))
-async def test_een_hergebruikte_code_weigert(naam, platformbeheerder_token, verse_otp) -> None:
-    """Geen venster: elke aanroep draagt zijn eigen code, en een tweede keer faalt."""
-    aanroep, _ = WIJZIGENDE_ROUTES[naam]
-    headers = platformbeheerder_token["headers"] | verse_otp["headers"]
-
-    eerste = await aanroep(headers)
-    tweede = await aanroep(headers)
-
-    assert eerste.status_code in (200, 202)
-    assert tweede.status_code == 403
-    assert json.loads(tweede.body)["cause"] == StepUpCause.CODE_INVALID.value
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("naam", sorted(WIJZIGENDE_ROUTES))
 async def test_met_de_projectsleutel_komt_de_route_niet_tot_de_step_up(naam, platformbeheerder_token) -> None:
     """De tokencontrole gaat voor: een gedeelde sleutel is hier geen legitimatie."""
     aanroep, _ = WIJZIGENDE_ROUTES[naam]
@@ -176,7 +160,16 @@ async def test_met_de_projectsleutel_komt_de_route_niet_tot_de_step_up(naam, pla
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("naam", sorted(_leesroutes()))
-async def test_een_leesroute_slaagt_zonder_otp(naam, platformbeheerder_token) -> None:
+async def test_a_read_route_needs_a_step_up(naam, platformbeheerder_token) -> None:
+    response = await _leesroutes()[naam](platformbeheerder_token["headers"])
+
+    assert response.status_code == 403
+    assert json.loads(response.body)["action"] == StepUpAction.ELEVATE.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("naam", sorted(_leesroutes()))
+async def test_a_read_route_opens_with_a_step_up(naam, platformbeheerder_token, verse_otp) -> None:
     response = await _leesroutes()[naam](platformbeheerder_token["headers"])
 
     assert response.status_code == 200

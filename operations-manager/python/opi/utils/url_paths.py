@@ -16,6 +16,16 @@ from typing import Any
 SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*\Z")
 
 
+def local_redirect_path(value: str, default: str = "/") -> str:
+    """This value as a redirect target on this site, or ``default``.
+
+    ``//host`` and ``/\\host`` are another domain to a browser, not a path.
+    """
+    if value.startswith("/") and not value.startswith(("//", "/\\")):
+        return value
+    return default
+
+
 def sanitize_path_value(value: Any, field: str) -> str:
     """
     Validate a tenant-supplied URL path used for ingress routing/rewriting.

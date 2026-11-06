@@ -227,6 +227,7 @@ class TestDeStoringZelf:
         project.data = {"name": "dd-mco"}
         monkeypatch.setattr(authz, "get_project_store", lambda: MagicMock(get=lambda naam: project))
         monkeypatch.setattr(authz, "get_user_service", lambda: MagicMock(is_platform_admin=lambda _e: True))
+        monkeypatch.setattr("opi.middleware.authorization.has_fresh_step_up", lambda _request: True)
 
         app = create_app()
         app.debug = False

@@ -67,6 +67,7 @@ def _make_token(
     now = int(time.time())
     header = {"alg": algorithm, "kid": key.thumbprint()}
     payload = {
+        "sid": "sso-sessie-1",
         "iss": issuer,
         "aud": audience,
         "sub": "user-1",
@@ -302,7 +303,9 @@ class TestValidateUserTokenDecorator:
 class TestValidatePlatformAdminTokenDecorator:
     """Platformbeheer via de API (RC-377): hetzelfde token, plus de rol."""
 
-    async def test_valid_admin_token_reaches_the_route_and_names_the_admin(self, realm: Any, signing_key: Any) -> None:
+    async def test_valid_admin_token_reaches_the_route_and_names_the_admin(
+        self, realm: Any, signing_key: Any, api_step_up: None
+    ) -> None:
         seen: dict[str, Any] = {}
 
         @validate_platform_admin_token

@@ -47,6 +47,7 @@ def _token_for(email: str, key: Any) -> str:
             "iss": ISSUER,
             "aud": AUDIENCE,
             "sub": "user-1",
+            "sid": "sso-sessie-1",
             "exp": now + 300,
             "email": email,
             "email_verified": True,
@@ -210,6 +211,7 @@ class TestWhoGetsTheKey:
         assert not_a_member.json() == {"detail": "Project 'andermans-project' not found"}
         assert does_not_exist.json() == {"detail": "Project 'does-not-exist' not found"}
 
+    @pytest.mark.usefixtures("api_step_up")
     def test_a_platform_administrator_gets_the_key_without_being_a_member(
         self, test_client: TestClient, realm: Any, store: Any, platform_admins: Any
     ) -> None:

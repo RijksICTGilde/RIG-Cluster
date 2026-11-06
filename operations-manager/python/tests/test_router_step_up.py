@@ -7,6 +7,7 @@ oorspronkelijke handeling, een foute of geblokkeerde code doet dat niet.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,15 @@ from opi.services.user_otp_service import OtpVerification
 from opi.web.router_step_up import step_up
 
 EMAIL = "eigenaar@example.org"
+
+
+@pytest.fixture(autouse=True)
+def _no_audit_trail() -> Any:
+    with (
+        patch("opi.web.router_step_up.record_step_up_attempt", AsyncMock()),
+        patch("opi.web.router_step_up.client_ip", return_value="10.0.0.1"),
+    ):
+        yield
 
 
 def _request(form: dict[str, str], *, email: str = EMAIL) -> SimpleNamespace:

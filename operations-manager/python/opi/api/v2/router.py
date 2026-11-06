@@ -1282,10 +1282,8 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     /api/v2/projects/{project_name}/leden/{naam}/tokens``, whose value is returned
     once and never again.
 
-    **A platform administrator sees every project.** That is deliberate and
-    follows from the platform-admin rule the whole application uses: an
-    administrator can already open any project's page. It is not a separate "list
-    everything" mode and there is no flag to ask for one.
+    **A platform administrator with a fresh step-up sees every project.** Without one
+    they see their own projects, like any other user. See ``POST /api/v2/step-up``.
 
     Headers:
         Authorization: Bearer <SSO access token> (required)
@@ -1550,7 +1548,7 @@ async def rotate_project_key_v2(
 ) -> JSONResponse:
     """Replace this project's AGE key pair. Async task, for a platform admin.
 
-    Wants a fresh ``X-ZAD-OTP`` on top of the token; see
+    Wants a fresh step-up (``POST /api/v2/step-up``) on top of the token; see
     ``features/projectsleutel-vervangen.md`` for details.
     """
     logger.info("V2 rotate project key: %s", project_name)
