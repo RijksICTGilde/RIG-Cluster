@@ -211,7 +211,7 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
         logger.debug(f"No .to-sops.yaml files found in {directory}")
         return True
 
-    logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt")
+    logger.debug(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt")
 
     failed_files: list[str] = []
     skipped = 0
@@ -251,7 +251,7 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
             with open(output_path, "w") as f:
                 f.write(process.stdout)
             os.remove(file_path)
-            logger.info(f"Successfully encrypted {file_path} -> {output_path}")
+            logger.debug(f"Successfully encrypted {file_path} -> {output_path}")
         except FileNotFoundError:
             logger.exception("sops command not found. Please install SOPS (https://github.com/mozilla/sops)")
             # sops is missing entirely; no point retrying the other files.
@@ -274,7 +274,7 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
         )
 
     if skipped:
-        logger.info(f"Kept {skipped} unchanged secret(s) as-is (no re-encryption)")
+        logger.debug(f"Kept {skipped} unchanged secret(s) as-is (no re-encryption)")
 
     return True
 

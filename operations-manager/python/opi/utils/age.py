@@ -154,7 +154,7 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str, *, log_fa
         logger.log(logging.ERROR if log_failure else logging.DEBUG, f"Age decryption failed (sync): {e}")
         return None
 
-    logger.info(f"Successfully decrypted age content (sync) - result length: {len(decrypted_content)}")
+    logger.debug(f"Successfully decrypted age content (sync) - result length: {len(decrypted_content)}")
     return decrypted_content
 
 
