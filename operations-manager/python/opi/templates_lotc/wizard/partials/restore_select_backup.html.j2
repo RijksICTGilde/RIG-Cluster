@@ -22,8 +22,8 @@
             <div class="backup-option__body">
                 <div class="backup-option__title-row">
                     {# Was een <code> met een eigen blauwe pil (--rvo-color-hemelblauw-200, bestaat
-                       niet). <c-code> geeft de code-opmaak die het thema ervoor heeft. #}
-                    <c-code>{{ run.backup_run_id }}</c-code>
+                       niet). nldd-rich-text geeft de code-opmaak die het thema ervoor heeft. #}
+                    <nldd-rich-text><code>{{ run.backup_run_id }}</code></nldd-rich-text>
                     <span class="backup-option__timestamp">{{ run.timestamp | dutch_date }}</span>
                 </div>
                 <div class="backup-option__meta-row">

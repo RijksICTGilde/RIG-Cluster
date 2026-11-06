@@ -445,7 +445,7 @@
                                                 {% else %}
                                                     <c-icon icon="exclamation-triangle" size="sm" />
                                                 {% endif %}
-                                                <c-code>{{ error.resource }}</c-code>
+                                                <nldd-rich-text><code>{{ error.resource }}</code></nldd-rich-text>
                                                 {% if error.get('count') and error.count|int > 1 %}
                                                     <c-span>({{ error.count }}x)</c-span>
                                                 {% endif %}

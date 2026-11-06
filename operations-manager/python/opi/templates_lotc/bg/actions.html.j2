@@ -42,14 +42,14 @@
     {% endcall %}
 
     {% call panel("Uitrollen", "arrow-up-arrow-down") %}
-        <c-code-viewer language="yaml">- name: Deploy to ZAD
+        <nldd-code-viewer language="yaml">- name: Deploy to ZAD
   uses: RijksICTGilde/zad-actions/deploy@v4
   with:
     api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
     project-id: my-project
     deployment-name: my-deployment
     component: web
-    image: ghcr.io/org/app:latest</c-code-viewer>
+    image: ghcr.io/org/app:latest</nldd-code-viewer>
 
         <c-paragraph size="sm">
             De API-sleutel hoort in de secrets van je CI/CD, niet in de workflow zelf.
@@ -61,7 +61,7 @@
             Werk je meer dan een image bij, gebruik dan <i>components</i> in plaats
             van <i>component</i> en <i>image</i>. Dan kan het als 1 actie.
         </c-paragraph>
-        <c-code-viewer language="yaml">- name: Deploy to ZAD
+        <nldd-code-viewer language="yaml">- name: Deploy to ZAD
   uses: RijksICTGilde/zad-actions/deploy@v4
   with:
     api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
@@ -71,7 +71,7 @@
       [
         {"name": "web", "image": "ghcr.io/org/web:latest"},
         {"name": "api", "image": "ghcr.io/org/api:latest"}
-      ]</c-code-viewer>
+      ]</nldd-code-viewer>
     {% endcall %}
 
     {% call panel("Opruimen", "trash") %}
@@ -79,14 +79,14 @@
             Bij het sluiten van een pull request. Naast de deployment kan hij ook de
             GitHub-omgeving en de gepubliceerde image opruimen, zodat er niets achterblijft.
         </c-paragraph>
-        <c-code-viewer language="yaml">- name: Cleanup ZAD deployment
+        <nldd-code-viewer language="yaml">- name: Cleanup ZAD deployment
   uses: RijksICTGilde/zad-actions/cleanup@v4
   with:
     api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
     project-id: my-project
     deployment-name: my-deployment
     delete-github-env: true
-    delete-container: true</c-code-viewer>
+    delete-container: true</nldd-code-viewer>
 
     {% endcall %}
 {% endblock %}

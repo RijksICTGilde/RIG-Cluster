@@ -3,7 +3,8 @@
   tests/test_getting_started_pagina.py enforces that.
 
   nldd-code-viewer directly, not c-code-viewer: that wrapper puts newlines around its content,
-  and the viewer shows them as an empty first and last line.
+  and the viewer shows them as an empty first and last line. The same goes for <code> and
+  c-code: inside a paragraph, c-code shows those newlines as spaces in the code box.
 #}
 
 {% macro begrippen() %}
@@ -38,7 +39,7 @@
 
 <c-heading type="h3" size="6" label="Waar vind je de env vars?" />
 <c-paragraph>
-    Op <c-link href="/services" label="Services overzicht" /> staan bij elke service de namen van zijn env vars, met uitleg. Vanaf de opdrachtregel krijg je ze met <c-code>zadctl service describe postgresql-database</c-code>.
+    Op <c-link href="/services" label="Services overzicht" /> staan bij elke service de namen van zijn env vars, met uitleg. Vanaf de opdrachtregel krijg je ze met <code>zadctl service describe postgresql-database</code>.
 </c-paragraph>
 <c-paragraph>PostgreSQL levert bijvoorbeeld:</c-paragraph>
 <nldd-rich-text><table>
@@ -64,7 +65,7 @@ with psycopg.connect(os.environ["DATABASE_SERVER_FULL"]) as conn:
     print(conn.execute("SELECT 'hello world'").fetchone())</nldd-code-viewer>
 
 <c-heading type="h3" size="6" label="Java" />
-<c-paragraph size="sm">JDBC kent de vorm van <c-code>DATABASE_SERVER_FULL</c-code> niet, dus hier bouw je de URL uit de losse env vars.</c-paragraph>
+<c-paragraph size="sm">JDBC kent de vorm van <code>DATABASE_SERVER_FULL</code> niet, dus hier bouw je de URL uit de losse env vars.</c-paragraph>
 {# No language: the pinned NLDD code viewer has no Java grammar. #}
 <nldd-code-viewer>var url = "jdbc:postgresql://" + System.getenv("DATABASE_SERVER_HOST")
     + ":" + System.getenv("DATABASE_SERVER_PORT")
@@ -73,18 +74,33 @@ var conn = DriverManager.getConnection(url,
     System.getenv("DATABASE_SERVER_USER"), System.getenv("DATABASE_PASSWORD"));</nldd-code-viewer>
 
 <c-paragraph size="sm">
-    Verwacht je applicatie een andere naam, dan leg je dat vast met een alias, zoals <c-code>POSTGRES_HOST: $DATABASE_SERVER_HOST</c-code>. Eigen instellingen zet je bij je component onder Omgevingsvariabelen.
+    Verwacht je applicatie een andere naam, dan leg je dat vast met een alias, zoals <code>POSTGRES_HOST: $DATABASE_SERVER_HOST</code>. Eigen instellingen zet je bij je component onder Omgevingsvariabelen.
 </c-paragraph>
 {% endmacro %}
 
+{% macro team_en_rollen(rollen) %}
+<c-paragraph>Op het tabblad Team van je project bepaal je wie erbij mag en wat ze mogen. Een lid kan meer dan een rol hebben, en krijgt dan alles bij elkaar opgeteld.</c-paragraph>
+<nldd-rich-text><table>
+    <thead><tr><th>Rol</th><th>Waarvoor</th></tr></thead>
+    <tbody>
+        {% for rol in rollen %}
+        <tr><td>{{ rol.label }}</td><td>{{ rol.description }}</td></tr>
+        {% endfor %}
+    </tbody>
+</table></nldd-rich-text>
+<c-paragraph size="sm">Admin is gebruikersbeheer: wil je zelf ook bouwen, neem er dan Ontwikkelaar of Ops bij. Wijzigen op productie vraagt de code van je 2-factor. Wat elke rol per handeling mag: <c-link href="/rollen" label="Rollen en rechten" /></c-paragraph>
+
+<c-heading type="h3" size="6" label="Een pipeline" />
+<c-paragraph>Een pipeline is geen persoon en kan geen 2-factor geven. Voeg daarvoor op hetzelfde tabblad een service account toe met de rol Developer CI of Ops CI, en geef dat een eigen token.</c-paragraph>
+{% endmacro %}
+
 {% macro image_uitrollen() %}
-<c-paragraph>Hiervoor heb je een token van je project nodig. Die maak je aan op het tabblad Team van je project, onder Leden en tokens.</c-paragraph>
+<c-paragraph>Hiervoor heb je een token nodig. Die maak je aan op het tabblad Team van je project, onder Leden en tokens.</c-paragraph>
 
 <c-heading type="h3" size="6" label="Met zadctl" />
-<nldd-code-viewer language="bash">export ZAD_API_KEY=jouw-token
-export ZAD_PROJECT_ID=my-project
+<nldd-code-viewer language="bash">zadctl config init
 zadctl deployment update-image staging --component web --image ghcr.io/org/app:v1.3</nldd-code-viewer>
-<c-paragraph size="sm">Meer info: <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" /></c-paragraph>
+<c-paragraph size="sm"><code>config init</code> vraagt om de API URL (Enter volstaat), je token en je project, en bewaart ze in <code>.env.zadctl</code> in de map waar je staat. Daarna werkt elke opdracht in die map zonder verdere instellingen. Installatie en alle opdrachten: <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" /></c-paragraph>
 
 <c-heading type="h3" size="6" label="Met een GitHub Action" />
 <nldd-code-viewer language="yaml">- uses: RijksICTGilde/zad-actions/deploy@v4
@@ -94,5 +110,5 @@ zadctl deployment update-image staging --component web --image ghcr.io/org/app:v
     deployment-name: staging
     component: web
     image: ghcr.io/org/app:v1.3</nldd-code-viewer>
-<c-paragraph size="sm">Zet de token in de secrets van je repository, niet in de workflow zelf. Meer info: <c-link href="https://github.com/RijksICTGilde/zad-actions" label="zad-actions op GitHub" target="_blank" /></c-paragraph>
+<c-paragraph size="sm">Gebruik de token van een service account, en zet die in de secrets van je repository, niet in de workflow zelf. Meer info: <c-link href="https://github.com/RijksICTGilde/zad-actions" label="zad-actions op GitHub" target="_blank" /></c-paragraph>
 {% endmacro %}
