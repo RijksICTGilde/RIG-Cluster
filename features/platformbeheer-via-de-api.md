@@ -58,30 +58,26 @@ geen, want hij vraagt geen OTP.
 | `POST /api/v2/admin/projects/:reconcile` | de projects-repo nu inlezen | ja | `projects-reload` |
 | `POST /api/v2/projects/{project_name}/:rotate-project-key` | de projectsleutel vervangen (`features/projectsleutel-vervangen.md`) | ja | `project-key-replace` |
 
-## Een verse OTP bij een wijziging
+## Een verse step-up
 
-Een beheerroute die iets VERANDERT vraagt naast het token een verse code uit de
-authenticator van de beheerder, in `X-ZAD-OTP`. Dat is dezelfde step-up als bij een
-handeling op productie (RC-332), met dezelfde header, hetzelfde problem-detail en dezelfde
+Elke beheerroute vraagt naast het token een verse step-up van de beheerder, ook een
+leesroute: zonder step-up is een platformbeheerder een gewone gebruiker. Dat is dezelfde
+step-up als bij een handeling op productie, met hetzelfde problem-detail en dezelfde
 `cause`-waarden; zie [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md) voor de velden.
-Het verschil is alleen de aanleiding: platformbeheer weegt geen omgeving, want een
-beheerhandeling raakt het hele cluster.
 
 ```bash
+curl -X POST "https://zad.rijksapps.nl/api/v2/step-up" \
+  -H "Authorization: Bearer $ZAD_TOKEN" -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'
+
 curl -X POST "https://zad.rijksapps.nl/api/v2/admin/projects/:reconcile" \
-  -H "Authorization: Bearer $ZAD_TOKEN" \
-  -H "X-ZAD-OTP: 123456"
+  -H "Authorization: Bearer $ZAD_TOKEN"
 ```
 
-Er is geen venster: elk verzoek draagt zijn eigen code, en een hergebruikte code faalt.
-
-Zonder code is het antwoord `403` met `application/problem+json`, `type:
+Zonder step-up is het antwoord `403` met `application/problem+json`, `type:
 urn:zad:step-up-required` en `cause: otp-missing`. Een client hoort daaraan te zien dat hij
-om een code moet vragen en de aanroep te herhalen. `action` zegt welke handeling het was,
-`reason` waarom ze een step-up vraagt, `remedy` wat er moet gebeuren.
-
-De twee leesroutes vragen alleen het token: een OTP erop zou een handeling verzinnen die er
-niet is.
+een step-up moet activeren en de aanroep moet herhalen. `action` zegt welke handeling het
+was, `reason` waarom ze een step-up vraagt, `remedy` wat er moet gebeuren.
 
 Sinds RC-409 geldt hetzelfde voor gebruikersbeheer in het PORTAAL (`/admin/users/*`): die
 vijf wijzigende routes droegen de step-up nog niet, en vragen nu een verse code zoals de

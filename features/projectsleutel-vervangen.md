@@ -8,11 +8,10 @@ Die sleutel is zichtbaar voor elke `admin` en `owner` van het project. Vertrekt 
 
 ```bash
 curl -X POST "https://zad.sandbox.rijksapp.dev/api/v2/projects/demo/:rotate-project-key" \
-  -H "Authorization: Bearer $ZAD_TOKEN" \
-  -H "X-ZAD-OTP: 123456"
+  -H "Authorization: Bearer $ZAD_TOKEN"
 ```
 
-Alleen met het token van een platformbeheerder, plus een verse code uit zijn authenticator: een projectlid kan zijn eigen sleutel niet vervangen. Zonder token `401`, met het token van een gewone gebruiker `403`, zonder code `403` met `type: urn:zad:step-up-required` en `action: project-key-replace`. Zie `features/platformbeheer-via-de-api.md`. Het antwoord is `202` met een `task_id`; de voortgang staat op `/api/tasks/{task_id}`.
+Alleen met het token van een platformbeheerder, plus een verse step-up (`POST /api/v2/step-up`): een projectlid kan zijn eigen sleutel niet vervangen. Zonder token `401`, met het token van een gewone gebruiker `403`, zonder step-up `403` met `type: urn:zad:step-up-required` en `action: project-key-replace`. Zie `features/platformbeheer-via-de-api.md`. Het antwoord is `202` met een `task_id`; de voortgang staat op `/api/tasks/{task_id}`.
 
 Het resultaat van de taak:
 
@@ -106,7 +105,7 @@ Het verwerken zet het namespace-Secret eerst en pusht daarna de nieuwe `*.sops.y
 
 Het venster duurt ongeveer twintig seconden (sandbox-meting). Na tien seconden staat de nieuwe sleutel in het namespace-Secret terwijl zad-deployments nog de OUDE recipient noemt. Na twintig seconden (taak-einde) noemde dat bestand alleen de nieuwe recipient en waren beide Applications (`<project>-project`, `<project>-productie`) `Synced / Healthy` op de rotatie-commit.
 
-Het volgen van de taak gaat met hetzelfde token: `/api/tasks/{task_id}` wil de api-key van het project zelf of het bearertoken van wie de taak startte, en dat laatste is hier het e-mailadres van de platformbeheerder in `created_by`. Die route vraagt geen `X-ZAD-OTP`; alleen de rotatie zelf doet dat.
+Het volgen van de taak gaat met hetzelfde token: `/api/tasks/{task_id}` wil de api-key van het project zelf of het bearertoken van wie de taak startte, en dat laatste is hier het e-mailadres van de platformbeheerder in `created_by`. Die route vraagt geen step-up; alleen de rotatie zelf doet dat.
 
 ## Terugzetten
 

@@ -96,7 +96,7 @@ A reconciliation job can be triggered via the admin API:
 
 ### Admin API
 
-The admin router (`/api/v2/admin/`) provides manual control over the cleanup lifecycle. Authenticated with the bearer token of a platform admin, and the three that change something also want a fresh code in `X-ZAD-OTP`; see `features/platformbeheer-via-de-api.md`.
+The admin router (`/api/v2/admin/`) provides manual control over the cleanup lifecycle. Authenticated with the bearer token of a platform admin, and all of them want a fresh step-up (`POST /api/v2/step-up`); see `features/platformbeheer-via-de-api.md`.
 
 | Endpoint | Method | Description | OTP |
 |----------|--------|-------------|-----|

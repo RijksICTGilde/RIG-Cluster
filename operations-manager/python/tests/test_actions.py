@@ -39,6 +39,8 @@ from opi.services.project_roles import roles_from_value
 #: handeling bij de methode past: een route die iets WIJZIGT hoort geen leeshandeling te
 #: vragen (``test_een_leesrol_komt_niet_verder_dan_lezen`` legt die kant vast).
 SLEUTELROUTES: dict[tuple[str, str], Action] = {
+    ("POST", "/api/v2/projects/{project_name}/step-up"): Action.TOKEN_STEP_UP,
+    ("DELETE", "/api/v2/projects/{project_name}/step-up"): Action.TOKEN_STEP_UP,
     ("GET", "/api/logs/{project_name}"): Action.LOGS_READ,
     ("DELETE", "/api/projects/{project_name}"): Action.PROJECT_DELETE,
     ("GET", "/api/projects/{project_name}/:refresh"): Action.PROJECT_REFRESH,
@@ -413,6 +415,8 @@ HANDGESCHREVEN = {
 #: Wat de bearerroutes vragen. Ze nemen een SSO-bearer en geen projectsleutel: bij het
 #: projectoverzicht bestaat het project nog niet, en een token hoort geen token te maken.
 BEARERROUTES = {
+    ("POST", "/api/v2/step-up"): Action.STEP_UP_VERIFY,
+    ("DELETE", "/api/v2/step-up"): Action.STEP_UP_VERIFY,
     ("GET", "/api/v2/projects"): Action.PROJECT_LIST,
     ("POST", "/api/v2/projects"): Action.PROJECT_CREATE,
     ("GET", "/api/v2/projects/{project_name}/api-key"): Action.PROJECT_KEY_READ,

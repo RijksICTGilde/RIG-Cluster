@@ -9,16 +9,22 @@ import inspect
 import logging
 from functools import wraps
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
-from opi.core.step_up import StepUpAction, has_fresh_step_up, log_step_up_refusal
+from opi.core.step_up import StepUpAction, has_fresh_step_up, is_elevated_admin, log_step_up_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+#: The route behind the popup where a platform admin activates elevated permissions.
+ELEVATE_PATH = "/step-up/elevate"
+
+ELEVATION_NEEDED = "Activeer eerst verhoogde rechten via het menu rechtsboven."
 
 
 def requires_sso(func: Callable) -> Callable:
@@ -85,9 +91,31 @@ def require_platform_admin(request) -> dict[str, Any]:
     if not user:
         raise HTTPException(status_code=401, detail="Niet ingelogd")
     email = str(user.get("email", "")).lower()
-    if not get_user_service().is_platform_admin(email):
+    users = get_user_service()
+    if not users.is_platform_admin(email):
         raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
+    if not is_elevated_admin(users, email):
+        raise _elevation_required(request)
     return user
+
+
+def _elevation_required(request) -> HTTPException:
+    """Send a platform admin without a fresh step-up to the popup that activates it."""
+    if request.headers.get("HX-Request"):
+        terug = urlsplit(request.headers.get("HX-Current-URL", "")).path or "/"
+        return HTTPException(status_code=403, detail=ELEVATION_NEEDED, headers={"HX-Redirect": elevate_url(terug)})
+    if request.method == "GET":
+        terug = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        return HTTPException(status_code=303, detail=ELEVATION_NEEDED, headers={"Location": elevate_url(terug)})
+    return HTTPException(status_code=403, detail=ELEVATION_NEEDED)
+
+
+def elevate_url(terug: str) -> str:
+    """The dashboard with the popup open, which returns to ``terug`` after a valid code.
+
+    The dashboard because an admin page cannot show itself without the rights it asks for.
+    """
+    return f"/dashboard?{urlencode({'verhoog': terug})}"
 
 
 #: Markering op een route die zich voor een step-up heeft aangemeld, met de

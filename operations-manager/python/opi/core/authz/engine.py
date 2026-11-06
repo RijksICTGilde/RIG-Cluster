@@ -182,6 +182,7 @@ class Requirement(StrEnum):
 
 
 STEP_UP = frozenset({Requirement.STEP_UP})
+HUMAN_ONLY = frozenset({Requirement.HUMAN_ONLY})
 
 
 @dataclass(frozen=True)

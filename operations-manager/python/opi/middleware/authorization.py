@@ -16,6 +16,7 @@ from starlette.routing import Match
 
 from opi.core.actor import set_actor, user_actor
 from opi.core.session_guard import drop_refused_session, valid_session_user
+from opi.core.step_up import has_fresh_step_up, step_up_fresh
 from opi.services.user_service import get_user_service
 from opi.utils.logging_redact import redact_invite_key_in_path
 
@@ -90,6 +91,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
             HTTP response, potentially a redirect to login
         """
         path = request.url.path
+        step_up_fresh.set(False)
 
         # Skip auth checks and logging for infrastructure endpoints
         if path in SKIP_AUTH_EXACT or path.startswith(SKIP_AUTH_PREFIXES):
@@ -134,6 +136,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         # niet terug naar deze middleware.
         if user and user.get("email"):
             set_actor(user_actor(user["email"]))
+            step_up_fresh.set(has_fresh_step_up(request))
 
         return await call_next(request)
 

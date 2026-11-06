@@ -36,7 +36,7 @@ from opi.core.authz.engine import (
     record_decision,
     rule_for,
 )
-from opi.core.step_up import has_fresh_step_up
+from opi.core.step_up import has_fresh_step_up, is_elevated_admin
 from opi.manager.clone_validation import new_or_changed_clone_sources
 from opi.services.project_leden import lid_met_naam
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles, resource_path
@@ -59,11 +59,11 @@ TE_SMALLE_ROL = "Onvoldoende rechten voor deze handeling op dit project"
 def portal_principal(request: Request, project: ProjectSummary) -> Principal:
     """De aanroeper als principal op DIT project.
 
-    Een platformbeheerder krijgt op elk project dezelfde rollen als hij nu overal
-    ``admin`` krijgt (B6); hij hoeft geen lid te zijn.
+    Een platformbeheerder met verhoogde rechten krijgt op elk project dezelfde rollen als
+    hij nu overal ``admin`` krijgt (B6); hij hoeft geen lid te zijn.
     """
     email = str((get_current_user(request) or {}).get("email", "")).lower()
-    if get_user_service().is_platform_admin(email):
+    if is_elevated_admin(get_user_service(), email):
         rollen = PLATFORM_ADMIN_ROLES
     else:
         lid = lid_met_naam(project, email)

@@ -22,7 +22,6 @@ from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
 from opi.core.step_up import StepUpAction
-from opi.services.user_otp_service import OtpStatus, OtpVerification
 
 API_KEY = "sleutel-123"
 LID = "lid@example.org"
@@ -102,56 +101,16 @@ async def test_productie_met_de_projectsleutel_zonder_otp_weigert_en_verwijdert_
 
 
 @pytest.mark.asyncio
-async def test_productie_met_de_projectsleutel_en_een_code_weigert_ook() -> None:
-    """Een machine heeft geen tweede factor; een code aan een projectsleutel hangen mag niet."""
+async def test_production_with_a_fresh_step_up_of_the_owner_succeeds() -> None:
     p1, p2, manager = _patches(PRODUCTIE)
-    with p1, p2, patch("opi.api.otp_step_up.UserOtpService") as service_cls:
-        response = await delete_project(
-            request=_request({"X-API-Key": API_KEY, "X-ZAD-OTP": "123456"}),
-            project_name="demo",
-            delete_data=_delete_data(),
-        )
-
-    assert response.status_code == 403
-    assert json.loads(response.body)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
-    service_cls.assert_not_called()
-    manager.delete_project.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_productie_met_de_eigen_code_van_een_persoonlijk_token_slaagt() -> None:
-    """De weg die open blijft: de code van de eigenaar van het token.
-
-    Vandaag draagt geen step-up-route ``validate_user_token``, dus hier staat
-    ``request.state.user`` zoals die decorator hem zou zetten.
-    """
-    p1, p2, manager = _patches(PRODUCTIE)
-    request = _request({"X-API-Key": API_KEY, "X-ZAD-OTP": "654321"})
+    request = _request({"X-API-Key": API_KEY})
     request.state.user = {"email": LID}
-    service = MagicMock(verify=AsyncMock(return_value=OtpVerification.OK))
-    with p1, p2, patch("opi.api.otp_step_up.UserOtpService", return_value=service):
+    request.state.step_up_fresh = True
+    with p1, p2:
         response = await delete_project(request=request, project_name="demo", delete_data=_delete_data())
 
     assert response.status_code == 200
-    service.verify.assert_awaited_once_with(LID, "654321")
     manager.delete_project.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_productie_met_een_ongeldige_code_van_de_eigenaar_weigert() -> None:
-    p1, p2, manager = _patches(PRODUCTIE)
-    request = _request({"X-API-Key": API_KEY, "X-ZAD-OTP": "000000"})
-    request.state.user = {"email": LID}
-    service = MagicMock(
-        verify=AsyncMock(return_value=OtpVerification.INVALID),
-        status=AsyncMock(return_value=OtpStatus(registered=True)),
-    )
-    with p1, p2, patch("opi.api.otp_step_up.UserOtpService", return_value=service):
-        response = await delete_project(request=request, project_name="demo", delete_data=_delete_data())
-
-    assert response.status_code == 403
-    assert json.loads(response.body)["cause"] == StepUpCause.CODE_INVALID.value
-    manager.delete_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio

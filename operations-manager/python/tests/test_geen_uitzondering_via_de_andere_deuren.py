@@ -96,6 +96,7 @@ class TestDeSjabloonDeur:
         # is; zonder deze twee valt het fragment op een 404 voordat de meting begint.
         monkeypatch.setattr(authz, "get_project_store", lambda: MagicMock(get=lambda naam: project))
         monkeypatch.setattr(authz, "get_user_service", lambda: MagicMock(is_platform_admin=lambda _e: True))
+        monkeypatch.setattr("opi.middleware.authorization.has_fresh_step_up", lambda _request: True)
 
         async def _prometheus_valt_om() -> object:
             raise OSError(PROMETHEUS_STORING)

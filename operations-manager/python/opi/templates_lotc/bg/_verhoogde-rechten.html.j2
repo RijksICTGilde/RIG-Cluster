@@ -1,0 +1,38 @@
+{# The content of the popup: active, a code to give, or no factor yet. #}
+<div hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
+    <c-stack gap="md">
+        {% if actief_tot %}
+            <c-paragraph>Verhoogde rechten zijn actief tot {{ actief_tot | dutch_date(only_time=True) }}.</c-paragraph>
+            <form hx-post="/step-up/end" hx-target="#verhoog-inhoud" hx-swap="innerHTML">
+                <nldd-button-group>
+                    <nldd-button type="button" appearance="secondary" text="Sluiten" data-verhoog-sluit></nldd-button>
+                    <nldd-button type="submit" appearance="primary" text="Beëindigen"></nldd-button>
+                </nldd-button-group>
+            </form>
+        {% elif geregistreerd %}
+            <c-paragraph>Vul je 2-factor code in. De beheer rechten gelden {{ venster_minuten }} minuten.</c-paragraph>
+            {# novalidate: de server valideert de code en meldt in het Nederlands. #}
+            <form id="verhoog-form" autocomplete="off" novalidate
+                  hx-post="/step-up/elevate" hx-target="#verhoog-inhoud" hx-swap="innerHTML">
+                <input type="hidden" name="terug" value="{{ terug }}" />
+                <c-stack gap="md">
+                    <nldd-form-field label="Code uit je app">
+                        <nldd-text-field name="otp" autocomplete="one-time-code" keyboard="numeric" required
+                                         {% if code_fout %}invalid unmet="verhoog-code-fout"{% endif %}></nldd-text-field>
+                        {% if code_fout %}<nldd-validation-list><nldd-validation-item id="verhoog-code-fout">{{ code_fout }}</nldd-validation-item></nldd-validation-list>{% endif %}
+                    </nldd-form-field>
+                    <nldd-button-group>
+                        <nldd-button type="button" appearance="secondary" text="Annuleren" data-verhoog-sluit></nldd-button>
+                        <nldd-button type="submit" appearance="primary" text="Activeren"></nldd-button>
+                    </nldd-button-group>
+                </c-stack>
+            </form>
+        {% else %}
+            <c-paragraph>Je hebt nog geen 2-factor ingericht. Die is nodig om verhoogde rechten te activeren.</c-paragraph>
+            <nldd-button-group>
+                <nldd-button type="button" appearance="secondary" text="Annuleren" data-verhoog-sluit></nldd-button>
+                <nldd-button appearance="primary" text="Factor inrichten" href="/account/otp"></nldd-button>
+            </nldd-button-group>
+        {% endif %}
+    </c-stack>
+</div>

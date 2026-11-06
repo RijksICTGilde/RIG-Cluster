@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from opi.core.actor import ActorKind, get_actor
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide, effective_roles
 from opi.core.project_environment import Omgeving, effective_environment, highest_environment
+from opi.core.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ def actor_may_set(action: Action, project_data: dict[str, Any], *, environment: 
     if actor.kind is not ActorKind.USER or not actor.identity:
         return True
     email = actor.identity.lower()
-    if get_user_service().is_platform_admin(email):
+    if is_elevated_admin(get_user_service(), email):
         roles = PLATFORM_ADMIN_ROLES
     else:
         roles = frozenset()

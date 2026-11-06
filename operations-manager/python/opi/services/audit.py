@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Text, cast, delete, literal, or_, select, tuple_, update
 
+from opi.core.actor import user_actor
+from opi.core.authz.actions import Action
 from opi.core.config import settings
 from opi.core.db import session_scope
 from opi.core.flow_id import get_flow_id
@@ -98,6 +100,26 @@ def _dedup_key(action: str, subject: str | None, allowed: bool, cause: str | Non
     """
     uitkomst = "allowed" if allowed else (cause or "denied")
     return f"audit:{action}:{subject or '-'}:{uitkomst}"[:160]
+
+
+async def record_step_up_attempt(email: str, *, allowed: bool, cause: str | None, origin: str) -> None:
+    """Leave a trail of a step-up: a refused code is a security signal, not noise."""
+    await record_action(
+        actor=user_actor(email),
+        action=Action.STEP_UP_VERIFY.value,
+        resource_path="step-up",
+        project=None,
+        deployment=None,
+        environment=None,
+        allowed=allowed,
+        cause=cause,
+        grant=None,
+        step_up=allowed,
+        status_code=None,
+        commit_shas=[],
+        task_id=None,
+        origin=origin,
+    )
 
 
 async def record_action(

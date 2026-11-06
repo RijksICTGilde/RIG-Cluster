@@ -3,7 +3,7 @@
 Provides endpoints for managing resource lifecycle operations that are
 separate from the normal project API. Authenticated with the bearer token of a
 platform admin, and every route that CHANGES something also wants a fresh code in
-``X-ZAD-OTP``; see ``features/platformbeheer-via-de-api.md``.
+a fresh step-up (``POST /api/v2/step-up``); see ``features/platformbeheer-via-de-api.md``.
 
 Endpoints:
     GET  /api/v2/admin/marked-for-deletion          - List marked resources
@@ -99,7 +99,7 @@ async def trigger_cleanup(
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/cleanup/trigger?project_name=my-project&dry_run=false" \\
-          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
+          -H "Authorization: Bearer $ZAD_TOKEN"
     """
     from opi.jobs.reconciliation import cleanup_project
 
@@ -137,7 +137,7 @@ async def trigger_reconciliation(
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/reconciliation/trigger?dry_run=false" \\
-          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
+          -H "Authorization: Bearer $ZAD_TOKEN"
     """
     from opi.jobs.reconciliation import reconcile
 
@@ -178,7 +178,7 @@ async def delete_mark(
 
     Example:
         curl -X DELETE "http://localhost:9595/api/v2/admin/marked-for-deletion/some-uuid" \\
-          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
+          -H "Authorization: Bearer $ZAD_TOKEN"
     """
     service = _get_marked_for_deletion_service()
 
@@ -238,7 +238,7 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/orphans/confirm" \\
-          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456" \\
+          -H "Authorization: Bearer $ZAD_TOKEN" \\
           -H "Content-Type: application/json" \\
           -d '{"items": [{"type": "postgresql_database", "name": "regel_k4c_pr104"}]}'
     """
@@ -326,7 +326,7 @@ async def reconcile_projects(request: Request) -> JSONResponse:
 
     Example:
         curl -X POST "http://localhost:9595/api/v2/admin/projects/:reconcile" \\
-          -H "Authorization: Bearer $ZAD_TOKEN" -H "X-ZAD-OTP: 123456"
+          -H "Authorization: Bearer $ZAD_TOKEN"
     """
     store = get_project_store()
 

@@ -29,6 +29,7 @@ from opi.core.authz.engine import RuleError, rule_for
 from opi.core.config import settings
 from opi.core.project_environment import DEFAULT_ENVIRONMENT, Omgeving, effective_environment
 from opi.manager.run_support import find_deployment
+from opi.services.api_step_up_service import ApiStepUpService, personal_token_credential
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_store import get_project_store
@@ -133,6 +134,10 @@ async def handhaaf(
     tel_gebruik(project.name, principaal.kind)
     if principaal.kind is PrincipalKind.HUMAN:
         request.state.user = {"email": principaal.name}
+        request.state.step_up_credential = personal_token_credential(presented)
+        request.state.step_up_fresh = await ApiStepUpService().is_fresh(
+            request.state.step_up_credential, principaal.name
+        )
     logger.debug("Toegestaan: %s mag %s op %s", principaal.actor, action_of(endpoint), project.name)
 
 

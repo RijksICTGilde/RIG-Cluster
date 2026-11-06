@@ -22,7 +22,7 @@ from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
 from opi.api.otp_step_up import (
-    OTP_CODE_HEADER,
+    STEP_UP_PATH,
     STEP_UP_PROBLEM_MEDIA_TYPE,
     STEP_UP_PROBLEM_TYPE,
     StepUpProblem,
@@ -31,6 +31,7 @@ from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
+from opi.api.step_up_router import step_up_api_router
 from opi.api.task_router import task_router
 from opi.api.token_router import token_router
 from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
@@ -627,23 +628,11 @@ def create_app() -> FastAPI:
         step_up_schema = StepUpProblem.model_json_schema(ref_template="#/components/schemas/{model}")
         schemas.update(step_up_schema.pop("$defs", {}))
         schemas["StepUpProblem"] = step_up_schema
-        step_up_header = {
-            "name": OTP_CODE_HEADER,
-            "in": "header",
-            "required": False,
-            "schema": {"type": "string"},
-            "description": (
-                "Een verse code uit de authenticator van de aanroeper, voor een handeling die "
-                "productie raakt of het platform beheert. Alleen nodig als deze aanroep dat echt doet, en alleen te "
-                "gebruiken met een persoonlijk token: de code wordt getoetst tegen de tweede "
-                "factor van de eigenaar van dat token. Met een projectsleutel kan de handeling niet."
-            ),
-        }
         step_up_403 = {
             "description": (
                 "Deze handeling vraagt een verse 2-factor. Het antwoord "
                 f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
-                f"'remedy' wat er moet gebeuren. Herhaal de aanroep met '{OTP_CODE_HEADER}'."
+                f"'remedy' wat er moet gebeuren. Activeer een step-up met '{STEP_UP_PATH}' en herhaal de aanroep."
             ),
             "content": {STEP_UP_PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/StepUpProblem"}}},
         }
@@ -666,7 +655,6 @@ def create_app() -> FastAPI:
                 method["security"] = [{scheme: []}]
                 method.setdefault("responses", {})["5XX"] = vijf_xx
                 if (path, verb) in step_up_operations:
-                    method.setdefault("parameters", []).append(step_up_header)
                     method["responses"]["403"] = step_up_403
 
         # Sort paths: V2 first, then v1, for clarity in docs
@@ -880,6 +868,7 @@ def create_app() -> FastAPI:
     app.include_router(token_router, include_in_schema=True)  # API-tokens en service accounts
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
     app.include_router(admin_router, include_in_schema=True)  # Admin cleanup/reconciliation API
+    app.include_router(step_up_api_router, include_in_schema=True)  # Step-up state of a bearer token
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs

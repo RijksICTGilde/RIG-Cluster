@@ -36,6 +36,7 @@ def _bearer(email: str, key: Any) -> str:
             "iss": ISSUER,
             "aud": AUDIENCE,
             "sub": "user-1",
+            "sid": "sso-sessie-1",
             "exp": now + 300,
             "email": email,
             "email_verified": True,

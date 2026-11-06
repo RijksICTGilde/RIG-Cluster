@@ -95,6 +95,7 @@ class Action(StrEnum):
     WIZARD_USE = "wizard.use"
     ACCOUNT_OTP = "account.otp"
     STEP_UP_VERIFY = "step-up.verify"
+    TOKEN_STEP_UP = "token.step-up"  # noqa: S105  # naam van de handeling, geen secret
     TOOLS_USE = "tools.use"
 
     # Platformbeheer. Deze routes blijven achter ``is_platform_admin``; de action bestaat

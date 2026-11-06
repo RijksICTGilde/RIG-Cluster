@@ -24,6 +24,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import kenmerk_van, met_kenmerk
+from opi.core.step_up import has_fresh_step_up, step_up_fresh
 from opi.middleware.authorization import get_user
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.project_authorization import is_user_authorized_for_project
@@ -258,6 +259,8 @@ async def get_component_pods(
         raise HTTPException(status_code=401, detail="Authentication required")
     if not get_user_service().is_email_allowed(user_email):
         raise HTTPException(status_code=403, detail="Access denied")
+    # This route runs on the portal session, and the middleware skips /api/.
+    step_up_fresh.set(has_fresh_step_up(request))
     if not is_user_authorized_for_project(project_name, user_email):
         raise HTTPException(status_code=403, detail="Access denied")
 

@@ -47,6 +47,7 @@ def _token_for(email: str, key: Any) -> str:
             "iss": ISSUER,
             "aud": AUDIENCE,
             "sub": "user-1",
+            "sid": "sso-sessie-1",
             "exp": now + 300,
             "email": email,
             "email_verified": True,
@@ -225,6 +226,7 @@ class TestWhatTheCallerSees:
         assert response.headers["Cache-Control"] == "no-store"
 
 
+@pytest.mark.usefixtures("api_step_up")
 class TestPlatformAdministrator:
     """Deliberate: an administrator sees everything, keys included."""
 
@@ -284,3 +286,15 @@ class TestTheDocumentationSaysSo:
         api_key = spec["components"]["schemas"]["ProjectListItem"]["properties"]["api_key"]
         assert api_key["deprecated"] is True
         assert "/api/v2/projects/{project_name}/api-key" in api_key["description"]
+
+
+class TestPlatformAdministratorWithoutStepUp:
+    def test_an_administrator_only_sees_their_own_projects(
+        self, test_client: TestClient, realm: Any, store: Any, platform_admins: Any
+    ) -> None:
+        platform_admins.is_platform_admin.return_value = True
+
+        response = _get(test_client, realm["token_for"]("beheerder@example.test"))
+
+        assert response.status_code == 200
+        assert response.json()["projects"] == []

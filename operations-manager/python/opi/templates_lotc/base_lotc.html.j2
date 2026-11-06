@@ -126,6 +126,9 @@
                                                {% if verhoogd_tot %}supporting-text="Verhoogde rechten tot {{ verhoogd_tot | dutch_date(only_time=True) }}"{% endif %}></nldd-identity>
                             </nldd-container>
                             <nldd-menu-item text="Profiel" icon="user" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                            {% if kan_verhogen %}
+                                <nldd-menu-item text="Verhoogde rechten" icon="shield-check-mark" data-verhoog-open></nldd-menu-item>
+                            {% endif %}
                             <nldd-menu-divider></nldd-menu-divider>
                             <nldd-menu-item text="Weergave" icon="appearance">
                                 <nldd-menu>
@@ -141,6 +144,9 @@
                         </nldd-menu>
                     </nldd-icon-button>
                     <nldd-menu-item slot="overflow" text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                    {% if kan_verhogen %}
+                        <nldd-menu-item slot="overflow" text="Verhoogde rechten" data-verhoog-open></nldd-menu-item>
+                    {% endif %}
                     <nldd-menu-item slot="overflow" text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
                 {% else %}
                     <nldd-button text="Inloggen" start-icon="person-circle" appearance="secondary" href="/auth/login"></nldd-button>
@@ -211,6 +217,7 @@
 </nldd-split-view-pane>
 </nldd-bar-split-view>
 </nldd-shell>
+{% if kan_verhogen %}{% include "bg/_verhoogde-rechten-dialoog.html.j2" %}{% endif %}
 
     {% block additional_styles %}{% endblock %}
     {% block additional_scripts %}{% endblock %}

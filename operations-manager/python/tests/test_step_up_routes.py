@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.api.otp_step_up import OTP_CODE_HEADER, STEP_UP_PROBLEM_MEDIA_TYPE
+from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE
 from opi.core.auth_decorators import REQUIRES_STEP_UP
 from opi.core.step_up import StepUpAction
 from opi.server import create_app
@@ -122,13 +122,12 @@ def test_elke_step_up_route_in_de_api_is_gedocumenteerd(app: Any) -> None:
         if not pad.startswith("/api/"):
             continue
         operatie = document["paths"][pad][methode.lower()]
-        headers = {p["name"] for p in operatie.get("parameters", []) if p.get("in") == "header"}
         antwoord = operatie.get("responses", {}).get("403", {})
         schema = antwoord.get("content", {}).get(STEP_UP_PROBLEM_MEDIA_TYPE, {}).get("schema", {})
-        if OTP_CODE_HEADER not in headers or schema.get("$ref") != "#/components/schemas/StepUpProblem":
+        if schema.get("$ref") != "#/components/schemas/StepUpProblem":
             ongedocumenteerd.append(f"{methode} {pad}")
 
     assert ongedocumenteerd == [], (
-        f"Deze step-up-routes documenteren '{OTP_CODE_HEADER}' of de 403 niet. Een client die op "
+        "Deze step-up-routes documenteren de 403 niet. Een client die op "
         "dit document afgaat verliest daardoor een aanroep zonder te weten waarom:\n  " + "\n  ".join(ongedocumenteerd)
     )

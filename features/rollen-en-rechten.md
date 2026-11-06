@@ -27,7 +27,8 @@ Admin is **gebruikersbeheer en geen bovenste trede**: een admin beheert wie erbi
 maar bouwt niet aan het project. Wie beide doet heeft `[admin, ops]`, en dat is wat elke
 bestaande admin bij de migratie naar schemaversie 2.13 gekregen heeft.
 
-Een platformbeheerder krijgt op elk project `[admin, ops]`, zonder lid te zijn.
+Een platformbeheerder met een verse step-up krijgt op elk project `[admin, ops]`, zonder lid te
+zijn. Zonder step-up is hij een gewone gebruiker.
 
 ## De matrix
 
@@ -100,7 +101,8 @@ er iets mee kan.
 - **Step-up**: `@requires_step_up` zonder conditie leest de beslissing die de poort al
   op het verzoek zette (`request.state.authz_decision`), en daaruit of er een verse
   2-factor bij deze aanroep hoort. Zo dwingt de route af wat de matrixpagina toont.
-  De mechaniek (dialoog, venster van vijf minuten, replay, `X-ZAD-OTP`) is onveranderd.
+  De mechaniek (dialoog, venster, replay, `POST /api/v2/step-up`) staat in
+  [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
 
   Een eigen conditie blijft voor de twee gevallen waar geen projectbeslissing is om uit
   te lezen: de platformroutes (`platform.*`, een eigen `Audience` zonder grants) en de

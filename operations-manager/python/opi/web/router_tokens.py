@@ -11,7 +11,7 @@ cookie-sessie van Starlette is ondertekend en niet versleuteld, dus het token zo
 volgende GET base64-leesbaar op de schijf van de browser staan. Zelfde keuze als
 ``router_otp``, dat ook een vingerafdruk in de sessie zet en niet het geheim.
 
-Elke handeling hier vraagt een verse step-up (RC-387), met het venster van vijf minuten uit
+Elke handeling hier vraagt een verse step-up (RC-387), met het venster uit
 ``opi.core.step_up``. De dialoog neemt de plaats van het formulier in, dus de velden van de
 handeling gaan mee in de herhaling: ``velden`` op de decorator somt ze per route op.
 """
