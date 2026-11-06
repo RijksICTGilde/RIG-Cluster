@@ -160,6 +160,73 @@ async def test_secret_exists_delegates_to_resource_exists_with_secret_as_the_typ
         mock_resource_exists.assert_awaited_once_with("secret", "sops-age-key", "rig-demo")
 
 
+async def test_get_namespaced_resource_returns_the_parsed_resource(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ('{"status": {"phase": "Cluster in healthy state"}}', "", 0)
+
+        resource = await connector.get_namespaced_resource(
+            "clusters.postgresql.cnpg.io", "demo-db", "rig-demo-infrastructure"
+        )
+
+        assert resource == {"status": {"phase": "Cluster in healthy state"}}
+        args = mock_run_cmd.call_args[0][0]
+        assert args == [
+            "get",
+            "clusters.postgresql.cnpg.io",
+            "demo-db",
+            "-n",
+            "rig-demo-infrastructure",
+            "-o",
+            "json",
+        ]
+
+
+async def test_get_namespaced_resource_is_none_on_notfound(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = (
+            "",
+            'Error from server (NotFound): clusters.postgresql.cnpg.io "demo-db" not found',
+            1,
+        )
+
+        assert (
+            await connector.get_namespaced_resource("clusters.postgresql.cnpg.io", "demo-db", "rig-demo-infrastructure")
+            is None
+        )
+
+
+async def test_get_namespaced_resource_is_none_on_an_unexpected_error(connector):
+    """A caller distinguishes absent from unreadable only through the log line, never the
+    return value: both must stay None so an RBAC gap cannot be read as 'does not exist'."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): clusters is forbidden", 1)
+
+        assert (
+            await connector.get_namespaced_resource("clusters.postgresql.cnpg.io", "demo-db", "rig-demo-infrastructure")
+            is None
+        )
+
+
+async def test_get_namespaced_resource_is_none_on_unparseable_json(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("not json", "", 0)
+
+        assert (
+            await connector.get_namespaced_resource("clusters.postgresql.cnpg.io", "demo-db", "rig-demo-infrastructure")
+            is None
+        )
+
+
+async def test_get_namespaced_resource_is_none_when_the_result_is_not_an_object(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("[]", "", 0)
+
+        assert (
+            await connector.get_namespaced_resource("clusters.postgresql.cnpg.io", "demo-db", "rig-demo-infrastructure")
+            is None
+        )
+
+
 async def test_encrypt_file_with_sops_gebruikt_de_gefilterde_omgeving(connector, tmp_path, monkeypatch):
     """RC-279: deze aanroep had geen env, en erfde dus de volle omgeving van OPI zelf."""
     monkeypatch.setenv("DATABASE_ADMIN_PASSWORD", "geheim")

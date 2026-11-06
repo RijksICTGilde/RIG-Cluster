@@ -4,7 +4,7 @@ Three fields: sender name, sender address (after approval), and daily budget (ab
 platform default also after approval). Leave the address empty and the platform derives one
 from the account name. Mail leaves over the
 Rijksoverheid server carrying their domain; SPF alignment via DMARC is the only control
-that passes, so a self-chosen domain breaks it. See docs/ron-koppeling.md.
+that passes, so a self-chosen domain breaks it. See docs/operations/ron-koppeling.md.
 
 The same three fields exist per deployment (RC-401), with the SAME validation: the form and
 the API judge an override exactly as they judge the project value, so a value that cannot

@@ -83,6 +83,30 @@ def test_a_success_message_is_shown_not_executed(layout: str) -> None:
 
 
 @pytest.mark.parametrize("layout", LAYOUTS)
+def test_the_error_and_subject_of_a_step_are_shown_not_executed(layout: str) -> None:
+    """A failing step shows a reason and a subject, and those carry text from outside.
+
+    Since RC-421 a git push, fetch or ls-remote that got no answer lands in ``error``,
+    with the repository or deployment name in ``subject``. Both end up in an attribute,
+    so the escaping has to hold there too, not only in the step name.
+    """
+    from opi.web.task_progress import render_progress_fragment
+
+    payload = f'{PAYLOAD}<script>alert(1)</script>" onmouseover="alert(2)'
+    rendered = render_progress_fragment(
+        _layout_request(layout),
+        _context(
+            tasks=[{"name": "Manifesten naar Git pushen", "status": "failed", "subject": payload, "error": payload}],
+            current_step="Manifesten naar Git pushen",
+        ),
+    )
+
+    assert "49" not in rendered
+    assert "<script>" not in rendered
+    assert ' onmouseover="alert(2)' not in rendered
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
 def test_the_single_render_still_resolves_every_component(layout: str) -> None:
     """Dropping the second pass may not leave raw ``<c-...>`` tags in the answer.
 

@@ -20,6 +20,12 @@ import aiohttp
 import pytest
 from opi.api.task_models import TASK_RESULT_MODELS, task_response_from_dict
 from opi.api.v2.models import ErrorCategory, error_category_for
+from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
+
+
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
 
 
 def _failed(error_type: str | None, **extra: object) -> dict:
@@ -336,3 +342,36 @@ class TestDeHandlersMetProcessingFailedSchrijvenDeMailrelayAanHetPlatformToe:
 
         assert resultaat["error_type"] == "processing_failed"
         assert "error_category" not in resultaat
+
+
+class TestAGitOutageIsAPlatformFailure:
+    """RC-430: the message for an unreachable git server said "this is the platform" while
+    ``error_category`` said something else.
+
+    Both paths along which such an error reaches the task are covered: through the
+    exception the manager kept (this class) and through a handler that raises
+    (tests/test_task_worker_failure_result.py).
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("name", "handler"), HANDLERS, ids=[h[0] for h in HANDLERS])
+    @pytest.mark.parametrize(
+        "error",
+        [
+            GitRemoteUnavailableError("De git-server is niet bereikbaar, dit ligt niet aan je project"),
+            GitCommandTimeoutError("git push gaf geen antwoord binnen 120s"),
+        ],
+        ids=["unreachable", "timeout"],
+    )
+    async def test_a_git_outage_becomes_internal_error(self, name: str, handler: object, error: Exception) -> None:
+        result = await handler(error)  # type: ignore[operator]
+
+        assert result["error_type"] == "processing_failed"
+        assert result["error_category"] == ErrorCategory.InternalError.value
+
+    @pytest.mark.asyncio
+    async def test_a_plain_runtime_error_does_not(self) -> None:
+        """The counter-check: not every exception from processing is a platform failure."""
+        result = await _refresh_project(RuntimeError("iets anders"))
+
+        assert "error_category" not in result

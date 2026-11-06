@@ -18,6 +18,7 @@ from opi.connectors.keycloak import (
     legacy_restricted_flow_alias,
     role_gate_flow_alias,
 )
+from opi.core import progress_steps as steps
 from opi.core.cluster_config import (
     get_ingress_postfix,
     get_keycloak_demo_users,
@@ -208,6 +209,12 @@ def find_realm_entry_for_admin(project_data: dict[str, Any], admin_username: str
 class KeycloakManager:
     """Manager for Keycloak SSO operations and resources."""
 
+    #: De (realm, keycloak-url)-paren waarvan het realm-brede werk in deze taak al is
+    #: gedaan. Een KeycloakManager leeft zo lang als de ProjectManager die hem houdt,
+    #: dus dit is "een keer per taak". Op klasseniveau met een onveranderlijke default,
+    #: zodat een aanroeper die __init__ overslaat hem toch kan lezen.
+    _realm_reconciled: set[tuple[str, str]] | None = None
+
     def __init__(self, project_manager: ProjectManager) -> None:
         """
         Initialize the KeycloakManager with reference to ProjectManager.
@@ -267,7 +274,7 @@ class KeycloakManager:
         progress_manager = self.project_manager.get_progress_manager()
         keycloak_task = None
         if progress_manager:
-            keycloak_task = progress_manager.add_task("Keycloak-SSO klaarmaken", subject=deployment_name)
+            keycloak_task = progress_manager.add_task(steps.LOGIN_CONFIG_APPLY, subject=deployment_name)
 
         try:
             # Handle external keycloak (credentials from Kubernetes secret)
@@ -1073,6 +1080,13 @@ class KeycloakManager:
                 # No config exists - definitely need to create
                 logger.info(f"Project realm config not found for cluster {cluster}, will create realm")
                 need_to_create_realm = True
+            elif self._realm_reconciled and (kc_config["realm"], keycloak_url) in self._realm_reconciled:
+                # Al gedaan in DEZE taak (RC-418). Het werk hieronder is realm-breed en
+                # idempotent, dus een tweede SSO-deployment van hetzelfde project deed het
+                # nog een keer: een eigen admin-token, acht reconcilerondes, zelfde uitkomst.
+                realm_name = kc_config["realm"]
+                logger.debug("Realm %s is in deze taak al bijgetrokken; alleen de clients nog", realm_name)
+                await self._ensure_realm_clients(project_name, cluster, realm_name, keycloak_url, config, ingress_hosts)
             else:
                 # Config exists - verify realm actually exists in Keycloak
                 realm_name = kc_config["realm"]
@@ -1126,6 +1140,11 @@ class KeycloakManager:
                         await self._create_additional_clients(realm_name, keycloak_url, additional_clients, cluster)
                     # Ensure the realm admin has the shared OTP credential (idempotent retrofit)
                     await self._ensure_admin_otp(project_name, cluster, realm_name, keycloak_url)
+                    # Alleen het realm-brede werk hierboven is af; de clients hangen aan de
+                    # ingress-hosts van DEZE deployment en gaan dus per deployment opnieuw.
+                    if self._realm_reconciled is None:
+                        self._realm_reconciled = set()
+                    self._realm_reconciled.add((realm_name, keycloak_url))
                 else:
                     logger.warning(
                         f"Project realm config exists but realm {realm_name} is not in Keycloak's admin API "

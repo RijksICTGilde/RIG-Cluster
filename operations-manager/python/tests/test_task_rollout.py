@@ -27,8 +27,8 @@ PM_PATH = "opi.manager.project_manager.ProjectManager"
 
 def _make_progress():
     progress = MagicMock()
-    progress.add_task.side_effect = lambda name: f"task-{name}"
-    progress.add_subtask.side_effect = lambda parent, name: f"subtask-{name}"
+    progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
+    progress.add_subtask.side_effect = lambda parent, name, subject=None: f"subtask-{name}"
     return progress
 
 
@@ -530,6 +530,38 @@ def _image_manager():
 
 
 class TestUpdateImageManagerSplit:
+    @pytest.mark.asyncio
+    async def test_a_failed_process_without_its_own_reason_still_fails_with_one(self):
+        """``process_project`` failing without raising has no container step either.
+
+        If it left ``_processing_error`` empty, the task would otherwise fail with no
+        reason at all: the method has to fill one in before raising.
+        """
+        pm = _image_manager()
+        pm.process_project = AsyncMock(return_value=False)
+        pm._processing_error = None
+
+        with pytest.raises(Exception, match="Failed to process deployment productie"):
+            await pm.update_image_and_regenerate("productie", "web", "ghcr.io/example/web:2.0")
+
+        assert pm._processing_error == "Failed to process deployment productie"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_process_keeps_its_own_reason(self):
+        """A reason the pipeline already set must not be overwritten by the generic one."""
+        pm = _image_manager()
+
+        async def _fail_with_reason(*_args, **_kwargs):
+            pm._processing_error = "database niet bereikbaar"
+            return False
+
+        pm.process_project = AsyncMock(side_effect=_fail_with_reason)
+
+        with pytest.raises(Exception, match="Failed to process deployment productie"):
+            await pm.update_image_and_regenerate("productie", "web", "ghcr.io/example/web:2.0")
+
+        assert pm._processing_error == "database niet bereikbaar"
+
     @pytest.mark.asyncio
     async def test_rollout_false_commits_but_does_not_process(self):
         pm = _image_manager()

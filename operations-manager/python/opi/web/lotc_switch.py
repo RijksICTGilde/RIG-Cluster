@@ -25,6 +25,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.core.config import settings
 from opi.core.step_up import step_up_until
 from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, AuditCursor, list_actions
+from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -50,8 +51,13 @@ def render(request: Request, *, template: str, context: dict[str, Any], status_c
 
     # Voor het accountmenu: een pagina zonder sessie (een foutpagina) heeft geen step-up.
     verhoogd_tot = step_up_until(request) if "session" in request.scope else None
+    email = str((getattr(request.state, "user", None) or {}).get("email", ""))
+    kan_verhogen = get_user_service().is_platform_admin(email)
     return templates_lotc.TemplateResponse(
-        request, template, {"verhoogd_tot": verhoogd_tot, **context}, status_code=status_code
+        request,
+        template,
+        {"verhoogd_tot": verhoogd_tot, "kan_verhogen": kan_verhogen, **context},
+        status_code=status_code,
     )
 
 

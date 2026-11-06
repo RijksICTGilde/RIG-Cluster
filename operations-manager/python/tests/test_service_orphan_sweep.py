@@ -31,8 +31,9 @@ def _no_real_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
     error = ConnectionError("no real inventory in a unit test")
     for name in ("create_postgres_connector", "create_minio_connector"):
         monkeypatch.setattr(f"opi.jobs.service_orphan_sweep.{name}", MagicMock(side_effect=error))
-    for name in ("create_keycloak_connector", "create_mail_connector", "create_git_connector_for_argocd"):
+    for name in ("create_keycloak_connector", "create_mail_connector"):
         monkeypatch.setattr(f"opi.jobs.service_orphan_sweep.{name}", AsyncMock(side_effect=error))
+    monkeypatch.setattr("opi.jobs.service_orphan_sweep.get_git_repo", MagicMock(side_effect=error))
 
 
 PROJECTS = {"regel-k4c": ["regelrecht", "pr781"], "waggl-9et": ["productie"]}
@@ -392,17 +393,14 @@ class TestGitopsFolderInventory:
     @pytest.mark.asyncio
     async def test_folder_without_project_is_an_orphan_candidate(self, tmp_path) -> None:
         cluster = "sandboxed-local"
-        cluster_dir = tmp_path / cluster
-        (cluster_dir / "leeft-abc").mkdir(parents=True)
-        (cluster_dir / "weg-xyz").mkdir(parents=True)
+        repo = AsyncMock()
+        repo.list_tree = AsyncMock(
+            return_value=[f"{cluster}/leeft-abc/kustomization.yaml", f"{cluster}/weg-xyz/kustomization.yaml"]
+        )
 
-        gitops = AsyncMock()
-        gitops.refresh_working_tree = AsyncMock()
-        gitops.get_working_dir = AsyncMock(return_value=str(tmp_path))
-
-        with patch(
-            "opi.jobs.service_orphan_sweep.create_git_connector_for_argocd",
-            AsyncMock(return_value=gitops),
+        with (
+            patch("opi.jobs.service_orphan_sweep.get_git_repo", MagicMock(return_value=repo)),
+            patch("opi.jobs.service_orphan_sweep.credentials_from_repo_config", MagicMock()),
         ):
             report = await sweep([{"name": "leeft-abc", "deployments": []}], cluster=cluster)
 
@@ -412,18 +410,17 @@ class TestGitopsFolderInventory:
         assert mappen["weg-xyz"]["path"] == f"{cluster}/weg-xyz"
 
     @pytest.mark.asyncio
-    async def test_working_tree_is_refreshed_before_listing(self, tmp_path) -> None:
-        """Zonder verversen wordt er geoordeeld op een checkout die willekeurig oud kan zijn."""
-        (tmp_path / "sandboxed-local").mkdir()
+    async def test_de_inventaris_leest_de_laatste_stand(self, tmp_path) -> None:
+        """Zonder een sync wordt er geoordeeld op een stand die willekeurig oud kan zijn."""
+        repo = AsyncMock()
+        repo.list_tree = AsyncMock(return_value=[])
 
-        gitops = AsyncMock()
-        gitops.refresh_working_tree = AsyncMock()
-        gitops.get_working_dir = AsyncMock(return_value=str(tmp_path))
-
-        with patch(
-            "opi.jobs.service_orphan_sweep.create_git_connector_for_argocd",
-            AsyncMock(return_value=gitops),
+        with (
+            patch("opi.jobs.service_orphan_sweep.get_git_repo", MagicMock(return_value=repo)),
+            patch("opi.jobs.service_orphan_sweep.credentials_from_repo_config", MagicMock()),
         ):
             await sweep([], cluster="sandboxed-local")
 
-        gitops.refresh_working_tree.assert_awaited()
+        repo.sync.assert_awaited()
+        assert repo.list_tree.await_args is not None
+        assert repo.list_tree.await_args.args[1] == repo.sync.return_value

@@ -14,29 +14,40 @@ Five things carry the design, and each one is a way this could fail silently:
 5. **Switching the service off removes the policy**, which is the prune prefix on the
    filename plus the service returning nothing.
 
-RC-167 adds the DOORLUS to the same service, and with it a sixth: **the three things that
-path needs are one unit.** The address of the passthrough port, the hosts entry that
-points the VLAM name at our proxy, and the CA bundle to verify against are each useless
-without the other two -- an address without the name fails on every connection, the name
-without the issuer fails on an unknown CA. So a cluster offers all three or none, and the
-tests at the bottom of this file measure exactly that.
+RC-167 adds the DOORLUS to the same service, and with it a sixth: **the two things that
+path needs are one unit.** The address of the passthrough port and the hosts entry that
+points the VLAM name at our proxy are each useless without the other -- an address without
+the name fails on every connection. So a cluster offers both or neither, and the tests at
+the bottom of this file measure exactly that.
+
+RC-414 removes the third thing that path used to need. VLAM moved from
+``vlam-api.rijksweb.nl`` to ``vlam-api.overheid-i.nl``, whose certificate comes from
+DigiCert, so the consumer verifies it against the standard trust store of its own runtime
+and the service delivers no CA material at all.
 """
 
 from __future__ import annotations
+
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.core.cluster_config import get_vlam_config
 from opi.core.project_schema import ProjectIntegrityError
-from opi.generation.manifests import render_template
-from opi.manager.project_manager import apply_manifest_contributions, collect_manifest_contributions
+from opi.generation.manifests import ManifestGenerator, render_template
+from opi.manager.project_manager import (
+    ProjectManager,
+    apply_manifest_contributions,
+    collect_manifest_contributions,
+)
 from opi.manager.project_validation import validate_service_availability
 from opi.services.catalog.base import DeploymentManifestContext, ManifestContext, ManifestContribution
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
-from opi.services.registry import get_service
+from opi.services.registry import collect_service_routers, get_service
 from opi.services.services_enums import ServiceType, UIEvent
 from opi.utils.naming import generate_unique_name
+from opi.utils.sops import sops_filenames
 from ruamel.yaml import YAML
 
 SERVICE = get_service(ServiceType.VLAM)
@@ -131,30 +142,29 @@ class TestTheServiceDeclaration:
         assert SERVICE.config_model is None
         assert SERVICE.config_layers() == []
 
-    def test_it_hands_out_three_variables(self) -> None:
-        """Een voor het getermineerde pad, twee voor de doorlus (RC-167)."""
+    def test_it_hands_out_two_variables(self) -> None:
+        """Een voor het getermineerde pad, een voor de doorlus (RC-167)."""
         assert [var.name for var in SERVICE.definition.variables] == [
             "VLAM_API_URL",
             "VLAM_API_URL_DIRECT",
-            "VLAM_CA_BUNDLE_PATH",
         ]
 
     def test_only_the_terminated_address_is_unconditional(self) -> None:
-        """De twee doorlus-variabelen hangen aan het CLUSTER, niet aan de selectie.
+        """De doorlus-variabele hangt aan het CLUSTER, niet aan de selectie.
 
         Dat verschil staat in de declaratie omdat de e2e-probe erop oordeelt: hij eist dat
         elke variabele van een gebonden dienst in de pod staat, en zonder deze markering
         zou een cluster dat de doorlus niet aanbiedt dat als een provisioning-fout melden.
         """
         conditional = {var.name for var in SERVICE.definition.variables if var.conditional}
-        assert conditional == {"VLAM_API_URL_DIRECT", "VLAM_CA_BUNDLE_PATH"}
+        assert conditional == {"VLAM_API_URL_DIRECT"}
 
     def test_it_sets_no_language_wide_ca_variables(self) -> None:
-        """De valkuil van dit ontwerp, vastgelegd: die variabelen VERVANGEN de keten.
+        """De valkuil van het oude ontwerp, vastgelegd: die variabelen VERVANGEN de keten.
 
-        Een pod met SSL_CERT_FILE op alleen deze bundel vertrouwt verder niets meer, en
-        die storing lijkt in niets op zijn oorzaak. De dienst biedt een PAD aan; wat de
-        applicatie ermee doet is aan de applicatie.
+        Een pod met SSL_CERT_FILE op een losse bundel vertrouwt verder niets meer, en die
+        storing lijkt in niets op zijn oorzaak. Sinds RC-414 levert de dienst geen bundel
+        meer, en dan is dit de toets die voorkomt dat er ooit weer een komt.
         """
         names = {var.name for var in SERVICE.definition.variables}
         assert names.isdisjoint({"REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE"})
@@ -249,9 +259,9 @@ class TestTheEnvironmentVariable:
         belooft en diens coverage-check meet, dus wat de dienst declareert en wat hij
         injecteert moeten hetzelfde zijn.
 
-        Op een cluster mét doorlus zijn dat er drie: het getermineerde adres, plus de
-        twee die alleen samen bruikbaar zijn (adres en CA-pad). De laatste twee staan
-        in variables.py als ``conditional`` en horen er op zo'n cluster dus bij."""
+        Op een cluster mét doorlus zijn dat er twee: het getermineerde adres en het
+        doorlus-adres. Dat tweede staat in variables.py als ``conditional`` en hoort er op
+        zo'n cluster dus bij."""
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         assert endpoint.passthrough is not None
@@ -259,18 +269,16 @@ class TestTheEnvironmentVariable:
         assert contribution.env_vars == {
             "VLAM_API_URL": endpoint.api_url,
             "VLAM_API_URL_DIRECT": endpoint.passthrough.api_url,
-            "VLAM_CA_BUNDLE_PATH": endpoint.passthrough.container_path,
         }
 
     def test_it_is_not_an_envfrom_secret(self) -> None:
         """An in-cluster address is not a secret; encrypting it only hides it from its owner.
 
-        ``secret_files`` is niet leeg en dat is geen tegenspraak: daar reist de CA-bundel
-        van de doorlus in, als BESTAND en niet als geheim. Een Secret is de ene bestaande
-        weg om een bestand in een pod te krijgen; zie de moduledocstring van de dienst."""
+        Sinds RC-414 levert de dienst ook geen bestand meer, dus er is helemaal geen
+        Secret: beide waarden zijn gewone env-vars."""
         contribution = SERVICE.contribute_manifest_context(self._ctx())
         assert contribution.env_from_secrets == []
-        assert [spec.secret_name for spec in contribution.secret_files] == ["prod-vlam-ca"]
+        assert contribution.secret_files == []
 
     def test_a_cluster_without_an_endpoint_contributes_nothing(self) -> None:
         """Generation never fails on a project that slipped past the validation."""
@@ -438,52 +446,58 @@ class TestTheNetworkPolicy:
 
 
 # ---------------------------------------------------------------------------
-# Het doorlus-pad (RC-167)
+# Het doorlus-pad (RC-167, zonder eigen CA sinds RC-414)
 #
-# Drie dingen, en ze zijn alle drie waardeloos zonder de andere twee: het ADRES van de
-# doorlus-poort, de NAAM die naar onze proxy wijst (TLS vergelijkt de hostnaam uit de URL
-# met het certificaat) en het CA-CERTIFICAAT in de pod (de afnemer verifieert nu zelf).
-# Daarom toetsen deze tests ze als EEN geheel: een cluster biedt het pad aan of niet.
+# Twee dingen, en ze zijn beide waardeloos zonder het andere: het ADRES van de doorlus-
+# poort en de NAAM die naar onze proxy wijst (TLS vergelijkt de hostnaam uit de URL met
+# het certificaat). Daarom toetsen deze tests ze als EEN geheel: een cluster biedt het pad
+# aan of niet. Een derde ding, een eigen CA-bundel, hoorde er tot RC-414 bij; het
+# certificaat van `vlam-api.overheid-i.nl` komt van DigiCert en is publiek vertrouwd, dus
+# de afnemer verifieert met de certificatenlijst van zijn eigen image.
 # ---------------------------------------------------------------------------
 
-#: Geen echt certificaat en met opzet ook niet iets dat erop lijkt. Wat hier gemeten wordt
-#: is dat de BYTES uit het bronbestand ongewijzigd in de pod aankomen, en daarvoor is de
-#: inhoud onverschillig zolang hij meerdere regels heeft (de secret-sjabloon kiest op een
-#: newline tussen een blokscalar en een gewone scalar).
-_TEST_BUNDLE = "-----BEGIN CERTIFICATE-----\nVOORBEELD-GEEN-ECHT-CERTIFICAAT\nabc/def+ghi=\n-----END CERTIFICATE-----\n"
+#: De sleutels die samen de doorlus vormen. Het ontbreken van elk van de drie laat het pad
+#: wegvallen, en die drie gevallen zijn even normaal als aanwezigheid.
+DOORLUS_KEYS = ("api_host", "cluster_ip", "passthrough_port")
+
+
+def _config_zonder(*keys: str) -> dict:
+    """De productie-``vlam``-ingang met deze sleutels eruit."""
+    config = get_vlam_config(WITH_VLAM)
+    assert config is not None
+    return {key: value for key, value in config.items() if key not in keys}
 
 
 @pytest.fixture
-def doorlus(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Een cluster dat het doorlus-pad WEL aanbiedt: de CA-bundel staat er.
+def zonder_doorlus(monkeypatch: pytest.MonkeyPatch):
+    """Een cluster met VLAM maar zonder doorlus: de proxy heeft geen passthrough-poort.
 
-    De bundel is een platformgegeven dat eenmalig geleverd wordt; welk bestand dat is zegt
-    de clusterconfiguratie (``ca_bundle``), en waar de dienst het zoekt is zijn eigen map.
-    Die map wijst deze fixture naar een tijdelijke, zodat de toets niet afhangt van wat er
-    op dat moment in de repo ligt.
+    Gepatcht op de configuratie en niet op een bestand: sinds RC-414 is de hele vraag of
+    de ``vlam``-ingang de doorlus-sleutels noemt.
     """
     from opi.services.catalog.vlam import endpoint as endpoint_module
 
-    config = get_vlam_config(WITH_VLAM)
-    assert config is not None
-    bundle = tmp_path / str(config["ca_bundle"])
-    bundle.write_text(_TEST_BUNDLE)
-    monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
-    return bundle
+    monkeypatch.setattr(endpoint_module, "get_vlam_config", lambda cluster: _config_zonder(*DOORLUS_KEYS))
 
 
 class TestDeDoorlusInDeConfiguratie:
-    """Stap 1 en 2: het certificaat en het ClusterIP als platformgegeven vastgelegd."""
+    """Het ClusterIP en de poort als platformgegeven vastgelegd."""
 
-    def test_de_clusterconfiguratie_noemt_de_vier_waarden(self) -> None:
+    def test_de_clusterconfiguratie_noemt_de_drie_waarden(self) -> None:
         config = get_vlam_config(WITH_VLAM)
         assert config is not None
         assert config["passthrough_port"] == 8443
         assert config["api_host"] == "vlam-api.overheid-i.nl"
         assert config["cluster_ip"] == "172.30.254.144"
-        assert config["ca_bundle"] == "vlam-ca.pem"
 
-    def test_een_cluster_zonder_vlam_noemt_ook_geen_ca(self) -> None:
+    def test_er_staat_geen_ca_bundel_meer_in(self) -> None:
+        """RC-414: het certificaat van VLAM is publiek vertrouwd, dus er valt niets te
+        leveren. Een achtergebleven sleutel zou een bestand noemen dat niet bestaat."""
+        config = get_vlam_config(WITH_VLAM)
+        assert config is not None
+        assert "ca_bundle" not in config
+
+    def test_een_cluster_zonder_vlam_noemt_ook_geen_doorlus(self) -> None:
         """De doorlus hangt aan dezelfde sleutel, dus hij kan niet los blijven staan."""
         assert get_vlam_config(WITHOUT_VLAM) is None
 
@@ -497,9 +511,9 @@ class TestDeDoorlusInDeConfiguratie:
 
 
 class TestDeDoorlusUitEenIngang:
-    """Stap 3: drie dingen uit een configuratie-ingang, zodat ze niet uiteen lopen."""
+    """Twee dingen uit een configuratie-ingang, zodat ze niet uiteen lopen."""
 
-    def test_het_endpoint_levert_de_doorlus_als_een_geheel(self, doorlus) -> None:
+    def test_het_endpoint_levert_de_doorlus_als_een_geheel(self) -> None:
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         passthrough = endpoint.passthrough
@@ -509,54 +523,50 @@ class TestDeDoorlusUitEenIngang:
         assert passthrough.cluster_ip == "172.30.254.144"
         assert passthrough.port == 8443
 
-    def test_de_naam_in_het_adres_is_de_naam_die_de_alias_zet(self, doorlus) -> None:
+    def test_de_naam_in_het_adres_is_de_naam_die_de_alias_zet(self) -> None:
         """Anders valideert TLS een andere naam dan er in /etc/hosts staat."""
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         assert endpoint.passthrough is not None
         assert endpoint.passthrough.host in endpoint.passthrough.api_url
 
-    def test_het_getermineerde_adres_blijft_ongewijzigd(self, doorlus) -> None:
+    def test_het_getermineerde_adres_blijft_ongewijzigd(self) -> None:
         """De doorlus komt ERNAAST; het bestaande pad verandert niet."""
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         assert endpoint.api_url.startswith("http://")
         assert ":8082" in endpoint.api_url
 
-    def test_het_mountpad_staat_niet_in_de_systeemmap(self, doorlus) -> None:
-        """/etc/ssl/certs wordt door sommige runtimes vanzelf gelezen, en dan hangt het
-        gedrag af van het basis-image in plaats van van wat de applicatie vraagt."""
-        endpoint = vlam_endpoint(WITH_VLAM)
-        assert endpoint is not None
-        assert endpoint.passthrough is not None
-        assert endpoint.passthrough.container_path == "/etc/ssl/vlam/vlam-ca.pem"
-        assert not endpoint.passthrough.container_path.startswith("/etc/ssl/certs")
+    def test_de_drie_sleutels_zijn_genoeg(self) -> None:
+        """Geen vierde voorwaarde meer: wat de configuratie noemt, levert het pad."""
+        from opi.services.catalog.vlam.endpoint import _passthrough
 
-    def test_zonder_bundel_geen_doorlus(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Een adres plus een alias zonder de uitgever levert 'unknown issuer' bij de
-        afnemer op, met aan deze kant niets dat zegt waarom. Dan liever niets aanbieden."""
-        from opi.services.catalog.vlam import endpoint as endpoint_module
+        config = {key: value for key, value in _config_zonder().items() if key in DOORLUS_KEYS}
+        passthrough = _passthrough(config)
+        assert passthrough is not None
+        assert passthrough.api_url == "https://vlam-api.overheid-i.nl:8443"
 
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+    @pytest.mark.parametrize("ontbrekend", DOORLUS_KEYS)
+    def test_zonder_een_van_de_drie_geen_doorlus(self, ontbrekend: str) -> None:
+        """Niet de helft van een pad: een adres zonder de naam faalt op elke verbinding,
+        en de naam zonder adres wijst nergens heen."""
+        from opi.services.catalog.vlam.endpoint import _passthrough
+
+        assert _passthrough(_config_zonder(ontbrekend)) is None
+
+    def test_zonder_doorlus_blijft_het_getermineerde_pad_staan(self, zonder_doorlus) -> None:
+        """De doorlus valt weg, de dienst niet."""
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         assert endpoint.passthrough is None
-
-    def test_zonder_bundel_blijft_het_getermineerde_pad_staan(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """De doorlus valt weg, de dienst niet."""
-        from opi.services.catalog.vlam import endpoint as endpoint_module
-
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
-        endpoint = vlam_endpoint(WITH_VLAM)
-        assert endpoint is not None
         assert endpoint.api_url.endswith(":8082")
 
-    def test_een_cluster_zonder_vlam_levert_nog_steeds_none(self, doorlus) -> None:
+    def test_een_cluster_zonder_vlam_levert_nog_steeds_none(self) -> None:
         assert vlam_endpoint(WITHOUT_VLAM) is None
 
 
 class TestDeDoorlusVariabelen:
-    """Stap 6: de twee variabelen komen ERBIJ, en alleen samen met de rest."""
+    """De doorlus-variabele komt ERBIJ, en alleen samen met de rest."""
 
     def _ctx(self, cluster: str = WITH_VLAM) -> ManifestContext:
         return ManifestContext(
@@ -568,7 +578,7 @@ class TestDeDoorlusVariabelen:
             component_def={"name": "web", "services": []},
         )
 
-    def test_het_component_krijgt_alle_drie_de_adressen(self, doorlus) -> None:
+    def test_het_component_krijgt_beide_adressen(self) -> None:
         endpoint = vlam_endpoint(WITH_VLAM)
         assert endpoint is not None
         assert endpoint.passthrough is not None
@@ -576,26 +586,23 @@ class TestDeDoorlusVariabelen:
         assert contribution.env_vars == {
             "VLAM_API_URL": endpoint.api_url,
             "VLAM_API_URL_DIRECT": endpoint.passthrough.api_url,
-            "VLAM_CA_BUNDLE_PATH": endpoint.passthrough.container_path,
         }
 
-    def test_zonder_doorlus_krijgt_het_component_alleen_het_bestaande_adres(
-        self, tmp_path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Niet twee derde van een pad: een pad naar een bestand dat niet bestaat is
-        erger dan geen pad."""
-        from opi.services.catalog.vlam import endpoint as endpoint_module
+    def test_er_reist_geen_bestand_en_geen_secret_mee(self) -> None:
+        """RC-414: geen Secret, geen mount. Een volume dat naar een Secret wijst die
+        niemand schrijft, laat de pod in ContainerCreating hangen."""
+        contribution = SERVICE.contribute_manifest_context(self._ctx())
+        assert contribution.secret_files == []
 
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+    def test_zonder_doorlus_krijgt_het_component_alleen_het_bestaande_adres(self, zonder_doorlus) -> None:
         contribution = SERVICE.contribute_manifest_context(self._ctx())
         assert list(contribution.env_vars) == ["VLAM_API_URL"]
         assert contribution.template_vars == {}
-        assert contribution.secret_mounts == []
         assert contribution.secret_files == []
 
 
 class TestDeAliasOpDeDeployment:
-    """Stap 4: hostAliases wijst de VLAM-naam naar het geconfigureerde adres."""
+    """hostAliases wijst de VLAM-naam naar het geconfigureerde adres."""
 
     def _ctx(self) -> ManifestContext:
         return ManifestContext(
@@ -607,8 +614,9 @@ class TestDeAliasOpDeDeployment:
             component_def={"name": "web", "services": []},
         )
 
-    def _rendered(self, *, component_services: list[str]) -> dict:
+    def _rendered(self, *, component_services: list[str], own_mounts: list[dict] | None = None) -> dict:
         variables = _golden_deployment_vars()
+        variables["attachment_secret_mounts"] = list(own_mounts or [])
         apply_manifest_contributions(
             variables,
             collect_manifest_contributions(
@@ -619,11 +627,11 @@ class TestDeAliasOpDeDeployment:
         )
         return YAML().load(render_template("deployment.yaml.jinja", variables))
 
-    def test_de_pod_krijgt_de_regel_in_etc_hosts(self, doorlus) -> None:
+    def test_de_pod_krijgt_de_regel_in_etc_hosts(self) -> None:
         pod_spec = self._rendered(component_services=[ServiceType.VLAM.value])["spec"]["template"]["spec"]
         assert pod_spec["hostAliases"] == [{"ip": "172.30.254.144", "hostnames": ["vlam-api.overheid-i.nl"]}]
 
-    def test_de_naam_in_de_regel_is_de_naam_uit_het_doorlus_adres(self, doorlus) -> None:
+    def test_de_naam_in_de_regel_is_de_naam_uit_het_doorlus_adres(self) -> None:
         """Anders wijst /etc/hosts een andere naam aan dan de URL gebruikt en doet de
         alias niets, terwijl alles er goed uitziet."""
         rendered = self._rendered(component_services=[ServiceType.VLAM.value])
@@ -632,20 +640,47 @@ class TestDeAliasOpDeDeployment:
         alias = rendered["spec"]["template"]["spec"]["hostAliases"][0]
         assert alias["hostnames"][0] in env["VLAM_API_URL_DIRECT"]
 
-    def test_een_component_zonder_de_dienst_krijgt_geen_blok(self, doorlus) -> None:
+    def test_een_component_zonder_de_dienst_krijgt_geen_blok(self) -> None:
         pod_spec = self._rendered(component_services=[])["spec"]["template"]["spec"]
         assert "hostAliases" not in pod_spec
 
-    def test_zonder_doorlus_geen_blok(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.services.catalog.vlam import endpoint as endpoint_module
-
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+    def test_zonder_doorlus_geen_blok(self, zonder_doorlus) -> None:
         pod_spec = self._rendered(component_services=[ServiceType.VLAM.value])["spec"]["template"]["spec"]
         assert "hostAliases" not in pod_spec
 
+    def test_de_gerenderde_pod_mount_geen_ca_bundel(self) -> None:
+        """RC-414 op het gerenderde manifest: het adres en de alias blijven, het volume en
+        de volumeMount ``vlam-ca`` zijn weg."""
+        rendered = self._rendered(component_services=[ServiceType.VLAM.value])
+        pod_spec = rendered["spec"]["template"]["spec"]
+        container = pod_spec["containers"][0]
+        env = {entry["name"]: entry["value"] for entry in container["env"]}
+        assert env["VLAM_API_URL_DIRECT"] == "https://vlam-api.overheid-i.nl:8443"
+        assert pod_spec["hostAliases"]
+        assert "vlam-ca" not in [mount["name"] for mount in container.get("volumeMounts", [])]
+        assert "vlam-ca" not in [volume["name"] for volume in pod_spec.get("volumes", [])]
 
-class TestDeGemounteCaBundel:
-    """Stap 5: Secret, volume en volumeMount langs de weg van attachment_secret_mounts."""
+    def test_de_eigen_bijlagen_van_het_component_blijven_staan(self) -> None:
+        """De dienst levert zelf geen bestand meer, maar mag de bestanden die het
+        component zelf uploadde ook niet wegduwen."""
+        own = {
+            "name": "attch-eigen",
+            "secret_name": "prod-attch-eigen",
+            "mount_path": "/data/eigen.pem",
+            "sub_path": "eigen",
+        }
+        container = self._rendered(component_services=[ServiceType.VLAM.value], own_mounts=[own])["spec"]["template"][
+            "spec"
+        ]["containers"][0]
+        assert [mount["name"] for mount in container["volumeMounts"]] == ["attch-eigen"]
+
+
+class TestDeOudeCaSecretWordtOpgeruimd:
+    """De tien productie-deployments die de bundel nog hebben, raken hem bij de eerstvolgende
+    reprocess kwijt. Het Secret-bestand heet ``<deployment>-vlam-ca-secret``, en dat draagt
+    het prune-voorvoegsel ``<deployment>-vlam-``; zonder deze toets is dat een aanname, en
+    een kustomization die naar een verdwenen bestand wijst breekt de sync.
+    """
 
     def _ctx(self) -> ManifestContext:
         return ManifestContext(
@@ -657,84 +692,45 @@ class TestDeGemounteCaBundel:
             component_def={"name": "web", "services": []},
         )
 
-    def _rendered(self, *, own_mounts: list[dict] | None = None) -> dict:
-        variables = _golden_deployment_vars()
-        variables["attachment_secret_mounts"] = list(own_mounts or [])
-        apply_manifest_contributions(
-            variables,
-            collect_manifest_contributions(
-                self._ctx(),
-                component_services=[ServiceType.VLAM.value],
-                project_services=[ServiceType.VLAM.value],
-            ),
+    def _gegenereerd(self) -> list[str]:
+        """Wat een run met de huidige code voor deze deployment neerzet."""
+        deployment_ctx = DeploymentManifestContext(
+            project_name="myproject",
+            project_data=_project(),
+            deployment=_project()["deployments"][0],
+            cluster=WITH_VLAM,
+            namespace="rig-prd-myproject",
         )
-        return YAML().load(render_template("deployment.yaml.jinja", variables))
-
-    def test_de_bundel_wordt_als_bestand_gemount(self, doorlus) -> None:
-        container = self._rendered()["spec"]["template"]["spec"]["containers"][0]
-        mounts = {mount["name"]: mount for mount in container["volumeMounts"]}
-        assert mounts["vlam-ca"]["mountPath"] == "/etc/ssl/vlam/vlam-ca.pem"
-        assert mounts["vlam-ca"]["subPath"] == "vlam-ca.pem"
-        assert mounts["vlam-ca"]["readOnly"] is True
-
-    def test_er_staat_een_volume_bij_dat_de_secret_noemt(self, doorlus) -> None:
-        volumes = {volume["name"]: volume for volume in self._rendered()["spec"]["template"]["spec"]["volumes"]}
-        assert volumes["vlam-ca"]["secret"]["secretName"] == "prod-vlam-ca"
-
-    def test_het_gemounte_pad_is_het_pad_in_de_variabele(self, doorlus) -> None:
-        """De applicatie leest VLAM_CA_BUNDLE_PATH; wijst die ergens anders heen dan de
-        mount, dan is er een bestand en een pad en komen ze niet bij elkaar."""
-        rendered = self._rendered()
-        container = rendered["spec"]["template"]["spec"]["containers"][0]
-        env = {entry["name"]: entry["value"] for entry in container["env"]}
-        mount = next(m for m in container["volumeMounts"] if m["name"] == "vlam-ca")
-        assert env["VLAM_CA_BUNDLE_PATH"] == mount["mountPath"]
-
-    def test_de_eigen_bijlagen_van_het_component_blijven_staan(self, doorlus) -> None:
-        """Additief, geen override: een dienst die een bestand meelevert mag de bestanden
-        die het component zelf uploadde niet wegduwen."""
-        own = {
-            "name": "attch-eigen",
-            "secret_name": "prod-attch-eigen",
-            "mount_path": "/data/eigen.pem",
-            "sub_path": "eigen",
-        }
-        container = self._rendered(own_mounts=[own])["spec"]["template"]["spec"]["containers"][0]
-        names = [mount["name"] for mount in container["volumeMounts"]]
-        assert "attch-eigen" in names
-        assert "vlam-ca" in names
-
-    def test_de_secret_draagt_de_bytes_van_het_bronbestand(self, doorlus) -> None:
-        specs = SERVICE.build_secret_files(self._ctx())
-        assert len(specs) == 1
-        assert specs[0].secret_name == "prod-vlam-ca"
-        rendered = YAML().load(
-            render_template(
-                "generic-secret.yaml.to-sops.jinja",
-                {
-                    "name": specs[0].secret_name,
-                    "namespace": "rig-prd-myproject",
-                    "secret_pairs": specs[0].secret_pairs,
-                    "secret_labels": None,
-                },
-            )
-        )
-        assert rendered["stringData"]["vlam-ca.pem"] == doorlus.read_text()
-
-    def test_de_secret_reist_mee_met_de_bijdrage(self, doorlus) -> None:
-        """De schrijver leest ``contribution.secret_files``; staat de spec daar niet in,
-        dan wordt er een volume gemount dat naar een Secret wijst die niemand schrijft."""
+        namen = [f"{spec.filename}.yaml" for spec in SERVICE.contribute_deployment_manifests(deployment_ctx)]
         contribution = SERVICE.contribute_manifest_context(self._ctx())
-        assert [spec.secret_name for spec in contribution.secret_files] == ["prod-vlam-ca"]
-        assert [mount["secret_name"] for mount in contribution.secret_mounts] == ["prod-vlam-ca"]
+        namen += [sops_filenames(f"{spec.secret_name}-secret").plaintext for spec in contribution.secret_files]
+        return namen
 
-    def test_zonder_doorlus_geen_secret_en_geen_mount(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.services.catalog.vlam import endpoint as endpoint_module
+    def test_het_achtergebleven_secret_wordt_verwijderd(self, tmp_path) -> None:
+        achtergebleven = tmp_path / "prod-vlam-ca-secret.sops.yaml"
+        achtergebleven.write_text("kind: Secret\n")
+        beleid = tmp_path / "prod-vlam-web-network-policy.yaml"
+        beleid.write_text("kind: NetworkPolicy\n")
 
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
-        assert SERVICE.build_secret_files(self._ctx()) == []
-        container = self._rendered()["spec"]["template"]["spec"]["containers"][0]
-        assert "volumeMounts" not in container
+        # De methode gebruikt alleen ``deployment["name"]`` van zichzelf; een echte
+        # ProjectManager bouwen zou hier connectors optuigen die niets met de prune doen.
+        ProjectManager._prune_obsolete_service_manifests(
+            MagicMock(), {"name": "prod"}, str(tmp_path), self._gegenereerd()
+        )
+
+        assert not achtergebleven.exists()
+        assert beleid.exists()
+
+    def test_de_kustomization_noemt_het_niet_meer(self, tmp_path) -> None:
+        """De kustomization wordt uit een schijfscan opgebouwd, dus dit is de uitkomst van
+        de prune en niet een tweede plek om bij te werken."""
+        (tmp_path / "prod-vlam-ca-secret.sops.yaml").write_text("kind: Secret\n")
+        ProjectManager._prune_obsolete_service_manifests(
+            MagicMock(), {"name": "prod"}, str(tmp_path), self._gegenereerd()
+        )
+
+        sops_files, regular_files = ManifestGenerator().collect_manifest_files(str(tmp_path))
+        assert "prod-vlam-ca-secret.sops.yaml" not in sops_files + regular_files
 
 
 class TestDeNetwerkregelOpentBeidePoorten:
@@ -752,76 +748,39 @@ class TestDeNetwerkregelOpentBeidePoorten:
             namespace="rig-prd-myproject",
         )
 
-    def test_beide_poorten_staan_in_de_regel(self, doorlus) -> None:
+    def test_beide_poorten_staan_in_de_regel(self) -> None:
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
         assert specs[0].values["egress"][0]["ports"] == [8082, 8443]
 
-    def test_de_gerenderde_regel_opent_beide(self, doorlus) -> None:
+    def test_de_gerenderde_regel_opent_beide(self) -> None:
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
         rendered = YAML().load(render_template(specs[0].template_path, specs[0].values))
         rule = rendered["spec"]["egress"][0]
         assert [port["port"] for port in rule["ports"]] == [8082, 8443]
         assert rule["to"][0]["podSelector"]["matchLabels"]["app"] == "productie-vlam-proxy-intern"
 
-    def test_zonder_doorlus_blijft_het_bij_een_poort(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.services.catalog.vlam import endpoint as endpoint_module
-
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+    def test_zonder_doorlus_blijft_het_bij_een_poort(self, zonder_doorlus) -> None:
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
         assert specs[0].values["egress"][0]["ports"] == [8082]
 
 
-class TestDeDownloadknop:
-    """Stap 7: de bundel is te downloaden bij het dienstblok.
+class TestDeDownloadrouteIsWeg:
+    """RC-414: de bundel bestaat niet meer, dus de route die hem uitdeelde ook niet.
 
-    Van de drie dingen die de dienst neerzet is het BESTAND het enige dat je zonder de pod
-    niet kunt bekijken, en het is het ding dat het vaakst verkeerd begrepen wordt. Wie het
-    pad lokaal wil proberen, of wil zien wat zijn pod vertrouwt, haalt het hier op.
+    Op de gemonteerde routers en niet op de bron: een vergeten registratie elders zou de
+    route terugbrengen zonder dat er een bestand bij hoort, en dan deelt de app een
+    404-pagina uit als PEM-bestand.
     """
 
-    @pytest.fixture
-    def client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-        """De route zonder de rest van de applicatie: genoeg om te meten wat hij teruggeeft.
+    def test_geen_dienst_registreert_de_route_nog(self) -> None:
+        paden = [route.path for router in collect_service_routers() for route in router.routes]
+        assert not [pad for pad in paden if "ca-bundle" in pad]
 
-        Het cluster van deze instantie is dat met VLAM -- de route kent geen project en
-        leest dus, net als het blok, ``settings.CLUSTER_MANAGER``. Gepatcht op de
-        ``settings`` die de route zelf vasthoudt: laadt ``mock_settings`` de module eerder,
-        dan is dat de mock en niet ``opi.core.config.settings``.
-        """
-        from opi.services.catalog.vlam import routes
-        from opi.services.catalog.vlam.routes import vlam_router
-
-        monkeypatch.setattr(routes.settings, "CLUSTER_MANAGER", WITH_VLAM)
+    def test_de_app_antwoordt_niet_meer_op_het_pad(self) -> None:
         app = FastAPI()
-        app.include_router(vlam_router)
-        return TestClient(app)
-
-    def test_hij_zit_achter_de_login(self) -> None:
-        """Er valt niets te lekken aan een publiek CA-certificaat, maar er is ook geen
-        reden waarom een route van deze app anders zou werken dan alle andere."""
-        from opi.services.catalog.vlam.routes import vlam_ca_bundle
-
-        assert getattr(vlam_ca_bundle, "_requires_sso", False) is True
-
-    def test_de_bundel_komt_er_byte_voor_byte_uit(self, client: TestClient, doorlus) -> None:
-        """Dezelfde bron als de gemounte Secret: wat je downloadt en wat je pod
-        verifieert mogen niet twee verschillende bestanden zijn."""
-        response = client.get("/services/vlam/ca-bundle")
-        assert response.status_code == 200
-        assert response.content == doorlus.read_bytes()
-
-    def test_hij_komt_binnen_als_bestand_en_niet_als_pagina(self, client: TestClient, doorlus) -> None:
-        response = client.get("/services/vlam/ca-bundle")
-        assert response.headers["content-type"].startswith("application/x-pem-file")
-        assert 'filename="vlam-ca.pem"' in response.headers["content-disposition"]
-
-    def test_een_cluster_zonder_doorlus_heeft_niets_te_downloaden(
-        self, client: TestClient, tmp_path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from opi.services.catalog.vlam import endpoint as endpoint_module
-
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
-        assert client.get("/services/vlam/ca-bundle").status_code == 404
+        for router in SERVICE.web_routers():
+            app.include_router(router)
+        assert TestClient(app).get("/services/vlam/ca-bundle").status_code == 404
 
 
 class TestHetBlokOpDeProjectpagina:
@@ -840,23 +799,17 @@ class TestHetBlokOpDeProjectpagina:
             UIEvent.PROJECT_SECTIONS, ProjectPageContext(project_data=_project(), can=lambda _handeling: True)
         )
 
-    def test_het_blok_noemt_beide_adressen_en_het_pad(self, doorlus, op_het_vlam_cluster) -> None:
+    def test_het_blok_noemt_beide_adressen(self, op_het_vlam_cluster) -> None:
         sections = self._sections()
         assert len(sections) == 1
         context = sections[0].context
         assert context["api_url"].startswith("http://")
         assert context["direct_url"] == "https://vlam-api.overheid-i.nl:8443"
-        assert context["ca_path"] == "/etc/ssl/vlam/vlam-ca.pem"
 
-    def test_de_knop_wijst_naar_het_endpoint_dat_bestaat(self, doorlus, op_het_vlam_cluster) -> None:
-        """Een dode knop ziet er precies zo uit als een levende."""
-        from opi.services.catalog.vlam.routes import vlam_router
-
+    def test_het_blok_geeft_niets_over_een_bundel_mee(self, op_het_vlam_cluster) -> None:
+        """Een sjabloon dat een pad of een knop verwacht, rendert stil een lege waarde."""
         context = self._sections()[0].context
-        assert context["ca_download_url"] in [route.path for route in vlam_router.routes]
+        assert set(context) == {"api_url", "direct_url"}
 
-    def test_zonder_doorlus_geen_blok(self, tmp_path, monkeypatch: pytest.MonkeyPatch, op_het_vlam_cluster) -> None:
-        from opi.services.catalog.vlam import endpoint as endpoint_module
-
-        monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
+    def test_zonder_doorlus_geen_blok(self, zonder_doorlus, op_het_vlam_cluster) -> None:
         assert self._sections() == []

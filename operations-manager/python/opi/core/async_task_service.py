@@ -20,6 +20,7 @@ from opi.core.db import session_scope
 from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
 from opi.core.task_rollout import PROCESSING_TASK_TYPES
 from opi.core.task_supersede import Scope, covers, scope_of
+from opi.core.task_worker import notify_new_task
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.utils.logging_redact import redact_structure, redact_text
@@ -218,6 +219,8 @@ class AsyncTaskService:
             # Voor de auditrij van het verzoek dat deze taak startte; de hook leest hem na
             # het antwoord, als deze functie al klaar is (opi/core/audit_trail.py).
             record_task(row.id)
+            # De worker in dit proces hoeft niet op zijn poll te wachten (RC-418).
+            notify_new_task()
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
                 row.id,

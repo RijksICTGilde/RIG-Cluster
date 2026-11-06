@@ -20,14 +20,15 @@ heeft krijgt alles bij elkaar opgeteld.
 | `developer` | Ontwikkelaar | bouwen op alles wat niet productie is |
 | `ops` | Ops | hetzelfde op productie, en de OTAP-markering |
 | `admin` | Admin | leden, rollen, tokens, service accounts, project verwijderen |
-| `developer-ci` | Developer CI | voor een pijplijn: deployments die niet productie zijn |
-| `ops-ci` | Ops CI | voor een pijplijn: image vervangen op elke deployment |
+| `developer-ci` | Developer CI | voor een pijplijn: deployments die niet productie zijn aanmaken, bijwerken en verwijderen; leest als `viewer` |
+| `ops-ci` | Ops CI | voor een pijplijn: image vervangen op elke deployment, en de afloop teruglezen |
 
 Admin is **gebruikersbeheer en geen bovenste trede**: een admin beheert wie erbij mag,
 maar bouwt niet aan het project. Wie beide doet heeft `[admin, ops]`, en dat is wat elke
 bestaande admin bij de migratie naar schemaversie 2.13 gekregen heeft.
 
-Een platformbeheerder krijgt op elk project `[admin, ops]`, zonder lid te zijn.
+Een platformbeheerder met een verse step-up krijgt op elk project `[admin, ops]`, zonder lid te
+zijn. Zonder step-up is hij een gewone gebruiker.
 
 ## De matrix
 
@@ -100,7 +101,8 @@ er iets mee kan.
 - **Step-up**: `@requires_step_up` zonder conditie leest de beslissing die de poort al
   op het verzoek zette (`request.state.authz_decision`), en daaruit of er een verse
   2-factor bij deze aanroep hoort. Zo dwingt de route af wat de matrixpagina toont.
-  De mechaniek (dialoog, venster van vijf minuten, replay, `X-ZAD-OTP`) is onveranderd.
+  De mechaniek (dialoog, venster, replay, `POST /api/v2/step-up`) staat in
+  [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
 
   Een eigen conditie blijft voor de twee gevallen waar geen projectbeslissing is om uit
   te lezen: de platformroutes (`platform.*`, een eigen `Audience` zonder grants) en de
@@ -199,7 +201,30 @@ ops. De domeingoedkeuring geldt per project (`is_deployment_domain_approved`) en
 format `subdomain` is `{subdomain}.{domain}`, dus twee deployments van hetzelfde project
 kunnen dezelfde hostnaam vormen; wie de hostnaam van een draaiende deployment mag
 verzetten kan die van productie opeisen. Een NIEUWE deployment krijgt zijn domeinvelden
-mee uit `deployment.write`.
+mee uit `deployment.write`. Een veld dat de opgeslagen waarde herhaalt verzet niets en
+vraagt dus ook geen `deployment.domain-set`: een pijplijn stuurt bij elke deploy dezelfde
+`subdomain` mee.
+
+`developer-ci` leest alles wat `viewer` leest. `ops-ci` leest alleen de afloop terug:
+`project.read`, `deployment.read` en `task.read`, wat de pijplijn na een deploy opvraagt.
+Dat is de rol die productie bereikt, dus die houdt het smal.
+
+### Wat de deploy-action vraagt
+
+De deploy-action van zad-actions doet altijd een upsert, en de cleanup een delete. Drie
+verklaringen op die routes zorgen dat een pijplijn daarmee kan wat zijn rol belooft:
+
+- `@marking_if_absent(marking_in_body)` op de upsert: een deployment die nog niet bestaat
+  weegt tegen de markering die hij krijgt (`environment` uit de body, anders
+  `ontwikkeling`), niet tegen de hoogste van het project. Zonder die verklaring kon in
+  een project met productie alleen ops nog een preview aanmaken. Meteen op productie
+  aanmaken vraagt nog steeds `environment.set`.
+- `@marking_if_absent(default_marking)` op de delete: een deployment die al weg is weegt
+  als `ontwikkeling`, zodat de route zijn eigen 404 geeft en `--ignore-not-found` werkt.
+- `@weighed_action_from(image_only_upsert)` op de upsert: een upsert op een bestaande
+  deployment die alleen images vervangt (bekende componenten, geen kloon, dezelfde
+  markering, geen domeinwijziging) weegt als `deployment.image-replace`. Zo deployt
+  `ops-ci` via de action naar productie, en blijft al het andere `deployment.write`.
 
 ## Zie ook
 

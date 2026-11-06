@@ -15,9 +15,12 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Respon
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from opi.api.endpoint_util import (
+    default_marking,
     deployment_in_body,
     eis_doelwitten_uit_de_upsertbody,
     eis_handeling,
+    image_only_upsert,
+    marking_in_body,
     validate_api_token,
 )
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
@@ -101,7 +104,7 @@ from opi.connectors.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.core.auth_decorators import get_current_user, requires_step_up
-from opi.core.authz.actions import Action, deployment_from
+from opi.core.authz.actions import Action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.authz.actions import action as action_marker
 from opi.core.authz.engine import Role
 from opi.core.cluster_config import (
@@ -178,7 +181,12 @@ from opi.utils.naming import (
     sanitize_kubernetes_name,
 )
 from opi.utils.project_names import ensure_unique_project_name
-from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
+from opi.utils.project_utils import (
+    ProjectApiKeyError,
+    affected_deployments,
+    generate_base_project_file,
+    validate_project_name,
+)
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 from opi.utils.yaml_util import dump_yaml_to_string
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
@@ -534,6 +542,20 @@ def _project_data_or_404(project_name: str) -> dict[str, Any]:
     if not project or not project.data:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
     return project.data
+
+
+def _deployments_of_components(project_name: str, component_names: list[str] | None) -> list[str] | None:
+    """De deployments die deze componenten gebruiken, of None voor projectbreed.
+
+    Zonder componentnamen, en voor een project dat niet in de store staat, is er niets om
+    op te versmallen: dan blijft de ronde projectbreed, zoals ze was.
+    """
+    if not component_names:
+        return None
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        return None
+    return affected_deployments(project.data, component_names=component_names)
 
 
 async def _deployment_details(project_name: str, project_data: dict[str, Any]) -> list[DeploymentDetail]:
@@ -1136,6 +1158,8 @@ def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
 )
 @action_marker(Action.DEPLOYMENT_WRITE)
 @deployment_from(deployment_in_body)
+@marking_if_absent(marking_in_body)
+@weighed_action_from(image_only_upsert)
 @validate_api_token
 @requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
 async def upsert_deployment_v2(
@@ -1258,10 +1282,8 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     /api/v2/projects/{project_name}/leden/{naam}/tokens``, whose value is returned
     once and never again.
 
-    **A platform administrator sees every project.** That is deliberate and
-    follows from the platform-admin rule the whole application uses: an
-    administrator can already open any project's page. It is not a separate "list
-    everything" mode and there is no flag to ask for one.
+    **A platform administrator with a fresh step-up sees every project.** Without one
+    they see their own projects, like any other user. See ``POST /api/v2/step-up``.
 
     Headers:
         Authorization: Bearer <SSO access token> (required)
@@ -1526,7 +1548,7 @@ async def rotate_project_key_v2(
 ) -> JSONResponse:
     """Replace this project's AGE key pair. Async task, for a platform admin.
 
-    Wants a fresh ``X-ZAD-OTP`` on top of the token; see
+    Wants a fresh step-up (``POST /api/v2/step-up``) on top of the token; see
     ``features/projectsleutel-vervangen.md`` for details.
     """
     logger.info("V2 rotate project key: %s", project_name)
@@ -1555,6 +1577,7 @@ async def rotate_project_key_v2(
     },
 )
 @action_marker(Action.DEPLOYMENT_DELETE)
+@marking_if_absent(default_marking)
 @validate_api_token
 @requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_deployment_v2(
@@ -2014,6 +2037,9 @@ async def update_component_v2(
             "cpu_limit": component_data.cpu_limit,
             "memory_limit": component_data.memory_limit,
             "rollout": rollout,
+            # Alleen de deployments die dit component gebruiken; staat het project niet in
+            # de store, dan valt er niets te versmallen en blijft de ronde projectbreed.
+            "deployment_names": _deployments_of_components(project_name, [component_name]),
         },
     )
     return _accepted_response(task, "update_component")
@@ -2243,6 +2269,10 @@ async def add_service_v2(
             "service": service_data.service,
             "components": service_data.components,
             "rollout": rollout,
+            # Met een lijst componenten is de ronde te versmallen tot de deployments die
+            # ze gebruiken. Zonder lijst bindt de dienst aan ELK component van het
+            # project, en dan is projectbreed de waarheid.
+            "deployment_names": _deployments_of_components(project_name, service_data.components),
         },
     )
     return _accepted_response(task, "add_service")
@@ -2839,6 +2869,13 @@ async def _enqueue_config_write(
         "component": component,
         "deployment": deployment,
         "rollout": rollout,
+        # De deployments die deze config raakt, hier opgelost zodat de taakscope en de
+        # verwerking dezelfde lijst gebruiken. None = projectbreed (de projectlaag).
+        "deployment_names": affected_deployments(
+            _project_data_or_404(project_name),
+            deployment_name=deployment,
+            component_names=[component] if component else None,
+        ),
     }
     if operation == "patch":
         payload["add"] = add
@@ -4278,6 +4315,9 @@ async def _enqueue_values_write(
             "values": values,
             "keys": keys,
             "rollout": rollout,
+            "deployment_names": affected_deployments(
+                project.data, deployment_name=deployment_name, component_names=[component_name]
+            ),
         },
     )
     return _accepted_response(task, "configure_service_values")

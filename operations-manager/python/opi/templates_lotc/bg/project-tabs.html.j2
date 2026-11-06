@@ -125,7 +125,7 @@
        achter de bestaande. Hier gezet en niet in een tabblad, omdat zowel Overzicht als
        Deployments deze knop aanbiedt. #}
     {% set deployment_toevoegen = "openEditModal('modal-add-deployment-" ~ (project.deployments | length) ~ "', 'Deployment toevoegen')" %}
-    {% set project_herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
+    {% set project_herverwerken = "openConfirmAction('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
 
     <c-stack id="tab-{{ active_tab }}" gap="lg">
 
@@ -372,7 +372,7 @@
                    gewone handeling die je vaker doet, en niets eraan is onomkeerbaar. In de
                    Gevarenzone hoort alleen wat je niet terug kunt draaien, anders verliest
                    die kop zijn betekenis. #}
-                {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
+                {% set verwijderen = "openConfirmAction('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
                 <c-action-group align="start">
                     <c-button type="warning" label="Project verwijderen" @click="{{ verwijderen }}" />
                 </c-action-group>
@@ -452,7 +452,7 @@
                     {% for component in project.components | sort(attribute='name') %}
                         {% set original_index = project.components.index(component) %}
                         {% set component_bewerken = "openEditModal('modal-edit-component-" ~ original_index ~ "', 'Component bewerken - " ~ component.name ~ "')" %}
-                        {% set component_verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-component/confirm?target=" ~ (component.name | urlencode) ~ "', 'Component verwijderen')" %}
+                        {% set component_verwijderen = "openConfirmAction('/projects/" ~ project.name ~ "/actions/delete-component/confirm?target=" ~ (component.name | urlencode) ~ "', 'Component verwijderen')" %}
                         {# De kop hoort BIJ de kaart en staat er dus in.
                            Hij heeft er even buiten gestaan, als ankerpunt om langs te
                            scrollen toen de kaarten nog honderden regels lang waren. Dat
@@ -1074,8 +1074,22 @@
     {% elif active_tab == 'kaart' %}
     {# De kaart van dit project. De pagina draagt alleen het element; de plaat komt van
        /projects/<naam>/kaart.json, achter dezelfde poort als dit tabblad. #}
+    {# Project toont de definitie; een deployment toont wat er draait en hoeveel data het
+       bewaart. De opties staan er bij het renderen al in, dus de bekende beperking van
+       <nldd-dropdown> met later toegevoegde opties (zie _log-viewer.html.j2) speelt niet. #}
+    {% if project.deployments %}
+    <c-dropdown size="sm" width="16rem">
+        <select id="zad-map-view" aria-label="Weergave van de kaart"
+                onchange="document.getElementById('zad-map').src = '/projects/{{ project.name }}/kaart.json' + (this.value ? '?deployment=' + encodeURIComponent(this.value) : '')">
+            <option value="">Project</option>
+            {% for deployment in project.deployments %}
+            <option value="{{ deployment.name }}">Deployment {{ deployment.name }}</option>
+            {% endfor %}
+        </select>
+    </c-dropdown>
+    {% endif %}
     <div class="zad-map-frame">
-        <zad-map src="/projects/{{ project.name }}/kaart.json"></zad-map>
+        <zad-map id="zad-map" src="/projects/{{ project.name }}/kaart.json"></zad-map>
     </div>
 
     {% elif active_tab == 'audit' %}

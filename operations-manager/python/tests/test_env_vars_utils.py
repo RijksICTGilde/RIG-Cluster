@@ -190,6 +190,33 @@ class TestValidateAndParseEnvVars:
             "NEXTAUTH_URL": "https://$PUBLIC_HOST",
         }
 
+    # JSON is a subset of YAML, so it parses as YAML once detected
+    def test_multiline_json(self):
+        text = '{\n  "API_KEY": "secret",\n  "PORT": 8080\n}'
+        assert validate_and_parse_env_vars(text) == {"API_KEY": "secret", "PORT": "8080"}
+
+    def test_single_line_json_is_rejected(self):
+        """Detection only sees YAML when the text starts with "{\\n"."""
+        with pytest.raises(ValueError, match="Invalid format"):
+            validate_and_parse_env_vars('{"API_KEY": "secret"}')
+
+    def test_yaml_block_scalar(self):
+        text = "CERT: |\n  line one\n  line two"
+        assert validate_and_parse_env_vars(text) == {"CERT": "line one\nline two"}
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "CONFIG:\n  NESTED: value",
+            "HOSTS:\n  - a\n  - b",
+            '{\n  "CONFIG": {"NESTED": "value"}\n}',
+        ],
+        ids=["yaml-map", "yaml-list", "json-object"],
+    )
+    def test_nested_value_is_rejected(self, text):
+        with pytest.raises(ValueError, match="unsupported value type"):
+            validate_and_parse_env_vars(text)
+
     # CommentedMap input
     def test_commented_map_input(self):
         cm = CommentedMap()

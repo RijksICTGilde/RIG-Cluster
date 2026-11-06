@@ -52,6 +52,7 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/"): "de voorpagina, met de inlogknop",
     ("GET", "/about"): "doorverwijzing naar /introductie",
     ("GET", "/introductie"): "vaste inhoud, bewust zonder sessie (tests/test_introductiepagina.py)",
+    ("GET", "/getting-started"): "vaste uitleg, bewust zonder sessie (tests/test_getting_started_pagina.py)",
     ("GET", "/eigen-domein"): "vaste uitleg over domeinnamen",
     ("GET", "/weergave"): "vaste uitleg over de weergave",
     ("GET", "/security"): "het beveiligingsbeleid; wie een kwetsbaarheid meldt is meestal niet ingelogd",

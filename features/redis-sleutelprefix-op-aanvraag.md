@@ -74,5 +74,5 @@ een keer per bestand, dus een opt-out die daarna wordt gezet doorloopt de gewone
 | De poort | `opi/manager/redis_manager.py`, via `is_acl_key_prefix_approved` |
 | De migratie | `opi/services/schema_migration.py` (v2.9 -> 2.10) |
 
-Zie ook `instructions/services.md`, sectie Approvals, en
+Zie ook `docs/development/services.md`, sectie Approvals, en
 `features/impliciete-dienstselectie.md`.

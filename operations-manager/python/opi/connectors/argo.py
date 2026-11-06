@@ -35,7 +35,7 @@ _token_refresh_lock = asyncio.Lock()
 
 # While argocd-server restarts its API server in-process, the service can be without an
 # endpoint for as long as its 20 second graceful-shutdown deadline. 30 seconds covers
-# that with margin. Why it restarts: docs/argocd-server-herstart-elke-40-minuten.md.
+# that with margin. Why it restarts: docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
 CONNECT_RETRY_SECONDS = 30.0
 
 
@@ -60,6 +60,37 @@ def _ssl_context_voor(verify_ssl: bool, ca_bundle: str | None) -> ssl.SSLContext
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
     return context
+
+
+#: Een gedeelde ClientSession per (verify_ssl, ca_bundle) en per event loop. Elk ArgoCD-
+#: verzoek opende er zijn eigen, met een eigen TCP-verbinding en TLS-handshake erbij; een
+#: wachtlus doet er tientallen per deployment. De loop hoort in de sleutel omdat een sessie
+#: aan de loop vastzit waarop ze gemaakt is.
+_sessions: dict[tuple[bool, str | None, int], aiohttp.ClientSession] = {}
+_session_lock = asyncio.Lock()
+
+
+async def _shared_session(verify_ssl: bool, ca_bundle: str | None) -> aiohttp.ClientSession:
+    """De gedeelde sessie voor deze TLS-instelling, aangemaakt bij het eerste gebruik."""
+    sleutel = (verify_ssl, ca_bundle, id(asyncio.get_running_loop()))
+    sessie = _sessions.get(sleutel)
+    if sessie is not None and not sessie.closed:
+        return sessie
+    async with _session_lock:
+        sessie = _sessions.get(sleutel)
+        if sessie is not None and not sessie.closed:
+            return sessie
+        sessie = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=_ssl_context_voor(verify_ssl, ca_bundle)))
+        _sessions[sleutel] = sessie
+        return sessie
+
+
+async def close_shared_sessions() -> None:
+    """Sluit de gedeelde sessies. Hoort bij het afsluiten van het proces."""
+    for sessie in list(_sessions.values()):
+        if not sessie.closed:
+            await sessie.close()
+    _sessions.clear()
 
 
 def _exc_text(error: BaseException) -> str:
@@ -212,16 +243,13 @@ class ArgoConnector:
         login_url = f"{self.base_url}/api/v1/session"
         login_data = {"username": self.username, "password": self.password}
 
-        # Create SSL context
-        ssl_context = self._ssl_context()
-
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        request_timeout = aiohttp.ClientTimeout(total=30)
-
-        async with (
-            aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
-            session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
-        ):
+        session = await _shared_session(self.verify_ssl, self.ca_bundle)
+        async with session.post(
+            login_url,
+            json=login_data,
+            headers={"Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as response:
             if response.status == 200:
                 response_data = await response.json()
                 logger.debug(f"Login response data: {response_data}")
@@ -312,52 +340,52 @@ class ArgoConnector:
         if not await self.ensure_authenticated():
             return 401, "Authentication failed"
 
-        ssl_context = self._ssl_context()
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        session = await _shared_session(self.verify_ssl, self.ca_bundle)
         request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
-        async with aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session:
-            headers = {"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"}
-            logger.debug(f"Request headers: {redact_sensitive_headers(headers)}")
-            logger.debug(f"Making {method} request to: {url}")
+        headers = {"Authorization": f"Bearer {self.auth_token}", "Content-Type": "application/json"}
+        logger.debug(f"Request headers: {redact_sensitive_headers(headers)}")
+        logger.debug(f"Making {method} request to: {url}")
 
-            async def _send() -> tuple[int, str]:
-                async with session.request(method, url, json=json_data or {}, headers=headers) as response:
-                    return response.status, await response.text()
+        async def _send() -> tuple[int, str]:
+            async with session.request(
+                method, url, json=json_data or {}, headers=headers, timeout=request_timeout
+            ) as response:
+                return response.status, await response.text()
 
-            status, response_text = await retry_on_connect_error(_send, self.connect_retry_seconds, f"{method} {url}")
-            logger.debug(f"Response status: {status}")
-            logger.debug(
-                f"Response text: {response_text[:200]}..."
-                if len(response_text) > 200
-                else f"Response text: {response_text}"
+        status, response_text = await retry_on_connect_error(_send, self.connect_retry_seconds, f"{method} {url}")
+        logger.debug(f"Response status: {status}")
+        logger.debug(
+            f"Response text: {response_text[:200]}..."
+            if len(response_text) > 200
+            else f"Response text: {response_text}"
+        )
+
+        if status == 401 and self.token:
+            logger.error(
+                "ArgoCD wees het API-token van dit account af; opnieuw aanbieden helpt niet. "
+                "Roteer ARGOCD_TOKEN (scripts/edit-secret.py --component argocd-opi-token)."
             )
+            return 401, response_text
 
-            if status == 401 and self.token:
-                logger.error(
-                    "ArgoCD wees het API-token van dit account af; opnieuw aanbieden helpt niet. "
-                    "Roteer ARGOCD_TOKEN (scripts/edit-secret.py --component argocd-opi-token)."
-                )
-                return 401, response_text
+        if status == 401 and retry_count == 0:
+            logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
+            # Invalidate only the token this request actually used, then
+            # re-authenticate through the shared path so concurrent 401s
+            # collapse into a single login.
+            self._invalidate_token(self.auth_token)
+            self.auth_token = None
+            if await self.ensure_authenticated():
+                logger.info("Re-authentication successful, retrying request")
+                return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
+            else:
+                logger.error("Re-authentication failed")
+                return 401, "Re-authentication failed"
+        elif status == 401:
+            logger.error("Still receiving 401 after re-authentication attempt")
+            return 401, "Authentication failed after retry"
 
-            if status == 401 and retry_count == 0:
-                logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
-                # Invalidate only the token this request actually used, then
-                # re-authenticate through the shared path so concurrent 401s
-                # collapse into a single login.
-                self._invalidate_token(self.auth_token)
-                self.auth_token = None
-                if await self.ensure_authenticated():
-                    logger.info("Re-authentication successful, retrying request")
-                    return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
-                else:
-                    logger.error("Re-authentication failed")
-                    return 401, "Re-authentication failed"
-            elif status == 401:
-                logger.error("Still receiving 401 after re-authentication attempt")
-                return 401, "Authentication failed after retry"
-
-            return status, response_text
+        return status, response_text
 
     async def sync_application(self, app_name: str | None = None) -> bool:
         """

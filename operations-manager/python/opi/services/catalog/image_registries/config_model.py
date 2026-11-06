@@ -7,12 +7,13 @@ zie ``naming.py``.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
 
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
+from opi.services.config_managed import PLATFORM_MANAGED
 
 #: Een hostnaam met eventueel een pad, in kleine letters, zonder protocol en zonder tag.
 #: Ook een veiligheidsgrendel, zie features/image-registries.md.
@@ -38,6 +39,16 @@ UPSTREAM_MESSAGE = (
 #: dit patroon en weigert platte tekst ook zonder ``enforce_validation``.
 AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+age:|^plain:)"
 
+
+#: The key of the quota on a registry, shared by the model and its approval.
+QUOTA_FIELD = "quota-gib"
+
+#: Up to and including this value a project picks the quota itself; above it is a request.
+QUOTA_FREE_MAX_GIB = 10
+
+#: The ceiling. An ``le`` on the model rather than an ``IntegerSetting``: ``config_settings``
+#: cannot look inside a list, and the quota is per registry.
+QUOTA_MAX_GIB = 20
 
 #: Een DNS-1123-achtige naam die met een kleine LETTER begint, zodat hij nooit als
 #: YAML-getal gelezen wordt.
@@ -128,6 +139,19 @@ class RegistryEntry(BaseModel):
         ),
     )
 
+    quota_gib: int | None = Field(
+        default=None,
+        alias=QUOTA_FIELD,
+        ge=1,
+        le=QUOTA_MAX_GIB,
+        description=(
+            f"Opslagquota in GiB van de proxy-cache van deze registry in RCR. Laat hem weg voor de "
+            f"standaard van het cluster. Tot en met {QUOTA_FREE_MAX_GIB} kies je zelf; daarboven, tot "
+            f"{QUOTA_MAX_GIB}, is het een aanvraag die een platformbeheerder goedkeurt. Tot dan geldt "
+            f"{QUOTA_FREE_MAX_GIB}, of de laatst goedgekeurde waarde."
+        ),
+    )
+
     @model_validator(mode="after")
     def _has_something_to_be_called(self) -> RegistryEntry:
         """Een entry zonder naam EN zonder label is nergens naar te verwijzen.
@@ -163,6 +187,30 @@ class RegistryEntry(BaseModel):
         return self
 
 
+class QuotaApproval(BaseModel):
+    """Whether a platform administrator approved the quota of one registry.
+
+    Same shape as the value approvals of send-email, but ``value`` and ``status`` stay
+    optional: lowering back to an already approved quota leaves a block with only
+    ``approved-value``, which send-email's required fields would reject. Written by the
+    approval flow (``opi/services/approvals.py``).
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    value: str | None = Field(default=None, description="The quota this verdict is about.")
+    status: str | None = Field(default=None, description="requested, approved or denied.")
+    approved_value: str | None = Field(
+        default=None,
+        alias="approved-value",
+        description="The last approved quota, which keeps applying while a new request is open.",
+    )
+    history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Verdict history: one {date, status, by, message} entry per decision.",
+    )
+
+
 class ImageRegistriesConfig(BaseModel):
     """Projectniveau: de lijst private registries."""
 
@@ -171,6 +219,15 @@ class ImageRegistriesConfig(BaseModel):
     registries: list[RegistryEntry] = Field(
         default_factory=list,
         description="De private registries van dit project, met hun upstream en inloggegevens.",
+    )
+    quota_gib_approval: dict[str, QuotaApproval] | None = Field(
+        default=None,
+        alias=f"{QUOTA_FIELD}-approval",
+        json_schema_extra={PLATFORM_MANAGED: True},
+        description=(
+            "Per registry name: whether the requested quota is approved. Written by the platform. Here and "
+            "not on the registry itself, because only a field at this level is protected against writes."
+        ),
     )
 
 

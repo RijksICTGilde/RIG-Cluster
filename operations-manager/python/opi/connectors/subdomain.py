@@ -328,6 +328,12 @@ def is_deployment_domain_approved(
     return True
 
 
+#: The item types that trace back to a DEPLOYMENT, through the address it publishes on.
+#: A decision about anything else (a value in the project config) touches the project level,
+#: which is outside what ``find_deployments_for_domain_item`` can attribute.
+DOMAIN_ITEM_TYPES = frozenset({"domain", "subdomain"})
+
+
 def find_deployments_for_domain_item(project_data: dict[str, Any], item: dict[str, Any]) -> list[str]:
     """Return names of deployments that use the domain/subdomain in an approval item.
 

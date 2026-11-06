@@ -7,9 +7,14 @@
 ## Wat het is
 
 Een taak die minuten duurt toont niet langer alleen een balk en een regel tekst, maar
-noemt de stappen die hij zet: het projectbestand ophalen, diensten en manifesten
-bijwerken, wachten tot ArgoCD gesynchroniseerd is. De stappen verschijnen terwijl ze
-lopen, met een vinkje als ze klaar zijn en een kruis als ze mislukken.
+noemt de stappen die hij zet: het projectbestand ophalen, de omgeving inrichten, de
+configuratie publiceren, uitrollen. De stappen verschijnen terwijl ze lopen, met een
+vinkje als ze klaar zijn en een kruis als ze mislukken.
+
+Elke regel is werk dat echt gebeurt: er zijn geen stappen die alleen andere stappen
+omsluiten. En elke staptekst staat in `opi/core/progress_steps.py`, dus wie een stap
+toevoegt zet zijn tekst daar. Zie [Eén voortgangsweergave](./task-progress-view.md),
+"Wat de huidige regel betekent".
 
 Het mechanisme (subtaken op de voortgangsmanager, gerenderd door
 `templates/partials/task_progress_fragment.html.j2`) bestond al; wat ontbrak was gebruik
@@ -19,12 +24,12 @@ ervan op de plekken waar mensen zitten te wachten.
 
 | Actie | Stappen die je ziet |
 |---|---|
-| Deployment of project herverwerken | Project opzoeken; Projectbestand ophalen en controleren; (Projectbestand bijwerken naar de nieuwste vorm); (Verwijderde deployments opruimen); Diensten en manifesten bijwerken; Wachten tot ArgoCD gesynchroniseerd is (met per deployment een regel over waar hij op wacht) |
+| Deployment of project herverwerken | Project opzoeken; Projectbestand ophalen; Projectbestand valideren; (Projectbestand bijwerken naar de nieuwste versie); (Verwijderde deployments opruimen); de diensten, de configuratie en het projectbestand; Uitrol klaarzetten; Uitrollen (met per deployment een regel over waar hij op wacht) |
 | Deployment in slaapstand zetten / wekken | Projectgegevens ophalen; Slaap- of wektoestand vastleggen in git; daarna dezelfde stappen van het herverwerken |
-| Image bijwerken | Projectgegevens ophalen; Nieuwe image vastleggen in het projectbestand; Diensten en manifesten bijwerken; ArgoCD laten uitrollen |
-| Database of bucket klonen | Projectgegevens ophalen; Database/bucket kopiëren (met bron en verbindingswijze in de naam) |
+| Image bijwerken | Projectgegevens ophalen; Image bijwerken; Nieuwe image opslaan in het projectbestand; dezelfde stappen van het herverwerken; Uitrollen |
+| Database of bucket klonen | Projectgegevens ophalen; Database/bucket kopiëren (met bron en verbindingswijze als onderwerp) |
 | Deployment verwijderen | Projectgegevens ophalen; ArgoCD-toepassing verwijderen; (Namespace verwijderen); Services opruimen; (Manifesten verwijderen); (Deployment uit het projectbestand verwijderen); Subdomein opruimen; Controleren dat alles verwijderd is, allemaal met de deployment als onderwerp |
-| Project verwijderen | Project '...' verwijderen; per deployment de stappen hierboven; (Projectinfrastructuur opruimen); (Keycloak-realm verwijderen); (ArgoCD-resources van het project verwijderen); (Namespaces verwijderen); (Controleren dat alles verwijderd is); (Projectbestand verwijderen); Subdomeinen opruimen |
+| Project verwijderen | Project verwijderen, met de projectnaam als onderwerp; per deployment de stappen hierboven; (Projectinfrastructuur opruimen); (Keycloak-realm verwijderen); (ArgoCD-resources van het project verwijderen); (Namespaces verwijderen); (Controleren dat alles verwijderd is); (Projectbestand verwijderen); Subdomeinen opruimen |
 
 Stappen tussen haakjes verschijnen alleen als dat werk echt gebeurt.
 
@@ -47,9 +52,8 @@ Dit is de kern van de functie, niet een detail.
   deployment die al slaapt levert de regel "Geen wijziging nodig, de deployment is al
   sleeping" op, geen reeks afgevinkte stappen.
 - De namen staan in gewone taal en in het Nederlands, zoals de rest van de interface.
-  `tests/test_task_step_subject.py` scant daarvoor de bron van alle stapnamen, zodat een
-  Engelse regel er niet ongemerkt bij komt, en meet dat een stap die op meerdere plekken
-  gezet wordt overal hetzelfde heet.
+  `tests/test_task_step_subject.py` scant daarvoor `opi/core/progress_steps.py`, zodat
+  een Engelse regel er niet ongemerkt bij komt.
 
 ## Een stap zegt waarvoor hij loopt
 
@@ -58,7 +62,7 @@ bootstrap-acties -- stonden bij twee deployments twee keer identiek onder elkaar
 dragen daarom een **onderwerp** naast hun naam:
 
 ```python
-progress_manager.add_task("Database klaarmaken", subject=deployment_name)
+progress_manager.add_task(steps.DATABASE_CONFIG_APPLY, subject=deployment_name)
 ```
 
 Het onderwerp staat NAAST de naam en niet erin. De naam blijft zo bruikbaar om op te
@@ -66,20 +70,24 @@ groeperen of te vergelijken, en de weergave kiest zelf hoe ze getoond worden: in
 takenlijst is het de tweede regel onder de naam (samen met de foutreden, als die er is),
 in de eenregelige "huidige stap" worden ze samengevoegd tot `naam - onderwerp`.
 
-Een stap die een keer per project loopt (`Project aanmaken`,
-`Kubernetes namespace(s) aanmaken`) krijgt GEEN onderwerp; dat maakt de lijst alleen
-langer. `update_task` schrijft alleen de naam, dus een stap die zichzelf gaandeweg
-hernoemt houdt zijn onderwerp.
+Een stap die een keer per project loopt (`PROJECT_FILE_VALIDATE`, `ROLLOUT_PREPARE`)
+krijgt GEEN onderwerp; dat maakt de lijst alleen langer. `update_task` schrijft alleen de
+naam, dus een stap die zichzelf gaandeweg hernoemt houdt zijn onderwerp.
 
 Taken die al liepen voor dit veld bestond hebben geen `subject` in de opgeslagen
 subtaken; de weergave leest het met `.get` en toont dan gewoon geen tweede regel.
 
 ## Hoe je een stap toevoegt
 
+**Eerst de tekst.** Elke staptekst staat in `opi/core/progress_steps.py`, als constante
+met een Engelse naam en een Nederlandse waarde. Zet die er dus bij, en geef de constante
+mee aan de aanroep. `tests/test_progress_step_texts.py` faalt op een letterlijke
+staptekst buiten die module.
+
 In `ProjectManager` staan twee helpers:
 
 ```python
-step = self._begin_step("Diensten en manifesten bijwerken")   # None zonder voortgangsmanager
+step = self._begin_step(steps.CONFIG_PUBLISH)   # None zonder voortgangsmanager
 ...
 self._end_step(step)                     # klaar
 self._end_step(step, "reden waarom niet") # mislukt

@@ -70,7 +70,8 @@ patches:
       name: keycloak
 
 # Zie de prometheus-overlay voor de reden: zonder het rcr-pad in git blijft ArgoCD OutOfSync.
-# De tag komt uit de basis: dat is de tag die productie draait.
+# De tag komt uit de basis, die productie draait, behalve als `task pin-keycloak-image
+# TARGET=staging` er de tag van de sandbox onder zet; een promotie naar de basis haalt die weer weg.
 images:
   - name: ghcr.io/rijksictgilde/zad/keycloak-zad
     newName: rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad

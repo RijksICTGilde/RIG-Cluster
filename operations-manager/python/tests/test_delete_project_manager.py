@@ -61,21 +61,19 @@ def _make_project_manager_mock() -> MagicMock:
         return await mutate()
 
     mock_gitops.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
-    mock_pm.get_git_connector_for_argocd = AsyncMock(return_value=mock_gitops)
+    mock_pm.get_argo_workspace = AsyncMock(return_value=mock_gitops)
 
     mock_git_projects = AsyncMock()
     mock_git_projects.ensure_repo_cloned = AsyncMock()
     mock_git_projects.commit_and_push = AsyncMock()
     mock_git_projects.file_exists = AsyncMock(return_value=True)
     mock_git_projects.delete_file = AsyncMock()
-    mock_git_projects.commit_and_push_changes = AsyncMock(return_value=True)
     mock_pm.get_git_connector_for_project_files = AsyncMock(return_value=mock_git_projects)
 
     mock_git_deploy = AsyncMock()
     mock_git_deploy.ensure_repo_cloned = AsyncMock()
     mock_git_deploy.get_working_dir = AsyncMock(return_value="/tmp/deploy-repo")
-    mock_git_deploy.commit_and_push_changes = AsyncMock(return_value=True)
-    mock_pm.get_git_connector_for_deployment = AsyncMock(return_value=mock_git_deploy)
+    mock_pm.get_deployment_workspace = AsyncMock(return_value=mock_git_deploy)
 
     mock_pm.get_contents = AsyncMock()
     mock_pm.get_deployment_by_name = AsyncMock()
@@ -293,7 +291,7 @@ class TestCleanupProjectInfrastructure:
         mock_rmtree.assert_called()
 
         # Verify gitops commit was made
-        gitops_connector = await mock_pm.get_git_connector_for_argocd()
+        gitops_connector = await mock_pm.get_argo_workspace()
         gitops_connector.mutate_and_push.assert_awaited()
 
         # Verify success operation recorded
@@ -307,7 +305,7 @@ class TestCleanupProjectInfrastructure:
     async def test_errors_are_captured_not_raised(self):
         """Errors during infrastructure cleanup should be captured in results, not raised."""
         mock_pm = _make_project_manager_mock()
-        mock_pm.get_git_connector_for_argocd = AsyncMock(side_effect=RuntimeError("git error"))
+        mock_pm.get_argo_workspace = AsyncMock(side_effect=RuntimeError("git error"))
         manager = DeleteProjectManager(mock_pm)
 
         project_data = _make_project_data(services=["namespace-postgresql-database"])
@@ -349,7 +347,7 @@ class TestDeleteProjectArgocdFolder:
         assert verwijderd is True
         mock_rmtree.assert_called_once_with("/tmp/gitops/local/test-project")
 
-        gitops_connector = await mock_pm.get_git_connector_for_argocd()
+        gitops_connector = await mock_pm.get_argo_workspace()
         gitops_connector.mutate_and_push.assert_awaited()
         mock_argo.refresh_application.assert_called_once_with("user-applications")
 
@@ -424,7 +422,7 @@ class TestDeleteProjectArgocdFolder:
         mock_pm = _make_project_manager_mock()
         manager = DeleteProjectManager(mock_pm)
         deletion_results: dict = {"operations": [], "errors": [], "success": True}
-        gitops_connector = await mock_pm.get_git_connector_for_argocd()
+        gitops_connector = await mock_pm.get_argo_workspace()
 
         bekeken: list[str] = []
 
@@ -452,7 +450,7 @@ class TestDeleteProjectArgocdFolder:
     async def test_errors_are_captured_not_raised(self):
         """Errors should be captured in results, not raised."""
         mock_pm = _make_project_manager_mock()
-        mock_pm.get_git_connector_for_argocd = AsyncMock(side_effect=RuntimeError("git error"))
+        mock_pm.get_argo_workspace = AsyncMock(side_effect=RuntimeError("git error"))
         manager = DeleteProjectManager(mock_pm)
         deletion_results: dict = {"operations": [], "errors": [], "success": True}
 
@@ -553,7 +551,7 @@ class TestDeleteDeploymentSeparation:
         werkmap = tmp_path / "argo-applications"
         project_dir = werkmap / "local" / "test-project"
         project_dir.mkdir(parents=True)
-        gitops = await mock_pm.get_git_connector_for_argocd()
+        gitops = await mock_pm.get_argo_workspace()
         gitops.get_working_dir = AsyncMock(return_value=str(werkmap))
 
         argocd_app_path = werkmap / generate_gitops_argocd_application_path("local", "test-project", "pr-42")

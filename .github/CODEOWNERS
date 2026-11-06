@@ -8,7 +8,7 @@
 /operations-manager/python/opi/services/project_authorization.py @uittenbroekrobbert
 /operations-manager/python/opi/utils/api_keys.py @uittenbroekrobbert
 /operations-manager/python/opi/configs/keycloak/bootstrap.yaml @uittenbroekrobbert
-/keycloak-migration/custom-mapper/src/main/java/ @uittenbroekrobbert
+/images/keycloak-zad/extensions/custom-mapper/src/main/java/ @uittenbroekrobbert
 
 # Sessie en CSRF
 /operations-manager/python/opi/core/secret_key.py @uittenbroekrobbert
@@ -55,7 +55,7 @@
 /features/falco-runtime-detectie.md @uittenbroekrobbert
 /features/asvs-zelfbeoordeling.md @uittenbroekrobbert
 /features/rollen-en-rechten.md @uittenbroekrobbert
-/docs/asvs-zelfbeoordeling.md @uittenbroekrobbert
+/docs/security/asvs-zelfbeoordeling.md @uittenbroekrobbert
 /architecture/asvs-zelfbeoordeling.yaml @uittenbroekrobbert
 
 # De maatregelen waar SECURITY.md naar verwijst als bewijs

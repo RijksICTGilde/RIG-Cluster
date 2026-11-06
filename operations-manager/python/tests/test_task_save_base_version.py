@@ -88,8 +88,8 @@ def _external_edit(remote: FakeRemote, mutate) -> None:
 
 def _make_progress() -> MagicMock:
     progress = MagicMock()
-    progress.add_task.side_effect = lambda name: f"task-{name}"
-    progress.add_subtask.side_effect = lambda parent, name: f"subtask-{name}"
+    progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
+    progress.add_subtask.side_effect = lambda parent, name, subject=None: f"subtask-{name}"
     return progress
 
 

@@ -14,6 +14,7 @@ from opi.services.catalog.image_registries.naming import (
     organization_suffix,
     pull_secret_name,
 )
+from opi.services.catalog.image_registries.quota import effective_quota_gib
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
 from opi.services.services_enums import ServiceType
 from opi.utils.age import (
@@ -103,7 +104,11 @@ class QuayProxyOrganizationBackend:
         cluster_config = get_image_registries_config(ctx.cluster)
         customer_name = cluster_config.get("customer_name", "")
         rotation_days = cluster_config.get("rotation_days", 90)
-        quota_limit_gib = cluster_config.get("quota_limit_gib", DEFAULT_QUOTA_LIMIT_GIB)
+        quota_limit_gib = effective_quota_gib(
+            ctx.project_data,
+            str(registry.get("name", "")),
+            cluster_config.get("quota_limit_gib", DEFAULT_QUOTA_LIMIT_GIB),
+        )
         organization = organization_name(str(upstream), customer_name, ctx.project_name)
 
         password = _plain_password(registry, ctx)

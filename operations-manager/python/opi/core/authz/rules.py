@@ -13,6 +13,7 @@ from opi.core.authz.actions import Action
 from opi.core.authz.engine import (
     COMPONENT_IN_PRODUCTION,
     COMPONENT_NOT_IN_PRODUCTION,
+    HUMAN_ONLY,
     NON_PRODUCTION,
     PRODUCTION,
     PROJECT_WITH_PRODUCTION,
@@ -44,6 +45,11 @@ PLATFORM = "Platformbeheer"
 # Rij 1 van de matrix: een viewer leest alles van het project, behalve de waarden van
 # omgevingsvariabelen en secrets. Die staan achter env-vars.manage respectievelijk de
 # projectsleutel.
+#
+# developer-ci reads as viewer (INCLUDES). ops-ci reads only what a pipeline asks for
+# after a deploy: the task outcome, the deployment's URLs and whether changes are still
+# waiting for a rollout; it is the role that reaches production.
+_CI_READS = frozenset({Action.PROJECT_READ, Action.DEPLOYMENT_READ, Action.TASK_READ})
 
 for _actie, _label, _sectie in (
     (Action.PROJECT_READ, "Project bekijken", PROJECT),
@@ -61,7 +67,8 @@ for _actie, _label, _sectie in (
     (Action.SLEEP_READ, "Slaapstand bekijken", TASKS),
     (Action.TOKEN_READ, "Tokens bekijken", MEMBERS),
 ):
-    rule(_actie, label=_label, section=_sectie, read=True, grants=[Grant(Role.VIEWER)])
+    _ci = [Grant(Role.OPS_CI)] if _actie in _CI_READS else []
+    rule(_actie, label=_label, section=_sectie, read=True, grants=[Grant(Role.VIEWER), *_ci])
 
 
 # --- Deployments -------------------------------------------------------------
@@ -276,6 +283,16 @@ rule(Action.WIZARD_USE, label="De aanmaakwizard gebruiken", section=PORTAL, audi
 rule(Action.PROJECT_CREATE, label="Een project aanmaken", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.ACCOUNT_OTP, label="De eigen 2-factor inrichten", section=PORTAL, audience=Audience.SIGNED_IN)
 rule(Action.STEP_UP_VERIFY, label="Een step-up-code bevestigen", section=PORTAL, audience=Audience.SIGNED_IN)
+# Humans only; service accounts lack 2FA. Read action: viewers can activate to access
+# env-vars. One viewer grant is enough: INCLUDES puts developer, ops, admin and
+# developer-ci on viewer.
+rule(
+    Action.TOKEN_STEP_UP,
+    label="Een step-up activeren met een persoonlijk token",
+    section=PORTAL,
+    read=True,
+    grants=[Grant(Role.VIEWER, requires=HUMAN_ONLY)],
+)
 rule(Action.TOOLS_USE, label="Het versleutelgereedschap gebruiken", section=PORTAL, audience=Audience.SIGNED_IN)
 
 

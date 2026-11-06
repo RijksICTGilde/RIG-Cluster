@@ -124,7 +124,7 @@ class MailManager:
     ) -> MailAccount:
         """Make the relay hold exactly this account. The ONE place an account is made.
 
-        Replay-safe by contract (``instructions/services.md``): an account that already
+        Replay-safe by contract (``docs/development/services.md``): an account that already
         exists is brought in line rather than refused, so processing a project twice is a
         no-op and a changed limit takes effect on the next run.
 

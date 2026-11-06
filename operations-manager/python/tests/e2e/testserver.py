@@ -21,10 +21,11 @@ from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from opi.core.step_up import has_fresh_step_up
 from opi.services.otp_herlogin_service import Herlogin
 from opi.utils.age import encrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
@@ -339,6 +340,15 @@ def _mock_get_otp_service() -> InMemoryUserOtpService:
     return get_in_memory_otp_service()
 
 
+#: A test of what an admin may do starts with the rights, like ``elevated_by_default`` in
+#: tests/conftest.py. ``test_elevated_rights.py`` switches this off to test the way there.
+ELEVATED_BY_DEFAULT = {"on": True}
+
+
+def _middleware_step_up(request: Any) -> bool:
+    return ELEVATED_BY_DEFAULT["on"] or has_fresh_step_up(request)
+
+
 @contextmanager
 def _otp_stubs() -> Iterator[None]:
     """De 2-factor en de herlogin zonder Postgres en Keycloak.
@@ -352,6 +362,8 @@ def _otp_stubs() -> Iterator[None]:
         patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
         patch("opi.web.router_otp._get_herlogin_service", get_in_memory_herlogin_service),
         patch("opi.web.router.UserOtpService", _mock_get_otp_service),
+        patch("opi.middleware.authorization.has_fresh_step_up", _middleware_step_up),
+        patch("opi.web.router_step_up.UserOtpService", _mock_get_otp_service),
     ):
         yield
 

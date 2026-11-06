@@ -138,6 +138,24 @@ class TestTheSavedProjectFile:
         validate_project_schema(saved["project_data"])
 
     @pytest.mark.asyncio
+    async def test_the_wizard_service_shape_is_normalized_before_the_save(self, saved: Any) -> None:
+        """Staging, wies-6z3: the restore wizard hands publish-on-web over in the name-as-key
+        shape, and the schema's deployment-service envelope refused the whole file."""
+        from opi.core.backup_tasks import _create_deployment_from_source
+
+        deployment_config = {
+            "name": TARGET,
+            "components": [{"reference": "mono", "image": "nginx:1.27"}],
+            "services": [{"publish-on-web": {"config": {"subdomain": "herstel"}}}],
+        }
+
+        await _create_deployment_from_source(PROJECT, TARGET, SOURCE, deployment_config, backup_run_id=RUN)
+
+        services = saved["project_data"]["deployments"][1]["services"]
+        assert services == [{"reference": "publish-on-web", "config": {"subdomain": "herstel"}}]
+        validate_project_schema(saved["project_data"])
+
+    @pytest.mark.asyncio
     async def test_the_file_is_saved_with_validation_on(self, saved: Any) -> None:
         """Een ongeldig bestand hoort de restore te stoppen voordat er iets is aangemaakt."""
         from opi.core.backup_tasks import _create_deployment_from_source

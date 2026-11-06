@@ -94,6 +94,8 @@ data:
     # GRAFANA_TOKEN staan in het env-secret in zad-staging-secrets.
     GRAFANA_DATASOURCE_UID=mimir-staging
     GRAFANA_BILLING_DATASOURCE_UID=mimir-billing
+    CAPACITY_WATCH_ENABLED=true
+    CAPACITY_WATCH_TENANT=rig-staging
 
     # Geen REGISTRY_*: de registry-organisatie rig/zad is die van productie. Zonder
     # REGISTRY_URL staat de image-upload uit.

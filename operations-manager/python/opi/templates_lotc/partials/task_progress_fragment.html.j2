@@ -12,6 +12,7 @@
     - status: str ("running", "completed", "failed")
   Optional:
     - tasks: list of task dicts (name, status, subtasks)
+    - total_duration_seconds: float | None (shown as "Klaar in ..." once completed)
     - error: str | None
     - component_failures: list of failure dicts (component, deployment, failure_type, message, logs) | None
     - project_name: str | None (for linking to detail page)
@@ -56,14 +57,20 @@
 
     {{ progress_task_list(tasks) }}
 
+    {% set _klaar_in = "Klaar in " ~ (total_duration_seconds | stapduur) if status == "completed" and total_duration_seconds is defined and total_duration_seconds is not none else "" %}
+
     {# De vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
        zonder klikafhandeling op het scherm: de dialoog ging niet dicht en de pagina
        herlaadde niet. Zelfde vorm als bg/_modal-wizard-progress-fragment.html.j2. #}
     {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
+        {% if _klaar_in %}<span class="edit-progress-duration">{{ _klaar_in }}</span>{% endif %}
         {% set afronden_js %}{{ on_complete }}{% endset %}
         <c-button type="primary" label="{{ on_complete_label | default('Ok') }}" @click="{{ afronden_js }}" />
     </div>
+    {% elif _klaar_in %}
+    {# Without a finish button there is no bar to sit in. #}
+    <p class="edit-progress-step">{{ _klaar_in }}</p>
     {% elif status == "failed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
         {% set sluiten_js %}{{ on_complete }}{% endset %}

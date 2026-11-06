@@ -335,7 +335,7 @@ class TestExterneEgressBlijftBeperktTot443En80:
     """De mailrelay leunt op deze eigenschap, dus hij wordt hier vastgepind.
 
     De upstream mailserver authenticeert niet en vertrouwt op ons uitgaande IP
-    (gemeten 17-08-2026, zie docs/ron-koppeling.md). Daardoor is dit baseline-beleid
+    (gemeten 17-08-2026, zie docs/operations/ron-koppeling.md). Daardoor is dit baseline-beleid
     het enige dat een tenant dwingt via de relay te mailen: kan een pod
     145.21.161.201:25 bereiken, dan mailt hij namens onze organisatie zonder limiet,
     zonder From-policy, zonder DKIM en zonder log.
@@ -369,7 +369,7 @@ class TestExterneEgressBlijftBeperktTot443En80:
             assert smtp not in poorten, (
                 f"poort {smtp} naar buiten maakt de mailrelay omzeilbaar: een tenant kan dan "
                 "rechtstreeks bij de upstream mailserver, die niet authenticeert. "
-                "Zie docs/ron-koppeling.md."
+                "Zie docs/operations/ron-koppeling.md."
             )
 
     def test_geen_ongelimiteerde_externe_egress(self):

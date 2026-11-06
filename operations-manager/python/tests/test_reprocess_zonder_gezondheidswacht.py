@@ -72,6 +72,9 @@ def _project_manager(monkeypatch: pytest.MonkeyPatch, *, render_ok: bool = True)
     argo_connector.refresh_application = AsyncMock(return_value="2026-10-12T11:37:00Z")
     render = (True, "") if render_ok else (False, "rpc error: code = Unknown desc = kustomize build failed: oeps")
     argo_connector.get_application_manifests = AsyncMock(return_value=render)
+    # Nog niet Synced, dus de render-check hieronder loopt zoals voorheen (RC-418: een
+    # verse Synced bewijst de render al en dan wordt het ophalen overgeslagen).
+    argo_connector.get_application_status = AsyncMock(return_value={"status": {"sync": {"status": "OutOfSync"}}})
     monkeypatch.setattr("opi.manager.project_manager.create_argo_connector", lambda *a, **k: argo_connector)
 
     wacht = AsyncMock(return_value=None)
@@ -120,3 +123,23 @@ async def test_de_standaard_wacht_nog_steeds_op_gezondheid(monkeypatch: pytest.M
     assert geslaagd is True, manager.get_processing_error()
     wacht.assert_awaited_once()
     assert wacht.await_args.kwargs["app_name"] == "wies-pr-689"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_rollout_no_longer_says_it_is_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The wait sets "wacht op N applicatie(s)" as the rollout's subject; done, it goes."""
+    from opi.core import progress_steps
+
+    manager, _, wacht = _project_manager(monkeypatch)
+    progress = _progress()
+    subjects: list[str | None] = []
+    wacht.side_effect = lambda **_: subjects.extend(
+        info["subject"] for info in progress._subtasks.values() if info["name"] == progress_steps.ROLLOUT
+    )
+
+    assert await manager.process_project_from_git("projects/wies.yaml", task_progress_manager=progress) is True
+
+    assert subjects == [progress_steps.waiting_for_applications(1)]
+    [rollout] = [info for info in progress._subtasks.values() if info["name"] == progress_steps.ROLLOUT]
+    assert rollout["status"] == "completed"
+    assert not rollout["subject"]

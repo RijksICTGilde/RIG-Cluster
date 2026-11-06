@@ -34,7 +34,7 @@ en 8.19 (installeren van software) vragen.
 
 De bronpaden en niet de hele repo: voor de operations-manager is dat `operations-manager/` (de
 `COPY`-regels in `operations-manager/Dockerfile`), voor `publish-keycloak-image` zijn dat
-`keycloak-migration/relay-email-sender`, `keycloak-migration/custom-mapper` en
+`images/keycloak-zad/extensions/relay-email-sender`, `images/keycloak-zad/extensions/custom-mapper` en
 `images/keycloak-zad`. Over de hele repo was de tag altijd `-dirty`, omdat
 `publish-operations-manager` afhangt van `generate-env-secrets-for-operations-manager` en die het
 secrets-bestand in `bootstrap/` herschrijft. Daarmee verloor `-dirty` zijn betekenis, en weigerde de
@@ -80,7 +80,7 @@ Die commit je, waarna je deployt:
 ```bash
 git add bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
 git commit -m "deploy: operations-manager 2026.07.22.1432-7ccad61d"
-task deploy-operations-manager CLUSTER_TYPE=odcn-production
+CLUSTER_TYPE=odcn-production task deploy-operations-manager
 ```
 
 De pin staat dus in git. Daarmee is de git-historie van dat ene bestand het draaiboek van wat er
@@ -164,7 +164,7 @@ uitzonderingen staan in `UITZONDERINGEN`, met de reden per regel.
 ## Wat bewust niet is meegenomen
 
 - **De sandbox.** Die pusht naar de registry naast het cluster met de commit als tag
-  (`docs/sandbox-kind-registry.md`), en publiceert niet, dus er is geen rollback-probleem.
+  (`docs/sandbox/sandbox-kind-registry.md`), en publiceert niet, dus er is geen rollback-probleem.
 - **De overige images** (hello-world, argocd-rig, zad-waker). `docker-build-and-push`
   ondersteunt `IMAGE_TAG` en `EXTRA_TAG` voor iedereen, dus dit is per image een kleine stap
   zodra het nodig is.

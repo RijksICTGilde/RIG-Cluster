@@ -4,7 +4,13 @@ Tests for the opi.core.template_helpers module.
 Tests format_dutch_date and get_service_name utility functions.
 """
 
-from opi.core.template_helpers import format_dutch_date, get_service_name, shorten_image_digest
+from typing import TYPE_CHECKING
+
+from opi.core.config import settings
+from opi.core.template_helpers import cluster_tag, format_dutch_date, get_service_name, shorten_image_digest
+
+if TYPE_CHECKING:
+    from fastapi.testclient import TestClient
 
 
 class TestFormatDutchDate:
@@ -174,3 +180,26 @@ class TestShortenImageDigest:
         wat de pod meldt komt van buiten.
         """
         assert shorten_image_digest("ghcr.io/minbzk/moza@abcdefghijklmnop") == "ghcr.io/minbzk/moza@abcdefghijkl"
+
+
+class TestClusterTag:
+    """Tests for cluster_tag."""
+
+    def test_known_clusters(self):
+        assert cluster_tag("sandboxed-local") == ("Sandbox", "accent")
+        assert cluster_tag("odcn-staging") == ("ODCN Staging", "warning")
+        assert cluster_tag("odcn-production") == ("ODCN Production", "neutral")
+
+    def test_sandbox_variants_are_sandbox(self):
+        assert cluster_tag("sandboxed-local-dev") == ("Sandbox", "accent")
+
+    def test_unknown_cluster_shows_its_name(self):
+        assert cluster_tag("odcn-acceptatie") == ("odcn-acceptatie", "neutral")
+
+
+def test_kopbalk_toont_het_cluster(test_client: TestClient) -> None:
+    label, color = cluster_tag(settings.CLUSTER_MANAGER)
+
+    html = test_client.get("/introductie").text
+
+    assert f'<nldd-tag slot="action" text="{label}" color="{color}">' in html

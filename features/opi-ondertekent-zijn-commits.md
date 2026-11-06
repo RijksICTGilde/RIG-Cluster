@@ -20,10 +20,10 @@ De git-connector gebruikt die identiteit op al zijn commitwegen:
 
 | weg | hoe |
 |---|---|
-| `commit_and_push`, `commit_changes`, `commit_and_push_changes` | `user.signingkey` + `commit.gpgsign true` in de git-config van de werkmap |
+| `commit_and_push`, `commit_changes` | `user.signingkey` + `commit.gpgsign true` in de git-config van de werkmap |
 | de initial commit van een leeg repo | dezelfde git-config |
 | de rebase na een push-conflict | dezelfde git-config: git ondertekent de commits die hij opnieuw maakt |
-| `build_commit` (de ProjectStore-weg) | `-S<fingerprint>` bij `commit-tree`, want plumbing leest `commit.gpgsign` niet |
+| `build_tree_commit`: `GitRepo.commit` (de deployments- en argo-repo) en `build_commit` (de ProjectStore) | `-S<fingerprint>` bij `commit-tree`, want plumbing leest `commit.gpgsign` niet |
 
 `GNUPGHOME` gaat als omgeving mee bij elk git-commando, zodat gpg de geïmporteerde sleutel
 vindt. Een wrapper via `gpg.program` is daarvoor niet nodig.

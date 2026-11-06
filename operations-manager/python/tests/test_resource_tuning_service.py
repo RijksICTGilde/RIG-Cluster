@@ -157,7 +157,7 @@ class TestTuneDeploymentResources:
 
     @pytest.mark.asyncio
     async def test_metrics_unavailable_raises_runtime_error(self):
-        """Should raise RuntimeError when metrics backend is unavailable."""
+        """Should raise RuntimeError when the metrics backend reports itself unavailable."""
         with (
             patch(
                 "opi.services.resource_tuning_service.get_project_data_from_git", new_callable=AsyncMock
@@ -168,7 +168,7 @@ class TestTuneDeploymentResources:
         ):
             mock_get_from_git.return_value = ({"deployments": []}, "test.yaml")
 
-            mock_get_connector.side_effect = RuntimeError("Connection refused")
+            mock_get_connector.return_value = MagicMock(is_connected=False)
 
             with pytest.raises(RuntimeError, match="Metrics backend unavailable"):
                 await tune_deployment_resources("my-project")

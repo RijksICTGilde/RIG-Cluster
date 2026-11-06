@@ -1,7 +1,7 @@
 """LEVEL 5 (UI wizard, Playwright) for the wizard's base-plus-mutations rules - AND
 the template for browser-testing a wizard FLOW rather than one service's config.
 
-The levels are described in ``instructions/wizard-tests.md``; the browserless companion
+The levels are described in ``docs/development/wizard-tests.md``; the browserless companion
 to this file is ``tests/forms/test_wizard_base_and_mutations.py``.
 
 WHY THIS SEAM

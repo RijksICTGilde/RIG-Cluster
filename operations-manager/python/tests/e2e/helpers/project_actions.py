@@ -26,8 +26,8 @@ def delete_project_via_ui(
 
     Navigates to the details page, clicks "Project verwijderen" to open the modal,
     confirms there, and then waits for the task to report back the way a user does: the
-    question is replaced by the progress view, and the finish button appears when the
-    task ends.
+    modal opens with the progress view, and the finish button appears when the task
+    ends.
 
     Waiting matters since deleting became a task: the project file disappearing from
     Forgejo happens partway through, so a caller that only polls Forgejo can catch the
@@ -41,15 +41,13 @@ def delete_project_via_ui(
     page.goto(f"{base}/projects/{project_name}/details")
     page.wait_for_load_state("networkidle")
 
-    # Open the confirmation in the shared modal.
+    # The question comes first, in the confirmation dialog.
     page.locator("button:has-text('Project verwijderen')").first.click()
-    page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=start_timeout)
-
-    confirm = page.locator("#edit-section-inner [data-confirm-action] .confirm-action-submit").first
+    confirm = page.locator("#bevestiging-doorgaan")
     confirm.wait_for(state="visible", timeout=start_timeout)
     confirm.click()
 
-    # The question is replaced by the running task...
+    # Then the shared modal opens with the running task...
     page.locator(".edit-progress-view").wait_for(state="visible", timeout=start_timeout)
     # ...and the finish button (Ok / Sluiten) appears when the task ends, whichever way.
     page.locator(".edit-progress-actions").wait_for(state="visible", timeout=finish_timeout)

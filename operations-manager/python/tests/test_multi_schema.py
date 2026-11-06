@@ -131,6 +131,7 @@ async def test_readonly_role_granted_on_every_schema():
         database="proj_dep",
         schemas=schemas,
         connection_limit=20,
+        db_host="h",
     )
 
     assert ro_username == "proj_dep_ro"

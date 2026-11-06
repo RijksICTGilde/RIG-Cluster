@@ -15,10 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.services.user_otp_service import OtpStatus, OtpVerification
+from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.tabs import open_tab
 
 if TYPE_CHECKING:
-    from playwright.sync_api import Page
+    from playwright.sync_api import Locator, Page
 
 pytestmark = pytest.mark.e2e
 
@@ -44,6 +45,9 @@ def otp_factor() -> object:
         yield
 
 
+DOTS = "\u2022" * 8
+
+
 def _open_window(auth_page: Page, app_server: str) -> None:
     auth_page.goto(f"{app_server}{COMPONENTEN_URL}")
     auth_page.wait_for_load_state("networkidle")
@@ -53,6 +57,17 @@ def _open_window(auth_page: Page, app_server: str) -> None:
     knop.wait_for(state="visible", timeout=10000)
     knop.click()
     auth_page.wait_for_selector(".edit-section-modal.is-open", timeout=10000)
+
+
+def _open_window_with_code(auth_page: Page, app_server: str) -> Locator:
+    """Open het venster, loop de step-up door, en geef de editor terug."""
+    _open_window(auth_page, app_server)
+    code = auth_page.locator("#edit-section-inner input[name='otp'], #edit-section-inner [name='otp'] input").first
+    code.fill("000000")
+    auth_page.locator("#edit-section-inner button:has-text('Bevestigen')").first.click()
+    editor = auth_page.locator("#edit-section-inner .kv-editor .cm-content")
+    editor.wait_for(state="visible", timeout=10000)
+    return editor
 
 
 def test_opening_asks_for_a_code_first_and_shows_no_value(app_server: str, auth_page: Page, otp_factor: object) -> None:
@@ -77,19 +92,155 @@ def test_opening_asks_for_a_code_first_and_shows_no_value(app_server: str, auth_
 
 
 def test_after_the_code_the_window_shows_the_real_values(app_server: str, auth_page: Page, otp_factor: object) -> None:
-    """De dialoog herhaalt de handeling als GET, en het venster is de enige plek met de waarden."""
-    _open_window(auth_page, app_server)
+    """De dialoog herhaalt de handeling als GET, en het venster is de enige plek met de waarden.
 
-    code = auth_page.locator("#edit-section-inner input[name='otp'], #edit-section-inner [name='otp'] input").first
-    code.fill("000000")
-    auth_page.locator("#edit-section-inner button:has-text('Bevestigen')").first.click()
+    Sinds RC-416 ligt er een veil over de waarden, dus de editor toont ze pas na "Toon
+    waarden". Wat hier gemeten wordt is dat de HERHALING de echte regels binnenhaalt.
+    """
+    editor = _open_window_with_code(auth_page, app_server)
+    auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars").click()
 
-    # De herhaling haalt het venster met een GET binnen; de editor toont de echte regels.
-    editor = auth_page.locator("#edit-section-inner .kv-editor .cm-content")
-    editor.wait_for(state="visible", timeout=10000)
     text = editor.inner_text()
     assert "LOG_LEVEL=debug" in text
     assert "FEATURE_FLAG=on" in text
+
+
+def test_the_values_are_masked_until_you_ask_for_them(app_server: str, auth_page: Page, otp_factor: object) -> None:
+    """Het veil (RC-416): stippen in plaats van waarden, en de knop schakelt beide kanten op."""
+    editor = _open_window_with_code(auth_page, app_server)
+
+    gemaskeerd = editor.inner_text()
+    assert f"LOG_LEVEL={DOTS}" in gemaskeerd, gemaskeerd
+    assert f"FEATURE_FLAG={DOTS}" in gemaskeerd, gemaskeerd
+    assert "debug" not in gemaskeerd
+    assert "=on" not in gemaskeerd
+
+    # Een screenreader krijgt de rol voorgelezen, niet de stippen en niet de waarde.
+    maskers = editor.locator(".cm-kv-mask")
+    assert maskers.count() == 2
+    assert maskers.first.get_attribute("aria-label") == "verborgen waarde"
+
+    # De knop is een nldd-toggle-button: het etiket en aria-pressed staan op de knop in
+    # zijn shadow DOM, de aan-stand als 'selected' op het component zelf.
+    knop = auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars")
+    binnen = knop.locator("button")
+    assert binnen.inner_text() == "Toon waarden"
+    assert binnen.get_attribute("aria-pressed") == "false"
+    knop.click()
+
+    getoond = editor.inner_text()
+    assert "LOG_LEVEL=debug" in getoond
+    assert "FEATURE_FLAG=on" in getoond
+    assert DOTS not in getoond
+    assert binnen.inner_text() == "Verberg waarden"
+    assert binnen.get_attribute("aria-pressed") == "true"
+
+    knop.click()
+    opnieuw = editor.inner_text()
+    assert f"LOG_LEVEL={DOTS}" in opnieuw, opnieuw
+    assert "debug" not in opnieuw
+
+
+def test_only_looking_does_not_mark_the_modal_as_changed(app_server: str, auth_page: Page, otp_factor: object) -> None:
+    """Het veil omzetten bewerkt niets, dus de modal blijft schoon (RC-416, rework).
+
+    De change van de nldd-toggle-button bubbelt naar de luisteraar op document in
+    edit_modal.js. Zonder stopPropagation vroeg sluiten na alleen "Toon waarden" om
+    bevestiging van niet-opgeslagen werk dat er niet was.
+    """
+    # Eerst de step-up doorlopen; het invullen van de code maakt de modal wel vuil.
+    _open_window_with_code(auth_page, app_server)
+    auth_page.evaluate("closeEditModal()")
+
+    # Tweede opening valt binnen het verse step-up-venster: geen code, dus modal schoon.
+    _open_window(auth_page, app_server)
+    editor = auth_page.locator("#edit-section-inner .kv-editor .cm-content")
+    editor.wait_for(state="visible", timeout=10000)
+    assert auth_page.evaluate("window.isEditDirty") is False
+
+    auth_page.locator("#edit-section-inner #kv-mask-toggle-env-vars").click()
+    assert auth_page.locator("#edit-section-inner .cm-kv-mask").count() == 0
+    assert auth_page.evaluate("window.isEditDirty") is False
+
+
+def test_the_cursor_line_shows_its_own_value(app_server: str, auth_page: Page, otp_factor: object) -> None:
+    """Een waarde bewerken zonder de rest te zien: alleen de regel met de cursor gaat open."""
+    editor = _open_window_with_code(auth_page, app_server)
+
+    editor.locator(".cm-line").nth(1).click()
+    text = editor.inner_text()
+    assert "FEATURE_FLAG=on" in text, text
+    assert f"LOG_LEVEL={DOTS}" in text, text
+
+
+def test_editing_one_masked_line_keeps_the_other_values(app_server: str, auth_page: Page, otp_factor: object) -> None:
+    """Het veil raakt het document niet: wat opgeslagen wordt houdt de ongemoeide waarden.
+
+    Het meetpunt is de verborgen textarea, want dat is wat het formulier verstuurt.
+    """
+    editor = _open_window_with_code(auth_page, app_server)
+
+    regel = editor.locator(".cm-line").first
+    regel.click()
+    auth_page.keyboard.press("Home")
+    auth_page.keyboard.press("Shift+End")
+    auth_page.keyboard.type("LOG_LEVEL=trace")
+
+    verzonden = auth_page.locator("#edit-section-inner textarea[name='vars']").input_value()
+    assert "LOG_LEVEL=trace" in verzonden, verzonden
+    assert "FEATURE_FLAG=on" in verzonden, verzonden
+    assert DOTS not in verzonden, verzonden
+
+
+@pytest.mark.parametrize("weergave", ["light", "dark"])
+def test_the_dots_stay_legible_in_both_schemes(
+    app_server: str, auth_page: Page, otp_factor: object, weergave: str
+) -> None:
+    """De stippen krijgen een themategen, dus ze mogen in geen van beide weergaven wegvallen."""
+    auth_page.emulate_media(color_scheme=weergave)
+    try:
+        editor = _open_window_with_code(auth_page, app_server)
+        masker = editor.locator(".cm-kv-mask").first
+        masker.wait_for(state="visible", timeout=10000)
+        kleuren = masker.evaluate(
+            "el => { const s = getComputedStyle(el);"
+            " return [s.color, getComputedStyle(el.closest('.cm-editor')).backgroundColor]; }"
+        )
+        voorgrond, achtergrond = kleuren
+        assert voorgrond != achtergrond, f"{weergave}: stippen in de achtergrondkleur"
+        assert "rgba(0, 0, 0, 0)" not in voorgrond, f"{weergave}: stippen zonder kleur"
+    finally:
+        auth_page.emulate_media(color_scheme="light")
+
+
+def test_comment_and_empty_lines_are_never_masked(app_server: str, auth_page: Page, otp_factor: object) -> None:
+    """Commentaarregels en lege regels blijven leesbaar, ook als ze een `=` bevatten."""
+    editor = _open_window_with_code(auth_page, app_server)
+
+    editor.click()
+    auth_page.keyboard.press("ControlOrMeta+a")
+    auth_page.keyboard.type("# KEY=een-geheim-dat-niet-bestaat\n\nLOG_LEVEL=debug\nFEATURE_FLAG=on")
+    # Cursor op een vierde regel: anders toont de uitzondering voor de cursorregel toevallig
+    # dezelfde regel die hier getest wordt (comment of LOG_LEVEL), en meet de toets niets.
+    editor.locator(".cm-line").nth(3).click()
+
+    tekst = editor.inner_text()
+    assert "# KEY=een-geheim-dat-niet-bestaat" in tekst, tekst
+    assert f"LOG_LEVEL={DOTS}" in tekst, tekst
+    assert "debug" not in tekst, tekst
+    assert editor.locator(".cm-kv-mask").count() == 1
+
+
+def test_the_aliases_field_is_not_masked(app_server: str, auth_page: Page) -> None:
+    """Aliassen zijn namen van platform-variabelen, geen geheimen, dus geen veil."""
+    modal = EditModalHelper(auth_page, app_server, PROJECT)
+    modal.open_detail_page()
+    modal.open_edit_modal("modal-edit-components", "Components beheren")
+
+    veld = auth_page.locator(".kv-editor:has(textarea[name='components[0]/aliases'])")
+    veld.wait_for(state="visible", timeout=10000)
+    assert veld.get_attribute("data-mask-values") is None
+    assert veld.locator(".cm-kv-mask").count() == 0
 
 
 @pytest.fixture
@@ -117,7 +268,6 @@ def test_saving_writes_encrypted_and_leaves_nothing_on_the_card(
     editor = auth_page.locator("#edit-section-inner .kv-editor .cm-content")
     editor.wait_for(state="visible", timeout=10000)
 
-    original = editor.inner_text()
     try:
         editor.click()
         auth_page.keyboard.press("ControlOrMeta+a")

@@ -1,0 +1,10 @@
+{
+  "name": "keycloak-zad-theme",
+  "version": "1.0.0",
+  "description": "Assets of the NLDD design system for the ZAD Keycloak theme",
+  "private": true,
+  "license": "EUPL-1.2",
+  "dependencies": {
+    "@nldd/design-system": "0.16.0"
+  }
+}

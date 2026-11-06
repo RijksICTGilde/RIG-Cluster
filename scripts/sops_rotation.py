@@ -100,10 +100,7 @@ REPO = Path(__file__).resolve().parents[1]
 #: with the reason. Anything carrying ciphertext that is neither converted nor named here is a
 #: coverage gap and stops the tool. Every entry is a hand-written claim, and
 #: ``check_exceptions()`` holds it to that claim with the old key.
-COVERAGE_EXCEPTIONS = {
-    "docs/doorloop-rc108/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
-    "docs/doorloop-rc110/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
-}
+COVERAGE_EXCEPTIONS: dict[str, str] = {}
 
 #: This repo carries a project file of its own, and it holds a repository password on the platform
 #: key -- measured, one field. It is a project file, so ``rotate_project_file`` converts it, but it

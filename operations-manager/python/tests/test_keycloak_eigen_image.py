@@ -5,6 +5,7 @@ met opzet: wat hier fout kan gaan, gaat stil fout, en meestal pas bij de eerste 
 een wijziging.
 """
 
+import json
 import os
 import re
 import shutil
@@ -19,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 DOCKERFILE = REPO_ROOT / "images/keycloak-zad/Dockerfile"
 KEYCLOAK = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller"
-MODULES = REPO_ROOT / "keycloak-migration"
+MODULES = REPO_ROOT / "images" / "keycloak-zad" / "extensions"
 BRON_TAG = REPO_ROOT / "scripts/bron-tag.sh"
 CALVER_TAG = REPO_ROOT / "scripts/calver-tag.sh"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -100,11 +101,9 @@ def _bouwfase_namen() -> set[str]:
     return namen
 
 
-def _thema_jar() -> str:
-    """De naam waaronder de Dockerfile het thema van MinBZK wegschrijft."""
-    match = re.search(r"\bcurl .*?-o (\S+)", _dockerfile())
-    assert match is not None, "de Dockerfile haalt het thema niet op"
-    return match.group(1)
+def _thema_bron() -> Path:
+    """De map waar het thema in deze repo staat."""
+    return REPO_ROOT / "images/keycloak-zad/theme"
 
 
 def _basis_container() -> dict:
@@ -173,10 +172,10 @@ class TestDeImageIsHetArtefact:
         in plaats van de eerste pod die zijn provider mist.
         """
         modules = sorted(p.name for p in MODULES.iterdir() if (p / "pom.xml").is_file())
-        assert modules, "geen Java-module gevonden onder keycloak-migration/"
+        assert modules, "geen Java-module gevonden onder images/keycloak-zad/extensions/"
 
         for naam in modules:
-            assert f"COPY keycloak-migration/{naam} " in _dockerfile(), naam
+            assert f"COPY images/keycloak-zad/extensions/{naam} " in _dockerfile(), naam
             assert f"-f {naam}/pom.xml clean package" in _dockerfile(), naam
 
     def test_de_basisversie_is_die_waar_de_modules_tegen_bouwen(self) -> None:
@@ -194,17 +193,58 @@ class TestDeImageIsHetArtefact:
             assert versie is not None, pom
             assert versie.group(1) == basis, f"{pom.relative_to(REPO_ROOT)} bouwt tegen {versie.group(1)}"
 
-    def test_het_thema_wordt_op_checksum_gecontroleerd(self) -> None:
-        """Het thema blijft een externe download, maar tijdens de BOUW.
+    def test_het_thema_komt_uit_deze_repo_en_niet_van_een_release(self) -> None:
+        """Sinds RC-424 is het thema bron in deze repo, geen jar van MinBZK.
 
-        Zonder controle is een gewijzigd of half binnengehaald bestand pas zichtbaar op het
-        inlogscherm van een draaiend cluster. Waarom de som uitgeschreven staat en niet in een
-        ARG: zie de Dockerfile.
+        Komt die download terug, dan draait het inlogscherm weer op een artefact dat buiten
+        deze repo wordt gebouwd, en is de ROOS-opmaak terug zonder dat de code hier wijzigt.
         """
         tekst = _dockerfile()
-        assert "keycloak-nl-design-system.jar" in tekst
-        assert "sha256sum -c" in tekst
-        assert re.search(r'"[0-9a-f]{64}  keycloak-nl-design-system\.jar"', tekst), tekst
+        assert "MinBZK/keycloak-theme" not in tekst, tekst
+        assert "keycloak-nl-design-system.jar" not in tekst, tekst
+        assert (_thema_bron() / "nl-design-system/login/template.ftl").is_file()
+
+    def test_de_assets_van_het_thema_staan_op_een_gepinde_versie_met_lockfile(self) -> None:
+        """Een bereik in plaats van een versie laat de bouw op een andere NLDD landen.
+
+        `npm ci` weigert zonder lockfile, en de lockfile draagt de integriteitssom van elke
+        tarball: dat samen maakt de bouw reproduceerbaar.
+        """
+        manifest = json.loads((_thema_bron() / "package.json").read_text())
+        versie = manifest["dependencies"]["@nldd/design-system"]
+        assert re.fullmatch(r"\d+\.\d+\.\d+", versie), versie
+
+        lockfile = json.loads((_thema_bron() / "package-lock.json").read_text())
+        vergrendeld = lockfile["packages"]["node_modules/@nldd/design-system"]
+        assert vergrendeld["version"] == versie, (vergrendeld["version"], versie)
+        assert vergrendeld["integrity"].startswith("sha512-"), vergrendeld
+
+        assert "npm ci" in _dockerfile()
+
+    def test_het_thema_haalt_bij_het_renderen_niets_buiten_de_image_op(self) -> None:
+        """De inlogpagina is de plek waar een derde partij het minst mag meekijken.
+
+        Een CDN-URL in een sjabloon valt niet op zolang de bouwmachine en de browser er wel
+        bij kunnen; op een afgesloten cluster is het een pagina zonder opmaak.
+        """
+        for pad in sorted(_thema_bron().rglob("*")):
+            if pad.suffix not in (".ftl", ".properties", ".css"):
+                continue
+            tekst = pad.read_text()
+            assert "http://" not in tekst, pad
+            for regel in tekst.splitlines():
+                if regel.lstrip().startswith("#") or regel.lstrip().startswith("<#--"):
+                    continue
+                assert "https://" not in regel, (pad, regel)
+
+    def test_het_thema_draagt_geen_roos_meer(self) -> None:
+        """De wissel is pas af als de klassen van het oude design system weg zijn."""
+        for pad in sorted(_thema_bron().rglob("*")):
+            if pad.suffix not in (".ftl", ".properties", ".css", ".json"):
+                continue
+            tekst = pad.read_text()
+            for naald in ("rvo-", "utrecht-", "nl-rvo"):
+                assert naald not in tekst, (pad, naald)
 
     def test_de_providers_worden_ingebakken(self) -> None:
         """Zonder deze stap doet de pod de augmentatie bij elke start alsnog (gemeten)."""
@@ -214,19 +254,33 @@ class TestDeImageIsHetArtefact:
         """Bouwen is niet hetzelfde als meeleveren: de eindfase moet ze ook overnemen.
 
         Alleen de verzender heeft een canarie, en die dekt zijn eigen jar: landt die ergens
-        anders, dan lost het provider-id niet op en faalt `kc.sh build`. Voor de andere twee
-        bouwt de image gewoon door: de SAML-mapper is dan stil weg, en het inlogscherm draait
-        zonder nl-design-system.
+        anders, dan lost het provider-id niet op en faalt `kc.sh build`. Voor de SAML-mapper
+        bouwt de image gewoon door en is hij stil weg.
         """
-        overgenomen = _overgenomen_uit_de_bouw()
-        assert overgenomen, "de eindfase neemt niets uit de bouwfase over"
+        overgenomen = {b: d for b, d in _overgenomen_uit_de_bouw().items() if b.endswith(".jar")}
+        assert overgenomen, "de eindfase neemt geen enkele jar uit de bouwfase over"
         for bron, doel in overgenomen.items():
             assert doel.rstrip("/") == "/opt/keycloak/providers", (bron, doel)
 
         bronnen = " ".join(overgenomen)
         for naam in _module_namen():
             assert f"/{naam}/target/" in bronnen, naam
-        assert f"/{_thema_jar()}" in bronnen, _thema_jar()
+
+    def test_de_assets_van_het_thema_landen_in_de_themamap(self) -> None:
+        """Landen ze ergens anders, dan laadt de pagina ze niet en valt de opmaak weg.
+
+        De bron in de repo en de bundel uit de node-fase horen in dezelfde themamap: de
+        sjablonen verwijzen naar `resourcesCommonPath/nldd`, en dat is de map `common` van
+        dit thema.
+        """
+        tekst = _eindfase()
+        assert "COPY images/keycloak-zad/theme/nl-design-system /opt/keycloak/themes/nl-design-system" in tekst
+
+        assets = next(
+            (d for b, d in _overgenomen_uit_de_bouw().items() if b.endswith("/nldd")),
+            None,
+        )
+        assert assets == "/opt/keycloak/themes/nl-design-system/common/resources/nldd", assets
 
     def test_de_bouwfase_draait_niet_per_doelarchitectuur(self) -> None:
         """De jars zijn architectuuronafhankelijk, de image gaat naar amd64 en arm64.
@@ -442,7 +496,9 @@ class TestDePinStaatPerOmgeving:
         assert isinstance(entry["newTag"], str), f"newTag {entry['newTag']!r} moet aangehaald in de overlay staan"
         assert "newName" not in entry, "de sandbox haalt uit dezelfde registry als de basis"
 
-    @pytest.mark.parametrize("plek", ["basis", "sandbox"], ids=["de basis", "de sandbox-overlay"])
+    @pytest.mark.parametrize(
+        "plek", ["basis", "sandbox", "staging"], ids=["de basis", "de sandbox-overlay", "de staging-overlay"]
+    )
     def test_geen_van_de_pinnen_is_met_de_hand_geschreven(self, plek: str) -> None:
         """DE VAL DIE ER STOND: de basis pinde `2026.9.1`, een CalVer die alleen CI uitrekent.
 
@@ -454,7 +510,12 @@ class TestDePinStaatPerOmgeving:
         De CalVer van CI (`{YYYY}.{M}.{patch}`) valt daar buiten: die wordt in dezelfde run
         uitgerekend en gepusht en hoort in geen enkel manifest.
         """
-        tag = _basis_image().split(":")[-1] if plek == "basis" else _image_entry(_overlay("sandboxed-local"))["newTag"]
+        if plek == "basis":
+            tag = _basis_image().split(":")[-1]
+        else:
+            tag = _image_entry(_overlay("sandboxed-local" if plek == "sandbox" else "odcn-staging")).get("newTag")
+            if tag is None:
+                pytest.skip(f"de {plek}-overlay pint niets en erft de basis")
 
         # Een plaatshouder ("er is hier nog niets gebouwd") draagt geen cijfer en is daarmee
         # ook geen versie die eruitziet als iets dat te halen valt.
@@ -538,7 +599,7 @@ class TestDeImageWordtGebouwdEnGepusht:
         assert sorted(job["strategy"]["matrix"]["module"]) == _module_namen()
 
         stap = next(s for s in job["steps"] if "mvn" in s.get("run", ""))
-        assert stap["working-directory"] == "keycloak-migration/${{ matrix.module }}"
+        assert stap["working-directory"] == "images/keycloak-zad/extensions/${{ matrix.module }}"
         assert stap["run"].strip() == "mvn -B test"
 
     def test_elke_module_blijft_los_te_bouwen_en_te_toetsen(self) -> None:
@@ -548,7 +609,7 @@ class TestDeImageWordtGebouwdEnGepusht:
             for vorm in ("build", "test"):
                 taak = f"{vorm}-keycloak-{naam}"
                 assert taak in taken, taak
-                assert f"keycloak-migration/{naam}" in yaml.dump(taken[taak])
+                assert f"images/keycloak-zad/extensions/{naam}" in yaml.dump(taken[taak])
 
     def test_elke_module_bouwt_reproduceerbaar(self) -> None:
         """Bouwt een van de twee jars op de klok, dan is de imagelaag alsnog elke keer nieuw.
@@ -937,6 +998,11 @@ def _promoveer(tmp_path: Path, *extra: str, **env_extra: str) -> Run:
     return _draai(tmp_path, PIN, "TARGET=base", *extra, **env_extra)
 
 
+def _naar_staging(tmp_path: Path, *extra: str, **env_extra: str) -> Run:
+    """Dezelfde promotie, alleen naar de odcn-staging overlay."""
+    return _draai(tmp_path, PIN, "TARGET=staging", *extra, **env_extra)
+
+
 #: Een tag in de vorm die publish-keycloak-image uitrekent. Vast, niet van de klok: anders
 #: hangt een assertie op de tag aan het moment waarop de toets draaide.
 PROEFTAG = "2026.09.26.1432-abcdef12"
@@ -1251,6 +1317,75 @@ class TestPromoverenIsEenVerplaatsingEnGeenHerbouw:
         assert promotie.returncode != 0
         # De weg vooruit staat in de melding, en dat is de taak die pusht en pint.
         assert PUBLICEER in promotie.stderr, promotie.stderr
+
+    def test_staging_krijgt_de_tag_van_de_sandbox_en_productie_niet(self, tmp_path: Path) -> None:
+        """Eerst op staging: dezelfde tag als de sandbox, terwijl odcn op de basis blijft."""
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+
+        voor = _rendered_image(REPO_ROOT, "odcn")
+        run = _pin(tmp_path, PROEFTAG)
+        staging = _naar_staging(tmp_path)
+        assert staging.returncode == 0, staging.stderr
+
+        gespiegeld = f"{RCR_VOORVOEGSEL}{IMAGE_REPO.removeprefix('ghcr.io/')}"
+        assert _rendered_image(run.repo, "odcn-staging") == f"{gespiegeld}:{PROEFTAG}"
+        assert _rendered_image(run.repo, "odcn") == voor
+        assert run.basis_tag() == _basis_image().split(":")[-1]
+        assert isinstance(_image_entry(yaml.safe_load(run.overlay("odcn-staging")))["newTag"], str)
+
+    def test_staging_neemt_geen_tag_aan_die_niet_op_de_sandbox_draaide(self, tmp_path: Path) -> None:
+        run = _pin(tmp_path, PROEFTAG)
+        assert run.returncode == 0, run.stderr
+        voor = run.pin("odcn-staging")
+
+        staging = _naar_staging(tmp_path, "IMAGE_TAG=2026.01.01.0000-00000000")
+
+        assert staging.returncode != 0
+        assert "niet op de sandbox gedraaid" in staging.stderr
+        assert staging.pin("odcn-staging") == voor
+
+    def test_een_tweede_keer_naar_staging_is_geen_fout_en_geen_tweede_regel(self, tmp_path: Path) -> None:
+        _pin(tmp_path, PROEFTAG)
+        assert _naar_staging(tmp_path).returncode == 0
+
+        tweede = _naar_staging(tmp_path)
+
+        assert tweede.returncode == 0, tweede.stderr
+        assert f"Staging draagt {PROEFTAG} al" in tweede.stdout
+        assert tweede.overlay("odcn-staging").count("newTag:") == 1
+
+    def test_een_volgende_tag_naar_staging_vervangt_de_vorige(self, tmp_path: Path) -> None:
+        """DE VAL DIE ER STOND: de nieuwe newTag kwam onder de newName, de oude bleef eronder
+        staan, en kustomize nam de oude. Staging draaide dan stil de vorige tag."""
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+
+        volgende = "2026.09.27.0900-12345678"
+        run = _pin(tmp_path, PROEFTAG)
+        assert _naar_staging(tmp_path).returncode == 0
+        assert _pin(tmp_path, volgende).returncode == 0
+
+        tweede = _naar_staging(tmp_path)
+
+        assert tweede.returncode == 0, tweede.stderr
+        assert tweede.overlay("odcn-staging").count("newTag:") == 1
+        assert _rendered_image(run.repo, "odcn-staging").endswith(f":{volgende}")
+
+    def test_een_promotie_naar_de_basis_haalt_de_pin_van_staging_weg(self, tmp_path: Path) -> None:
+        """Anders blijft staging stil op deze tag hangen als de basis later verder gaat."""
+        if shutil.which("kustomize") is None:
+            pytest.skip("kustomize ontbreekt")
+
+        run = _pin(tmp_path, PROEFTAG)
+        assert _naar_staging(tmp_path).returncode == 0
+        promotie = _promoveer(tmp_path)
+        assert promotie.returncode == 0, promotie.stderr
+
+        assert promotie.pin("odcn-staging") is None
+        assert _image_entry(yaml.safe_load(run.overlay("odcn-staging")))["newName"].startswith(RCR_VOORVOEGSEL)
+        gespiegeld = f"{RCR_VOORVOEGSEL}{IMAGE_REPO.removeprefix('ghcr.io/')}"
+        assert _rendered_image(run.repo, "odcn-staging") == f"{gespiegeld}:{PROEFTAG}"
 
     def test_promoveren_raakt_alleen_de_image_regel_van_de_basis(self, tmp_path: Path) -> None:
         """De basis draagt ook de startvlaggen; een promotie hoort daar niets aan te doen."""

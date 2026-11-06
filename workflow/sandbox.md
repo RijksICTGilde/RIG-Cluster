@@ -29,7 +29,7 @@ Two things make the loopback URL work with valid TLS:
 
 There is **no remote server and no shared state**. If a colleague also runs the sandbox, they have their own independent cluster. "Live sandbox" in the tests just means "a Kind sandbox is currently running and reachable at those URLs."
 
-(On the shared Linux dev server the same Kind cluster sits behind Caddy on ports 80/443 - see `docs/sandbox-on-dev-server.md`. Still local Kind.)
+(On the shared Linux dev server the same Kind cluster sits behind Caddy on ports 80/443 - see `docs/sandbox/sandbox-on-dev-server.md`. Still local Kind.)
 
 ## What runs in it
 
@@ -39,7 +39,7 @@ ZAD drives three Forgejo repos, exactly as in production: `zad-projects` (one YA
 
 ### Service URLs and credentials
 
-From `docs/sandbox-reference.md` (printed at the end of setup). All dev-only, fixed because the cluster is disposable.
+From `docs/sandbox/sandbox-reference.md` (printed at the end of setup). All dev-only, fixed because the cluster is disposable.
 
 | Service | URL | Credentials |
 |---|---|---|
@@ -63,7 +63,7 @@ task sandbox:skaffold-dev              # hot-reload OPI at localhost:9595
 task sandbox:destroy                   # tear it all down
 ```
 
-Prerequisites: `docs/sandbox-prerequisites.md` (kind, kubectl, kustomize, sops, age, pwgen, yq, Docker). The developer AGE private key (`security/developer-key.txt`) is obtained out-of-band and is required to decrypt the wildcard cert. The sandbox uses its own generated key, `security/sandbox-key.txt`, for its runtime secrets.
+Prerequisites: `docs/sandbox/sandbox-prerequisites.md` (kind, kubectl, kustomize, sops, age, pwgen, yq, Docker). The developer AGE private key (`security/developer-key.txt`) is obtained out-of-band and is required to decrypt the wildcard cert. The sandbox uses its own generated key, `security/sandbox-key.txt`, for its runtime secrets.
 
 ## Testing YOUR code: rebuild, redeploy, verify the running version
 
@@ -85,7 +85,7 @@ task sandbox:update-operations-manager
 
 This builds the OPI image from the current tree (`--target application`), pushes it as
 `localhost:5001/operations-manager:<commit>` to the registry next to the cluster
-(`docs/sandbox-kind-registry.md`), points the overlay at that tag, redeploys, stamps the
+(`docs/sandbox/sandbox-kind-registry.md`), points the overlay at that tag, redeploys, stamps the
 deployment with `ZAD_VERSION=$(git describe --tags --always)` + `ZAD_BUILD_DATE`, and
 waits for the rollout.
 
@@ -108,7 +108,7 @@ testing. Only run the sandbox E2E suite once the running version is your build.
 
 The **sandbox test stage** does step 1 automatically: the runner checks out the PR
 branch, builds the image with a per-commit tag, pushes it to the registry next to the
-cluster (`docs/sandbox-kind-registry.md`), points the overlay at that tag
+cluster (`docs/sandbox/sandbox-kind-registry.md`), points the overlay at that tag
 (`imagePullPolicy: IfNotPresent` on a tag that is new every commit, so the node pulls it
 once and reuses it), waits for the rollout, then runs the tests. Step 2 (version
 verification) should be part of the PR's own sandbox test so a stale/failed deploy fails

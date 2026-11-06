@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.core.config import settings
 from opi.forms.layout import COMPONENT_IMAGE_SLOT, Div, Fieldset
 from opi.forms.visualizers.sections import FormSection
 from opi.services.catalog.base import (
@@ -23,7 +24,7 @@ from opi.services.catalog.base import (
     config_path,
 )
 from opi.services.catalog.events import on
-from opi.services.catalog.image_registries.backends import backend_for_cluster
+from opi.services.catalog.image_registries.backends import QuayProxyOrganizationBackend, backend_for_cluster
 from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig, ImageRegistriesConfig
 from opi.services.catalog.image_registries.editables import (
     COMPONENT_REGISTRY_EDITABLE,
@@ -37,6 +38,7 @@ from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
+from opi.services.catalog.image_registries.quota import QUOTA_APPROVAL
 from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.image_registries.visualizers import (
@@ -51,8 +53,26 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
     from opi.forms.visualizers.visualizer import EditableVisualizer
+    from opi.services.catalog.approval import ApprovalSpec
 
 logger = logging.getLogger(__name__)
+
+
+#: Shown up front where the cluster builds a proxy per registry: measured on staging on
+#: 3 November 2026, the first pull only worked after three and a half minutes.
+_PROXY_SETUP_NOTICE = (
+    "Op dit platform maakt ODCN voor elke registry een eigen proxy aan. Dat duurt na het "
+    "opslaan een paar minuten, en zolang kan een component zijn image nog niet ophalen. "
+    "Dat lost zich vanzelf op."
+)
+
+
+def _section_description(cluster: str) -> str:
+    """The step's description, with the proxy notice on a cluster that builds one."""
+    description = "De private registries waaruit dit project images haalt."
+    if isinstance(backend_for_cluster(cluster), QuayProxyOrganizationBackend):
+        return f"{description} {_PROXY_SETUP_NOTICE}"
+    return description
 
 
 class ImageRegistriesService(Service):
@@ -103,6 +123,12 @@ class ImageRegistriesService(Service):
         if layer is ConfigLayer.DEPLOYMENT_COMPONENT:
             return [DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE]
         return []
+
+    def config_approvals(self, layer: ConfigLayer) -> list[ApprovalSpec]:
+        return [QUOTA_APPROVAL.spec] if layer is ConfigLayer.PROJECT else []
+
+    def ensure_approval_requests(self, project_data: dict[str, Any]) -> None:
+        QUOTA_APPROVAL.ensure_requested(project_data)
 
     # --- component- en deployment-componentniveau -------------------------------------
 
@@ -194,7 +220,7 @@ class ImageRegistriesService(Service):
                 section_id=self.config_section_id or "image-registries-config",
                 title="Eigen container registries",
                 icon="server",
-                description="De private registries waaruit dit project images haalt",
+                description=_section_description(settings.CLUSTER_MANAGER),
                 visible=self._config_selected,
                 post_save_action="process_project",
                 editables=[REGISTRIES_SEQUENCE],

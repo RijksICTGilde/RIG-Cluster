@@ -30,6 +30,7 @@ from tenacity import (
 
 from opi.api.endpoint_util import controleer_handelingen
 from opi.bootstrap.keycloak_setup import setup_keycloak
+from opi.connectors.git_repo import warm_platform_repos
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
 from opi.connectors.mail import MailRelayError
@@ -194,48 +195,6 @@ async def keycloak_operation_with_retry(operation_func, *args, **kwargs):
         else:
             logger.warning(f"Keycloak operation {operation_func.__name__} failed, will retry: {e}")
         raise  # This will trigger the retry (or not, based on our custom retry logic)
-
-
-async def start_prometheus_reconnection_task() -> None:
-    """
-    Start a background task that attempts to reconnect to Prometheus.
-
-    This task runs with exponential backoff, attempting to connect to Prometheus
-    if the initial connection failed. Once connected, the task stops.
-    The application continues to function without Prometheus - metrics will
-    simply be unavailable until connection is established.
-    """
-    metrics_connector = await get_metrics_connector()
-
-    if metrics_connector.is_connected:
-        logger.info("Metrics connector already connected, no background reconnection needed")
-        return
-
-    logger.info("Starting background metrics reconnection task")
-
-    # Retry parameters: 10 attempts with exponential backoff (4s, 8s, 16s, 32s, 60s max)
-    max_attempts = 10
-    base_delay = 4
-    max_delay = 60
-
-    for attempt in range(1, max_attempts + 1):
-        if metrics_connector.is_connected:
-            logger.info("Metrics connector connected, stopping reconnection task")
-            return
-
-        delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
-        logger.info(f"Metrics reconnection attempt {attempt}/{max_attempts} in {delay}s")
-
-        await asyncio.sleep(delay)
-
-        if metrics_connector.reconnect():
-            logger.info("Metrics connector reconnection successful")
-            return
-
-    logger.warning(
-        f"Metrics connector reconnection failed after {max_attempts} attempts. "
-        "Metrics will be unavailable. Manual restart may be required."
-    )
 
 
 def print_boot_banner():
@@ -966,12 +925,12 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     controleer_handelingen(app.routes)
     check_register()
 
-    # Initialize metrics connector (non-critical)
-    logger.info("Initializing metrics connector")
+    # Metrics are not critical and the boot never waits for them: the connector starts
+    # out unavailable and probes the backend in the background, so a Grafana that is down
+    # cannot hold up the startup. It keeps probing with backoff until it answers.
+    logger.info("Starting the metrics availability probe")
     metrics_connector = await get_metrics_connector()
-    if not metrics_connector.is_connected:
-        logger.warning("Metrics connector not available at startup, starting background reconnection task")
-        app.state.metrics_reconnect_task = asyncio.create_task(start_prometheus_reconnection_task())
+    metrics_connector.start_probe()
 
     # Phase 1: Database
     await _setup_database(readiness)
@@ -987,6 +946,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # readiness er niet op wacht.
     if readiness.projects.ready and not skip_checks:
         app.state.cmp_key_reader_task = asyncio.create_task(ensure_cmp_key_readers())
+
+    # Phase 2d: warm up bare copies of deployments and argo repos in the background.
+    # A clone costs minutes; without this the first writing task pays for it.
+    app.state.git_warm_task = asyncio.create_task(warm_platform_repos())
 
     # Resolve which image this pod runs, so /version can say who is answering.
     await _resolve_running_image()

@@ -499,10 +499,10 @@ class PVCManager:
         repo_name = repo_config.get("name", "") if isinstance(repo_config, dict) else ""
 
         try:
-            git_connector = await self.project_manager.get_git_connector_for_deployment(repo_name, repo_config)
+            git_connector = await self.project_manager.get_deployment_workspace(repo_name, repo_config)
         except Exception as e:
             error_msg = (
-                f"Cannot access git connector for repository '{repo_name}' "
+                f"Cannot access git workspace for repository '{repo_name}' "
                 f"- cannot rename PVC manifests for deferred deletion: {e}"
             )
             logger.error(error_msg)

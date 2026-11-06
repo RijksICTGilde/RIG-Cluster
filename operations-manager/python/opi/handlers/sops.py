@@ -250,6 +250,7 @@ class SopsHandler:
             from opi.connectors.kubectl import KubectlExecutionError
 
             last_error = ""
+            last_error_transient = False
             stored = False
             for attempt in range(1, _SOPS_STORE_MAX_ATTEMPTS + 1):
                 try:
@@ -260,8 +261,8 @@ class SopsHandler:
                     break
                 except KubectlExecutionError as apply_error:
                     last_error = str(apply_error)
-                    is_transient = "forbidden" in last_error.lower()
-                    if attempt < _SOPS_STORE_MAX_ATTEMPTS and is_transient:
+                    last_error_transient = "forbidden" in last_error.lower()
+                    if attempt < _SOPS_STORE_MAX_ATTEMPTS and last_error_transient:
                         self.logger.warning(
                             f"SOPS key not stored yet in namespace {namespace} (Capsule RBAC still "
                             f"propagating), attempt {attempt}/{_SOPS_STORE_MAX_ATTEMPTS}, retrying in "
@@ -284,7 +285,13 @@ class SopsHandler:
                     return False
                 return True
 
-            self.logger.error(f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {last_error}")
+            # The caller retries this whole call, so giving up on the transient Capsule-RBAC
+            # race is not yet a failure: only the caller's last round is.
+            message = f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {last_error}"
+            if last_error_transient:
+                self.logger.warning(message)
+            else:
+                self.logger.error(message)
             return False
 
         except Exception as e:

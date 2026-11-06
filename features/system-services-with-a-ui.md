@@ -122,7 +122,7 @@ verdwijnen. Deze stap modelleert ze naast elkaar; het samenvoegen is een aparte 
 ## Een systeemdienst met UI toevoegen
 
 1. `ServiceType`-lid, `ServiceDefinition` met `kind=ServiceKind.SYSTEM`, regel in
-   `registry.SERVICES` (zoals elke dienst, zie `instructions/services.md`).
+   `registry.SERVICES` (zoals elke dienst, zie `docs/development/services.md`).
 2. `config_model` + `config_schema_version`, en regenereer het fragment met
    `uv run python -m opi.services.config_schema`.
 3. Bezit de dienst een gewone eigenschap in plaats van een `services:`-blok? Declareer

@@ -367,7 +367,12 @@ def test_markdown_the_renderer_handles_is_not_reported(bron: str) -> None:
 
 
 def test_every_keytool_import_passes_the_store_password() -> None:
-    """Zonder -storepass vraagt keytool erom, en een image-build heeft geen tty."""
+    """Zonder -storepass vraagt keytool erom, en een image-build heeft geen tty.
+
+    Geen enkele uitleg roept keytool vandaag nog aan: de laatste stond in vlam/help.md en
+    is met de CA-bundel verdwenen (RC-414). De toets blijft staan voor het recept dat
+    iemand er ooit weer in zet.
+    """
     aanroepen = [
         (template, regel)
         for template in _HELP_DOCUMENTS
@@ -375,7 +380,6 @@ def test_every_keytool_import_passes_the_store_password() -> None:
         if "keytool -importcert" in regel
     ]
 
-    assert aanroepen
     assert [a for a in aanroepen if "-storepass " not in a[1]] == []
 
 

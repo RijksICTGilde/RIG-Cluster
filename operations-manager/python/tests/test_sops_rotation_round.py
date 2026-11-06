@@ -897,7 +897,7 @@ ENTRY_SCRIPTS = (
 #: The documents that hand an operator a command line to paste.
 COMMAND_DOCS = (
     tool.REPO / "features" / "sops-sleutel-roteren.md",
-    tool.REPO / "instructions" / "sops-sleutel-in-het-cluster.md",
+    tool.REPO / "docs" / "development" / "sops-sleutel-in-het-cluster.md",
     tool.REPO / "scripts" / "README.md",
 )
 

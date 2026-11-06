@@ -60,19 +60,23 @@ def _wait_for_request(recorded: list[tuple[str, str]], timeout: float = 10.0) ->
 
 
 def _open_confirmation(page: Page, app_server: str, trigger: str, *, tab: str | None = None) -> None:
-    """Click a dangerous action and wait for the shared modal to hold its confirmation."""
+    """Click a dangerous action and wait for the confirmation dialog to ask."""
     page.goto(f"{app_server}{DETAIL_URL}")
     page.wait_for_load_state("networkidle")
     if tab:
         open_tab(page, tab)
 
     page.locator(f"button:has-text('{trigger}')").first.click()
-    page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
-    page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
+    _wait_for_question(page)
+
+
+def _wait_for_question(page: Page) -> None:
+    page.locator("#bevestiging-dialoog").wait_for(state="visible", timeout=10000)
+    assert page.locator("#edit-section-modal.is-open").count() == 0, "the modal opened before the question"
 
 
 def _confirm(page: Page) -> None:
-    page.locator("#edit-section-inner [data-confirm-action] .confirm-action-submit").first.click()
+    page.locator("#bevestiging-doorgaan").click()
 
 
 @pytest.mark.parametrize(
@@ -108,8 +112,7 @@ def test_component_delete_posts_the_right_component(app_server: str, auth_page: 
 
     card = auth_page.locator(".component-card", has_text="web-app").first
     knop(card, "Verwijderen").first.click()
-    auth_page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
-    auth_page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
+    _wait_for_question(auth_page)
 
     recorded: list[tuple[str, str]] = []
     _intercept_posts(auth_page, recorded)
@@ -132,8 +135,7 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
     # bewerken" liet in het midden wat er weg zou gaan.
     acties = auth_page.locator("#tab-deployments [id^='deployment-actions-']:not(.is-hidden)").first
     knop(acties, "Deployment verwijderen").first.click()
-    auth_page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
-    auth_page.locator("#edit-section-inner [data-confirm-action]").wait_for(state="visible", timeout=10000)
+    _wait_for_question(auth_page)
 
     recorded: list[tuple[str, str]] = []
     _intercept_posts(auth_page, recorded)
@@ -148,11 +150,10 @@ def test_confirmation_states_what_will_happen(app_server: str, auth_page: Page) 
     """The dialog names the project it is about, so the user can see what they confirm."""
     _open_confirmation(auth_page, app_server, "Project verwijderen")
 
-    # get_by_text en geen text_content: de vraag staat in de schaduwboom van
-    # <nldd-inline-dialog>, en text_content leest alleen de light DOM.
-    vraag = auth_page.locator("#edit-section-inner").get_by_text("Detail Test Project", exact=False)
-    vraag.wait_for(state="visible", timeout=10000)
-    assert "verwijderen" in (vraag.inner_text() or "").lower()
+    # The question is an attribute of <nldd-modal-dialog>, rendered in its shadow tree.
+    uitleg = auth_page.locator("#bevestiging-dialoog").get_attribute("supporting-text") or ""
+    assert "Detail Test Project" in uitleg
+    assert "verwijderen" in uitleg.lower()
 
 
 def test_running_action_cannot_be_dismissed(app_server: str, auth_page: Page) -> None:

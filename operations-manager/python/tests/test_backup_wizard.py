@@ -993,13 +993,19 @@ class TestRestoreNewDeploymentSections:
             assert section.visible({}) is False  # type: ignore[operator]
 
     def test_editables_have_materialized_paths(self) -> None:
-        """Editables should use [0] not [*] in their paths."""
+        """Editables should use [0] not [*] in their paths.
+
+        A transient wizard field (config_source) has no index at all, so it is not
+        materialized and not expected to be.
+        """
         from opi.forms.visualizers.wizard_sections import build_restore_new_deployment_sections
 
         for section in build_restore_new_deployment_sections(0):
             for vis in section.editables:
                 path = vis.editable.yaml_path
                 assert "[*]" not in path, f"Editable {path} still has wildcard"
+                if vis.editable.transient:
+                    continue
                 assert "[0]" in path, f"Editable {path} not materialized to [0]"
 
     def test_info_section_excludes_clone_from(self) -> None:

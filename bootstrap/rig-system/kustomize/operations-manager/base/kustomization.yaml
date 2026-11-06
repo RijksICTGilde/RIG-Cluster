@@ -8,4 +8,3 @@ resources:
   - service.yaml
   - service-account.yaml
   - argo-application-role.yaml
-  - secret-keycloak.yaml

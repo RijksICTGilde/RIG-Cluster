@@ -7,17 +7,21 @@ import asyncio
 import base64
 import copy
 import glob
+import hashlib
 import logging
 import os
+import posixpath
 import secrets
 import shutil
+import tempfile
 import time
 from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
     AsyncIterator,
     Awaitable,
     Callable,
+    Iterator,
 )
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -30,10 +34,15 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
-from opi.connectors.git import (
-    GitConnector,
-    create_git_connector_for_argocd,
-    create_git_connector_from_repo_config,
+from opi.connectors.argo import ArgoTransportError
+from opi.connectors.git import GitConnector, repo_lock_key
+from opi.connectors.git_repo import (
+    GitRepoConflictError,
+    GitRepoWorkspace,
+    argo_workspace,
+    credentials_from_repo_config,
+    get_git_repo,
+    workspace_from_repo_config,
 )
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.subdomain import (
@@ -42,6 +51,7 @@ from opi.connectors.subdomain import (
     is_deployment_domain_approved,
     validate_bare_domain_allowed,
 )
+from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
 from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import (
@@ -69,6 +79,15 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.metrics import (
+    PHASE_AFTER_SYNC,
+    PHASE_ARGO_PROJECT_GATE,
+    PHASE_ARGO_UMBRELLA,
+    PHASE_GENERATE,
+    PHASE_PROVISION,
+    rollout_phase,
+    umbrella_refresh_lost_total,
+)
 from opi.core.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.task_errors import TaskInputError
@@ -105,13 +124,17 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
-from opi.manager.clone_validation import resolve_clone_source_deployment
+from opi.manager.clone_validation import derive_deployment_from_source, resolve_clone_source_deployment
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
-from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS, terminate_stuck_operation
+from opi.services.argocd_operation import (
+    STUCK_OPERATION_THRESHOLD_SECONDS,
+    describe_sync_waiting,
+    terminate_stuck_operation,
+)
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -130,10 +153,8 @@ from opi.services.catalog.image_registries.resolution import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
-    clear_domain_name_settings,
     custom_domain_certificate_note,
     get_domain_setting,
-    pop_domain_setting,
     set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
@@ -149,7 +170,6 @@ from opi.services.project_store import ConcurrencyError, ConflictError, get_proj
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
-    deployment_runtime_keys,
     generate_missing_values,
     manifest_services,
     project_manifest_services,
@@ -166,6 +186,7 @@ from opi.utils.age import (
     get_decoded_project_private_key,
     get_project_public_key,
 )
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.env_vars import (
     detect_circular_references,
     extract_variable_references,
@@ -181,10 +202,11 @@ from opi.utils.fs_paths import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
-    SELF_CONTAINED_FORMAT_IDS,
+    RepositoryPathError,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
+    generate_cluster_manifest_folder_path,
     generate_deployment_manifest_path,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -197,6 +219,7 @@ from opi.utils.naming import (
     generate_network_policy_manifest_name,
     generate_network_policy_name,
     generate_project_level_manifest_path,
+    generate_project_manifest_folder_path,
     generate_project_realm_name,
     generate_project_service_account_name,
     generate_public_url,
@@ -272,6 +295,10 @@ _UPSERT_CONFLICT_RETRIES = 5
 
 _EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
 
+# ArgoCD reports a CNPG cluster healthy as soon as the pod is Ready, which is before the
+# primary accepts connections. This is the budget for that gap.
+DATABASE_CONNECT_TIMEOUT_SECONDS = 180
+
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
     """Pin every deployment namespace to the project name (mutates in place).
@@ -318,6 +345,24 @@ def _deployment_names_for_paths(paths: Iterable[str], yaml_doc: dict[str, Any] |
     """Resolve DeepDiff paths to deployment names (falling back to the raw path), deduplicated."""
     names = [_deployment_name_for_path(path, yaml_doc) or path for path in paths]
     return list(dict.fromkeys(names))
+
+
+#: Vingerafdrukken van infrastructuur-credentials die in dit proces al met succes getoetst
+#: zijn. Zie _test_infrastructure_database_connection.
+_validated_infrastructure_credentials: set[str] = set()
+
+
+def _remote_identity(repo_config: dict[str, str]) -> tuple[str, str, str]:
+    """De remote waar een repo-config naar wijst: URL zonder credentials, branch en pad.
+
+    Het pad hoort erbij omdat de connector het gebruikt om bestandspaden op te lossen; twee
+    configs met een ander pad mogen dus geen werkboom delen.
+    """
+    return (
+        repo_lock_key(repo_config.get("url", "")),
+        repo_config.get("branch", "main"),
+        (repo_config.get("path") or "").strip("/"),
+    )
 
 
 def _resolve_deployment_filter(deployment_name: str | None, deployment_names: list[str] | None) -> list[str] | None:
@@ -626,10 +671,7 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
       replacing them. That is why they are a field of their own rather than a
       ``template_vars`` entry -- as an override, one service handing out one variable
       would wipe every variable the component itself declared.
-    * ``sidecars`` and ``secret_mounts`` are additive too. The mounts join the
-      component's own attachment mounts in ``attachment_secret_mounts`` rather than
-      replacing them -- a component that both uploads an attachment and takes a service
-      that mounts a file must keep both files.
+    * ``sidecars`` are additive too.
     """
     for contribution in contributions:
         variables.update(contribution.template_vars)
@@ -637,8 +679,6 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
             variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
         if contribution.sidecars:
             variables.setdefault("sidecars", []).extend(contribution.sidecars)
-        if contribution.secret_mounts:
-            variables.setdefault("attachment_secret_mounts", []).extend(contribution.secret_mounts)
 
 
 class ProjectManager:
@@ -649,6 +689,16 @@ class ProjectManager:
     # __init__ (tests calling the unbound methods with a stand-in self) still
     # resolve it, and so the attribute has one documented home.
     __contents_as_read: dict[str, Any] | None = None
+
+    #: Of het PROJECTNIVEAU deze ronde veranderde, en in welke repo het staat. True zolang
+    #: het tegendeel niet gemeten is: de grendel in wait_for_project_level_application mag
+    #: alleen op bewijs worden overgeslagen. Op klasseniveau, om dezelfde reden als
+    #: hierboven: een aanroeper die __init__ overslaat moet ze toch kunnen lezen.
+    _project_level_manifests_changed: bool = True
+    _project_level_repo: str | None = None
+    #: De map in die repo waar de project-level manifests staan, zodat te bewijzen is dat
+    #: ArgoCD precies die bestanden al heeft toegepast.
+    _project_level_path: str | None = None
 
     def __init__(
         self,
@@ -668,9 +718,14 @@ class ProjectManager:
         self.__git_connector_for_project_files = git_connector_for_project_files
         # Track ownership: if connector was injected, we don't own it and shouldn't close it
         self.__owns_git_connector_for_project_files = git_connector_for_project_files is None
-        self.__git_connector_for_argocd = None
+        self.__argo_workspace: GitRepoWorkspace | None = None
         # each deployment has a repository, referenced by name
-        self.__git_connectors_for_deployments: dict[str, GitConnector] = {}
+        self.__deployment_workspaces: dict[str, GitRepoWorkspace] = {}
+        # Dezelfde werkmappen, geindexeerd op remote, zodat twee repo-configs met dezelfde
+        # remote er een delen. Zie get_deployment_workspace.
+        self.__deployment_workspaces_by_remote: dict[tuple[str, str, str], GitRepoWorkspace] = {}
+        # Wegwerpmappen die niet bij een werkmap horen; zie materialize_cluster_tree.
+        self.__scratch_dirs: list[str] = []
         # Progress manager for tracking operation status
         self.__progress_manager = None
         # Private map for storing secrets that need to be created
@@ -1852,21 +1907,16 @@ class ProjectManager:
 
         return env_vars
 
-    async def get_git_connector_for_argocd(self) -> GitConnector:
-        if self.__git_connector_for_argocd is None:
-            self.__git_connector_for_argocd = await create_git_connector_for_argocd(await self.get_name())
-            await self.__git_connector_for_argocd.ensure_repo_cloned()
-        return self.__git_connector_for_argocd
+    async def get_argo_workspace(self) -> GitRepoWorkspace:
+        """De werkmap op de argo-applications repo voor dit project, een per taak."""
+        if self.__argo_workspace is None:
+            self.__argo_workspace = argo_workspace(await self.get_name(), settings.CLUSTER_MANAGER)
+        return self.__argo_workspace
 
-    async def set_git_connector_for_argocd(self, git_connector: GitConnector) -> None:
-        if self.__git_connector_for_argocd:
-            raise Exception("git_connector_for_argocd already set")
-        self.__git_connector_for_argocd = git_connector
-
-    async def close_git_connector_for_argocd(self) -> None:
-        if self.__git_connector_for_argocd:
-            await self.__git_connector_for_argocd.close()
-            self.__git_connector_for_argocd = None
+    async def close_argo_workspace(self) -> None:
+        if self.__argo_workspace:
+            await self.__argo_workspace.close()
+            self.__argo_workspace = None
 
     def set_progress_manager(self, task_progress_manager: AnyTaskProgressManager) -> None:
         """Set the task progress manager for tracking operation status."""
@@ -1907,7 +1957,7 @@ class ProjectManager:
     # gets no step at all rather than a green check it did not earn.
     # ------------------------------------------------------------------
 
-    def _begin_step(self, name: str) -> str | None:
+    def _begin_step(self, name: str, subject: str | None = None) -> str | None:
         """Start a named progress step for the running task.
 
         Returns the step id, or None when no progress manager is attached (the
@@ -1916,7 +1966,14 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         if progress_manager is None:
             return None
-        return progress_manager.add_task(name)
+        return progress_manager.add_task(name, subject=subject)
+
+    def _begin_phase(self, name: str) -> str | None:
+        """Open a phase: the steps that follow land under it. See ``begin_phase``."""
+        progress_manager = self.get_progress_manager()
+        if progress_manager is None:
+            return None
+        return progress_manager.begin_phase(name)
 
     def _end_step(self, step_id: str | None, error: str | None = None) -> None:
         """Close a step started with :meth:`_begin_step`: completed, or failed with a reason."""
@@ -1928,22 +1985,85 @@ class ProjectManager:
         else:
             progress_manager.complete_task(step_id)
 
-    async def set_git_connector_for_deployment(self, name: str, git_connector: GitConnector) -> None:
-        if name in self.__git_connectors_for_deployments:
-            raise Exception(f"git_connector_for_deployments already set for {name}")
-        self.__git_connectors_for_deployments[name] = git_connector
+    @contextmanager
+    def _step(self, name: str, subject: str | None = None, retried_on: type[Exception] | None = None) -> Iterator[None]:
+        """Report one step around a block of work, failing it with the raised reason.
 
-    async def get_git_connector_for_deployment(self, name: str, repo_config: dict[str, str]) -> GitConnector:
-        if name not in self.__git_connectors_for_deployments:
-            if "project_name" not in repo_config:
-                repo_config["project_name"] = await self.get_name()
-            self.__git_connectors_for_deployments[name] = await create_git_connector_from_repo_config(repo_config)
-        return self.__git_connectors_for_deployments[name]
+        ``retried_on`` is an error the caller retries itself: it closes the step as
+        "retried" instead of failed, so a rollout that succeeds on the next attempt shows
+        no red step. The error still propagates to the retry loop.
+        """
+        step_id = self._begin_step(name, subject)
+        try:
+            yield
+        except Exception as e:
+            if retried_on is not None and isinstance(e, retried_on):
+                progress_manager = self.get_progress_manager()
+                if progress_manager is not None and step_id is not None:
+                    progress_manager.update_task(step_id, steps.retried_step(name))
+                self._end_step(step_id)
+            else:
+                self._end_step(step_id, str(e))
+            raise
+        self._end_step(step_id)
 
-    async def close_git_connectors_for_deployments(self) -> None:
-        for name in self.__git_connectors_for_deployments:
-            await self.__git_connectors_for_deployments[name].close()
-        self.__git_connectors_for_deployments = {}
+    async def get_deployment_workspace(self, name: str, repo_config: dict[str, str]) -> GitRepoWorkspace:
+        """De werkmap op de deployments-repo van deze config, een per remote binnen deze taak.
+
+        Twee namen kunnen dezelfde remote zijn: "infrastructure" is dezelfde repo, branch
+        en pad als de deployments-repo (``repositories[0]``). Dat is dan ook dezelfde scope
+        en dezelfde tempmap, zodat de generatie van beide in een commit kan landen.
+        """
+        if name in self.__deployment_workspaces:
+            return self.__deployment_workspaces[name]
+        if "project_name" not in repo_config:
+            repo_config["project_name"] = await self.get_name()
+        remote = _remote_identity(repo_config)
+        workspace = self.__deployment_workspaces_by_remote.get(remote)
+        if workspace is None:
+            workspace = workspace_from_repo_config(
+                repo_config,
+                [
+                    generate_project_manifest_folder_path(
+                        settings.CLUSTER_MANAGER, await self.get_name(), repo_config.get("path", "")
+                    )
+                ],
+                project_name=await self.get_name(),
+            )
+            self.__deployment_workspaces_by_remote[remote] = workspace
+        self.__deployment_workspaces[name] = workspace
+        return workspace
+
+    async def materialize_cluster_tree(self, repo_config: dict[str, str]) -> str | None:
+        """De ``{cluster}/``-boom van de deployments-repo in een wegwerpmap, alleen om te lezen.
+
+        Voor de lezers over ALLE projecten (``rendered_kinds``). De map wordt met de rest
+        van de werkmappen opgeruimd.
+        """
+        repo_path = (repo_config.get("path") or "").strip("/")
+        try:
+            cluster_path = generate_cluster_manifest_folder_path(settings.CLUSTER_MANAGER, repo_path)
+        except RepositoryPathError as e:
+            logger.error("Repositorypad '%s' valt buiten de repository, dus niet gelezen: %s", repo_path, e)
+            return None
+
+        repo = get_git_repo(repo_config["url"], repo_config.get("branch") or "main")
+        credentials = credentials_from_repo_config(repo_config)
+        scratch = tempfile.mkdtemp(prefix="git-cluster-", dir=settings.TEMP_DIR)
+        self.__scratch_dirs.append(scratch)
+        materialized = await repo.materialize([cluster_path], await repo.tip(credentials), scratch, credentials)
+        if not materialized:
+            return None
+        return os.path.join(scratch, repo_path) if repo_path else scratch
+
+    async def close_deployment_workspaces(self) -> None:
+        for workspace in self.__deployment_workspaces_by_remote.values():
+            await workspace.close()
+        for scratch in self.__scratch_dirs:
+            shutil.rmtree(scratch, ignore_errors=True)
+        self.__scratch_dirs = []
+        self.__deployment_workspaces = {}
+        self.__deployment_workspaces_by_remote = {}
 
     # TODO: we may want to process a file anyway
     async def has_deployments_for_current_cluster(self) -> bool:
@@ -2140,7 +2260,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         namespace_subtask = None
         if progress_manager:
-            namespace_subtask = progress_manager.add_task("Kubernetes namespace(s) aanmaken")
+            namespace_subtask = progress_manager.add_task(steps.ENVIRONMENT_SETUP)
 
         # Get deployments for THIS cluster using helper method
         deployments = await self.get_deployments(
@@ -2322,10 +2442,14 @@ class ProjectManager:
                     )
                     await asyncio.sleep(1)
                 else:
-                    raise RuntimeError(
+                    # The first ERROR of this sequence: the handler keeps its own give-up on
+                    # WARNING, because this loop was still going to try again.
+                    message = (
                         f"Failed to create SOPS secret in namespace {namespace} after {max_retries} attempts. "
                         "RBAC permissions may not have propagated for this namespace."
                     )
+                    logger.error(message)
+                    raise RuntimeError(message)
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
             # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
@@ -2361,6 +2485,16 @@ class ProjectManager:
 
         import asyncpg
 
+        # Een geslaagde toets op precies deze (host, gebruiker, wachtwoord) blijft gelden
+        # zolang het proces leeft: het secret is niet veranderd, dus de verbinding opnieuw
+        # opzetten meet hetzelfde (RC-418). Een wachtwoord dat SERVERKANT wijzigt zonder dat
+        # het secret meewijzigt valt hier buiten, maar komt bij de eerste echte
+        # databasehandeling van die ronde alsnog als auth-fout naar boven.
+        memo = hashlib.sha256(f"{host}\n{username}\n{password}".encode()).hexdigest()
+        if memo in _validated_infrastructure_credentials:
+            logger.debug("Infrastructuur-credentials voor %s@%s zijn in dit proces al getoetst", username, host)
+            return True, "success"
+
         try:
             # Create a direct connection with the superuser credentials to the postgres database
             conn = await asyncpg.connect(
@@ -2368,6 +2502,7 @@ class ProjectManager:
             )
             await conn.close()
             logger.debug(f"Infrastructure database connection test successful for {username}@{host}/postgres")
+            _validated_infrastructure_credentials.add(memo)
             return True, "success"
         except asyncpg.InvalidPasswordError as e:
             # Authentication failed - wrong password
@@ -2381,6 +2516,105 @@ class ProjectManager:
             # Other errors
             logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
             return False, "unknown_error"
+
+    async def _read_database_cluster_status(self, cluster_name: str, project_name: str) -> dict[str, Any]:
+        """The CNPG Cluster status of the project's dedicated cluster.
+
+        Empty when the resource is absent or unreadable, so a caller cannot tell those
+        apart and must stay silent instead of reporting a cluster as unhealthy.
+        """
+        from opi.core.cluster_config import get_infrastructure_namespace
+        from opi.utils.naming import _sanitize_for_lowercase
+
+        cluster = await self._kubectl_connector.get_namespaced_resource(
+            "clusters.postgresql.cnpg.io",
+            f"{_sanitize_for_lowercase(project_name)}-db",
+            get_infrastructure_namespace(cluster_name, project_name),
+        )
+        if not cluster:
+            return {}
+        status = cluster.get("status", {})
+        return status if isinstance(status, dict) else {}
+
+    @staticmethod
+    def _database_cluster_phase_summary(status: dict[str, Any]) -> str:
+        """What CNPG says about the cluster, as a suffix for a message, or an empty string."""
+        parts = [f"{key}: {status[key]}" for key in ("phase", "phaseReason") if status.get(key)]
+        return f" ({', '.join(parts)})" if parts else ""
+
+    async def _wait_until_database_accepts_connections(
+        self, project_name: str, cluster_name: str, username: str, password: str
+    ) -> None:
+        """Wait until the project's PostgreSQL primary answers a superuser query.
+
+        On 3 November 2026 provisioning of pocpl-0g8 died on a ConnectionRefusedError
+        straight after ArgoCD called the infrastructure healthy, and the task failed
+        permanently.
+
+        Raises:
+            RuntimeError: If no connection was accepted within the timeout.
+        """
+        from opi.core.cluster_config import get_database_cluster_service_endpoint
+
+        host = get_database_cluster_service_endpoint(cluster_name, project_name)
+
+        async def _select_one() -> None:
+            conn = await asyncpg.connect(
+                host=host, port=5432, user=username, password=password, database="postgres", timeout=5
+            )
+            try:
+                await conn.fetchval("SELECT 1")
+            finally:
+                await conn.close()
+
+        try:
+            await retry_on_connect_error(
+                _select_one,
+                DATABASE_CONNECT_TIMEOUT_SECONDS,
+                f"PostgreSQL at {host}",
+                connect_errors=(OSError,),
+            )
+        except OSError as e:
+            summary = self._database_cluster_phase_summary(
+                await self._read_database_cluster_status(cluster_name, project_name)
+            )
+            raise RuntimeError(
+                f"Database of project '{project_name}' accepts no connections at {host} after "
+                f"{DATABASE_CONNECT_TIMEOUT_SECONDS}s{summary}: {e}"
+            ) from e
+        logger.info(f"Database of project '{project_name}' accepts connections at {host}")
+
+    async def _warn_when_database_cluster_not_ready(
+        self,
+        project_name: str,
+        cluster_name: str,
+        progress_manager: AnyTaskProgressManager | None,
+        infra_task: str | None,
+    ) -> None:
+        """Report a dedicated cluster that CNPG itself does not call Ready, without blocking.
+
+        The database answering queries is what provisioning needs; the operator reaching
+        the instances is what backup and failover need. A cluster whose Ready condition
+        stays false therefore gets a warning instead of a failure.
+        """
+        status = await self._read_database_cluster_status(cluster_name, project_name)
+        if not status:
+            return
+
+        conditions = status.get("conditions") or []
+        ready = next((c for c in conditions if isinstance(c, dict) and c.get("type") == "Ready"), None)
+        if ready and ready.get("status") == "True":
+            return
+
+        summary = self._database_cluster_phase_summary(status)
+        logger.warning(
+            f"CNPG does not report the database cluster of project '{project_name}' as Ready{summary}. "
+            f"The database accepts connections, but the operator cannot reach the instances, so backups "
+            f"and failover through the operator are not guaranteed."
+        )
+        if progress_manager and infra_task:
+            warning_step = progress_manager.add_subtask(infra_task, steps.database_not_ready(summary))
+            progress_manager.complete_task(warning_step)
 
     async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
         """
@@ -2417,7 +2651,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         namespace_subtask = None
         if progress_manager:
-            namespace_subtask = progress_manager.add_task(f"Namespace {infrastructure_namespace} aanmaken")
+            namespace_subtask = progress_manager.add_task(steps.ENVIRONMENT_SETUP, subject="projectdatabase")
 
         try:
             # Check if namespace exists, create if needed (using shared function)
@@ -2458,6 +2692,8 @@ class ProjectManager:
         7. Wait for infrastructure application to be created by ArgoCD
         8. Refresh the infrastructure application to pick up latest changes
         9. Wait for ArgoCD to report infrastructure as Synced + Healthy
+        10. Wait until the database accepts connections, which ArgoCD does not report
+        11. Warn when CNPG itself does not call the cluster Ready
 
         Args:
             project_data: The project configuration data
@@ -2491,7 +2727,7 @@ class ProjectManager:
         progress_manager = self.get_progress_manager()
         infra_task = None
         if progress_manager:
-            infra_task = progress_manager.add_task("Databasecluster aanmaken")
+            infra_task = progress_manager.add_task(steps.PROJECT_DATABASE_SETUP)
 
         try:
             # STEP 1: Check for existing superuser credentials and validate them
@@ -2659,143 +2895,147 @@ class ProjectManager:
                 "path": main_repo.get("path", ""),
             }
 
-            # Get git connector for deployment repo
-            deployment_git_connector = await self.get_git_connector_for_deployment("infrastructure", infra_repo_config)
-            deployment_working_dir = await deployment_git_connector.get_working_dir()
+            infra_workspace = await self.get_deployment_workspace("infrastructure", infra_repo_config)
 
-            # Create infrastructure resources directory in deployment repo
-            # Path: {cluster}/{project_name}/infrastructure/
-            # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
-            infra_resources_dir = os.path.join(
-                deployment_working_dir,
-                generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
-            )
-            os.makedirs(infra_resources_dir, exist_ok=True)
+            async def _write_infrastructure_manifests() -> None:
+                """Zet de infrastructuurmap neer in de werkmap van deze ronde."""
+                deployment_working_dir = await infra_workspace.get_working_dir()
 
-            # Write manifests - secret as .to-sops.yaml for encryption
-            secret_path = os.path.join(
-                infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
-            )
-            cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
-
-            with open(secret_path, "w") as f:
-                f.write(secret_manifest)
-            with open(cluster_path, "w") as f:
-                f.write(cluster_manifest)
-
-            # Create a least-privilege baseline network policy for the
-            # infrastructure namespace. This namespace hosts the project's
-            # PostgreSQL cluster, so it must accept ingress from the project's
-            # own tenant app namespaces (where the application pods connect
-            # from) while denying everything else. It is NOT allow-all.
-            tenant_namespaces = sorted(
-                {
-                    get_prefixed_namespace(cluster_name, deployment_def["namespace"])
-                    for deployment_def in project_data.get("deployments", [])
-                    if deployment_def.get("cluster") == cluster_name and deployment_def.get("namespace")
-                }
-            )
-            logger.info(
-                f"Generating baseline network policy for infrastructure namespace: {infrastructure_namespace} "
-                f"(ingress allowed from tenant namespaces: {tenant_namespaces})"
-            )
-            network_policy_manifest = render_template(
-                "tenant-baseline-network-policy.yaml.jinja",
-                {
-                    "name": "tenant-baseline",
-                    "namespace": infrastructure_namespace,
-                    # No deployment_selector: this policy covers the whole
-                    # infrastructure namespace (CNPG operator + cluster pods,
-                    # none of which carry our `deployment:` label).
-                    "deployment_selector": None,
-                    "ops_namespace": get_namespace(cluster_name),
-                    "backup_namespace": get_backup_namespace(cluster_name),
-                    "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
-                    "ops_egress": get_ops_egress(cluster_name),
-                    "cluster_cidrs": get_cluster_cidrs(cluster_name),
-                    # The CNPG operator (in its own namespace) must reach the
-                    # dedicated cluster's pods to extract instance status, or the
-                    # Cluster never becomes Ready. The DB subsystem owns which
-                    # namespace that is; only the infra namespace needs this rule.
-                    "database_operator_namespace": database_cluster_config["database_operator_namespace"],
-                    # The project's app namespaces must reach the PostgreSQL
-                    # cluster that lives in this infrastructure namespace.
-                    "allowed_ingress_namespaces": tenant_namespaces,
-                    # Skip the "project infra" egress rule: this IS the infra
-                    # namespace, so an explicit self-rule would be redundant.
-                    "project_infra_namespace": None,
-                },
-            )
-            network_policy_path = os.path.join(infra_resources_dir, "tenant-baseline-network-policy.yaml")
-            with open(network_policy_path, "w") as f:
-                f.write(network_policy_manifest)
-            logger.info(f"Created baseline network policy for infrastructure namespace: {infrastructure_namespace}")
-
-            # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
-            if registry_name and registry_config and not registry_config.get("secretName"):
-                logger.info(
-                    f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
+                # Create infrastructure resources directory in deployment repo
+                # Path: {cluster}/{project_name}/infrastructure/
+                # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
+                infra_resources_dir = os.path.join(
+                    deployment_working_dir,
+                    generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
                 )
+                os.makedirs(infra_resources_dir, exist_ok=True)
 
-                # Decrypt registry credentials (reuse existing logic)
-                from opi.utils.secrets import RegistrySecret
+                # Write manifests - secret as .to-sops.yaml for encryption
+                secret_path = os.path.join(
+                    infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
+                )
+                cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
 
-                registry_url = registry_config.get("upstream", "")
-                username = registry_config.get("username", "")
-                password_encrypted = registry_config.get("password", "")
+                with open(secret_path, "w") as f:
+                    f.write(secret_manifest)
+                with open(cluster_path, "w") as f:
+                    f.write(cluster_manifest)
 
-                private_key = await get_decoded_project_private_key(project_data)
-                password = await decrypt_password_smart(password_encrypted, private_key)
-
-                # Create RegistrySecret instance (same as deployments)
-                registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
-
-                # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
-                registry_secret_manifest = render_template(
-                    "generic-secret.yaml.to-sops.jinja",
+                # Create a least-privilege baseline network policy for the
+                # infrastructure namespace. This namespace hosts the project's
+                # PostgreSQL cluster, so it must accept ingress from the project's
+                # own tenant app namespaces (where the application pods connect
+                # from) while denying everything else. It is NOT allow-all.
+                tenant_namespaces = sorted(
                     {
-                        "name": registry_secret_name,
+                        get_prefixed_namespace(cluster_name, deployment_def["namespace"])
+                        for deployment_def in project_data.get("deployments", [])
+                        if deployment_def.get("cluster") == cluster_name and deployment_def.get("namespace")
+                    }
+                )
+                logger.info(
+                    f"Generating baseline network policy for infrastructure namespace: {infrastructure_namespace} "
+                    f"(ingress allowed from tenant namespaces: {tenant_namespaces})"
+                )
+                network_policy_manifest = render_template(
+                    "tenant-baseline-network-policy.yaml.jinja",
+                    {
+                        "name": "tenant-baseline",
                         "namespace": infrastructure_namespace,
-                        "secret_type": "registry",
-                        "secret_k8s_type": "kubernetes.io/dockerconfigjson",
-                        "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
+                        # No deployment_selector: this policy covers the whole
+                        # infrastructure namespace (CNPG operator + cluster pods,
+                        # none of which carry our `deployment:` label).
+                        "deployment_selector": None,
+                        "ops_namespace": get_namespace(cluster_name),
+                        "backup_namespace": get_backup_namespace(cluster_name),
+                        "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                        "ops_egress": get_ops_egress(cluster_name),
+                        "cluster_cidrs": get_cluster_cidrs(cluster_name),
+                        # The CNPG operator (in its own namespace) must reach the
+                        # dedicated cluster's pods to extract instance status, or the
+                        # Cluster never becomes Ready. The DB subsystem owns which
+                        # namespace that is; only the infra namespace needs this rule.
+                        "database_operator_namespace": database_cluster_config["database_operator_namespace"],
+                        # The project's app namespaces must reach the PostgreSQL
+                        # cluster that lives in this infrastructure namespace.
+                        "allowed_ingress_namespaces": tenant_namespaces,
+                        # Skip the "project infra" egress rule: this IS the infra
+                        # namespace, so an explicit self-rule would be redundant.
+                        "project_infra_namespace": None,
                     },
                 )
+                network_policy_path = os.path.join(infra_resources_dir, "tenant-baseline-network-policy.yaml")
+                with open(network_policy_path, "w") as f:
+                    f.write(network_policy_manifest)
+                logger.info(f"Created baseline network policy for infrastructure namespace: {infrastructure_namespace}")
 
-                # Write registry secret to infrastructure directory
-                registry_secret_path = os.path.join(infra_resources_dir, sops_filenames(registry_secret_name).plaintext)
-                with open(registry_secret_path, "w") as f:
-                    f.write(registry_secret_manifest)
+                # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
+                if registry_name and registry_config and not registry_config.get("secretName"):
+                    logger.info(
+                        f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
+                    )
 
-                logger.info(
-                    f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
+                    # Decrypt registry credentials (reuse existing logic)
+                    from opi.utils.secrets import RegistrySecret
+
+                    registry_url = registry_config.get("upstream", "")
+                    username = registry_config.get("username", "")
+                    password_encrypted = registry_config.get("password", "")
+
+                    private_key = await get_decoded_project_private_key(project_data)
+                    password = await decrypt_password_smart(password_encrypted, private_key)
+
+                    # Create RegistrySecret instance (same as deployments)
+                    registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
+
+                    # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
+                    registry_secret_manifest = render_template(
+                        "generic-secret.yaml.to-sops.jinja",
+                        {
+                            "name": registry_secret_name,
+                            "namespace": infrastructure_namespace,
+                            "secret_type": "registry",
+                            "secret_k8s_type": "kubernetes.io/dockerconfigjson",
+                            "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
+                        },
+                    )
+
+                    # Write registry secret to infrastructure directory
+                    registry_secret_path = os.path.join(
+                        infra_resources_dir, sops_filenames(registry_secret_name).plaintext
+                    )
+                    with open(registry_secret_path, "w") as f:
+                        f.write(registry_secret_manifest)
+
+                    logger.info(
+                        f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
+                    )
+
+                # STEP 4: SOPS encrypt the secrets using project's SOPS key
+                logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
+                project_public_key = get_project_public_key(project_data)
+                if not project_public_key:
+                    raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
+                await asyncio.to_thread(
+                    encrypt_to_sops_files_or_fail,
+                    infra_resources_dir,
+                    project_public_key,
+                    f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
+                    private_key=await self._sops_private_key_for(project_data),
                 )
 
-            # STEP 4: SOPS encrypt the secrets using project's SOPS key
-            logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
-            project_public_key = get_project_public_key(project_data)
-            if not project_public_key:
-                raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
-            await asyncio.to_thread(
-                encrypt_to_sops_files_or_fail,
-                infra_resources_dir,
-                project_public_key,
-                f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
-                private_key=await self._sops_private_key_for(project_data),
-            )
+                # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
+                logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
+                kustomization_success = self._manifest_generator.create_kustomization_files(
+                    output_dir=infra_resources_dir,
+                    namespace=infrastructure_namespace,
+                )
+                if not kustomization_success:
+                    raise RuntimeError(f"Failed to create kustomization files for project '{project_name}'")
 
-            # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
-            logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
-            kustomization_success = self._manifest_generator.create_kustomization_files(
-                output_dir=infra_resources_dir,
-                namespace=infrastructure_namespace,
-            )
-            if not kustomization_success:
-                raise RuntimeError(f"Failed to create kustomization files for project '{project_name}'")
-
-            # Commit and push infrastructure resources to deployment repo
-            await deployment_git_connector.commit_and_push(
-                f"Add infrastructure resources for {project_name} in {cluster_name} cluster"
+            await infra_workspace.mutate_and_push(
+                f"Add infrastructure resources for {project_name} in {cluster_name} cluster",
+                _write_infrastructure_manifests,
             )
 
             logger.info(
@@ -2829,7 +3069,7 @@ class ProjectManager:
             # STEP 8: Wait for infrastructure application to be created by ArgoCD
             infra_app_name = f"{project_name}-infrastructure"
             if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
+                progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_ROLLOUT)
 
             async with self._umbrella_verversbewaker(argo_connector):
                 await self._argo_manager.wait_for_application_created(
@@ -2853,7 +3093,7 @@ class ProjectManager:
             )
 
             if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, "Wachten tot het databasecluster klaar is")
+                progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_WAIT_READY)
 
             await self._argo_manager.wait_for_infrastructure_ready(
                 project_name=project_name,
@@ -2863,6 +3103,23 @@ class ProjectManager:
             )
 
             logger.info(f"Infrastructure is ready for project '{project_name}'")
+
+            if progress_manager and infra_task:
+                progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_WAIT_CONNECTIONS)
+
+            await self._wait_until_database_accepts_connections(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                username=superuser_username,
+                password=superuser_password,
+            )
+
+            await self._warn_when_database_cluster_not_ready(
+                project_name=project_name,
+                cluster_name=cluster_name,
+                progress_manager=progress_manager,
+                infra_task=infra_task,
+            )
 
             if progress_manager and infra_task:
                 progress_manager.complete_task(infra_task)
@@ -3024,6 +3281,7 @@ class ProjectManager:
             if poging == UMBRELLA_REFRESH_MAX_POGINGEN:
                 break
 
+            umbrella_refresh_lost_total.inc()
             logger.info(
                 f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
                 "de vorige refresh is verloren gegaan, opnieuw verversen"
@@ -3058,7 +3316,10 @@ class ProjectManager:
             self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
         )
         try:
-            yield
+            # De fase wordt hier gemeten en niet in de bewaker zelf: deze wacht is wat de
+            # taak kost, en de bewaker wordt er altijd halverwege afgebroken.
+            with rollout_phase(PHASE_ARGO_UMBRELLA):
+                yield
         finally:
             bewaker.cancel()
             try:
@@ -3083,7 +3344,7 @@ class ProjectManager:
 
         De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul
         resources en meldt zich daarmee binnen een seconde Healthy. Zie
-        docs/de-serviceaccount-komt-na-de-deployment.md.
+        docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md.
 
         Args:
             app_name: Naam van de applicatie van het projectniveau.
@@ -3092,6 +3353,71 @@ class ProjectManager:
             RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
             TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
         """
+        with rollout_phase(PHASE_ARGO_PROJECT_GATE):
+            if await self._project_level_already_applied(app_name):
+                logger.info(
+                    "Projectniveau '%s' staat al Synced en Healthy op onze stand; niet opnieuw verversen", app_name
+                )
+                return
+            await self._await_project_level_application(app_name)
+
+    @staticmethod
+    async def _status_voor_een_overslag(argo_connector: ArgoConnector, app_name: str) -> dict[str, Any]:
+        """De status van een applicatie, voor een BESLISSING om werk over te slaan.
+
+        Zo'n beslissing mag nooit een taak kosten. ArgoCD antwoordt 400 zolang de
+        AppProject van een project nog niet bestaat of de applicatie er nog niet in
+        toegelaten is, en ``get_application_status`` maakt daar een RuntimeError van: dat
+        is precies de situatie waarin er niets te bewijzen valt en het volle werk hoort te
+        lopen. Gemeten op de sandbox, 4 november 2026.
+        """
+        try:
+            return await argo_connector.get_application_status(app_name) or {}
+        except (ArgoTransportError, RuntimeError, OSError) as fout:
+            logger.info("Geen status van '%s' om werk op over te slaan: %s", app_name, fout)
+            return {}
+
+    async def _render_already_proven(
+        self, argo_connector: ArgoConnector, app_name: str, reconciled_at: str | None
+    ) -> bool:
+        """Of deze applicatie na onze refresh Synced meldde, en haar render dus klopte."""
+        status_data = await self._status_voor_een_overslag(argo_connector, app_name)
+        if (status_data.get("status", {}) or {}).get("sync", {}).get("status") != "Synced":
+            return False
+        return self._argo_manager.status_reflects_refresh(status_data, reconciled_at)
+
+    async def _project_level_already_applied(self, app_name: str) -> bool:
+        """Of ArgoCD het projectniveau al heeft toegepast zoals het nu in git staat.
+
+        Drie dingen moeten kloppen, en elk ervan is bewijs en geen aanname: deze ronde
+        veranderde het projectniveau niet, de applicatie meldt Synced EN Healthy, en de
+        map met de project-level manifests is bij de revisie die ze vergeleek gelijk aan wat
+        er nu in git staat (``path_unchanged_since``). Dan staat de ServiceAccount er, en dat
+        is precies wat deze grendel beschermt. Mist een van de drie, dan loopt de grendel
+        zoals voorheen.
+
+        Zie docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md: een net
+        aangemaakte applicatie meldt zich Healthy met nul resources, dus Healthy alleen is
+        nooit genoeg. De revisie-eis is wat dat geval uitsluit: een nieuwe applicatie heeft
+        nog geen vergeleken revisie.
+        """
+        if self._project_level_manifests_changed or self._project_level_repo is None:
+            return False
+        if self._project_level_path is None:
+            return False
+        connector = self.__deployment_workspaces.get(self._project_level_repo)
+        if connector is None:
+            return False
+
+        status_data = await self._status_voor_een_overslag(create_argo_connector(), app_name)
+        status = status_data.get("status", {}) or {}
+        sync = status.get("sync", {}) or {}
+        if sync.get("status") != "Synced" or (status.get("health", {}) or {}).get("status") != "Healthy":
+            return False
+        return await connector.path_unchanged_since(str(sync.get("revision") or ""), self._project_level_path)
+
+    async def _await_project_level_application(self, app_name: str) -> None:
+        """De wacht zelf; zie :meth:`wait_for_project_level_application`."""
         argo_connector = create_argo_connector()
         loop = asyncio.get_running_loop()
         einde = loop.time() + ARGOCD_HERSTEL_BUDGET_SECONDEN
@@ -3223,7 +3549,7 @@ class ProjectManager:
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
         try:
-            read_step = self._begin_step("Projectbestand ophalen en controleren")
+            read_step = self._begin_step(steps.PROJECT_FILE_FETCH)
             try:
                 git_connector_for_project_files = await self.get_git_connector_for_project_files()
 
@@ -3234,7 +3560,13 @@ class ProjectManager:
                 )
 
                 current_yaml = analysis["current_yaml"]
+            except Exception as e:
+                self._end_step(read_step, str(e))
+                raise
+            self._end_step(read_step)
 
+            validate_step = self._begin_step(steps.PROJECT_FILE_VALIDATE)
+            try:
                 # Security gate FIRST: validate against the project schema before
                 # any side-effect (including the auto-migration save+commit+push
                 # below). Without this ordering, a hostile project that happens to
@@ -3249,9 +3581,9 @@ class ProjectManager:
                         RESERVED_PROJECT_NAME_MESSAGE.format(name=current_yaml.get("name", "(onbekend)"))
                     )
             except Exception as e:
-                self._end_step(read_step, str(e))
+                self._end_step(validate_step, str(e))
                 raise
-            self._end_step(read_step)
+            self._end_step(validate_step)
 
             # read_project_file auto-migrates in memory; persist to disk if needed
             if self._project_file_handler.was_migrated:
@@ -3259,7 +3591,7 @@ class ProjectManager:
                 logger.info(f"Schema migration applied for project '{project_name}', committing changes")
                 # Only reported when it actually happens: on a normal run there is no
                 # migration, and a step claiming one would be a lie.
-                migrate_step = self._begin_step("Projectbestand bijwerken naar de nieuwste vorm")
+                migrate_step = self._begin_step(steps.PROJECT_FILE_MIGRATE)
                 # Central save: one locked write+commit. The previous write-then-commit
                 # pair left the migrated file uncommitted in the shared warm copy in
                 # between, where a concurrent reconcile could discard it -- after which
@@ -3343,9 +3675,7 @@ class ProjectManager:
             if previous_yaml is not None and deployment_changes["deleted"]:
                 logger.info("Processing %d deleted deployment(s)", len(deployment_changes["deleted"]))
                 # Only when there is something to remove; nothing to do gets no step.
-                delete_step = self._begin_step(
-                    f"Verwijderde deployments opruimen ({len(deployment_changes['deleted'])})"
-                )
+                delete_step = self._begin_step(steps.deleted_deployments_cleanup(len(deployment_changes["deleted"])))
                 delete_errors_before = len(critical_failures)
 
                 for value in deployment_changes["deleted"].values():
@@ -3392,30 +3722,20 @@ class ProjectManager:
             # Step 2: Process the project with change context
             logger.info("Step 2: Processing project with change detection")
 
-            process_step = self._begin_step("Diensten en manifesten bijwerken")
-            try:
-                process_success = await self.process_project(
-                    force_clone=force_clone,
-                    deployment_names=targets,
-                    force_reenable=force_reenable,
-                    reset_running_sync=reset_running_sync,
-                    rotate_credentials=rotate_credentials,
-                )
-            except Exception as e:
-                self._end_step(process_step, str(e))
-                raise
+            process_success = await self.process_project(
+                force_clone=force_clone,
+                deployment_names=targets,
+                force_reenable=force_reenable,
+                reset_running_sync=reset_running_sync,
+                rotate_credentials=rotate_credentials,
+            )
             if not process_success:
                 # The reason, not a pointer at logs the caller has no access to (RC-66,
                 # bevinding 2). process_project records why it gave up in
                 # _processing_error; only when it did not is there nothing better to say
-                # than that this step failed.
-                critical_failures.append(self._processing_error or "Bijwerken van diensten en manifesten is mislukt")
-                self._end_step(
-                    process_step,
-                    self._processing_error or "Bijwerken van diensten en manifesten is mislukt",
-                )
-            else:
-                self._end_step(process_step)
+                # than that this step failed. The steps inside process_project name their
+                # own failure, so there is no container step left to fail here.
+                critical_failures.append(self._processing_error or "Het verwerken van het project is mislukt")
 
             # Check for critical failures before triggering ArgoCD sync
             # Don't sync if there were failures during processing
@@ -3436,7 +3756,8 @@ class ProjectManager:
             )
 
             progress_manager = self.get_progress_manager()
-            argo_task = self._begin_step("Wachten tot ArgoCD gesynchroniseerd is")
+            # The rollout phase is this step itself: its rows per deployment land under it.
+            argo_task = self._begin_phase(steps.ROLLOUT)
 
             argo_connector = create_argo_connector()
 
@@ -3610,15 +3931,26 @@ class ProjectManager:
                     # (De OOM-callback verderop throttlet zichzelf al, via last_check_at.)
                     describe_next: dict[str, int] = {"at": 0}
 
-                    async def _on_progressing(elapsed: int) -> None:
-                        if app_subtask and namespace and component_names and elapsed >= describe_next["at"]:
+                    async def _on_poll(elapsed: int, status: dict[str, Any], fresh: bool) -> None:
+                        if not (progress_manager and app_subtask):
+                            return
+                        # Wat ArgoCD zelf nog doet gaat voor de pods: zolang de sync niet rond
+                        # is, zegt de stand van de pods niets over waar de uitrol op wacht.
+                        argo_reason = describe_sync_waiting(status, fresh=fresh)
+                        statuses: list[tuple[str, str]] = []
+                        if argo_reason:
+                            detail = argo_reason
+                        else:
+                            if elapsed < describe_next["at"]:
+                                return
                             describe_next["at"] = elapsed + 5
-                            try:
-                                statuses = await describe_components_waiting(
-                                    namespace, component_names, component_refs, deployment_state
-                                )
-                            except Exception:
-                                statuses = []
+                            if namespace and component_names:
+                                try:
+                                    statuses = await describe_components_waiting(
+                                        namespace, component_names, component_refs, deployment_state
+                                    )
+                                except Exception:
+                                    statuses = []
                             # Componenten met dezelfde reden op één regel. Twee componenten
                             # die op hetzelfde image wachten zijn één ding dat misgaat, geen
                             # twee, en zo is ook te zien welke reden bij welke componenten hoort.
@@ -3633,23 +3965,21 @@ class ProjectManager:
                             else:
                                 detail = "wachten tot componenten gereed zijn"
 
-                            if detail != stall["line"]:
-                                stall["line"] = detail
-                                stall["since"] = elapsed
-                            waited = elapsed - stall["since"]
-                            if waited >= STALL_NOTICE_SECONDS and statuses:
-                                detail = f"{detail} (al {waited}s onveranderd, bekijk de logs)"
-                            # De deploymentnaam is de titel van de regel, de reden staat
-                            # eronder. Beide in de titel proppen gaf één onleesbare regel.
-                            progress_manager.update_task(app_subtask, dep_name, subject=detail)
+                        if detail != stall["line"]:
+                            stall["line"] = detail
+                            stall["since"] = elapsed
+                        waited = elapsed - stall["since"]
+                        if waited >= STALL_NOTICE_SECONDS and (argo_reason or statuses):
+                            detail = f"{detail} (al {waited}s onveranderd, bekijk de logs)"
+                        # De deploymentnaam is de titel van de regel, de reden staat
+                        # eronder. Beide in de titel proppen gaf één onleesbare regel.
+                        progress_manager.update_task(app_subtask, dep_name, subject=detail)
 
-                        # Failure detection (OOM / ImagePull / CrashLoop) runs after
-                        # reporting so the user still sees the live status before a
-                        # DeploymentHealthError aborts the wait.
-                        if oom_callback:
-                            await oom_callback(elapsed)
-
-                    on_progressing = _on_progressing if (app_subtask or oom_callback) else None
+                    # Failure detection (OOM / ImagePull / CrashLoop) runs after on_poll,
+                    # so the user still sees the live status before a DeploymentHealthError
+                    # aborts the wait.
+                    on_poll = _on_poll if app_subtask else None
+                    on_progressing = oom_callback
 
                     try:
                         reconciled_at = await argo_connector.refresh_application(app_name)
@@ -3662,7 +3992,16 @@ class ProjectManager:
                         # deployments, which only render inside the CMP. A non-render failure
                         # (network, 401) must not block the deploy: log and fall through to
                         # the wait loop.
-                        render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
+                        # Een applicatie die NA onze refresh Synced meldt heeft zijn render
+                        # al gedaan: ArgoCD kan niet vergelijken zonder manifests. Dan is het
+                        # ophalen ervan (de duurste call van de lus: de hele render over de
+                        # lijn) alleen nog werk. De status-GET die dat vaststelt doet de
+                        # wachtlus hieronder toch al.
+                        if await self._render_already_proven(argo_connector, app_name, reconciled_at):
+                            logger.debug("Render van '%s' al bewezen door een verse Synced; niet ophalen", app_name)
+                            render_ok, render_detail = True, ""
+                        else:
+                            render_ok, render_detail = await argo_connector.get_application_manifests(app_name)
                         if not render_ok and _looks_like_render_failure(render_detail):
                             from opi.services.event_interpreter import condense_render_error
 
@@ -3691,11 +4030,12 @@ class ProjectManager:
                             timeout=300,
                             # 2s: de status-GET is een goedkope live read; het oude 5s-rooster
                             # betekende gemiddeld 2,5s extra wachten nadat de app al groen was.
-                            # De zwaardere componenten-inspectie in on_progressing zit op zijn
+                            # De zwaardere componenten-inspectie in on_poll zit op zijn
                             # eigen 5s-throttle en versnelt hierdoor niet mee.
                             poll_interval=2,
                             refreshed_after=reconciled_at,
                             on_progressing=on_progressing,
+                            on_poll=on_poll,
                         )
                         logger.info(f"Application '{app_name}' is synced and healthy")
                         if app_subtask:
@@ -3743,7 +4083,7 @@ class ProjectManager:
                 pending_apps = [(a, d) for a, d in app_deployments if not any(a in f for f in sync_failures)]
                 if progress_manager and argo_task and pending_apps:
                     progress_manager.update_task(
-                        argo_task, f"Wachten tot {len(pending_apps)} applicatie(s) gesynchroniseerd zijn"
+                        argo_task, steps.ROLLOUT, subject=steps.waiting_for_applications(len(pending_apps))
                     )
                 outcomes = await asyncio.gather(*(_refresh_and_wait(a, d) for a, d in pending_apps))
                 synced_deployment_count = len(outcomes)
@@ -3831,12 +4171,12 @@ class ProjectManager:
                         oom_names = ", ".join(f.component_reference or f.component_name for f in oom_failures)
                         if progress_manager and argo_task:
                             progress_manager.update_task(
-                                argo_task,
-                                f"Te weinig geheugen voor {oom_names} in {app_name}, geheugenlimiet bijstellen...",
+                                argo_task, steps.ROLLOUT, subject=steps.tuning_memory(oom_names, app_name)
                             )
                         component_health = component_health_from_oom_failures(oom_failures)
                         try:
-                            observation = await run_after_sync_observation(project_name, dep_name, component_health)
+                            with rollout_phase(PHASE_AFTER_SYNC):
+                                observation = await run_after_sync_observation(project_name, dep_name, component_health)
                             if observation.requeue_refresh:
                                 logger.info(
                                     "OOM auto-tune committed changes for %s/%s (components: %s), queuing refresh task",
@@ -3933,6 +4273,8 @@ class ProjectManager:
                 # alert on every push. Complete the task and report the reason instead.
                 logger.info("ArgoCD applications synced (%d runtime health warning(s) above)", len(health_warnings))
                 if progress_manager and argo_task:
+                    # The wait is over: its subject ("wacht op ...") would otherwise stay.
+                    progress_manager.update_task(argo_task, steps.ROLLOUT, subject="")
                     progress_manager.complete_task(argo_task)
                     # Een TELLING, geen aaneenschakeling. Hier stond "; ".join(health_warnings),
                     # en die waarschuwingen dragen elk de volledige kubelet-tekst: voor een
@@ -3961,7 +4303,7 @@ class ProjectManager:
                     )
                     notice = progress_manager.add_subtask(
                         argo_task,
-                        f"Uitgerold, maar {hoeveel} {draait} niet gezond",
+                        steps.deployed_but_unhealthy(hoeveel, draait),
                         subject=f"{which}. {cause}",
                     )
                     progress_manager.complete_task(notice)
@@ -3972,6 +4314,7 @@ class ProjectManager:
                 else:
                     logger.info("All ArgoCD applications are refreshed and rendered; health was not awaited")
                 if progress_manager and argo_task:
+                    progress_manager.update_task(argo_task, steps.ROLLOUT, subject="")
                     progress_manager.complete_task(argo_task)
                 return True
         except Exception as e:
@@ -4074,33 +4417,61 @@ class ProjectManager:
         project_data = await self.get_contents()
         project_name = project_data.get("name")
 
-        project_repo_connector = await self.get_git_connector_for_deployment(repo_config["name"], repo_config)
-        # Deployments are already filtered for current cluster by caller
-        for deployment in deployments:
-            await self._process_deployment_manifests(deployment, project_repo_connector)
-            await project_repo_connector.commit_changes(f"Update manifests for {project_name}/{deployment['name']}")
-
-        # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
-        # project deployments over twee repo's heeft. Welke, beslist
-        # project_level_deployment, dezelfde functie die de applicatie gebruikt.
+        workspace = await self.get_deployment_workspace(repo_config["name"], repo_config)
         owner = project_level_deployment(await self.get_deployments(cluster_filter=True))
-        if owner is not None and owner.get("repository") == repo_config.get("name"):
-            await self._process_project_manifests(
-                repo_config,
-                str(owner["cluster"]),
-                get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
-                project_repo_connector,
+
+        async def _generate() -> None:
+            """Zet de manifests van deze repo neer in de werkmap van deze ronde."""
+            # Deployments are already filtered for current cluster by caller
+            for deployment in deployments:
+                with self._step(steps.DEPLOYMENT_CONFIG_BUILD, subject=str(deployment["name"])):
+                    await self._process_deployment_manifests(deployment, workspace)
+
+            # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
+            # project deployments over twee repo's heeft. Welke, beslist
+            # project_level_deployment, dezelfde functie die de applicatie gebruikt.
+            if owner is not None and owner.get("repository") == repo_config.get("name"):
+                with self._step(steps.PROJECT_CONFIG_BUILD):
+                    await self._process_project_manifests(
+                        repo_config,
+                        str(owner["cluster"]),
+                        get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
+                        workspace,
+                    )
+                self._project_level_repo = repo_config.get("name")
+
+            # Vlak VOOR de write, en niet erna: ArgoCD probeert een revisie die al eens faalde
+            # niet opnieuw, dus beeindigen na de push laat de blokkade staan voor precies de
+            # commit die hem moet oplossen. Een storing hierin houdt de write niet tegen
+            # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
+            await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
+
+        names = ", ".join(str(deployment["name"]) for deployment in deployments)
+        # Fetching and pushing each get their own step, so a hanging or failing remote shows
+        # up on the progress page at that phase, not at the last service or manifest. The
+        # fetch lives inside mutate_and_push because it belongs under the lock. A conflict
+        # is retried there, so it does not fail the push step.
+        await workspace.mutate_and_push(
+            f"Update manifests for {project_name} ({names})",
+            _generate,
+            on_prepare=lambda: self._step(steps.CONFIG_FETCH, subject=str(repo_config["name"])),
+            on_push=lambda: self._step(
+                steps.CONFIG_PUBLISH, subject=str(repo_config["name"]), retried_on=GitRepoConflictError
+            ),
+        )
+
+        # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel in
+        # wait_for_project_level_application niet op een nieuwe sync te wachten. Alleen de
+        # repo die het projectniveau bezit kan dat meten; voor een andere blijft het True,
+        # want die weet er niets van. De paden van de write zijn repo-relatief en
+        # genormaliseerd, en ``_project_level_path`` is dat niet (``./cluster/...`` bij een
+        # repositories[].path van '.'), dus beide kanten gaan door normpath.
+        if owner is not None and owner.get("repository") == repo_config.get("name") and self._project_level_path:
+            prefix = f"{posixpath.normpath(self._project_level_path)}/"
+            self._project_level_manifests_changed = bool(
+                workspace.last_write
+                and any(posixpath.normpath(path).startswith(prefix) for path in workspace.last_write.paths)
             )
-            await project_repo_connector.commit_changes(f"Update project manifests for {project_name}")
-
-        # Vlak VOOR de push, en niet erna: ArgoCD probeert een revisie die al eens faalde niet
-        # opnieuw, dus beëindigen na de push laat de blokkade staan voor precies de commit die
-        # hem moet oplossen. Een storing hierin houdt de push niet tegen: dit staat tussen de
-        # commits en de push, dus stranden zou de manifests gecommit en ongepusht achterlaten
-        # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
-        await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
-
-        await project_repo_connector.push_changes()
 
         logger.info(f"Successfully processed repository: {repo_config['name']}")
 
@@ -4165,7 +4536,7 @@ class ProjectManager:
             return
         self._terminated_sync_operations.extend(terminated)
         # De stap begint en eindigt in een keer, want het werk is al gedaan.
-        self._end_step(self._begin_step("Lopende sync afgebroken: " + ", ".join(terminated)))
+        self._end_step(self._begin_step(steps.running_sync_terminated(terminated)))
 
     # TODO: maybe this should be moved to project_file manager
     async def get_repository_path(self, repository_name: str) -> str | None:
@@ -4274,7 +4645,7 @@ class ProjectManager:
         repo_config: dict[str, Any],
         cluster_name: str,
         namespace: str,
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
     ) -> None:
         """Schrijf het PROJECTniveau van de deployments-repo: ``<cluster>/<project>/_project/``.
 
@@ -4287,6 +4658,9 @@ class ProjectManager:
         # Dezelfde functie als de ArgoCD-applicatie die naar deze map wijst, zodat de map
         # en de verwijzing ernaar niet uit elkaar kunnen lopen.
         project_dir = generate_project_level_manifest_path(cluster_name, project_name, repo_config.get("path", ""))
+        # Onthouden voor _project_level_already_applied: dat is de map waarvan bewezen moet
+        # worden dat ArgoCD hem al heeft toegepast.
+        self._project_level_path = project_dir
         target_path = os.path.join(await git_connector.get_working_dir(), project_dir)
         os.makedirs(target_path, exist_ok=True)
 
@@ -4335,7 +4709,7 @@ class ProjectManager:
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
     ) -> None:
         """
         Process manifests for a specific deployment.
@@ -4346,7 +4720,7 @@ class ProjectManager:
 
         Args:
             deployment: Deployment configuration
-            git_connector: GitConnector for the repository
+            git_connector: de werkmap van de repository
 
         Returns:
             None
@@ -4878,7 +5252,7 @@ class ProjectManager:
     async def _process_helm_chart_deployment(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         target_path: str,
         namespace_policy_files: list[str] | None = None,
     ) -> None:
@@ -5237,7 +5611,7 @@ class ProjectManager:
     async def _process_helmfile_deployment(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         target_path: str,
         namespace_policy_files: list[str] | None = None,
     ) -> None:
@@ -5697,8 +6071,8 @@ class ProjectManager:
         self._closed = True
         for step in (
             self.close_git_connector_for_project_files,
-            self.close_git_connector_for_argocd,
-            self.close_git_connectors_for_deployments,
+            self.close_argo_workspace,
+            self.close_deployment_workspaces,
         ):
             try:
                 await step()
@@ -5839,13 +6213,9 @@ class ProjectManager:
             #     logger.error("Failed to create repositories, aborting")
             #     return False
 
-            progress_manager = self.get_progress_manager()
-            creation_task = None
-
-            if progress_manager:
-                creation_task = progress_manager.add_task("Project aanmaken")
-
             # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
+
+            self._begin_phase(steps.PHASE_CONFIGURATION)
 
             # Create namespaces first (always first task)
             # TODO: move methods to a kubernetes manager?
@@ -5907,12 +6277,16 @@ class ProjectManager:
                         clone_interrupted=current_deployment_name in interrupted_clones,
                         rotate_credentials=rotate_credentials,
                     )
-                    for provider in provisioning_services():
-                        await provider.provision(provision_ctx)
+                    with rollout_phase(PHASE_PROVISION):
+                        for provider in provisioning_services():
+                            await provider.provision(provision_ctx)
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
-            await self._process_application_manifests(deployment_names=targets, reset_running_sync=reset_running_sync)
+            with rollout_phase(PHASE_GENERATE):
+                await self._process_application_manifests(
+                    deployment_names=targets, reset_running_sync=reset_running_sync
+                )
 
             # Now update clone-from status for all deployments that had clones performed
             # (covers DB, MinIO, and PVC clones reported during manifest generation)
@@ -5963,13 +6337,17 @@ class ProjectManager:
             # three-way merges our mutations with whatever landed in between.
             self.__contents_as_read = self._process_run[1]
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
-            await self.save_and_commit_project(
-                project_data,
-                f"Process project {project_name}{scope}",
-                enforce_validation=False,
-            )
+            with self._step(steps.PROJECT_FILE_UPDATE):
+                await self.save_and_commit_project(
+                    project_data,
+                    f"Process project {project_name}{scope}",
+                    enforce_validation=False,
+                )
 
-            await self._argo_manager.create_argocd_resources(deployment_names=targets)
+            # The wait for the project level happens inside, so the line names ArgoCD for
+            # as long as that wait runs.
+            with self._step(steps.ROLLOUT_PREPARE):
+                await self._argo_manager.create_argocd_resources(deployment_names=targets)
 
             await self._record_reconciliation(project_name, deployments, project_wide, read_started)
 
@@ -5986,9 +6364,6 @@ class ProjectManager:
             # If a step between the save and this point ever starts mutating project_data
             # (the bootstrap actions above do not today), that mutation must be persisted
             # with save_and_commit_project as well, not pushed into the cache directly.
-
-            if progress_manager and creation_task:
-                self.get_progress_manager().complete_task(creation_task)
 
             self._processing_error = None
             self._component_failures = None
@@ -6034,7 +6409,7 @@ class ProjectManager:
     async def create_application_manifests(
         self,
         deployment: dict[str, Any],
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         target_dir: str | None = None,
     ) -> list[str]:
         """
@@ -7470,7 +7845,7 @@ class ProjectManager:
     # TODO: this should be moved to manifests.py
     async def create_kustomization_file(
         self,
-        git_connector: GitConnector,
+        git_connector: GitRepoWorkspace,
         namespace: str,
         sops_files: list[str],
         regular_files: list[str],
@@ -8026,61 +8401,13 @@ class ProjectManager:
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
 
-                        # Clone properties from source, excluding fields that must be
-                        # unique per deployment. The backup block is not copied: backups
-                        # are an explicit per-deployment choice, and inheriting the
-                        # source's schedule made every PR preview accumulate nightly
-                        # snapshots.
-                        #
-                        # On top of those, every key a service uses for its own runtime
-                        # state about the SOURCE deployment: that state describes the
-                        # deployment it was recorded on, so it must not travel to this
-                        # one. Asked of the catalog rather than listed here, so a service
-                        # that starts recording state does not need an edit in this file.
-                        clone_exclude_keys = ["name", "components", "backup", *deployment_runtime_keys()]
+                        # One derivation for every path that builds a deployment out of an
+                        # existing one: the upsert here, and the restore to a new
+                        # deployment. The components stay out of it, because the images
+                        # come from this request.
                         new_deployment.update(
-                            {
-                                key: copy.deepcopy(value)
-                                for key, value in source_deployment.items()
-                                if key not in clone_exclude_keys
-                            }
+                            derive_deployment_from_source(source_deployment, deployment_name, requested_domain_settings)
                         )
-
-                        # A clone uses its own (target) domain setup, never the source's
-                        # hostnames, or two deployments claim the same ones. The web
-                        # address travels inside the source's `services` block, so it is
-                        # removed AFTER the copy -- excluding the old root key names would
-                        # be a silent no-op.
-                        #
-                        # The SHAPE stays, unless it leans on the name it is about to lose
-                        # (SELF_CONTAINED_FORMAT_IDS): dropping it handed the clone the
-                        # platform default of the day it was processed (RC-217). Dropped
-                        # first, so clearing the names also tidies away a service entry
-                        # that has nothing left in it.
-                        if (
-                            get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                            not in SELF_CONTAINED_FORMAT_IDS
-                        ):
-                            pop_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
-                        clear_domain_name_settings(new_deployment)
-
-                        # The caller's own request was written before that copy and got
-                        # overwritten by it. Write it again; it must beat the source.
-                        for setting, setting_value in requested_domain_settings.items():
-                            set_domain_setting(new_deployment, setting, setting_value)
-
-                        # When the source's subdomain matches its deployment name, it means
-                        # components share a single hostname and use paths to differentiate.
-                        # Preserve this pattern for the clone by setting subdomain to the
-                        # new deployment name.
-                        source_subdomain = get_domain_setting(source_deployment, DomainSetting.SUBDOMAIN)
-                        source_name = source_deployment.get("name")
-                        if source_subdomain and source_subdomain == source_name:
-                            set_domain_setting(new_deployment, DomainSetting.SUBDOMAIN, deployment_name)
-                            logger.info(
-                                f"Source subdomain '{source_subdomain}' matches source deployment name, "
-                                f"setting cloned subdomain to '{deployment_name}'"
-                            )
 
                         # Set clone-from in dict format for proper status tracking
                         new_deployment["clone-from"] = {
@@ -9634,7 +9961,7 @@ class ProjectManager:
         if generation_changes:
             storage_list = ", ".join(generation_changes.keys())
             commit_msg += f" and recreate PVCs: {storage_list}"
-        commit_step = self._begin_step("Nieuwe image vastleggen in het projectbestand")
+        commit_step = self._begin_step(steps.IMAGE_SAVE)
         try:
             await self.save_and_commit_project(project_data, commit_msg)
         except Exception as e:
@@ -9673,21 +10000,18 @@ class ProjectManager:
         # - Application manifests (including new PVC generations)
         # - ArgoCD resources
         logger.info(f"Processing deployment {deployment_name} to apply all changes")
-        process_step = self._begin_step("Diensten en manifesten bijwerken")
-        try:
-            process_success = await self.process_project(deployment_name)
-        except Exception as e:
-            self._end_step(process_step, str(e))
-            raise
-
+        process_success = await self.process_project(deployment_name)
         if not process_success:
-            self._end_step(process_step, f"Failed to process deployment {deployment_name}")
-            raise Exception(f"Failed to process deployment {deployment_name}")
-        self._end_step(process_step)
+            # The steps inside process_project name their own failure; the reason has to
+            # survive for the task, which reads _processing_error.
+            reason = f"Failed to process deployment {deployment_name}"
+            if not self._processing_error:
+                self._processing_error = reason
+            raise Exception(reason)
 
         # 8. Trigger ArgoCD sync
         logger.info("Triggering ArgoCD sync for updated deployment")
-        sync_step = self._begin_step("ArgoCD laten uitrollen")
+        sync_step = self._begin_phase(steps.ROLLOUT)
         try:
             argo_connector = create_argo_connector()
 

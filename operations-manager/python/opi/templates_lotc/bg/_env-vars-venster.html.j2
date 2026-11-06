@@ -35,8 +35,25 @@
                 {# De id is niet decoratief: zonder id bergt initKvEditors de editor op
                    onder de lege sleutel en ruimt zijn eigen opruimronde hem meteen weer
                    op (document.getElementById('') bestaat nooit). #}
-                <div class="kv-editor" id="kv-editor-env-vars" data-format="env">
+                <div class="kv-editor" id="kv-editor-env-vars" data-format="env" data-mask-values="true">
                     <span class="utrecht-form-label kv-editor__label">Omgevingsvariabelen</span>
+                    {# Standaard dicht: bij elke opnieuw open wordt de editor opgebouwd
+                       uit data-mask-values. De nldd-toggle-button draagt aria-pressed en
+                       schakelt via change, niet click.
+
+                       "Regel toevoegen" is er voor een volle editor: daar is onder de tekst
+                       geen ruimte meer om op een nieuwe regel te landen.
+
+                       stopPropagation voorkomt dat alleen het kijken of een lege regel de
+                       modal markeert als gewijzigd. #}
+                    <div class="kv-mask-toggle">
+                        <nldd-toggle-button id="kv-mask-toggle-env-vars" type="button" size="sm"
+                                            text="Toon waarden"
+                                            onchange="event.stopPropagation(); toggleKvMask('kv-editor-env-vars', this)"></nldd-toggle-button>
+                        <nldd-button type="button" size="sm" appearance="neutral-tinted" start-icon="plus"
+                                     text="Regel toevoegen"
+                                     onclick="event.stopPropagation(); addKvLine('kv-editor-env-vars')"></nldd-button>
+                    </div>
                     <textarea id="vars" name="vars" data-cm-kv="true" rows="8"
                               placeholder="KEY=value">{{ vars_text | e }}</textarea>
                 </div>

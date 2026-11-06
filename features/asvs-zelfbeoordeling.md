@@ -13,13 +13,13 @@ die we al hadden gemaakt.
 |---|---|
 | `architecture/asvs-5.0-eisen.yaml` | de meetlat: de 253 ASVS 5.0-eisen op L1 en L2, letterlijk uit de standaard. Wordt niet met de hand bewerkt |
 | `architecture/asvs-zelfbeoordeling.yaml` | ons oordeel per eis. Dit is het bestand dat je bijwerkt |
-| `docs/asvs-zelfbeoordeling.md` | het afvinkdocument, gegenereerd. Nooit met de hand bewerken |
+| `docs/security/asvs-zelfbeoordeling.md` | het afvinkdocument, gegenereerd. Nooit met de hand bewerken |
 
 De eisen staan apart van het oordeel, zodat de toets echt iets kan bewijzen: elke eis uit de
 standaard moet een oordeel hebben, en een oordeel over een eis die niet bestaat valt op.
 
 ```bash
-task asvs-afvinklijst   # schrijf docs/asvs-zelfbeoordeling.md opnieuw
+task asvs-afvinklijst   # schrijf docs/security/asvs-zelfbeoordeling.md opnieuw
 task asvs-check         # faalt bij een gat of bij drift op het document
 ```
 
@@ -45,7 +45,7 @@ hernoemd, dan gaat de meetlat rood in plaats van stil onwaar te worden.
 
 Op 21 oktober 2026, niveau L2: 122 eisen met een automatische toets, 6 via een plan, 83
 handwerk, 42 niet van toepassing. De volledige tabel staat in
-`docs/asvs-zelfbeoordeling.md`.
+`docs/security/asvs-zelfbeoordeling.md`.
 
 Waar het handwerk zit, is geen verrassing en wel informatief:
 

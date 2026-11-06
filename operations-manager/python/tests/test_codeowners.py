@@ -115,7 +115,7 @@ def test_security_md_heeft_de_koppen_en_de_meldweg() -> None:
 
 @pytest.mark.parametrize(
     "pad",
-    [REPO_ROOT / "README.md", REPO_ROOT / "instructions" / "README.md"],
+    [REPO_ROOT / "README.md", REPO_ROOT / "docs" / "development" / "README.md"],
 )
 def test_verwijst_naar_security_md(pad: Path) -> None:
     assert "SECURITY.md" in pad.read_text(), f"{pad} verwijst niet naar SECURITY.md"

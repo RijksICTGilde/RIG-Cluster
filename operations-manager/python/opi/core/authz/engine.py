@@ -69,6 +69,7 @@ INCLUDES: dict[Role, frozenset[Role]] = {
     Role.DEVELOPER: frozenset({Role.VIEWER}),
     Role.OPS: frozenset({Role.DEVELOPER}),
     Role.ADMIN: frozenset({Role.VIEWER}),
+    Role.DEVELOPER_CI: frozenset({Role.VIEWER}),
 }
 
 
@@ -181,6 +182,7 @@ class Requirement(StrEnum):
 
 
 STEP_UP = frozenset({Requirement.STEP_UP})
+HUMAN_ONLY = frozenset({Requirement.HUMAN_ONLY})
 
 
 @dataclass(frozen=True)

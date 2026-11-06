@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.api.task_models import task_response_from_dict
+from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.core.task_errors import TaskInputError
 from opi.core.task_worker import TaskWorker
 
@@ -137,3 +138,42 @@ class TestElkeAndereFout:
         )
 
         assert antwoord["result"]["error_category"] == "InvalidInput"
+
+
+@pytest.mark.asyncio
+class TestAGitOutageIsAPlatformFailure:
+    """RC-430: the category must be right along this path too.
+
+    ``internal_error`` translates to ``Unknown`` ("not attributable"), which contradicted the
+    message, which already says the platform is at fault for an unreachable git server.
+    """
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            GitRemoteUnavailableError("De git-server is niet bereikbaar, dit ligt niet aan je project"),
+            GitCommandTimeoutError("git push gaf geen antwoord binnen 120s"),
+        ],
+        ids=["unreachable", "timeout"],
+    )
+    async def test_the_client_reads_internal_error(self, error: Exception) -> None:
+        task_service = await _run_with(error)
+        stored = _fail_kwargs(task_service)["result"]
+
+        response = task_response_from_dict(
+            {
+                "task_id": TASK_ID,
+                "task_type": "update_image",
+                "status": "failed",
+                "result": stored,
+                "created_at": "2026-08-17T00:00:00Z",
+            }
+        )
+
+        assert stored["error_type"] == "internal_error"
+        assert response["result"]["error_category"] == "InternalError"
+
+    async def test_a_plain_runtime_error_stays_unattributed(self) -> None:
+        task_service = await _run_with(RuntimeError("iets anders"))
+
+        assert "error_category" not in _fail_kwargs(task_service)["result"]

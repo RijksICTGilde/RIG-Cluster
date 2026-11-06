@@ -1,7 +1,7 @@
 """Wanneer een handeling een verse step-up vraagt, en hoe vers die is (RC-332).
 
-Dekt ``opi/core/step_up.py``: het venster van vijf minuten dat niet meeschuift (besluit
-8.5), de vier soorten uit :class:`StepUpKind`, en wat een opslag daarvan afleidt
+Dekt ``opi/core/step_up.py``: het venster dat niet meeschuift (besluit 8.5), de vier
+soorten uit :class:`StepUpKind`, en wat een opslag daarvan afleidt
 (:func:`save_requires_step_up`).
 """
 
@@ -16,6 +16,7 @@ from freezegun import freeze_time
 from opi.core.project_environment import Omgeving
 from opi.core.step_up import (
     STEP_UP_SESSION_KEY,
+    STEP_UP_WINDOW,
     StepUpAction,
     StepUpKind,
     has_fresh_step_up,
@@ -32,7 +33,7 @@ def _request(session: dict[str, Any] | None = None) -> SimpleNamespace:
 
 
 # ---------------------------------------------------------------------------
-# has_fresh_step_up / record_step_up: het venster van vijf minuten
+# has_fresh_step_up / record_step_up: het venster
 # ---------------------------------------------------------------------------
 
 
@@ -48,21 +49,21 @@ def test_record_step_up_zet_de_stempel_in_de_sessie() -> None:
     assert has_fresh_step_up(request) is True
 
 
-def test_na_vier_minuten_nog_vers() -> None:
+def test_net_voor_het_einde_van_het_venster_nog_vers() -> None:
     with freeze_time(NU):
         request = _request()
         record_step_up(request)
 
-    with freeze_time(datetime.fromisoformat(NU) + timedelta(minutes=4)):
+    with freeze_time(datetime.fromisoformat(NU) + STEP_UP_WINDOW - timedelta(minutes=1)):
         assert has_fresh_step_up(request) is True
 
 
-def test_na_zes_minuten_niet_meer_vers() -> None:
+def test_na_het_venster_niet_meer_vers() -> None:
     with freeze_time(NU):
         request = _request()
         record_step_up(request)
 
-    with freeze_time(datetime.fromisoformat(NU) + timedelta(minutes=6)):
+    with freeze_time(datetime.fromisoformat(NU) + STEP_UP_WINDOW + timedelta(minutes=1)):
         assert has_fresh_step_up(request) is False
 
 
@@ -73,12 +74,12 @@ def test_een_tweede_handeling_binnen_het_venster_verlengt_het_niet() -> None:
         record_step_up(request)
 
     # Een volgende handeling binnen het venster leest alleen, ze schrijft niets.
-    with freeze_time(datetime.fromisoformat(NU) + timedelta(minutes=3)):
+    with freeze_time(datetime.fromisoformat(NU) + STEP_UP_WINDOW / 2):
         assert has_fresh_step_up(request) is True
 
-    # Vijf minuten na de OORSPRONKELIJKE code is het venster nog steeds dicht, ook al
-    # was er een geslaagde handeling op minuut drie.
-    with freeze_time(datetime.fromisoformat(NU) + timedelta(minutes=6)):
+    # Na de OORSPRONKELIJKE code is het venster dicht, ook al was er halverwege een
+    # geslaagde handeling.
+    with freeze_time(datetime.fromisoformat(NU) + STEP_UP_WINDOW + timedelta(minutes=1)):
         assert has_fresh_step_up(request) is False
 
 

@@ -1,6 +1,13 @@
 version: '3'
 
-dotenv: ['.env', '.env-taskfile-current']
+# Met CLUSTER_TYPE in de omgeving (`CLUSTER_TYPE=odcn-staging task ...`) komt de hele
+# clusterconfiguratie uit .env-taskfile-<cluster>, en de selectie van task select-cluster
+# wordt dan NIET geladen: ook geen naam die het clusterbestand zelf niet zet. Op 3 november
+# 2026 vulde de staging-selectie zo SECRETS_DIR aan bij een deploy voor productie, en schreef
+# die deploy het prod-env-secret in de werkmap van zad-staging-secrets. Zonder CLUSTER_TYPE
+# geldt de selectie. Een argument (`task ... CLUSTER_TYPE=x`) bestaat nog niet als dit gelezen
+# wordt; daarvoor is de guard selected_cluster_guard.
+dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '{{if not .CLUSTER_TYPE}}.env-taskfile-current{{end}}']
 
 vars:
   KIND_VERSION: 1.32.0
@@ -19,9 +26,9 @@ vars:
   # Optionele registry-cache, dezelfde vorm als publish-operations-manager. Leeg = alleen
   # de cache van de builder zelf, wat op een dev-server het geval is.
   SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
-  # De registry naast het kind-cluster, zie docs/sandbox-kind-registry.md.
+  # De registry naast het kind-cluster, zie docs/sandbox/sandbox-kind-registry.md.
   SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
-  # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
+  # Tag per commit, zie docs/sandbox/sandbox-kind-registry.md. Alleen operations-manager/ telt
   # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
   SANDBOX_OM_TAG:
     sh: scripts/bron-tag.sh operations-manager
@@ -37,7 +44,7 @@ tasks:
     silent: true
 
   select-cluster:
-    desc: "Select target cluster and load corresponding environment file"
+    desc: "Select target cluster and load corresponding environment file (CLUSTER=<naam> kiest zonder vraag)"
     cmds:
       - |
         echo "🎯 Cluster Selection"
@@ -48,19 +55,23 @@ tasks:
         echo "2) sandboxed-local (self-contained sandbox with Forgejo)"
         echo "3) odcn-staging (ODCN, tenant rig-staging)"
         echo ""
-        printf "Select cluster [1-3]: "
-        read -r CLUSTER_CHOICE
+        # CLUSTER=<naam> of CLUSTER=<nummer> kiest zonder vraag, ook waar geen terminal is.
+        CLUSTER_CHOICE="{{.CLUSTER}}"
+        if [ -z "$CLUSTER_CHOICE" ]; then
+          printf "Select cluster [1-3]: "
+          read -r CLUSTER_CHOICE
+        fi
 
         case $CLUSTER_CHOICE in
-          1)
+          1|odcn-production)
             ENV_FILE=".env-taskfile-odcn-production"
             CLUSTER_NAME="odcn-production"
             ;;
-          2)
+          2|sandboxed-local)
             ENV_FILE=".env-taskfile-sandboxed-local"
             CLUSTER_NAME="sandboxed-local"
             ;;
-          3)
+          3|odcn-staging)
             ENV_FILE=".env-taskfile-odcn-staging"
             CLUSTER_NAME="odcn-staging"
             ;;
@@ -610,6 +621,14 @@ tasks:
       # Draai de taak daarna nog een keer zonder deze optie, dan staat prune weer aan.
       PAUSE_PRUNE: '{{default "false" .PAUSE_PRUNE}}'
     preconditions:
+      # CLUSTER_TYPE kiest de overlay, maar namespace, sleutel en secrets-map komen uit de
+      # geladen clusterconfiguratie. Liepen die uiteen, dan ging het stil mis: op 2 november
+      # 2026 schreef een deploy de prod-geheimen in de staging-namespace, en herstartte een
+      # bootstrap voor staging de ArgoCD van productie. $CLUSTER_TYPE is wat er geladen is,
+      # {{.CLUSTER_TYPE}} wat er gevraagd wordt.
+      - &selected_cluster_guard
+        sh: '[ "$CLUSTER_TYPE" = "{{.CLUSTER_TYPE}}" ]'
+        msg: "Gevraagd is CLUSTER_TYPE={{.CLUSTER_TYPE}}, maar geladen is de configuratie van een ander cluster. Geef het cluster mee in de omgeving, dan komt alles uit .env-taskfile-{{.CLUSTER_TYPE}}: CLUSTER_TYPE={{.CLUSTER_TYPE}} task <taak>"
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
@@ -769,7 +788,7 @@ tasks:
     cmds:
       - |
         # De scripts zitten niet in de image (.dockerignore), dus ze gaan naar /tmp in de
-        # pod, zoals in docs/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
+        # pod, zoals in docs/sandbox/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
         # uit de omgeving van die pod.
         POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
         kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_set_dns.py "$POD:/tmp/transip_set_dns.py"
@@ -930,6 +949,7 @@ tasks:
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
     preconditions:
+      - *selected_cluster_guard
       - &secrets_dir_current_guard
         # Op een verouderde clone maakt de generator een secret dat een ander al maakte
         # opnieuw aan, met een ander wachtwoord; dat zie je pas bij de push.
@@ -1031,24 +1051,38 @@ tasks:
       - task: _check-key-file
         vars: {KEY_FILE: '{{.KEY_FILE}}'}
     preconditions:
+      - *selected_cluster_guard
       - *age_key_file_guard
     cmds:
       - |
+        set -o pipefail
         echo "Updating operations-manager deployment..."
+        TEMPLATE="kubectl get deployment operations-manager -n {{.RIG_NAMESPACE}} -o jsonpath={.spec.template}"
+        VOOR=$($TEMPLATE 2>/dev/null | shasum)
+        UIT=""
         # Met SECRETS_DIR draagt de overlay het env-secret niet zelf.
         if [ -n "{{.SECRETS_DIR}}" ]; then
-          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f -
+          UIT=$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f - 2>&1) || { echo "$UIT"; exit 1; }
         fi
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        # On the ODCN clusters the image is a CalVer tag that changes every deploy, so the
-        # apply above already rolls the deployment. A `rollout restart` on top of that is
-        # a SECOND change to the pod template, so two rollouts start at once and you
-        # briefly see three pods. Only restart where apply may see nothing new: the sandbox
-        # overlay keeps the tag of its last configure.
+        UIT2=$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f - 2>&1) || { echo "$UIT"; echo "$UIT2"; exit 1; }
+        UIT=$(printf '%s\n%s\n' "$UIT" "$UIT2" | sed '/^$/d')
+        echo "$UIT"
+        NA=$($TEMPLATE 2>/dev/null | shasum)
+        # Een gewijzigde pod-template rolt Kubernetes zelf uit; een rollout restart erbovenop
+        # is een TWEEDE wijziging, met twee rollouts tegelijk. Maar een secret of de configmap
+        # komt alleen bij het starten binnen: verandert alleen die (een rotatie), dan blijft
+        # de oude pod met de oude waarde draaien tot iemand hem herstart. Dat gebeurde op
+        # 3 november met SECRET_KEY op staging.
         if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
+          # De sandbox-overlay houdt de tag van zijn laatste configure: apply ziet vaak niets.
+          kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        elif [ "$VOOR" != "$NA" ]; then
+          echo "De pod-template is gewijzigd; Kubernetes rolt zelf uit (geen restart nodig)."
+        elif echo "$UIT" | grep -qE '^(secret/operations-manager-(env-secrets|access)|configmap/operations-manager-config) configured'; then
+          echo "Alleen een secret of de configmap is gewijzigd; herstart zodat de pod de nieuwe waarden laadt."
           kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
         else
-          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
+          echo "Niets gewijzigd voor de pod; geen herstart."
         fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -1422,7 +1456,7 @@ tasks:
         echo ""
         echo "Commit this pin, then deploy:"
         echo "  git add {{.PATCH_FILE}} && git commit -m 'deploy: operations-manager {{.IMAGE_TAG}}'"
-        echo "  task deploy-operations-manager CLUSTER_TYPE={{.OVERLAY}}"
+        echo "  CLUSTER_TYPE={{.OVERLAY}} task deploy-operations-manager"
         echo ""
         echo "To roll back, pin an earlier tag from the git history of that file."
     silent: true
@@ -1473,18 +1507,6 @@ tasks:
           BUILD_CONTEXT: images/hello-world
           DOCKERFILE_PATH: Dockerfile
           IMAGE_NAME: hello-world
-          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
-          PLATFORMS: linux/amd64,linux/arm64
-
-  publish-hello-world-seventies:
-    desc: "Build and publish the hello-world-seventies image to GitHub Container Registry"
-    deps: [requirements-check]
-    cmds:
-      - task: docker-build-and-push
-        vars:
-          BUILD_CONTEXT: images/hello-world-seventies
-          DOCKERFILE_PATH: Dockerfile
-          IMAGE_NAME: hello-world-seventies
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
@@ -1540,7 +1562,7 @@ tasks:
     silent: true
 
   asvs-afvinklijst:
-    desc: "Genereer docs/asvs-zelfbeoordeling.md uit de ASVS-zelfbeoordeling"
+    desc: "Genereer docs/security/asvs-zelfbeoordeling.md uit de ASVS-zelfbeoordeling"
     dir: operations-manager/python
     cmds:
       - uv run python -m opi.tools.asvs_render
@@ -2079,7 +2101,7 @@ tasks:
     cmds:
       - |
         echo "🔨 Building Keycloak custom mapper..."
-        cd keycloak-migration/custom-mapper
+        cd images/keycloak-zad/extensions/custom-mapper
         mvn clean package
         echo "✅ JAR built: $(ls target/keycloak-saml-nameid-mapper-*.jar)"
     silent: false
@@ -2090,7 +2112,7 @@ tasks:
     cmds:
       - |
         echo "🧪 Running tests..."
-        cd keycloak-migration/custom-mapper
+        cd images/keycloak-zad/extensions/custom-mapper
         mvn test
     silent: false
 
@@ -2237,268 +2259,9 @@ tasks:
         KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_URL="http://localhost:{{.LOKAAS_SINK_PORT}}" \
         KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_SMTP="{{.LOKAAS_SINK}}:1025" \
           uv run pytest tests/integration/test_keycloak_image_providers.py \
+            tests/integration/test_keycloak_image_thema.py \
             tests/integration/test_keycloak_image_mail.py \
             tests/integration/test_keycloak_admin_api.py -m requires_infra -q
-    silent: false
-
-  keycloak-telling:
-    desc: "Tel wat er in de database keycloak staat: realms, clients, gebruikers, credentials per type"
-    summary: |
-      De telling waarmee een versiesprong "alle data behouden" kan aantonen. Draai hem voor
-      de migratie en na de start van de nieuwe versie; een verschil is een reden om terug
-      te vallen. Alleen AANTALLEN, geen persoonsgegevens.
-
-      Standaard de sandbox. Voor productie: task keycloak-telling CONTEXT=prd OUT=voor.txt
-
-      CLUSTER, DB en SECRET staan los, zodat keycloak-proefmigratie dezelfde telling op zijn
-      kopie kan draaien.
-    vars:
-      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
-      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
-      OUT: '{{.OUT | default ""}}'
-      CLUSTER: '{{.CLUSTER | default "rig-db"}}'
-      DB: '{{.DB | default "keycloak"}}'
-      SECRET: '{{.SECRET | default "keycloak-db-credentials"}}'
-      SQL_FILE: keycloak-migration/telling.sql
-    cmds:
-      - |
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        # De primary via het label van CNPG en niet via een vaste podnaam: na een failover
-        # is rig-db-1 een replica, en een telling op een replica kan achterlopen.
-        POD="$($KUBECTL get pods -l cnpg.io/cluster={{.CLUSTER}},cnpg.io/instanceRole=primary \
-          -o jsonpath='{.items[0].metadata.name}')"
-        if [ -z "$POD" ]; then
-          echo "Geen primary van {{.CLUSTER}} gevonden in {{.NAMESPACE}} op {{.CONTEXT}}" >&2
-          exit 1
-        fi
-        ROLE="$($KUBECTL get secret {{.SECRET}} -o jsonpath='{.data.username}' | base64 -d)"
-        SQL="$(cat {{.SQL_FILE}})"
-        # Het wachtwoord gaat via stdin en nooit als argument: de argv van een pod is te
-        # lezen. `$(cat)` en niet `read -r`, want zonder afsluitende newline stopt read de
-        # keten stil. De SQL en de rol gaan als $0 en $1 mee, want stdin is al bezet door
-        # het wachtwoord; zo komt geen van beide in het script zelf terecht.
-        TELLING="$($KUBECTL get secret {{.SECRET}} -o jsonpath='{.data.password}' \
-          | base64 -d \
-          | $KUBECTL exec -i "$POD" -c postgres -- sh -c \
-              'PGPASSWORD=$(cat) exec psql -h localhost -U "$1" -d {{.DB}} \
-                 -v ON_ERROR_STOP=1 -A -F "|" -P footer=off -c "$0"' "$SQL" "$ROLE")"
-        printf '%s\n' "$TELLING"
-        if [ -n "{{.OUT}}" ]; then
-          printf '%s\n' "$TELLING" > "{{.OUT}}"
-          echo "Weggeschreven naar {{.OUT}}" >&2
-        fi
-    silent: false
-
-  keycloak-proefmigratie:
-    desc: "Migreer een KOPIE van de database keycloak naar de nieuwe image en vergelijk de telling"
-    summary: |
-      De proef die "alle data behouden" aantoonbaar maakt VOORDAT productie migreert.
-
-      Wat hij doet, in de namespace van rig-db:
-        1. een CNPG-cluster keycloak-proef met een pod-naar-pod import van de database
-           keycloak uit rig-db, met de eigen rol van Keycloak als bron;
-        2. task keycloak-telling op die kopie, VOOR de migratie;
-        3. een Deployment keycloak-proef met de nieuwe image en de args van de
-           basisdeployment, tegen die kopie; de pod is ready zodra de migratie klaar is;
-        4. dezelfde telling NA de migratie, en een diff die bij elk verschil faalt;
-        5. een direct grant via een port-forward, met de OTP-beheerder (wachtwoord plus
-           code) als die in het secret staat en anders met admin: dat bewijst dat een
-           wachtwoord-hash en een OTP-secret van de oude versie nog kloppen;
-        6. opruimen, ook bij een fout, en tonen dat er niets met keycloak-proef meer staat.
-
-      De kopie verlaat het cluster niet. Niets is van buiten bereikbaar: geen Ingress, de
-      Service is ClusterIP en er vertrekt geen mail.
-
-      Standaard de sandbox met de tag uit de sandbox-overlay. Voor productie hoort er een
-      besluit van de eigenaar bij: deze task zet tijdelijk resources in de
-      productienamespace met kubectl, en productie verandert normaal alleen via Git en
-      ArgoCD. Draaien kan dan zo:
-
-        task keycloak-proefmigratie CONTEXT=prd NAMESPACE=rig-prd-operations \
-          IMAGE=rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad:<tag> \
-          PG_IMAGE=rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11 \
-          STORAGE_CLASS=ocs-storagecluster-ceph-rbd \
-          PULL_SECRET=rig-robot-pull-secret,ghcr-rig-robot-pull-secret
-
-      PG_IMAGE en STORAGE_CLASS moeten op ODCN mee, want zonder het rcr-pad vervangt CNPG
-      zijn eigen pod in een lus (admission herschrijft imageName) en zonder de storageClass
-      komt er geen volume. PULL_SECRET gaat naar de Deployment EN naar de CNPG-cluster.
-
-      Het runbook voor het venster zelf staat in features/keycloak-26-upgrade.md.
-    vars:
-      CONTEXT: '{{.CONTEXT | default "kind-rig-sandbox"}}'
-      NAMESPACE: '{{.NAMESPACE | default "rig-system"}}'
-      MANIFESTEN: keycloak-migration/proefmigratie
-      IMAGE: '{{.IMAGE | default ""}}'
-      # Zonder IMAGE de tag uit de sandbox-overlay: dat is de image die op de sandbox heeft
-      # gedraaid. Als var en niet in een cmd, zodat een ontbrekende pin meteen faalt en niet
-      # pas na de import.
-      KC_IMAGE:
-        sh: |
-          IMAGE="{{.IMAGE}}"
-          if [ -z "$IMAGE" ]; then
-            TAG="$(yq '.images[] | select(.name == "ghcr.io/rijksictgilde/zad/keycloak-zad") | .newTag' \
-              infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/sandboxed-local/kustomization.yaml)"
-            case "$TAG" in
-              ""|null|bouw-eerst)
-                echo "De sandbox-overlay pint geen keycloak-zad-tag; geef IMAGE mee." >&2
-                exit 1
-                ;;
-            esac
-            IMAGE="ghcr.io/rijksictgilde/zad/keycloak-zad:$TAG"
-          fi
-          printf '%s' "$IMAGE"
-      # Komma-gescheiden; gaat naar Deployment EN CNPG-cluster.
-      PULL_SECRET: '{{.PULL_SECRET | default ""}}'
-      # Op ODCN met rcr-pad en ocs-storagecluster-ceph-rbd, om admission-herschrijving en
-      # volume-aanmaak te voorkomen.
-      PG_IMAGE: '{{.PG_IMAGE | default ""}}'
-      STORAGE_CLASS: '{{.STORAGE_CLASS | default ""}}'
-      STORAGE_SIZE: '{{.STORAGE_SIZE | default ""}}'
-      VOOR: '{{.VOOR | default "/tmp/keycloak-proef-voor.txt"}}'
-      NA: '{{.NA | default "/tmp/keycloak-proef-na.txt"}}'
-    cmds:
-      - defer: |
-          # ALTIJD opruimen, ook bij een fout: deze resources mogen niet blijven staan.
-          KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-          echo "Opruimen van de proef..."
-          $KUBECTL delete deployment,service -l rig.nl/proefmigratie=keycloak --ignore-not-found >/dev/null 2>&1
-          $KUBECTL delete cluster.postgresql.cnpg.io keycloak-proef --ignore-not-found >/dev/null 2>&1
-          $KUBECTL delete pvc -l rig.nl/proefmigratie=keycloak --ignore-not-found >/dev/null 2>&1
-          # De secrets die CNPG zelf aanmaakt dragen het label van de proef niet.
-          $KUBECTL delete secret -l cnpg.io/cluster=keycloak-proef --ignore-not-found >/dev/null 2>&1
-          REST="$($KUBECTL get cluster.postgresql.cnpg.io,deployment,service,pod,pvc,secret \
-            -o name 2>/dev/null | grep keycloak-proef || true)"
-          if [ -n "$REST" ]; then
-            echo "LET OP: er staat nog iets met keycloak-proef in de naam:" >&2
-            printf '%s\n' "$REST" >&2
-            exit 1
-          fi
-          echo "Niets met keycloak-proef in de naam meer in {{.NAMESPACE}}."
-      - |
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        echo "Proefmigratie met {{.KC_IMAGE}} in {{.NAMESPACE}} op {{.CONTEXT}}"
-
-        # Een restant van een afgebroken ronde zou als een geslaagde import lezen.
-        if $KUBECTL get cluster.postgresql.cnpg.io keycloak-proef >/dev/null 2>&1; then
-          echo "keycloak-proef bestaat al in {{.NAMESPACE}}; ruim hem eerst op." >&2
-          exit 1
-        fi
-        # Het beeld, de opslag en de pull-secrets gaan er met yq in VOORDAT de cluster bestaat:
-        # imageName naderhand patchen laat CNPG zijn pod opnieuw aanmaken.
-        RENDER="$(mktemp)"
-        trap 'rm -f "$RENDER"' EXIT
-        PG_IMAGE='{{.PG_IMAGE}}' STORAGE_CLASS='{{.STORAGE_CLASS}}' STORAGE_SIZE='{{.STORAGE_SIZE}}' \
-          PULL_SECRET='{{.PULL_SECRET}}' yq '
-            with(select(strenv(PG_IMAGE) != ""); .spec.imageName = strenv(PG_IMAGE))
-            | with(select(strenv(STORAGE_SIZE) != ""); .spec.storage.size = strenv(STORAGE_SIZE))
-            | with(select(strenv(STORAGE_CLASS) != ""); .spec.storage.storageClass = strenv(STORAGE_CLASS))
-            | with(select(strenv(PULL_SECRET) != "");
-                .spec.imagePullSecrets = [strenv(PULL_SECRET) | split(",") | .[] | {"name": .}])
-          ' {{.MANIFESTEN}}/cluster.yaml > "$RENDER"
-        $KUBECTL apply -f "$RENDER"
-        echo "Wachten tot de kopie klaar is (de import loopt van pod naar pod)..."
-        $KUBECTL wait --for=condition=Ready cluster.postgresql.cnpg.io/keycloak-proef --timeout=900s
-      - task: keycloak-telling
-        vars:
-          CONTEXT: '{{.CONTEXT}}'
-          NAMESPACE: '{{.NAMESPACE}}'
-          CLUSTER: keycloak-proef
-          SECRET: keycloak-proef-app
-          OUT: '{{.VOOR}}'
-      - |
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        # De image gaat er met yq in VOORDAT de apply gebeurt: het manifest draagt een woord
-        # in plaats van een tag, dus een apply met daarna `set image` zou de pod eerst op een
-        # mislukte pull laten staan.
-        RENDER="$(mktemp)"
-        trap 'rm -f "$RENDER"' EXIT
-        KC_IMAGE='{{.KC_IMAGE}}' PULL_SECRET='{{.PULL_SECRET}}' yq '
-            with(select(.kind == "Deployment");
-              .spec.template.spec.containers[0].image = strenv(KC_IMAGE))
-            | with(select(.kind == "Deployment" and strenv(PULL_SECRET) != "");
-                .spec.template.spec.imagePullSecrets = [strenv(PULL_SECRET) | split(",") | .[] | {"name": .}])
-          ' {{.MANIFESTEN}}/deployment.yaml > "$RENDER"
-        $KUBECTL apply -f "$RENDER"
-        echo "Wachten tot de nieuwe Keycloak ready is; dan is de schemamigratie klaar..."
-        if ! $KUBECTL rollout status deployment/keycloak-proef --timeout=900s; then
-          $KUBECTL logs deployment/keycloak-proef --tail=80 >&2
-          exit 1
-        fi
-      - task: keycloak-telling
-        vars:
-          CONTEXT: '{{.CONTEXT}}'
-          NAMESPACE: '{{.NAMESPACE}}'
-          CLUSTER: keycloak-proef
-          SECRET: keycloak-proef-app
-          OUT: '{{.NA}}'
-      - |
-        echo "Telling voor en na de migratie:"
-        if ! diff -u {{.VOOR}} {{.NA}}; then
-          echo "De telling verschilt na de migratie. Dit is een reden om NIET te promoveren." >&2
-          exit 1
-        fi
-        echo "Geen verschil in de telling."
-      - |
-        # De inlogcontrole: een wachtwoord-hash en een OTP-secret uit de oude versie moeten op
-        # de nieuwe nog kloppen. Bij voorkeur met de OTP-beheerder, wachtwoord plus code: een
-        # direct grant zonder code geeft OOK "Invalid user credentials" zodra een gebruiker
-        # een OTP draagt, dus met alleen het wachtwoord van admin meet je dan niets.
-        KUBECTL="kubectl --context {{.CONTEXT}} -n {{.NAMESPACE}} --request-timeout=60s"
-        PORT=58091
-        $KUBECTL port-forward service/keycloak-proef "$PORT:8080" >/dev/null 2>&1 &
-        FORWARD=$!
-        trap 'kill $FORWARD 2>/dev/null' EXIT
-        i=0
-        until curl -sf -o /dev/null "http://localhost:$PORT/realms/master"; do
-          i=$((i + 1))
-          if [ "$i" -gt 30 ]; then
-            echo "De port-forward naar keycloak-proef kwam niet op binnen 60 seconden" >&2
-            exit 1
-          fi
-          sleep 2
-        done
-        veld() {
-          $KUBECTL get secret keycloak-admin-credentials -o jsonpath="{.data.$1}" | base64 -d
-        }
-        OTP_GEBRUIKER="$(veld KEYCLOAK_OTP_ADMIN_USERNAME)"
-        if [ -n "$OTP_GEBRUIKER" ]; then
-          GEBRUIKER="$OTP_GEBRUIKER"
-          WACHTWOORD_VELD=KEYCLOAK_OTP_ADMIN_PASSWORD
-          # De code staat wel in argv: hij geldt maar een periode van 30 seconden.
-          CODE="$(veld KEYCLOAK_OTP_ADMIN_TOTP_SECRET | (cd operations-manager/python \
-            && uv run -q python -c 'import sys; from opi.utils.totp import totp_now; print(totp_now(sys.stdin.read())[0])'))"
-          echo "Inlogcontrole met $GEBRUIKER: wachtwoord en OTP-code"
-        else
-          GEBRUIKER="$(veld KEYCLOAK_ADMIN)"
-          WACHTWOORD_VELD=KEYCLOAK_ADMIN_PASSWORD
-          CODE=""
-          echo "Inlogcontrole met $GEBRUIKER: alleen het wachtwoord (geen OTP-beheerder in het secret)"
-        fi
-        # Het wachtwoord gaat via stdin en nooit als argument, dezelfde norm als
-        # keycloak-telling: de argv van een lopend proces is te lezen via /proc.
-        ANTWOORD="$(veld "$WACHTWOORD_VELD" \
-          | curl -s "http://localhost:$PORT/realms/master/protocol/openid-connect/token" \
-              -d grant_type=password -d client_id=admin-cli \
-              --data-urlencode "username=$GEBRUIKER" \
-              ${CODE:+--data-urlencode "totp=$CODE"} \
-              --data-urlencode "password@/dev/stdin")"
-        case "$ANTWOORD" in
-          *access_token*)
-            echo "Inloggen op de kopie lukt: de credentials van de oude versie kloppen nog."
-            ;;
-          *Invalid*user*credentials*)
-            echo "$GEBRUIKER kan niet inloggen op de kopie. Ofwel klopt de hash niet meer, ofwel" >&2
-            echo "draagt de gebruiker een OTP die deze controle niet meegeeft, ofwel staat hij" >&2
-            echo "tijdelijk geblokkeerd door de brute-force-detectie. Zoek uit welke van de drie." >&2
-            exit 1
-            ;;
-          *)
-            echo "Geen token, maar ook geen afgewezen wachtwoord. Lees het antwoord:" >&2
-            printf '%s\n' "$ANTWOORD" >&2
-            exit 1
-            ;;
-        esac
     silent: false
 
   build-keycloak-relay-email-sender:
@@ -2506,7 +2269,7 @@ tasks:
     cmds:
       - |
         echo "🔨 Bouwen van de relay-emailSender..."
-        cd keycloak-migration/relay-email-sender
+        cd images/keycloak-zad/extensions/relay-email-sender
         mvn clean package
         echo "✅ JAR gebouwd: $(ls target/keycloak-relay-email-sender-*.jar)"
     silent: false
@@ -2531,7 +2294,7 @@ tasks:
     deps: [requirements-check, sandbox:build-builder]
     vars:
       IMAGE_VERSION:
-        sh: scripts/calver-tag.sh keycloak-migration/relay-email-sender keycloak-migration/custom-mapper images/keycloak-zad
+        sh: scripts/calver-tag.sh images/keycloak-zad/extensions/relay-email-sender images/keycloak-zad/extensions/custom-mapper images/keycloak-zad
     preconditions:
       # Een inlog met een credential-helper laat een LEGE auths-regel achter, dus de sleutel
       # is het signaal en niet de inhoud. Hier en niet na de bouw: de validatiebouw staat uit,
@@ -2572,7 +2335,7 @@ tasks:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
   pin-keycloak-image:
-    desc: "Zet een gepushte keycloak-zad-tag in de sandbox-overlay (TARGET=base: in de basis)"
+    desc: "Zet een gepushte keycloak-zad-tag in de sandbox-overlay (TARGET=staging of base: verder)"
     summary: |
       publish-keycloak-image roept dit aan met de tag die hij net gepusht heeft. Los aanroepen
       kan ook, bijvoorbeeld om een tag van CI op de sandbox te zetten.
@@ -2586,17 +2349,22 @@ tasks:
       dus daar hoort geen eigen IMAGE_TAG bij: die komt uit de sandbox-overlay. Geef je er
       toch een mee, dan moet het die tag zijn. Deze taak bouwt en pusht nooit: een herbouw
       levert een ander artefact op, en dan is het bewijs van de sandbox niets waard.
+
+      TARGET=staging is dezelfde promotie, maar alleen naar de odcn-staging overlay: de tag van
+      de sandbox draait dan eerst op staging, terwijl productie op de basis blijft. Een
+      promotie naar de basis haalt die pin weer weg, zodat staging daarna de basis erft.
     vars:
       TARGET: '{{.TARGET | default "sandbox"}}'
       IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
       REPO: ghcr.io/rijksictgilde/zad/keycloak-zad
       KEYCLOAK: infrastructure/bootstrap/infrastructure/keycloak/controller
     preconditions:
-      - sh: 'case "{{.TARGET}}" in sandbox|base) exit 0 ;; esac; exit 1'
+      - sh: 'case "{{.TARGET}}" in sandbox|staging|base) exit 0 ;; esac; exit 1'
         msg: |
-          TARGET is sandbox (de sandboxed-local overlay) of base (de basis, die ODCN erft).
-      # Niet voor base: daar IS de tag die van de sandbox, en die wordt gelezen.
-      - sh: '[ -n "{{.IMAGE_TAG}}" ] || [ "{{.TARGET}}" = "base" ]'
+          TARGET is sandbox (de sandboxed-local overlay), staging (de odcn-staging overlay)
+          of base (de basis, die ODCN erft).
+      # Niet voor staging en base: daar IS de tag die van de sandbox, en die wordt gelezen.
+      - sh: '[ -n "{{.IMAGE_TAG}}" ] || [ "{{.TARGET}}" != "sandbox" ]'
         msg: |
           IMAGE_TAG is verplicht, bijvoorbeeld:
             task pin-keycloak-image IMAGE_TAG=2026.09.26.1432-7ccad61d
@@ -2607,16 +2375,21 @@ tasks:
         TAG="{{.IMAGE_TAG}}"
         OVERLAY="{{.KEYCLOAK}}/overlays/sandboxed-local/kustomization.yaml"
         BASIS="{{.KEYCLOAK}}/base/deployment.yaml"
+        STAGING="{{.KEYCLOAK}}/overlays/odcn-staging/kustomization.yaml"
         PAD="${REPO#ghcr.io/}"
 
-        if [ "$TARGET" = "base" ]; then
-          # De newTag onder DEZE naam, niet de eerste die voorbijkomt; dezelfde grens die het
-          # schrijven verderop heeft.
-          SANDBOXTAG="$(awk -v repo="$REPO" '
+        # De newTag onder DEZE naam in een overlay, niet de eerste die voorbijkomt; dezelfde
+        # grens die het schrijven verderop heeft.
+        tag_in() {
+          awk -v repo="$REPO" '
               $0 ~ "- name: " repo "$" { gevonden = 1; next }
               gevonden && /^ *newTag: / { sub(/^ *newTag: /, ""); gsub(/["\x27]/, ""); print; exit }
               gevonden && /^ *- name: / { exit }
-          ' "$OVERLAY")"
+          ' "$1"
+        }
+
+        if [ "$TARGET" != "sandbox" ]; then
+          SANDBOXTAG="$(tag_in "$OVERLAY")"
 
           # De tag komt uit de sandbox-overlay en nergens anders: de basis mag alleen een tag
           # dragen die aantoonbaar op de sandbox heeft gedraaid. Een tag die hier met de hand
@@ -2645,10 +2418,18 @@ tasks:
           esac
 
           # De commit is een losse handeling, dus deze taak wordt ook twee keer gedraaid.
-          HUIDIG="$(sed -n "s|^ *image: $REPO:||p" "$BASIS")"
-          if [ "$HUIDIG" = "$TAG" ]; then
-            echo "De basis draagt $TAG al."
-            exit 0
+          if [ "$TARGET" = "staging" ]; then
+            HUIDIG="$(tag_in "$STAGING")"
+            if [ "$HUIDIG" = "$TAG" ]; then
+              echo "Staging draagt $TAG al."
+              exit 0
+            fi
+          else
+            HUIDIG="$(sed -n "s|^ *image: $REPO:||p" "$BASIS")"
+            if [ "$HUIDIG" = "$TAG" ] && [ -z "$(tag_in "$STAGING")" ]; then
+              echo "De basis draagt $TAG al."
+              exit 0
+            fi
           fi
         fi
 
@@ -2676,6 +2457,33 @@ tasks:
           exit 1
         fi
 
+        if [ "$TARGET" = "staging" ]; then
+          # De newTag komt direct onder de newName van DEZE naam. Een eerdere pin vervalt, ook
+          # als hij NA de newName staat: het blok loopt tot de volgende naam of sleutel.
+          awk -v repo="$REPO" -v tag="$TAG" '
+              $0 ~ "- name: " repo "$" { gevonden = 1; print; next }
+              gevonden && (/^ *- name: / || /^[^ ]/) { gevonden = 0 }
+              gevonden && /^ *newTag: / { next }
+              gevonden && /^ *newName: / { print; sub(/newName: .*/, "newTag: \"" tag "\""); print; next }
+              { print }
+          ' "$STAGING" > "$STAGING.nieuw"
+          mv "$STAGING.nieuw" "$STAGING"
+
+          [ "$(tag_in "$STAGING")" = "$TAG" ] && grep -q "newTag: \"$TAG\"" "$STAGING" || {
+            echo "$STAGING pint $TAG niet: staat de images-regel met newName voor $REPO er nog?" >&2
+            exit 1
+          }
+
+          echo ""
+          echo "Staging draait nu $TAG (was ${HUIDIG:-de tag van de basis}); productie blijft op de basis."
+          echo ""
+          echo "Commit dit en schuif de branch staging door; ArgoCD rolt hem daar uit:"
+          echo "  git add $STAGING && git commit -m 'deploy: keycloak-zad $TAG naar staging'"
+          echo ""
+          echo "Naar productie: task pin-keycloak-image TARGET=base, dat deze pin ook weer weghaalt."
+          exit 0
+        fi
+
         if [ "$TARGET" = "base" ]; then
           # Alleen het stuk achter de dubbele punt: de inspringing van de regel blijft zoals
           # hij is.
@@ -2690,12 +2498,22 @@ tasks:
             exit 1
           }
 
+          # Staging erft vanaf nu weer de basis. Een achtergebleven pin zou staging stil op een
+          # oude tag houden na de volgende promotie.
+          awk -v repo="$REPO" '
+              $0 ~ "- name: " repo "$" { gevonden = 1; print; next }
+              gevonden && (/^ *- name: / || /^[^ ]/) { gevonden = 0 }
+              gevonden && /^ *newTag: / { next }
+              { print }
+          ' "$STAGING" > "$STAGING.nieuw"
+          mv "$STAGING.nieuw" "$STAGING"
+
           echo ""
           echo "De basis draagt nu $TAG (was ${HUIDIG:-onbekend})."
           grep -n "image: $REPO:" "$BASIS"
           echo ""
           echo "Commit dit; ODCN erft de tag uit de basis en ArgoCD rolt hem uit:"
-          echo "  git add $BASIS && git commit -m 'deploy: keycloak-zad $TAG naar productie'"
+          echo "  git add $BASIS $STAGING && git commit -m 'deploy: keycloak-zad $TAG naar productie'"
           echo ""
           echo "Terugrollen: pin een eerdere tag uit de git-historie van dat bestand."
           exit 0
@@ -2742,7 +2560,7 @@ tasks:
     cmds:
       - |
         echo "🧪 Tests van de relay-emailSender..."
-        cd keycloak-migration/relay-email-sender
+        cd images/keycloak-zad/extensions/relay-email-sender
         mvn test
     silent: false
 
@@ -3011,6 +2829,39 @@ tasks:
       - >-
         uv run python scripts/oom_growth_report.py "{{.PROJECTS}}"
         {{if .FACTOR}}--factor {{.FACTOR}}{{end}} {{if .ALL}}--all{{end}}
+    silent: true
+
+  bench-rollout:
+    desc: "Meet waar de tijd van een rollout-taak heen gaat, op de sandbox"
+    summary: |
+      Drijft een bestaand sandboxproject via de API door de scenario's uit RC-418 (een
+      nieuwe deployment bij 1 en bij 5 bestaande, een image-update, een configure_service
+      op een deployment) en meldt per scenario de taakduur, de fases uit
+      opi_rollout_phase_seconds en de tijd die ZAD zelf toevoegt.
+
+      Draai hem voor en na een wijziging op hetzelfde project; de tabellen naast elkaar
+      zijn het bewijs. De deployments die hij aanmaakt ruimt hij weer op.
+
+      De sleutels komen uit het cluster:
+
+        eval "$(sandbox-gegevens --env)"
+        export ZAD_METRICS_TOKEN=$(kubectl -n rig-system get secret operations-manager-secrets \
+          -o jsonpath='{.data.PROMETHEUS_METRICS_AUTH_TOKEN}' | base64 -d)
+        PROJECT=mijnproject task bench-rollout
+        PROJECT=mijnproject LABEL=na-deel-1 JSON=/tmp/bench-na.json task bench-rollout
+        PROJECT=mijnproject SCENARIOS=a1,b task bench-rollout
+        PROJECT=mijnproject ALT_IMAGE=ghcr.io/org/app:2 task bench-rollout
+    dir: operations-manager/python
+    requires:
+      vars: [PROJECT]
+    cmds:
+      - >-
+        uv run python scripts/bench_rollout.py --project "{{.PROJECT}}"
+        {{if .SCENARIOS}}--scenarios {{.SCENARIOS}}{{end}}
+        {{if .LABEL}}--label {{.LABEL}}{{end}}
+        {{if .JSON}}--json {{.JSON}}{{end}}
+        {{if .KEEP}}--keep{{end}}
+        {{if .ALT_IMAGE}}--alt-image {{.ALT_IMAGE}}{{end}}
     silent: true
 
   argocd-orphan-sweep:
@@ -3389,7 +3240,7 @@ tasks:
       - task: requirements-check
       - |
         cat banner.txt
-        cat docs/sandbox-prerequisites.md
+        cat docs/sandbox/sandbox-prerequisites.md
         echo ""
         # SANDBOX_NONINTERACTIVE=true skips this confirmation (unattended installs)
         if [ "${SANDBOX_NONINTERACTIVE:-}" = "true" ]; then
@@ -3424,7 +3275,7 @@ tasks:
       - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
-      # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox-kind-registry.md.
+      # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox/sandbox-kind-registry.md.
       - task: sandbox:setup-registry
       # De images moeten klaarstaan vóórdat de deployments ze proberen te halen: de
       # CMP-sidecar geladen in kind (Never), operations-manager in de registry.
@@ -3448,10 +3299,9 @@ tasks:
       - task: sandbox:sync
       # Phase 4: Bootstrap ArgoCD + Operations Manager (images pulled from GHCR)
       - task: prepare-argocd-operator
-      - task: bootstrap-argo-system
-        vars:
-          CLUSTER_TYPE: sandboxed-local
-          KEY_FILE: security/sandbox-key.txt
+      # Een eigen run en geen `task:`: deze run las bij het starten de configuratie van de
+      # vorige selectie, en de cp hierboven verandert dat niet meer.
+      - CLUSTER_TYPE=sandboxed-local task bootstrap-argo-system KEY_FILE=security/sandbox-key.txt
       # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
       # Phase 5: Wait for everything to be deployed and ready
       - task: sandbox:wait-ready
@@ -3467,9 +3317,9 @@ tasks:
         echo "Sandboxed local cluster setup complete!"
         echo "========================================="
         echo ""
-        cat docs/sandbox-reference.md
+        cat docs/sandbox/sandbox-reference.md
         echo ""
-        echo "This reference card is saved at: docs/sandbox-reference.md"
+        echo "This reference card is saved at: docs/sandbox/sandbox-reference.md"
     silent: true
 
   sandbox:issue-argocd-opi-token:
@@ -3500,7 +3350,7 @@ tasks:
           read -p "HTTPS port for ingress [443]: " https_port
           export KIND_HTTPS_PORT="${https_port:-443}"
         fi
-        envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
+        envsubst < bootstrap/sandbox/kind-config.yaml | kind create cluster --name rig-sandbox --config -
         echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT}, HTTPS port: ${KIND_HTTPS_PORT})"
     silent: true
 
@@ -3513,7 +3363,7 @@ tasks:
   sandbox:prune-registry:
     desc: "Verwijder oude tags uit de registry naast het kind-cluster, de gedeelde lagen blijven"
     summary: |
-      Zie docs/sandbox-kind-registry.md.
+      Zie docs/sandbox/sandbox-kind-registry.md.
 
         task sandbox:prune-registry RETENTIE_DAGEN=0
     vars:
@@ -3754,7 +3604,7 @@ tasks:
         echo "Overlays configured for local images"
     silent: true
 
-  # Draait bij elke deploy, zie docs/sandbox-kind-registry.md.
+  # Draait bij elke deploy, zie docs/sandbox/sandbox-kind-registry.md.
   sandbox:configure-operations-manager-image:
     desc: "Zet de operations-manager-overlay op het image van deze commit in de registry"
     cmds:
@@ -3766,7 +3616,7 @@ tasks:
     silent: true
 
   sandbox:renew-wildcard-cert:
-    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox-wildcard-cert-renewal.md."
+    desc: "Renew the *.sandbox.rijksapp.dev wildcard Let's Encrypt cert (every ~90 days). See docs/sandbox/sandbox-wildcard-cert-renewal.md."
     cmds:
       - scripts/renew-sandbox-cert.sh
 
@@ -4737,7 +4587,7 @@ tasks:
     desc: "Build operations-manager image and push it to the registry next to Kind (no deploy)"
     cmds:
       # Niet beginnen als er te weinig vrij is: dat was vooraf te zien toen een build de
-      # server bijna omver trok. Zie docs/uitrol-op-de-dev-server.md.
+      # server bijna omver trok. Zie docs/sandbox/uitrol-op-de-dev-server.md.
       - scripts/build-preflight.sh
       # Eerst de versie schrijven, anders bakt de build in wat er toevallig op schijf ligt:
       # opi/version.json staat in .gitignore en dus niet in `git status`, maar wel in de
@@ -4785,7 +4635,7 @@ tasks:
           ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
         kubectl rollout status deployment/operations-manager -n {{.RIG_NAMESPACE}} --timeout=300s
       - echo "Operations manager updated successfully"
-      # Waarom hier en niet in een cron: docs/sandbox-kind-registry.md.
+      # Waarom hier en niet in een cron: docs/sandbox/sandbox-kind-registry.md.
       - task: sandbox:prune-registry
     silent: true
 

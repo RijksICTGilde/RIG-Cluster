@@ -17,6 +17,7 @@ import yaml
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
+from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
@@ -30,7 +31,6 @@ from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
 from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from
-from opi.utils.fs_paths import safe_join
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 from opi.utils.rendered_kinds import rendered_kinds, rendered_types
 
@@ -355,19 +355,9 @@ class DeleteProjectManager:
         )
         if not repo_config:
             return None
-        connector = await self.project_manager.get_git_connector_for_deployment(str(repository_name), repo_config)
-        await connector.ensure_repo_cloned()
-        working_dir = await connector.get_working_dir()
-        repo_path = (repo_config.get("path") or "").strip("/")
-        if not repo_path or repo_path == ".":
-            return working_dir
-        try:
-            # Via safe_join: een bestaand projectbestand komt niet opnieuw langs het
-            # patroon van REPOSITORY_PATH_PATTERN (features/repository-pad.md).
-            return safe_join(working_dir, repo_path)
-        except ValueError as e:
-            logger.error(f"Repository path of '{repository_name}' falls outside its clone, so it is not read: {e}")
-            return None
+        # Alleen om te LEZEN, en over alle projecten, dus niet via de werkmap van dit
+        # project: een wegwerpmap met de hele ``{cluster}/``-boom erin.
+        return await self.project_manager.materialize_cluster_tree(repo_config)
 
     async def _force_delete_stuck_application(
         self, app_name: str, deletion_results: dict[str, Any], deployments_repo_dir: str | None = None
@@ -711,8 +701,8 @@ class DeleteProjectManager:
         self, project_name: str, cluster: str, deletion_results: dict[str, Any]
     ) -> bool:
         """Haal Applications uit git en wacht tot ze weg zijn; AppProject kan pas weg als map leeg is (geval 1)."""
-        gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-        working_dir = await gitops_connector.get_working_dir()
+        gitops_workspace = await self.project_manager.get_argo_workspace()
+        working_dir = await gitops_workspace.get_working_dir()
         project_dir = os.path.join(working_dir, cluster, project_name)
         removed: list[str] = []
         unreadable: list[str] = []
@@ -734,7 +724,7 @@ class DeleteProjectManager:
             return True
 
         commit_message = f"Remove ArgoCD applications of project '{project_name}' before its AppProject"
-        await gitops_connector.mutate_and_push(commit_message, _verwijder_applications)
+        await gitops_workspace.mutate_and_push(commit_message, _verwijder_applications)
         if not removed and not unreadable:
             return True
 
@@ -824,8 +814,8 @@ class DeleteProjectManager:
         logger.info(f"Deleting project ArgoCD folder: {project_argocd_folder_rel}")
 
         try:
-            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-            working_dir = await gitops_connector.get_working_dir()
+            gitops_workspace = await self.project_manager.get_argo_workspace()
+            working_dir = await gitops_workspace.get_working_dir()
             project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
 
             # De BESLISSING hoort binnen de lock, op de stand die reset_to_remote daar
@@ -838,7 +828,7 @@ class DeleteProjectManager:
                 return True
 
             commit_message = f"Delete ArgoCD resources for project '{project_name}'"
-            verwijderd = await gitops_connector.mutate_and_push(commit_message, _verwijder_projectmap)
+            verwijderd = await gitops_workspace.mutate_and_push(commit_message, _verwijder_projectmap)
 
             if verwijderd:
                 deletion_results["operations"].append(
@@ -1088,8 +1078,8 @@ class DeleteProjectManager:
             infra_argocd_folder_rel = generate_infrastructure_argocd_folder_path(cluster, project_name)
             logger.info(f"Deleting infrastructure ArgoCD folder: {infra_argocd_folder_rel}")
 
-            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-            working_dir = await gitops_connector.get_working_dir()
+            gitops_workspace = await self.project_manager.get_argo_workspace()
+            working_dir = await gitops_workspace.get_working_dir()
             infra_argocd_folder = os.path.join(working_dir, infra_argocd_folder_rel)
 
             async def _verwijder_inframap() -> bool:
@@ -1099,7 +1089,7 @@ class DeleteProjectManager:
                 return True
 
             commit_message = f"Delete infrastructure ArgoCD application for project '{project_name}'"
-            verwijderd = await gitops_connector.mutate_and_push(commit_message, _verwijder_inframap)
+            verwijderd = await gitops_workspace.mutate_and_push(commit_message, _verwijder_inframap)
 
             if verwijderd:
                 deletion_results["operations"].append(
@@ -1253,19 +1243,14 @@ class DeleteProjectManager:
             if repositories:
                 main_repo = repositories[0]
                 repo_config = main_repo
-                manifest_connector = await self.project_manager.get_git_connector_for_deployment(
-                    "infrastructure", repo_config
-                )
+                workspace = await self.project_manager.get_deployment_workspace("infrastructure", repo_config)
 
                 repo_path = repo_config.get("path", "")
                 infra_manifest_path = generate_infrastructure_manifest_path(cluster, project_name, repo_path)
                 logger.info(f"Deleting infrastructure manifests folder: {infra_manifest_path}")
 
-                await manifest_connector.ensure_repo_cloned()
-                infra_folder_full_path = os.path.join(await manifest_connector.get_working_dir(), infra_manifest_path)
-
-                if os.path.exists(infra_folder_full_path):
-                    await asyncio.to_thread(shutil.rmtree, infra_folder_full_path)
+                commit_message = f"Delete infrastructure manifests for project '{project_name}'"
+                if await workspace.remove_and_push(infra_manifest_path, commit_message):
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_manifest_deletion",
@@ -1274,9 +1259,6 @@ class DeleteProjectManager:
                         }
                     )
                     logger.info(f"Deleted infrastructure manifests folder: {infra_manifest_path}")
-
-                    commit_message = f"Delete infrastructure manifests for project '{project_name}'"
-                    await manifest_connector.commit_and_push_changes(commit_message)
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_manifest_commit",
@@ -1330,17 +1312,13 @@ class DeleteProjectManager:
             return
 
         try:
-            connector = await self.project_manager.get_git_connector_for_deployment(str(repository_name), repo_config)
-            await connector.ensure_repo_cloned()
+            workspace = await self.project_manager.get_deployment_workspace(str(repository_name), repo_config)
             folder = generate_project_level_manifest_path(cluster, project_name, repo_config.get("path", ""))
-            full_path = os.path.join(await connector.get_working_dir(), folder)
-            if not os.path.exists(full_path):
+            if not await workspace.remove_and_push(folder, f"Delete project level of project '{project_name}'"):
                 deletion_results["operations"].append(
                     {"type": "project_level_folder_deletion", "target": folder, "status": "not_found"}
                 )
                 return
-            await asyncio.to_thread(shutil.rmtree, full_path)
-            await connector.commit_and_push_changes(f"Delete project level of project '{project_name}'")
             deletion_results["operations"].append(
                 {"type": "project_level_folder_deletion", "target": folder, "status": "success"}
             )
@@ -1405,7 +1383,7 @@ class DeleteProjectManager:
         meer. Kon de meting niet worden gedaan, dan beslist de rit alsnog: onbekend is geen
         bewijs, in geen van beide richtingen.
         """
-        stap = self._begin_step("Controleren dat alles verwijderd is")
+        stap = self._begin_step(steps.DELETE_VERIFY)
         fouten_voor = len(deletion_results["errors"])
         appprojects = [
             generate_argocd_appproject_prefix(project_name, dep.get("namespace") or project_name) for dep in deployments
@@ -1459,7 +1437,7 @@ class DeleteProjectManager:
 
         logger.info(f"Everything of project {project_name} is gone, now deleting its project file")
         commit_message = f"Delete project '{project_name}' - removed project file after deployment cleanup"
-        stap = self._begin_step("Projectbestand verwijderen")
+        stap = self._begin_step(steps.PROJECT_FILE_DELETE)
         fouten_voor = len(deletion_results["errors"])
         delete_result = await self._delete_project_file(project_name, commit_message)
         deletion_results["operations"].extend(delete_result["operations"])
@@ -1620,7 +1598,7 @@ class DeleteProjectManager:
 
             # Step 4.5: Clean up project-level infrastructure (namespace-specific PostgreSQL/Redis)
             if deletion_results["success"] or force:
-                stap = self._begin_step("Projectinfrastructuur opruimen")
+                stap = self._begin_step(steps.PROJECT_INFRA_CLEANUP)
                 fouten_voor = len(deletion_results["errors"])
                 await self._cleanup_project_infrastructure(
                     project_name, current_cluster, project_data, deletion_results, force
@@ -1629,7 +1607,7 @@ class DeleteProjectManager:
 
             # Step 4.6: Clean up project Keycloak realm(s)
             if deletion_results["success"] or force:
-                stap = self._begin_step("Keycloak-realm verwijderen")
+                stap = self._begin_step(steps.KEYCLOAK_REALM_DELETE)
                 fouten_voor = len(deletion_results["errors"])
                 kc_config = await self.project_manager._get_project_keycloak_config_for_cluster(current_cluster)
                 if kc_config:
@@ -1669,7 +1647,7 @@ class DeleteProjectManager:
 
             # Step 4.65: Delete the project level of the deployments repo
             if deletion_results["success"] or force:
-                stap_argo = self._begin_step("ArgoCD-resources van het project verwijderen")
+                stap_argo = self._begin_step(steps.PROJECT_ARGOCD_DELETE)
                 await self._delete_project_level_folder(
                     project_name, current_cluster, project_data, current_cluster_deployments, deletion_results
                 )
@@ -1698,7 +1676,7 @@ class DeleteProjectManager:
 
             # Step 4.8: De namespaces van dit project, nu er geen deployment meer naar wijst
             if deletion_results["success"] or force:
-                stap = self._begin_step("Namespaces verwijderen")
+                stap = self._begin_step(steps.NAMESPACES_DELETE)
                 fouten_voor = len(deletion_results["errors"])
                 await self._delete_project_namespaces(
                     project_name, current_cluster, current_cluster_deployments, deletion_results
@@ -1733,7 +1711,7 @@ class DeleteProjectManager:
                 await self._cleanup_orphaned_argocd_resources(project_name, deletion_results)
 
                 commit_message = f"Delete project '{project_name}' - no deployments remaining"
-                stap = self._begin_step("Projectbestand verwijderen")
+                stap = self._begin_step(steps.PROJECT_FILE_DELETE)
                 fouten_voor = len(deletion_results["errors"])
                 delete_result = await self._delete_project_file(project_name, commit_message)
 
@@ -1744,7 +1722,7 @@ class DeleteProjectManager:
                 self._end_step(stap, self._new_errors(deletion_results, fouten_voor))
 
             # Clean up subdomain registrations for this project
-            stap = self._begin_step("Subdomeinen opruimen")
+            stap = self._begin_step(steps.SUBDOMAINS_CLEANUP)
             fouten_voor = len(deletion_results["errors"])
             try:
                 subdomain_connector = SubdomainConnector()
@@ -1943,17 +1921,17 @@ class DeleteProjectManager:
             repository_name = deployment.get("repository")
             cluster = deployment.get("cluster")
 
-            stap_argo = self._begin_step("ArgoCD-toepassing verwijderen", subject=deployment_name)
+            stap_argo = self._begin_step(steps.ARGOCD_APP_DELETE, subject=deployment_name)
             fouten_voor_argo = len(deletion_results["errors"])
 
             # Step 2: Delete ArgoCD application file from GitOps
             logger.info(f"Deleting ArgoCD application file for {project_name}/{deployment_name}")
 
-            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            gitops_workspace = await self.project_manager.get_argo_workspace()
             argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
             logger.info(f"Attempting to delete ArgoCD application file: {argocd_app_file_path}")
 
-            working_dir = await gitops_connector.get_working_dir()
+            working_dir = await gitops_workspace.get_working_dir()
             project_dir = os.path.join(working_dir, cluster, project_name)
             file_full_path = os.path.join(working_dir, argocd_app_file_path)
 
@@ -2041,7 +2019,7 @@ class DeleteProjectManager:
             # Let git exceptions bubble up for worker retry.
             commit_message = f"Delete ArgoCD application for deployment '{deployment_name}' from project '{project_name}' and rebuild kustomization"
             try:
-                await gitops_connector.mutate_and_push(commit_message, _verwijder_argocd_bestanden)
+                await gitops_workspace.mutate_and_push(commit_message, _verwijder_argocd_bestanden)
             except Exception as e:
                 self._end_step(stap_argo, str(e))
                 raise
@@ -2227,7 +2205,7 @@ class DeleteProjectManager:
                             f"Force mode: deleting namespace {namespace} even though ArgoCD app status is uncertain"
                         )
                     logger.info(f"Deleting Kubernetes namespace: {namespace}")
-                    stap_ns = self._begin_step("Namespace verwijderen", subject=deployment_name)
+                    stap_ns = self._begin_step(steps.NAMESPACE_DELETE, subject=deployment_name)
                     namespace_deleted = await self.project_manager._kubectl_connector.delete_namespace(namespace)
 
                     if namespace_deleted:
@@ -2292,7 +2270,7 @@ class DeleteProjectManager:
                 logger.exception(f"Error deleting namespace {namespace}")
 
             # Step 6: Delete service resources (calls service managers)
-            stap_svc = self._begin_step("Services opruimen", subject=deployment_name)
+            stap_svc = self._begin_step(steps.SERVICES_CLEANUP, subject=deployment_name)
             fouten_voor_svc = len(deletion_results["errors"])
             logger.info(f"Deleting service resources for {project_name}/{deployment_name}")
 
@@ -2435,7 +2413,7 @@ class DeleteProjectManager:
             # opruiming horen bij deze stap; zonder repository is er geen van beide.
             fouten_voor_manifesten = len(deletion_results["errors"])
             stap_manifesten = (
-                self._begin_step("Manifesten verwijderen", subject=deployment_name)
+                self._begin_step(steps.MANIFESTS_DELETE, subject=deployment_name)
                 if not argocd_app_deleted or (repository_name and cluster)
                 else None
             )
@@ -2497,9 +2475,7 @@ class DeleteProjectManager:
                             break
 
                     if repo_config:
-                        manifest_connector = await self.project_manager.get_git_connector_for_deployment(
-                            repository_name, repo_config
-                        )
+                        workspace = await self.project_manager.get_deployment_workspace(repository_name, repo_config)
 
                         repo_path = repo_config.get("path", "")
                         deployment_folder_path = generate_deployment_manifest_path(
@@ -2507,14 +2483,10 @@ class DeleteProjectManager:
                         )
                         logger.info(f"Attempting to delete deployment folder: {deployment_folder_path}")
 
-                        await manifest_connector.ensure_repo_cloned()
-                        folder_full_path = os.path.join(
-                            await manifest_connector.get_working_dir(), deployment_folder_path
-                        )
-                        folder_exists = os.path.exists(folder_full_path)
+                        commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
+                        folder_exists = await workspace.remove_and_push(deployment_folder_path, commit_message)
 
                         if folder_exists:
-                            await asyncio.to_thread(shutil.rmtree, folder_full_path)
                             deletion_results["operations"].append(
                                 {
                                     "type": "deployment_folder_deletion",
@@ -2525,24 +2497,15 @@ class DeleteProjectManager:
                                 }
                             )
                             logger.info(f"Successfully deleted deployment folder: {deployment_folder_path}")
-
-                            commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
-                            commit_result = await manifest_connector.commit_and_push_changes(commit_message)
-                            if commit_result:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "manifest_repo_commit",
-                                        "repository": repository_name,
-                                        "status": "success",
-                                        "message": commit_message,
-                                    }
-                                )
-                                logger.info(f"Successfully committed deployment deletion to {repository_name}")
-                            else:
-                                deletion_results["errors"].append(
-                                    f"Failed to commit deployment changes to {repository_name}"
-                                )
-                                manifest_folder_removed = False
+                            deletion_results["operations"].append(
+                                {
+                                    "type": "manifest_repo_commit",
+                                    "repository": repository_name,
+                                    "status": "success",
+                                    "message": commit_message,
+                                }
+                            )
+                            logger.info(f"Successfully committed deployment deletion to {repository_name}")
                         else:
                             deletion_results["operations"].append(
                                 {
@@ -2619,7 +2582,7 @@ class DeleteProjectManager:
                         f"application was not confirmed deleted"
                     )
             else:
-                stap = self._begin_step("Deployment uit het projectbestand verwijderen", subject=deployment_name)
+                stap = self._begin_step(steps.DEPLOYMENT_REMOVE_FROM_PROJECT_FILE, subject=deployment_name)
                 fouten_voor = len(deletion_results["errors"])
                 try:
                     logger.info(
@@ -2665,7 +2628,7 @@ class DeleteProjectManager:
                 self._end_step(stap, self._new_errors(deletion_results, fouten_voor))
 
             # Clean up subdomain registration for this deployment
-            stap = self._begin_step("Subdomein opruimen", subject=deployment_name)
+            stap = self._begin_step(steps.SUBDOMAIN_CLEANUP, subject=deployment_name)
             fouten_voor = len(deletion_results["errors"])
             try:
                 subdomain_connector = SubdomainConnector()
@@ -2704,7 +2667,7 @@ class DeleteProjectManager:
             # De meting beslist alleen over de lagen die ze meet. Laag 1, de entry in het
             # projectbestand, staat er niet bij: stap 8 laat die met opzet staan zodra git
             # of het cluster niet schoon was, en dat is geen geslaagde verwijdering.
-            stap = self._begin_step("Controleren dat alles verwijderd is", subject=deployment_name)
+            stap = self._begin_step(steps.DELETE_VERIFY, subject=deployment_name)
             fouten_voor = len(deletion_results["errors"])
             if appproject_left_git:
                 # Zelfde AppProject-wacht als in _judge_and_delete_project_file.
@@ -2863,9 +2826,9 @@ class DeleteProjectManager:
 
         # 1. Delete ArgoCD application file from GitOps
         try:
-            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            gitops_workspace = await self.project_manager.get_argo_workspace()
             argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
-            working_dir = await gitops_connector.get_working_dir()
+            working_dir = await gitops_workspace.get_working_dir()
             project_dir = os.path.join(working_dir, cluster, project_name)
             file_full_path = os.path.join(working_dir, argocd_app_file_path)
 
@@ -2919,7 +2882,7 @@ class DeleteProjectManager:
             commit_message = (
                 f"Remove ArgoCD resources for deleted deployment '{deployment_name}' from project '{project_name}'"
             )
-            await gitops_connector.mutate_and_push(commit_message, _verwijder_argocd_bestanden)
+            await gitops_workspace.mutate_and_push(commit_message, _verwijder_argocd_bestanden)
             deletion_results["operations"].append(
                 {
                     "type": "gitops_commit",
@@ -3299,20 +3262,14 @@ class DeleteProjectManager:
                         break
 
                 if repo_config:
-                    manifest_connector = await self.project_manager.get_git_connector_for_deployment(
-                        repository_name, repo_config
-                    )
+                    workspace = await self.project_manager.get_deployment_workspace(repository_name, repo_config)
                     repo_path = repo_config.get("path", "")
                     deployment_folder_path = generate_deployment_manifest_path(
                         cluster, project_name, deployment_name, repo_path
                     )
-                    await manifest_connector.ensure_repo_cloned()
-                    folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
+                    commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
 
-                    if os.path.exists(folder_full_path):
-                        await asyncio.to_thread(shutil.rmtree, folder_full_path)
-                        commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
-                        await manifest_connector.commit_and_push_changes(commit_message)
+                    if await workspace.remove_and_push(deployment_folder_path, commit_message):
                         deletion_results["operations"].append(
                             {
                                 "type": "deployment_folder_deletion",

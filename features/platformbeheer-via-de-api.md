@@ -44,13 +44,13 @@ hij legitimeert een project, geen persoon.
 
 ## De routes
 
-`action` is de waarde die een weigering in het problem-detail noemt; een leesroute heeft er
-geen, want hij vraagt geen OTP.
+`action` is de waarde die een weigering in het problem-detail noemt. Een leesroute vraagt
+geen eigen handeling maar wel een step-up, en noemt daarom `elevate`.
 
-| Route | Wat hij doet | OTP | `action` |
+| Route | Wat hij doet | step-up | `action` |
 |---|---|---|---|
-| `GET /api/v2/admin/marked-for-deletion` | de resources die voor verwijdering gemarkeerd staan | nee | |
-| `GET /api/v2/admin/orphans/report` | het wezenrapport, zonder mutaties | nee | |
+| `GET /api/v2/admin/marked-for-deletion` | de resources die voor verwijdering gemarkeerd staan | ja | `elevate` |
+| `GET /api/v2/admin/orphans/report` | het wezenrapport, zonder mutaties | ja | `elevate` |
 | `POST /api/v2/admin/cleanup/trigger` | de opruiming van verlopen markeringen starten | ja | `cleanup-start` |
 | `POST /api/v2/admin/reconciliation/trigger` | een volledige reconciliatie starten | ja | `reconciliation-start` |
 | `DELETE /api/v2/admin/marked-for-deletion/{mark_id}` | een markering intrekken | ja | `marking-revoke` |
@@ -58,34 +58,32 @@ geen, want hij vraagt geen OTP.
 | `POST /api/v2/admin/projects/:reconcile` | de projects-repo nu inlezen | ja | `projects-reload` |
 | `POST /api/v2/projects/{project_name}/:rotate-project-key` | de projectsleutel vervangen (`features/projectsleutel-vervangen.md`) | ja | `project-key-replace` |
 
-## Een verse OTP bij een wijziging
+## Een verse step-up
 
-Een beheerroute die iets VERANDERT vraagt naast het token een verse code uit de
-authenticator van de beheerder, in `X-ZAD-OTP`. Dat is dezelfde step-up als bij een
-handeling op productie (RC-332), met dezelfde header, hetzelfde problem-detail en dezelfde
+Elke beheerroute vraagt naast het token een verse step-up van de beheerder, ook een
+leesroute: zonder step-up is een platformbeheerder een gewone gebruiker. Dat is dezelfde
+step-up als bij een handeling op productie, met hetzelfde problem-detail en dezelfde
 `cause`-waarden; zie [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md) voor de velden.
-Het verschil is alleen de aanleiding: platformbeheer weegt geen omgeving, want een
-beheerhandeling raakt het hele cluster.
 
 ```bash
+curl -X POST "https://zad.rijksapps.nl/api/v2/step-up" \
+  -H "Authorization: Bearer $ZAD_TOKEN" -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'
+
 curl -X POST "https://zad.rijksapps.nl/api/v2/admin/projects/:reconcile" \
-  -H "Authorization: Bearer $ZAD_TOKEN" \
-  -H "X-ZAD-OTP: 123456"
+  -H "Authorization: Bearer $ZAD_TOKEN"
 ```
 
-Er is geen venster: elk verzoek draagt zijn eigen code, en een hergebruikte code faalt.
-
-Zonder code is het antwoord `403` met `application/problem+json`, `type:
+Zonder step-up is het antwoord `403` met `application/problem+json`, `type:
 urn:zad:step-up-required` en `cause: otp-missing`. Een client hoort daaraan te zien dat hij
-om een code moet vragen en de aanroep te herhalen. `action` zegt welke handeling het was,
-`reason` waarom ze een step-up vraagt, `remedy` wat er moet gebeuren.
-
-De twee leesroutes vragen alleen het token: een OTP erop zou een handeling verzinnen die er
-niet is.
+een step-up moet activeren en de aanroep moet herhalen. `action` zegt welke handeling het
+was, `reason` waarom ze een step-up vraagt, `remedy` wat er moet gebeuren.
 
 Sinds RC-409 geldt hetzelfde voor gebruikersbeheer in het PORTAAL (`/admin/users/*`): die
 vijf wijzigende routes droegen de step-up nog niet, en vragen nu een verse code zoals de
-API-tegenhangers. De leesroutes (de lijst en de twee formulieren) niet.
+API-tegenhangers. De leesroutes (de lijst en de twee formulieren) vragen geen eigen
+handeling, maar wel verhoogde rechten: `require_platform_admin` stuurt zonder step-up door
+naar de popup.
 
 In het portaal komt die vraag als dialoog, en dat stelt een eis aan de pagina. De
 weigering rendert de dialoog alleen op een HX-Request en werpt anders een 403, dus de vijf
@@ -121,5 +119,5 @@ De twee federatieroutes geven **404** als de federatie op deze instantie uit sta
 - `opi/core/step_up.py` en `opi/api/otp_step_up.py`: de step-up en het problem-detail (RC-332)
 - `opi/services/step_up_conditions.py`: `vraagt_altijd_step_up`, de conditie van de beheerroutes (sinds RC-387 ook van de ledenroutes, vandaar de naam)
 - `tests/test_platformbeheer_via_de_api.py`: de guard op de routes en op de oude sleutel
-- `tests/test_platformbeheer_step_up.py`: per route de 403, de geslaagde aanroep en de hergebruikte code
+- `tests/test_platformbeheer_step_up.py`: per route de 403 zonder step-up, de geslaagde aanroep met step-up, en de projectsleutel die er niet aan toekomt
 - `tests/test_step_up_routes.py`: de lijst van routes die een step-up dragen, en hun OpenAPI

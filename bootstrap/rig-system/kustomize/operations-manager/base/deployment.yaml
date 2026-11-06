@@ -223,7 +223,10 @@ spec:
             name: operations-manager-env-secrets
         - secretRef:
             name: operations-manager-keycloak
-            optional: true  # Optional to avoid bootstrap issues on first deployment
+            # OPI schrijft dit secret zelf bij het opstarten en zet zijn instellingen meteen
+            # in het proces; het staat bewust niet in git. Een lege placeholder hier werd bij
+            # elke bootstrap en elke deploy opnieuw toegepast en wiste dan wat OPI schreef.
+            optional: true
       volumes:
       - name: kube-api-access
         projected:

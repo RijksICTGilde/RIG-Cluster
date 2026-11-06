@@ -6,7 +6,7 @@ Drie richtingen, en ze horen alle drie te gelden voor het formulier en voor de A
 - de standaardwaarde (Automatisch) schrijft niets en haalt een bestaande vermelding weg;
 - een formulier waarin niemand iets koos voegt niets toe.
 
-Die derde is de val waar ``instructions/services.md`` voor waarschuwt: het pad-filter
+Die derde is de val waar ``docs/development/services.md`` voor waarschuwt: het pad-filter
 materialiseert een dienst als bijwerking, dus een default wordt stilletjes een selectie.
 Hier willen we dat WEL, maar alleen in de ene richting.
 """

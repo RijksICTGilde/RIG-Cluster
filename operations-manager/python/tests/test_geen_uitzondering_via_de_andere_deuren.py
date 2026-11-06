@@ -26,6 +26,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from opi.api.logs_router import logs_router
+from opi.connectors import prometheus
+from opi.core import errors
+from opi.core.config import settings
+from opi.core.errors import kenmerk_nu
+from opi.core.flow_id import set_flow_id
+from opi.middleware import authorization
+from opi.server import create_app
+from opi.web import authz
+from opi.web import router as webrouter
 
 #: De uitzondering zoals hij binnenkwam: de storing uit de melding, en de vorm die
 #: Prometheus eromheen zet als hij zijn eigen adres niet kan vinden.
@@ -70,11 +80,6 @@ class TestDeSjabloonDeur:
 
     @pytest.fixture
     def fragmentclient(self, mock_settings: object, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-        from opi.connectors import prometheus
-        from opi.middleware import authorization
-        from opi.server import create_app
-        from opi.web import router as webrouter
-
         gebruiker = {"email": "beheerder@voorbeeld.nl", "name": "Beheerder"}
         monkeypatch.setattr(authorization, "get_user", lambda request: gebruiker)
         monkeypatch.setattr(authorization, "get_user_service", lambda: _ToegelatenGebruikers(gebruiker["email"]))
@@ -83,18 +88,15 @@ class TestDeSjabloonDeur:
 
         # Een deployment op DIT cluster, want zonder namespace vraagt de route de
         # meting niet eens op en meet de test niets.
-        from opi.core.config import settings
-
         project = MagicMock()
         project.name = PROJECT
         project.data = {"deployments": [{"name": "main", "cluster": settings.CLUSTER_MANAGER, "namespace": PROJECT}]}
         monkeypatch.setattr(webrouter, "get_project_store", lambda: MagicMock(get=lambda naam: project))
         # De rolpoort op de web-router leest hetzelfde project en vraagt wie de aanroeper
         # is; zonder deze twee valt het fragment op een 404 voordat de meting begint.
-        from opi.web import authz
-
         monkeypatch.setattr(authz, "get_project_store", lambda: MagicMock(get=lambda naam: project))
         monkeypatch.setattr(authz, "get_user_service", lambda: MagicMock(is_platform_admin=lambda _e: True))
+        monkeypatch.setattr("opi.middleware.authorization.has_fresh_step_up", lambda _request: True)
 
         async def _prometheus_valt_om() -> object:
             raise OSError(PROMETHEUS_STORING)
@@ -113,6 +115,24 @@ class TestDeSjabloonDeur:
         assert "Resourcegebruik is niet op te halen" in antwoord.text
         assert "Probeer het over een minuut opnieuw." in antwoord.text
         assert not LEKT.search(antwoord.text), "de meetdienst staat op het scherm"
+
+    def test_een_niet_beschikbare_backend_geeft_de_melding_en_een_200(
+        self, fragmentclient: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Een metingsbron die zichzelf niet beschikbaar noemt is een stand, geen storing.
+
+        Dan hoort er geen kenmerk bij en ook geen lege grafiek, maar de melding zelf.
+        """
+
+        async def _niet_beschikbaar() -> object:
+            return MagicMock(is_connected=False)
+
+        monkeypatch.setattr(prometheus, "get_metrics_connector", _niet_beschikbaar)
+
+        antwoord = fragmentclient.get(f"/projects/details/{PROJECT}/resource-usage", follow_redirects=False)
+
+        assert antwoord.status_code == 200, antwoord.text
+        assert "Metrics zijn op dit moment niet beschikbaar." in antwoord.text
 
     def test_de_kaart_noemt_het_kenmerk(self, fragmentclient: TestClient) -> None:
         """Zonder kenmerk is 'niet op te halen' een doodlopende weg voor wie het meldt."""
@@ -159,8 +179,6 @@ class TestDeLijstregelDeur:
 
     @pytest.fixture
     def logsclient(self, mock_settings: Any) -> Any:
-        from opi.api.logs_router import logs_router
-
         data = {
             "deployments": [
                 {
@@ -211,9 +229,6 @@ class TestHetKenmerkZonderRequest:
     """
 
     def test_binnen_een_verzoek_is_het_het_kenmerk_van_dat_verzoek(self) -> None:
-        from opi.core.errors import kenmerk_nu
-        from opi.core.flow_id import set_flow_id
-
         gezet = set_flow_id("req")
 
         assert kenmerk_nu() == gezet
@@ -222,7 +237,6 @@ class TestHetKenmerkZonderRequest:
     def test_buiten_een_verzoek_is_er_geen_kenmerk_en_geen_staart(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Buiten een verzoek staat de contextvar op ``-``; dat is niets om te melden,
         dus krijgt de zin er ook geen staart bij die naar een leeg kenmerk wijst."""
-        from opi.core import errors
 
         monkeypatch.setattr(errors, "get_flow_id", lambda: "-")
 

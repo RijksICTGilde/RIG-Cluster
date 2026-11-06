@@ -47,9 +47,27 @@ mechanisme.
 
 ### Het venster
 
-Een geslaagde step-up dekt vijf minuten (`STEP_UP_WINDOW`). Het venster **schuift niet
-mee**: een handeling leest de stempel en zet hem nooit opnieuw, dus vijf minuten na de
-code is het voorbij, hoeveel handelingen er intussen ook langskwamen.
+Een geslaagde step-up dekt standaard vijf minuten (`STEP_UP_WINDOW_MINUTES`). Het venster
+**schuift niet mee**: een handeling leest de stempel en zet hem nooit opnieuw, dus na het
+venster is het voorbij, hoeveel handelingen er intussen ook langskwamen. Eén instelling
+voor alles: een langer venster dekt ook de verwijderacties en de tokenhandelingen langer.
+
+### Verhoogde rechten: platformbeheer zit erachter
+
+Een platformbeheerder is een gewone gebruiker die zijn eigen projecten ziet, tot hij een
+verse step-up heeft. Pas dan krijgt hij de beheerpagina's, alle projecten en `[admin, ops]`
+op elk project. `ADMIN_EMAILS` zegt dus wie MAG verhogen, de step-up zet het aan.
+
+In het portaal kiest hij **Verhoogde rechten** in het accountmenu. Dat opent een popup
+(`nldd-modal-dialog`) waarin hij activeert met een code of het eerder beëindigt. Een
+beheerpagina zonder step-up stuurt door naar het dashboard met de popup open, en na de code
+terug naar die pagina. Elke route achter `require_platform_admin` is
+daarmee ook gedekt door een verse code, dus ook het beoordelen van aanvragen.
+
+Op een project waar hij geen lid van is, geeft een verlopen venster een gewone 403: activeer
+opnieuw via het menu. `is_elevated_admin` (`opi/core/step_up.py`) is de ene plek die dit
+beslist; zonder ingang die de toestand zet is het antwoord nee, dus een worker of een
+vergeten route heeft nooit beheerrechten.
 
 ### In het portaal
 
@@ -88,41 +106,50 @@ het menu is een tijdstip en geen "nu", dus die blijft kloppen.
 
 ### Via de API en de CLI
 
-Sinds RC-377 vraagt ook elke wijzigende beheerroute een step-up, ongeacht de omgeving: een
-handeling van platformbeheer raakt het hele cluster. Voor de rest geldt: buiten `productie`
-verandert er niets: de projectsleutel en de bearer-tokens werken zoals
-ze werkten. Raakt de handeling `productie`, dan vraagt ze een verse 2-factor van de
-AANROEPER zelf. Eén header, en maar één betekenis:
+Op de API is de step-up dezelfde toestand, met één call in plaats van een dialoog. Daarna werk
+je door zonder code, tot het venster voorbij is.
 
-| header | waarde |
-|---|---|
-| `X-ZAD-OTP` | een verse code uit de authenticator van de aanroeper |
-
-De code wordt getoetst tegen de factor van de **eigenaar van het token**: een persoonlijk
-bearer-token hoort bij een gebruiker, en straks, met het plan voor service accounts, hoort
-elk token bij een lid. Er is dus geen manier om de code van iemand anders aan een aanroep
-te hangen; de oude header `X-ZAD-OTP-User` bestaat niet meer.
-
-Met de **projectsleutel** (`X-API-Key`) kan zo'n handeling niet. Die hoort bij geen enkele
-gebruiker, en een machine heeft geen 2-factor: dat is altijd een 403, ook met een
-`X-ZAD-OTP` erbij. De verwijderroutes van de API worden met de projectsleutel afgeschermd,
-dus die handelingen lopen via het portaal tot er een persoonlijk token op die routes kan.
-De beheerroutes van RC-377 lopen al wel op een persoonlijk token: zie
-[platformbeheer-via-de-api.md](platformbeheer-via-de-api.md).
-
-Er is hier geen venster: elk verzoek draagt zijn eigen code, en een hergebruikte code faalt.
+| je legitimeert je met | activeren | geldt voor |
+|---|---|---|
+| SSO-token (`Authorization: Bearer`) | `POST /api/v2/step-up` | alles wat je mag, in heel ZAD |
+| persoonlijk `zad_`-token (`X-API-Key`) | `POST /api/v2/projects/{project}/step-up` | dit ene token, dus dit ene project |
 
 ```bash
+curl -X POST "https://zad.rijksapps.nl/api/v2/step-up" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'
+
 curl -X DELETE "https://zad.rijksapps.nl/api/v2/projects/mijnproject/productie" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "X-ZAD-OTP: 123456"
+  -H "Authorization: Bearer $TOKEN"
 ```
+
+Het antwoord noemt `valid_until`. `DELETE` op dezelfde route beëindigt de step-up eerder. De
+toestand hoort bij één bewijsmiddel: een SSO-token bij zijn inlogsessie (de
+`sid`-claim, die een token-refresh overleeft) en een persoonlijk token bij zijn eigen hash. Een
+code in de ene sessie opent dus geen ander token van dezelfde persoon.
+
+Wat dat beschermt verschilt per bewijsmiddel. Een gelekt **persoonlijk token** kan niet
+meeliften op de step-up van zijn eigenaar: die hangt aan de hash van het token dat de code
+gaf, dus een ander token van dezelfde persoon staat erbuiten. Een gelekt **SSO-token** wel: dat
+hangt aan de `sid` van de inlogsessie, dus elk token uit diezelfde sessie draagt de step-up tot
+het venster om is. Daarom is dat venster kort en schuift het niet mee. De toestand staat in de
+tabel `api_step_ups`.
+
+De code wordt getoetst tegen de **eigenaar van het token**. Er is geen manier om de code van
+iemand anders aan een aanroep te hangen. Een **service account** en de oude **projectsleutel**
+horen bij geen persoon en kunnen geen step-up krijgen: dat is altijd een 403.
+
+Een platformbeheerder heeft op de API dezelfde grens als in het portaal: zonder step-up ziet zijn
+SSO-token alleen zijn eigen projecten en geven ook de leesroutes van platformbeheer een 403. Die
+rechten zijn er alleen op een SSO-token, niet op een persoonlijk token. Het logpaneel en de
+log-WebSocket staan onder `/api/`, maar draaien op de portaalsessie en lezen dus de stempel
+daarvan.
 
 #### Het antwoord op een weigering
 
 Een geweigerde aanroep krijgt 403 met een problem-detail (`application/problem+json`)
 waarvan `type` op `urn:zad:step-up-required` staat. Daaraan hoort een client te zien dat
-hij om een code moet vragen en de aanroep moet herhalen. Een ontbrekend of ongeldig token
+hij een step-up moet activeren en de aanroep moet herhalen. Een ontbrekend of ongeldig token
 blijft 401.
 
 | veld | wat het zegt |
@@ -131,7 +158,6 @@ blijft 401.
 | `reason` | waarom, bijvoorbeeld dat de deployment op productie staat |
 | `remedy` | wat er moet gebeuren |
 | `cause` | waarom er geweigerd werd, als waarde om op te sturen |
-| `otp_header` | de header waarin de code hoort |
 | `enroll_url` | waar je je factor inricht, alleen bij `factor-missing` |
 | `blocked_until` | wanneer het weer mag, alleen bij `geblokkeerd` |
 
@@ -140,10 +166,10 @@ blijft 401.
 `principal-kind-not-allowed` (de projectsleutel). `code-invalid` dekt zowel een verkeerde
 als een al gebruikte code: `detail` zegt nooit welk deel van een code fout was.
 
-Elke route met `@requires_step_up` documenteert dit in de OpenAPI: `X-ZAD-OTP` als
-optionele header en de 403 met het schema `StepUpProblem`. Dat wordt uit de markering op
-de route afgeleid (`custom_openapi` in `opi/server.py`), en
-`tests/test_step_up_routes.py` faalt als een step-up-route die documentatie mist.
+Elke route met `@requires_step_up` documenteert dit in de OpenAPI: de 403 met het schema
+`StepUpProblem`. Dat wordt uit de markering op de route afgeleid (`custom_openapi` in
+`opi/server.py`), en `tests/test_step_up_routes.py` faalt als een step-up-route die
+documentatie mist.
 
 ### Loggen
 

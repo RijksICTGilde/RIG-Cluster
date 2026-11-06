@@ -559,7 +559,7 @@ MAIL_RELAY_PASSWORD=<geheim> uv run python scripts/mail_identity_check.py --user
 
 RC-159 gaf `zad-keycloak` een eigen lokaal deel in de `From:`, waardoor die twee wegen uiteenliepen en het script een `--verwacht-envelope` nodig had. Sinds RC-175 vertrekt inlogpost onder het kale adres en vallen ze weer samen; die vlag is eruit.
 
-De eerste sandbox-run beantwoordde en passant een vraag die openstond: de relay praat STARTTLS met strikte certificaatcontrole, en nergens stond wat Stalwart doet als de tegenpartij STARTTLS niet aanbiedt. **Gemeten op 19 augustus 2026: het is een garantie.** Zonder STARTTLS weigert hij permanent (`STARTTLS was not advertised by host`) en bouncet het bericht; met een certificaat dat niet valideert weigert hij tijdelijk en blijft het bericht in de wachtrij. Hij valt in geen van beide gevallen terug op platte tekst. Daar hoort een tweede uitkomst bij die productie raakt: Stalwart leest de trust store van het besturingssysteem niet, dus een interne CA valt niet te vertrouwen. Beide staan uitgewerkt in `docs/ron-koppeling.md`. De sink biedt STARTTLS daarom nu wel aan, met een certificaat dat een initContainer bij elke start maakt.
+De eerste sandbox-run beantwoordde en passant een vraag die openstond: de relay praat STARTTLS met strikte certificaatcontrole, en nergens stond wat Stalwart doet als de tegenpartij STARTTLS niet aanbiedt. **Gemeten op 19 augustus 2026: het is een garantie.** Zonder STARTTLS weigert hij permanent (`STARTTLS was not advertised by host`) en bouncet het bericht; met een certificaat dat niet valideert weigert hij tijdelijk en blijft het bericht in de wachtrij. Hij valt in geen van beide gevallen terug op platte tekst. Daar hoort een tweede uitkomst bij die productie raakt: Stalwart leest de trust store van het besturingssysteem niet, dus een interne CA valt niet te vertrouwen. Beide staan uitgewerkt in `docs/operations/ron-koppeling.md`. De sink biedt STARTTLS daarom nu wel aan, met een certificaat dat een initContainer bij elke start maakt.
 
 Het netwerkbeleid van de relay staat in de dev-overlays op precies deze sink dichtgezet. Daar stond eerst `0.0.0.0/0` met het argument dat niet vastligt welke testupstream een ontwikkelaar gebruikt; nu er een sink meekomt ligt het wel vast, en een relay die overal heen mag is een open relay zodra iemand een account bemachtigt.
 
@@ -572,7 +572,7 @@ identiteitsregels doen wat ze beloven. De weg naar de upstream is los daarvan be
 2026 gemeten vanuit een pod met `rig-ron`-egress: `rmrmail.rijksweb.nl` antwoordt op poort 25
 met een banner en neemt een testbericht aan. De eerdere meting, waarin alle drie de poorten
 stil bleven, liep door het baseline-netwerkbeleid van de tenant dat egress alleen op 443 en 80
-toestaat; die pakketten hadden de pod nooit verlaten. Zie `docs/ron-koppeling.md`.
+toestaat; die pakketten hadden de pod nooit verlaten. Zie `docs/operations/ron-koppeling.md`.
 
 Wat dat opleverde en wat hier verwerkt is: poort 25 en niet 587, geen authenticatie maar een
 toelating op ons uitgaande IP, STARTTLS, en 30 MB als grens aan hun kant.
@@ -610,7 +610,7 @@ plek om te kijken als de dienst niets doet.
    daarom als `namespace-ron.yaml` in de bootstrap-overlay
    (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
    (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
-   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` past hem met
+   `argocd.argoproj.io/managed-by`-label erop; `CLUSTER_TYPE=odcn-production task bootstrap-argo-system` past hem met
    kubectl toe, buiten ArgoCD om.
 
    **Een `sops-age-key` in die namespace is sinds RC-351 niet meer nodig.**
@@ -618,7 +618,7 @@ plek om te kijken als de dienst niets doet.
    `cmp-platform`-sidecar leest in plaats van uit de bestemmingsnamespace. RC-261 zette
    die kopie nog vanuit de bootstrap; die stap is vervallen, en een cluster dat het
    secret nog heeft staan mag het na de uitrol met de hand weghalen (zie
-   `instructions/sops-sleutel-in-het-cluster.md`).
+   `docs/development/sops-sleutel-in-het-cluster.md`).
 
 2b. **De eigen Application**: `- argocd-application-ron-infrastructure.yaml` in
    `bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml`, en dan de

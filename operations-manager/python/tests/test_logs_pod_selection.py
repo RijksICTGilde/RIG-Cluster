@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,6 +28,10 @@ from opi.api.logs_router import get_component_pods, resolve_component_pods
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
+from opi.core.step_up import STEP_UP_SESSION_KEY
+from opi.services import project_authorization
+from opi.services.user_service import UserService
+from starlette.websockets import WebSocketDisconnect
 
 PROJECT = "psd-law"
 DEPLOYMENT = "pr-114"
@@ -218,6 +223,56 @@ async def test_endpoint_lists_the_pods_with_the_source_registry_image():
 
 
 # ---------------------------------------------------------------------------
+# RC-431: een platformbeheerder zonder lidmaatschap komt er pas door met een
+# verse step-up. Dit mag niet via een gemockte ``is_user_authorized_for_project``
+# gemeten worden, want dan toetst de test de mock en niet de verbinding tussen
+# de route en het echte rechtensysteem.
+# ---------------------------------------------------------------------------
+
+BEHEERDER = "beheer@rijksoverheid.nl"
+
+
+def _platform_admin() -> UserService:
+    service = UserService()
+    service.add_allowed_email(BEHEERDER)
+    service.add_platform_admins([BEHEERDER])
+    return service
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_without_a_fresh_step_up_is_refused_pods_of_a_project_they_are_not_a_member_of():
+    from fastapi import HTTPException
+
+    users = _platform_admin()
+    with (
+        patch("opi.api.logs_router.get_user_service", return_value=users),
+        patch.object(project_authorization, "get_user_service", return_value=users),
+        patch.object(project_authorization, "get_project_users", return_value=[]),
+        pytest.raises(HTTPException) as excinfo,
+    ):
+        await get_component_pods(_request(BEHEERDER), PROJECT, deployment=DEPLOYMENT, component=COMPONENT)
+
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_a_platform_admin_with_a_fresh_step_up_sees_pods_of_a_project_they_are_not_a_member_of():
+    users = _platform_admin()
+    request = _request(BEHEERDER)
+    request.session[STEP_UP_SESSION_KEY] = datetime.now(UTC).isoformat()
+    with (
+        patch("opi.api.logs_router.get_user_service", return_value=users),
+        patch.object(project_authorization, "get_user_service", return_value=users),
+        patch.object(project_authorization, "get_project_users", return_value=[]),
+        patch("opi.api.logs_router.get_project_store", return_value=_project_store()),
+        patch("opi.api.logs_router.resolve_component_pods", AsyncMock(return_value=[])),
+    ):
+        response = await get_component_pods(request, PROJECT, deployment=DEPLOYMENT, component=COMPONENT)
+
+    assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # De WebSocket: een podnaam van de client komt er niet zomaar in
 # ---------------------------------------------------------------------------
 
@@ -385,3 +440,60 @@ def test_the_previous_attempt_actually_delivers_its_lines(stream_start: Any):
         "ERROR Migration checksum mismatch for migration 4",
         "FATAL Flyway validation failed, shutting down",
     ]
+
+
+# ---------------------------------------------------------------------------
+# RC-431: dezelfde grens als bij ``get_component_pods``, maar op de handshake
+# van de WebSocket, met de echte ``is_user_authorized_for_project``.
+# ---------------------------------------------------------------------------
+
+
+def _client_met_echte_autorisatie(stream_start: Any, users: UserService, *, fresh: bool) -> Any:
+    app = FastAPI()
+    app.include_router(logs_websocket_router)
+    session: dict[str, Any] = {"user": {"email": BEHEERDER, "login_at": time.time()}}
+    if fresh:
+        session[STEP_UP_SESSION_KEY] = datetime.now(UTC).isoformat()
+
+    return (
+        TestClient(app),
+        patch.multiple(
+            "opi.api.logs_websocket_router",
+            _get_session_from_scope=MagicMock(return_value=session),
+            get_user_service=MagicMock(return_value=users),
+            get_project_store=MagicMock(return_value=_project_store()),
+            resolve_component_pods=AsyncMock(return_value=[_pod(EIGEN_POD, "pr-114-profielservice")]),
+        ),
+        patch.object(project_authorization, "get_user_service", return_value=users),
+        patch.object(project_authorization, "get_project_users", return_value=[]),
+        patch.object(KubectlConnector, "stream_deployment_logs", stream_start),
+    )
+
+
+def test_a_platform_admin_without_a_fresh_step_up_cannot_open_the_log_stream(stream_start: Any):
+    users = _platform_admin()
+    client, auth, authz_users, authz_members, kubectl = _client_met_echte_autorisatie(stream_start, users, fresh=False)
+
+    with (
+        auth,
+        authz_users,
+        authz_members,
+        kubectl,
+        pytest.raises(WebSocketDisconnect) as weigering,
+        client.websocket_connect(URL),
+    ):
+        pass
+
+    assert weigering.value.code == 4003
+    stream_start.assert_not_called()
+
+
+def test_a_platform_admin_with_a_fresh_step_up_can_open_the_log_stream(stream_start: Any):
+    users = _platform_admin()
+    client, auth, authz_users, authz_members, kubectl = _client_met_echte_autorisatie(stream_start, users, fresh=True)
+
+    with auth, authz_users, authz_members, kubectl, client.websocket_connect(URL) as ws:
+        assert ws.receive_json()["status"] == "connected"
+        assert ws.receive_json()["status"] == "streaming"
+
+    stream_start.assert_called_once()

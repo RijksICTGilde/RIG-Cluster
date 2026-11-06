@@ -22,13 +22,14 @@ from opi.core.authz.matrix import COLUMNS, rows
 #: (action, scope-naam) -> de zes cellen uit ontwerp paragraaf 4.
 #: De scope-naam is "" voor een regel die er maar een rij in de matrix heeft.
 ONTWERP: dict[tuple[str, str], tuple[str, ...]] = {
+    # geen rij uit het ontwerp: een persoonlijk token activeert zijn eigen step-up. Mens-only in
+    # de engine, dus developer-ci staat hier wel open maar komt er in decide niet door.
+    ("token.step-up", ""): ("v", "v", "v", "v", "v", ""),
     # rij 1: project, deployments, logs, taken, back-ups lezen
     **{
-        (naam, ""): ("v", "v", "v", "v", "", "")
+        (naam, ""): ("v", "v", "v", "v", "v", "")
         for naam in (
-            "project.read",
             "project.list",
-            "deployment.read",
             "component.read",
             "service.read",
             "database.schema-read",
@@ -37,11 +38,12 @@ ONTWERP: dict[tuple[str, str], tuple[str, ...]] = {
             "logs.read",
             "subdomain.read",
             "cluster.read",
-            "task.read",
             "sleep.read",
             "token.read",
         )
     },
+    # row 1b: what a pipeline reads back after a deploy
+    **{(naam, ""): ("v", "v", "v", "v", "v", "v") for naam in ("project.read", "deployment.read", "task.read")},
     # rij 2 en 3: deployment aanmaken of wijzigen
     **{
         (naam, scope): cellen

@@ -1,0 +1,98 @@
+{#
+  The text of bg/getting-started.html.j2. Variable names must exist in the service catalog;
+  tests/test_getting_started_pagina.py enforces that.
+
+  nldd-code-viewer directly, not c-code-viewer: that wrapper puts newlines around its content,
+  and the viewer shows them as an empty first and last line.
+#}
+
+{% macro begrippen() %}
+<nldd-rich-text><dl>
+    <dt>Project</dt><dd>Alles van je applicatie bij elkaar.</dd>
+    <dt>Component</dt><dd>Een container image die draait, bijvoorbeeld een website, frontend of backend api.</dd>
+    <dt>Deployment</dt><dd>Een omgeving waarin je componenten draaien, bijvoorbeeld test, staging of productie.</dd>
+    <dt>Service</dt><dd>Iets dat het platform voor je regelt, zoals een database of een webadres.</dd>
+</dl></nldd-rich-text>
+{% endmacro %}
+
+{% macro hello_world() %}
+<c-paragraph>Start de wizard via <c-link href="/forms/wizard/start" label="Nieuw project" /> en vul dit in:</c-paragraph>
+<nldd-rich-text><ol>
+    <li>Kies bij de services <strong>Publiceren op het web</strong>, dan krijgt je applicatie een webadres.</li>
+    <li>
+        Voeg een component <strong>web</strong> toe, met de image hieronder en inbound poort <strong>8080</strong>.
+        <nldd-code-viewer language="bash">ghcr.io/minbzk/base-images/hello-world:latest</nldd-code-viewer>
+    </li>
+    <li>Maak een deployment <strong>staging</strong> en rond de wizard af.</li>
+</ol></nldd-rich-text>
+<c-paragraph size="sm">Een webadres staat bij je deployment. Dat adres kun je later altijd wijzigen. Services die ervan afhangen, zoals Keycloak, worden dan automatisch bijgewerkt. Voor gebruik van subdomeinen of een <c-link href="/eigen-domein" label="eigen domein" /> geldt een goedkeuringsprocedure.</c-paragraph>
+{% endmacro %}
+
+{% macro services_gebruiken() %}
+<c-paragraph>
+    Je richt een service niet zelf in. Zet je bijvoorbeeld PostgreSQL aan, dan maakt het platform de database, de gebruiker en het wachtwoord aan. Je container krijgt die gegevens als env vars, en je code leest ze alleen uit.
+</c-paragraph>
+<c-alert type="warning" heading="Koppel de service aan je component">
+    Kies hem bij je component onder Gebruikte services. Zonder koppeling start je component zonder deze env vars, en daar krijg je geen melding van.
+</c-alert>
+
+<c-heading type="h3" size="6" label="Waar vind je de env vars?" />
+<c-paragraph>
+    Op <c-link href="/services" label="Services overzicht" /> staan bij elke service de namen van zijn env vars, met uitleg. Vanaf de opdrachtregel krijg je ze met <c-code>zadctl service describe postgresql-database</c-code>.
+</c-paragraph>
+<c-paragraph>PostgreSQL levert bijvoorbeeld:</c-paragraph>
+<nldd-rich-text><table>
+    <thead><tr><th>Env var</th><th>Inhoud</th></tr></thead>
+    <tbody>
+        <tr><td><code>DATABASE_SERVER_HOST</code></td><td>Hostnaam van de server</td></tr>
+        <tr><td><code>DATABASE_SERVER_PORT</code></td><td>Poort van de server</td></tr>
+        <tr><td><code>DATABASE_DB</code></td><td>Naam van de database</td></tr>
+        <tr><td><code>DATABASE_SCHEMA</code></td><td>Naam van het schema</td></tr>
+        <tr><td><code>DATABASE_SERVER_USER</code></td><td>Gebruikersnaam</td></tr>
+        <tr><td><code>DATABASE_PASSWORD</code></td><td>Wachtwoord</td></tr>
+        <tr><td><code>DATABASE_SERVER_USER_RO</code></td><td>Gebruikersnaam van de read-only gebruiker</td></tr>
+        <tr><td><code>DATABASE_PASSWORD_RO</code></td><td>Wachtwoord van de read-only gebruiker</td></tr>
+        <tr><td><code>DATABASE_SERVER_FULL</code></td><td>De volledige connectiestring</td></tr>
+    </tbody>
+</table></nldd-rich-text>
+
+<c-heading type="h3" size="6" label="Python" />
+<nldd-code-viewer language="python">import os
+import psycopg
+
+with psycopg.connect(os.environ["DATABASE_SERVER_FULL"]) as conn:
+    print(conn.execute("SELECT 'hello world'").fetchone())</nldd-code-viewer>
+
+<c-heading type="h3" size="6" label="Java" />
+<c-paragraph size="sm">JDBC kent de vorm van <c-code>DATABASE_SERVER_FULL</c-code> niet, dus hier bouw je de URL uit de losse env vars.</c-paragraph>
+{# No language: the pinned NLDD code viewer has no Java grammar. #}
+<nldd-code-viewer>var url = "jdbc:postgresql://" + System.getenv("DATABASE_SERVER_HOST")
+    + ":" + System.getenv("DATABASE_SERVER_PORT")
+    + "/" + System.getenv("DATABASE_DB");
+var conn = DriverManager.getConnection(url,
+    System.getenv("DATABASE_SERVER_USER"), System.getenv("DATABASE_PASSWORD"));</nldd-code-viewer>
+
+<c-paragraph size="sm">
+    Verwacht je applicatie een andere naam, dan leg je dat vast met een alias, zoals <c-code>POSTGRES_HOST: $DATABASE_SERVER_HOST</c-code>. Eigen instellingen zet je bij je component onder Omgevingsvariabelen.
+</c-paragraph>
+{% endmacro %}
+
+{% macro image_uitrollen() %}
+<c-paragraph>Hiervoor heb je een token van je project nodig. Die maak je aan op het tabblad Team van je project, onder Leden en tokens.</c-paragraph>
+
+<c-heading type="h3" size="6" label="Met zadctl" />
+<nldd-code-viewer language="bash">export ZAD_API_KEY=jouw-token
+export ZAD_PROJECT_ID=my-project
+zadctl deployment update-image staging --component web --image ghcr.io/org/app:v1.3</nldd-code-viewer>
+<c-paragraph size="sm">Meer info: <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" /></c-paragraph>
+
+<c-heading type="h3" size="6" label="Met een GitHub Action" />
+<nldd-code-viewer language="yaml">- uses: RijksICTGilde/zad-actions/deploy@v4
+  with:
+    api-key: ${{ '{{' }} secrets.ZAD_API_KEY {{ '}}' }}
+    project-id: my-project
+    deployment-name: staging
+    component: web
+    image: ghcr.io/org/app:v1.3</nldd-code-viewer>
+<c-paragraph size="sm">Zet de token in de secrets van je repository, niet in de workflow zelf. Meer info: <c-link href="https://github.com/RijksICTGilde/zad-actions" label="zad-actions op GitHub" target="_blank" /></c-paragraph>
+{% endmacro %}

@@ -1,9 +1,12 @@
-{# De bevestigingsdialoog. Annuleren staat VOOR de knop om de focus op de veilige keuze. #}
-<c-modal-dialog variant="destructive"
-                icon="exclamation-triangle"
-                id="bevestiging-dialoog"
-                accessible-label="Bevestig deze actie">
-    <c-button slot="actions" type="secondary" label="Annuleren" id="bevestiging-annuleren" />
-    <c-button slot="actions" type="warning" label="Doorgaan" id="bevestiging-doorgaan" />
-</c-modal-dialog>
+{# De bevestigingsdialoog. Annuleren staat VOOR de knop om de focus op de veilige keuze.
+
+   Plain nldd elements, not <c-modal-dialog>/<c-button>: the LOTC button writes `variant`,
+   and nldd-button 0.13 only reads `appearance` (see bg/_modals.html.j2). This is the
+   destructive form; vraagBevestiging() switches it per question. #}
+<nldd-modal-dialog variant="alert"
+                   id="bevestiging-dialoog"
+                   accessible-label="Bevestig deze actie">
+    <nldd-button slot="actions" appearance="primary" text="Annuleren" id="bevestiging-annuleren"></nldd-button>
+    <nldd-button slot="actions" appearance="destructive" text="Doorgaan" id="bevestiging-doorgaan"></nldd-button>
+</nldd-modal-dialog>
 <script nonce="{{ csp_nonce }}" src="{{ static_url('js/bevestiging.js') }}"></script>

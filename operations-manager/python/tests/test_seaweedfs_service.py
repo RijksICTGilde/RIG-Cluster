@@ -202,7 +202,7 @@ class TestValidatieVanEenVervangenDienst:
         vorige = _minio_project([self._dep()], self._comp())
         assert validate_service_availability(project, previous=vorige) == []
 
-    def test_een_tweede_deployment_die_hem_erbij_krijgt_wordt_geweigerd(self) -> None:
+    def test_een_tweede_deployment_in_een_project_dat_hem_al_had_mag_hem_ook(self) -> None:
         oud_comp = {"name": "oud-comp", "services": ["minio-storage"]}
         nieuw_comp = {"name": "web", "services": ["minio-storage"]}
         oud_dep = {**self._dep("oud"), "components": [{"reference": "oud-comp"}]}
@@ -219,9 +219,22 @@ class TestValidatieVanEenVervangenDienst:
             "deployments": [oud_dep, self._dep("nieuw")],
         }
 
+        assert validate_service_availability(project, previous=vorige) == []
+
+    def test_een_gekloonde_deployment_houdt_de_dienst_van_zijn_bron(self) -> None:
+        # Een PR-preview: de V2-upsert kloont 'main' naar een nieuwe deployment.
+        vorige = _minio_project([self._dep("main")], self._comp())
+        project = _minio_project([self._dep("main"), self._dep("pr-803")], self._comp())
+        assert validate_service_availability(project, previous=vorige) == []
+
+    def test_een_bestaand_project_zonder_de_dienst_krijgt_hem_niet_erbij(self) -> None:
+        vorige = _minio_project([self._dep()], self._comp(services=[]), services=[])
+        project = _minio_project([self._dep()], self._comp())
+
         fouten = validate_service_availability(project, previous=vorige)
         assert len(fouten) == 1
-        assert "nieuw" in fouten[0]
+        assert "minio-storage" in fouten[0]
+        assert "seaweedfs-storage" in fouten[0]
 
     def test_op_een_cluster_zonder_opvolger_verandert_er_niets(self) -> None:
         # "local" heeft geen seaweedfs-storage, dus minio-storage is daar niet vervangen:

@@ -133,11 +133,12 @@ def test_the_cookie_carries_only_a_signed_id(client: TestClient, store: InMemory
     assert store._rows[signed] == {"v": "written"}, "the content lives in the store"
 
 
-def test_the_cookie_has_max_age_httponly_and_path(client: TestClient) -> None:
+def test_the_cookie_has_no_max_age_but_httponly_and_path(client: TestClient) -> None:
+    """A browser-session cookie: no lifetime of its own, the server holds the window."""
     response = client.get("/write")
 
     header = response.headers["set-cookie"]
-    assert f"Max-Age={MAX_AGE}" in header
+    assert "max-age" not in header.lower()
     assert "httponly" in header
     assert "path=/" in header
 

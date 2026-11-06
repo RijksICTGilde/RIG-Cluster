@@ -119,7 +119,20 @@ GROUPS: list[tuple[str, list[str]]] = [
     ("Bouwen & draaien", ["/forms/wizard/restart", "/services"]),
     # /introductie als eerste van Platform: het is de uitleg OVER het platform, en zonder
     # groep viel hij bovenaan bij Dashboard en Mijn projecten, waar hij niet hoort.
-    ("Platform", ["/introductie", "/platform", "/rollen", "/cli", "/actions", "/docs", "/eigen-domein", "/security"]),
+    (
+        "Platform",
+        [
+            "/introductie",
+            "/getting-started",
+            "/platform",
+            "/cli",
+            "/actions",
+            "/docs",
+            "/eigen-domein",
+            "/rollen",
+            "/security",
+        ],
+    ),
     # /metrics-explorer stond onder "Bouwen & draaien" en hoort hier: het is een
     # beheerpagina over het hele platform, niet iets dat je gebruikt om je eigen project
     # te bouwen. Het menu-item zelf is al alleen voor een platformbeheerder zichtbaar

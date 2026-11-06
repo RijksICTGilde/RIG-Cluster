@@ -124,7 +124,7 @@ Available formats:
 - **Dash variant**: used for clusters without nice-URL support
 - **Dot variant**: used when the cluster supports nice URLs (dot-separated hostnames)
 
-The field is optional and backward-compatible. See [domain-format.md](../operations-manager/python/features/domain-format.md) for full details.
+The field is optional and backward-compatible. See [domain-format.md](domain-format.md) for full details.
 
 ```yaml
 deployments:

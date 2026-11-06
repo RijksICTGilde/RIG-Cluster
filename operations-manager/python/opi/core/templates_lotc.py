@@ -18,12 +18,14 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
 
-from opi.core.config import BUILD_DATE, VERSION
+from opi.core.config import BUILD_DATE, VERSION, settings
 from opi.core.project_environment import environment_label
 from opi.core.template_helpers import (
     CATALOG_DIR,
+    cluster_tag,
     format_dutch_date,
     format_rrule_schedule,
+    format_step_duration,
     get_service_definition_for_entry,
     get_service_name,
     shorten_image_digest,
@@ -94,6 +96,7 @@ setup_components(templates_lotc.env, design_systems=DESIGN_SYSTEMS, htmx=True)
 # filters hieronder.
 templates_lotc.env.globals["version"] = VERSION
 templates_lotc.env.globals["build_date"] = BUILD_DATE
+templates_lotc.env.globals["cluster_tag"] = cluster_tag(settings.CLUSTER_MANAGER)
 templates_lotc.env.globals["version_info"] = get_version_info
 templates_lotc.env.globals["static_url"] = static_url
 # De groepering van componentfouten. Als global en niet als contextsleutel, zodat elke
@@ -147,6 +150,7 @@ templates_lotc.env.filters["service_definition"] = get_service_definition_for_en
 # verzint over wat een verwijzing is.
 templates_lotc.env.filters["is_verwijzing"] = _alias_is_reference
 templates_lotc.env.filters["dutch_date"] = format_dutch_date
+templates_lotc.env.filters["stapduur"] = format_step_duration
 templates_lotc.env.filters["rrule_schedule"] = format_rrule_schedule
 templates_lotc.env.filters["deployment_action_key"] = deployment_action_key
 # De digest in een imageverwijzing afgekort tot twaalf tekens. Als filter en niet als

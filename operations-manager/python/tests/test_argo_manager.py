@@ -317,6 +317,42 @@ class TestWaitForApplicationSynced:
                 on_progressing=callback,
             )
 
+    @pytest.mark.asyncio
+    async def test_on_poll_reports_a_sync_that_hangs_while_healthy(
+        self, argo_manager: ArgoManager, mock_connector: AsyncMock
+    ):
+        """on_poll fires while the sync is open even though health is Healthy; on_progressing does not.
+
+        Only calling back on Progressing/Degraded froze the progress line on the last pod
+        reason while ArgoCD itself was still busy.
+        """
+        hanging = _make_status("OutOfSync", "Healthy", operation_phase="Running", reconciled_at="2026-03-17T10:01:00Z")
+        mock_connector.get_application_status = AsyncMock(
+            side_effect=[hanging, _make_status("Synced", "Healthy", reconciled_at="2026-03-17T10:01:00Z")]
+        )
+        on_poll = AsyncMock()
+        on_progressing = AsyncMock()
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await argo_manager.wait_for_application_synced(
+                "my-app",
+                timeout=30,
+                poll_interval=2,
+                refreshed_after="2026-03-17T10:00:00Z",
+                on_progressing=on_progressing,
+                on_poll=on_poll,
+            )
+
+        assert result is True
+        on_poll.assert_called_once()
+        _, status, fresh = on_poll.call_args.args
+        assert status is hanging
+        assert fresh is True
+        on_progressing.assert_not_called()
+
 
 class TestStaleStatusProtection:
     """Tests for the refreshed_after parameter that prevents acting on stale status."""

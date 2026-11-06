@@ -5,7 +5,13 @@ The dashboard tile keyed on health alone showed green for a project whose render
 reflect the real ArgoCD status.
 """
 
+from datetime import UTC, datetime, timedelta
+
 from opi.web.router import _deployment_dashboard_status, _derive_project_health
+
+
+def _ago(seconds: int) -> str:
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
 
 
 def _status(health: str, *, sync: str = "Synced", condition: str | None = None) -> dict:
@@ -30,6 +36,38 @@ class TestDeploymentDashboardStatus:
     def test_non_terminal_condition_keeps_health(self):
         s = _status("Healthy", condition="OrphanedResourceWarning")
         assert _deployment_dashboard_status(s) == "Healthy"
+
+    def test_progressing_for_weeks_is_degraded(self):
+        # The production shape: a rescheduled pod in ImagePullBackOff after a finished
+        # rollout keeps Progressing=True, so ArgoCD never says Degraded.
+        s = _status("Progressing")
+        s["status"]["health"]["lastTransitionTime"] = _ago(20 * 24 * 3600)
+        assert _deployment_dashboard_status(s) == "Degraded"
+
+    def test_recent_progressing_stays_progressing(self):
+        s = _status("Progressing")
+        s["status"]["health"]["lastTransitionTime"] = _ago(30)
+        assert _deployment_dashboard_status(s) == "Progressing"
+
+    def test_progressing_without_transition_time_stays_progressing(self):
+        assert _deployment_dashboard_status(_status("Progressing")) == "Progressing"
+
+    def test_failed_sync_is_degraded(self):
+        s = _status("Progressing", sync="OutOfSync")
+        s["status"]["operationState"] = {"phase": "Failed", "message": "one or more objects failed to apply"}
+        assert _deployment_dashboard_status(s) == "Degraded"
+
+    def test_stuck_running_sync_is_degraded(self):
+        s = _status("Progressing", sync="OutOfSync")
+        s["status"]["operationState"] = {"phase": "Running", "startedAt": _ago(3600)}
+        s["operation"] = {"sync": {}}
+        assert _deployment_dashboard_status(s) == "Degraded"
+
+    def test_young_running_sync_stays_progressing(self):
+        s = _status("Progressing", sync="OutOfSync")
+        s["status"]["operationState"] = {"phase": "Running", "startedAt": _ago(20)}
+        s["operation"] = {"sync": {}}
+        assert _deployment_dashboard_status(s) == "Progressing"
 
 
 class TestDeriveProjectHealth:

@@ -240,21 +240,58 @@ class SkopeoConnector:
         with _authfile(upstream_host(repository), username, password) as authfile:
             cmd = ["skopeo", "list-tags", "--authfile", authfile, f"docker://{repository}"]
             logger.info(f"Verifying registry access: {' '.join(cmd)}")
-            try:
-                process = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=child_env()
-                )
-                _stdout, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
-            except TimeoutError:
-                logger.warning(f"Registry access check timed out for {repository}")
-                return True, ""
-            except FileNotFoundError:
-                return True, ""
+            return await self._run_check(cmd, repository, timeout_seconds)
+
+    async def check_login(
+        self, registry: str, username: str, password: str, timeout_seconds: int = 20
+    ) -> tuple[bool, str]:
+        """Does this registry accept these credentials at all? Returns (ok, reason).
+
+        For when there is no repository to read yet: the create wizard asks for the
+        registry before the components. A login proves the token is valid, not that it
+        may read a given repository; ``check_repository_access`` stays the stronger check.
+        Same fallbacks as that one.
+        """
+        if not self.is_skopeo_available:
+            logger.info("Skopeo CLI not available; registry credentials not verified")
+            return True, ""
+
+        if await _destination_refused(registry):
+            logger.warning(f"Registry login check refused: {registry} is not a public destination")
+            return False, REFUSED_DESTINATION_REASON
+
+        host = upstream_host(registry)
+        # A fresh authfile: skopeo writes the credentials there on success, never in the
+        # user's own. The password goes over stdin, not in the argv.
+        with tempfile.TemporaryDirectory(prefix="skopeo-auth-") as directory:
+            authfile = os.path.join(directory, "auth.json")
+            cmd = ["skopeo", "login", "--authfile", authfile, "--username", username, "--password-stdin", host]
+            logger.info(f"Verifying registry login: skopeo login --authfile {authfile} {host}")
+            return await self._run_check(cmd, host, timeout_seconds, stdin=password.encode())
+
+    async def _run_check(
+        self, cmd: list[str], target: str, timeout_seconds: int, stdin: bytes | None = None
+    ) -> tuple[bool, str]:
+        """Run a credential check; a check that cannot run says ok, as in ``check_repository_access``."""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=child_env(),
+            )
+            _stdout, stderr_bytes = await asyncio.wait_for(process.communicate(stdin), timeout=timeout_seconds)
+        except TimeoutError:
+            logger.warning(f"Registry credential check timed out for {target}")
+            return True, ""
+        except FileNotFoundError:
+            return True, ""
 
         if process.returncode == 0:
             return True, ""
         stderr = self._mask_userinfo(stderr_bytes.decode(errors="replace").strip())
-        logger.warning(f"Registry access check failed for {repository}: {stderr}")
+        logger.warning(f"Registry credential check failed for {target}: {stderr}")
         return False, UNREADABLE_REASON
 
     @staticmethod

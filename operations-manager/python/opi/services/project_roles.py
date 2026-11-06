@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from opi.core.actor import ActorKind, get_actor
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide, effective_roles
 from opi.core.project_environment import Omgeving, effective_environment, highest_environment
+from opi.core.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ def actor_may_set(action: Action, project_data: dict[str, Any], *, environment: 
     if actor.kind is not ActorKind.USER or not actor.identity:
         return True
     email = actor.identity.lower()
-    if get_user_service().is_platform_admin(email):
+    if is_elevated_admin(get_user_service(), email):
         roles = PLATFORM_ADMIN_ROLES
     else:
         roles = frozenset()
@@ -134,6 +135,7 @@ def build_resource(
     path: str,
     deployment: str | None = None,
     component: str | None = None,
+    marking_if_absent: str | None = None,
 ) -> Resource:
     """De resource waarop een aanroep werkt, uit één lezing van het projectbestand.
 
@@ -144,6 +146,9 @@ def build_resource(
 
     Zonder project (een route die er geen heeft, of een onbekend project) blijft alles op
     de standaardmarkering staan, en geeft de route zelf zijn 404.
+
+    *marking_if_absent* is the marking of a named deployment that does not exist, for a
+    route that declared one with :func:`opi.core.authz.actions.marking_if_absent`.
     """
     data: dict[str, Any] = (getattr(project, "data", None) or {}) if project is not None else {}
     heeft_productie = project_has_production(data)
@@ -151,7 +156,9 @@ def build_resource(
         project=project_name,
         path=path,
         deployment=deployment,
-        environment=deployment_marking(data, deployment) or highest_environment(data).value,
+        environment=deployment_marking(data, deployment)
+        or (marking_if_absent if deployment else None)
+        or highest_environment(data).value,
         component=component,
         component_in_production=component_in_production(data, component) if component else heeft_productie,
         project_has_production=heeft_productie,

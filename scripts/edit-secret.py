@@ -158,7 +158,9 @@ def rotate_flow(args: argparse.Namespace, cluster: Cluster) -> int:
     gaps = rotate.coverage_gaps()
     if gaps:
         raise EditFailed(
-            "de dekking-poort is open: " + " | ".join(gaps) + " -- los dit eerst (rij in de tabel of benoemde uitzondering)"
+            "de dekking-poort is open: "
+            + " | ".join(gaps)
+            + " -- los dit eerst (rij in de tabel of benoemde uitzondering)"
         )
     if args.component and args.component not in rotate.BY_KEY:
         raise EditFailed(f"onbekend component '{args.component}'. Kies uit: {', '.join(rotate.BY_KEY)}")
@@ -210,7 +212,7 @@ def rotate_flow(args: argparse.Namespace, cluster: Cluster) -> int:
                 print(line)
             continue
         ctx = (
-            rotate.gather_ctx(component, cluster, kube, apply_changes=apply_changes)
+            rotate.gather_ctx(component, cluster, kube, apply_changes=apply_changes, assume_yes=bool(args.yes))
             if apply_changes
             else rotate.gather_dry_ctx(component, cluster, kube)
         )

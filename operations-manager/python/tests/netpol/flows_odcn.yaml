@@ -78,7 +78,7 @@ endpoints:
 
   # De CNPG-operator, die de instance-status van dat cluster ophaalt.
   cnpg-operator:
-    namespace: cnpg-system
+    namespace: quattro-cloudnative-db-operator
     labels: {app.kubernetes.io/name: cloudnative-pg}
 
   rig-db:

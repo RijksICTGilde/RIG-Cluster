@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from opi.core import progress_steps as steps
 from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
 from opi.services import ServiceType
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
@@ -52,7 +53,7 @@ class BootstrapManager:
         progress_manager = self.project_manager.get_progress_manager()
         bootstrap_task = None
         if progress_manager:
-            bootstrap_task = progress_manager.add_task("Bootstrap-acties uitvoeren", subject=deployment_name)
+            bootstrap_task = progress_manager.add_task(steps.BOOTSTRAP_ACTIONS, subject=deployment_name)
 
         try:
             # Build context for variable substitution

@@ -1,0 +1,38 @@
+{#
+  Getting started: the shortest route to something running, and how services reach your code.
+
+  Less is more: anything longer belongs on /services or in the repositories of zadctl and
+  zad-actions, which keep their own documentation. See bg/cli.html.j2 for how
+  a manual in this portal went stale.
+
+  Public like /introductie: it is for people who do not have access yet.
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import panel, page_head %}
+{% from "bg/_getting-started-blokken.html.j2" import
+    begrippen, hello_world, services_gebruiken, image_uitrollen %}
+
+{% block page_title %}Getting started - Zelfservice Applicatie Deployment{% endblock %}
+
+{% block content %}
+    {{ page_head(
+        "Getting started",
+        "Je eerste applicatie op ZAD, en hoe je project services kan gebruiken."
+    ) }}
+
+    {% call panel("Zo zit het in elkaar", "puzzle-piece") %}
+        {{ begrippen() }}
+    {% endcall %}
+
+    {% call panel("Hello world", "play") %}
+        {{ hello_world() }}
+    {% endcall %}
+
+    {% call panel("Services gebruiken", "rectangle-stack") %}
+        {{ services_gebruiken() }}
+    {% endcall %}
+
+    {% call panel("Een nieuwe image uitrollen", "arrow-up-arrow-down") %}
+        {{ image_uitrollen() }}
+    {% endcall %}
+{% endblock %}

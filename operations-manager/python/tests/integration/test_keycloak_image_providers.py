@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.requires_infra
 
 #: Provider-id per SPI, gelezen uit de factories en de META-INF/services-bestanden van
-#: `keycloak-migration/`, niet uit het plan. De SPI-namen komen uit `getName()` van de
+#: `images/keycloak-zad/extensions/`, niet uit het plan. De SPI-namen komen uit `getName()` van de
 #: bijbehorende Spi-klasse in de Keycloak-jars.
 PROVIDERS = (
     ("identity-provider-mapper", "saml-unrestricted-xpath-idp-mapper"),
@@ -41,7 +41,7 @@ PROVIDERS = (
     ("emailSender", "zad-relay"),
 )
 
-#: Het thema uit de MinBZK-release dat de imagebouw ophaalt.
+#: Het thema dat de imagebouw uit `images/keycloak-zad/theme/` meeneemt.
 LOGIN_THEMA = "nl-design-system"
 
 #: De foutgauge van PrometheusExporter, met de realm-onafhankelijke stap op 0.
@@ -57,11 +57,12 @@ IDP_TELLING_ALIAS = "rc412-telling-idp"
 #: De realm waarvan de inlogpagina met het thema gerenderd wordt.
 THEMA_REALM = "rc412-thema"
 
-#: Twee klassen uit `login/theme.properties` van de MinBZK-release: de body-klasse van het
-#: thema en de invoerklasse van de component-bibliotheek. Komt het thema niet door de
-#: FreeMarker-render van deze Keycloak-versie, dan geeft Keycloak zijn eigen foutpagina en
-#: staan ze er niet.
-THEMA_MARKERS = ("rvo-theme", "utrecht-textbox")
+#: Twee dingen die alleen in ONS thema staan: het wortelelement van de NLDD-schil en het pad
+#: van de bundel in de image. Komt het thema niet door de FreeMarker-render van deze
+#: Keycloak-versie, dan geeft Keycloak zijn eigen foutpagina; valt een pagina terug op de
+#: parent `base`, dan staat er geen van beide in. Het pad dekt ook de omgekeerde fout: een
+#: bundel van een CDN zou hier langs komen.
+THEMA_MARKERS = ("<nldd-shell", "/nldd/nldd.min.js")
 
 
 @pytest.fixture(scope="module")

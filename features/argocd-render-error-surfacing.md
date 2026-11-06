@@ -81,7 +81,7 @@ the namespace or the secret does not exist, or the repo-server may not read it
 Dit is geen kapotte kustomization maar een ontbrekende Role `cmp-sops-key-reader` naast het
 sleutel-secret. OPI zet die bij elke verwerking en bij het opstarten, dus een herstart of een
 verwerking van dat project herstelt het; wie en wanneer staat in
-`instructions/sops-sleutel-in-het-cluster.md`.
+`docs/development/sops-sleutel-in-het-cluster.md`.
 
 ## Files
 

@@ -70,7 +70,7 @@
     {
      "name": "argo",
      "file": "opi/connectors/argo.py",
-     "uses": 13
+     "uses": 15
     }
    ],
    "services": [],
@@ -132,6 +132,10 @@
     {
      "file": "features/git-push-serialization.md",
      "title": "Git push-serialisatie per repo"
+    },
+    {
+     "file": "features/git-repo.md",
+     "title": "GitRepo: één beheerde repo per remote"
     }
    ]
   },
@@ -460,6 +464,10 @@
      "title": "Domain Configuration"
     },
     {
+     "file": "features/domain-format.md",
+     "title": "Domain Format (Primary Wizard Control)"
+    },
+    {
      "file": "features/domain-restrictions.md",
      "title": "Domain Restrictions"
     },
@@ -572,12 +580,12 @@
     {
      "name": "grafana_prometheus",
      "file": "opi/connectors/grafana_prometheus.py",
-     "uses": 1
+     "uses": 4
     },
     {
      "name": "prometheus",
      "file": "opi/connectors/prometheus.py",
-     "uses": 11
+     "uses": 13
     }
    ],
    "services": [
@@ -594,6 +602,10 @@
     {
      "file": "features/metrics-endpoint-security.md",
      "title": "Metrics Endpoint Security"
+    },
+    {
+     "file": "features/metrics-graceful-degradation.md",
+     "title": "Metrics: graceful degradation en herstel op de achtergrond"
     },
     {
      "file": "features/metrics-scraper.md",

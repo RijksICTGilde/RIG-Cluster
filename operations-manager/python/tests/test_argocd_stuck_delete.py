@@ -15,6 +15,7 @@ So these tests assert sequences, not just that the calls happened.
 import asyncio
 import json
 import logging
+import os
 import time
 from inspect import signature
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1283,16 +1284,21 @@ class TestForceDeleteStuckApplication:
 
 
 def _gitops_dubbel() -> AsyncMock:
-    """Een git-connector die ``mutate_and_push`` doet wat de echte doet: de mutatie
-    uitvoeren en dan committen. Een kale AsyncMock zou de mutatie nooit aanroepen."""
-    connector = AsyncMock()
-    connector.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+    """Een werkmap die ``mutate_and_push`` doet wat de echte doet: de mutatie uitvoeren en
+    dan schrijven. Een kale AsyncMock zou de mutatie nooit aanroepen.
+
+    ``remove_and_push`` meldt of het pad er stond, zoals de echte, en laat de verwijdering
+    aan ``os.path.exists`` van de test over.
+    """
+    workspace = AsyncMock()
+    workspace.get_working_dir = AsyncMock(return_value="/tmp/gitops")
 
     async def _mutate_and_push(message, mutate):
         return await mutate()
 
-    connector.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
-    return connector
+    workspace.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
+    workspace.remove_and_push = AsyncMock(side_effect=lambda pad, _bericht: os.path.exists(f"/tmp/gitops/{pad}"))
+    return workspace
 
 
 def _deployment_harness(
@@ -1324,7 +1330,7 @@ def _deployment_harness(
         return_value={"operations": [], "errors": []}
     )
 
-    for factory in ("get_git_connector_for_argocd", "get_git_connector_for_deployment"):
+    for factory in ("get_argo_workspace", "get_deployment_workspace"):
         setattr(pm, factory, AsyncMock(return_value=_gitops_dubbel()))
 
     answers = list(wait_results or [])
@@ -1364,7 +1370,7 @@ class TestOperationClearedBeforeTheWait:
         pm._manifest_generator = MagicMock()
 
         gitops = _gitops_dubbel()
-        pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+        pm.get_argo_workspace = AsyncMock(return_value=gitops)
 
         async def _wait(*args, **kwargs):
             calls.append("wait_for_deletion")
@@ -1412,7 +1418,7 @@ class TestOperationClearedBeforeTheWait:
         pm._manifest_generator = MagicMock()
 
         gitops = _gitops_dubbel()
-        pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+        pm.get_argo_workspace = AsyncMock(return_value=gitops)
 
         argo = AsyncMock()
         argo.refresh_application = AsyncMock(return_value=True)
@@ -1447,7 +1453,7 @@ class TestOperationClearedBeforeTheWait:
         pm._manifest_generator = MagicMock()
 
         gitops = _gitops_dubbel()
-        pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+        pm.get_argo_workspace = AsyncMock(return_value=gitops)
 
         answers = [False, True]
 
@@ -1971,11 +1977,10 @@ async def _delete_a_half_swept_deployment(calls: list[str], *, cascade_ends: boo
         patch("opi.manager.delete_project_manager.SubdomainConnector", subdomains),
         patch("opi.services.marked_for_deletion_service.MarkedForDeletionService", deferred),
         patch("os.path.exists", side_effect=lambda path: path == MANIFEST_FOLDER),
-        patch("opi.manager.delete_project_manager.shutil.rmtree") as rmtree,
     ):
         results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
 
-    results["_rmtree"] = rmtree
+    results["_verwijderd"] = (await pm.get_deployment_workspace()).remove_and_push
     results["_deferred"] = deferred
     results["_argo"] = argo
     return results
@@ -2009,7 +2014,8 @@ class TestTheManifestFolderAfterAPartialSweep:
         ]
         cascade = next(op for op in results["operations"] if op["type"] == "argocd_app_cascade_wait")
         assert cascade["status"] == "success"
-        results["_rmtree"].assert_called_once_with(MANIFEST_FOLDER)
+        results["_verwijderd"].assert_awaited_once()
+        assert results["_verwijderd"].await_args.args[0] == MANIFEST_FOLDER.removeprefix("/tmp/gitops/")
         folder = next(op for op in results["operations"] if op["type"] == "deployment_folder_deletion")
         assert folder["status"] == "success"
 
@@ -2040,7 +2046,7 @@ class TestTheManifestFolderAfterAPartialSweep:
 
         cascade = next(op for op in results["operations"] if op["type"] == "argocd_app_cascade_wait")
         assert cascade["status"] == "timeout"
-        results["_rmtree"].assert_not_called()
+        results["_verwijderd"].assert_not_awaited()
         folder = next(op for op in results["operations"] if op["type"] == "deployment_folder_deletion")
         assert folder["status"] == "deferred"
         assert results["_deferred"].return_value.mark_resource.await_args.kwargs["resource_name"] == (

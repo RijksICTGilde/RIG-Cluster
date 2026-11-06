@@ -63,7 +63,9 @@ spec:
           value: "{{ backup_prefix }}"
         - name: KOPIA_PASSWORD
           value: "{{ kopia_password }}"
-        # Use /tmp for Kopia cache (container filesystem is read-only)
+        # Use /tmp for Kopia paths (HOME is not writable on OpenShift)
+        - name: KOPIA_CONFIG_PATH
+          value: "/tmp/kopia-repository.config"
         - name: KOPIA_CACHE_DIRECTORY
           value: "/tmp/kopia-cache"
         - name: KOPIA_LOG_DIR

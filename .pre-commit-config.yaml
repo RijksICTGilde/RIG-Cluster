@@ -20,9 +20,9 @@ repos:
       # is exactly what images/argocd-rig/Taskfile.yaml `src:verify` runs.
       # Vendored bundles (mermaid, redoc, swagger-ui) blijven byte-gelijk aan de release.
       - id: trailing-whitespace
-        exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|redoc/|swagger-ui/))
+        exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|js/zad-map\.js|redoc/|swagger-ui/))
       - id: end-of-file-fixer
-        exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|redoc/|swagger-ui/))
+        exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|js/zad-map\.js|redoc/|swagger-ui/))
       - id: check-yaml
         args: [--allow-multiple-documents]
       - id: check-added-large-files

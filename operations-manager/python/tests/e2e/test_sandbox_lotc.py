@@ -10,6 +10,7 @@ Draait alleen met E2E_BASE_URL gezet; zonder slaan deze tests over.
 """
 
 import pytest
+from opi.core.static_files import LOTC_VERSIONED_PATH
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 
@@ -25,15 +26,17 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 # naast wat een gerenderde pagina werkelijk ophaalt, in beide richtingen. Zonder die tweede
 # richting stonden forms/forms.css en nldd/dist/css/global.css er niet in, terwijl elke
 # pagina ze laadt.
+# Namen binnen de leverdirectory van LOTC (/static/lotc/v<datum>-<tijd>-NLDD<versie>/...),
+# zonder die directory: die verandert bij elke LOTC-versie, de namen erin niet.
 STATIC_ASSETS = [
-    "/static/lotc/nldd/dist/nldd.js",
-    "/static/lotc/nldd/dist/css/global.css",
-    "/static/lotc/layout/layout.css",
-    "/static/lotc/app-components.css",
-    "/static/lotc/nldd/lotc-nldd.css",
-    "/static/lotc/nldd/lotc-nldd.js",
-    "/static/lotc/forms/forms.css",
-    "/static/lotc/forms/forms.js",
+    "nldd/dist/nldd.js",
+    "nldd/dist/css/global.css",
+    "layout/layout.css",
+    "app-components.css",
+    "nldd/lotc-nldd.css",
+    "nldd/lotc-nldd.js",
+    "forms/forms.css",
+    "forms/forms.js",
 ]
 
 
@@ -59,6 +62,13 @@ def test_lotc_static_assets_are_in_the_image(sandbox_page, sandbox_url: str) -> 
     Dit is de toets die een testserver niet kan doen: die leest ze van de schijf van de
     ontwikkelmachine.
     """
+    sandbox_page.goto(f"{sandbox_url}/lotc/")
+    urls = sandbox_page.eval_on_selector_all(
+        "link[href*='/static/lotc/'], script[src*='/static/lotc/']",
+        "els => els.map(e => e.getAttribute('href') || e.getAttribute('src'))",
+    )
     for asset in STATIC_ASSETS:
-        response = sandbox_page.request.get(f"{sandbox_url}{asset}")
-        assert response.ok, f"asset ontbreekt in de image: {asset} -> {response.status}"
+        url = next((u for u in urls if LOTC_VERSIONED_PATH.search(u) and u.endswith(f"/{asset}")), None)
+        assert url is not None, f"de pagina haalt {asset} niet uit een leverdirectory: {urls}"
+        response = sandbox_page.request.get(f"{sandbox_url}{url}")
+        assert response.ok, f"asset ontbreekt in de image: {url} -> {response.status}"

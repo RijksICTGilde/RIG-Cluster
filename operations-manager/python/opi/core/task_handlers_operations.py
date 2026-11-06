@@ -10,7 +10,9 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 import logging
 from typing import Any
 
+from opi.connectors.git_repo import sync_platform_repos
 from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
+from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
@@ -72,13 +74,13 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
     try:
         # Task 1: Initialize project manager
-        init_task = progress.add_task("Projectgegevens ophalen")
+        init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
         progress.complete_task(init_task)
 
         # Task 2: Clone database
         clone_method = "via een Chisel-tunnel" if tunnel else "via een directe verbinding"
-        clone_task = progress.add_task(f"Database kopiëren van {source_database} {clone_method}")
+        clone_task = progress.add_task(steps.DATABASE_CLONE, subject=f"{source_database} {clone_method}")
 
         if tunnel:
             # Chisel tunnel-based connection
@@ -207,12 +209,12 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
     try:
         # Task 1: Initialize project manager
-        init_task = progress.add_task("Projectgegevens ophalen")
+        init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
         progress.complete_task(init_task)
 
         # Task 2: Clone bucket
-        clone_task = progress.add_task(f"Bucket {source_bucket} kopiëren")
+        clone_task = progress.add_task(steps.BUCKET_CLONE, subject=source_bucket)
 
         if tunnel:
             # Chisel tunnel-based connection
@@ -302,6 +304,22 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
 
+async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects: bool = False) -> None:
+    """Pick up outside changes, and fail the step when git does not cooperate.
+
+    Without this the step stayed open while the task had already failed, and the user read
+    nowhere what went wrong. The message is the connector's, so the user sees whether it is
+    the platform's doing.
+    """
+    try:
+        if reconcile_projects:
+            await get_project_store().reconcile()
+        await sync_platform_repos()
+    except RuntimeError as exc:
+        progress.fail_task(task_id, f"{type(exc).__name__}: {exc}")
+        raise
+
+
 async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     """Handle async deployment refresh task.
 
@@ -354,13 +372,17 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     project_manager = None
     try:
         # Task 1: Look up project
-        lookup_task = progress.add_task("Project opzoeken")
+        lookup_task = progress.add_task(steps.PROJECT_LOOKUP)
         logger.info(
             "Deployment refresh request for: %s/%s (force_clone=%s)",
             project_name,
             deployment_name,
             force_clone,
         )
+
+        # Same reason as on a project refresh: whatever was committed to the manifest
+        # repos outside ZAD belongs in the state we generate from.
+        await _sync_or_fail_step(progress, lookup_task)
 
         project = get_project_store().get(project_name)
 
@@ -373,7 +395,6 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
         progress.complete_task(lookup_task)
 
         # Task 2: Process deployment
-        deploy_task = progress.add_task(f"Deployment {deployment_name} opnieuw verwerken")
         project_manager = create_project_manager()
         project_file_path = f"projects/{project.filename}"
 
@@ -401,8 +422,6 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                 # Report web addresses from deployment results
                 for url_name, url_value in (dep_result.urls or {}).items():
                     progress.update_component_web_address(url_name, url_value)
-
-            progress.complete_task(deploy_task)
 
             # Schedule fire-and-forget OOM watcher
             from opi.core.config import settings
@@ -442,7 +461,6 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                 processing_error or f"Failed to process deployment '{deployment_name}' in project '{project_name}'"
             )
             logger.warning("Deployment refresh failed: %s/%s", project_name, deployment_name)
-            progress.fail_task(deploy_task, error_msg)
             progress.fail_project(error_msg)
 
             component_failures = project_manager.get_component_failures()
@@ -532,13 +550,13 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     project_manager = None
     try:
         # Task 1: Look up project
-        lookup_task = progress.add_task("Project opzoeken en wijzigingen uit git ophalen")
+        lookup_task = progress.add_task(steps.PROJECT_LOOKUP)
         logger.info("Project refresh request for: %s (force_clone=%s)", project_name, force_clone)
 
         # Pick up anything committed outside ZAD before reprocessing, so "refresh"
         # actually means "use what is in git right now". Costs one ls-remote when
         # nothing changed; a fetch and a targeted re-read when it did.
-        await get_project_store().reconcile()
+        await _sync_or_fail_step(progress, lookup_task, reconcile_projects=True)
 
         project = get_project_store().get(project_name)
 
@@ -551,7 +569,6 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         progress.complete_task(lookup_task)
 
         # Task 2: Process project (all deployments)
-        process_task = progress.add_task("Alle deployments opnieuw verwerken")
         project_manager = create_project_manager()
         project_file_path = f"projects/{project.filename}"
 
@@ -575,8 +592,6 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                 }
                 for url_name, url_value in (dep_result.urls or {}).items():
                     progress.update_component_web_address(url_name, url_value)
-
-            progress.complete_task(process_task)
 
             return {
                 "status": "success",
@@ -602,7 +617,6 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
             processing_error = project_manager.get_processing_error()
             error_msg = processing_error or f"Failed to process project '{project_name}'"
             logger.warning("Project refresh failed: %s", project_name)
-            progress.fail_task(process_task, error_msg)
             progress.fail_project(error_msg)
 
             component_failures = project_manager.get_component_failures()
@@ -682,7 +696,7 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
 
     store = get_project_store()
 
-    lookup_task = progress.add_task("Projectbestand lezen")
+    lookup_task = progress.add_task(steps.PROJECT_FILE_READ)
     await store.reconcile()
     project = store.get(project_name)
     if not project:
@@ -692,7 +706,7 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
         raise ValueError(error_msg)
     progress.complete_task(lookup_task)
 
-    rotate_task = progress.add_task("Nieuwe projectsleutel maken, de velden omzetten en opslaan")
+    rotate_task = progress.add_task(steps.PROJECT_KEY_ROTATE)
     new_private_key, new_public_key = generate_sops_key_pair()
     # Onder de project-KEK, net als bij projectaanmaak; zonder KEK valt wrap_project_key terug
     # op de platformsleutel (RC-334).
@@ -742,7 +756,7 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
     progress.complete_task(rotate_task)
 
     # Na opslag (reparatie vereist beide wachtwoorden) en voor verwerking (die de sleutel in het Secret zet).
-    backup_task = progress.add_task("Backupwachtwoord meeverhuizen")
+    backup_task = progress.add_task(steps.BACKUP_PASSWORD_CARRY)
     try:
         carried = await _carry_over_backup_passwords(mutation.after, new_private_key, new_public_key)
     except (KopiaConnectionError, KopiaExecutionError) as e:

@@ -23,7 +23,7 @@ upstream (sandbox: de Mailpit-sink)
 Het middelste blok is het verschil met een standaard Keycloak. Normaal draagt **elke realm**
 zijn eigen `smtpServer`-map met host, gebruiker en wachtwoord; Keycloak heeft geen
 serverbrede SMTP-instelling. Op dit platform is die map vervangen door een eigen
-`EmailSenderProvider` (`keycloak-migration/relay-email-sender/`) die de relay, de
+`EmailSenderProvider` (`images/keycloak-zad/extensions/relay-email-sender/`) die de relay, de
 inloggegevens en het afzenderadres uit de **omgeving van de pod** leest en de map van de
 realm volledig negeert.
 
@@ -301,8 +301,9 @@ Drie dingen om te weten:
 - **Een taal is pas beschikbaar als login-, account- EN emailthema hem ondersteunen.** Voor
   `nl` is dat het geval: Keycloak levert `messages_nl.properties` mee in zijn base/email-thema.
 
-**`emailTheme` blijft leeg.** Het MinBZK-thema levert geen bruikbaar mailthema (waargenomen:
-kale Engelse tekst met dat thema geladen). Eigen mailsjablonen zijn een eigen taak, met een
+**`emailTheme` blijft leeg.** `nl-design-system` levert geen mailthema (zie
+`features/keycloak-nldd-thema.md`); met het MinBZK-thema dat er tot RC-424 stond kwam er
+kale Engelse tekst uit (waargenomen). Eigen mailsjablonen zijn een eigen taak, met een
 echte ontwerpvraag eronder - zie `plans/mail-vervolgpunten.md`.
 
 ### Wanneer het landt
@@ -489,7 +490,7 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 
 | Onderdeel | Pad |
 |---|---|
-| De verzender (Java) | `keycloak-migration/relay-email-sender/` |
+| De verzender (Java) | `images/keycloak-zad/extensions/relay-email-sender/` |
 | De jar in de pod | `images/keycloak-zad/`, gebouwd uit de bron hierboven |
 | De vlag en de omgevingsvariabelen | `infrastructure/.../keycloak/controller/base/deployment.yaml` |
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |

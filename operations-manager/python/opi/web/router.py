@@ -17,7 +17,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
-from opi.core.step_up import StepUpAction
+from opi.core.step_up import StepUpAction, is_elevated_admin
 from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import is_projectbeheerder
 from opi.services.argocd_operation import (
@@ -26,6 +26,7 @@ from opi.services.argocd_operation import (
     is_stuck,
     operation_age_seconds,
     read_sync_operation,
+    seconds_since,
 )
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
@@ -45,9 +46,12 @@ from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.services.zad_map import platform_graph, project_graph
 from opi.services.zad_map.platform import current_cluster_folder
+from opi.services.zad_map.project import usage_targets
+from opi.services.zad_map.usage import measure_usage
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
+from opi.utils.url_paths import local_redirect_path
 from opi.utils.yaml_util import load_yaml_from_string
 from opi.web.authz import enforce_route_action, may
 from opi.web.lotc_switch import (
@@ -251,6 +255,15 @@ async def introductie(request: Request):
             **build_lotc_introductie(user),
         },
     )
+
+
+@web_router.get("/getting-started", response_class=HTMLResponse)
+async def getting_started(request: Request):
+    """The first steps on ZAD.
+
+    BEWUST ZONDER ``@requires_sso``: public like /introductie, it is for people without access yet.
+    """
+    return _wegwijzer(request, "getting-started.html.j2", "bg/getting-started.html.j2", "/getting-started")
 
 
 @web_router.get("/permission-denied", response_class=HTMLResponse)
@@ -787,6 +800,9 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
     rendered or compared; health may still read ``Healthy`` from the last good sync, so a
     tile keyed on health alone would be misleadingly green. Treat that as ``Degraded`` so a
     broken render is visible at the top level.
+
+    ``Progressing`` only counts as "wordt bijgewerkt" while something can still move: a
+    failed or stuck sync, and a Progressing that outlasts OPI's own wait, are Degraded.
     """
     from opi.manager.argo_manager import terminal_condition_message
 
@@ -794,7 +810,21 @@ def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
         return "Unknown"
     if terminal_condition_message(status_data):
         return "Degraded"
-    return status_data.get("status", {}).get("health", {}).get("status", "Unknown")
+    operation = read_sync_operation(status_data)
+    if operation.phase in ("Failed", "Error") or is_stuck(
+        operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS
+    ):
+        return "Degraded"
+    health = status_data.get("status", {}).get("health", {}) or {}
+    health_status = health.get("status", "Unknown")
+    # Een pod die na een geslaagde rollout opnieuw ingepland wordt en zijn image niet kan
+    # halen, haalt nooit de progress deadline: Kubernetes houdt Progressing=True vanaf de
+    # vorige rollout, dus ArgoCD meldt Progressing, wekenlang. Hier gaat de duur beslissen.
+    if health_status == "Progressing":
+        progressing_for = seconds_since(health.get("lastTransitionTime"))
+        if progressing_for is not None and progressing_for >= STUCK_OPERATION_THRESHOLD_SECONDS:
+            return "Degraded"
+    return health_status
 
 
 def _deployment_inactivity(project_data: dict[str, Any], deployment_name: str) -> str | None:
@@ -1262,7 +1292,7 @@ async def dashboard(request: Request):
             # Fail fast: het standaardbudget van 30 seconden zou hier PER deployment
             # gelden, sequentieel in een enkel verzoek, waar deze pagina eerder in
             # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
-            # opi/api/v2/router.py; zie docs/argocd-server-herstart-elke-40-minuten.md.
+            # opi/api/v2/router.py; zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
             argo_connector = create_argo_connector(connect_retry_seconds=0)
             argocd_available = await argo_connector.ensure_authenticated()
 
@@ -1364,16 +1394,18 @@ async def project_details(request: Request, project_name: str):
 @web_router.get("/projects/{project_name}/kaart.json")
 @action(Action.PROJECT_READ)
 @requires_sso
-async def project_map_json(request: Request, project_name: str) -> JSONResponse:
-    """De graaf achter het tabblad Kaart.
+async def project_map_json(request: Request, project_name: str, deployment: str | None = None) -> JSONResponse:
+    """De graaf achter het tabblad Kaart; met ``?deployment=`` die van een deployment.
 
     Een eigen route met een eigen action, zoals het metingenfragment: het tabblad laadt
     zijn plaat zelf. Leest alleen ``ProjectSummary.data``, nooit de ontsleutelde vorm.
+    Alleen de kaart van een deployment meet groottes.
     """
     try:
-        graph = project_graph(project_name)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found") from None
+        usage = await measure_usage(*usage_targets(project_name, deployment)) if deployment else None
+        graph = project_graph(project_name, deployment, usage)
+    except KeyError as missing:
+        raise HTTPException(status_code=404, detail=f"'{missing.args[0]}' not found") from None
     return JSONResponse(graph.as_json())
 
 
@@ -1694,7 +1726,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             "user_roles": user_roles,
             # Voor de link naar de rolmatrix op de Team-kaart: die pagina is voor
             # platformbeheerders, dus een lid krijgt er geen link naartoe die 403 geeft.
-            "is_platform_admin": get_user_service().is_platform_admin(user_email),
+            "is_platform_admin": is_elevated_admin(get_user_service(), user_email),
             "services": services_with_info,
             "clusters": project_data.get("clusters", []),
             "components": project_data_decrypted.get("components", []),
@@ -1727,7 +1759,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
         # does not block the page render; only the cheap availability check stays here.
         # Fail fast: op het standaardbudget wacht deze toets 30 seconden met de pagina
-        # erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+        # erachter. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
         argocd_available = False
         if not map_tab:
             try:
@@ -2311,12 +2343,14 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
 
     if namespaces:
         ns_regex = "|".join(namespaces)
-        try:
-            from opi.connectors.prometheus import get_metrics_connector
+        # Boven de try, want de except hieronder noemt deze fouten.
+        from opi.connectors.grafana_prometheus import GrafanaConnectionError
+        from opi.connectors.prometheus import PrometheusConnectionError, get_metrics_connector
 
+        try:
             prom = await get_metrics_connector()
             if not prom.is_connected:
-                ctx["usage_error"] = "Prometheus is niet beschikbaar"
+                ctx["usage_error"] = "Metrics zijn op dit moment niet beschikbaar."
             else:
 
                 async def _scalar(promql: str) -> float:
@@ -2351,6 +2385,11 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
                         [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
                     ),
                 }
+        except (GrafanaConnectionError, PrometheusConnectionError) as fout:
+            # De metingsbron viel weg TIJDENS de bevraging. Dezelfde melding als hierboven,
+            # want voor de lezer is het hetzelfde: er is nu niets te meten.
+            logger.warning("Metrics niet beschikbaar voor %s: %s", project_name, fout)
+            ctx["usage_error"] = "Metrics zijn op dit moment niet beschikbaar."
         except Exception:
             # De melding van de metingslaag ging tot nu toe onbewerkt het sjabloon in en
             # kwam er op regel 40 letterlijk uit: bij een onbereikbare Prometheus stond
@@ -2409,7 +2448,7 @@ async def argocd_status_fragment(
 
     # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
     # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
-    # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    # taak. Zie docs/post-mortems/argocd-server-herstart-elke-40-minuten.md.
     # Zonder ARGOCD_TOKEN en zonder wachtwoord is er geen connector te maken. Dat hoort
     # dezelfde kaart te geven als een ArgoCD die niet antwoordt, niet een 500 in dit fragment.
     argo = None
@@ -2886,7 +2925,7 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
     """
     from opi.web.lotc_switch import SCHEME_COOKIE, SCHEMES
 
-    bestemming = terug if terug.startswith("/") and not terug.startswith("//") else "/"
+    bestemming = local_redirect_path(terug)
     antwoord = RedirectResponse(url=bestemming, status_code=303)
     antwoord.set_cookie(
         SCHEME_COOKIE,
@@ -3096,7 +3135,7 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
         template_status = "failed"
 
     subtasks = task.get("subtasks") or []
-    task_hierarchy = _build_task_hierarchy(subtasks)
+    task_hierarchy = _build_task_hierarchy(subtasks, template_status)
 
     error = task.get("error_message")
     component_failures = None
@@ -3117,6 +3156,7 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
         "current_step": stap_label(task.get("current_step"))
         or ("Details niet meer beschikbaar" if details_purged else "Verwerking gestart..."),
         "tasks": task_hierarchy,
+        "total_duration_seconds": _total_duration_seconds(subtasks) if template_status == "completed" else None,
         "status": template_status,
         "error": error,
         "component_failures": component_failures,
@@ -3127,8 +3167,33 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
     }
 
 
-def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
-    """Convert flat V2 subtask list to nested task hierarchy for the template."""
+def _step_duration_seconds(step: dict) -> float | None:
+    """De duur van een afgeronde stap in seconden, of None als die niet te bepalen is."""
+    started, completed = step.get("started_at"), step.get("completed_at")
+    if not started or not completed:
+        return None
+    try:
+        duur = datetime.fromisoformat(completed) - datetime.fromisoformat(started)
+    except ValueError:
+        return None
+    return max(duur.total_seconds(), 0.0)
+
+
+def _total_duration_seconds(subtasks: list[dict]) -> float | None:
+    """From the first step's start to the last step's end, or None without timestamps."""
+    started = [st["started_at"] for st in subtasks if st.get("started_at")]
+    completed = [st["completed_at"] for st in subtasks if st.get("completed_at")]
+    if not started or not completed:
+        return None
+    return _step_duration_seconds({"started_at": min(started), "completed_at": max(completed)})
+
+
+def _build_task_hierarchy(subtasks: list[dict], task_status: str = "running") -> list[dict]:
+    """Convert flat V2 subtask list to nested task hierarchy for the template.
+
+    A step with steps under it that is still marked running in a task that already ended
+    shows the task's outcome, since a handler that raised never closed its phase.
+    """
     main_tasks = []
     children: dict[str, list] = {}
     for st in subtasks:
@@ -3148,6 +3213,8 @@ def _build_task_hierarchy(subtasks: list[dict]) -> list[dict]:
             main_tasks.append(task_entry)
     for mt in main_tasks:
         mt["subtasks"] = children.get(mt["id"], [])
+        if mt["subtasks"] and mt["status"] == "running" and task_status != "running":
+            mt["status"] = task_status
     return main_tasks
 
 

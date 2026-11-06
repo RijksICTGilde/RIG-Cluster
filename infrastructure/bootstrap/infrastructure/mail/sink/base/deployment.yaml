@@ -24,7 +24,7 @@
 # zou beantwoorden: valt Stalwart terug op platte tekst als STARTTLS ontbreekt? Gemeten op
 # 19 augustus 2026: nee. Hij weigert permanent met "STARTTLS was not advertised by host" en
 # bouncet het bericht. `[remote.upstream.tls]` is dus een garantie en geen voorkeur - zie
-# docs/ron-koppeling.md - en een sink zonder TLS maakt de sandbox stuk op precies het punt
+# docs/operations/ron-koppeling.md - en een sink zonder TLS maakt de sandbox stuk op precies het punt
 # waarvoor hij bestaat.
 #
 # Het certificaat wordt bij elke start gemaakt in plaats van bewaard. Een zelfondertekend

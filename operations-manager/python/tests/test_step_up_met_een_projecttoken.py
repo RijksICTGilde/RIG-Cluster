@@ -28,10 +28,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
+from opi.api.step_up_router import StepUpRequest, StepUpWindow, activate_token_step_up, end_token_step_up
 from opi.core.leden import LidSoort
 from opi.core.step_up import StepUpAction
+from opi.services.api_step_up_service import personal_token_credential
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_otp_service import OtpStatus, OtpVerification
@@ -106,20 +109,21 @@ def _patches(project: ProjectSummary):
     )
 
 
-async def _verwijder(headers: dict[str, str], *, project: ProjectSummary, otp: MagicMock | None = None):
+async def _verwijder(headers: dict[str, str], *, project: ProjectSummary, fresh: bool = False):
     p1, p2, p3, p4, manager = _patches(project)
-    otp_patch = (
-        patch("opi.api.otp_step_up.UserOtpService", return_value=otp)
-        if otp is not None
-        else patch("opi.api.otp_step_up.UserOtpService")
-    )
-    with p1, p2, p3, p4, otp_patch as service_cls:
+    with (
+        p1,
+        p2,
+        p3,
+        p4,
+        patch("opi.api.endpoint_util.ApiStepUpService", return_value=MagicMock(is_fresh=AsyncMock(return_value=fresh))),
+    ):
         antwoord = await delete_project(
             request=_verzoek(headers),
             project_name="demo",
             delete_data=MagicMock(confirmDeletion=True, force=False),
         )
-    return antwoord, manager, service_cls
+    return antwoord, manager
 
 
 def _probleem(antwoord) -> dict[str, Any]:
@@ -133,61 +137,114 @@ def _probleem(antwoord) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_een_token_van_een_mens_zonder_code_weigert_met_een_problem_detail() -> None:
-    antwoord, manager, _ = await _verwijder({"X-API-Key": TOKEN_MENS}, project=_project())
+    antwoord, manager = await _verwijder({"X-API-Key": TOKEN_MENS}, project=_project())
 
     inhoud = _probleem(antwoord)
     assert inhoud["cause"] == StepUpCause.OTP_MISSING.value
-    assert inhoud["otp_header"] == "X-ZAD-OTP"
     manager.delete_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_een_token_van_een_mens_met_zijn_eigen_code_gaat_door() -> None:
-    """De code wordt tegen de EIGENAAR van het token getoetst en tegen niemand anders."""
-    otp = MagicMock(verify=AsyncMock(return_value=OtpVerification.OK))
-    antwoord, manager, _ = await _verwijder(
-        {"X-API-Key": TOKEN_MENS, "X-ZAD-OTP": "654321"}, project=_project(), otp=otp
-    )
+async def test_a_personal_token_with_a_fresh_step_up_goes_through() -> None:
+    antwoord, manager = await _verwijder({"X-API-Key": TOKEN_MENS}, project=_project(), fresh=True)
 
     assert antwoord.status_code == 200
-    otp.verify.assert_awaited_once_with(LID, "654321")
     manager.delete_project.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_een_token_van_een_mens_met_een_foute_code_weigert() -> None:
+async def test_a_service_account_cannot_have_a_step_up() -> None:
+    antwoord, manager = await _verwijder({"X-API-Key": TOKEN_BOUWSTRAAT}, project=_project(), fresh=True)
+
+    assert _probleem(antwoord)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
+    manager.delete_project.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_old_project_key_cannot_have_a_step_up() -> None:
+    antwoord, manager = await _verwijder(
+        {"X-API-Key": OUDE_SLEUTEL}, project=_project(met_oude_sleutel=True), fresh=True
+    )
+
+    assert _probleem(antwoord)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
+    manager.delete_project.assert_not_awaited()
+
+
+async def _activate(headers: dict[str, str], *, verification: OtpVerification = OtpVerification.OK) -> tuple[Any, Any]:
+    """Through the real gate of the route: recognising the token, the rule and the code."""
+    project = _project()
     otp = MagicMock(
-        verify=AsyncMock(return_value=OtpVerification.INVALID),
-        status=AsyncMock(return_value=OtpStatus(registered=True)),
+        verify=AsyncMock(return_value=verification), status=AsyncMock(return_value=OtpStatus(registered=True))
     )
-    antwoord, manager, _ = await _verwijder(
-        {"X-API-Key": TOKEN_MENS, "X-ZAD-OTP": "000000"}, project=_project(), otp=otp
+    service = MagicMock(
+        is_fresh=AsyncMock(return_value=False), record=AsyncMock(return_value=datetime.now(UTC) + timedelta(minutes=5))
     )
-
-    assert _probleem(antwoord)["cause"] == StepUpCause.CODE_INVALID.value
-    manager.delete_project.assert_not_awaited()
+    store = MagicMock(get=MagicMock(return_value=project))
+    with (
+        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.api.endpoint_util.ApiStepUpService", return_value=service),
+        patch("opi.api.step_up_router.ApiStepUpService", return_value=service),
+        patch("opi.api.step_up_router.record_step_up_attempt", AsyncMock()),
+        patch("opi.api.otp_step_up.UserOtpService", return_value=otp),
+    ):
+        response = await activate_token_step_up(
+            request=_verzoek(headers), project_name="demo", body=StepUpRequest(code="123456")
+        )
+    return response, service
 
 
 @pytest.mark.asyncio
-async def test_een_service_account_weigert_ook_met_een_code() -> None:
-    """Een service account hoort bij geen gebruiker, dus er is geen factor om te toetsen."""
-    antwoord, manager, service_cls = await _verwijder(
-        {"X-API-Key": TOKEN_BOUWSTRAAT, "X-ZAD-OTP": "123456"}, project=_project()
-    )
+async def test_a_personal_token_activates_a_step_up_for_itself() -> None:
+    response, service = await _activate({"X-API-Key": TOKEN_MENS})
 
-    assert _probleem(antwoord)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
-    service_cls.assert_not_called()
-    manager.delete_project.assert_not_awaited()
+    assert response.status_code == 200
+    # Het antwoord zoals de OpenAPI het belooft: de route geeft een eigen Response terug,
+    # dus FastAPI toetst de vorm niet.
+    StepUpWindow.model_validate_json(response.body)
+    service.record.assert_awaited_once_with(personal_token_credential(TOKEN_MENS), LID)
 
 
 @pytest.mark.asyncio
-async def test_de_oude_projectsleutel_weigert_ook_met_een_code() -> None:
-    """De sleutel die de migratie naar 2.12 niet open kreeg komt hier niet verder dan een
-    service account: hij hoort bij geen gebruiker."""
-    antwoord, manager, service_cls = await _verwijder(
-        {"X-API-Key": OUDE_SLEUTEL, "X-ZAD-OTP": "123456"}, project=_project(met_oude_sleutel=True)
-    )
+async def test_a_wrong_code_records_nothing_for_a_personal_token() -> None:
+    response, service = await _activate({"X-API-Key": TOKEN_MENS}, verification=OtpVerification.INVALID)
 
-    assert _probleem(antwoord)["cause"] == StepUpCause.PRINCIPAL_KIND_NOT_ALLOWED.value
-    service_cls.assert_not_called()
-    manager.delete_project.assert_not_awaited()
+    assert json.loads(response.body)["cause"] == StepUpCause.CODE_INVALID.value
+    service.record.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_service_account_token_cannot_activate_a_step_up() -> None:
+    with pytest.raises(HTTPException) as refused:
+        await _activate({"X-API-Key": TOKEN_BOUWSTRAAT})
+
+    assert refused.value.status_code == 403
+
+
+async def _end(headers: dict[str, str]) -> tuple[Any, Any]:
+    """Through the real gate, like ``_activate``: ``end_token_step_up`` had no toets at all."""
+    project = _project()
+    service = MagicMock(is_fresh=AsyncMock(return_value=False), clear=AsyncMock())
+    store = MagicMock(get=MagicMock(return_value=project))
+    with (
+        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.api.endpoint_util.ApiStepUpService", return_value=service),
+        patch("opi.api.step_up_router.ApiStepUpService", return_value=service),
+    ):
+        response = await end_token_step_up(request=_verzoek(headers), project_name="demo")
+    return response, service
+
+
+@pytest.mark.asyncio
+async def test_a_personal_token_ends_the_step_up_for_itself() -> None:
+    response, service = await _end({"X-API-Key": TOKEN_MENS})
+
+    assert response.status_code == 204
+    service.clear.assert_awaited_once_with(personal_token_credential(TOKEN_MENS))
+
+
+@pytest.mark.asyncio
+async def test_a_service_account_token_cannot_end_a_step_up() -> None:
+    with pytest.raises(HTTPException) as refused:
+        await _end({"X-API-Key": TOKEN_BOUWSTRAAT})
+
+    assert refused.value.status_code == 403

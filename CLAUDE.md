@@ -12,7 +12,9 @@ Think and act as a Principal Engineer. Be a critical thinker - do not agree with
 
 ## Woordenlijst
 
-Nederlandse prose met Engelse vaktermen. Verzin geen Nederlandse vertaling voor een term die het team in het Engels gebruikt: dat leest als een ander begrip en is niet terug te zoeken. Geldt voor code, commentaar, documenten, commitberichten en antwoorden in de chat.
+**Code is Engels**: namen, commentaar, docstrings en testnamen, ook in een module of testbestand dat nog Nederlands is. Bestaande Nederlandse code wordt niet met terugwerkende kracht omgezet en ook niet vertaald als je hem toevallig raakt.
+
+Nederlandse prose met Engelse vaktermen. Verzin geen Nederlandse vertaling voor een term die het team in het Engels gebruikt: dat leest als een ander begrip en is niet terug te zoeken. Geldt voor documenten, commitberichten, teksten die de gebruiker ziet en antwoorden in de chat.
 
 Gebruik de rechterkolom, nooit de linker:
 
@@ -78,16 +80,14 @@ RIG-Cluster/
 |-- bootstrap/              # Bootstrap Kustomize for rig-system namespace
 |   +-- rig-system/         #   OPI deployment, secrets, overlays per cluster type
 |
-|-- projects/               # Example project definition files (YAML)
-|-- instructions/           # How to work in the code (read before changing a subsystem)
-|-- features/               # Feature documentation (one .md per feature)
-|-- docs/                   # Setup guides, known issues, post-mortems
+|-- features/               # Feature documentation (one .md per feature, index in README.md)
+|-- docs/                   # development/ (how to work in the code), sandbox/, operations/, keycloak/, security/, post-mortems/
 |-- architecture/           # Architectural diagrams and overviews
 |-- images/                 # Custom Docker images (e.g., postgresql-with-dictionaries)
 |-- security/               # AGE keys, SOPS config (not committed to repo)
 |-- scripts/                # Utility scripts
+|-- references/             # Reference material (e.g. usage/: billing queries)
 |-- weekly/                 # Release notes / weekly updates
-|-- archive/                # Outdated documentation kept for reference
 |-- Taskfile.yaml           # All operations (100+ tasks)
 +-- docker-compose.dev.yaml # Local dev (PostgreSQL + OPI)
 ```
@@ -170,14 +170,16 @@ task requirements-check                # Verify all tools installed
 
 ## Documentation
 
-Read `instructions/` before changing a subsystem it covers - it holds the contracts and the
-step-by-step, and saves you reverse-engineering them. Start with `instructions/README.md`,
-which also states which folder is for what (`instructions/` vs `features/` vs `docs/`).
+Read `docs/development/` before changing a subsystem it covers - it holds the contracts and
+the step-by-step, and saves you reverse-engineering them. Start with `docs/development/README.md`,
+which also states which folder is for what (`docs/development/` vs `features/` vs the rest of `docs/`).
 
-- `instructions/services.md` - the service system: what a service owns, how config, forms,
+- `docs/development/services.md` - the service system: what a service owns, how config, forms,
   provisioning, manifests and approvals hook in, and how to add one.
 
-When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames.
+When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames, and add a line for it to `features/README.md`.
+
+Plans, TODO lists, run reports, design briefs for unbuilt work (the old `features/futures/`) and other outdated material live in the separate repo **RIG-Cluster-Legacy** (`~/IdeaProjects/RIG-Cluster-Legacy`), under the same path they had here. A reference to a path that does not exist here points there. New plans go in `plans/` in that repo for now. Open work belongs on a card on the ZAD project board, not in a file.
 
 ## Python Code Style
 
@@ -237,7 +239,7 @@ Before implementing:
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-**Zoek eerst, schrijf daarna.** Voordat je een helper, een converter, een validator, een naamfunctie of een uitpakroutine schrijft: zoek of hij al bestaat. Deze codebase heeft er veel, en ze staan op voorspelbare plekken (`opi/utils/`, `opi/services/catalog/shared/`, de haken uit `instructions/services.md`). Doe dat per blok terwijl je bouwt, niet aan het eind.
+**Zoek eerst, schrijf daarna.** Voordat je een helper, een converter, een validator, een naamfunctie of een uitpakroutine schrijft: zoek of hij al bestaat. Deze codebase heeft er veel, en ze staan op voorspelbare plekken (`opi/utils/`, `opi/services/catalog/shared/`, de haken uit `docs/development/services.md`). Doe dat per blok terwijl je bouwt, niet aan het eind.
 
 - Vind je iets dat lijkt op wat je nodig hebt, gebruik het, ook als het net niet past. Uitbreiden van het bestaande gaat voor een tweede exemplaar ernaast.
 - Schrijf je toch iets nieuws naast iets bestaands, zeg dan in de PR waarom het bestaande niet volstond. Zonder die zin is het een dubbeling.

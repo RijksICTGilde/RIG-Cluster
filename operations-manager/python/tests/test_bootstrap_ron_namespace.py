@@ -4,7 +4,7 @@ RC-261 kopieerde de platformsleutel nog naar `rig-prd-ron`, omdat de CMP de sleu
 de bestemmingsnamespace las. Sinds RC-351 rendert ron-infrastructure op de
 platform-plugin, die de sleutel uit een mount leest, en hoort die kopie er juist niet
 meer te staan: een tweede plek met de platformsleutel is een plek die bij een rotatie
-wordt vergeten (`instructions/sops-sleutel-in-het-cluster.md`).
+wordt vergeten (`docs/development/sops-sleutel-in-het-cluster.md`).
 
 De shell uit de Taskfile wordt echt gedraaid, met een `kubectl` die zijn aanroepen
 opschrijft. Een test op de TEKST van de taak zou niet zien dat de aanroep achter de

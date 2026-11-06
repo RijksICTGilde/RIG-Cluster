@@ -1,5 +1,6 @@
 """Static file serving with cache headers that follow the content hash in the URL."""
 
+import re
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs
 
@@ -23,6 +24,20 @@ def cache_control_for(query_string: bytes) -> str:
     return IMMUTABLE_CACHE_CONTROL if query.get("v", [""])[0] else REVALIDATE_CACHE_CONTROL
 
 
+# De leverdirectory van lord-of-the-components: /static/lotc/v<datum>-<tijd>-NLDD<versie>/...
+# LOTC maakt bij elke wijziging een nieuwe, dus alles erin is per definitie onveranderlijk,
+# ook wat global.css via @import binnenhaalt. Het patroon staat hier en niet geimporteerd:
+# LOTC publiceert het alleen in zijn testserver (tests/visual/serve.py), niet in het pakket.
+LOTC_VERSIONED_PATH = re.compile(r"(^|/)v\d{8}-\d{4}-NLDD[^/]+/")
+
+
+def lotc_cache_control(rel_path: str, query_string: bytes) -> str:
+    """The Cache-Control for ``/static/lotc/<rel_path>``: immutable inside a version directory."""
+    if LOTC_VERSIONED_PATH.search(rel_path):
+        return IMMUTABLE_CACHE_CONTROL
+    return cache_control_for(query_string)
+
+
 class CacheControlledStaticFiles(StaticFiles):
     """Serves static files, pinning only URLs that carry a ``?v=`` content hash.
 
@@ -32,7 +47,7 @@ class CacheControlledStaticFiles(StaticFiles):
     already fetched it.
 
     De assets van het componentensysteem lopen hier niet langs: die worden onder
-    /static/lotc/ door een eigen route geserveerd, met dezelfde regel (cache_control_for).
+    /static/lotc/ door een eigen route geserveerd, met lotc_cache_control.
     """
 
     async def get_response(self, path: str, scope: Scope) -> Response:

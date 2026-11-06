@@ -50,7 +50,7 @@ def _make_progress() -> MagicMock:
     """Create a mock PersistentTaskProgressManager."""
     progress = MagicMock()
     progress.add_task = MagicMock(return_value="task-1")
-    progress.add_subtask = MagicMock(side_effect=lambda parent, name: f"subtask-{name}")
+    progress.add_subtask = MagicMock(side_effect=lambda parent, name, subject=None: f"subtask-{name}")
     progress.complete_task = MagicMock()
     progress.fail_task = MagicMock()
     progress.complete_subtask = MagicMock()
@@ -952,6 +952,35 @@ class TestHandleRestoreExistingDeployment:
         result = _run(handle_restore(payload, progress))
         progress.fail_project.assert_called()
 
+    def test_restore_existing_reprovision_failure_keeps_restore_result_and_fails_project(self, restore_mocks) -> None:
+        """Re-provisioning after a successful restore has no container step to fail.
+
+        Removing "Manifesten bijwerken" must not swallow the failure: the reason still
+        reaches fail_project, with the wording that replaced "manifesten bijwerken".
+        """
+        from opi.core.task_handlers_backup import handle_restore
+
+        restore_mocks["provision"].side_effect = RuntimeError("secret rotation mislukt")
+        payload = {
+            "project_name": "test-project",
+            "backup_run_id": "20260325020000",
+            "target_deployment": "prod",
+            "create_new_deployment": False,
+            "backup_items": [
+                {"resource_type": "pvc", "component_name": "web-app", "snapshot_id": "snap-1", "storage_name": "data"},
+            ],
+        }
+        progress = _make_progress()
+        result = _run(handle_restore(payload, progress))
+
+        assert result["success"] is False
+        assert "secret rotation mislukt" in result["error"]
+        progress.fail_project.assert_called_once()
+        (fail_message,) = progress.fail_project.call_args.args
+        assert "configuratie bijwerken mislukt" in fail_message
+        # No container step was added for the re-provisioning, so none can fail either.
+        progress.fail_task.assert_not_called()
+
     def test_restore_existing_progress_tracking(self, restore_mocks) -> None:
         """Handler reports progress through the progress manager."""
         from opi.core.task_handlers_backup import handle_restore
@@ -1043,6 +1072,7 @@ class TestHandleRestoreNewDeployment:
             "create_new_deployment": True,
             "source_deployment": "prod",
             "deployment_config": {"subdomain": "staging"},
+            "config_source": "prod",
             "backup_items": [
                 {"resource_type": "pvc", "component_name": "web-app", "snapshot_id": "snap-1", "storage_name": "data"},
                 {
@@ -1063,6 +1093,7 @@ class TestHandleRestoreNewDeployment:
             "prod",
             deployment_config={"subdomain": "staging"},
             backup_run_id="20260325020000",
+            config_source="prod",
         )
         new_deploy_mocks["pre_restore"].assert_awaited_once()
         new_deploy_mocks["provision"].assert_awaited_once()
@@ -1250,10 +1281,10 @@ class TestCreateDeploymentFromSourceYAML:
         assert new_dep["clone-from"]["mode"] == "once"
 
     def test_new_deployment_copies_components(self, yaml_mocks) -> None:
-        """Components are deep-copied from source deployment."""
+        """Components are deep-copied from the deployment the config is inherited from."""
         from opi.core.backup_tasks import _create_deployment_from_source
 
-        _run(_create_deployment_from_source("test-project", "staging", "production"))
+        _run(_create_deployment_from_source("test-project", "staging", "production", config_source="production"))
 
         new_dep = yaml_mocks["project_data"]["deployments"][1]
         assert len(new_dep["components"]) == 1

@@ -8,8 +8,7 @@ from Keycloak if needed.
 
 import logging
 
-import httpx
-
+from opi.bootstrap.keycloak_setup import extract_realm_from_discovery_url
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
@@ -19,49 +18,33 @@ logger = logging.getLogger(__name__)
 
 async def validate_oidc_credentials() -> bool:
     """
-    Validate existing OIDC credentials by attempting to get a token.
+    Check that OPI's client secret is the one Keycloak holds.
+
+    Compares through the admin API instead of requesting a token: since RC-325 a new client
+    has no service account, so a client_credentials grant is refused whatever the secret.
 
     Returns:
-        True if credentials are valid and working, False otherwise
+        True if the client exists with this secret, False otherwise
     """
     if not (settings.OIDC_CLIENT_ID and settings.OIDC_CLIENT_SECRET and settings.OIDC_DISCOVERY_URL):
         logger.debug("OIDC credentials not fully configured")
         return False
 
-    logger.info(f"Validating existing OIDC credentials: OIDC_CLIENT_ID = {settings.OIDC_CLIENT_ID}")
-    logger.info(f"Validating existing OIDC credentials: OIDC_OIDC_DISCOVERY_URL = {settings.OIDC_DISCOVERY_URL}")
-    logger.info("Validating existing OIDC credentials: OIDC_CLIENT_SECRET is set")
+    realm_name = extract_realm_from_discovery_url(settings.OIDC_DISCOVERY_URL) or settings.KEYCLOAK_DEFAULT_REALM
+    logger.info(f"Validating OIDC client '{settings.OIDC_CLIENT_ID}' in realm '{realm_name}'")
 
-    try:
-        from opi.bootstrap.keycloak_setup import extract_realm_from_discovery_url
-
-        realm_name = extract_realm_from_discovery_url(settings.OIDC_DISCOVERY_URL)
-        if not realm_name:
-            realm_name = settings.KEYCLOAK_DEFAULT_REALM
-        token_url = f"{settings.KEYCLOAK_URL}/realms/{realm_name}/protocol/openid-connect/token"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                token_url,
-                data={
-                    "grant_type": "client_credentials",
-                    "client_id": settings.OIDC_CLIENT_ID,
-                    "client_secret": settings.OIDC_CLIENT_SECRET,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=10.0,
-            )
-
-            if response.status_code == 200:
-                logger.info("OIDC credentials validated successfully")
-                return True
-            else:
-                logger.warning(f"OIDC credential validation failed with status {response.status_code}: {response.text}")
-                return False
-
-    except Exception as e:
-        logger.warning(f"Error validating OIDC credentials: {e}")
+    keycloak = await create_keycloak_connector()
+    client = await keycloak.find_client_by_client_id(settings.OIDC_CLIENT_ID, realm_name)
+    if not client:
+        logger.warning(f"OIDC client '{settings.OIDC_CLIENT_ID}' not found in realm '{realm_name}'")
         return False
+
+    if await keycloak.get_client_secret(client["id"], realm_name) != settings.OIDC_CLIENT_SECRET:
+        logger.warning(f"OIDC client '{settings.OIDC_CLIENT_ID}' has a different secret in realm '{realm_name}'")
+        return False
+
+    logger.info("OIDC credentials validated successfully")
+    return True
 
 
 async def ensure_keycloak_credentials() -> bool:

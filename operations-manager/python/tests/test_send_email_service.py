@@ -1054,7 +1054,7 @@ class TestTheClusterConfig:
 
     def test_production_sends_from_the_fixed_address(self) -> None:
         """Geen eigen maildomein: we versturen via de mailserver van de Rijksoverheid en
-        dragen daarom hun domein. Zie docs/ron-koppeling.md."""
+        dragen daarom hun domein. Zie docs/operations/ron-koppeling.md."""
         assert get_mail_from_address("odcn-production") == "noreply-rijksapp@rijksoverheid.nl"
 
 
@@ -2274,6 +2274,77 @@ class TestEenGewoneSchrijfwegZetGeenBesluit:
         assert deployment_messages_per_day(verzonnen, "prod") == 50000, (
             "een goedgekeurd blok geldt meteen, dus de poort op de schrijfweg is het enige dat telt"
         )
+
+
+class TestEenGoedgekeurdeWaardeKomtAlleenVanDeGoedkeuringsroute:
+    """RC-425 rework: een blok met alleen een ``approved-value`` telt als goedgekeurd
+    (``_status_of_value``), maar komt niet op de beheerpagina en had daarom geen poort.
+
+    Dezelfde gedeelde regel als bij de registry-quota: de waarde mag niet VERSCHIJNEN of
+    WIJZIGEN buiten de goedkeuringsroute. Het blok zelf is wel een legitieme stand, want
+    het platform schrijft het als het project terugkomt op de laatst goedgekeurde waarde.
+    """
+
+    def _blok(self, project: dict, key: str) -> dict:
+        return project["services"][0]["config"][f"{key}-approval"]
+
+    def _goedgekeurd(self, key: str, waarde: str) -> dict:
+        """Een project waarvan het blok alleen de laatst goedgekeurde waarde vasthoudt."""
+        from opi.services.approvals import apply_approval_verdicts, collect_approval_items
+
+        project = _project(config={key: int(waarde) if waarde.isdigit() else waarde})
+        SERVICE.ensure_approval_requests(project)
+        items = [item for item in collect_approval_items(project) if item["type"] == key]
+        for item in items:
+            item["status"] = "approved"
+        apply_approval_verdicts(project, items, admin_email="beheerder@example.nl")
+        return project
+
+    @pytest.mark.parametrize(
+        ("key", "waarde", "hoger"),
+        [("messages-per-day", "20000", "50000"), ("from-address", "a@rijksoverheid.nl", "b@rijksoverheid.nl")],
+    )
+    def test_een_verzonnen_goedgekeurde_waarde_wordt_geweigerd(self, key: str, waarde: str, hoger: str) -> None:
+        vorig = _project(config={key: int(waarde) if waarde.isdigit() else waarde})
+        SERVICE.ensure_approval_requests(vorig)
+        verzonnen = deepcopy(vorig)
+        self._blok(verzonnen, key).clear()
+        self._blok(verzonnen, key).update({"approved-value": waarde, "history": []})
+
+        with pytest.raises(ProjectIntegrityError, match="goedgekeurde waarde"):
+            validate_approval_decisions(vorig, verzonnen)
+
+    def _terug_op_de_goedgekeurde_waarde(self) -> dict:
+        """Een project waarvan het blok alleen de laatst goedgekeurde waarde vasthoudt.
+
+        20000 goedgekeurd, daarna 50000 gevraagd, daarna terug op 20000: de open aanvraag
+        valt weg en alleen wat al mocht blijft staan.
+        """
+        project = self._goedgekeurd("messages-per-day", "20000")
+        project["services"][0]["config"]["messages-per-day"] = 50000
+        SERVICE.ensure_approval_requests(project)
+        project["services"][0]["config"]["messages-per-day"] = 20000
+        SERVICE.ensure_approval_requests(project)
+        return project
+
+    def test_een_verzonnen_verhoging_van_de_goedgekeurde_waarde_wordt_geweigerd(self) -> None:
+        vorig = self._terug_op_de_goedgekeurde_waarde()
+        verzonnen = deepcopy(vorig)
+        self._blok(verzonnen, "messages-per-day")["approved-value"] = "50000"
+
+        with pytest.raises(ProjectIntegrityError, match="goedgekeurde waarde"):
+            validate_approval_decisions(vorig, verzonnen)
+
+    def test_terug_naar_de_laatst_goedgekeurde_waarde_blijft_opslaanbaar(self) -> None:
+        """De valkuil van de securitygate: deze stand schrijft het platform zelf."""
+        from opi.services.catalog.send_email import effective_messages_per_day
+
+        vorig = self._goedgekeurd("messages-per-day", "20000")
+        nieuw = self._terug_op_de_goedgekeurde_waarde()
+
+        assert self._blok(nieuw, "messages-per-day") == {"approved-value": "20000", "history": []}
+        validate_approval_decisions(vorig, nieuw)
+        assert effective_messages_per_day(nieuw) == 20000
 
 
 class TestDeDeploymentknopNaarDeAfzenderEnHetBudget:
@@ -3927,7 +3998,9 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
 
         monkeypatch.setattr(startup, "check_schema_versions", lambda *a, **k: None)
         monkeypatch.setattr(
-            startup, "get_metrics_connector", AsyncMock(return_value=SimpleNamespace(is_connected=True))
+            startup,
+            "get_metrics_connector",
+            AsyncMock(return_value=SimpleNamespace(is_connected=True, start_probe=lambda: None)),
         )
         monkeypatch.setattr(startup, "_setup_database", AsyncMock(return_value=True))
         monkeypatch.setattr(startup, "_setup_projects", AsyncMock(return_value=True))

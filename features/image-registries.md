@@ -127,10 +127,10 @@ Drie richtingen, en ze gelden voor het formulier en voor de API:
 | "Automatisch" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
 | niets kiezen | er verandert niets; afwezig BETEKENT automatisch (zie de voorrangsregel hieronder) |
 
-Dat is de val waar `instructions/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
+Dat is de val waar `docs/development/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
 een default stil een selectie), maar hier gewild, en alleen in de ene richting. De regel staat
 een keer, als `component_selection_follows_config` op de dienst; wat daaruit volgt staat in
-`instructions/services.md`.
+`docs/development/services.md`.
 
 Of het veld verschijnt volgt uit zijn eigen keuzelijst (`hidden_without_options`). Heeft het
 project geen registries, dan blijft de componentvorm zoals hij was: de toestand van 47 van de
@@ -342,10 +342,58 @@ API-server de CR met `quantity path did not resolve to any value`. De CRD heeft 
 van 10 op staan, maar een structural-schema-default wordt alleen gezet als het bovenliggende
 `quota` aanwezig is, dus het sjabloon schrijft hem altijd expliciet.
 
-De waarde is 3 GiB per private registry: clusterconfig (`quota_limit_gib`) met een terugval in
-`backends.py`. Bewust niet de CRD-default van 10, want tien per registry telt in het
-clustertotaal te snel op. Hele gibibytes, want `limitGiB` is een integer. Nog niet per project
-instelbaar; wordt het dat, dan blijft dit de default waar een project niets zegt.
+De standaard is 10 GiB per private registry op productie: clusterconfig (`quota_limit_gib`) met
+een terugval van 3 in `backends.py`. Het was 3, maar een proxy-cache bewaart elke tag die hij
+ophaalt en liep daarmee binnen een paar builds vol (pocpl-0g8, november 2026). Elke organisatie
+telt mee in `rig-quay-storage-quota` (`kubectl get gcq`). Hele gibibytes, want `limitGiB` is een
+integer.
+
+Een registry kan een eigen quota krijgen met `quota-gib` in het projectbestand:
+
+```yaml
+- name: image-registries
+  config:
+    registries:
+      - display-name: NLDD GitHub
+        upstream: ghcr.io/nederlandsedigitaledienst
+        quota-gib: 15
+```
+
+Tot en met 10 kiest een project dat zelf. Daarboven, tot het maximum van 20, is het een aanvraag
+die een platformbeheerder goedkeurt op de goedkeuringspagina. Tot dan krijgt de organisatie 10,
+of de laatst goedgekeurde waarde; een afwijzing houdt hem daar. Verlagen binnen een goedgekeurde
+waarde vraagt niets. De regels zijn die van het dagbudget van send-email, met een besluit per
+registry (`config_item_value_approval` in `opi/services/catalog/approval.py`, de quota in
+`image_registries/quota.py`).
+
+Het besluit staat niet op de registry zelf maar ernaast, in `quota-gib-approval` met de
+registrynaam als sleutel. `PLATFORM_MANAGED` beschermt alleen velden op het bovenste niveau van
+een configblok: op de registry kon een project zijn eigen goedkeuring schrijven.
+
+Daarnaast vergelijkt `validate_approval_decisions` bij elke opslagactie de goedgekeurde waarde
+met de vorige versie van het projectbestand: `approved-value` mag niet verschijnen of wijzigen
+buiten de goedkeuringsroute. Dat dekt de stand die geen aanvraag op de goedkeuringspagina heeft
+en dus geen statuspoort kent, namelijk een blok met alleen een `approved-value`. Die stand is
+wel legitiem, want het platform schrijft hem zelf als een registry terugkomt op de laatst
+goedgekeurde waarde; alleen de waarde mag niet bewegen. Dezelfde regel geldt voor het
+afzenderadres en het dagbudget van send-email.
+
+De grens van 20 staat als `le` op het model en niet als `IntegerSetting`, omdat
+`config_settings` niet in een lijst kijkt.
+
+### Wie tags mag verwijderen
+
+De operator maakt per organisatie drie teams, gekoppeld aan de OIDC-groepen
+`<klant>-<tenant>-<niveau>-group`. Zonder `authorization.teamSync.authLevels` krijgen ze alle
+drie de rol Member, en dan kan niemand in de RCR-interface een tag verwijderen als de cache
+tegen zijn quota loopt. Het sjabloon zet daarom `admin` op `Admin`; `developer` en `viewer`
+blijven Member.
+
+Het admin-team is geen groep per project: het is de clusterbrede tenantgroep
+`rig-prd-admin-group`, waarin alleen het platformteam zit. `Admin` geeft dat team dus
+platformbeheer over de organisaties van alle projecten. Projectleden kunnen zelf geen tags
+verwijderen; wie dat nodig heeft, vraagt het aan het platformteam. Een projectgebonden
+groep met de rol Admin kan pas zodra ODC-Noord zo'n groep levert.
 
 ## Het projectniveau in de deployments-repo
 
@@ -387,7 +435,7 @@ wave 0 voor wave 1 aan), maar hij poortwacht op HEALTH, en een net aangemaakte
 kind-Application beheert nul resources en meldt zich daarmee binnen een seconde Healthy. De
 grendel gaat dus open voordat het projectniveau zijn serviceaccount heeft uitgerold. Gemeten
 op 2026-09-25, met de afgewezen alternatieven, in
-`docs/de-serviceaccount-komt-na-de-deployment.md`.
+`docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`.
 
 Wat het wel oplost is de AANMAAKVOLGORDE, in `ArgoManager.create_argocd_resources`. Die
 pusht in twee commits: eerst het projectniveau (met zijn AppProject en repository-secret),
@@ -399,7 +447,7 @@ zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten z
 Loopt die wacht vast, dan gaat de commit met de deployment-applicaties er niet meer heen en
 breekt de verwerking van het project af. Eerder was dat een waarschuwing in het log en liep
 de verwerking degraded door; waarom de afbrekende kant hier de veilige is, staat in
-`docs/de-serviceaccount-komt-na-de-deployment.md`.
+`docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md`.
 
 De toets erop staat in `tests/test_project_level_ordering.py`.
 

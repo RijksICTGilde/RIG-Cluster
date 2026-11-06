@@ -16,14 +16,21 @@ Custom collectors here add OPI-specific internal state:
 """
 
 import asyncio
+import contextlib
 import gc
 import logging
 import os
 import time
 import tracemalloc
+from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
+from prometheus_client import Counter, Histogram
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import Collector
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 # Zodat een test de scan van kindprocessen op een nep-/proc kan laten lopen.
@@ -36,6 +43,77 @@ _last_reset_timestamp: float = 0.0
 _sample_task: asyncio.Task[None] | None = None
 
 logger = logging.getLogger(__name__)
+
+
+# --- Rollout phase timing ---
+# A rollout task takes tens of seconds while the ArgoCD sync inside it takes a few, so
+# the question is always "which phase". These are the phases a rollout is divided into;
+# the list is closed so a dashboard can enumerate them.
+PHASE_GIT_PREPARE = "git_prepare"
+PHASE_GENERATE = "generate"
+PHASE_PROVISION = "provision"
+PHASE_GIT_PUSH = "git_push"
+PHASE_ARGO_PROJECT_GATE = "argo_project_gate"
+PHASE_ARGO_UMBRELLA = "argo_umbrella"
+PHASE_ARGO_WAIT_SYNCED = "argo_wait_synced"
+PHASE_ARGO_WAIT_HEALTHY = "argo_wait_healthy"
+PHASE_AFTER_SYNC = "after_sync"
+
+ROLLOUT_PHASES = (
+    PHASE_GIT_PREPARE,
+    PHASE_GENERATE,
+    PHASE_PROVISION,
+    PHASE_GIT_PUSH,
+    PHASE_ARGO_PROJECT_GATE,
+    PHASE_ARGO_UMBRELLA,
+    PHASE_ARGO_WAIT_SYNCED,
+    PHASE_ARGO_WAIT_HEALTHY,
+    PHASE_AFTER_SYNC,
+)
+
+#: Buckets up to ten minutes: a phase that waits on ArgoCD has a 240-300s timeout, so
+#: the default buckets (ending at 10s) would put every wait in +Inf.
+_PHASE_BUCKETS = (0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 240, 300, 600, float("inf"))
+
+rollout_phase_seconds = Histogram(
+    "opi_rollout_phase_seconds",
+    "Duur van een fase van een rollout-taak",
+    ["task_type", "phase"],
+    buckets=_PHASE_BUCKETS,
+)
+
+umbrella_refresh_lost_total = Counter(
+    "opi_argocd_umbrella_refresh_lost_total",
+    "Refreshes van user-applications die opgingen in een reconcile van voor onze commit",
+)
+
+#: The task type the phases of the current task are labeled with. Set by the task worker;
+#: paths that run outside a task (schedulers, CLI) observe under "unknown".
+_current_task_type: ContextVar[str] = ContextVar("rollout_task_type", default="unknown")
+
+
+def set_rollout_task_type(task_type: str) -> None:
+    """Label the phases measured from here on with this task type."""
+    _current_task_type.set(task_type)
+
+
+def observe_rollout_phase(phase: str, seconds: float) -> None:
+    """Record a phase whose duration the caller measured itself."""
+    rollout_phase_seconds.labels(_current_task_type.get(), phase).observe(seconds)
+
+
+@contextlib.contextmanager
+def rollout_phase(phase: str) -> Iterator[None]:
+    """Measure a rollout phase and record it, also when the phase raises.
+
+    A phase that fails halfway still spent its time, and leaving it out would make the
+    histogram flatter than the rollout it describes.
+    """
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        observe_rollout_phase(phase, time.monotonic() - started)
 
 
 class OPICollector(Collector):

@@ -14,7 +14,10 @@
 </script>
 
 <g>
-  {#each [...shape.line, ...shape.head] as p}
+  {#each shape.line as p}
+    <path d={p.d} style:stroke={p.stroke} stroke-width={p.strokeWidth} stroke-dasharray={data.dashed ? '7 6' : undefined} fill="none" stroke-linecap="round" />
+  {/each}
+  {#each shape.head as p}
     <path d={p.d} style:stroke={p.stroke} stroke-width={p.strokeWidth} fill="none" stroke-linecap="round" />
   {/each}
   {#if data.label}

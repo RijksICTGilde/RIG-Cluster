@@ -50,8 +50,9 @@ spec:
     # Naar buiten op 443 en DNS. Op 443 zitten de Capsule-Proxy kube-API
     # (KUBERNETES_SERVICE_HOST in patches/deployment.yaml), Keycloak op zijn publieke
     # hostnaam (KEYCLOAK_URL in configmap.yaml), de git-servers en de registry.
-    - to: []
-      ports:
+    # No `to`: it means every destination, and an empty list is dropped by the API
+    # server, so `to: []` made every kubectl apply report the policy as configured.
+    - ports:
         - protocol: TCP
           port: 443
         - protocol: TCP

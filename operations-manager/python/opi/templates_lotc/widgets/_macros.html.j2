@@ -251,6 +251,10 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
   de naam. Loopt een stap een keer per project, dan heeft hij geen onderwerp en blijft
   de regel weg.
 
+  De DUUR staat op dezelfde regel, voor een stap die klaar is. Een rollout duurt tien
+  keer zo lang als de sync eronder, en zonder duur per stap is uit de lijst niet te zien
+  waar die tijd zit. Een stap die nog loopt heeft er geen.
+
   Fout en onderwerp delen die tweede regel. Ze sluiten elkaar niet uit -- een mislukte
   stap hoort nog steeds te zeggen voor welke deployment hij mislukte -- dus staan ze
   achter elkaar in plaats van dat de een de ander verdringt.

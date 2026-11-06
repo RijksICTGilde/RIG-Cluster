@@ -8,11 +8,11 @@ kind to debug from the consumer's side.
 
 Since RC-167 the same entry also yields the DOORLUS half: poort 8443 of that same proxy
 passes the TLS session through instead of terminating it, so the consumer speaks to VLAM
-itself and verifies the certificate itself. That takes three things -- the address, the
-name the URL must carry (TLS compares the hostname from the URL against the certificate)
-and the issuer to verify against -- and any one of them alone is useless. They therefore
-travel as ONE object, ``VlamPassthrough``: either a cluster offers the doorlus or it does
-not, and no caller can accidentally hand out two thirds of it.
+itself and verifies the certificate itself. That takes two things: the address and the
+name the URL must carry (TLS compares the hostname from the URL against the certificate).
+Either one alone is useless. They therefore travel as ONE object, ``VlamPassthrough``:
+either a cluster offers the doorlus or it does not, and no caller can accidentally hand
+out half of it.
 
 No cluster name appears in this module. A cluster without a ``vlam`` entry has no VLAM,
 and every caller reads that as ``None``.
@@ -21,38 +21,27 @@ and every caller reads that as ``None``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from opi.core.cluster_config import get_prefixed_namespace, get_vlam_config
 from opi.utils.naming import generate_unique_name
 
-#: Where the CA bundles the cluster configuration names live: in this service's own
-#: package (RC-36). The configuration carries the FILE NAME, not a path, so the catalog
-#: keeps its own files and ``opi/core`` never points into a service package.
-CA_BUNDLE_DIR = Path(__file__).parent
-
-#: Directory the bundle is mounted in. Deliberately NOT ``/etc/ssl/certs/``: some runtimes
-#: read that directory by themselves, and then whether the doorlus works would depend on
-#: the consumer's base image rather than on what the application asked for.
-CONTAINER_CA_DIR = "/etc/ssl/vlam"
-
-#: Where the bundle can be downloaded. Named here rather than in ``routes.py`` so the page
-#: block can link to it without importing the route module (which reaches into the app).
-CA_BUNDLE_URL = "/services/vlam/ca-bundle"
-
 
 @dataclass(frozen=True)
 class VlamPassthrough:
-    """The doorlus (RC-167): the three things a consumer needs to speak to VLAM itself.
+    """The doorlus (RC-167): the two things a consumer needs to speak to VLAM itself.
 
-    Built only when the cluster configuration carries all four keys AND the CA bundle it
-    names is actually present. Missing any of them means the path cannot work, and an
-    address without a trustworthy issuer is exactly the half-configured state this plan
-    exists to prevent -- so the whole thing is absent instead.
+    Built only when the cluster configuration carries all three keys. Missing one means
+    the path cannot work, and an address without the name it must be reached under is
+    exactly the half-configured state this design exists to prevent, so the whole thing
+    is absent instead.
+
+    No CA material here (RC-414): the certificate of ``api_host`` comes from DigiCert and
+    is in every standard trust store, so the consumer verifies it the way it verifies any
+    other public endpoint.
     """
 
-    #: What the consumer connects to, e.g. ``https://vlam-api.rijksweb.nl:8443``. It
+    #: What the consumer connects to, e.g. ``https://vlam-api.overheid-i.nl:8443``. It
     #: carries the VLAM hostname (TLS validates it) and resolves to our proxy via the
     #: ``hostAliases`` entry below.
     api_url: str
@@ -64,15 +53,6 @@ class VlamPassthrough:
     cluster_ip: str
     #: The port the doorlus listens on.
     port: int
-    #: The bundle on disk, inside this service's package.
-    ca_bundle_path: Path
-    #: Where it lands in the pod, e.g. ``/etc/ssl/vlam/vlam-ca.pem``.
-    container_path: str
-
-    @property
-    def ca_bundle_filename(self) -> str:
-        """The file's own name -- also the Secret key and the ``subPath`` of the mount."""
-        return self.ca_bundle_path.name
 
 
 @dataclass(frozen=True)
@@ -107,23 +87,13 @@ class VlamEndpoint:
 def _passthrough(config: dict[str, Any]) -> VlamPassthrough | None:
     """The doorlus half of a cluster's ``vlam`` entry, or None when it is not offered.
 
-    Two ways to answer None, and both are normal rather than an error:
-
-    * the entry carries no doorlus keys -- a cluster whose proxy has no passthrough port;
-    * the CA bundle it names is not in this package. The bundle is a platform datum that
-      is supplied once (and rotated in one place); until it is there, handing out an
-      address plus a hostname alias would produce an "unknown issuer" failure at the
-      consumer with nothing on this side saying why.
+    Absent is normal rather than an error: a cluster whose proxy has no passthrough port
+    carries none of these keys, and then the terminated path is the only one.
     """
     host = config.get("api_host")
     cluster_ip = config.get("cluster_ip")
     port = config.get("passthrough_port")
-    bundle = config.get("ca_bundle")
-    if not (host and cluster_ip and port and bundle):
-        return None
-
-    ca_bundle_path = CA_BUNDLE_DIR / str(bundle)
-    if not ca_bundle_path.is_file():
+    if not (host and cluster_ip and port):
         return None
 
     return VlamPassthrough(
@@ -131,8 +101,6 @@ def _passthrough(config: dict[str, Any]) -> VlamPassthrough | None:
         host=str(host),
         cluster_ip=str(cluster_ip),
         port=int(port),
-        ca_bundle_path=ca_bundle_path,
-        container_path=f"{CONTAINER_CA_DIR}/{ca_bundle_path.name}",
     )
 
 

@@ -12,7 +12,7 @@ ronde 10. Dat is precies wat dit bestand voorkomt.
 Bouw zoals dit project het al doet. Voordat je een nieuw patroon neerzet, kijk hoe een
 bestaand pakket het oplost en volg dat.
 
-- `instructions/services.md` beschrijft hoe een dienst is opgebouwd. Dat is de vorm.
+- `docs/development/services.md` beschrijft hoe een dienst is opgebouwd. Dat is de vorm.
 - Kijk naar bestaande dienstpakketten voordat je begint: metrics-scraper voor
   componentconfig, auth-wall voor projectconfig.
 - Editables zijn het startpunt van een dienst: yaml-pad, validators en converters horen

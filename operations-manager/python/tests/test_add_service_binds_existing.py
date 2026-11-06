@@ -141,7 +141,7 @@ class TestRolloutFollowsTheBinding:
         pm.close = AsyncMock()
 
         progress = MagicMock()
-        progress.add_task.side_effect = lambda name: f"task-{name}"
+        progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
 
         with patch("opi.manager.project_manager.ProjectManager", return_value=pm):
             result = await handle_add_service(
@@ -164,7 +164,7 @@ class TestRolloutFollowsTheBinding:
         pm.close = AsyncMock()
 
         progress = MagicMock()
-        progress.add_task.side_effect = lambda name: f"task-{name}"
+        progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
 
         with patch("opi.manager.project_manager.ProjectManager", return_value=pm):
             result = await handle_add_service({"project_name": "demo", "service": SERVICE}, progress)

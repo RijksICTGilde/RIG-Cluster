@@ -1,4 +1,4 @@
-From 4cdfa28ed7ed9e28c8bfb32327545a5c54b07fe8 Mon Sep 17 00:00:00 2001
+From 9d2c28f8773f47433d97978eece1614afe0d1879 Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Thu, 13 Aug 2026 23:27:10 +0200
 Subject: [PATCH 3/7] fix: refresh app health from cluster cache on tree-only
@@ -23,7 +23,7 @@ ignore annotations, Lua overrides, self-referencing apps).
  3 files changed, 154 insertions(+)
 
 diff --git a/controller/appcontroller.go b/controller/appcontroller.go
-index ed0348ccd..41641a4f5 100644
+index bd4657b4f..4b1700678 100644
 --- a/controller/appcontroller.go
 +++ b/controller/appcontroller.go
 @@ -144,6 +144,7 @@ type ApplicationController struct {
@@ -42,7 +42,7 @@ index ed0348ccd..41641a4f5 100644
  		metricsClusterLabels:              metricsClusterLabels,
  	}
  	if hydratorEnabled {
-@@ -1853,6 +1855,12 @@ func (ctrl *ApplicationController) processAppRefreshQueueItem() (processNext boo
+@@ -1948,6 +1950,12 @@ func (ctrl *ApplicationController) processAppRefreshQueueItem() (processNext boo
  						logCtx.WithError(err).Error("Failed to cache resources tree")
  						return processNext
  					}
@@ -56,10 +56,10 @@ index ed0348ccd..41641a4f5 100644
  
  				patchDuration = ctrl.persistReconciliationStatus(origApp, &app.Status)
 diff --git a/controller/appcontroller_test.go b/controller/appcontroller_test.go
-index d93179219..54657f660 100644
+index 49b96eb24..2a993c7b9 100644
 --- a/controller/appcontroller_test.go
 +++ b/controller/appcontroller_test.go
-@@ -1784,6 +1784,90 @@ func TestNormalizeApplication(t *testing.T) {
+@@ -1964,6 +1964,90 @@ func TestNormalizeApplication(t *testing.T) {
  	}
  }
  

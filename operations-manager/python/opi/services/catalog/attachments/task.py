@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from opi.core import progress_steps as steps
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,7 +38,7 @@ async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> di
 
     logger.info(f"Task: removing attachment {attachment_id} from {project_name}")
 
-    remove_task = progress.add_task(f"Bijlage '{attachment_id}' verwijderen")
+    remove_task = progress.add_task(steps.ATTACHMENT_REMOVE, subject=attachment_id)
     # Single ProjectManager path: read fresh from Git, mutate, save, commit. The save
     # already refreshes the read-only cache, so no extra reload is needed.
     project_file_relative_path = f"projects/{project_name}.yaml"
@@ -55,18 +57,12 @@ async def handle_delete_attachment(payload: dict[str, Any], progress: Any) -> di
         # generated manifests, so without processing the project they stay on the cluster
         # and the pod keeps the file it started with -- the same change-nobody-sees the
         # API routes had. Nothing to process when the catalog did not change.
-        if result.get("changed"):
-            deploy_task = progress.add_task("Project verwerken")
-            progress.update_current_step("Project verwerken zodat de bijlage van de pods verdwijnt")
-            if await project_manager.process_project_from_git(
-                project_file_relative_path, task_progress_manager=progress
-            ):
-                progress.complete_task(deploy_task)
-            else:
-                error_msg = project_manager.get_processing_error() or "Project processing failed"
-                progress.fail_task(deploy_task, error_msg)
-                progress.fail_project(error_msg)
-                raise RuntimeError(error_msg)
+        if result.get("changed") and not await project_manager.process_project_from_git(
+            project_file_relative_path, task_progress_manager=progress
+        ):
+            error_msg = project_manager.get_processing_error() or "Project processing failed"
+            progress.fail_project(error_msg)
+            raise RuntimeError(error_msg)
     finally:
         await project_manager.close()
 
@@ -116,9 +112,6 @@ async def handle_configure_attachment(payload: dict[str, Any], progress: Any) ->
         }
 
     logger.info(f"Task: rolling out attachment change in {project_name}")
-    deploy_task = progress.add_task("Project verwerken")
-    progress.update_current_step("Project verwerken zodat de bijlage de pods bereikt")
-
     project_file_relative_path = f"projects/{project_name}.yaml"
     project_manager = ProjectManager(project_file_relative_path=project_file_relative_path)
     try:
@@ -131,7 +124,6 @@ async def handle_configure_attachment(payload: dict[str, Any], progress: Any) ->
 
     if not succeeded:
         error_msg = error or "Project processing failed"
-        progress.fail_task(deploy_task, error_msg)
         progress.fail_project(error_msg)
         return {
             "status": "failed",
@@ -140,7 +132,6 @@ async def handle_configure_attachment(payload: dict[str, Any], progress: Any) ->
             "processing": {"status": "failed", "error": error_msg},
         }
 
-    progress.complete_task(deploy_task)
     return {
         "status": "success",
         "project": project_name,

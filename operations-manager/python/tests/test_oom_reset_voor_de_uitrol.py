@@ -29,6 +29,11 @@ _OUDE_GENERATIE = "4411bb22c"
 _NIEUWE_GENERATIE = "6694c99686"
 
 
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
+
+
 def _sleutel() -> str:
     return f"{_PROJECT}/{_DEPLOYMENT}/{_COMPONENT}"
 
@@ -44,7 +49,7 @@ def _schone_generatiestaat():
 
 def _make_progress() -> MagicMock:
     progress = MagicMock()
-    progress.add_task.side_effect = lambda name: f"task-{name}"
+    progress.add_task.side_effect = lambda name, subject=None: f"task-{name}"
     progress.add_subtask.side_effect = lambda parent, name, **kwargs: f"subtask-{name}"
     return progress
 

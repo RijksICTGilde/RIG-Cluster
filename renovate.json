@@ -9,8 +9,6 @@
   "prHourlyLimit": 3,
   "minimumReleaseAge": "7 days",
   "ignorePaths": [
-    "archive/**",
-    "self-service-portal/**",
     "**/node_modules/**",
     "**/.venv/**",
     "**/vendor/**",
@@ -116,17 +114,6 @@
     },
     {
       "customType": "regex",
-      "description": "De jar van het NL-design-thema. De versie staat uitgeschreven in de URL en niet als ARG, zodat --build-arg de checksumcontrole niet kan omzeilen",
-      "managerFilePatterns": ["/^images/keycloak-zad/Dockerfile$/"],
-      "matchStrings": [
-        "MinBZK/keycloak-theme/releases/download/v(?<currentValue>\\d+\\.\\d+\\.\\d+)/"
-      ],
-      "depNameTemplate": "MinBZK/keycloak-theme",
-      "datasourceTemplate": "github-releases",
-      "extractVersionTemplate": "^v(?<version>.+)$"
-    },
-    {
-      "customType": "regex",
       "description": "task kent de asdf-manager niet",
       "managerFilePatterns": ["/^\\.tool-versions$/"],
       "matchStrings": [
@@ -140,7 +127,7 @@
     {
       "customType": "regex",
       "description": "De node-image van het kind-sandboxcluster",
-      "managerFilePatterns": ["/^sandboxed-local/kind-config\\.yaml$/"],
+      "managerFilePatterns": ["/^bootstrap/sandbox/kind-config\\.yaml$/"],
       "matchStrings": [
         "image:\\s*kindest/node:v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],

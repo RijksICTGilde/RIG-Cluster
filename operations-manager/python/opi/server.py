@@ -21,21 +21,18 @@ from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
-from opi.api.otp_step_up import (
-    OTP_CODE_HEADER,
-    STEP_UP_PROBLEM_MEDIA_TYPE,
-    STEP_UP_PROBLEM_TYPE,
-    StepUpProblem,
-)
+from opi.api.otp_step_up import STEP_UP_403_RESPONSE, StepUpProblem
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
 from opi.api.router import api_router
+from opi.api.step_up_router import step_up_api_router
 from opi.api.task_router import task_router
 from opi.api.token_router import token_router
 from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
+from opi.connectors.prometheus import close_metrics_connector
 from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, SECURITY_PROOF_HEADER, VERSION, settings
@@ -53,7 +50,7 @@ from opi.core.errors import (
 )
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks, warm_connector_singletons
-from opi.core.static_files import CacheControlledStaticFiles, cache_control_for
+from opi.core.static_files import CacheControlledStaticFiles, lotc_cache_control
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
@@ -338,6 +335,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start mail relay watcher: %s", e)
 
+    if settings.CAPACITY_WATCH_ENABLED and settings.CAPACITY_WATCH_TENANT:
+        try:
+            from opi.core.capacity_watcher import CapacityWatcher
+
+            _capacity_watcher = CapacityWatcher()
+            await _capacity_watcher.start()
+            app.state.capacity_watcher = _capacity_watcher
+        except Exception as e:
+            logger.error("Failed to start capacity watcher: %s", e)
+
     # Start the cluster-wide OOM pod watch if this cluster runs it
     from opi.core.cluster_config import watches_pods_for_oom
 
@@ -443,6 +450,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     if mail_relay_watcher is not None:
         await mail_relay_watcher.stop()
 
+    capacity_watcher = getattr(app.state, "capacity_watcher", None)
+    if capacity_watcher is not None:
+        await capacity_watcher.stop()
+
+    # Stop the metrics connector: its recovery task and its HTTP client
+    await close_metrics_connector()
+
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:
         await _worker_instance.stop()
@@ -491,6 +505,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.error("Timed out disposing ORM async engine after 10s; continuing shutdown")
     except Exception as e:
         logger.error(f"Error disposing ORM async engine: {e}")
+
+    # De gedeelde HTTP-sessies naar ArgoCD: een open connector zou het sluiten van de
+    # loop met een waarschuwing halen.
+    try:
+        from opi.connectors.argo import close_shared_sessions
+
+        await close_shared_sessions()
+    except Exception as e:
+        logger.error(f"Error closing shared ArgoCD sessions: {e}")
 
     stop_loop_watchdog()
 
@@ -588,38 +611,20 @@ def create_app() -> FastAPI:
         schemas.update(envelop.pop("$defs", {}))
         schemas["ProblemDetail"] = envelop
 
-        # De step-up, op dezelfde manier uit de route zelf gelezen: welke routes een verse
-        # tweede factor vragen staat in hun decorator, en een client hoort de header en de
-        # 403 in dit document te vinden in plaats van ze te ontdekken (RC-332).
+        # Verzamel routes die step-up vragen: die met @requires_step_up of @requires_platform_admin_token.
+        # Clients lezen de 403 in dit document in plaats van er langs.
         step_up_operations = {
             (route.path, method.lower())
             for route in app.routes
-            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_STEP_UP, None)
+            if getattr(route, "endpoint", None) is not None
+            and any(
+                getattr(route.endpoint, marker, None) for marker in (REQUIRES_STEP_UP, REQUIRES_PLATFORM_ADMIN_TOKEN)
+            )
             for method in getattr(route, "methods", None) or []
         }
         step_up_schema = StepUpProblem.model_json_schema(ref_template="#/components/schemas/{model}")
         schemas.update(step_up_schema.pop("$defs", {}))
         schemas["StepUpProblem"] = step_up_schema
-        step_up_header = {
-            "name": OTP_CODE_HEADER,
-            "in": "header",
-            "required": False,
-            "schema": {"type": "string"},
-            "description": (
-                "Een verse code uit de authenticator van de aanroeper, voor een handeling die "
-                "productie raakt of het platform beheert. Alleen nodig als deze aanroep dat echt doet, en alleen te "
-                "gebruiken met een persoonlijk token: de code wordt getoetst tegen de tweede "
-                "factor van de eigenaar van dat token. Met een projectsleutel kan de handeling niet."
-            ),
-        }
-        step_up_403 = {
-            "description": (
-                "Deze handeling vraagt een verse 2-factor. Het antwoord "
-                f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
-                f"'remedy' wat er moet gebeuren. Herhaal de aanroep met '{OTP_CODE_HEADER}'."
-            ),
-            "content": {STEP_UP_PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/StepUpProblem"}}},
-        }
         vijf_xx = {
             "description": (
                 "Er ging iets mis aan onze kant. Het lag niet aan je verzoek, dus opnieuw "
@@ -639,8 +644,7 @@ def create_app() -> FastAPI:
                 method["security"] = [{scheme: []}]
                 method.setdefault("responses", {})["5XX"] = vijf_xx
                 if (path, verb) in step_up_operations:
-                    method.setdefault("parameters", []).append(step_up_header)
-                    method["responses"]["403"] = step_up_403
+                    method["responses"]["403"] = STEP_UP_403_RESPONSE
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})
@@ -853,6 +857,7 @@ def create_app() -> FastAPI:
     app.include_router(token_router, include_in_schema=True)  # API-tokens en service accounts
     app.include_router(federation_router, include_in_schema=True)  # Federation peers/health
     app.include_router(admin_router, include_in_schema=True)  # Admin cleanup/reconciliation API
+    app.include_router(step_up_api_router, include_in_schema=True)  # Step-up state of a bearer token
     app.include_router(prometheus_router, include_in_schema=False)  # Prometheus /metrics scrape endpoint
     app.include_router(invite_router, include_in_schema=False)  # Exclude from OpenAPI docs (public invite flow)
     app.include_router(web_router, include_in_schema=False)  # Exclude from OpenAPI docs
@@ -877,7 +882,8 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Static asset not found")
         # Zonder Cache-Control gokt de browser zelf hoe lang zijn kopie vers is, en na een
         # LOTC-upgrade draaide hij dan dagen de oude nldd.js tegen nieuwe markup.
-        return FileResponse(resolved, headers={"cache-control": cache_control_for(request.scope["query_string"])})
+        cache_control = lotc_cache_control(rel, request.scope["query_string"])
+        return FileResponse(resolved, headers={"cache-control": cache_control})
 
     logger.info("LOTC static files served at /static/lotc/")
 

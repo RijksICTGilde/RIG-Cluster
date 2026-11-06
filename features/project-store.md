@@ -25,6 +25,7 @@ window.
 | Write serialization | A per-repo `asyncio.Lock`. Same-project writers queue; each re-reads the previous winner's result. |
 | Mutations | A *change function* applied to freshly-read state, validated on the FINAL state, then committed and pushed. |
 | External writes | A non-fast-forward push means HEAD moved: reset to remote, re-read, re-apply, re-validate, retry (bounded). Pushes use `allow_rebase=False` so divergence always reaches the store. |
+| Refusal by the server | A refusal (a pre-receive hook, a protected branch) is NOT a collision: reading and writing again yields the same refusal. The mutation fails with the reason the server gave (`GitPushRejectedError`), the branch ref moves back, and there is no resync. See `features/git-repo.md`. |
 | Durability | The push is the ack. The cache is updated only after a successful push, from what actually landed. |
 | Rollback | A failed push moves the branch ref back. Nothing was written to disk, so there is nothing to clean up. |
 
@@ -75,8 +76,23 @@ the store), authorization moved to `opi/services/project_authorization.py` -- wh
 the store like everything else -- and the platform-admin allowlist moved to `UserService`, next to
 the email allowlist it already owned.
 
-**Scope: the store owns `zad-projects` only.** The `zad-deployments` and `zad-argo-user-applications`
-repos keep using their own `ProjectManager` git connectors and are explicitly out of scope.
+**Scope: the store owns `zad-projects` only.** Sinds RC-422 lopen `zad-deployments` en
+`zad-argo-user-applications` op [`GitRepo`](./git-repo.md), dat de git-helft van deze store
+is, eruit gehaald en generiek gemaakt: een beheerde bare kopie per remote, commits uit
+git-objecten, en bij divergentie opnieuw lezen en toepassen.
+
+De store zelf gaat in een eigen taak over op `GitRepo`. Hij is de kern van ZAD en moet in
+een keer goed overgaan, en dan is er van hem alleen nog domeinwerk over: YAML, validatie,
+cache en de mutate-semantiek bovenop een git-laag. Tot die tijd houdt hij zijn eigen warme
+werkkopie, en staat de gedeelde plumbing (`run_git`, `credential_env`, `build_tree_commit`)
+op een plek in `opi/connectors/git.py`.
+
+De twee repo's hebben sinds RC-422 geen werkboom meer: `GitRepo` houdt per remote een bare
+kopie, en een taak materialiseert alleen zijn eigen scope in een eigen tempmap. Twee taken
+delen daar dus nooit een werkboom, wat `features/concurrent-write-safety-lost-update.md`
+vraagt van een repo waar meerdere projecten in schrijven. De kopie staat op de URL **zonder**
+credentials en wordt gedeeld door alle projecten op dezelfde remote; zie
+[`git-repo.md`](./git-repo.md) voor hoe die kopie bijgewerkt wordt.
 
 ## Usage
 
@@ -248,9 +264,10 @@ Three things follow from this:
   carry userinfo, it is stripped from the URL and used to build the header instead.
 - `GIT_TERMINAL_PROMPT=0` is set on every invocation, so a missing or wrong credential fails
   immediately instead of blocking on a password prompt that no terminal will ever answer.
-- No clone outlives the process, so none has to be repaired: the warm copy's directory is
-  `rmtree`'d and recloned in `get_connector()`, and every other connector clones into a fresh
-  `tempfile` directory.
+- The store's warm copy does not outlive the process: its directory is `rmtree`'d and recloned in
+  `get_connector()`. De bare kopieen van `GitRepo` voor de deployments- en argo-repo blijven wel
+  staan tussen processen, en herstellen zich door weggegooid en opnieuw opgebouwd te worden;
+  `git-repo.md` beschrijft die kopie en zijn grens op schijfruimte.
 
 For SSH remotes (local and sandbox setups only; production is HTTPS) the connector uses
 `StrictHostKeyChecking=accept-new` with a fixed `UserKnownHostsFile`, so the first connection

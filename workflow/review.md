@@ -26,7 +26,7 @@ The goal: a reviewer should be able to see that every behaviour the PR changes i
 
 ## When something is missing
 
-If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a corresponding test, call it out and, where practical, add the test. New components that don't exist yet go into `request_for_components.md` with a detailed request rather than a raw `<button>` workaround.
+If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a corresponding test, call it out and, where practical, add the test. New components that don't exist yet go on a card on the ZAD project board with a detailed request rather than a raw `<button>` workaround.
 
 ## The bar for approve
 

@@ -31,6 +31,7 @@
     - <c-page> bedraadt zelf de <head>, inclusief de CSS/JS van elk actief design
       system onder /static/lotc/
 #}
+{% from "bg/_patterns.html.j2" import woordmerk %}
 
 {% set page_title_value %}{% block page_title %}Self Service Portal{% endblock %}{% endset %}
 
@@ -93,13 +94,16 @@
 <nldd-split-view-pane slot="header" background="base">
 
     {# De kopbalk van de Fundament-console: een toolbar met ons eigen beeldmerk in plaats
-       van nldd-top-navigation-bar, die altijd het Rijkswapen tekent. Het logo is
-       hetzelfde huisje als de favicon, zodat tab en balk hetzelfde teken tonen; alt is
-       leeg omdat de naam ernaast staat. De beheeritems staan alleen nog in de zijbalk. #}
+       van nldd-top-navigation-bar, die altijd het Rijkswapen tekent. Het beeldmerk is
+       het woordmerk van /introductie in het klein, met het huisje van de favicon als A.
+       Zonder de volle naam erachter: dat maakte de balk te vol, en /introductie legt de
+       naam uit. De link heet "ZAD", via de aria-label van het woordmerk. De beheeritems
+       staan alleen nog in de zijbalk. #}
     <nldd-container padding-left="16" padding-right="8" padding-block="8">
         <nldd-toolbar accessible-label="Applicatie">
-            <nldd-toolbar-title slot="start" text="Zelfservice Applicatie Deployment (ZAD)" min-width="96px" max-width="480px" href="/">
-                <img slot="media" class="kop-logo" src="{{ static_url('img/zad-logo.png') }}" alt="" width="32" height="32">
+            <nldd-toolbar-title slot="start" href="/">
+                {{ woordmerk('zad-woordmerk--kop', slot='media') }}
+                <nldd-tag slot="action" text="{{ cluster_tag[0] }}" color="{{ cluster_tag[1] }}"></nldd-tag>
             </nldd-toolbar-title>
 
             <nldd-toolbar-item slot="end">
@@ -122,6 +126,9 @@
                                                {% if verhoogd_tot %}supporting-text="Verhoogde rechten tot {{ verhoogd_tot | dutch_date(only_time=True) }}"{% endif %}></nldd-identity>
                             </nldd-container>
                             <nldd-menu-item text="Profiel" icon="user" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                            {% if kan_verhogen %}
+                                <nldd-menu-item text="Verhoogde rechten" icon="shield-check-mark" data-verhoog-open></nldd-menu-item>
+                            {% endif %}
                             <nldd-menu-divider></nldd-menu-divider>
                             <nldd-menu-item text="Weergave" icon="appearance">
                                 <nldd-menu>
@@ -137,6 +144,9 @@
                         </nldd-menu>
                     </nldd-icon-button>
                     <nldd-menu-item slot="overflow" text="Profiel" href="/account" onclick="location.href='/account'"></nldd-menu-item>
+                    {% if kan_verhogen %}
+                        <nldd-menu-item slot="overflow" text="Verhoogde rechten" data-verhoog-open></nldd-menu-item>
+                    {% endif %}
                     <nldd-menu-item slot="overflow" text="Uitloggen" href="/auth/logout" onclick="location.href='/auth/logout'"></nldd-menu-item>
                 {% else %}
                     <nldd-button text="Inloggen" start-icon="person-circle" appearance="secondary" href="/auth/login"></nldd-button>
@@ -207,6 +217,7 @@
 </nldd-split-view-pane>
 </nldd-bar-split-view>
 </nldd-shell>
+{% if kan_verhogen %}{% include "bg/_verhoogde-rechten-dialoog.html.j2" %}{% endif %}
 
     {% block additional_styles %}{% endblock %}
     {% block additional_scripts %}{% endblock %}

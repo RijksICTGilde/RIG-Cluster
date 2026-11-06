@@ -283,7 +283,9 @@ async def test_een_nieuwe_deployment_maakt_beide_rollen_met_de_limiet() -> None:
             admin_password="p",
             connection_limit=40,
         )
-        await mgr._ensure_readonly_user("test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 40)
+        await mgr._ensure_readonly_user(
+            "test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 40, db_host="h"
+        )
 
     assert rollen.limieten == {"proj_test": 40, "proj_test_ro": 40}
     assert rollen.alters == []

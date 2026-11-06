@@ -55,7 +55,7 @@ async def test_het_versleutelen_van_repository_secrets_blokkeert_de_loop_niet(tm
     project_manager._manifest_generator = ManifestGenerator()
     project_manager.get_name = AsyncMock(return_value="demo")
     project_manager.get_deployments = AsyncMock(return_value=[{"name": "productie"}])
-    project_manager.get_git_connector_for_argocd = AsyncMock(return_value=git_connector)
+    project_manager.get_argo_workspace = AsyncMock(return_value=git_connector)
     project_manager.get_repositories = AsyncMock(
         return_value=[
             {"name": naam, "url": f"https://forgejo.example.org/zad/{naam}.git", "username": "git", "password": "x"}

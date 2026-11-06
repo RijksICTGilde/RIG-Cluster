@@ -832,43 +832,39 @@ async def _purge_pvc(
             repo_config = repositories[0] if repositories else {}
             repo_name = repo_config.get("name", "") if isinstance(repo_config, dict) else ""
 
-            git_connector = await pm.get_git_connector_for_deployment(repo_name, repo_config)
+            workspace = await pm.get_deployment_workspace(repo_name, repo_config)
 
-            working_dir = await git_connector.get_working_dir()
-            full_output_dir = os.path.join(working_dir, deployment_path)
-            manifest_path = os.path.join(full_output_dir, resource_name)
+            async def _remove_marked_manifest() -> bool:
+                """Haal het gemarkeerde manifest weg en herbouw de kustomization."""
+                full_output_dir = os.path.join(await workspace.get_working_dir(), deployment_path)
+                manifest_path = os.path.join(full_output_dir, resource_name)
+                if not os.path.exists(manifest_path):
+                    logger.info("PVC manifest '%s' already removed from git - cleaning up mark", resource_name)
+                    return False
 
-            if not os.path.exists(manifest_path):
-                logger.info(
-                    "PVC manifest '%s' already removed from git - cleaning up mark",
-                    resource_name,
+                os.remove(manifest_path)
+                logger.info("Deleted PVC manifest: %s", manifest_path)
+
+                # Regenerate kustomization.yaml so the deleted file is no longer listed
+                sops_files, regular_files = pm._manifest_generator.collect_manifest_files(
+                    full_output_dir, include_subfolders=False
                 )
-                await service.delete_mark(mark["id"])
-                results["purged"].append({"type": "pvc", "name": resource_name})
-                return
+                pm._manifest_generator.create_kustomization_files(
+                    output_dir=full_output_dir,
+                    sops_files=sops_files,
+                    regular_files=regular_files,
+                )
+                logger.info("Regenerated kustomization.yaml for %s", deployment_path)
+                return True
 
-            # Delete the manifest file
-            os.remove(manifest_path)
-            logger.info("Deleted PVC manifest: %s", manifest_path)
-
-            # Regenerate kustomization.yaml so the deleted file is no longer listed
-            sops_files, regular_files = pm._manifest_generator.collect_manifest_files(
-                full_output_dir, include_subfolders=False
-            )
-            pm._manifest_generator.create_kustomization_files(
-                output_dir=full_output_dir,
-                sops_files=sops_files,
-                regular_files=regular_files,
-            )
-            logger.info("Regenerated kustomization.yaml for %s", deployment_path)
-
-            # Commit and push
-            await git_connector.commit_and_push(
-                f"Purge deferred PVC manifest {resource_name} for {project_name}/{deployment_name}"
+            removed = await workspace.mutate_and_push(
+                f"Purge deferred PVC manifest {resource_name} for {project_name}/{deployment_name}",
+                _remove_marked_manifest,
             )
 
             await service.delete_mark(mark["id"])
-            logger.info("Purged PVC manifest: %s (project=%s)", resource_name, project_name)
+            if removed:
+                logger.info("Purged PVC manifest: %s (project=%s)", resource_name, project_name)
 
         results["purged"].append({"type": "pvc", "name": resource_name})
 
@@ -965,21 +961,24 @@ async def _purge_deployment_manifests(
                 results["purged"].append({"type": "deployment_manifests", "name": resource_name})
                 return
 
-            manifest_connector = await pm.get_git_connector_for_deployment(repository_name, repo_config)
+            workspace = await pm.get_deployment_workspace(repository_name, repo_config)
             repo_path = repo_config.get("path", "")
             deployment_folder_path = generate_deployment_manifest_path(
                 cluster, project_name, deployment_name, repo_path
             )
 
-            await manifest_connector.ensure_repo_cloned()
-            folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
-
-            if os.path.exists(folder_full_path):
+            async def _remove_deployment_folder() -> bool:
+                folder_full_path = os.path.join(await workspace.get_working_dir(), deployment_folder_path)
+                if not os.path.exists(folder_full_path):
+                    return False
                 await asyncio.to_thread(shutil.rmtree, folder_full_path)
-                commit_message = (
-                    f"Deferred cleanup: delete deployment '{deployment_name}' manifests from project '{project_name}'"
-                )
-                await manifest_connector.commit_and_push_changes(commit_message)
+                return True
+
+            removed = await workspace.mutate_and_push(
+                f"Deferred cleanup: delete deployment '{deployment_name}' manifests from project '{project_name}'",
+                _remove_deployment_folder,
+            )
+            if removed:
                 logger.info("Purged deployment manifests: %s", deployment_folder_path)
             else:
                 logger.info("Deployment manifests already removed: %s", deployment_folder_path)

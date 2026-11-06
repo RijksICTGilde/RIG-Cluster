@@ -109,7 +109,7 @@ async def test_create_app_projects_zet_in_elk_bestand_alleen_de_repos_van_die_na
     project_manager = MagicMock()
     project_manager._manifest_generator = ManifestGenerator()
     project_manager.get_name = AsyncMock(return_value="demo")
-    project_manager.get_git_connector_for_argocd = AsyncMock(
+    project_manager.get_argo_workspace = AsyncMock(
         return_value=MagicMock(get_working_dir=AsyncMock(return_value=str(tmp_path)))
     )
     project_manager.get_deployments = AsyncMock(

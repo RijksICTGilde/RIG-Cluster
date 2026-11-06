@@ -9,16 +9,22 @@ import inspect
 import logging
 from functools import wraps
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
-from opi.core.step_up import StepUpAction, has_fresh_step_up, log_step_up_refusal
+from opi.core.step_up import StepUpAction, has_fresh_step_up, is_elevated_admin, log_step_up_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+#: The route behind the popup where a platform admin activates elevated permissions.
+ELEVATE_PATH = "/step-up/elevate"
+
+ELEVATION_NEEDED = "Activeer eerst verhoogde rechten via het menu rechtsboven."
 
 
 def requires_sso(func: Callable) -> Callable:
@@ -56,8 +62,8 @@ def get_current_user(request) -> dict[str, Any] | None:
     de bearer-decorators uit een geverifieerd SSO-token, en ``handhaaf`` uit een
     persoonlijk API-token (RC-322). Een gevulde waarde zegt dus WIE de aanroeper is en
     NIET dat hij een browserflow doorliep: hang er geen controle aan die een sessie of
-    een tweede factor veronderstelt. Een step-up hoort op ``@requires_step_up``, dat de
-    code per verzoek tegen deze persoon toetst.
+    een tweede factor veronderstelt. Een step-up hoort op ``@requires_step_up``, dat het
+    venster van deze persoon leest.
 
     Args:
         request: The FastAPI/Starlette request object
@@ -85,14 +91,36 @@ def require_platform_admin(request) -> dict[str, Any]:
     if not user:
         raise HTTPException(status_code=401, detail="Niet ingelogd")
     email = str(user.get("email", "")).lower()
-    if not get_user_service().is_platform_admin(email):
+    users = get_user_service()
+    if not users.is_platform_admin(email):
         raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
+    if not is_elevated_admin(users, email):
+        raise _elevation_required(request)
     return user
+
+
+def _elevation_required(request) -> HTTPException:
+    """Send a platform admin without a fresh step-up to the popup that activates it."""
+    if request.headers.get("HX-Request"):
+        terug = urlsplit(request.headers.get("HX-Current-URL", "")).path or "/"
+        return HTTPException(status_code=403, detail=ELEVATION_NEEDED, headers={"HX-Redirect": elevate_url(terug)})
+    if request.method == "GET":
+        terug = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        return HTTPException(status_code=303, detail=ELEVATION_NEEDED, headers={"Location": elevate_url(terug)})
+    return HTTPException(status_code=403, detail=ELEVATION_NEEDED)
+
+
+def elevate_url(terug: str) -> str:
+    """The dashboard with the popup open, which returns to ``terug`` after a valid code.
+
+    The dashboard because an admin page cannot show itself without the rights it asks for.
+    """
+    return f"/dashboard?{urlencode({'verhoog': terug})}"
 
 
 #: Markering op een route die zich voor een step-up heeft aangemeld, met de
 #: :class:`~opi.core.step_up.StepUpAction` als waarde. ``tests/test_step_up_routes.py``
-#: leest hem, en ``custom_openapi`` documenteert de header en de 403 eruit: zonder
+#: leest hem, en ``custom_openapi`` documenteert de 403 eruit: zonder
 #: markering zou een route die de decorator kwijtraakt stilzwijgend weer open staan.
 REQUIRES_STEP_UP = "zad_requires_step_up"
 
@@ -109,8 +137,8 @@ def requires_step_up(
     verlaagt. ``actie`` draagt de teksten voor de dialoog, de log en de client.
 
     Twee wegen, omdat er twee soorten aanroepers zijn: het portaal heeft een sessie en
-    krijgt een dialoog, de API heeft die niet en draagt de code van de eigenaar van het
-    token per verzoek mee.
+    krijgt een dialoog, de API leest het venster dat de aanroeper met
+    ``POST /api/v2/step-up`` opende.
 
     ``velden`` noemt de formuliervelden die de herhaling in het portaal moet meesturen:
     de dialoog neemt de plaats in van het formulier, dus zonder die velden zou een

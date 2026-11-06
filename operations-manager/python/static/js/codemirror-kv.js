@@ -10,6 +10,9 @@
  *   - ENV mode: checks each non-empty/non-comment line for KEY=value
  *   - YAML mode: parses with js-yaml and shows parse errors at position
  *
+ * Editors met data-mask-values="true" tonen elke waarde als een rij stippen tot
+ * toggleKvMask() het veil opheft; zie "masker" hieronder.
+ *
  * Depends on window.CM (set by codemirror-bundle.js).
  */
 (function () {
@@ -32,6 +35,10 @@
     var syntaxHighlighting = CM.syntaxHighlighting;
     var tags          = CM.tags;
     var autocompletion = CM.autocompletion;
+    var Decoration    = CM.Decoration;
+    var ViewPlugin    = CM.ViewPlugin;
+    var WidgetType    = CM.WidgetType;
+    var RangeSetBuilder = CM.RangeSetBuilder;
 
     var _instances = {};
 
@@ -81,6 +88,7 @@
             backgroundColor: "var(--semantics-surfaces-tinted-background-color)",
             color: "var(--semantics-content-color)",
         },
+        ".cm-kv-mask": { color: "var(--semantics-content-secondary-color)", letterSpacing: "0.15em" },
     });
 
     /*
@@ -111,8 +119,30 @@
 
     /* ---- linter extensions ---- */
 
+    /*
+     * Of een ENV-veld eigenlijk YAML (of JSON) bevat. Dezelfde regel als
+     * _detect_env_var_format in opi/utils/env_vars.py: de server accepteert beide in
+     * hetzelfde veld, dus de linter moet YAML niet regel voor regel rood maken.
+     */
+    function looksLikeYaml(text) {
+        var trimmed = text.trim();
+        if (/^(---|\{\n|\[\n)/.test(trimmed)) return true;
+        var yamlLines = 0;
+        var envLines = 0;
+        var lines = trimmed.split("\n").slice(0, 10);
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (!line || line.charAt(0) === "#") continue;
+            if (/^[a-zA-Z_][a-zA-Z0-9_]*:(\s|$)/.test(line)) yamlLines++;
+            else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(line)) envLines++;
+        }
+        return yamlLines > envLines;
+    }
+
     function envLinter() {
+        var yamlDiagnostics = yamlLinterSource();
         return linter(function (view) {
+            if (looksLikeYaml(view.state.doc.toString())) return yamlDiagnostics(view);
             var diagnostics = [];
             var doc = view.state.doc;
             for (var i = 1; i <= doc.lines; i++) {
@@ -133,7 +163,11 @@
     }
 
     function yamlLinter() {
-        return linter(function (view) {
+        return linter(yamlLinterSource());
+    }
+
+    function yamlLinterSource() {
+        return function (view) {
             var text = view.state.doc.toString();
             if (!text.trim()) return [];
             try {
@@ -153,12 +187,142 @@
                 }
                 return [];
             }
-        });
+        };
     }
 
     function lintExtension(format) {
         if (format === "yaml") return yamlLinter();
         return envLinter();
+    }
+
+    /* ---- masker ---- */
+
+    /*
+     * Veil over de waarden via Decoration.replace op het deel na de `=` (ENV) of `:` (YAML).
+     *
+     * Het document verandert niet, dus textarea en opslaan zien de echte waarden.
+     * De rij stippen heeft vaste lengte. De regel met de cursor toont zijn waarde,
+     * maar alleen zolang de editor focus heeft (anders stond de eerste waarde al open
+     * omdat de cursor begint op positie 0).
+     */
+    var MASK_DOTS = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+
+    /* Een screenreader leest de rol voor, niet de stippen en niet de waarde. */
+    class MaskWidget extends WidgetType {
+        eq() {
+            return true;
+        }
+        toDOM() {
+            var span = document.createElement("span");
+            span.className = "cm-kv-mask";
+            span.setAttribute("role", "img");
+            span.setAttribute("aria-label", "verborgen waarde");
+            span.textContent = MASK_DOTS;
+            return span;
+        }
+    }
+
+    var maskDecoration = Decoration.replace({ widget: new MaskWidget() });
+
+    /*
+     * Waar de waarde in de regel begint, of -1 als die geen waarde bevat.
+     *
+     * Niet per format: ook een ENV-veld mag YAML of JSON bevatten (de server herkent
+     * dat zelf), en een scheiding alleen op `=` liet `KEY: geheim` open staan. Het
+     * eerste `=` of `:` is de scheiding, want een sleutel bevat geen van beide.
+     * Een ingesprongen regel zonder scheiding is het vervolg van een YAML-blokwaarde
+     * (`KEY: |`) en is in zijn geheel waarde.
+     */
+    function valueStart(text) {
+        var match = /^[^=:]*[=:][ \t]*/.exec(text);
+        if (match) return match[0].length;
+        var indent = /^[ \t]+(?=\S)/.exec(text);
+        return indent ? indent[0].length : -1;
+    }
+
+    function linesWithCursor(state) {
+        var lines = {};
+        for (var i = 0; i < state.selection.ranges.length; i++) {
+            var range = state.selection.ranges[i];
+            lines[state.doc.lineAt(range.head).number] = true;
+            lines[state.doc.lineAt(range.anchor).number] = true;
+        }
+        return lines;
+    }
+
+    function maskDecorations(view) {
+        var state = view.state;
+        var builder = new RangeSetBuilder();
+        var exempt = view.hasFocus ? linesWithCursor(state) : {};
+        for (var i = 1; i <= state.doc.lines; i++) {
+            if (exempt[i]) continue;
+            var line = state.doc.line(i);
+            var trimmed = line.text.trim();
+            if (!trimmed || trimmed.charAt(0) === "#") continue;
+            var start = valueStart(line.text);
+            if (start < 0 || line.from + start >= line.to) continue;
+            builder.add(line.from + start, line.to, maskDecoration);
+        }
+        return builder.finish();
+    }
+
+    function maskExtension(enabled) {
+        if (!enabled) return [];
+        return ViewPlugin.fromClass(
+            class {
+                constructor(view) {
+                    this.decorations = maskDecorations(view);
+                }
+                update(update) {
+                    if (update.docChanged || update.selectionSet || update.focusChanged) {
+                        this.decorations = maskDecorations(update.view);
+                    }
+                }
+            },
+            { decorations: function (plugin) { return plugin.decorations; } }
+        );
+    }
+
+    /*
+     * Wie de editor binnenkomt zonder een regel aan te wijzen, landt op een lege regel
+     * onderaan. Anders zette CodeMirror de cursor op de laatste (klik onder de tekst) of
+     * eerste regel (Tab), en lag die waarde open. Een lege regel wordt bij het opslaan
+     * overgeslagen.
+     *
+     * De mousedown luistert in de capture-fase op view.dom: zo valt ook een klik in de
+     * kantlijn eronder, en komt CodeMirror er niet aan te pas.
+     */
+    function moveToEmptyLastLine(view) {
+        var doc = view.state.doc;
+        if (doc.line(doc.lines).text.trim()) {
+            view.dispatch({ changes: { from: doc.length, insert: "\n" }, selection: { anchor: doc.length + 1 }, scrollIntoView: true });
+        } else {
+            view.dispatch({ selection: { anchor: doc.length }, scrollIntoView: true });
+        }
+    }
+
+    /* Ruimte onder de laatste regel, zodat er ook in een volle editor iets is om op te
+       klikken. Hoort bij enterOnEmptyLastLine. */
+    var emptyLastLineRoom = EditorView.theme({ ".cm-content": { paddingBottom: "1.5rem" } });
+
+    function enterOnEmptyLastLine(view) {
+        var byPointer = false;
+        view.dom.addEventListener("mousedown", function (event) {
+            byPointer = true;
+            var lastLineBottom = view.lineBlockAt(view.state.doc.length).bottom + view.documentTop;
+            if (event.clientY <= lastLineBottom) return;
+            event.preventDefault();
+            event.stopPropagation();
+            moveToEmptyLastLine(view);
+            view.focus();
+        }, true);
+        view.contentDOM.addEventListener("focus", function () {
+            if (!byPointer) moveToEmptyLastLine(view);
+            byPointer = false;
+        });
+        view.contentDOM.addEventListener("blur", function () {
+            byPointer = false;
+        });
     }
 
     /* ---- aanvullen ---- */
@@ -227,6 +391,8 @@
         var format = editorDiv.dataset.format || "env";
         var langCompartment = new Compartment();
         var lintCompartment = new Compartment();
+        var maskCompartment = new Compartment();
+        var masked = editorDiv.dataset.maskValues === "true";
 
         var completions = parseCompletions(editorDiv);
 
@@ -242,6 +408,7 @@
             basicSetup,
             langCompartment.of(langExtension(format)),
             lintCompartment.of(lintExtension(format)),
+            maskCompartment.of(maskExtension(masked)),
             EditorView.updateListener.of(function (update) {
                 if (update.docChanged) {
                     textarea.value = update.state.doc.toString();
@@ -250,6 +417,7 @@
             zadTheme,
             syntaxHighlighting(zadHighlight)
         );
+        if (masked) extensions.push(emptyLastLineRoom);
 
         var view = new EditorView({
             doc: textarea.value,
@@ -262,10 +430,14 @@
         textarea.parentNode.insertBefore(wrapper, textarea.nextSibling);
         textarea.style.display = "none";
 
+        if (masked) enterOnEmptyLastLine(view);
+
         _instances[editorId] = {
             view: view,
             langCompartment: langCompartment,
             lintCompartment: lintCompartment,
+            maskCompartment: maskCompartment,
+            masked: masked,
         };
         editorDiv.dataset.cmInitialized = "1";
     }
@@ -323,6 +495,28 @@
         });
     }
 
+    /* Hef of herstel het masker en herbepaal het knopetiket.
+       Het aan-zijn van de nldd-toggle-button IS de stand: aan betekent zichtbaar. */
+    function toggleKvMask(editorId, button) {
+        var inst = _instances[editorId];
+        if (!inst) return;
+
+        inst.masked = button ? !button.selected : !inst.masked;
+        inst.view.dispatch({
+            effects: inst.maskCompartment.reconfigure(maskExtension(inst.masked)),
+        });
+
+        if (button) button.text = inst.masked ? "Toon waarden" : "Verberg waarden";
+    }
+
+    /* Voor een volle editor, waar onder de tekst geen ruimte meer is om te klikken. */
+    function addKvLine(editorId) {
+        var inst = _instances[editorId];
+        if (!inst) return;
+        moveToEmptyLastLine(inst.view);
+        inst.view.focus();
+    }
+
     /**
      * Destroy a CodeMirror KV editor instance and restore the textarea.
      */
@@ -346,5 +540,7 @@
     // Expose on window
     window.initKvEditors = initKvEditors;
     window.switchKvLanguage = switchKvLanguage;
+    window.toggleKvMask = toggleKvMask;
+    window.addKvLine = addKvLine;
     window.destroyKvEditor = destroyKvEditor;
 })();

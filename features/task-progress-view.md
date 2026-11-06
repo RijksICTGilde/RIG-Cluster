@@ -50,6 +50,7 @@ volgbaar -- het project staat dan niet (meer) in de store.
 
 - een voortgangsbalk, met het percentage naast de huidige stap;
 - de stappen en substappen met een vinkje, kruis, pijl of klok;
+- na afloop de totale duur, "Klaar in ..." (geen duur per stap: dat was ruis);
 - de foutregel van een stap of substap die mislukte;
 - bij mislukken: de uitleg per component uit `partials/_component_failures.html.j2`;
 - een afsluitknop, als de aanroeper er een meegeeft.
@@ -71,3 +72,49 @@ autoescape ontsnapt `< > & " '` maar niet `{{`. Een stapnaam met `{{ ... }}` eri
 en stapnamen bevatten deployment- en componentnamen uit het projectbestand -- wordt dan
 uitgevoerd in plaats van getoond. Zie `render_progress_fragment()` in
 `opi/web/task_progress.py`; de test staat in `tests/test_progress_fragment_injection.py`.
+
+## Wat de huidige regel betekent
+
+De regel is de laatst GESTARTE stap, niet de laatst voltooide, dus blijft die regel tot de
+volgende stap begint. Elke fase noemt zich zelf, in deze orde: "Projectbestand ophalen",
+"Projectbestand valideren", de diensten ("Databaseconfiguratie toepassen",
+"Opslagconfiguratie toepassen", "Inlogconfiguratie toepassen", "Cacheconfiguratie
+toepassen"), "Configuratie ophalen" per repository, "Deploymentconfiguratie opstellen" per
+deployment, "Projectbrede configuratie opstellen", "Configuratie publiceren" per repository,
+"Projectbestand bijwerken", "Uitrol klaarzetten", "Uitrollen". Faalt een fase, dan staat de
+foutregel bij die stap.
+
+**Een uitrol toont drie fases.** "Wijziging controleren en opslaan" (bij een refresh
+"Projectbestand controleren"), "Configuratie bijwerken" en "Uitrollen". De
+task worker opent de eerste (`first_phase` in `opi/core/task_rollout.py`), `process_project`
+de tweede en de ArgoCD-wacht is de derde. Een stap die start terwijl een fase open is, valt
+eronder (`begin_phase` op de progress manager); de aanroepen zelf weten niets van fases. Een
+fase houdt zijn stappen, ook als hij klaar is: een fase die ze na afloop wegklapte liet de
+lijst verspringen en de stappen verdwijnen. Taken zonder fase (verwijderen, backup,
+slaapstand) tonen hun stappen plat, zoals voorheen.
+
+**Elke regel is werk dat echt gebeurt.** Er zijn geen containerstappen die alleen andere
+stappen omsluiten: de pagina toont één niveau nesting, dus zo'n stap stond tussen de echte
+stappen in met een vinkje dat pas aan het eind kwam. Mislukt een verwerking zonder dat een
+eigen stap faalde, dan staat de reden bovenaan de pagina, via `fail_project`.
+
+**Alle stapteksten staan in `opi/core/progress_steps.py`.** Wie een stap toevoegt, zet zijn
+tekst daar en geeft de constante mee; het variabele deel (een deployment, component of
+repository) gaat als `subject` mee, niet in de naam.
+`tests/test_progress_step_texts.py` scant `opi/` en faalt op een letterlijke staptekst
+ergens anders. De teksten zijn gewone taal en kloppen voor een nieuw en een bestaand
+project: "inrichten", "toepassen", "opstellen", "opslaan", "publiceren", niet "aanmaken"
+voor iets dat al kan bestaan.
+
+Het ophalen en de push zijn eigen stappen omdat het netwerk ervoor nodig is. Ze starten
+binnen de write, via `on_prepare` en `on_push` van `GitRepoWorkspace.mutate_and_push`. Bij
+een botsing starten ze opnieuw. De push-stap van de poging die botste staat dan als
+"Configuratie publiceren: botsing, opnieuw" afgerond, niet als mislukt: een uitrol die bij
+de volgende poging landt, toont geen rode stap.
+
+Een push, fetch of ls-remote zonder antwoord breekt af na 60s
+(`GIT_PUSH_TIMEOUT_SECONDS`) i.p.v. curl's 300s. Dat geldt voor beide git-paden: de
+deployments- en argo-repo via `GitRepo`, en de projects-repo via `GitConnector`, waar de
+push en de fetch van de rebase dezelfde grens hebben. De foutregel noemt server en repository
+zonder credentials, zegt "kreeg geen antwoord" (niet "niet gepusht"; het kan toch geland
+zijn), en volgende ronde leest de remote opnieuw.

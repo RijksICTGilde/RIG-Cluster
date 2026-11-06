@@ -11,16 +11,18 @@ erom vraagt staat in ``opi/web/router_step_up.py``; hoe een handeling hem oplegt
 :func:`opi.core.auth_decorators.requires_step_up`.
 
 Het venster schuift niet mee: een handeling LEEST de stempel en zet hem nooit opnieuw,
-zodat vijf minuten na de code ook echt vijf minuten zijn (besluit 8.5).
+zodat het venster na de code ook echt zo lang duurt als ingesteld.
 """
 
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from opi.core.config import settings
 from opi.core.leden import ledenlijst_wijzigt
 from opi.core.project_environment import (
     Omgeving,
@@ -31,13 +33,19 @@ from opi.core.project_environment import (
 if TYPE_CHECKING:
     from starlette.requests import Request
 
+    from opi.services.user_service import UserService
+
 logger = logging.getLogger(__name__)
 
 #: Hoe lang een step-up een volgende handeling dekt.
-STEP_UP_WINDOW = timedelta(minutes=5)
+STEP_UP_WINDOW = timedelta(minutes=settings.STEP_UP_WINDOW_MINUTES)
 
 #: De sessiesleutel met het moment van de laatste geslaagde step-up.
 STEP_UP_SESSION_KEY = "step_up_at"
+
+#: Whether caller has a fresh step-up. Service-layer has no request. Default False
+#: prevents accidental admin rights for workers or forgotten entry points.
+step_up_fresh: ContextVar[bool] = ContextVar("step_up_fresh", default=False)
 
 
 class StepUpKind(StrEnum):
@@ -78,6 +86,7 @@ class StepUpAction(StrEnum):
     USER_SESSIONS_REVOKE = "user-sessions-revoke"
     USER_DELETE = "user-delete"
     USER_OTP_RESET = "user-otp-reset"
+    ELEVATE = "elevate"
 
     @property
     def phrase(self) -> str:
@@ -112,6 +121,7 @@ _PHRASE = {
     StepUpAction.USER_SESSIONS_REVOKE: "de sessies van deze gebruiker te beëindigen",
     StepUpAction.USER_DELETE: "deze gebruiker te verwijderen",
     StepUpAction.USER_OTP_RESET: "de 2-factor van deze gebruiker leeg te maken",
+    StepUpAction.ELEVATE: "verhoogde rechten te activeren",
 }
 
 _REASON = {
@@ -143,6 +153,7 @@ _REASON = {
     StepUpAction.USER_SESSIONS_REVOKE: "de gebruiker moet daarna opnieuw inloggen",
     StepUpAction.USER_DELETE: "de gebruiker kan daarna niet meer op het portaal inloggen",
     StepUpAction.USER_OTP_RESET: "wie de 2-factor van een ander leegmaakt zet zijn tweede slot open",
+    StepUpAction.ELEVATE: "verhoogde rechten openen platformbeheer en alle projecten voor '{doelwit}'",
 }
 
 
@@ -242,6 +253,11 @@ def step_up_until(request: Request) -> datetime | None:
         sessie = request.session
     except AssertionError, AttributeError:
         return None
+    return session_step_up_until(sessie)
+
+
+def session_step_up_until(sessie: Any) -> datetime | None:
+    """:func:`step_up_until` for a caller holding only the session, such as a WebSocket."""
     stamp = sessie.get(STEP_UP_SESSION_KEY)
     if not isinstance(stamp, str):
         return None
@@ -256,6 +272,20 @@ def step_up_until(request: Request) -> datetime | None:
 def has_fresh_step_up(request: Request) -> bool:
     """Of er een step-up van minder dan :data:`STEP_UP_WINDOW` geleden in de sessie staat."""
     return step_up_until(request) is not None
+
+
+def clear_step_up(request: Request) -> None:
+    """End the step-up in this session, before its window runs out."""
+    request.session.pop(STEP_UP_SESSION_KEY, None)
+
+
+def is_elevated_admin(users: UserService, email: str) -> bool:
+    """Whether this caller may use platform admin rights right now.
+
+    A platform admin without a fresh step-up is an ordinary user who sees their own
+    projects. ``UserService.is_platform_admin`` only says who MAY elevate.
+    """
+    return step_up_fresh.get() and users.is_platform_admin(email)
 
 
 def _names(items: Any) -> set[str]:

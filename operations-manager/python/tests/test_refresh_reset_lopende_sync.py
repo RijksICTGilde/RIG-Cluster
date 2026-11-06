@@ -29,6 +29,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
+from opi.core import progress_steps
 from opi.core.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.manager.project_manager import ProjectManager
 from opi.server import app
@@ -40,6 +41,11 @@ PROJECT = "dd-mco"
 DEPLOYMENT = "pr-68"
 APP = "dd-mco-pr-68"
 ARGO_NS = "rig-prd-operations"
+
+
+@pytest.fixture(autouse=True)
+def _zonder_platform_repo_sync(stub_platform_repo_sync: None) -> None:
+    """Deze toetsen meten de refresh-handler, niet de git-sync erin."""
 
 
 def _application(age_seconds: int) -> dict[str, Any]:
@@ -131,16 +137,22 @@ class TestDeVlagLooptDoorDeKeten:
 
     @pytest.mark.parametrize("vlag", [True, False])
     async def test_de_repositoryronde_geeft_hem_door_aan_de_opruimronde(self, vlag: bool) -> None:
-        git = MagicMock()
-        git.get_working_dir = AsyncMock(return_value="/tmp/repo")
-        git.commit_changes = AsyncMock()
-        git.push_changes = AsyncMock()
+        # on_prepare and on_push are the hooks the caller uses to report the fetch and the
+        # push as their own progress step; this test does not cover those steps.
+        async def mutate_and_push(_message: str, mutate, on_prepare=None, on_push=None):  # type: ignore[no-untyped-def]
+            return await mutate()
+
+        workspace = MagicMock()
+        workspace.get_working_dir = AsyncMock(return_value="/tmp/repo")
+        workspace.mutate_and_push = AsyncMock(side_effect=mutate_and_push)
+        workspace.last_write = None
 
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": PROJECT})
-        fake.get_git_connector_for_deployment = AsyncMock(return_value=git)
+        fake.get_deployment_workspace = AsyncMock(return_value=workspace)
         fake._process_deployment_manifests = AsyncMock()
         fake.get_deployments = AsyncMock(return_value=[])
+        fake._project_level_path = None
         fake._clear_blocking_sync_operations = AsyncMock()
 
         deployments = [{"name": DEPLOYMENT, "cluster": "odcn-production", "namespace": PROJECT}]
@@ -343,7 +355,7 @@ class TestDeTaakuitkomst:
             manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
-        assert manager._begin_step.call_args.args[0] == f"Lopende sync afgebroken: {DEPLOYMENT}"
+        assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
         manager._end_step.assert_called_once_with("stap-1")
 
     async def test_een_gewone_push_meldt_een_vastgelopen_sync_ook(self) -> None:
@@ -357,7 +369,7 @@ class TestDeTaakuitkomst:
             manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
         )
 
-        assert manager._begin_step.call_args.args[0] == f"Lopende sync afgebroken: {DEPLOYMENT}"
+        assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
         assert manager._terminated_sync_operations == [DEPLOYMENT]
 
     async def test_zonder_afgebroken_sync_komt_er_geen_stap(self) -> None:

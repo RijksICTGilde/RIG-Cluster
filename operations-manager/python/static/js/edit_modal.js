@@ -320,6 +320,55 @@
         });
     };
 
+    /* A confirmed action (bg/_action-confirm.html.j2): first only the question, in the
+       page's own confirmation dialog; the shared modal opens after "yes", with the task's
+       progress. The fragment goes into the still-closed modal so htmx can post it from
+       there, with the CSRF header it inherits from the fragment's own wrapper. A response
+       that is not a confirmation (a refusal, the step-up dialog) is shown in the modal. */
+    window.openConfirmAction = function (endpoint, title) {
+        var innerEl = document.getElementById('edit-section-inner');
+        var errorEl = document.getElementById('edit-section-error');
+        if (errorEl) errorEl.classList.add('is-hidden');
+        document.getElementById('edit-section-title-text').textContent = title;
+
+        function showModal() {
+            toonDialoog(
+                document.getElementById('edit-section-modal'),
+                document.getElementById('edit-section-backdrop')
+            );
+        }
+
+        fetch(endpoint, { credentials: 'same-origin' })
+        .then(function(response) {
+            if (!response.ok) throw new Error('Fout bij het laden van ' + title);
+            return response.text();
+        })
+        .then(function(html) {
+            innerEl.innerHTML = html;
+            if (typeof htmx !== 'undefined') htmx.process(innerEl);
+            var question = innerEl.querySelector('[data-confirm-action]');
+            if (!question) {
+                showModal();
+                return;
+            }
+            var submit = question.querySelector('[hx-post]');
+            window.vraagBevestiging(
+                title,
+                question.dataset.question,
+                question.dataset.button,
+                function () {
+                    showModal();
+                    htmx.trigger(submit, 'confirmed');
+                },
+                { destructive: 'destructive' in question.dataset, explainOnly: !submit }
+            );
+        })
+        .catch(function(err) {
+            innerEl.innerHTML = '<div class="edit-section-error">' + err.message + '</div>';
+            showModal();
+        });
+    };
+
     /* Failure of a confirmed action (project-details/action-confirm.html.j2, which marks
        itself with data-confirm-action). A successful POST answers with the shared task
        progress fragment and htmx swaps it into the dialog, so success needs nothing here;

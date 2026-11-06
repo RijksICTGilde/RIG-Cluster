@@ -3,7 +3,7 @@
 De opvolger van `minio-storage`, met SeaweedFS 4.48 erachter. Sinds RC-382 draagt
 `minio-storage` een `replaced_by` naar deze dienst, dus op een cluster waar SeaweedFS er is
 (vandaag: de sandbox) ziet een nieuw project de MinIO-kaart niet meer, en houdt een
-deployment die MinIO al heeft hem. Zie `features/dienst-vervangen-door-een-opvolger.md`.
+project dat MinIO al heeft hem, ook op een nieuwe deployment. Zie `features/dienst-vervangen-door-een-opvolger.md`.
 Een deployment krijgt een eigen bucket, een eigen identiteit met rechten op alleen die
 bucket, en precies dezelfde omgevingsvariabelen als bij MinIO: een applicatie wisselt dus
 alleen van endpoint.
@@ -119,7 +119,8 @@ niet of de pod draait, dus een OPI die vooroploopt biedt SeaweedFS aan voordat h
 Reken er ook op dat de **MinIO-kaart op dat cluster verdwijnt voor een nieuw project**:
 `minio-storage` draagt sinds RC-382 `replaced_by` naar deze dienst, dus zodra SeaweedFS er
 is, is MinIO daar een vervangen dienst. Een project dat hem al heeft houdt hem, met twee
-pillen op de kaart; een deployment die hem er nieuw bij zou krijgen wordt geweigerd.
+pillen op de kaart, ook op een nieuwe deployment; een project dat hem er nieuw bij zou
+krijgen wordt geweigerd.
 
 Wat je na de uitrol meet:
 
@@ -442,5 +443,5 @@ Daarom staat het memory-request op **512Mi** en niet op de 256Mi van MinIO; de l
 ## Verder
 
 - `features/impliciete-dienstselectie.md` - waarom deze dienst zich zelf mag inschrijven
-- `instructions/services.md` - het dienstensysteem waar deze dienst in past
+- `docs/development/services.md` - het dienstensysteem waar deze dienst in past
 - `docs/KNOWN-ISSUES.md` - waarom MinIO een overbrugging is

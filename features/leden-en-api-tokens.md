@@ -60,8 +60,8 @@ portaal, dus een token opent nooit meer dan zijn eigenaar op het scherm kan.
 | `developer` | bouwen op alles wat niet productie is |
 | `ops` | hetzelfde op productie, en de OTAP-markering |
 | `admin` | leden, rollen, tokens, service accounts, project verwijderen |
-| `developer-ci` | voor een pijplijn: deployments die niet productie zijn |
-| `ops-ci` | voor een pijplijn: image vervangen op elke deployment |
+| `developer-ci` | voor een pijplijn: deployments die niet productie zijn aanmaken, bijwerken en verwijderen; leest als `viewer` |
+| `ops-ci` | voor een pijplijn: image vervangen op elke deployment, en de afloop teruglezen |
 | iets anders | niets |
 
 De volledige tabel staat op `/rollen` en wordt uit de regels in de code gelezen;
@@ -86,14 +86,19 @@ een eigen reden en niet "te weinig rechten", want zijn rol klopt en zijn SOORT n
 Een handeling die productie raakt vraagt een VERSE 2-factor (RC-332), en met een
 `zad_`-token loopt dat langs dezelfde weg als met een SSO-bearer. Het handhavingspunt zet
 de eigenaar van een persoonlijk token op `request.state.user`, en dat is precies waar
-`verify_api_step_up` (`opi/api/otp_step_up.py`) de persoon leest tegen wie de code uit
-`X-ZAD-OTP` getoetst wordt. Een code van iemand anders aan een aanroep hangen kan dus niet.
+`opi/api/otp_step_up.py` de persoon leest tegen wie de code getoetst wordt. Een code van
+iemand anders aan een aanroep hangen kan dus niet.
 
-| bewijsmiddel | productiehandeling zonder code | met een geldige code | met een foute code |
+Een persoonlijk token activeert zijn step-up met `POST /api/v2/projects/{project}/step-up` en
+`{"code": "123456"}`. Daarna werkt dat ene token de rest van het venster zonder code. De
+step-up hoort bij het token: een gelekt token kan niet meeliften op een code die de eigenaar
+ergens anders gaf.
+
+| bewijsmiddel | productiehandeling zonder step-up | met een verse step-up | step-up activeren |
 |---|---|---|---|
-| token van een mens | 403 `otp-missing` | gaat door | 403 `code-invalid` |
-| token van een service account | 403 `principal-kind-not-allowed` | idem, de factor wordt niet eens geraadpleegd | idem |
-| de oude projectsleutel | 403 `principal-kind-not-allowed` | idem | idem |
+| token van een mens | 403 `otp-missing` | gaat door | kan, met een foute code 403 `code-invalid` |
+| token van een service account | 403 `principal-kind-not-allowed` | kan niet | kan niet, 403 |
+| de oude projectsleutel | 403 `principal-kind-not-allowed` | kan niet | kan niet, 403 |
 
 Het antwoord is een problem-detail (RFC 7807) met `type: urn:zad:step-up-required`, zodat
 een client ziet welke handeling het was, waarom ze een step-up vraagt en wat hij moet doen.
@@ -116,11 +121,11 @@ project, ook als dat project niet op productie staat (BIO2 8.05 en 8.32).
 
 De leesroute (`GET .../leden`) vraagt er geen: die verandert niets.
 
-In de API gaat de code als `X-ZAD-OTP` mee, per aanroep, en wordt getoetst tegen de eigenaar
-van het bearertoken. Zonder code is het 403 `otp-missing`, met een foute code 403
-`code-invalid`, en zonder ingerichte factor 403 `factor-missing` met de weg naar
+In de API activeer je de step-up met `POST /api/v2/step-up` en werk je daarna door. Zonder
+step-up is het 403 `otp-missing`. De activering zelf geeft bij een foute code 403
+`code-invalid` en zonder ingerichte factor 403 `factor-missing` met de weg naar
 `/account/otp`. In het portaal neemt de dialoog de plaats van het formulier in; een geldige
-code dekt vijf minuten en voert de handeling daarna alsnog uit. Zie
+code dekt het hele venster en voert de handeling daarna alsnog uit. Zie
 [otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
 
 Een service account komt hier nooit aan toe: deze routes vragen een bearertoken van een

@@ -19,7 +19,7 @@
         <c-alert type="warning" heading="Deze handeling vraagt extra rechten, omdat je er gevoelige gegevens of instellingen mee raakt. Bevestig daarom met je ZAD 2-factor code." />
 
         {% if geregistreerd %}
-            <c-paragraph>Vul een code uit je app in om {{ handeling }}. De code dekt vijf minuten; daarna vraagt de volgende handeling er opnieuw om.</c-paragraph>
+            <c-paragraph>Vul een code uit je app in om {{ handeling }}. De code dekt {{ venster_minuten }} minuten; daarna vraagt de volgende handeling er opnieuw om.</c-paragraph>
             {# novalidate: de server valideert de code en meldt in het Nederlands. #}
             <form id="step-up-form"
                   autocomplete="off"

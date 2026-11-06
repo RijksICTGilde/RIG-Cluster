@@ -214,8 +214,9 @@ login).
 In `confirm` mode, Keycloak's stock `login-idp-link-confirm.ftl` renders a "Review profile" link
 alongside "Add to existing account". Because this flow sets `idp-review-profile` to `DISABLED`,
 that link has no target and appears to do nothing (a flow reset that returns to the same page);
-"Add to existing account" is the working action. Hiding the link would require overriding that
-template in the `nl-design-system` Keycloak theme (a separate artifact), not in this repo.
+"Add to existing account" is the working action. Since RC-424 that template lives in this
+repository (`images/keycloak-zad/theme/nl-design-system/login/login-idp-link-confirm.ftl`), so
+hiding the link is now a change here; it has not been made.
 
 ## Dependencies
 

@@ -8,6 +8,7 @@ that are used across different web routes.
 import logging
 from typing import Any
 
+from opi.core.step_up import is_elevated_admin
 from opi.services.user_service import get_user_service
 
 logger = logging.getLogger(__name__)
@@ -44,16 +45,17 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # het dashboard), en dit is de weg naar de uitleg over het platform. Bovenaan de
         # groep, want het is waar een nieuwkomer begint.
         {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
+        {"label": "Getting started", "link": "/getting-started", "icon": "uitvoering"},
         # De kaart van het platform: wat er draait en waar ZAD mee praat.
         {"label": "Platform", "link": "/platform", "icon": "wolk"},
-        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
-        {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         {"label": "CLI", "link": "/cli", "icon": "computercode"},
         {"label": "Actions", "link": "/actions", "icon": "applicatie"},
         {"label": "API Docs", "link": "/docs", "icon": "computercode"},
         # Onder de API-docs en niet bij Introductie: dit is naslag voor wie zijn eigen
         # domein hierheen laat wijzen, dezelfde soort lezer als de API-documentatie.
         {"label": "Eigen domein", "link": "/eigen-domein", "icon": "wereldbol"},
+        # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.
+        {"label": "Rollen en rechten", "link": "/rollen", "icon": "user"},
         # In the sidebar and not in a page footer: the NLDD application pattern has no footer.
         {"label": "Beveiligingsbeleid", "link": "/security", "icon": "schild-met-vinkje-erop"},
     ]
@@ -62,7 +64,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
     is_admin = False
     if user and user.get("email"):
         try:
-            is_admin = get_user_service().is_platform_admin(user["email"].lower())
+            is_admin = is_elevated_admin(get_user_service(), user["email"].lower())
         except Exception:
             logger.debug("Could not check admin status for menu", exc_info=True)
 

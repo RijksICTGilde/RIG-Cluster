@@ -43,6 +43,7 @@ def _data(registries: list[dict[str, Any]], images: list[str] | None = None) -> 
 def _connector(ok: bool, reason: str = "") -> Any:
     connector = AsyncMock()
     connector.check_repository_access = AsyncMock(return_value=(ok, reason))
+    connector.check_login = AsyncMock(return_value=(ok, reason))
     return connector
 
 
@@ -114,16 +115,47 @@ class TestDeToets:
         with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=_connector(True)):
             assert await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"}) is data
 
-    async def test_zonder_image_wordt_er_niets_geweigerd(self) -> None:
-        """De eerste stap vooruit in de create-wizard: de registry komt voor de componenten.
-        In de edit-wizard en de modals staan de bestaande componenten al in de samengevoegde
-        data. Een weigering op iets wat we niet gemeten hebben zou een gebruiker blokkeren op
-        een aanname."""
-        connector = _connector(False, "zou niet aangeroepen mogen worden")
+    async def test_without_an_image_the_login_is_checked(self) -> None:
+        """The create wizard asks for the registry before the components, so there is no
+        repository to read yet. The step then checks the login instead of nothing, so a
+        wrong token shows on this step and not only when the project is created."""
+        connector = _connector(True)
         data = _data([REGISTRY])
         with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
-            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+            assert await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"}) is data
         connector.check_repository_access.assert_not_awaited()
+        connector.check_login.assert_awaited_once_with(
+            "code.overheid.nl/robbert.uittenbroek", "robbert.uittenbroek", "een-token"
+        )
+
+    async def test_without_an_image_a_refused_login_is_an_error_on_the_token(self) -> None:
+        connector = _connector(False, UNREADABLE_REASON)
+        data = _data([REGISTRY])
+        with (
+            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        assert exc.value.field_path.endswith("registries[0]/password")
+        assert "code.overheid.nl accepteert dit token niet" in str(exc.value)
+
+    async def test_without_an_image_a_refused_destination_is_an_error_on_the_upstream(self) -> None:
+        connector = _connector(False, REFUSED_DESTINATION_REASON)
+        data = _data([REGISTRY])
+        with (
+            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        assert exc.value.field_path.endswith("registries[0]/upstream")
+
+    async def test_with_an_image_the_repository_is_read_not_just_the_login(self) -> None:
+        connector = _connector(True)
+        data = _data([REGISTRY], [IMAGE])
+        with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        connector.check_login.assert_not_awaited()
+        connector.check_repository_access.assert_awaited_once()
 
     async def test_met_een_secretname_wordt_er_niets_getoetst(self) -> None:
         connector = _connector(False)
@@ -163,10 +195,13 @@ class TestDeToets:
         """De fout wijst het VELD aan, dus de index moet die van de echte registry zijn."""
         ander = {**REGISTRY, "name": "ander", "upstream": "ghcr.io/team"}
         data = _data([ander, REGISTRY], [IMAGE])
+        connector = _connector(False, reason)
+        # The first registry has no image, so only its login is checked; that one passes.
+        connector.check_login = AsyncMock(return_value=(True, ""))
         with (
             patch(
                 "opi.services.catalog.image_registries.enforcers._connector",
-                return_value=_connector(False, reason),
+                return_value=connector,
             ),
             pytest.raises(FieldError) as exc,
         ):

@@ -15,7 +15,7 @@ meer op te halen; wie hem kwijt is roteert het token.
 
 Elke schrijvende handeling hier vraagt daarbovenop een verse tweede factor (RC-387): wie een
 token uitgeeft, roteert, intrekt of een rol verandert, geeft of neemt een bewijsmiddel. De
-code gaat als ``X-ZAD-OTP`` mee en wordt getoetst tegen de eigenaar van het bearer-token;
+aanroeper activeert die met ``POST /api/v2/step-up``, getoetst tegen de eigenaar van het token;
 ``opi.api.otp_step_up`` beschrijft de weigering. De leesroute vraagt er geen: die verandert niets.
 """
 

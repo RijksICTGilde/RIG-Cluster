@@ -24,7 +24,7 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.services import ServiceAdapter
-from opi.services.approvals import collect_approval_items
+from opi.services.approvals import collect_approval_items, collect_approved_values
 from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
@@ -754,10 +754,11 @@ def validate_service_availability(
 
     ``Service.available_on_cluster`` is the hard one: the cluster cannot deliver the
     service at all, so nobody may have it. ``Service.replaced_on_cluster`` is the softer
-    one: the service has a successor there, so a deployment that already runs it keeps
-    it, and only a deployment that would get it NEW is refused. Which is why this rule
-    needs ``previous``, the version this save replaces; a create has none, and then every
-    choice is new.
+    one: the service has a successor there, so a project that already runs it keeps it on
+    every deployment, new ones included, and only a project that would get it NEW is
+    refused. Per project and not per deployment, because a PR preview is a fresh clone of
+    a deployment that already ran it. Which is why this rule needs ``previous``, the
+    version this save replaces; a create has none, and then every choice is new.
 
     This is the refusal that counts. Leaving a service out of the wizard's cards hides it
     from one of three roads; the API and a hand-written project file never pass a card at
@@ -800,12 +801,17 @@ def validate_service_availability(
                 # De dienst staat wel in de projectlijst maar deze deployment gebruikt hem
                 # niet, dus deze deployment krijgt er niets bij.
                 continue
-            if previous is not None and handler.deployment_uses_service(previous, str(dep_name), [name]):
+            if previous is not None and any(
+                isinstance(prev_dep, dict)
+                and handler.deployment_uses_service(previous, str(prev_dep.get("name")), [name])
+                for prev_dep in previous.get("deployments", []) or []
+            ):
                 continue
             successor = service.replaced_by.value if service.replaced_by else ""
             errors.append(
                 f"de dienst '{name}' is op cluster '{cluster}' vervangen door '{service.replacement_name()}'. "
-                f"Deployment '{dep_name}' had hem niet; gebruik '{successor}' in plaats daarvan"
+                f"Het project had hem niet, dus deployment '{dep_name}' krijgt hem niet erbij; "
+                f"gebruik '{successor}' in plaats daarvan"
             )
     return errors
 
@@ -883,10 +889,39 @@ def _approval_items_by_identity(project_data: dict[str, Any]) -> dict[tuple[str,
     }
 
 
+#: Sentinel for "this project had no approved value here at all", so that an approved
+#: value appearing out of nothing is caught the same way as one that changed.
+_NO_APPROVED_VALUE = object()
+
+
+def _validate_approved_values_unchanged(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
+    """A stored last-approved value may not appear or change outside the approval route.
+
+    The status guard only sees a block that carries a ``value``, so a block holding
+    nothing but an ``approved-value`` slipped past it while counting as approved
+    (``_status_of_value``). Keeping that block unchanged IS legitimate: the platform
+    writes exactly that shape when a value goes back to the last approved one. So the
+    rule is about the value moving, not about the block existing.
+    """
+    before = collect_approved_values(previous)
+    for identity, value in collect_approved_values(project_data).items():
+        if before.get(identity, _NO_APPROVED_VALUE) == value:
+            continue
+        service, key, name = identity
+        spec = get_service(ServiceType(service)).get_approval(key)
+        subject = f"{spec.label if spec else key}{f' van {name}' if name else ''}"
+        raise ProjectIntegrityError(
+            f"Project '{project_data.get('name', '(onbekend)')}': de goedgekeurde waarde van {subject} "
+            f"kan niet via deze schrijfweg worden gezet; een goedkeuring komt alleen van de "
+            f"goedkeuringsroute"
+        )
+
+
 def validate_approval_decisions(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
     """Decisions (approved/denied) may only be set by approval_decision=True.
 
-    Raises ProjectIntegrityError if a status moves to a decision without the marker.
+    Raises ProjectIntegrityError if a status moves to a decision without the marker, or
+    if a stored last-approved value appears or changes.
     """
     before = _approval_items_by_identity(previous)
     for identity, item in _approval_items_by_identity(project_data).items():
@@ -901,6 +936,9 @@ def validate_approval_decisions(previous: dict[str, Any], project_data: dict[str
             f"{item.get('label', identity[1])} '{item.get('subject', '(onbekend)')}' kan niet via deze "
             f"schrijfweg op '{status}' worden gezet; een besluit komt alleen van de goedkeuringsroute"
         )
+    # Runs after the status guard, which names a forged block more precisely; this one
+    # covers the block that carries nothing but an approved value and so has no item.
+    _validate_approved_values_unchanged(previous, project_data)
 
 
 async def validate_project_structure(

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import asyncpg
 import pytest
 from keycloak.exceptions import KeycloakError
 from opi.connectors.keycloak import KeycloakConnector
@@ -137,7 +138,7 @@ async def test_de_read_only_rol_rouleert_mee() -> None:
 
     with patch.object(DatabaseManager, "_get_existing_database_credentials_from_k8s", lezen):
         _, ro_wachtwoord = await mgr._ensure_readonly_user(
-            "test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 20, rotate_password=True
+            "test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 20, db_host="h", rotate_password=True
         )
 
     assert ro_wachtwoord != "dummy-oud-readonly"
@@ -150,16 +151,52 @@ async def test_zonder_de_vlag_houdt_de_read_only_rol_zijn_wachtwoord() -> None:
     rollen = _Rollen("proj_test", "proj_test_ro")
     mgr = _db_manager(rollen)
 
-    with patch.object(
-        DatabaseManager,
-        "_get_existing_database_credentials_from_k8s",
-        AsyncMock(return_value=SimpleNamespace(password="dummy-oud-wachtwoord", ro_password="dummy-oud-readonly")),
+    with (
+        patch.object(
+            DatabaseManager,
+            "_get_existing_database_credentials_from_k8s",
+            AsyncMock(return_value=SimpleNamespace(password="dummy-oud-wachtwoord", ro_password="dummy-oud-readonly")),
+        ),
+        patch.object(DatabaseManager, "_test_database_connection", AsyncMock(return_value=True)),
     ):
         _, ro_wachtwoord = await mgr._ensure_readonly_user(
-            "test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 20
+            "test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 20, db_host="h"
         )
 
     assert ro_wachtwoord == "dummy-oud-readonly"
+    assert rollen.gezet == {}
+
+
+@pytest.mark.asyncio
+async def test_read_only_password_is_set_again_when_the_stored_one_is_rejected() -> None:
+    rollen = _Rollen("proj_test", "proj_test_ro")
+    mgr = _db_manager(rollen)
+
+    with (
+        patch.object(
+            DatabaseManager,
+            "_get_existing_database_credentials_from_k8s",
+            AsyncMock(return_value=SimpleNamespace(password="dummy-oud-wachtwoord", ro_password="dummy-oud-readonly")),
+        ),
+        patch.object(DatabaseManager, "_test_database_connection", AsyncMock(return_value=False)),
+    ):
+        _, ro_wachtwoord = await mgr._ensure_readonly_user(
+            "test", {"name": "test"}, "proj_test", "proj_test", ["proj_test"], 20, db_host="h"
+        )
+
+    assert ro_wachtwoord == "dummy-oud-readonly"
+    assert rollen.gezet == {"proj_test_ro": "dummy-oud-readonly"}
+
+
+@pytest.mark.asyncio
+async def test_connect_denied_after_authentication_counts_as_valid_credentials() -> None:
+    """PostgreSQL checks the password before CONNECT, so 42501 means the password was accepted."""
+    weigering = asyncpg.InsufficientPrivilegeError('permission denied for database "proj_test"')
+
+    with patch("opi.manager.database_manager.asyncpg.connect", AsyncMock(side_effect=weigering)):
+        geldig = await DatabaseManager._test_database_connection("proj_test_ro", "pw", "proj_test", "proj_test", "h")
+
+    assert geldig is True
 
 
 # --- Keycloak ---------------------------------------------------------------------

@@ -1,0 +1,9 @@
+{# The popup behind the account menu item. Its content comes from GET /step-up/elevate on
+   opening, so a page render asks nothing about the factor of an admin. #}
+<nldd-modal-dialog id="verhoog-dialoog"
+                   text="Verhoogde rechten"
+                   supporting-text="Zonder verhoogde rechten werk je als gewone gebruiker."
+                   horizontal-alignment="left">
+    <div id="verhoog-inhoud"></div>
+</nldd-modal-dialog>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/verhoogde-rechten.js') }}"></script>

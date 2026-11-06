@@ -22,10 +22,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import deployment_in_body, handhaaf
+from opi.api.endpoint_util import default_marking, deployment_in_body, handhaaf
 from opi.api.router import UpsertDeploymentRequest
 from opi.api.v2.router import upsert_deployment_v2
-from opi.core.authz.actions import Action, action, deployment_from, deployment_of
+from opi.core.authz.actions import Action, action, deployment_from, deployment_of, marking_if_absent
 from opi.core.leden import LidSoort
 from opi.services.project_leden import hash_van
 from opi.services.project_roles import build_resource, resource_path
@@ -35,6 +35,7 @@ from starlette.requests import Request
 
 TOKEN_CI = "zad_pijplijn"
 TOKEN_OPS = "zad_beheer"
+TOKEN_OPS_CI = "zad_uitrol"
 
 
 def _afgeronde_kloon(bron: str, soort: str = "deployment") -> dict[str, Any]:
@@ -47,13 +48,21 @@ def _afgeronde_kloon(bron: str, soort: str = "deployment") -> dict[str, Any]:
     }
 
 
-def _project(*, met_productie: bool = True, kloon_op_dev1: dict[str, Any] | None = None) -> ProjectSummary:
+def _project(
+    *,
+    met_productie: bool = True,
+    kloon_op_dev1: dict[str, Any] | None = None,
+    domain_on_dev1: dict[str, Any] | None = None,
+) -> ProjectSummary:
     """Een project met twee ontwikkeldeployments en, desgewenst, een productiedeployment."""
     dev1: dict[str, Any] = {"name": "dev1", "environment": "ontwikkel", "components": [{"reference": "web"}]}
     if kloon_op_dev1 is not None:
         dev1["clone-from"] = kloon_op_dev1
+    if domain_on_dev1 is not None:
+        dev1["services"] = [{"reference": "publish-on-web", "config": domain_on_dev1}]
     data: dict[str, Any] = {
         "name": "bouwput",
+        "components": [{"name": "web"}],
         "deployments": [
             dev1,
             {"name": "dev2", "environment": "ontwikkel", "components": [{"reference": "web"}]},
@@ -74,6 +83,12 @@ def _project(*, met_productie: bool = True, kloon_op_dev1: dict[str, Any] | None
                 name="pijplijn",
                 roles=["developer-ci"],
                 tokens=[ProjectToken(name="ci", expires=verloopt, hash=hash_van(TOKEN_CI))],
+            ),
+            ProjectUser(
+                type=LidSoort.SERVICE_ACCOUNT,
+                name="uitrol",
+                roles=["ops-ci"],
+                tokens=[ProjectToken(name="ci", expires=verloopt, hash=hash_van(TOKEN_OPS_CI))],
             ),
             ProjectUser(
                 email="beheer@rijksoverheid.nl",
@@ -216,6 +231,27 @@ async def test_het_domeindrietal_weegt_alleen_op_een_bestaande_deployment(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("body", "verwacht"),
+    [
+        ({"deploymentName": "dev1", "subdomain": "wies"}, 202),
+        ({"deploymentName": "dev1", "subdomain": "wies", "domain_format": "subdomain"}, 202),
+        ({"deploymentName": "dev1", "subdomain": "tad"}, 403),
+        ({"deploymentName": "dev1", "subdomain": "wies", "domain_format": "component-subdomain"}, 403),
+        ({"deploymentName": "dev1", "base_domain": "rijksapp.nl"}, 403),
+    ],
+)
+async def test_only_a_changed_domain_field_needs_ops(
+    body: dict[str, Any], verwacht: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated deploy that sends the stored hostname moves nothing."""
+    domain = {"domain-format": "subdomain", "subdomain": "wies"}
+    await _roep_de_upsert_aan(
+        TOKEN_CI, body, verwacht, monkeypatch, _project(met_productie=False, domain_on_dev1=domain)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("token", "body", "kloon", "verwacht"),
     [
         # forceClone zonder cloneFrom laat de kloon lopen die AL op dev1 staat: de bron
@@ -255,12 +291,13 @@ async def _roep_de_upsert_aan(
     with (
         patch("opi.api.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.v2.router.get_project_store", return_value=store),
+        patch("opi.services.step_up_conditions.get_project_store", return_value=store),
     ):
         try:
             antwoord = await upsert_deployment_v2(
                 request=verzoek,
                 project_name=project.name,
-                deployment_data=UpsertDeploymentRequest(components=[], **body),
+                deployment_data=UpsertDeploymentRequest(**{"components": [], **body}),
                 rollout=True,
             )
         except HTTPException as fout:
@@ -269,3 +306,76 @@ async def _roep_de_upsert_aan(
             gekregen, reden = antwoord.status_code, antwoord.body
 
     assert gekregen == verwacht, reden
+
+
+_IMAGE = [{"reference": "web", "image": "ghcr.io/minbzk/web:2"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token", "body", "expected"),
+    [
+        # A new deployment weighs as the marking it gets, not as production.
+        (TOKEN_CI, {"deploymentName": "pr-349", "components": _IMAGE}, 202),
+        (TOKEN_CI, {"deploymentName": "pr-349", "environment": "test"}, 202),
+        (TOKEN_CI, {"deploymentName": "pr-349", "environment": "productie"}, 403),
+        (TOKEN_CI, {"deploymentName": "pr-349", "cloneFrom": "prod1"}, 403),
+        (TOKEN_OPS_CI, {"deploymentName": "pr-349", "components": _IMAGE}, 403),
+    ],
+)
+async def test_a_new_deployment_weighs_as_its_own_marking(
+    token: str, body: dict[str, Any], expected: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a project with production, creating a preview is not a production write."""
+    await _roep_de_upsert_aan(token, body, expected, monkeypatch, _project())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token", "body", "expected"),
+    [
+        # Only images move: that is image-replace, which ops-ci may do on production.
+        (TOKEN_OPS_CI, {"deploymentName": "prod1", "components": _IMAGE}, 202),
+        (TOKEN_OPS_CI, {"deploymentName": "prod1", "components": _IMAGE, "environment": "productie"}, 202),
+        (TOKEN_OPS_CI, {"deploymentName": "dev1", "components": _IMAGE}, 202),
+        # Anything beyond images stays deployment.write, which ops-ci does not hold.
+        (TOKEN_OPS_CI, {"deploymentName": "prod1", "components": [{"reference": "api", "image": "ghcr.io/a:1"}]}, 403),
+        (TOKEN_OPS_CI, {"deploymentName": "prod1", "components": _IMAGE, "subdomain": "wies"}, 403),
+        (TOKEN_OPS_CI, {"deploymentName": "prod1", "components": _IMAGE, "cloneFrom": "dev1"}, 403),
+        (TOKEN_OPS_CI, {"deploymentName": "dev1", "components": _IMAGE, "environment": "test"}, 403),
+        # image-replace on production is still not developer-ci's.
+        (TOKEN_CI, {"deploymentName": "prod1", "components": _IMAGE}, 403),
+    ],
+)
+async def test_an_image_only_upsert_weighs_as_image_replace(
+    token: str, body: dict[str, Any], expected: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The deploy action always upserts, so this is how ops-ci deploys to production."""
+    await _roep_de_upsert_aan(token, body, expected, monkeypatch, _project())
+
+
+@action(Action.DEPLOYMENT_DELETE)
+@marking_if_absent(default_marking)
+async def _delete_route(request: Request, project_name: str, deployment_name: str) -> None:
+    """A route with the same declaration as the deployment delete."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("deployment_name", "allowed"),
+    [("pr-349", True), ("dev1", True), ("prod1", False)],
+)
+async def test_developer_ci_deletes_any_deployment_that_is_not_production(deployment_name: str, allowed: bool) -> None:
+    """A deployment that is already gone weighs as the default, so the route can answer 404."""
+    project = _project()
+    request = _request()
+    request.scope["path_params"] = {"project_name": project.name, "deployment_name": deployment_name}
+    store = MagicMock()
+    store.get.return_value = project
+    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+        if allowed:
+            await handhaaf(request, TOKEN_CI, _delete_route, project)
+        else:
+            with pytest.raises(HTTPException) as refused:
+                await handhaaf(request, TOKEN_CI, _delete_route, project)
+            assert refused.value.status_code == 403

@@ -1905,6 +1905,34 @@ class KubectlConnector:
             logger.error(f"Error getting VPA recommendation for '{workload_name}': {e}")
             return None
 
+    async def get_namespaced_resource(
+        self, resource_type: str, resource_name: str, namespace: str
+    ) -> dict[str, Any] | None:
+        """One named namespaced resource, as the API returns it.
+
+        Works for a custom resource too, so the caller passes the fully qualified type
+        (``clusters.postgresql.cnpg.io``) when the short name could be ambiguous.
+
+        Returns:
+            The resource, or ``None`` when it is absent or could not be read. The log line
+            below says which of the two it was.
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", resource_type, resource_name, "-n", namespace, "-o", "json"]
+        )
+        if code != 0:
+            if "notfound" in stderr.lower().replace(" ", ""):
+                logger.debug(f"{resource_type} '{resource_name}' does not exist in namespace '{namespace}'")
+            else:
+                logger.warning(f"Could not read {resource_type} '{resource_name}' in '{namespace}': {stderr}")
+            return None
+        try:
+            resource = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse {resource_type} '{resource_name}': {e}")
+            return None
+        return resource if isinstance(resource, dict) else None
+
     async def get_resources_by_label(
         self, resource_type: str, namespace: str, label_selector: str
     ) -> list[dict[str, Any]]:

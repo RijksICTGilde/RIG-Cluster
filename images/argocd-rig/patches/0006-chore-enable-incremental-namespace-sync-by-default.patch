@@ -1,4 +1,4 @@
-From 83b04a2b2bc274ad5c60f4ae1022cf2a6a9641f6 Mon Sep 17 00:00:00 2001
+From 042e4546c749bdc168d2c51031ae13f2943c1a4e Mon Sep 17 00:00:00 2001
 From: robbertuittenbroek <robbert.uittenbroek@rijksoverheid.nl>
 Date: Tue, 18 Aug 2026 00:06:06 +0200
 Subject: [PATCH 6/7] chore: enable incremental namespace sync by default

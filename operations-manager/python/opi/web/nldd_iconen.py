@@ -44,6 +44,8 @@ import re
 from functools import cache
 from pathlib import Path
 
+from lord_of_the_components.assets import manifest_urls
+
 #: Een icoon in de bundel: ["naam", "<svg ...".
 _ICOON = re.compile(r'\["([a-z0-9][a-z0-9-]{1,50})",[\'"]<svg')
 
@@ -61,7 +63,15 @@ def _dist_map() -> Path | None:
     if lotc_nldd.__file__ is None:
         return None
 
-    map_ = Path(lotc_nldd.__file__).parent / "static" / "lotc" / "nldd" / "dist"
+    # Uit het manifest en niet als vast pad: de bundel staat in een leverdirectory met de
+    # LOTC-versie in de naam (v<datum>-<tijd>-NLDD<versie>/nldd/dist). Een vast pad wees
+    # na die wijziging naar een lege plek, en dan liet de iconentoets alles stil door.
+    pakket = Path(lotc_nldd.__file__).parent
+    _, js_urls = manifest_urls(pakket / "assets.json", "")
+    bundel = next((url for url in js_urls if url.endswith("/nldd/dist/nldd.js")), None)
+    if bundel is None:
+        return None
+    map_ = (pakket / "static" / "lotc" / bundel.lstrip("/")).parent
     return map_ if map_.is_dir() else None
 
 
