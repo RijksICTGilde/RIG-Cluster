@@ -85,6 +85,7 @@ var conn = DriverManager.getConnection(url,
 <nldd-code-viewer language="bash">export ZAD_API_KEY=jouw-token
 export ZAD_PROJECT_ID=my-project
 zadctl deployment update-image staging --component web --image ghcr.io/org/app:v1.3</nldd-code-viewer>
+<c-paragraph size="sm">Meer info: <c-link href="https://github.com/RijksICTGilde/zad-cli" label="zad-cli op GitHub" target="_blank" /></c-paragraph>
 
 <c-heading type="h3" size="6" label="Met een GitHub Action" />
 <nldd-code-viewer language="yaml">- uses: RijksICTGilde/zad-actions/deploy@v4
@@ -94,14 +95,5 @@ zadctl deployment update-image staging --component web --image ghcr.io/org/app:v
     deployment-name: staging
     component: web
     image: ghcr.io/org/app:v1.3</nldd-code-viewer>
-<c-paragraph size="sm">Zet de token in de secrets van je repository, niet in de workflow zelf.</c-paragraph>
-{% endmacro %}
-
-{% macro waar_vind_je_wat() %}
-<c-columns columns="1" md="2" gap="md">
-    <c-shortcut icon="folder" title="Mijn projecten" desc="Je componenten, deployments, logs en team." cta="Naar je projecten" href="/projects" />
-    <c-shortcut icon="rectangle-stack" title="Services overzicht" desc="Wat elke service doet en welke env vars hij levert." cta="Naar de services" href="/services" />
-    <c-shortcut icon="terminal" title="ZAD CLI" desc="zadctl installeren, en waar alle opdrachten staan." cta="Naar de CLI" href="/cli" />
-    <c-shortcut icon="chevron-left-forward-slash-chevron-right" title="ZAD Actions" desc="Uitrollen vanuit je GitHub-pipeline, ook per pull request." cta="Naar de Actions" href="/actions" />
-</c-columns>
+<c-paragraph size="sm">Zet de token in de secrets van je repository, niet in de workflow zelf. Meer info: <c-link href="https://github.com/RijksICTGilde/zad-actions" label="zad-actions op GitHub" target="_blank" /></c-paragraph>
 {% endmacro %}
