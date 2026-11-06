@@ -44,6 +44,7 @@ def get_menu_items(user: dict[str, Any] | None = None, **_kwargs: Any) -> list[d
         # het dashboard), en dit is de weg naar de uitleg over het platform. Bovenaan de
         # groep, want het is waar een nieuwkomer begint.
         {"label": "Introductie", "link": "/introductie", "icon": "puzzel"},
+        {"label": "Getting started", "link": "/getting-started", "icon": "pijl-naar-rechts"},
         # De kaart van het platform: wat er draait en waar ZAD mee praat.
         {"label": "Platform", "link": "/platform", "icon": "wolk"},
         # Voor iedereen: wie een rol krijgt of uitdeelt, leest hier wat hij opent.

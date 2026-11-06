@@ -256,6 +256,12 @@ async def introductie(request: Request):
     )
 
 
+@web_router.get("/getting-started", response_class=HTMLResponse)
+async def getting_started(request: Request):
+    """The first steps on ZAD. Public, like /introductie: it is for people without access yet."""
+    return _wegwijzer(request, "getting-started.html.j2", "bg/getting-started.html.j2", "/getting-started")
+
+
 @web_router.get("/permission-denied", response_class=HTMLResponse)
 async def permission_denied(request: Request) -> HTMLResponse:
     """
