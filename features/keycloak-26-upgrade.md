@@ -37,6 +37,7 @@ Gemeten door beide modules tegen `org.keycloak:*:26.8.1` te bouwen (RC-412).
 | `IdpEmailVerificationAuthenticator` | Grendelt nog op `realm.getSmtpConfig().isEmpty()`. De minimale `smtpServer` op elke realm blijft dus doen wat hij deed; zie `features/keycloak-mail.md`. |
 | `--features=admin-api` | `ADMIN_API` bestaat nog als default-feature. |
 | De enkele-streep spi-vorm (`--spi-email-sender-provider=`, `--spi-theme-welcome-theme=`) | Werkt nog. 26 kent een nieuwe vorm met een dubbele streep, maar de oude wordt nog gelezen: `PropertyMappers.isSpiBuildTimeProperty` doet dat met opzet niet strikt ("we can't require the new property format until we're ok with a breaking change"), en `MicroProfileScope.getValue` leest beide namen. De args blijven daarom staan zoals ze staan. |
+| De alias van een authenticator config moet uniek zijn in het realm | Aanmaken met een bestaande alias geeft een 409; 25.0.6 accepteerde dat. De alias volgt nu de flow in plaats van de rol of de provider, want deployments van een project delen een realm. Configs van vóór deze wijziging krijgen hun nieuwe alias bij de volgende reconcile. |
 | STARTTLS op de standaardverzender | Strenger in 26.8.1: met `starttls` aan zet Keycloak ook `starttls.required`. Ons pad raakt dat niet, en `task test-keycloak-image` meet dat met `starttls: "true"` in de proefrealm. |
 
 De mail-SPI is een **interne** SPI en draagt een veiligheidseigenschap: zolang `zad-relay`

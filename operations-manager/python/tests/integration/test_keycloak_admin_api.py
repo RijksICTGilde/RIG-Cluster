@@ -949,6 +949,60 @@ class TestFlows:
         assert subflow(executions, "gate-realm-otp")["requirement"] == "REQUIRED"
         assert execution(executions, "conditional-user-configured")["requirement"] == "DISABLED"
 
+    async def test_each_deployment_gate_in_a_realm_gets_its_own_config(
+        self, connector: KeycloakConnector, api: AdminApi, keycloak_url: str, made_realm: str
+    ) -> None:
+        """Keycloak 26 refuses a config alias that already exists in the realm.
+
+        Deployments of a project share a realm and usually a role, so every step here runs
+        twice, and again to prove a reprocess leaves both gates as they are.
+        """
+        await connector.add_identity_provider(
+            realm_name=made_realm,
+            provider_alias="sso-rijk",
+            display_name="SSO Rijk",
+            client_id="broker-client",
+            client_secret="broker-secret",
+            discovery_url=f"{keycloak_url}/realms/master/.well-known/openid-configuration",
+        )
+        await connector.configure_sso_redirect_flow(made_realm, "sso-rijk")
+        await connector.create_realm_role(made_realm, "allowed-user")
+
+        for _ in range(2):
+            for deployment in ("one", "two"):
+                await connector.create_restricted_browser_flow_realm_role(
+                    realm_name=made_realm,
+                    flow_alias=f"gate-{deployment}",
+                    role_name="allowed-user",
+                    redirect_to_idp="sso-rijk",
+                )
+                await connector.create_post_broker_login_flow_realm_role(
+                    realm_name=made_realm,
+                    flow_alias=f"post-broker-{deployment}",
+                    role_name="allowed-user",
+                )
+
+        for deployment in ("one", "two"):
+            gate = api.executions(made_realm, f"gate-{deployment}")
+            condition = execution(gate, "conditional-user-role")
+            assert (
+                api.authenticator_config(made_realm, condition["authenticationConfig"])["config"]["condUserRole"]
+                == "allowed-user"
+            )
+            redirector = execution(gate, "identity-provider-redirector")
+            assert (
+                api.authenticator_config(made_realm, redirector["authenticationConfig"])["config"]["defaultProvider"]
+                == "sso-rijk"
+            )
+            # Without its config this step fails every SSO login in the realm.
+            authenticator = execution(
+                api.executions(made_realm, f"post-broker-{deployment}"), "require-client-role-authenticator"
+            )
+            assert (
+                api.authenticator_config(made_realm, authenticator["authenticationConfig"])["config"]["roleName"]
+                == "allowed-user"
+            )
+
     async def test_set_client_authentication_flow_override_stores_the_flow_id(
         self, connector: KeycloakConnector, api: AdminApi, made_realm: str
     ) -> None:
