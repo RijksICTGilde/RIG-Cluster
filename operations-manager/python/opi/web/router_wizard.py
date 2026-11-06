@@ -49,6 +49,7 @@ from opi.handlers.project_file_handler import merge_staged_attachments
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
+from opi.services.project_roles import CREATOR_ROLES
 from opi.services.schema_migration import normalize_service_entries
 from opi.services.services import ServiceAdapter
 from opi.utils.csrf import reject_misfired_form_get
@@ -439,8 +440,8 @@ def flow_uit_pad(flow_id: str, **context: Any) -> FormFlow:
 
 
 def creator_as_member(email: str) -> dict[str, Any]:
-    """The signing-in user as the first member of a new project: admin, so someone can manage it."""
-    return {"email": email, "roles": ["admin"]}
+    """The signing-in user as the first member of a new project."""
+    return {"email": email, "roles": sorted(rol.value for rol in CREATOR_ROLES)}
 
 
 @wizard_router.get("/{flow_id}", response_class=HTMLResponse)

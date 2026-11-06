@@ -15,7 +15,7 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
-from opi.services.project_roles import roles_from_value
+from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
 from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
 from opi.utils.age import encrypt_age_content, wrap_project_key
@@ -643,7 +643,7 @@ async def generate_base_project_file(
         display_name: Human-readable name
         description: Project description
         cluster: Cluster the project targets
-        owner_email: The creator, recorded as the project's admin
+        owner_email: The creator, recorded as a member with ``CREATOR_ROLES``
 
     Returns:
         A tuple of the project file as a dict, and the plaintext API key of the
@@ -665,7 +665,7 @@ async def generate_base_project_file(
         issuer=None,
         contact_email=None,
         user_email=[owner_email],
-        user_roles=["admin"],
+        user_roles=[sorted(rol.value for rol in CREATOR_ROLES)],
         services=[],
         components=None,
     )
