@@ -157,6 +157,7 @@ task sandbox:sync                      # Sync infrastructure changes to Forgejo
 task sandbox:skaffold-dev              # Hot-reload development (port 9595)
 task sandbox:update-operations-manager # Rebuild and deploy OPI
 task sandbox:destroy                   # Tear down sandbox
+task test-keycloak                     # Alles wat tegen een echte Keycloak meet (groep keycloak_live)
 task requirements-check                # Verify all tools installed
 ```
 

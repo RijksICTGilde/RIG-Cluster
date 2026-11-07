@@ -2116,11 +2116,51 @@ tasks:
         mvn test
     silent: false
 
-  test-keycloak-image:
-    desc: "Toets de providers van de eigen Keycloak-image in Docker, zoals de deployment hem start"
+  test-keycloak:
+    desc: "Draai de groep keycloak_live tegen de image die productie draait (IMAGE= voor een andere)"
     summary: |
-      Bouwt images/keycloak-zad/Dockerfile voor deze machine, start hem tegen een
-      wegwerp-PostgreSQL en toetst per provider dat hij geregistreerd EN bereikbaar is.
+      Alles wat tegen een echte Keycloak meet in een commando. Standaard tegen de image die
+      in de basisdeployment gepind staat, dus wat productie draait, zonder bouw. Met
+      `IMAGE=zad/keycloak-zad:toets` tegen een andere tag.
+
+      Draai dit bij elke wijziging in de connector, de manager, de yaml-handler, de
+      blauwdrukken of de Keycloak-versie: de standaardrun slaat deze toetsen over en meet
+      alleen de statische dekkingstoets. Zie features/keycloak-eigen-image.md.
+    cmds:
+      - task: _keycloak-live-group
+        vars:
+          IMAGE:
+            sh: |
+              if [ -n "{{.IMAGE}}" ]; then
+                echo "{{.IMAGE}}"
+              else
+                yq '.spec.template.spec.containers[0].image' \
+                  infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+              fi
+
+  test-keycloak-image:
+    desc: "Bouw images/keycloak-zad/Dockerfile en draai de groep keycloak_live ertegen"
+    summary: |
+      Dezelfde groep als `task test-keycloak`, maar tegen een image die hier wordt gebouwd.
+      De opstartroute is er maar een: deze taak bouwt en roept dan _keycloak-live-group aan.
+    deps: [requirements-check]
+    vars:
+      IMAGE: zad/keycloak-zad:toets
+    cmds:
+      - |
+        echo "Bouwen van {{.IMAGE}} uit images/keycloak-zad/Dockerfile..."
+        docker build -f images/keycloak-zad/Dockerfile -t {{.IMAGE}} .
+      - task: _keycloak-live-group
+        vars:
+          IMAGE: '{{.IMAGE}}'
+
+  _keycloak-live-group:
+    internal: true
+    desc: "Draai de groep keycloak_live tegen IMAGE, zoals de deployment hem start"
+    summary: |
+      Start IMAGE tegen een wegwerp-PostgreSQL met de startargumenten van de
+      basisdeployment en draait daar de hele groep keycloak_live tegen: de providers, het
+      thema, de post, de admin-API en de scenario's over meerdere deployments.
 
       De startargumenten komen uit de basisdeployment en worden hier niet overgeschreven,
       zodat deze toets niet stil kan afwijken van wat productie start. Een pod die opkomt
@@ -2129,9 +2169,19 @@ tasks:
       ook getoetst. Twee SMTP-sinks op hetzelfde netwerk tonen dat de post door onze
       mailprovider gaat en niet naar de smtpServer van de realm. Zie
       features/keycloak-eigen-image.md en features/keycloak-mail.md.
-    deps: [requirements-check]
+    # Niet requirements-check: die eist het hele sandboxgereedschap (kind, kustomize, sops,
+    # age, gpg, rsync, jq, numfmt) en deze groep heeft er drie nodig. Met alleen deze drie
+    # draait hij ook in CI.
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker draait niet; deze groep start een Keycloak en een PostgreSQL in Docker."
+      - sh: command -v yq
+        msg: "yq is niet geinstalleerd; de startargumenten komen met yq uit de basisdeployment."
+      - sh: command -v pwgen
+        msg: "pwgen is niet geinstalleerd; de wachtwoorden van de wegwerpcontainers komen daarvandaan."
+    requires:
+      vars: [IMAGE]
     vars:
-      IMAGE: zad/keycloak-zad:toets
       NETWORK: zad-keycloak-image-test
       KC_CONTAINER: zad-keycloak-image-test
       DB_CONTAINER: zad-keycloak-image-test-db
@@ -2156,8 +2206,7 @@ tasks:
           docker network rm {{.NETWORK}} >/dev/null 2>&1
           exit 0
       - |
-        echo "Bouwen van {{.IMAGE}} uit images/keycloak-zad/Dockerfile..."
-        docker build -f images/keycloak-zad/Dockerfile -t {{.IMAGE}} .
+        echo "Toetsen tegen {{.IMAGE}}"
       - |
         docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} {{.RELAY_SINK}} {{.LOKAAS_SINK}} >/dev/null 2>&1
         docker network create {{.NETWORK}} >/dev/null 2>&1
@@ -2261,7 +2310,8 @@ tasks:
           uv run pytest tests/integration/test_keycloak_image_providers.py \
             tests/integration/test_keycloak_image_thema.py \
             tests/integration/test_keycloak_image_mail.py \
-            tests/integration/test_keycloak_admin_api.py -m requires_infra -q
+            tests/integration/test_keycloak_admin_api.py \
+            tests/integration/test_keycloak_scenarios.py -m keycloak_live -q
     silent: false
 
   build-keycloak-relay-email-sender:

@@ -21,12 +21,18 @@ on:
       - 'operations-manager/**'
       - '.github/workflows/integration-tests.yaml'
       - 'docker-compose.dev.yaml'
+      - 'images/keycloak-zad/**'  # voor job keycloak-live
+      - 'infrastructure/bootstrap/infrastructure/keycloak/**'  # voor job keycloak-live
+      - 'Taskfile.yaml'
   pull_request:
     branches: [main]
     paths:
       - 'operations-manager/**'
       - '.github/workflows/integration-tests.yaml'
       - 'docker-compose.dev.yaml'
+      - 'images/keycloak-zad/**'
+      - 'infrastructure/bootstrap/infrastructure/keycloak/**'
+      - 'Taskfile.yaml'
 
 permissions:
   contents: read
@@ -36,11 +42,18 @@ permissions:
 # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
 # Tijdelijk op audit: in block weigert harden-runner ook toegestane domeinen
 # (step-security/harden-runner#708). Terug naar block zodra dat is opgelost.
+#
+# De twee ubuntu-endpoints zijn van de job keycloak-live: die haalt pwgen uit apt voor de
+# wegwerpwachtwoorden van zijn containers. De Task-release komt van github.com en de
+# Keycloak-image anoniem van ghcr.io, en die twee staan er al, dus die job heeft geen
+# packages:read nodig.
 env:
   HARDEN_ENDPOINTS: |
     *.actions.githubusercontent.com:443
     *.blob.core.windows.net:443
     agent.api.stepsecurity.io:443
+    azure.archive.ubuntu.com:80
+    security.ubuntu.com:80
     api.github.com:443
     astral.sh:443
     auth.docker.io:443
@@ -249,6 +262,57 @@ jobs:
         if: always()
         run: kind delete cluster --name rig-integration-test
 
+  keycloak-live:
+    name: Keycloak (live, gepinde image)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # pwgen voor de wegwerpwachtwoorden van de containers, Task omdat de groep via de
+      # Taskfile start: een tweede opstartroute in deze job zou stil kunnen afwijken van
+      # wat een ontwikkelaar draait. yq en docker staan al op de runner.
+      - name: Install pwgen and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          task --version
+
+      # KEYCLOAK_LIVE_REQUIRED maakt een ontbrekende KEYCLOAK_IMAGE_TEST_URL een FOUT in
+      # plaats van een skip. Zonder dat zou deze job groen zijn terwijl de hele groep
+      # zichzelf oversloeg, en dat is precies het gat waardoor de 409 productie bereikte.
+      - name: Run the keycloak_live group against the pinned image
+        env:
+          KEYCLOAK_LIVE_REQUIRED: '1'
+        run: task test-keycloak
+
+      - name: Keycloak logs on failure
+        if: failure()
+        run: docker logs --tail 200 zad-keycloak-image-test || true
+
   # Summary job that depends on all tests
   tests-passed:
     name: All Tests Passed
@@ -258,6 +322,7 @@ jobs:
       - lint
       - integration-tests-mock
       - integration-tests-kind
+      - keycloak-live
     if: always()
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -268,7 +333,8 @@ jobs:
         run: |
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.integration-tests-mock.result }}" != "success" ]] || \
-             [[ "${{ needs.integration-tests-kind.result }}" != "success" ]]; then
+             [[ "${{ needs.integration-tests-kind.result }}" != "success" ]] || \
+             [[ "${{ needs.keycloak-live.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

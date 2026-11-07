@@ -15,11 +15,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from opi.bootstrap.keycloak_setup import KeycloakSetup
+from opi.connectors.keycloak import create_keycloak_connector
+from opi.core.config import settings
+from tests.integration import keycloak_image
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+    from opi.connectors.keycloak import KeycloakConnector
 
 
 def is_kind_available() -> bool:
@@ -387,3 +393,51 @@ def docker_services(docker_compose_file: str) -> None:
         pytest.skip(f"Failed to start Docker services: {result.stderr}")
 
     _wait_for_postgres(compose_file)
+
+
+# ==================== De groep keycloak_live ====================
+#
+# Alle modules met de marker ``keycloak_live`` meten tegen dezelfde echte Keycloak, die
+# `task test-keycloak` opstart. Deze fixtures staan daarom hier en niet in een van die
+# modules: ze zijn modulebreed, en een tweede exemplaar per module zou een tweede
+# admin-token en een tweede bootstrap betekenen. Ze materialiseren alleen voor een toets
+# die erom vraagt, dus de rest van deze integratietoetsen merkt er niets van.
+
+
+@pytest.fixture(scope="module")
+def keycloak_url() -> str:
+    url = keycloak_image.basis_url()
+    keycloak_image.assert_local(url)
+    return url
+
+
+@pytest.fixture(scope="module")
+def api(keycloak_url: str) -> keycloak_image.AdminApi:
+    return keycloak_image.AdminApi(keycloak_url)
+
+
+@pytest.fixture(scope="module")
+def patched_settings(keycloak_url: str) -> Generator[None]:
+    """Point OPI's settings at the throwaway Keycloak for the whole module."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(settings, "KEYCLOAK_URL", keycloak_url)
+        patch.setattr(settings, "KEYCLOAK_ADMIN_USERNAME", keycloak_image.omgeving("KEYCLOAK_IMAGE_TEST_ADMIN"))
+        patch.setattr(
+            settings, "KEYCLOAK_ADMIN_PASSWORD", keycloak_image.omgeving("KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD")
+        )
+        patch.setattr(settings, "KEYCLOAK_ADMIN_CLIENT_ID", "opi-admin-service")
+        patch.setattr(settings, "KEYCLOAK_ADMIN_CLIENT_SECRET", keycloak_image.SERVICE_ACCOUNT_SECRET)
+        yield
+
+
+@pytest.fixture(scope="module")
+async def connector(patched_settings: None, api: keycloak_image.AdminApi) -> KeycloakConnector:
+    """A connector on client credentials, after OPI's own bootstrap created the account.
+
+    The bootstrap step is the production path: it uses the admin password once to create the
+    master service-account client, and everything afterwards runs on that account.
+    """
+    await KeycloakSetup().ensure_master_admin_service_account()
+    client = api.client("master", "opi-admin-service")
+    assert client["serviceAccountsEnabled"] is True
+    return await create_keycloak_connector()

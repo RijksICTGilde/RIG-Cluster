@@ -180,8 +180,23 @@ vandaag geen enkel registry-credential; dat is dan een eigen wijziging.
 ```bash
 task test-keycloak-relay-email-sender    # mvn test van de ene module
 task test-keycloak-custom-mapper         # mvn test van de andere
-task test-keycloak-image                 # de gebouwde image, met zijn providers, in Docker
+task test-keycloak                       # de hele groep tegen de GEPINDE image, zonder bouw
+task test-keycloak-image                 # dezelfde groep tegen een hier gebouwde image
 ```
+
+`task test-keycloak` is de groep: alles wat tegen een echte Keycloak meet in een commando,
+tegen de image die in de basisdeployment gepind staat, dus tegen wat productie draait. Met
+`IMAGE=<tag>` tegen een andere tag. De toetsen dragen de marker `keycloak_live`
+(`tests/integration/test_keycloak_image_providers.py`, `..._thema.py`, `..._mail.py`,
+`test_keycloak_admin_api.py` en `test_keycloak_scenarios.py`) en staan buiten de
+standaardrun; wat daar wel in zit is de statische dekkingstoets
+`tests/test_keycloak_admin_api_coverage.py`.
+
+**Draai de groep bij elke wijziging in de connector, de manager, de yaml-handler, de
+blauwdrukken of de Keycloak-versie.** De CI-job `keycloak-live` doet dat ook, tegen dezelfde
+gepinde image. Dat dit zo expliciet staat heeft een reden: tot RC-433 liep de groep alleen bij
+een imagebouw, en de 409 van 26.8.1 bereikte productie langs toetsen die groen stonden omdat
+ze zichzelf oversloegen.
 
 `test-keycloak-image` bouwt deze Dockerfile voor de eigen machine, start hem met de
 STARTARGUMENTEN VAN DE BASISDEPLOYMENT tegen een wegwerp-PostgreSQL in een eigen
@@ -211,13 +226,27 @@ rollen/groepen/gebruikers (mappings, memberships, credentials, required actions)
 (alle `ensure_*` twee keer); de volledige bootstrap `KeycloakSetup.setup_all` twee keer.
 
 Dekt NIET: de stroom `KeycloakManager.create_resources_for_deployment` (vereist halve
-`ProjectManager`; connector-aanroepen staan allemaal hier en `tests/test_keycloak_admin_api_coverage.py`
-bewaakt dekking); vier ongebruikte methodes (`update_deployment_client_hosts`,
-`ensure_standard_oidc_mappers`, `assign_realm_management_role`, `assign_realm_role_to_user`);
-OIDC-tokenaanroepen buiten de connector (standaard-OIDC).
+`ProjectManager`; de scenariomodule hieronder meet die stroom met een dubbel voor de
+git-kant, en `tests/test_keycloak_admin_api_coverage.py` bewaakt de dekking); vier
+ongebruikte methodes (`update_deployment_client_hosts`, `ensure_standard_oidc_mappers`,
+`assign_realm_management_role`, `assign_realm_role_to_user`); OIDC-tokenaanroepen buiten
+de connector (standaard-OIDC).
 
 De module weigert tegen alles dan `localhost` te draaien: hij maakt/verwijdert realms en
 verhardt master. Draait met service account `opi-admin-service` van productie.
+
+Als vierde draait hij de SCENARIO'S OVER MEERDERE DEPLOYMENTS
+(`tests/integration/test_keycloak_scenarios.py`, RC-433). Die lopen via `KeycloakManager`, dus
+in de volgorde die productie loopt, en zetten twee en drie deployments van hetzelfde project
+in HETZELFDE realm: eerste deployment, tweede, reprocess, derde, een weghalen, reprocess van
+wat overblijft, een template-wissel, en `restrict-access` dat later aan gaat. Na elke stap
+leest `assert_realm_consistent` het hele realm terug: elke configalias komt een keer voor,
+elke rolcontrole en elke weigerstap heeft een config, elke `browserFlowOverride` wijst naar
+een bestaande flow (ook op de `-public` client), en de post-broker flow op een IdP bestaat en
+heeft een config. Een execution zonder config is wat een stil geslikte 409 achterlaat, en dat
+breekt elke SSO-login in dat realm. Daarnaast logt de groep echt in door de poort: een
+rolhouder komt binnen op beide deployments, een gebruiker zonder de rol niet, en een bestaande
+realm-sessie zonder de rol ook niet.
 
 `publish-keycloak-image` draait hem voor de push, dus er gaat geen image naar ghcr die
 deze toets niet haalt. De toetsen zelf zitten in

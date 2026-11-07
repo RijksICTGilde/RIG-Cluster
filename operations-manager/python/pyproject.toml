@@ -272,6 +272,7 @@ markers = [
    "punt14: gerichte jacht op punt 14 uit de zad-cli-doorlopen (deployment_not_found); buiten de standaard sandboxrun",
    "serial: tests in this module depend on each other by design and keep their file order, also under pytest-randomly",
    "upgrade_safety: RC-20 upgrade-safety replay of real production project files (clones the projects repo; needs network)",
+   "keycloak_live: meet tegen een echte Keycloak uit de eigen image; draait met `task test-keycloak`",
    "keycloak_harness: de uitlogketen in een echte Keycloak met de shim (docker + maven + chromium); buiten elke standaardrun"
 ]
 pythonpath = "."
