@@ -39,6 +39,7 @@ from opi.services.user_otp_service import OtpStatus, OtpVerification
 from opi.utils.sops import generate_sops_key_pair
 from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
+from tests.image_pins import REPO_ROOT, pinned_image
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
@@ -446,8 +447,14 @@ def reset_rate_limiters() -> Any:
 #: Vaste naam, want daar draait dit hele ontwerp om: wat een mens kan noemen, kan hij
 #: opruimen.
 ZAD_TEST_PG_CONTAINER = "zad-test-postgres"
-ZAD_TEST_PG_IMAGE = "postgres:16-alpine"
+#: Het manifest dat de PostgreSQL van het platform pint.
+PLATFORM_POSTGRES_CLUSTER = "infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml"
+#: Een ORM-toets meet alleen tegen wat productie draait (ZAD_TEST_PG_IMAGE in de omgeving overschrijft dit).
+ZAD_TEST_PG_IMAGE = os.environ.get("ZAD_TEST_PG_IMAGE") or pinned_image(PLATFORM_POSTGRES_CLUSTER)
 ZAD_TEST_PG_PASSWORD = "zadtest"
+#: De CNPG-image start niet zelf; dit script doet wat de operator doet. Zie daar.
+ZAD_TEST_PG_START = REPO_ROOT / "scripts/postgres-standalone-start.sh"
+ZAD_TEST_PG_START_IN_CONTAINER = "/zad/postgres-standalone-start.sh"
 #: Alleen van belang bij het AANMAKEN. Staat de container er al, dan lezen we zijn
 #: werkelijke poort uit Docker: die is leidend, anders praat een tweede run tegen een
 #: poort waar niets luistert.
@@ -475,12 +482,12 @@ def _container_staat() -> tuple[bool, str]:
 
 
 def _wacht_tot_hij_luistert(seconden: int = 60) -> None:
-    """Wacht tot de ECHTE server luistert, niet tot de init-server van de entrypoint.
+    """Wacht tot de ECHTE server luistert, niet tot de init-server van de opstart.
 
     De toets gaat over TCP (``-h 127.0.0.1``) en niet over de unix-socket. Dat is het hele
-    punt: bij een koude start zet de postgres-entrypoint eerst een tijdelijke server op om
-    initdb en de init-scripts te draaien, en die start hij met ``listen_addresses=''``, dus
-    alleen op de socket. Een ``pg_isready`` zonder host slaagt daar al tegen, waarna de
+    punt: bij een koude start zet de opstart eerst een tijdelijke server op om initdb en de
+    init-stappen te draaien, en die start hij met ``listen_addresses=''``, dus alleen op de
+    socket. Een ``pg_isready`` zonder host slaagt daar al tegen, waarna de
     entrypoint hem stopt en de echte server start. In dat gat verdwijnt de socket, en de
     eerste query erna valt erin met "No such file or directory". Dat kostte op een koude
     runner alle ORM-tests in een keer, en viel lokaal nooit op omdat de container daar al
@@ -524,7 +531,11 @@ def _zorg_voor_container() -> str:
             f"POSTGRES_PASSWORD={ZAD_TEST_PG_PASSWORD}",
             "-p",
             f"{ZAD_TEST_PG_PORT}:5432",
+            "-v",
+            f"{ZAD_TEST_PG_START}:{ZAD_TEST_PG_START_IN_CONTAINER}:ro",
             ZAD_TEST_PG_IMAGE,
+            "bash",
+            ZAD_TEST_PG_START_IN_CONTAINER,
             check=False,
             timeout=180,
         )

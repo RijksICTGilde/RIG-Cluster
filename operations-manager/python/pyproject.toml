@@ -273,6 +273,9 @@ markers = [
    "serial: tests in this module depend on each other by design and keep their file order, also under pytest-randomly",
    "upgrade_safety: RC-20 upgrade-safety replay of real production project files (clones the projects repo; needs network)",
    "keycloak_live: meet tegen een echte Keycloak uit de eigen image; draait met `task test-keycloak`",
+   "postgres_live: meet tegen een echte PostgreSQL in de gepinde versie; draait met `task test-postgres`",
+   "minio_live: meet tegen een echte MinIO in de gepinde versie; draait met `task test-minio`",
+   "forgejo_live: meet tegen een echte Forgejo in de gepinde versie; draait met `task test-forgejo`",
    "keycloak_harness: de uitlogketen in een echte Keycloak met de shim (docker + maven + chromium); buiten elke standaardrun"
 ]
 pythonpath = "."

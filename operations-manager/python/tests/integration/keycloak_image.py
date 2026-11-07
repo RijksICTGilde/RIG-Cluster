@@ -13,15 +13,13 @@ van ``AdminApi`` of van de browserhulp zou meteen afdrijven.
 from __future__ import annotations
 
 import html
-import os
 import re
 import time
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
 
 import httpx
-import pytest
+from tests.integration.live import KEYCLOAK
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -42,20 +40,10 @@ USER_PASSWORD = "example-Wachtwoord-1234"
 TOKEN_MAX_AGE = 30.0
 
 
-def omgeving(naam: str) -> str:
-    """De waarde van een omgevingsvariabele van de meetopstelling, of een skip.
-
-    Met ``KEYCLOAK_LIVE_REQUIRED`` gezet is een ontbrekende variabele een FOUT. Dat is wat
-    de CI-job zet: daar betekent "overgeslagen" dat de groep niets heeft gemeten en dus dat
-    de job groen is zonder meting.
-    """
-    waarde = os.environ.get(naam)
-    if not waarde:
-        melding = f"{naam} niet gezet, geen Keycloak-image om tegen te meten"
-        if os.environ.get("KEYCLOAK_LIVE_REQUIRED"):
-            pytest.fail(melding)
-        pytest.skip(melding)
-    return waarde
+#: De omgeving lezen en de localhost-grendel komen uit de gedeelde hulp: elke live groep
+#: doet dat hetzelfde, en een tweede exemplaar zou hier afdrijven.
+omgeving = KEYCLOAK.omgeving
+assert_local = KEYCLOAK.assert_local
 
 
 def basis_url() -> str:
@@ -92,21 +80,6 @@ def tijdelijke_realm(url: str, token: str, naam: str, **velden: Any) -> Iterator
         yield headers
     finally:
         httpx.delete(f"{realms}/{naam}", headers=headers, timeout=TIMEOUT)
-
-
-def assert_local(url: str) -> None:
-    """Refuse to run against anything but a Keycloak on this machine.
-
-    This module creates and deletes realms and hardens the master realm. Pointed at a
-    shared or production Keycloak it would be destructive, so the address decides whether
-    it may run at all.
-    """
-    host = urlparse(url).hostname
-    if host not in ("localhost", "127.0.0.1", "::1"):
-        pytest.fail(
-            f"KEYCLOAK_IMAGE_TEST_URL points at '{host}'. This module creates and deletes realms "
-            "and only ever runs against a throwaway Keycloak on localhost."
-        )
 
 
 class AdminApi:

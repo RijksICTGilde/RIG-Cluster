@@ -11,10 +11,17 @@
 #   View logs:              docker compose -f docker-compose.dev.yaml logs -f
 #   Stop services:          docker compose -f docker-compose.dev.yaml down
 #   Reset (remove data):    docker compose -f docker-compose.dev.yaml down -v
+#
+# Eenmalig na de wissel naar de CNPG-image: een postgres_data van voor die wissel hangt
+# op /var/lib/postgresql/data en is van uid 70, dus de opstart kan er geen PGDATA naast
+# maken ("Permission denied"). Draai dan eerst "down -v".
 
 services:
   postgres:
-    image: postgres:17-alpine
+    # De image die het platform pint, en daarom met de opstart die CNPG doet: deze image
+    # heeft geen ENTRYPOINT. Zie scripts/postgres-standalone-start.sh.
+    image: ghcr.io/cloudnative-pg/postgresql:17.11
+    command: ["bash", "/zad/postgres-standalone-start.sh"]
     container_name: opi-postgres-dev
     environment:
       POSTGRES_DB: opi
@@ -23,9 +30,10 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
+      - ./scripts/postgres-standalone-start.sh:/zad/postgres-standalone-start.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U opi -d opi"]
+      test: ["CMD-SHELL", "pg_isready -U opi -d opi -h 127.0.0.1"]
       interval: 5s
       timeout: 5s
       retries: 5

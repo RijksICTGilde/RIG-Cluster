@@ -190,7 +190,7 @@ tegen de image die in de basisdeployment gepind staat, dus tegen wat productie d
 (`tests/integration/test_keycloak_image_providers.py`, `..._thema.py`, `..._mail.py`,
 `test_keycloak_admin_api.py` en `test_keycloak_scenarios.py`) en staan buiten de
 standaardrun; wat daar wel in zit is de statische dekkingstoets
-`tests/test_keycloak_admin_api_coverage.py`.
+`tests/test_live_group_coverage.py`.
 
 **Draai de groep bij elke wijziging in de connector, de manager, de yaml-handler, de
 blauwdrukken of de Keycloak-versie.** De CI-job `keycloak-live` doet dat ook, tegen dezelfde
@@ -227,7 +227,7 @@ rollen/groepen/gebruikers (mappings, memberships, credentials, required actions)
 
 Dekt NIET: de stroom `KeycloakManager.create_resources_for_deployment` (vereist halve
 `ProjectManager`; de scenariomodule hieronder meet die stroom met een dubbel voor de
-git-kant, en `tests/test_keycloak_admin_api_coverage.py` bewaakt de dekking); vier
+git-kant, en `tests/test_live_group_coverage.py` bewaakt de dekking); vier
 ongebruikte methodes (`update_deployment_client_hosts`, `ensure_standard_oidc_mappers`,
 `assign_realm_management_role`, `assign_realm_role_to_user`); OIDC-tokenaanroepen buiten
 de connector (standaard-OIDC).

@@ -7,7 +7,7 @@ silently ignores unknown fields, so "no exception" proves nothing.
 The connector runs in production authentication mode: the service account
 ``opi-admin-service``, created by OPI's own bootstrap. Requires ``KEYCLOAK_IMAGE_TEST_URL``
 (set by ``task test-keycloak``) and skips without it. Coverage is guarded by
-``tests/test_keycloak_admin_api_coverage.py``.
+``tests/test_live_group_coverage.py``.
 """
 
 from __future__ import annotations

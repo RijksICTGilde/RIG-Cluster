@@ -1,0 +1,435 @@
+# De kaart van alle acties van ZAD, en waartegen ze gemeten zijn.
+#
+# Elke stap van het opstarten en elke taak staat hier, met per afhankelijkheid of hij tegen
+# die echte afhankelijkheid gemeten is. ``tests/test_actions_map.py`` eist dat de kaart
+# volledig is: een nieuwe stap in ``lifespan`` of ``run_startup_tasks``, of een nieuw
+# ``TaskType``, laat die toets falen tot er een regel bij staat.
+#
+# Per afhankelijkheid een van drie:
+#   measured: met ``test``, de toets die hem tegen de echte afhankelijkheid draait.
+#             Voor een taakregel betekent measured: de hele taak, van begin tot eind.
+#   planned:  met ``phase``, een van de fasen onderaan dit bestand.
+#   exempt:   met ``reason``. Een beslissing, geen punt op een lijst.
+#
+# Geen afhankelijkheden betekent een lege ``dependencies``: die stap raakt niets buiten OPI.
+# Vul naar waarheid: wat vandaag alleen met mocks gemeten wordt, is planned en niet measured.
+
+phases:
+  "1-postgres-minio-forgejo": "deze taak: PostgreSQL, MinIO en git/Forgejo, de kaart en de dekkingstoetsen"
+  "2-kubernetes-argocd": "kind met de gepinde node-image, ArgoCD in de gepinde versie, de kubectl- en Argo-connectoren"
+  "3-opstarten": "run_startup_tasks tegen alle echte afhankelijkheden tegelijk, twee keer achter elkaar"
+  "4-taken": "elk TaskType als scenario tegen de echte afhankelijkheden, met een invariant per stap"
+  later: "SeaweedFS, mail, metrics en DNS, na fase 2"
+
+startup:
+  - step: print_boot_banner
+    where: lifespan
+    dependencies: {}
+  - step: start_probe_server
+    where: lifespan
+    dependencies: {}
+  - step: setup_metrics
+    where: lifespan
+    dependencies: {}
+  - step: start_peak_memory_tracking
+    where: lifespan
+    dependencies: {}
+  - step: start_loop_watchdog
+    where: lifespan
+    dependencies: {}
+  - step: setup_tracemalloc
+    where: lifespan
+    dependencies: {}
+  - step: setup_tracing
+    where: lifespan
+    dependencies:
+      postgres: {status: planned, phase: "3-opstarten"}
+  - step: warm_connector_singletons
+    where: lifespan
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+      minio: {status: measured, test: test_check_minio_availability_sees_the_live_server}
+      kopia: {status: planned, phase: later}
+      skopeo: {status: planned, phase: later}
+  - step: run_startup_tasks
+    where: lifespan
+    dependencies:
+      keycloak: {status: planned, phase: "3-opstarten"}
+      postgres: {status: planned, phase: "3-opstarten"}
+      minio: {status: planned, phase: "3-opstarten"}
+      git: {status: planned, phase: "3-opstarten"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: start_git_monitoring
+    where: lifespan
+    dependencies:
+      git: {status: planned, phase: "3-opstarten"}
+      forgejo: {status: planned, phase: "3-opstarten"}
+  - step: start_periodic_cleanup
+    where: lifespan
+    dependencies: {}
+  - step: start_reconcile_poll
+    where: lifespan
+    dependencies:
+      git: {status: planned, phase: "3-opstarten"}
+  - step: get_database_pool
+    where: lifespan
+    dependencies:
+      postgres: {status: measured, test: test_the_startup_phase_creates_its_own_database_and_migrates_it}
+  - step: AsyncTaskService
+    where: lifespan
+    dependencies:
+      postgres: {status: planned, phase: "4-taken"}
+  - step: set_task_service
+    where: lifespan
+    dependencies: {}
+  - step: TaskWorker
+    where: lifespan
+    dependencies:
+      postgres: {status: planned, phase: "4-taken"}
+  - step: FederationService
+    where: lifespan
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: ReconciliationScheduler
+    where: lifespan
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+  - step: ResourceTuningScheduler
+    where: lifespan
+    dependencies:
+      metrics: {status: planned, phase: later}
+  - step: resource_tuning_config
+    where: lifespan
+    dependencies: {}
+  - step: BackupScheduler
+    where: lifespan
+    dependencies:
+      kopia: {status: planned, phase: later}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: AuditRetentionScheduler
+    where: lifespan
+    dependencies:
+      postgres: {status: planned, phase: "4-taken"}
+  - step: SleepModeScheduler
+    where: lifespan
+    dependencies:
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: LogwatcherScheduler
+    where: lifespan
+    dependencies:
+      metrics: {status: planned, phase: later}
+  - step: CapacityWatcher
+    where: lifespan
+    dependencies:
+      metrics: {status: planned, phase: later}
+  - step: DbConsoleReaper
+    where: lifespan
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+      postgres: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: MailRelayWatcher
+    where: lifespan
+    dependencies:
+      mail: {status: planned, phase: later}
+  - step: ImagePullObserver
+    where: lifespan
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: OomPodWatcher
+    where: lifespan
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: OomMetricSweeper
+    where: lifespan
+    dependencies:
+      metrics: {status: planned, phase: later}
+  - step: watches_pods_for_oom
+    where: lifespan
+    dependencies: {}
+  - step: begin_drain
+    where: lifespan
+    dependencies: {}
+  - step: stop_git_monitoring
+    where: lifespan
+    dependencies: {}
+  - step: stop_reconcile_poll
+    where: lifespan
+    dependencies: {}
+  - step: stop_periodic_cleanup
+    where: lifespan
+    dependencies: {}
+  - step: stop_loop_watchdog
+    where: lifespan
+    dependencies: {}
+  - step: stop_peak_memory_tracking
+    where: lifespan
+    dependencies: {}
+  - step: stop_probe_server
+    where: lifespan
+    dependencies: {}
+  - step: shutdown_tracing
+    where: lifespan
+    dependencies: {}
+  - step: close_shared_sessions
+    where: lifespan
+    dependencies: {}
+  - step: close_metrics_connector
+    where: lifespan
+    dependencies:
+      metrics: {status: planned, phase: later}
+  - step: close_database_pools
+    where: lifespan
+    dependencies:
+      postgres: {status: measured, test: test_the_startup_phase_creates_its_own_database_and_migrates_it}
+  - step: dispose_engine
+    where: lifespan
+    dependencies:
+      postgres: {status: planned, phase: "3-opstarten"}
+
+  - step: get_readiness_state
+    where: run_startup_tasks
+    dependencies: {}
+  - step: check_schema_versions
+    where: run_startup_tasks
+    dependencies: {}
+  - step: load_git_signing_identity
+    where: run_startup_tasks
+    dependencies:
+      git:
+        status: exempt
+        reason: leest de gpg-sleutel uit de omgeving; wat de ondertekening met Forgejo doet staat op de commit-regels
+  - step: controleer_handelingen
+    where: run_startup_tasks
+    dependencies: {}
+  - step: check_register
+    where: run_startup_tasks
+    dependencies: {}
+  - step: get_metrics_connector
+    where: run_startup_tasks
+    dependencies:
+      metrics: {status: planned, phase: later}
+  - step: _setup_database
+    where: run_startup_tasks
+    dependencies:
+      postgres: {status: measured, test: test_the_startup_phase_creates_its_own_database_and_migrates_it}
+  - step: _setup_projects
+    where: run_startup_tasks
+    dependencies:
+      git: {status: planned, phase: "3-opstarten"}
+      forgejo: {status: planned, phase: "3-opstarten"}
+      postgres: {status: planned, phase: "3-opstarten"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: restrict_platform_databases
+    where: run_startup_tasks
+    dependencies:
+      postgres: {status: measured, test: test_restrict_platform_databases_locks_every_database_to_its_own_role}
+  - step: ensure_cmp_key_readers
+    where: run_startup_tasks
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: warm_platform_repos
+    where: run_startup_tasks
+    dependencies:
+      git: {status: measured, test: test_warm_platform_repos_makes_a_copy_of_the_platform_repos}
+      forgejo: {status: measured, test: test_warm_platform_repos_makes_a_copy_of_the_platform_repos}
+  - step: _resolve_running_image
+    where: run_startup_tasks
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - step: check_minio_availability
+    where: run_startup_tasks
+    dependencies:
+      minio: {status: measured, test: test_check_minio_availability_sees_the_live_server}
+  - step: _setup_mail_accounts
+    where: run_startup_tasks
+    dependencies:
+      mail: {status: planned, phase: later}
+      keycloak: {status: planned, phase: "3-opstarten"}
+  - step: _setup_keycloak
+    where: run_startup_tasks
+    dependencies:
+      keycloak: {status: measured, test: test_setup_all_builds_the_platform_realms_and_is_idempotent}
+  - step: _setup_oauth
+    where: run_startup_tasks
+    dependencies:
+      keycloak: {status: planned, phase: "3-opstarten"}
+  - step: reconcile_caa_records
+    where: run_startup_tasks
+    dependencies:
+      dns:
+        status: exempt
+        reason: TransIP is een externe dienst zonder image om tegen te meten; de connector blijft op mocks
+  - step: reconcile_no_mail_records
+    where: run_startup_tasks
+    dependencies:
+      dns:
+        status: exempt
+        reason: zelfde TransIP-API als reconcile_caa_records
+  - step: _startup_retry_loop
+    where: run_startup_tasks
+    dependencies:
+      keycloak: {status: planned, phase: "3-opstarten"}
+      minio: {status: planned, phase: "3-opstarten"}
+      mail: {status: planned, phase: later}
+
+# Een taakregel gaat over de taak van BEGIN TOT EIND, dus met de handler, git en ArgoCD
+# erbij. Waar fase 1 de stap van de manager al meet, staat dat als measured met een note.
+tasks:
+  - task: CREATE_PROJECT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      keycloak: {status: planned, phase: "4-taken"}
+      postgres: {status: planned, phase: "4-taken"}
+      minio: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: UPSERT_DEPLOYMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      postgres:
+        status: measured
+        test: test_two_deployments_each_reach_only_their_own_database
+        note: de stap van de DatabaseManager is gemeten; de taak met git en ArgoCD staat in fase 4
+      minio:
+        status: measured
+        test: test_two_deployments_each_reach_only_their_own_bucket
+        note: de stap van de MinioManager is gemeten; de taak met git en ArgoCD staat in fase 4
+      keycloak: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: UPDATE_IMAGE
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: DELETE_DEPLOYMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      postgres:
+        status: measured
+        test: test_deleting_a_deployment_leaves_no_database_or_role_behind
+        note: de stap van de DatabaseManager is gemeten; de taak met git en ArgoCD staat in fase 4
+      minio:
+        status: measured
+        test: test_deleting_a_deployment_leaves_no_bucket_or_user_behind
+        note: de stap van de MinioManager is gemeten; de taak met git en ArgoCD staat in fase 4
+      keycloak: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: DELETE_PROJECT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      keycloak: {status: planned, phase: "4-taken"}
+      postgres: {status: planned, phase: "4-taken"}
+      minio: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: DELETE_COMPONENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: DELETE_ATTACHMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: CONFIGURE_ATTACHMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: CLONE_DATABASE
+    dependencies:
+      postgres:
+        status: measured
+        test: test_clone_schema_copies_the_rows_to_the_target_owner
+        note: de kloonpijplijn is gemeten; de taak met git en de voortgang staat in fase 4
+      git: {status: planned, phase: "4-taken"}
+  - task: CLONE_BUCKET
+    dependencies:
+      minio:
+        status: measured
+        test: test_mirror_bucket_cross_alias_copies_every_object
+        note: de spiegelstap is gemeten; de taak met git en de voortgang staat in fase 4
+      git: {status: planned, phase: "4-taken"}
+  - task: REFRESH_DEPLOYMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: ROTATE_CREDENTIALS
+    dependencies:
+      postgres: {status: planned, phase: "4-taken"}
+      minio: {status: planned, phase: "4-taken"}
+      keycloak: {status: planned, phase: "4-taken"}
+      git: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: SLEEP_DEPLOYMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: WAKE_DEPLOYMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: REFRESH_PROJECT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: ROTATE_PROJECT_KEY
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: ADD_COMPONENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: ADD_COMPONENT_TO_DEPLOYMENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: UPDATE_COMPONENT
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: ADD_SERVICE
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      keycloak: {status: planned, phase: "4-taken"}
+      postgres: {status: planned, phase: "4-taken"}
+      minio: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: CONFIGURE_SERVICE
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      keycloak: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: CONFIGURE_SERVICE_VALUES
+    dependencies:
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: MANAGE_DATABASE_SCHEMAS
+    dependencies:
+      postgres:
+        status: measured
+        test: test_an_extra_schema_comes_and_goes_without_touching_the_rest
+        note: de stap van de DatabaseManager is gemeten; de handler met git en ArgoCD staat in fase 4
+      git: {status: planned, phase: "4-taken"}
+      argocd: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: BACKUP
+    dependencies:
+      kopia: {status: planned, phase: later}
+      seaweedfs: {status: planned, phase: later}
+      postgres: {status: planned, phase: "4-taken"}
+      minio: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+  - task: RESTORE
+    dependencies:
+      kopia: {status: planned, phase: later}
+      seaweedfs: {status: planned, phase: later}
+      postgres: {status: planned, phase: "4-taken"}
+      minio: {status: planned, phase: "4-taken"}
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}
+
+# De opstelling van de toetsen zelf hoort ook op de kaart: wat een test start, start de
+# versie die productie draait. ``tests/test_test_images_follow_pins.py`` bewaakt dat.
+test_setup:
+  - subject: kindest/node in tests/netpol/kind-config.yaml
+    dependencies:
+      kubernetes: {status: planned, phase: "2-kubernetes-argocd"}

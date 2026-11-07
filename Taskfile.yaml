@@ -11,6 +11,9 @@ dotenv: ['.env', '.env-taskfile-{{.CLUSTER_TYPE}}', '{{if not .CLUSTER_TYPE}}.en
 
 vars:
   KIND_VERSION: 1.32.0
+  # Waar scripts/postgres-standalone-start.sh in de container hangt. De CNPG-image start
+  # niet zelf; zie dat script.
+  PG_START_IN_CONTAINER: /zad/postgres-standalone-start.sh
   # Cluster configuration - can be overridden by .env-taskfile-current or environment variables
   KIND_CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
@@ -2116,6 +2119,284 @@ tasks:
         mvn test
     silent: false
 
+  _wacht-op:
+    internal: true
+    desc: "Wacht tot CHECK slaagt, en toon de logs van CONTAINER als hij niet komt"
+    summary: |
+      Elke live groep start een container en moet wachten tot de dienst erin antwoordt.
+      Wachten op de TOESTAND zelf, niet op de klok: de teller is een vangnet, geen
+      wachtmechanisme. Daarom staat dit hier een keer en niet per groep.
+    requires:
+      vars: [WAT, CHECK, CONTAINER]
+    vars:
+      POGINGEN: '{{.POGINGEN | default "150"}}'
+    cmds:
+      - |
+        i=0
+        until {{.CHECK}}; do
+          i=$((i + 1))
+          if [ "$i" -gt {{.POGINGEN}} ]; then
+            echo "{{.WAT}} kwam niet op binnen $(({{.POGINGEN}} * 2)) seconden:" >&2
+            docker logs --tail 60 {{.CONTAINER}} >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "{{.WAT}} antwoordt"
+
+  test-postgres:
+    desc: "Draai de groep postgres_live tegen de PostgreSQL die het platform pint (IMAGE= voor een andere)"
+    summary: |
+      Alles wat tegen een echte PostgreSQL meet in een commando: de connector methode voor
+      methode, de DatabaseManager over twee deployments met een invariant na elke stap, de
+      kloonpijplijn, en de opstartstappen (_setup_database, restrict_platform_databases).
+
+      Tegen de image uit de CNPG-cluster van het platform, dus wat productie draait. De
+      standaardrun slaat deze toetsen over. Zie docs/development/toetsen.md.
+    cmds:
+      - task: _postgres-live-group
+        vars:
+          IMAGE:
+            sh: |
+              if [ -n "{{.IMAGE}}" ]; then
+                echo "{{.IMAGE}}"
+              else
+                yq '.spec.imageName' \
+                  infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
+              fi
+
+  _postgres-live-group:
+    internal: true
+    desc: "Draai de groep postgres_live tegen IMAGE"
+    # De connector accepteert alleen poort 5432 (_ALLOWED_PG_PORTS), dus de wegwerpserver
+    # staat daar en nergens anders; staat er al iets op 5432, dan zegt deze taak dat.
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker draait niet; deze groep start een PostgreSQL in Docker."
+      - sh: command -v pwgen
+        msg: "pwgen is niet geinstalleerd; het wachtwoord van de wegwerpcontainer komt daarvandaan."
+      - sh: command -v yq
+        msg: "yq is niet geinstalleerd; de image en de init-SQL komen met yq uit het cluster-manifest."
+      - sh: command -v psql && command -v pg_dump
+        msg: "psql en pg_dump ontbreken; de kloonpijplijn roept ze aan als losse processen."
+    requires:
+      vars: [IMAGE]
+    vars:
+      CONTAINER: zad-postgres-live-test
+      PORT: '5432'
+      PASSWORD:
+        sh: pwgen -s 24 1
+      # De extensies die de CNPG-bootstrap aanmaakt, uit datzelfde manifest: een groep die
+      # ze zelf noemt, meet een andere server dan productie draait.
+      INIT_SQL:
+        sh: |
+          yq '.spec.bootstrap.initdb.postInitApplicationSQL | join(" ")' \
+            infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
+    cmds:
+      - defer: |
+          docker rm -f {{.CONTAINER}} >/dev/null 2>&1
+          exit 0
+      - |
+        echo "Toetsen tegen {{.IMAGE}}"
+        docker rm -f {{.CONTAINER}} >/dev/null 2>&1
+        docker run -d --name {{.CONTAINER}} \
+          -p 127.0.0.1:{{.PORT}}:5432 \
+          -e POSTGRES_PASSWORD='{{.PASSWORD}}' \
+          -e POSTGRES_INIT_SQL='{{.INIT_SQL}}' \
+          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
+          {{.IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-PostgreSQL op poort {{.PORT}}"
+          CONTAINER: '{{.CONTAINER}}'
+          POGINGEN: '60'
+          CHECK: 'docker exec {{.CONTAINER}} pg_isready -q -U postgres -h 127.0.0.1'
+      - |
+        cd operations-manager/python
+        # DATABASE_SSLMODE=disable: de connector eist sinds RC-275 TLS, en een wegwerpserver
+        # zonder certificaat weigert elke verbinding met "rejected SSL upgrade".
+        POSTGRES_LIVE_DSN="postgresql://postgres:{{.PASSWORD}}@127.0.0.1:{{.PORT}}/postgres" \
+        DATABASE_SSLMODE=disable \
+          uv run pytest tests/integration/test_postgres_live.py \
+            tests/integration/test_postgres_scenarios.py \
+            tests/test_clone_all_schemas.py -m postgres_live -q
+    silent: false
+
+  test-minio:
+    desc: "Draai de groep minio_live tegen de MinIO die het platform pint (IMAGE= voor een andere)"
+    summary: |
+      Alles wat tegen een echte MinIO meet in een commando: de connector methode voor
+      methode, de MinioManager over twee deployments met een invariant na elke stap, en de
+      opstartstap check_minio_availability.
+
+      De mc komt uit de image die de OPI-image gebruikt, niet uit de PATH van de
+      ontwikkelaar: mc verandert gedrag per release (zie get_bucket_versioning_status).
+    cmds:
+      - task: _minio-live-group
+        vars:
+          IMAGE:
+            sh: |
+              if [ -n "{{.IMAGE}}" ]; then
+                echo "{{.IMAGE}}"
+              else
+                yq '.spec.template.spec.containers[0].image' \
+                  infrastructure/bootstrap/infrastructure/minio/controller/base/deployment.yaml
+              fi
+
+  _minio-live-group:
+    internal: true
+    desc: "Draai de groep minio_live tegen IMAGE, met de mc van de OPI-image"
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker draait niet; deze groep start een MinIO in Docker."
+      - sh: command -v yq
+        msg: "yq is niet geinstalleerd; de mc-versie komt met yq uit de Dockerfile."
+      - sh: command -v pwgen
+        msg: "pwgen is niet geinstalleerd; de sleutels van de wegwerpcontainer komen daarvandaan."
+    requires:
+      vars: [IMAGE]
+    vars:
+      CONTAINER: zad-minio-live-test
+      PORT: '{{.PORT | default "59000"}}'
+      ACCESS_KEY: zadlive
+      SECRET_KEY:
+        sh: pwgen -s 24 1
+      MC_IMAGE:
+        sh: |
+          printf 'ghcr.io/minbzk/base-images/mc:%s\n' \
+            "$(sed -n 's/^ARG MC_VERSION=//p' operations-manager/Dockerfile | head -1)"
+      MC_DIR: /tmp/zad-minio-live-test
+    cmds:
+      - defer: |
+          docker rm -f {{.CONTAINER}} zad-minio-live-test-mc >/dev/null 2>&1
+          rm -rf {{.MC_DIR}}
+          exit 0
+      - |
+        echo "Toetsen tegen {{.IMAGE}} met {{.MC_IMAGE}}"
+        docker rm -f {{.CONTAINER}} zad-minio-live-test-mc >/dev/null 2>&1
+        rm -rf {{.MC_DIR}}
+        mkdir -p {{.MC_DIR}}/bin {{.MC_DIR}}/config
+        # De mc die de OPI-image meebrengt, uit diezelfde image gehaald in plaats van
+        # gedownload: zo meet deze groep de binary die in productie draait.
+        docker create --name zad-minio-live-test-mc {{.MC_IMAGE}} >/dev/null
+        docker cp zad-minio-live-test-mc:/usr/bin/mc {{.MC_DIR}}/bin/mc
+        docker rm -f zad-minio-live-test-mc >/dev/null
+        chmod +x {{.MC_DIR}}/bin/mc
+      - |
+        # Hetzelfde commando als de deployment, inclusief de vier schijven voor erasure
+        # coding. MINIO_CI_CD staat aan omdat MinIO vier schijven op EEN filesystem anders
+        # weigert; dat is hoe MinIO zijn eigen CI het ook doet.
+        docker run -d --name {{.CONTAINER}} \
+          -p 127.0.0.1:{{.PORT}}:9000 \
+          -e MINIO_ROOT_USER={{.ACCESS_KEY}} \
+          -e MINIO_ROOT_PASSWORD='{{.SECRET_KEY}}' \
+          -e MINIO_CI_CD=1 \
+          {{.IMAGE}} server /data/disk{1...4} --console-address :9001 >/dev/null
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-MinIO op http://localhost:{{.PORT}}"
+          CONTAINER: '{{.CONTAINER}}'
+          POGINGEN: '60'
+          CHECK: 'curl -sf -o /dev/null "http://localhost:{{.PORT}}/minio/health/live"'
+      - |
+        cd operations-manager/python
+        PATH="{{.MC_DIR}}/bin:$PATH" \
+        MC_CONFIG_DIR="{{.MC_DIR}}/config" \
+        MINIO_LIVE_HOST="localhost:{{.PORT}}" \
+        MINIO_LIVE_ACCESS_KEY="{{.ACCESS_KEY}}" \
+        MINIO_LIVE_SECRET_KEY="{{.SECRET_KEY}}" \
+          uv run pytest tests/integration/test_minio_live.py -m minio_live -q
+    silent: false
+
+  test-forgejo:
+    desc: "Draai de groep forgejo_live tegen de Forgejo die het platform pint (IMAGE= voor een andere)"
+    summary: |
+      Alles wat de git-laag tegen een echte Forgejo meet in een commando: clone met een
+      token, een partial clone, commit en push, een push die Forgejo weigert, de beheerde
+      kopie, en de opstartstap warm_platform_repos.
+
+      De bestaande toetsen tegen kale repo's en git http-backend blijven: die zijn snel en
+      meten onze eigen logica. Deze groep meet wat Forgejo daar anders aan doet.
+    cmds:
+      - task: _forgejo-live-group
+        vars:
+          IMAGE:
+            sh: |
+              if [ -n "{{.IMAGE}}" ]; then
+                echo "{{.IMAGE}}"
+              else
+                yq '.spec.template.spec.containers[0].image' \
+                  infrastructure/bootstrap/infrastructure/forgejo/controller/base/statefulset.yaml
+              fi
+
+  _forgejo-live-group:
+    internal: true
+    desc: "Draai de groep forgejo_live tegen IMAGE"
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker draait niet; deze groep start een Forgejo in Docker."
+      - sh: command -v pwgen
+        msg: "pwgen is niet geinstalleerd; het wachtwoord van de wegwerpbeheerder komt daarvandaan."
+      - sh: command -v git
+        msg: "git is niet geinstalleerd; de connector onder toets roept git aan."
+    requires:
+      vars: [IMAGE]
+    vars:
+      CONTAINER: zad-forgejo-live-test
+      PORT: '{{.PORT | default "53000"}}'
+      ADMIN: zadlive
+      ADMIN_PASSWORD:
+        sh: pwgen -s 24 1
+    cmds:
+      - defer: |
+          docker rm -f {{.CONTAINER}} >/dev/null 2>&1
+          exit 0
+      - |
+        echo "Toetsen tegen {{.IMAGE}}"
+        docker rm -f {{.CONTAINER}} >/dev/null 2>&1
+        # sqlite3 en INSTALL_LOCK: deze Forgejo leeft een paar minuten en hoeft geen
+        # database ernaast. ROOT_URL moet het adres zijn waarop de toetsen hem aanspreken,
+        # want Forgejo bouwt zijn clone-URL's daarmee op.
+        docker run -d --name {{.CONTAINER}} \
+          -p 127.0.0.1:{{.PORT}}:3000 \
+          -e FORGEJO__security__INSTALL_LOCK=true \
+          -e FORGEJO__database__DB_TYPE=sqlite3 \
+          -e FORGEJO__server__ROOT_URL="http://localhost:{{.PORT}}/" \
+          -e FORGEJO__service__DISABLE_REGISTRATION=true \
+          -e FORGEJO__repository__ENABLE_PUSH_CREATE_USER=true \
+          {{.IMAGE}} >/dev/null
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-Forgejo op http://localhost:{{.PORT}}"
+          CONTAINER: '{{.CONTAINER}}'
+          POGINGEN: '60'
+          CHECK: 'curl -sf -o /dev/null "http://localhost:{{.PORT}}/api/healthz"'
+      - |
+        # De beheerder maakt Forgejo zelf aan; de toetsen maken daarmee een token en de
+        # repositories via de API, zoals OPI er ook bij komt.
+        docker exec -u git {{.CONTAINER}} forgejo admin user create \
+          --admin --username {{.ADMIN}} --password '{{.ADMIN_PASSWORD}}' \
+          --email {{.ADMIN}}@example.invalid --must-change-password=false >/dev/null
+      - |
+        cd operations-manager/python
+        FORGEJO_LIVE_URL="http://localhost:{{.PORT}}" \
+        FORGEJO_LIVE_USER="{{.ADMIN}}" \
+        FORGEJO_LIVE_PASSWORD="{{.ADMIN_PASSWORD}}" \
+          uv run pytest tests/integration/test_forgejo_live.py -m forgejo_live -q
+    silent: false
+
+  test-live-groepen:
+    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO en Forgejo"
+    summary: |
+      Wat je lokaal draait voor een merge die een connector of een gepinde versie raakt.
+      In CI draait elke groep als eigen job, op de paden van die groep. Elke groep ruimt
+      zijn eigen containers op.
+    cmds:
+      - task: test-keycloak
+      - task: test-postgres
+      - task: test-minio
+      - task: test-forgejo
+
   test-keycloak:
     desc: "Draai de groep keycloak_live tegen de image die productie draait (IMAGE= voor een andere)"
     summary: |
@@ -2187,7 +2468,12 @@ tasks:
       DB_CONTAINER: zad-keycloak-image-test-db
       RELAY_SINK: zad-keycloak-image-test-relay-sink
       LOKAAS_SINK: zad-keycloak-image-test-lokaas-sink
-      SINK_IMAGE: axllent/mailpit:v1.33.0
+      # Uit de pin en niet met de hand: een opstelling die een versie zelf noemt, noemt hem
+      # vroeg of laat anders dan wat er uitgerold is (zie tests/test_test_images_follow_pins.py).
+      SINK_IMAGE:
+        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/mail/sink/base/deployment.yaml
+      DB_IMAGE:
+        sh: yq '.spec.imageName' infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
       DEPLOYMENT: infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
       PORT: '{{.PORT | default "58081"}}'
       RELAY_SINK_PORT: '{{.RELAY_SINK_PORT | default "58082"}}'
@@ -2214,17 +2500,16 @@ tasks:
           -e POSTGRES_DB=keycloak \
           -e POSTGRES_USER=keycloak \
           -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
-          postgres:17-alpine >/dev/null
-        i=0
-        until docker exec {{.DB_CONTAINER}} pg_isready -q -U keycloak -d keycloak; do
-          i=$((i + 1))
-          if [ "$i" -gt 30 ]; then
-            echo "De wegwerp-PostgreSQL kwam niet op binnen 60 seconden:" >&2
-            docker logs --tail 40 {{.DB_CONTAINER}} >&2
-            exit 1
-          fi
-          sleep 2
-        done
+          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
+          {{.DB_IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+      # Over TCP en niet over de socket: de opstart draait initdb eerst op een tijdelijke
+      # server die alleen op de socket luistert, en in dat gat valt de eerste query.
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-PostgreSQL"
+          CONTAINER: '{{.DB_CONTAINER}}'
+          POGINGEN: '30'
+          CHECK: 'docker exec {{.DB_CONTAINER}} pg_isready -q -U keycloak -d keycloak -h 127.0.0.1'
       - |
         # Onze provider zet AUTH aan; mailpit weigert AUTH zonder INSECURE.
         for sink in {{.RELAY_SINK}}:{{.RELAY_SINK_PORT}} {{.LOKAAS_SINK}}:{{.LOKAAS_SINK_PORT}}; do
@@ -2285,19 +2570,11 @@ tasks:
           -e ZAD_MAIL_RELAY_PASSWORD='{{.DB_PASSWORD}}' \
           -e ZAD_MAIL_RELAY_STARTTLS=false \
           {{.IMAGE}} $ARGS >/dev/null
-      - |
-        # Wachten op de toestand zelf; de teller is een vangnet en geen wachtmechanisme.
-        i=0
-        until curl -sf -o /dev/null "http://localhost:{{.PORT}}/realms/master"; do
-          i=$((i + 1))
-          if [ "$i" -gt 150 ]; then
-            echo "Keycloak kwam niet op binnen 300 seconden:" >&2
-            docker logs --tail 60 {{.KC_CONTAINER}} >&2
-            exit 1
-          fi
-          sleep 2
-        done
-        echo "Keycloak antwoordt op http://localhost:{{.PORT}}"
+      - task: _wacht-op
+        vars:
+          WAT: "Keycloak op http://localhost:{{.PORT}}"
+          CONTAINER: '{{.KC_CONTAINER}}'
+          CHECK: 'curl -sf -o /dev/null "http://localhost:{{.PORT}}/realms/master"'
       - |
         cd operations-manager/python
         KEYCLOAK_IMAGE_TEST_URL="http://localhost:{{.PORT}}" \

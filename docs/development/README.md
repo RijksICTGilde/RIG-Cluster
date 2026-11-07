@@ -13,7 +13,7 @@ point at real files and symbols, and delete a claim rather than let it rot.
 | [services.md](services.md) | The service system: what a service owns, how config, forms, provisioning, manifests and approvals hook in, and how to add one |
 | [wizard-tests.md](wizard-tests.md) | De vijf testniveaus voor een dienstconfig of een wizardflow, met een sjabloon per niveau |
 | [uitloggen-in-een-applicatie.md](uitloggen-in-een-applicatie.md) | Het uitlogcontract: wis je eigen sessie voor je naar het end-session endpoint stuurt, want de keten eindigt bij BZK en komt niet terug |
-| [keycloak-toetsen.md](keycloak-toetsen.md) | Waar een nieuwe Keycloak-actie zijn toets krijgt: de connector in de admin-API-module, een nieuwe stap of orde in de scenariomodule |
+| [toetsen.md](toetsen.md) | De vier lagen van de toetsen, de live groep per afhankelijkheid, en waar een nieuwe actie zijn toets en zijn regel op de kaart krijgt |
 | [sops-sleutel-in-het-cluster.md](sops-sleutel-in-het-cluster.md) | `sops-age-key`: een naam in veel namespaces met per namespace een andere inhoud, en wat dat betekent als je de platformsleutel vervangt |
 | [SECURITY.md](../../SECURITY.md) | Het beveiligingsbeleid: hoe je een kwetsbaarheid meldt en wat je dan van ons mag verwachten |
 

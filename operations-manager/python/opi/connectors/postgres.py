@@ -674,12 +674,13 @@ class PostgresConnector:
             conn = await self._get_or_create_connection("postgres")
 
             users = await conn.fetch("""
-                SELECT usename as username,
-                       usesuper as is_superuser,
-                       usecreatedb as can_create_db,
-                       usecreaterole as can_create_role
-                FROM pg_user
-                ORDER BY usename
+                SELECT rolname as username,
+                       rolsuper as is_superuser,
+                       rolcreatedb as can_create_db,
+                       rolcreaterole as can_create_role
+                FROM pg_roles
+                WHERE rolcanlogin
+                ORDER BY rolname
             """)
 
             user_list = [dict(user) for user in users]
@@ -1188,7 +1189,7 @@ class PostgresConnector:
 
             databases = await conn.fetch("""
                 SELECT datname as name,
-                       datowner::regrole as owner,
+                       pg_get_userbyid(datdba) as owner,
                        encoding,
                        datcollate as collate,
                        datctype as ctype

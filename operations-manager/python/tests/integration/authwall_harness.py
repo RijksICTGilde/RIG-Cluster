@@ -40,11 +40,16 @@ import httpx
 from opi.generation.manifests import render_template
 from ruamel.yaml import YAML
 from tests.docker_runtime import DockerError, container_state, docker
+from tests.image_pins import base_image_from_dockerfile
 
 
 class AuthwallHarnessError(DockerError):
     """De opstelling kon niet opgebouwd worden. Luid falen, nooit stil."""
 
+
+#: Het Dockerfile van de Keycloak-image van het platform; zijn FROM is de versie die
+#: productie draait.
+KEYCLOAK_ZAD_DOCKERFILE = "images/keycloak-zad/Dockerfile"
 
 #: Vaste namen, want daar draait dit ontwerp om: wat een mens kan noemen, kan hij opruimen.
 KEYCLOAK_CONTAINER = "zad-test-keycloak"
@@ -52,7 +57,9 @@ PROXY_CONTAINER = "zad-test-authwall-proxy"
 PROXY_IMAGE = "zad-test-authwall-proxy:local"
 NETWORK = "zad-test-authwall"
 
-KEYCLOAK_IMAGE = "quay.io/keycloak/keycloak:25.0.6"
+#: De basis van onze eigen Keycloak-image: lees hem uit het Dockerfile, niet hardgecodeerd.
+#: Hardcoded versies drijven stil af van wat productie werkelijk draait.
+KEYCLOAK_IMAGE = base_image_from_dockerfile(KEYCLOAK_ZAD_DOCKERFILE)
 KEYCLOAK_ADMIN = "admin"
 KEYCLOAK_ADMIN_PASSWORD = "adminadmin"
 

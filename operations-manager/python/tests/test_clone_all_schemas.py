@@ -22,16 +22,10 @@ Wat hier tegen een echte PostgreSQL 17 gemeten wordt:
 * een kloon die halverwege de restore faalt laat in een bestaande doeldatabase geen van
   zijn eigen schema's achter, en laat een schema dat er al stond staan.
 
-Wijs de tests naar een echte server met::
-
-    docker run -d --rm --name pg17 -p 5432:5432 -e POSTGRES_PASSWORD=pw postgres:17
-    DATABASE_SSLMODE=disable \\
-    CLONE_ALL_SCHEMAS_TEST_DSN=postgresql://postgres:pw@127.0.0.1:5432/postgres \\
-      uv run pytest tests/test_clone_all_schemas.py -m requires_infra -o addopts=""
-
-``DATABASE_SSLMODE=disable`` is nodig omdat de connector sinds RC-275 standaard TLS eist
-en de kale ``postgres:17``-container geen TLS aanbiedt; zonder faalt elke test op
-"rejected SSL upgrade".
+Deze module hoort bij de groep ``postgres_live`` en draait mee met ``task test-postgres``,
+tegen de image die het platform pint. Hij staat niet in ``tests/integration/`` omdat hij er
+al stond; de opstelling (het DSN, de naamresolutie) komt uit
+``tests/integration/postgres_live.py``, zodat er een opstartroute is en niet twee.
 
 De server MOET op poort 5432 staan: de code onder test accepteert geen andere poort
 (``PostgresConnector._ALLOWED_PG_PORTS``). De host geeft de test als in-cluster
@@ -42,9 +36,6 @@ egress-guards van ``_execute_pgdump_clone`` onveranderd mee.
 
 from __future__ import annotations
 
-import os
-import shutil
-import socket
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import urlparse
@@ -53,11 +44,11 @@ import asyncpg
 import pytest
 from opi.connectors.postgres import PostgresConnector, PostgresValidationError
 from opi.manager.database_manager import DatabaseManager
+from tests.integration.postgres_live import SERVICE_NAME, dsn, require_pg_client_tools, resolve_service_name
 
-pytestmark = pytest.mark.requires_infra
+pytestmark = [pytest.mark.requires_infra, pytest.mark.postgres_live]
 
-#: De naam waaronder de kloon de server ziet; een bare servicenaam, zoals in het cluster.
-SERVICE_NAME = "rig-db-rw"
+__all__ = ["resolve_service_name"]
 
 SOURCE_DB = "rc360_src"
 SOURCE_SCHEMA = SOURCE_DB
@@ -71,21 +62,15 @@ TARGET_OWNER_PASSWORD = "rc360-owner-pw"
 ALL_TEST_DATABASES = (SOURCE_DB, TARGET_DB, "rc360_badname_src", "rc360_badname_dst", "rc360_half_dst")
 
 
-def _dsn() -> str | None:
-    dsn = os.environ.get("CLONE_ALL_SCHEMAS_TEST_DSN")
-    if not dsn:
-        return None
-    if not all(shutil.which(tool) for tool in ("psql", "pg_dump")):
-        return None
-    if (urlparse(dsn).port or 5432) != 5432:
-        return None
-    return dsn
+def _dsn() -> str:
+    return dsn()
 
 
-requires_postgres = pytest.mark.skipif(
-    _dsn() is None,
-    reason="needs CLONE_ALL_SCHEMAS_TEST_DSN on port 5432 and the psql client tools",
-)
+@pytest.fixture(autouse=True)
+def _de_groep() -> None:
+    """Zonder de opstelling slaat deze module over, en in CI faalt hij in plaats daarvan."""
+    require_pg_client_tools()
+    dsn()
 
 
 async def _admin() -> asyncpg.Connection:
@@ -93,7 +78,7 @@ async def _admin() -> asyncpg.Connection:
 
 
 async def _connect(database: str, user: str | None = None, password: str | None = None) -> asyncpg.Connection:
-    parsed = urlparse(_dsn() or "")
+    parsed = urlparse(_dsn())
     return await asyncpg.connect(
         host=parsed.hostname,
         port=parsed.port or 5432,
@@ -182,26 +167,6 @@ async def _build_source(database: str, *, app_schema: str = "peers", with_broken
 
 
 @pytest.fixture
-def resolve_service_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Laat SERVICE_NAME naar de testserver wijzen, zonder de guards aan te raken.
-
-    De productiecode weigert een IP-adres als host en elke poort behalve 5432. In plaats
-    van die guards uit te zetten wijst de naam hier naar het DSN-adres: ``PGHOSTADDR``
-    voor pg_dump en psql, een ``getaddrinfo``-patch voor asyncpg.
-    """
-    parsed = urlparse(_dsn() or "")
-    address = socket.gethostbyname(parsed.hostname or "localhost")
-    monkeypatch.setenv("PGHOSTADDR", address)
-
-    echt = socket.getaddrinfo
-
-    def resolve(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
-        return echt(address if host == SERVICE_NAME else host, port, *args, **kwargs)
-
-    monkeypatch.setattr(socket, "getaddrinfo", resolve)
-
-
-@pytest.fixture
 async def schoon() -> Any:
     await _drop_test_state()
     yield
@@ -209,7 +174,7 @@ async def schoon() -> Any:
 
 
 def _connector() -> PostgresConnector:
-    parsed = urlparse(_dsn() or "")
+    parsed = urlparse(_dsn())
     return PostgresConnector(
         host=SERVICE_NAME,
         admin_username=parsed.username or "postgres",
@@ -252,7 +217,6 @@ async def _clone(connector: PostgresConnector, manager: DatabaseManager, target_
 # --- de kloon ------------------------------------------------------------------------
 
 
-@requires_postgres
 @pytest.mark.asyncio
 async def test_een_kloon_neemt_de_schemas_van_de_applicatie_mee(resolve_service_name: None, schoon: None) -> None:
     await _build_source(SOURCE_DB)
@@ -343,7 +307,6 @@ async def test_een_kloon_neemt_de_schemas_van_de_applicatie_mee(resolve_service_
         await bron.close()
 
 
-@requires_postgres
 @pytest.mark.asyncio
 async def test_de_tabel_in_public_van_de_bron_wordt_bij_naam_genoemd(resolve_service_name: None, schoon: None) -> None:
     await _build_source(SOURCE_DB)
@@ -359,7 +322,6 @@ async def test_de_tabel_in_public_van_de_bron_wordt_bij_naam_genoemd(resolve_ser
 # --- faalpaden -----------------------------------------------------------------------
 
 
-@requires_postgres
 @pytest.mark.asyncio
 async def test_een_naam_die_het_platform_niet_accepteert_laat_de_kloon_falen(
     resolve_service_name: None, schoon: None
@@ -384,7 +346,6 @@ async def test_een_naam_die_het_platform_niet_accepteert_laat_de_kloon_falen(
     await connector.close()
 
 
-@requires_postgres
 @pytest.mark.asyncio
 async def test_een_kloon_die_halverwege_faalt_laat_geen_van_zijn_schemas_achter(
     resolve_service_name: None, schoon: None
