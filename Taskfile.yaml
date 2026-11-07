@@ -2397,6 +2397,8 @@ tasks:
     vars:
       TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
     preconditions:
+      - sh: '[ "{{.TESTCLUSTER}}" != "rig-sandbox" ] && [ "{{.TESTCLUSTER}}" != "rig-integration-test" ]'
+        msg: "TESTCLUSTER={{.TESTCLUSTER}} is de naam van een ander cluster. Kies een eigen naam."
       - sh: kind get clusters 2>/dev/null | grep -qx "{{.TESTCLUSTER}}"
         msg: "Geen cluster {{.TESTCLUSTER}}; draai eerst task test-cluster-up."
     cmds:
@@ -2431,6 +2433,8 @@ tasks:
       ARGOCD_PORT: '{{.ARGOCD_PORT | default "38080"}}'
       FORGEJO_PORT: '{{.FORGEJO_PORT | default "38300"}}'
     preconditions:
+      - sh: '[ "{{.TESTCLUSTER}}" != "rig-sandbox" ] && [ "{{.TESTCLUSTER}}" != "rig-integration-test" ]'
+        msg: "TESTCLUSTER={{.TESTCLUSTER}} is de naam van een ander cluster. Kies een eigen naam."
       - sh: kind get clusters 2>/dev/null | grep -qx "{{.TESTCLUSTER}}"
         msg: "Geen cluster {{.TESTCLUSTER}}; draai eerst task test-cluster-up."
       - sh: command -v jq
@@ -2482,15 +2486,260 @@ tasks:
             -m argocd_live -q
     silent: false
 
+  test-startup:
+    desc: "Draai de groep startup_live: het hele opstarten van OPI tegen echte afhankelijkheden"
+    summary: |
+      Het opstarten van OPI van begin tot eind, in drie rondes (leeg cluster, direct nog
+      een keer, en na een herstart) plus het geval dat een afhankelijkheid bij de start
+      onbereikbaar is. OPI draait in het proces van de toets met de echte lifespan; na elke
+      ronde leest een invariant de hele toestand terug uit de afhankelijkheden zelf.
+
+      Deze taak zet de opstelling neer die de groepen van fase 1 en 2 al hadden en voegt
+      alleen de mailrelay toe: het wegwerpcluster van task test-cluster-up (Kubernetes,
+      ArgoCD en Forgejo) plus een PostgreSQL, een Keycloak, een MinIO en een Stalwart, alle
+      vier in de versie die het platform uitrolt. De Keycloak start via _keycloak-container,
+      dezelfde opstart als de groep keycloak_live.
+
+      De relay krijgt de configmap van productie, met een enkele regel omgezet: de
+      wegwerp-PostgreSQL draagt geen certificaat, dus de store doet geen TLS. Er gaat geen
+      post de deur uit; wat gemeten wordt zijn de accounts die het opstarten aanmaakt.
+    vars:
+      TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
+      NAME: zad-startup-live-test
+      # De connector accepteert alleen poort 5432 (_ALLOWED_PG_PORTS), dus de
+      # wegwerpserver staat daar, net als bij task test-postgres.
+      PG_PORT: '5432'
+      MAIL_PORT: '{{.MAIL_PORT | default "58090"}}'
+      MINIO_PORT: '{{.MINIO_PORT | default "59100"}}'
+      KEYCLOAK_PORT: '{{.KEYCLOAK_PORT | default "58181"}}'
+      RELAY_SINK_PORT: '{{.RELAY_SINK_PORT | default "58182"}}'
+      LOKAAS_SINK_PORT: '{{.LOKAAS_SINK_PORT | default "58183"}}'
+      ARGOCD_PORT: '{{.ARGOCD_PORT | default "38081"}}'
+      FORGEJO_PORT: '{{.FORGEJO_PORT | default "38300"}}'
+      # Elke image uit zijn pin; een opstelling die een versie zelf noemt, drijft af.
+      PG_IMAGE:
+        sh: yq '.spec.imageName' infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
+      MINIO_IMAGE:
+        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/minio/controller/base/deployment.yaml
+      MAIL_IMAGE:
+        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/mail/controller/base/deployment.yaml
+      KEYCLOAK_IMAGE:
+        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+      MC_IMAGE:
+        sh: |
+          printf 'ghcr.io/minbzk/base-images/mc:%s\n' \
+            "$(sed -n 's/^ARG MC_VERSION=//p' operations-manager/Dockerfile | head -1)"
+      MAIL_CONFIG: infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml
+      INIT_SQL:
+        sh: |
+          yq '.spec.bootstrap.initdb.postInitApplicationSQL | join(" ")' \
+            infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
+      MINIO_ACCESS_KEY: zadstart
+      ADMIN_PASSWORD:
+        sh: pwgen -s 24 1
+      DB_PASSWORD:
+        sh: pwgen -s 24 1
+      KC_DB_PASSWORD:
+        sh: pwgen -s 24 1
+      METRICS_TOKEN:
+        sh: pwgen -s 32 1
+      MAIL_ADMIN_PASSWORD:
+        sh: pwgen -s 24 1
+      MINIO_SECRET_KEY:
+        sh: pwgen -s 24 1
+      MC_DIR: /tmp/zad-startup-live-test
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker draait niet; deze groep start de hele opstelling in Docker."
+      - sh: command -v pwgen
+        msg: "pwgen is niet geinstalleerd; de wachtwoorden van de wegwerpcontainers komen daarvandaan."
+      - sh: command -v yq
+        msg: "yq is niet geinstalleerd; de images en de init-SQL komen met yq uit de manifesten."
+      - sh: command -v jq
+        msg: "jq is niet geinstalleerd; het token van account opi komt uit het API-antwoord."
+      # Dezelfde grendel als in test-cluster-up: TESTCLUSTER=rig-sandbox zou deze groep op
+      # het cluster van iemand anders laten meten, en hij maakt en verwijdert namespaces.
+      - sh: '[ "{{.TESTCLUSTER}}" != "rig-sandbox" ] && [ "{{.TESTCLUSTER}}" != "rig-integration-test" ]'
+        msg: "TESTCLUSTER={{.TESTCLUSTER}} is de naam van een ander cluster. Kies een eigen naam."
+      - sh: kind get clusters 2>/dev/null | grep -qx "{{.TESTCLUSTER}}"
+        msg: "Geen cluster {{.TESTCLUSTER}}; draai eerst task test-cluster-up."
+    cmds:
+      - defer: |
+          docker rm -f {{.NAME}}-db {{.NAME}}-mail {{.NAME}}-minio {{.NAME}}-mc >/dev/null 2>&1
+          docker rm -f {{.NAME}}-kc {{.NAME}}-kc-db {{.NAME}}-kc-relay-sink {{.NAME}}-kc-lokaas-sink >/dev/null 2>&1
+          docker network rm {{.NAME}} {{.NAME}}-kc >/dev/null 2>&1
+          rm -rf {{.MC_DIR}}
+          exit 0
+      - |
+        echo "Opstelling: PostgreSQL {{.PG_IMAGE}}, Keycloak {{.KEYCLOAK_IMAGE}}, MinIO {{.MINIO_IMAGE}}, relay {{.MAIL_IMAGE}}"
+        docker rm -f {{.NAME}}-db {{.NAME}}-mail {{.NAME}}-minio >/dev/null 2>&1
+        docker network create {{.NAME}} >/dev/null 2>&1
+        docker run -d --name {{.NAME}}-db --network {{.NAME}} \
+          -p 127.0.0.1:{{.PG_PORT}}:5432 \
+          -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
+          -e POSTGRES_INIT_SQL='{{.INIT_SQL}}' \
+          -v {{.ROOT_DIR}}/scripts/postgres-standalone-start.sh:{{.PG_START_IN_CONTAINER}}:ro \
+          {{.PG_IMAGE}} bash {{.PG_START_IN_CONTAINER}} >/dev/null
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-PostgreSQL op poort {{.PG_PORT}}"
+          CONTAINER: '{{.NAME}}-db'
+          POGINGEN: '60'
+          CHECK: 'docker exec {{.NAME}}-db pg_isready -q -U postgres -h 127.0.0.1'
+      - |
+        # De relay heeft zijn database nodig om te starten, dus die twee staan er voordat
+        # hij start. De andere platformdatabases maakt de groep zelf aan.
+        # -i, anders krijgt psql geen stdin en dus geen SQL.
+        docker exec -i -e PGPASSWORD='{{.DB_PASSWORD}}' {{.NAME}}-db \
+          psql --quiet --no-psqlrc -U postgres -h 127.0.0.1 -v pw="{{.DB_PASSWORD}}" <<'SQL'
+        CREATE ROLE mailrelay LOGIN PASSWORD :'pw';
+        CREATE DATABASE mailrelay OWNER mailrelay;
+        SQL
+      - |
+        # De productie-config omgezet: TLS uit omdat de wegwerpserver geen certificaat draagt.
+        RENDER=$(mktemp -d)
+        if [ "$(grep -c '^tls\.enable = true$' {{.MAIL_CONFIG}})" != "1" ]; then
+          echo "{{.MAIL_CONFIG}} heeft niet precies een 'tls.enable = true'; pas deze taak aan." >&2
+          exit 1
+        fi
+        sed 's/^tls\.enable = true$/tls.enable = false/' {{.MAIL_CONFIG}} > "$RENDER/config.toml"
+        docker run -d --name {{.NAME}}-mail --network {{.NAME}} \
+          -p 127.0.0.1:{{.MAIL_PORT}}:8080 \
+          -e MAIL_RELAY_HOSTNAME=rig-mail-relay \
+          -e MAIL_DOMAIN=rijksoverheid.nl \
+          -e MAIL_FROM_LOCAL=noreply-rijksapp \
+          -e MAIL_UPSTREAM_HOST=127.0.0.1 \
+          -e MAIL_UPSTREAM_ALLOW_INVALID_CERTS=true \
+          -e MAIL_RELAY_ADMIN_USERNAME=admin \
+          -e MAIL_RELAY_ADMIN_PASSWORD='{{.MAIL_ADMIN_PASSWORD}}' \
+          -e MAIL_DB_HOST={{.NAME}}-db \
+          -e MAIL_DB_NAME=mailrelay \
+          -e MAIL_DB_USER=mailrelay \
+          -e MAIL_DB_PASSWORD='{{.DB_PASSWORD}}' \
+          -v "$RENDER/config.toml":/etc/mail/config.toml:ro \
+          --entrypoint /usr/local/bin/stalwart-mail \
+          {{.MAIL_IMAGE}} --config /etc/mail/config.toml >/dev/null
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-mailrelay op http://localhost:{{.MAIL_PORT}}"
+          CONTAINER: '{{.NAME}}-mail'
+          POGINGEN: '90'
+          CHECK: 'curl -sf -o /dev/null "http://localhost:{{.MAIL_PORT}}/healthz/ready"'
+      - |
+        # Hetzelfde commando als de deployment, inclusief de vier schijven voor erasure
+        # coding; MINIO_CI_CD omdat MinIO vier schijven op EEN filesystem anders weigert.
+        docker run -d --name {{.NAME}}-minio --network {{.NAME}} \
+          -p 127.0.0.1:{{.MINIO_PORT}}:9000 \
+          -e MINIO_ROOT_USER={{.MINIO_ACCESS_KEY}} \
+          -e MINIO_ROOT_PASSWORD='{{.MINIO_SECRET_KEY}}' \
+          -e MINIO_CI_CD=1 \
+          {{.MINIO_IMAGE}} server /data/disk{1...4} --console-address :9001 >/dev/null
+      - task: _wacht-op
+        vars:
+          WAT: "De wegwerp-MinIO op http://localhost:{{.MINIO_PORT}}"
+          CONTAINER: '{{.NAME}}-minio'
+          POGINGEN: '60'
+          CHECK: 'curl -sf -o /dev/null "http://localhost:{{.MINIO_PORT}}/minio/health/live"'
+      - |
+        # De mc die de OPI-image meebrengt, uit diezelfde image gehaald: de opstartstap
+        # check_minio_availability meet de binary die in productie draait.
+        rm -rf {{.MC_DIR}}
+        mkdir -p {{.MC_DIR}}/bin {{.MC_DIR}}/config
+        docker rm -f {{.NAME}}-mc >/dev/null 2>&1
+        docker create --name {{.NAME}}-mc {{.MC_IMAGE}} >/dev/null
+        docker cp {{.NAME}}-mc:/usr/bin/mc {{.MC_DIR}}/bin/mc
+        docker rm -f {{.NAME}}-mc >/dev/null
+        chmod +x {{.MC_DIR}}/bin/mc
+      - task: _keycloak-container
+        vars:
+          NAME: '{{.NAME}}-kc'
+          IMAGE: '{{.KEYCLOAK_IMAGE}}'
+          PORT: '{{.KEYCLOAK_PORT}}'
+          RELAY_SINK_PORT: '{{.RELAY_SINK_PORT}}'
+          LOKAAS_SINK_PORT: '{{.LOKAAS_SINK_PORT}}'
+          ADMIN_PASSWORD: '{{.ADMIN_PASSWORD}}'
+          DB_PASSWORD: '{{.KC_DB_PASSWORD}}'
+          METRICS_TOKEN: '{{.METRICS_TOKEN}}'
+      - |
+        KUBECONFIG_FILE=$(mktemp)
+        kind get kubeconfig --name "{{.TESTCLUSTER}}" > "$KUBECONFIG_FILE"
+        export KUBECONFIG="$KUBECONFIG_FILE"
+
+        kubectl -n rig-system port-forward svc/argocd-server {{.ARGOCD_PORT}}:80 >/dev/null 2>&1 &
+        PF=$!
+        trap 'kill $PF 2>/dev/null; rm -f "$KUBECONFIG_FILE"' EXIT
+
+        BASE="http://localhost:{{.ARGOCD_PORT}}"
+        i=0
+        until curl -sf -o /dev/null "$BASE/healthz"; do
+          i=$((i + 1))
+          if [ "$i" -gt 60 ]; then
+            echo "argocd-server antwoordt niet op $BASE" >&2
+            kubectl -n rig-system logs deployment/argocd-server --tail 60 >&2
+            exit 1
+          fi
+          sleep 2
+        done
+
+        # jsonpath met een punt in de sleutel moet gequot: ongequot levert kubectl een lege
+        # waarde op.
+        ARGOCD_ADMIN=$(kubectl -n rig-system get secret argocd-cluster -o jsonpath='{.data.admin\.password}' | base64 -d)
+        SESSION=$(curl -sf -X POST -H "Content-Type: application/json" \
+          -d "{\"username\":\"admin\",\"password\":\"$ARGOCD_ADMIN\"}" "$BASE/api/v1/session" | jq -r .token)
+        TOKEN=$(curl -sf -X POST -H "Authorization: Bearer $SESSION" -H "Content-Type: application/json" \
+          -d '{}' "$BASE/api/v1/account/opi/token" | jq -r .token)
+        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          echo "Geen API-token voor account opi; staat accounts.opi: apiKey in de CR?" >&2
+          exit 1
+        fi
+
+        cd operations-manager/python
+        # De vereist-variabelen van de groepen waarvan deze groep de helpers leest, volgen
+        # STARTUP_LIVE_REQUIRED: in CI moet een ontbrekend adres daar ook een FOUT zijn en
+        # geen skip, anders is de job groen zonder meting.
+        VEREIST="${STARTUP_LIVE_REQUIRED:-}"
+        # DATABASE_SSLMODE=disable: de connector eist sinds RC-275 TLS, en een
+        # wegwerpserver zonder certificaat weigert elke verbinding.
+        PATH="{{.MC_DIR}}/bin:$PATH" \
+        MC_CONFIG_DIR="{{.MC_DIR}}/config" \
+        STARTUP_LIVE_REQUIRED="$VEREIST" \
+        KEYCLOAK_LIVE_REQUIRED="$VEREIST" \
+        POSTGRES_LIVE_REQUIRED="$VEREIST" \
+        MINIO_LIVE_REQUIRED="$VEREIST" \
+        FORGEJO_LIVE_REQUIRED="$VEREIST" \
+        KUBERNETES_LIVE_REQUIRED="$VEREIST" \
+        ARGOCD_LIVE_REQUIRED="$VEREIST" \
+        STARTUP_LIVE_MAIL_URL="http://localhost:{{.MAIL_PORT}}" \
+        STARTUP_LIVE_MAIL_ADMIN=admin \
+        STARTUP_LIVE_MAIL_ADMIN_PASSWORD='{{.MAIL_ADMIN_PASSWORD}}' \
+        POSTGRES_LIVE_DSN="postgresql://postgres:{{.DB_PASSWORD}}@127.0.0.1:{{.PG_PORT}}/postgres" \
+        DATABASE_SSLMODE=disable \
+        KEYCLOAK_IMAGE_TEST_URL="http://localhost:{{.KEYCLOAK_PORT}}" \
+        KEYCLOAK_IMAGE_TEST_ADMIN=admin \
+        KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
+        MINIO_LIVE_HOST="localhost:{{.MINIO_PORT}}" \
+        MINIO_LIVE_ACCESS_KEY="{{.MINIO_ACCESS_KEY}}" \
+        MINIO_LIVE_SECRET_KEY="{{.MINIO_SECRET_KEY}}" \
+        FORGEJO_LIVE_URL="http://localhost:{{.FORGEJO_PORT}}" \
+        FORGEJO_LIVE_USER=rig-admin \
+        FORGEJO_LIVE_PASSWORD=admin1234 \
+        KUBERNETES_LIVE_CONTEXT="kind-{{.TESTCLUSTER}}" \
+        ARGOCD_LIVE_HOST=localhost \
+        ARGOCD_LIVE_PORT="{{.ARGOCD_PORT}}" \
+        ARGOCD_LIVE_TOKEN="$TOKEN" \
+        ARGOCD_LIVE_ADMIN_PASSWORD="$ARGOCD_ADMIN" \
+          uv run pytest tests/integration/test_startup_live.py -m startup_live -q
+    silent: false
+
   test-live-groepen:
-    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO, Forgejo, Kubernetes en ArgoCD"
+    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO, Forgejo, Kubernetes, ArgoCD en het opstarten"
     summary: |
       Wat je lokaal draait voor een merge die een connector of een gepinde versie raakt.
       In CI draait elke groep als eigen job, op de paden van die groep. Elke groep ruimt
       zijn eigen containers op.
 
-      kubernetes_live en argocd_live meten op het wegwerpcluster van task test-cluster-up;
-      zet dat eerst op, en ruim het daarna op met task test-cluster-down.
+      kubernetes_live, argocd_live en startup_live meten op het wegwerpcluster van task
+      test-cluster-up; zet dat eerst op, en ruim het daarna op met task test-cluster-down.
     cmds:
       - task: test-keycloak
       - task: test-postgres
@@ -2498,6 +2747,7 @@ tasks:
       - task: test-forgejo
       - task: test-kubernetes
       - task: test-argocd
+      - task: test-startup
 
   test-keycloak:
     desc: "Draai de groep keycloak_live tegen de image die productie draait (IMAGE= voor een andere)"
@@ -2565,18 +2815,7 @@ tasks:
     requires:
       vars: [IMAGE]
     vars:
-      NETWORK: zad-keycloak-image-test
-      KC_CONTAINER: zad-keycloak-image-test
-      DB_CONTAINER: zad-keycloak-image-test-db
-      RELAY_SINK: zad-keycloak-image-test-relay-sink
-      LOKAAS_SINK: zad-keycloak-image-test-lokaas-sink
-      # Uit de pin en niet met de hand: een opstelling die een versie zelf noemt, noemt hem
-      # vroeg of laat anders dan wat er uitgerold is (zie tests/test_test_images_follow_pins.py).
-      SINK_IMAGE:
-        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/mail/sink/base/deployment.yaml
-      DB_IMAGE:
-        sh: yq '.spec.imageName' infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
-      DEPLOYMENT: infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+      NAME: zad-keycloak-image-test
       PORT: '{{.PORT | default "58081"}}'
       RELAY_SINK_PORT: '{{.RELAY_SINK_PORT | default "58082"}}'
       LOKAAS_SINK_PORT: '{{.LOKAAS_SINK_PORT | default "58083"}}'
@@ -2590,15 +2829,63 @@ tasks:
         sh: pwgen -s 32 1
     cmds:
       - defer: |
-          docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} {{.RELAY_SINK}} {{.LOKAAS_SINK}} >/dev/null 2>&1
-          docker network rm {{.NETWORK}} >/dev/null 2>&1
+          docker rm -f {{.NAME}} {{.NAME}}-db {{.NAME}}-relay-sink {{.NAME}}-lokaas-sink >/dev/null 2>&1
+          docker network rm {{.NAME}} >/dev/null 2>&1
           exit 0
       - |
         echo "Toetsen tegen {{.IMAGE}}"
+      - task: _keycloak-container
+        vars:
+          NAME: '{{.NAME}}'
+          IMAGE: '{{.IMAGE}}'
+          PORT: '{{.PORT}}'
+          RELAY_SINK_PORT: '{{.RELAY_SINK_PORT}}'
+          LOKAAS_SINK_PORT: '{{.LOKAAS_SINK_PORT}}'
+          ADMIN_PASSWORD: '{{.ADMIN_PASSWORD}}'
+          DB_PASSWORD: '{{.DB_PASSWORD}}'
+          METRICS_TOKEN: '{{.METRICS_TOKEN}}'
       - |
-        docker rm -f {{.KC_CONTAINER}} {{.DB_CONTAINER}} {{.RELAY_SINK}} {{.LOKAAS_SINK}} >/dev/null 2>&1
-        docker network create {{.NETWORK}} >/dev/null 2>&1
-        docker run -d --name {{.DB_CONTAINER}} --network {{.NETWORK}} \
+        cd operations-manager/python
+        KEYCLOAK_IMAGE_TEST_URL="http://localhost:{{.PORT}}" \
+        KEYCLOAK_IMAGE_TEST_ADMIN=admin \
+        KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
+        KEYCLOAK_IMAGE_TEST_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
+        KEYCLOAK_IMAGE_TEST_RELAY_SINK_URL="http://localhost:{{.RELAY_SINK_PORT}}" \
+        KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_URL="http://localhost:{{.LOKAAS_SINK_PORT}}" \
+        KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_SMTP="{{.NAME}}-lokaas-sink:1025" \
+          uv run pytest tests/integration/test_keycloak_image_providers.py \
+            tests/integration/test_keycloak_image_thema.py \
+            tests/integration/test_keycloak_image_mail.py \
+            tests/integration/test_keycloak_admin_api.py \
+            tests/integration/test_keycloak_scenarios.py -m keycloak_live -q
+    silent: false
+
+  _keycloak-container:
+    internal: true
+    desc: "Start IMAGE als Keycloak met de startargumenten van de basisdeployment"
+    summary: |
+      De opstart van de Keycloak-opstelling, los van de groep die eraan meet: de
+      wegwerp-PostgreSQL, de twee SMTP-sinks en Keycloak zelf met de args uit de
+      basisdeployment. De groepen keycloak_live en startup_live gebruiken hem beide, want
+      een tweede opstart ernaast zou stil kunnen afwijken van wat productie start.
+
+      De opruiming hoort bij de AANROEPER: een defer in deze taak zou de containers al
+      weghalen voordat de toetsen draaien.
+    requires:
+      vars: [NAME, IMAGE, PORT, RELAY_SINK_PORT, LOKAAS_SINK_PORT, ADMIN_PASSWORD, DB_PASSWORD, METRICS_TOKEN]
+    vars:
+      # Uit de pin en niet met de hand: een opstelling die een versie zelf noemt, noemt hem
+      # vroeg of laat anders dan wat er uitgerold is (zie tests/test_test_images_follow_pins.py).
+      SINK_IMAGE:
+        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/mail/sink/base/deployment.yaml
+      DB_IMAGE:
+        sh: yq '.spec.imageName' infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml
+      DEPLOYMENT: infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
+    cmds:
+      - |
+        docker rm -f {{.NAME}} {{.NAME}}-db {{.NAME}}-relay-sink {{.NAME}}-lokaas-sink >/dev/null 2>&1
+        docker network create {{.NAME}} >/dev/null 2>&1
+        docker run -d --name {{.NAME}}-db --network {{.NAME}} \
           -e POSTGRES_DB=keycloak \
           -e POSTGRES_USER=keycloak \
           -e POSTGRES_PASSWORD='{{.DB_PASSWORD}}' \
@@ -2609,13 +2896,13 @@ tasks:
       - task: _wacht-op
         vars:
           WAT: "De wegwerp-PostgreSQL"
-          CONTAINER: '{{.DB_CONTAINER}}'
+          CONTAINER: '{{.NAME}}-db'
           POGINGEN: '30'
-          CHECK: 'docker exec {{.DB_CONTAINER}} pg_isready -q -U keycloak -d keycloak -h 127.0.0.1'
+          CHECK: 'docker exec {{.NAME}}-db pg_isready -q -U keycloak -d keycloak -h 127.0.0.1'
       - |
         # Onze provider zet AUTH aan; mailpit weigert AUTH zonder INSECURE.
-        for sink in {{.RELAY_SINK}}:{{.RELAY_SINK_PORT}} {{.LOKAAS_SINK}}:{{.LOKAAS_SINK_PORT}}; do
-          docker run -d --name "${sink%%:*}" --network {{.NETWORK}} \
+        for sink in {{.NAME}}-relay-sink:{{.RELAY_SINK_PORT}} {{.NAME}}-lokaas-sink:{{.LOKAAS_SINK_PORT}}; do
+          docker run -d --name "${sink%%:*}" --network {{.NAME}} \
             -p "${sink##*:}:8025" \
             -e MP_SMTP_AUTH_ACCEPT_ANY=1 \
             -e MP_SMTP_AUTH_ALLOW_INSECURE=1 \
@@ -2655,17 +2942,17 @@ tasks:
           *) echo "Geen startargumenten gelezen uit {{.DEPLOYMENT}}" >&2; exit 1 ;;
         esac
         echo "Starten met de argumenten van de deployment:$ARGS"
-        docker run -d --name {{.KC_CONTAINER}} --network {{.NETWORK}} \
+        docker run -d --name {{.NAME}} --network {{.NAME}} \
           -p {{.PORT}}:8080 \
           -e KC_BOOTSTRAP_ADMIN_USERNAME=admin \
           -e KC_BOOTSTRAP_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
-          -e KC_DB_URL="jdbc:postgresql://{{.DB_CONTAINER}}:5432/keycloak" \
+          -e KC_DB_URL="jdbc:postgresql://{{.NAME}}-db:5432/keycloak" \
           -e KC_DB_USERNAME=keycloak \
           -e KC_DB_PASSWORD='{{.DB_PASSWORD}}' \
           -e KC_HTTP_ENABLED=true \
           -e KC_HOSTNAME_STRICT=false \
           -e RIG_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
-          -e ZAD_MAIL_RELAY_HOST={{.RELAY_SINK}} \
+          -e ZAD_MAIL_RELAY_HOST={{.NAME}}-relay-sink \
           -e ZAD_MAIL_RELAY_PORT=1025 \
           -e ZAD_MAIL_RELAY_USERNAME=zad-keycloak \
           -e ZAD_MAIL_RELAY_FROM=noreply-rijksapp@rijksoverheid.nl \
@@ -2675,23 +2962,8 @@ tasks:
       - task: _wacht-op
         vars:
           WAT: "Keycloak op http://localhost:{{.PORT}}"
-          CONTAINER: '{{.KC_CONTAINER}}'
+          CONTAINER: '{{.NAME}}'
           CHECK: 'curl -sf -o /dev/null "http://localhost:{{.PORT}}/realms/master"'
-      - |
-        cd operations-manager/python
-        KEYCLOAK_IMAGE_TEST_URL="http://localhost:{{.PORT}}" \
-        KEYCLOAK_IMAGE_TEST_ADMIN=admin \
-        KEYCLOAK_IMAGE_TEST_ADMIN_PASSWORD='{{.ADMIN_PASSWORD}}' \
-        KEYCLOAK_IMAGE_TEST_METRICS_TOKEN='{{.METRICS_TOKEN}}' \
-        KEYCLOAK_IMAGE_TEST_RELAY_SINK_URL="http://localhost:{{.RELAY_SINK_PORT}}" \
-        KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_URL="http://localhost:{{.LOKAAS_SINK_PORT}}" \
-        KEYCLOAK_IMAGE_TEST_LOKAAS_SINK_SMTP="{{.LOKAAS_SINK}}:1025" \
-          uv run pytest tests/integration/test_keycloak_image_providers.py \
-            tests/integration/test_keycloak_image_thema.py \
-            tests/integration/test_keycloak_image_mail.py \
-            tests/integration/test_keycloak_admin_api.py \
-            tests/integration/test_keycloak_scenarios.py -m keycloak_live -q
-    silent: false
 
   build-keycloak-relay-email-sender:
     desc: "Bouw de relay-emailSender-jar"

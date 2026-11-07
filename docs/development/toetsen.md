@@ -5,13 +5,14 @@ eigen code tegen mocks. Toen Keycloak 26.8.1 een dubbele config-alias ging weige
 alles groen, en een gebruiker meldde de fout op productie. Een mock die vertelt wat wij
 denken dat de afhankelijkheid doet, meet precies het verkeerde.
 
-Daarom vier lagen. Kies de laagste laag die het gedrag echt meet.
+Daarom vijf lagen. Kies de laagste laag die het gedrag echt meet.
 
 | Laag | Wat hij meet | Waar hij staat | Hoe je hem draait |
 |---|---|---|---|
 | unit | onze eigen logica: een beslissing, een naam, een vorm | `tests/test_*.py` | `uv run pytest tests/test_x.py` |
 | live per afhankelijkheid | het contract met de ECHTE afhankelijkheid in de versie die productie draait | `tests/integration/test_*_live.py` | `task test-keycloak`, `task test-postgres`, `task test-minio`, `task test-forgejo`, `task test-kubernetes`, `task test-argocd` |
 | scenario | de ORDE van meerdere acties, met een invariant na elke stap | `tests/integration/test_*_scenarios.py` | dezelfde task als de groep |
+| het opstarten | de hele opstartvolgorde over ALLE afhankelijkheden tegelijk, in drie rondes | `tests/integration/test_startup_live.py` | `task test-startup` |
 | e2e | het portaal in een browser, en de sandbox | `tests/e2e/` | `uv run pytest tests/e2e -m "e2e and not sandbox"`, `task test-e2e-sandbox` |
 
 De standaardrun (`uv run pytest`) draait de unit-laag en de statische toetsen. De live
@@ -29,9 +30,9 @@ schrijfactie terug wat de afhankelijkheid werkelijk opsloeg, met een eigen kanaa
 de API voor Forgejo) en niet met de connector onder toets.
 
 **Een mock alleen op de grens met een afhankelijkheid die een live groep heeft.** Heeft een
-afhankelijkheid geen live groep (SeaweedFS, mail, metrics en DNS vandaag), dan mag je hem mocken, maar
-dan is dat pad `planned` op de kaart en niet gemeten. Mock nooit onze eigen code weg om een
-toets te laten slagen.
+afhankelijkheid geen live groep (SeaweedFS, metrics en DNS vandaag; van mail is alleen gemeten
+wat het opstarten gebruikt), dan mag je hem mocken, maar dan is dat pad `planned` op de kaart
+en niet gemeten. Mock nooit onze eigen code weg om een toets te laten slagen.
 
 **Elke actie staat op de kaart.** `operations-manager/python/tests/regression/actions.yaml`
 noemt elke stap van het opstarten en elk `TaskType`, met per afhankelijkheid `measured` (met
@@ -62,8 +63,8 @@ Vul naar waarheid: wat alleen met mocks gemeten wordt, is `planned`.
 Volg `keycloak_live`; dat is het voorbeeld, en de rest is eraan gelijk gemaakt.
 
 - **Een marker per afhankelijkheid** (`keycloak_live`, `postgres_live`, `minio_live`,
-  `forgejo_live`, `kubernetes_live`, `argocd_live`), plus `requires_infra`, zodat de
-  standaardrun ze overslaat.
+  `forgejo_live`, `kubernetes_live`, `argocd_live`, en `startup_live` voor het opstarten over
+  alle zeven), plus `requires_infra`, zodat de standaardrun ze overslaat.
 - **De image komt uit de pin**, gelezen door de task. `IMAGE=` voor een andere tag.
   Niet elke image start zichzelf: de PostgreSQL van het platform is een CNPG-image zonder
   ENTRYPOINT, die de operator opstart. Elke plek die hem los start geeft daarom
@@ -72,26 +73,28 @@ Volg `keycloak_live`; dat is het voorbeeld, en de rest is eraan gelijk gemaakt.
   (`POSTGRES_LIVE_REQUIRED` en zijn broers) is ontbreken een FOUT. CI zet die altijd, want
   daar betekent "overgeslagen" dat de job groen is zonder meting.
 - **De groep ruimt op wat hij maakt**, ook bij falen, en weigert tegen iets anders dan
-  localhost te draaien (`LiveGroup.assert_local`). Alles wat hij maakt begint met
-  `zadlive`, zodat een mens ziet wat van de toetsen is.
+  localhost te draaien (`LiveGroup.assert_local`). Alles wat hij maakt begint met het
+  voorvoegsel van die groep (`zadlive`, `zadstart`), zodat een mens ziet wat van de toetsen is
+  en twee groepen elkaars opruiming niet meenemen.
 - **Een job in `.github/workflows/integration-tests.yaml`**, op de paden van die connector,
   zijn manager, zijn handlers, zijn pin en de groep zelf. Geen geplande run erbij: een groep
   meet een gepinde image, dus hij veroudert niet stil zolang het padfilter de pin omvat.
-  Lokaal draait `task test-live-groepen` ze alle zes achter elkaar.
+  Lokaal draait `task test-live-groepen` ze alle zeven achter elkaar.
 
 De gedeelde hulp staat in `tests/integration/live.py` (de omgeving lezen, de
 localhost-grendel) en per afhankelijkheid in `tests/integration/<naam>_live.py` (de
 opstelling en het terugleeskanaal). De opstartroute van een groep staat in de Taskfile, met
 `_wacht-op` voor het wachten. Schrijf geen tweede exemplaar ernaast.
 
-## Het wegwerpcluster van kubernetes_live en argocd_live
+## Het wegwerpcluster van kubernetes_live, argocd_live en startup_live
 
-Twee groepen hebben geen container nodig maar een cluster, en ze delen er een:
+Drie groepen hebben een cluster nodig in plaats van een container, en ze delen er een:
 
 ```bash
 task test-cluster-up      # kind + ArgoCD + Forgejo, met de pins van de sandbox
 task test-kubernetes      # de groep kubernetes_live
 task test-argocd          # de groep argocd_live
+task test-startup         # de groep startup_live
 task test-cluster-down    # cluster weg, kubectl-context terug
 ```
 
@@ -112,10 +115,52 @@ Wat erin zit, en waarom:
 - **Eigen naam en eigen poorten**, dus hij draait naast `rig-sandbox`. kind zet je
   kubectl-context op dit cluster; `task test-cluster-down` zet hem terug.
 
-De groepen draaien met een eigen KUBECONFIG en weigeren tegen iets anders dan een
-`kind-`context te meten. Wat alleen op ODCN bestaat (de webhook van Capsule, de
-VPA-operator) staat met een reden op de kaart: die operators hebben in deze repo geen
-gepinde versie.
+De drie groepen die erop meten (`kubernetes_live`, `argocd_live` en `startup_live`) draaien
+met een eigen KUBECONFIG en weigeren tegen iets anders dan een `kind-`context te meten. Elke
+groep heeft zijn EIGEN voorvoegsel (`zadlive`, `zadstart`), want de opruiming gaat op dat
+voorvoegsel en zou anders de namespaces van een andere groep weghalen.
+
+Wat alleen op ODCN bestaat (de webhook van Capsule, de VPA-operator) staat met een reden op de
+kaart: die operators hebben in deze repo geen gepinde versie.
+
+## De groep startup_live: het hele opstarten
+
+De andere groepen meten een afhankelijkheid per keer. Het opstarten van OPI is meer dan de som
+daarvan: een vaste volgorde over alle afhankelijkheden tegelijk, waarvan elke stap moet slagen
+op een leeg cluster EN op een cluster dat al draait.
+
+```bash
+task test-cluster-up      # hetzelfde wegwerpcluster als kubernetes_live en argocd_live
+task test-startup         # de groep startup_live
+task test-cluster-down
+```
+
+`task test-startup` zet de opstelling neer die de andere groepen al hadden en voegt er een toe:
+PostgreSQL, Keycloak, MinIO en de mailrelay als container naast de toets (zoals fase 1), en
+Kubernetes, ArgoCD en Forgejo op het wegwerpcluster (zoals fase 2). De Keycloak start via
+dezelfde interne taak als `task test-keycloak` (`_keycloak-container`), zodat er geen tweede
+opstart naast staat die stil kan afwijken van wat productie start.
+
+Wat de groep doet:
+
+- **OPI draait in het proces van de toets**, met de echte `lifespan` en instellingen die naar
+  de opstelling wijzen. Niet als uitgerolde pod: de uitrol-manifests meten de kustomize-toetsen,
+  en wat hier telt is wat de CODE bij het opstarten doet.
+- **Drie rondes**: een leeg cluster, direct nog een keer in hetzelfde proces, en na een
+  herstart met de toestand van ronde 1 er al. Na elke ronde dezelfde invariant, en na ronde 2
+  en 3 bovendien dat er niets dubbel is aangemaakt en niets is weggehaald.
+- **Een storing bij het opstarten**: PostgreSQL en de mailrelay zijn weg als OPI start en komen
+  daarna terug. Dat is het gedrag dat op productie telt, want een verse uitrol komt op voordat
+  zijn afhankelijkheden antwoorden.
+- **De achtergrondtaken** die `lifespan` daarna start (TaskWorker, schedulers, watchers) moeten
+  zonder fout starten en bij het afsluiten weer netjes stoppen. Ze staan daarom in deze groep
+  AAN, en de toets leest `app.state`: een scheduler die niet start wordt gelogd en niet
+  geworpen, dus de log is geen poort.
+
+Wat met opzet buiten de groep blijft, staat met een reden op `actions.yaml`: de DNS-stappen
+(TransIP is een externe dienst zonder image), de metrics-probe (die mag zijn bron missen, dat is
+bedoeld gedrag), `_resolve_running_image` (leest de eigen pod, en die is er niet) en de
+federatie (die vraagt een tweede cluster).
 
 ## Achtergrond
 

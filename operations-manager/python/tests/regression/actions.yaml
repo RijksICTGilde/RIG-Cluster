@@ -21,11 +21,11 @@
 # de taken eromheen staan daarom op fase 3 en fase 4.
 
 phases:
-  "1-postgres-minio-forgejo": "deze taak: PostgreSQL, MinIO en git/Forgejo, de kaart en de dekkingstoetsen"
+  "1-postgres-minio-forgejo": "gedaan: PostgreSQL, MinIO en git/Forgejo, de kaart en de dekkingstoetsen"
   "2-kubernetes-argocd": "gedaan: kind met de gepinde node-image en de ArgoCD van het platform, en de kubectl- en Argo-connectoren methode voor methode"
-  "3-opstarten": "run_startup_tasks tegen alle echte afhankelijkheden tegelijk, twee keer achter elkaar"
+  "3-opstarten": "gedaan: het hele opstarten (lifespan en run_startup_tasks) tegen alle echte afhankelijkheden tegelijk, in drie rondes plus een storing (groep startup_live)"
   "4-taken": "elk TaskType als scenario tegen de echte afhankelijkheden, met een invariant per stap"
-  later: "SeaweedFS, mail, metrics en DNS, na fase 2"
+  later: "SeaweedFS, de mailconnector buiten het opstarten, metrics en DNS"
 
 startup:
   - step: print_boot_banner
@@ -49,7 +49,11 @@ startup:
   - step: setup_tracing
     where: lifespan
     dependencies:
-      postgres: {status: planned, phase: "3-opstarten"}
+      postgres:
+        status: exempt
+        reason: >-
+          instrumenteert asyncpg alleen met OTEL_ENABLED, en deze repo pint geen OTLP-collector om
+          de spans naartoe te sturen; wat de instrumentatie meet is niet onze code
   - step: warm_connector_singletons
     where: lifespan
     dependencies:
@@ -62,23 +66,25 @@ startup:
   - step: run_startup_tasks
     where: lifespan
     dependencies:
-      keycloak: {status: planned, phase: "3-opstarten"}
-      postgres: {status: planned, phase: "3-opstarten"}
-      minio: {status: planned, phase: "3-opstarten"}
-      git: {status: planned, phase: "3-opstarten"}
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      keycloak: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      postgres: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      minio: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      mail: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: start_git_monitoring
     where: lifespan
     dependencies:
-      git: {status: planned, phase: "3-opstarten"}
-      forgejo: {status: planned, phase: "3-opstarten"}
+      git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: start_periodic_cleanup
     where: lifespan
     dependencies: {}
   - step: start_reconcile_poll
     where: lifespan
     dependencies:
-      git: {status: planned, phase: "3-opstarten"}
+      git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: get_database_pool
     where: lifespan
     dependencies:
@@ -97,7 +103,11 @@ startup:
   - step: FederationService
     where: lifespan
     dependencies:
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      kubernetes:
+        status: exempt
+        reason: >-
+          start alleen met FEDERATION_ROLE=master en FEDERATION_PEERS, en een peer is een TWEEDE
+          cluster met een eigen OPI; die opstelling bestaat in deze repo niet
   - step: ReconciliationScheduler
     where: lifespan
     dependencies:
@@ -113,7 +123,7 @@ startup:
     where: lifespan
     dependencies:
       kopia: {status: planned, phase: later}
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: AuditRetentionScheduler
     where: lifespan
     dependencies:
@@ -121,7 +131,7 @@ startup:
   - step: SleepModeScheduler
     where: lifespan
     dependencies:
-      argocd: {status: planned, phase: "3-opstarten"}
+      argocd: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: LogwatcherScheduler
     where: lifespan
     dependencies:
@@ -133,8 +143,8 @@ startup:
   - step: DbConsoleReaper
     where: lifespan
     dependencies:
-      kubernetes: {status: planned, phase: "3-opstarten"}
-      postgres: {status: planned, phase: "3-opstarten"}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      postgres: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: MailRelayWatcher
     where: lifespan
     dependencies:
@@ -142,11 +152,15 @@ startup:
   - step: ImagePullObserver
     where: lifespan
     dependencies:
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: OomPodWatcher
     where: lifespan
     dependencies:
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      kubernetes:
+        status: exempt
+        reason: >-
+          start alleen op het cluster dat de OOM-wacht draait (watches_pods_for_oom is op
+          odcn-production waar, en het wegwerpcluster gaat voor sandboxed-local door)
   - step: OomMetricSweeper
     where: lifespan
     dependencies:
@@ -192,7 +206,7 @@ startup:
   - step: dispose_engine
     where: lifespan
     dependencies:
-      postgres: {status: planned, phase: "3-opstarten"}
+      postgres: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
 
   - step: get_readiness_state
     where: run_startup_tasks
@@ -215,7 +229,12 @@ startup:
   - step: get_metrics_connector
     where: run_startup_tasks
     dependencies:
-      metrics: {status: planned, phase: later}
+      metrics:
+        status: exempt
+        reason: >-
+          de probe begint onbeschikbaar en zoekt zijn bron op de achtergrond, dus een
+          ontbrekende Prometheus of Grafana mag het opstarten niet ophouden; dat is bedoeld
+          gedrag en de groep startup_live draait het hele opstarten zonder die bron
   - step: _setup_database
     where: run_startup_tasks
     dependencies:
@@ -223,10 +242,10 @@ startup:
   - step: _setup_projects
     where: run_startup_tasks
     dependencies:
-      git: {status: planned, phase: "3-opstarten"}
-      forgejo: {status: planned, phase: "3-opstarten"}
-      postgres: {status: planned, phase: "3-opstarten"}
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      postgres: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: restrict_platform_databases
     where: run_startup_tasks
     dependencies:
@@ -234,7 +253,7 @@ startup:
   - step: ensure_cmp_key_readers
     where: run_startup_tasks
     dependencies:
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: warm_platform_repos
     where: run_startup_tasks
     dependencies:
@@ -243,7 +262,11 @@ startup:
   - step: _resolve_running_image
     where: run_startup_tasks
     dependencies:
-      kubernetes: {status: planned, phase: "3-opstarten"}
+      kubernetes:
+        status: exempt
+        reason: >-
+          leest de image van de EIGEN pod en doet niets zonder POD_NAME; in de groep startup_live
+          draait OPI in het proces van de toets en niet als pod
   - step: check_minio_availability
     where: run_startup_tasks
     dependencies:
@@ -251,8 +274,9 @@ startup:
   - step: _setup_mail_accounts
     where: run_startup_tasks
     dependencies:
-      mail: {status: planned, phase: later}
-      keycloak: {status: planned, phase: "3-opstarten"}
+      mail: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      keycloak: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
+      kubernetes: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: _setup_keycloak
     where: run_startup_tasks
     dependencies:
@@ -260,7 +284,7 @@ startup:
   - step: _setup_oauth
     where: run_startup_tasks
     dependencies:
-      keycloak: {status: planned, phase: "3-opstarten"}
+      keycloak: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
   - step: reconcile_caa_records
     where: run_startup_tasks
     dependencies:
@@ -276,9 +300,16 @@ startup:
   - step: _startup_retry_loop
     where: run_startup_tasks
     dependencies:
-      keycloak: {status: planned, phase: "3-opstarten"}
-      minio: {status: planned, phase: "3-opstarten"}
-      mail: {status: planned, phase: later}
+      postgres: {status: measured, test: test_the_boot_recovers_when_postgresql_and_the_relay_are_down_at_first}
+      git: {status: measured, test: test_the_boot_recovers_when_postgresql_and_the_relay_are_down_at_first}
+      mail: {status: measured, test: test_the_boot_recovers_when_postgresql_and_the_relay_are_down_at_first}
+      keycloak:
+        status: exempt
+        reason: >-
+          de keycloak-tak van de lus komt pas aan de beurt als Keycloak zelf wegvalt, en
+          wait_for_keycloak_availability doet daar tien tenacity-pogingen (zes minuten) over
+          voordat de lus ook maar begint; de storingsmeting gaat daarom over PostgreSQL en de
+          mailrelay, dezelfde lus met dezelfde takstructuur
 
 # Een taakregel gaat over de taak van BEGIN TOT EIND, dus met de handler, git en ArgoCD
 # erbij. Waar fase 1 de stap van de manager al meet, staat dat als measured met een note.
@@ -459,7 +490,7 @@ test_setup:
     dependencies:
       kubernetes:
         status: measured
-        test: test_the_kind_node_image_of_every_test_cluster_follows_the_sandbox_pin
+        test: test_the_test_cluster_reads_its_images_from_a_pin
   - subject: Forgejo en ArgoCD van het wegwerpcluster (task test-cluster-up)
     dependencies:
       kubernetes:

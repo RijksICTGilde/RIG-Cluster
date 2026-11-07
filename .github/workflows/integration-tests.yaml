@@ -11,7 +11,8 @@
 # 1. Unit tests - fastest, no infrastructure
 # 2. Mock integration tests - fast, mocked external services
 # 3. Live groepen - langzaam, tegen een echte Keycloak, PostgreSQL, MinIO, Forgejo,
-#    Kubernetes en ArgoCD. Zie docs/development/toetsen.md.
+#    Kubernetes en ArgoCD, en het opstarten tegen alle zeven tegelijk (startup-live).
+#    Zie docs/development/toetsen.md.
 
 name: Integration Tests
 
@@ -31,6 +32,7 @@ on:
       - 'infrastructure/bootstrap/infrastructure/postgresql/**'  # voor job postgres-live
       - 'infrastructure/bootstrap/infrastructure/minio/**'  # voor job minio-live
       - 'infrastructure/bootstrap/infrastructure/forgejo/**'  # voor job forgejo-live
+      - 'infrastructure/bootstrap/infrastructure/mail/**'  # voor job startup-live
       # De pins van het wegwerpcluster van kubernetes-live en argocd-live: de node-image,
       # de ArgoCD-CR met zijn image en version, de CMP-sidecar met zijn eigen digest, en het
       # voorbereide manifest van de ArgoCD-operator.
@@ -54,6 +56,7 @@ on:
       - 'infrastructure/bootstrap/infrastructure/postgresql/**'
       - 'infrastructure/bootstrap/infrastructure/minio/**'
       - 'infrastructure/bootstrap/infrastructure/forgejo/**'
+      - 'infrastructure/bootstrap/infrastructure/mail/**'  # voor job startup-live
       # De pins van het wegwerpcluster van kubernetes-live en argocd-live: de node-image,
       # de ArgoCD-CR met zijn image en version, de CMP-sidecar met zijn eigen digest, en het
       # voorbereide manifest van de ArgoCD-operator.
@@ -572,6 +575,70 @@ jobs:
         if: always()
         run: task test-cluster-down
 
+  startup-live:
+    name: Het opstarten (live, alle afhankelijkheden)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # Dezelfde tools als andere live jobs, plus kind en kubectl voor het cluster.
+      - name: Install pwgen, kind, kubectl and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          kind version && kubectl version --client && task --version
+
+      - name: Set up the throwaway cluster
+        run: task test-cluster-up
+
+      # STARTUP_LIVE_REQUIRED: ontbrekend adres is fout in CI (anders job groen zonder meting).
+      - name: Run the startup_live group
+        env:
+          STARTUP_LIVE_REQUIRED: '1'
+        run: task test-startup
+
+      - name: Setup state on failure
+        if: failure()
+        run: |
+          docker logs --tail 200 zad-startup-live-test-mail || true
+          docker logs --tail 100 zad-startup-live-test-db || true
+          docker logs --tail 100 zad-startup-live-test-kc || true
+          kubectl --context kind-rig-testcluster get all -A || true
+
+      - name: Tear the throwaway cluster down
+        if: always()
+        run: task test-cluster-down
+
   # Summary job that depends on all tests
   tests-passed:
     name: All Tests Passed
@@ -587,6 +654,7 @@ jobs:
       - forgejo-live
       - kubernetes-live
       - argocd-live
+      - startup-live
     if: always()
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -603,7 +671,8 @@ jobs:
              [[ "${{ needs.minio-live.result }}" != "success" ]] || \
              [[ "${{ needs.forgejo-live.result }}" != "success" ]] || \
              [[ "${{ needs.kubernetes-live.result }}" != "success" ]] || \
-             [[ "${{ needs.argocd-live.result }}" != "success" ]]; then
+             [[ "${{ needs.argocd-live.result }}" != "success" ]] || \
+             [[ "${{ needs.startup-live.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi
