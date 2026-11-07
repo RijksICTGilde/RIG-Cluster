@@ -110,7 +110,31 @@ GIT = Dependency(
     unused={},
 )
 
-DEPENDENCIES = (KEYCLOAK, POSTGRES, MINIO, GIT)
+KUBERNETES = Dependency(
+    name="kubernetes",
+    connectors=(Connector("connectors/kubectl.py", "KubectlConnector"),),
+    group=("integration/test_kubernetes_live.py",),
+    exempt={},
+    unused={
+        "apply_annotation_to_resource": "no caller in opi/; apply_labels_to_resource is the one in use",
+        "encrypt_file_with_sops": "no caller in opi/; opi/utils/sops.py encrypts without kubectl",
+        "get_namespace_label_map": "no caller in opi/; get_namespace_labels_map is the one in use",
+    },
+)
+
+ARGOCD = Dependency(
+    name="argocd",
+    connectors=(Connector("connectors/argo.py", "ArgoConnector"),),
+    group=("integration/test_argocd_live.py", "integration/test_argocd_scenarios.py"),
+    exempt={},
+    unused={
+        "login_and_sync": "no caller in opi/; login plus sync_application, both measured on their own",
+        "sync_application": "no caller in opi/; OPI syncs through git, the group measures it anyway",
+        "hard_refresh_application": "no caller in opi/; refresh_application(hard_refresh=True) is the one in use",
+    },
+)
+
+DEPENDENCIES = (KEYCLOAK, POSTGRES, MINIO, GIT, KUBERNETES, ARGOCD)
 
 #: raw_post en broers geven het antwoord maar niemand keek; fouten verdwenen stil. Via
 #: benoemde python-keycloak-methoden gooit het beter.

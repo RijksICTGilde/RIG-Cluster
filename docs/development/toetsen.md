@@ -10,7 +10,7 @@ Daarom vier lagen. Kies de laagste laag die het gedrag echt meet.
 | Laag | Wat hij meet | Waar hij staat | Hoe je hem draait |
 |---|---|---|---|
 | unit | onze eigen logica: een beslissing, een naam, een vorm | `tests/test_*.py` | `uv run pytest tests/test_x.py` |
-| live per afhankelijkheid | het contract met de ECHTE afhankelijkheid in de versie die productie draait | `tests/integration/test_*_live.py` | `task test-keycloak`, `task test-postgres`, `task test-minio`, `task test-forgejo` |
+| live per afhankelijkheid | het contract met de ECHTE afhankelijkheid in de versie die productie draait | `tests/integration/test_*_live.py` | `task test-keycloak`, `task test-postgres`, `task test-minio`, `task test-forgejo`, `task test-kubernetes`, `task test-argocd` |
 | scenario | de ORDE van meerdere acties, met een invariant na elke stap | `tests/integration/test_*_scenarios.py` | dezelfde task als de groep |
 | e2e | het portaal in een browser, en de sandbox | `tests/e2e/` | `uv run pytest tests/e2e -m "e2e and not sandbox"`, `task test-e2e-sandbox` |
 
@@ -29,7 +29,7 @@ schrijfactie terug wat de afhankelijkheid werkelijk opsloeg, met een eigen kanaa
 de API voor Forgejo) en niet met de connector onder toets.
 
 **Een mock alleen op de grens met een afhankelijkheid die een live groep heeft.** Heeft een
-afhankelijkheid geen live groep (Kubernetes, ArgoCD vandaag), dan mag je hem mocken, maar
+afhankelijkheid geen live groep (SeaweedFS, mail, metrics en DNS vandaag), dan mag je hem mocken, maar
 dan is dat pad `planned` op de kaart en niet gemeten. Mock nooit onze eigen code weg om een
 toets te laten slagen.
 
@@ -62,7 +62,8 @@ Vul naar waarheid: wat alleen met mocks gemeten wordt, is `planned`.
 Volg `keycloak_live`; dat is het voorbeeld, en de rest is eraan gelijk gemaakt.
 
 - **Een marker per afhankelijkheid** (`keycloak_live`, `postgres_live`, `minio_live`,
-  `forgejo_live`), plus `requires_infra`, zodat de standaardrun ze overslaat.
+  `forgejo_live`, `kubernetes_live`, `argocd_live`), plus `requires_infra`, zodat de
+  standaardrun ze overslaat.
 - **De image komt uit de pin**, gelezen door de task. `IMAGE=` voor een andere tag.
   Niet elke image start zichzelf: de PostgreSQL van het platform is een CNPG-image zonder
   ENTRYPOINT, die de operator opstart. Elke plek die hem los start geeft daarom
@@ -76,12 +77,45 @@ Volg `keycloak_live`; dat is het voorbeeld, en de rest is eraan gelijk gemaakt.
 - **Een job in `.github/workflows/integration-tests.yaml`**, op de paden van die connector,
   zijn manager, zijn handlers, zijn pin en de groep zelf. Geen geplande run erbij: een groep
   meet een gepinde image, dus hij veroudert niet stil zolang het padfilter de pin omvat.
-  Lokaal draait `task test-live-groepen` ze alle vier achter elkaar.
+  Lokaal draait `task test-live-groepen` ze alle zes achter elkaar.
 
 De gedeelde hulp staat in `tests/integration/live.py` (de omgeving lezen, de
 localhost-grendel) en per afhankelijkheid in `tests/integration/<naam>_live.py` (de
 opstelling en het terugleeskanaal). De opstartroute van een groep staat in de Taskfile, met
 `_wacht-op` voor het wachten. Schrijf geen tweede exemplaar ernaast.
+
+## Het wegwerpcluster van kubernetes_live en argocd_live
+
+Twee groepen hebben geen container nodig maar een cluster, en ze delen er een:
+
+```bash
+task test-cluster-up      # kind + ArgoCD + Forgejo, met de pins van de sandbox
+task test-kubernetes      # de groep kubernetes_live
+task test-argocd          # de groep argocd_live
+task test-cluster-down    # cluster weg, kubectl-context terug
+```
+
+Wat erin zit, en waarom:
+
+- **kind met de node-image uit `bootstrap/sandbox/kind-config.yaml`.** Die pin hoort de
+  Kubernetes-versie van ODCN te volgen; die stond bij het schrijven niet vast, dus hij
+  volgt de sandbox. Verandert dat, dan is het een regel in dat bestand:
+  `tests/image_pins.py` leest hem, en `tests/test_test_images_follow_pins.py` bewaakt dat
+  de meetclusters (ook die van `netpol:meet`) hem gebruiken.
+- **De ArgoCD van het platform**, uit de CR van de sandbox-overlay, met de CMP-sidecar uit
+  `bootstrap/rig-system/kustomize/components/sops-plugin`. Die sidecar hoort erbij: het
+  Application-sjabloon van OPI noemt de plugin `kustomize-sops`, dus zonder hem rendert
+  ArgoCD geen enkele app van een tenant.
+- **Een Forgejo op sqlite**, zoals de groep `forgejo_live` er een start. De
+  PostgreSQL-route van de sandbox vraagt CNPG en de ontwikkelaarssleutel voor de
+  SOPS-secrets, en dit cluster leeft een paar minuten.
+- **Eigen naam en eigen poorten**, dus hij draait naast `rig-sandbox`. kind zet je
+  kubectl-context op dit cluster; `task test-cluster-down` zet hem terug.
+
+De groepen draaien met een eigen KUBECONFIG en weigeren tegen iets anders dan een
+`kind-`context te meten. Wat alleen op ODCN bestaat (de webhook van Capsule, de
+VPA-operator) staat met een reden op de kaart: die operators hebben in deze repo geen
+gepinde versie.
 
 ## Achtergrond
 

@@ -1,9 +1,10 @@
 """Gedeelde hulp voor de groepen die tegen een echte afhankelijkheid meten.
 
 Elke afhankelijkheid heeft zijn eigen groep (``keycloak_live``, ``postgres_live``,
-``minio_live``, ``forgejo_live``) en zijn eigen task die de gepinde image start en de
-adressen in de omgeving zet. Wat die groepen delen staat hier: het lezen van die omgeving,
-en de grendel die weigert tegen iets anders dan deze machine te draaien.
+``minio_live``, ``forgejo_live``, ``kubernetes_live``, ``argocd_live``) en zijn eigen task
+die de gepinde image start en de adressen in de omgeving zet. Wat die groepen delen staat
+hier: het lezen van die omgeving, en de grendel die weigert tegen iets anders dan deze
+machine te draaien.
 
 Zonder de omgeving slaat een groep zichzelf over. Met de vereist-variabele van de groep
 gezet is een ontbrekende waarde een FOUT: dat is wat de CI zet, want daar betekent
@@ -62,3 +63,5 @@ KEYCLOAK = LiveGroup(name="Keycloak", marker="keycloak_live", required_variable=
 POSTGRES = LiveGroup(name="PostgreSQL", marker="postgres_live", required_variable="POSTGRES_LIVE_REQUIRED")
 MINIO = LiveGroup(name="MinIO", marker="minio_live", required_variable="MINIO_LIVE_REQUIRED")
 FORGEJO = LiveGroup(name="Forgejo", marker="forgejo_live", required_variable="FORGEJO_LIVE_REQUIRED")
+KUBERNETES = LiveGroup(name="Kubernetes", marker="kubernetes_live", required_variable="KUBERNETES_LIVE_REQUIRED")
+ARGOCD = LiveGroup(name="ArgoCD", marker="argocd_live", required_variable="ARGOCD_LIVE_REQUIRED")

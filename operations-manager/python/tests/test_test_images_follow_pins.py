@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from tests.image_pins import REPO_ROOT, pinned_images
+from tests.image_pins import REPO_ROOT, pinned_image, pinned_images
 
 TESTS_ROOT = Path(__file__).resolve().parent
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -144,4 +144,53 @@ def test_the_platform_postgres_gets_the_opstart_it_needs() -> None:
     assert not zonder, (
         f"Deze plekken starten de PostgreSQL van het platform zonder {PG_START_SCRIPT}: {zonder}. "
         "De CNPG-image heeft geen ENTRYPOINT, dus hij start dan bash en eindigt direct."
+    )
+
+
+#: De taak die het wegwerpcluster van kubernetes_live en argocd_live opzet, en de vars
+#: waarmee hij zijn images kiest, met het bestand waar die pin hoort te staan.
+TEST_CLUSTER_TASK = "test-cluster-up"
+TEST_CLUSTER_PINS = {
+    "NODE_IMAGE": "bootstrap/sandbox/kind-config.yaml",
+    "FORGEJO_IMAGE": "infrastructure/bootstrap/infrastructure/forgejo/controller/overlays/sandboxed-local/statefulset-patch.yaml",
+    "ARGOCD_IMAGE": "bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml",
+    "ARGOCD_VERSION": "bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml",
+}
+
+
+def _test_cluster_vars() -> dict[str, object]:
+    document = yaml.safe_load(TASKFILE.read_text())
+    return document["tasks"][TEST_CLUSTER_TASK]["vars"]
+
+
+def test_the_test_cluster_reads_its_images_from_a_pin() -> None:
+    """Het wegwerpcluster draait de versies die het platform uitrolt.
+
+    Een tag die hier voluit stond, zou stil afdrijven van de sandbox en van productie; dat
+    is precies hoe de authwall-opstelling op Keycloak 25.0.6 bleef staan. Elke var leest
+    daarom het manifest, en deze toets noemt welk manifest dat is.
+    """
+    vars_of_the_task = _test_cluster_vars()
+    for name, pin in TEST_CLUSTER_PINS.items():
+        entry = vars_of_the_task.get(name)
+        assert isinstance(entry, dict), f"{TEST_CLUSTER_TASK} zet {name} niet als var met een `sh:`: {entry}"
+        assert "sh" in entry, f"{TEST_CLUSTER_TASK} zet {name} met een vaste waarde: {entry}"
+        assert pin in entry["sh"], f"{TEST_CLUSTER_TASK}:{name} leest {pin} niet"
+        assert (REPO_ROOT / pin).is_file(), f"{pin} bestaat niet"
+
+
+def test_the_kind_node_image_of_every_test_cluster_follows_the_sandbox_pin() -> None:
+    """De node-image staat op een plek, en de meetclusters lezen die.
+
+    Hij hoort de Kubernetes-versie van ODCN te volgen; die stond bij het schrijven niet
+    vast, dus hij volgt de sandbox. Verandert dat, dan is het een regel in
+    bootstrap/sandbox/kind-config.yaml.
+    """
+    pinned = pinned_image("bootstrap/sandbox/kind-config.yaml", contains="kindest/node")
+    version = pinned.split(":v", 1)[1]
+
+    taskfile_version = yaml.safe_load(TASKFILE.read_text())["vars"]["KIND_VERSION"]
+    assert str(taskfile_version) == version, (
+        f"Taskfile.yaml vars.KIND_VERSION is {taskfile_version} en de pin is {version}. "
+        "tests/netpol/kind-config.yaml krijgt zijn node-image uit die var."
     )

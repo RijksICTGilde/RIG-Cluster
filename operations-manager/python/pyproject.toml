@@ -276,6 +276,8 @@ markers = [
    "postgres_live: meet tegen een echte PostgreSQL in de gepinde versie; draait met `task test-postgres`",
    "minio_live: meet tegen een echte MinIO in de gepinde versie; draait met `task test-minio`",
    "forgejo_live: meet tegen een echte Forgejo in de gepinde versie; draait met `task test-forgejo`",
+   "kubernetes_live: meet tegen een echte Kubernetes-API op het wegwerpcluster; draait met `task test-kubernetes`",
+   "argocd_live: meet tegen een echte ArgoCD in de gepinde versie; draait met `task test-argocd`",
    "keycloak_harness: de uitlogketen in een echte Keycloak met de shim (docker + maven + chromium); buiten elke standaardrun"
 ]
 pythonpath = "."

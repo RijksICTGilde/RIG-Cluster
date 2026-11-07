@@ -2385,17 +2385,119 @@ tasks:
           uv run pytest tests/integration/test_forgejo_live.py -m forgejo_live -q
     silent: false
 
+  test-kubernetes:
+    desc: "Draai de groep kubernetes_live tegen het testcluster van task test-cluster-up"
+    summary: |
+      Elke methode van KubectlConnector die opi/ aanroept, tegen een echte Kubernetes-API,
+      op wegwerp-namespaces met het voorvoegsel zadlive. Het terugleeskanaal is een eigen
+      kubectl, los van de connector onder toets.
+
+      Het cluster komt van task test-cluster-up. De run gaat via een eigen KUBECONFIG, dus
+      je kubectl-context blijft waar hij staat.
+    vars:
+      TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
+    preconditions:
+      - sh: kind get clusters 2>/dev/null | grep -qx "{{.TESTCLUSTER}}"
+        msg: "Geen cluster {{.TESTCLUSTER}}; draai eerst task test-cluster-up."
+    cmds:
+      - |
+        KUBECONFIG_FILE=$(mktemp)
+        trap 'rm -f "$KUBECONFIG_FILE"' EXIT
+        kind get kubeconfig --name "{{.TESTCLUSTER}}" > "$KUBECONFIG_FILE"
+        cd operations-manager/python
+        KUBECONFIG="$KUBECONFIG_FILE" \
+        KUBERNETES_LIVE_CONTEXT="kind-{{.TESTCLUSTER}}" \
+          uv run pytest tests/integration/test_kubernetes_live.py -m kubernetes_live -q
+    silent: false
+
+  test-argocd:
+    desc: "Draai de groep argocd_live tegen het testcluster van task test-cluster-up"
+    summary: |
+      Elke methode van ArgoConnector, en de scenario's van de ArgoManager over een echte
+      Application: aanmaken, synchroniseren tot Healthy, refreshen, en weghalen, met na elke
+      stap de invariant dat wat ArgoCD meldt klopt met wat de Kubernetes-API laat zien.
+
+      Het token is een API-token van het account opi, uitgegeven via dezelfde REST-API die
+      OPI gebruikt; het wachtwoord van admin komt uit argocd-cluster, voor de inlogroute.
+      argocd-server krijgt een port-forward: zijn Service is van de operator, dus er is geen
+      vaste poort om in de kind-config te zetten.
+
+      De manifesten staan in een repository op de Forgejo van het testcluster. De groep
+      leest die met ForgejoApi uit de groep forgejo_live, en daarom zet deze taak ook
+      FORGEJO_LIVE_URL en zijn broers: een tweede exemplaar van die klasse ernaast zou
+      hetzelfde doen.
+    vars:
+      TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
+      ARGOCD_PORT: '{{.ARGOCD_PORT | default "38080"}}'
+      FORGEJO_PORT: '{{.FORGEJO_PORT | default "38300"}}'
+    preconditions:
+      - sh: kind get clusters 2>/dev/null | grep -qx "{{.TESTCLUSTER}}"
+        msg: "Geen cluster {{.TESTCLUSTER}}; draai eerst task test-cluster-up."
+      - sh: command -v jq
+        msg: "jq is niet geinstalleerd; het token van account opi komt uit het API-antwoord."
+    cmds:
+      - |
+        KUBECONFIG_FILE=$(mktemp)
+        kind get kubeconfig --name "{{.TESTCLUSTER}}" > "$KUBECONFIG_FILE"
+        export KUBECONFIG="$KUBECONFIG_FILE"
+
+        kubectl -n rig-system port-forward svc/argocd-server {{.ARGOCD_PORT}}:80 >/dev/null 2>&1 &
+        PF=$!
+        trap 'kill $PF 2>/dev/null; rm -f "$KUBECONFIG_FILE"' EXIT
+
+        BASE="http://localhost:{{.ARGOCD_PORT}}"
+        i=0
+        until curl -sf -o /dev/null "$BASE/healthz"; do
+          i=$((i + 1))
+          if [ "$i" -gt 60 ]; then
+            echo "argocd-server antwoordt niet op $BASE" >&2
+            kubectl -n rig-system logs deployment/argocd-server --tail 60 >&2
+            exit 1
+          fi
+          sleep 2
+        done
+
+        # jsonpath met een punt in de sleutel moet gequot: ongequot levert kubectl een lege
+        # waarde op.
+        ADMIN_PASSWORD=$(kubectl -n rig-system get secret argocd-cluster -o jsonpath='{.data.admin\.password}' | base64 -d)
+        SESSION=$(curl -sf -X POST -H "Content-Type: application/json" \
+          -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASSWORD\"}" "$BASE/api/v1/session" | jq -r .token)
+        TOKEN=$(curl -sf -X POST -H "Authorization: Bearer $SESSION" -H "Content-Type: application/json" \
+          -d '{}' "$BASE/api/v1/account/opi/token" | jq -r .token)
+        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          echo "Geen API-token voor account opi; staat accounts.opi: apiKey in de CR?" >&2
+          exit 1
+        fi
+
+        cd operations-manager/python
+        ARGOCD_LIVE_HOST=localhost \
+        ARGOCD_LIVE_PORT="{{.ARGOCD_PORT}}" \
+        ARGOCD_LIVE_TOKEN="$TOKEN" \
+        ARGOCD_LIVE_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+        KUBERNETES_LIVE_CONTEXT="kind-{{.TESTCLUSTER}}" \
+        FORGEJO_LIVE_URL="http://localhost:{{.FORGEJO_PORT}}" \
+        FORGEJO_LIVE_USER=rig-admin \
+        FORGEJO_LIVE_PASSWORD=admin1234 \
+          uv run pytest tests/integration/test_argocd_live.py tests/integration/test_argocd_scenarios.py \
+            -m argocd_live -q
+    silent: false
+
   test-live-groepen:
-    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO en Forgejo"
+    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO, Forgejo, Kubernetes en ArgoCD"
     summary: |
       Wat je lokaal draait voor een merge die een connector of een gepinde versie raakt.
       In CI draait elke groep als eigen job, op de paden van die groep. Elke groep ruimt
       zijn eigen containers op.
+
+      kubernetes_live en argocd_live meten op het wegwerpcluster van task test-cluster-up;
+      zet dat eerst op, en ruim het daarna op met task test-cluster-down.
     cmds:
       - task: test-keycloak
       - task: test-postgres
       - task: test-minio
       - task: test-forgejo
+      - task: test-kubernetes
+      - task: test-argocd
 
   test-keycloak:
     desc: "Draai de groep keycloak_live tegen de image die productie draait (IMAGE= voor een andere)"
@@ -3279,15 +3381,14 @@ tasks:
       - uv run pytest tests/integration/ -v -m "not slow"
     silent: false
 
-  test-integration-kind:
-    desc: "Run Kind cluster integration tests (requires Kind + Docker)"
+  test-integration-slow:
+    desc: "Draai de langzame integratietoetsen (-m slow)"
+    summary: |
+      Heette test-integration-kind en maakte een kind-cluster: de kubectl-toetsen die dat
+      nodig hadden zijn opgegaan in de groep kubernetes_live (task test-kubernetes).
     dir: operations-manager/python
     cmds:
-      - |
-        echo "Running Kind cluster integration tests..."
-        echo "This will create a temporary Kind cluster for testing."
-        echo ""
-        uv run pytest tests/integration/ -v -m "slow"
+      - uv run pytest tests/integration/ -v -m "slow"
     silent: false
 
   test-all:
@@ -3505,56 +3606,122 @@ tasks:
       - kind delete cluster --name "{{.NETPOL_CLUSTER}}"
     silent: true
 
-  test-kind-create:
-    desc: "Create Kind cluster for integration testing"
-    cmds:
-      - |
-        echo "Creating Kind cluster for integration testing..."
-        if kind get clusters | grep -q "^rig-integration-test$"; then
-          echo "Cluster 'rig-integration-test' already exists."
-          echo "To recreate, run: task test-kind-delete && task test-kind-create"
-          exit 0
-        fi
-        kind create cluster --name rig-integration-test \
-          --config operations-manager/python/tests/fixtures/kind-config.yaml \
-          --wait 120s
-        echo ""
-        echo "Deploying test workloads..."
-        kubectl apply -f operations-manager/python/tests/fixtures/test-workloads.yaml
-        echo ""
-        echo "Waiting for deployments to be ready..."
-        kubectl wait --for=condition=available deployment/log-generator -n test-project --timeout=120s
-        echo ""
-        echo "Kind cluster 'rig-integration-test' is ready for testing."
-    silent: false
+  test-cluster-up:
+    desc: "Zet het wegwerpcluster op waarop de groepen kubernetes_live en argocd_live meten"
+    summary: |
+      Een kind-cluster met de node-image die de sandbox pint, de ArgoCD-operator, de ArgoCD
+      die het platform uitrolt, en een Forgejo om manifesten in te zetten. Niet-interactief,
+      zonder de ontwikkelaarssleutel en zonder het wildcard-certificaat.
 
-  test-kind-delete:
-    desc: "Delete Kind cluster used for integration testing"
+      Eigen naam en eigen poorten, dus hij draait naast rig-sandbox. kind zet je
+      kubectl-context op dit cluster, zoals sandbox:setup dat doet; task test-cluster-down
+      zet hem terug en verwijdert het cluster.
+
+      De node-image hoort de Kubernetes-versie van ODCN te volgen; die stond bij het
+      schrijven niet vast, dus hij volgt de sandbox. Dat is een regel in
+      bootstrap/sandbox/kind-config.yaml, niet hier.
+    vars:
+      TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
+      FORGEJO_PORT: '{{.FORGEJO_PORT | default "38300"}}'
+      NODE_IMAGE:
+        sh: yq '.nodes[0].image' bootstrap/sandbox/kind-config.yaml
+      FORGEJO_IMAGE:
+        sh: yq '.spec.template.spec.containers[0].image' infrastructure/bootstrap/infrastructure/forgejo/controller/overlays/sandboxed-local/statefulset-patch.yaml
+      ARGOCD_IMAGE:
+        sh: yq '.spec.image' bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml
+      ARGOCD_VERSION:
+        sh: yq '.spec.version' bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml
+    preconditions:
+      - sh: docker info >/dev/null 2>&1
+        msg: "Docker draait niet; dit cluster is een kind-cluster."
+      - sh: command -v envsubst
+        msg: "envsubst ontbreekt (pakket gettext); zonder het wordt de kind-config leeg."
+      # rig-sandbox en rig-integration-test zijn van iets anders; een naam die daarmee
+      # samenvalt zou het cluster van iemand anders overschrijven en in down verwijderen.
+      - sh: '[ "{{.TESTCLUSTER}}" != "rig-sandbox" ] && [ "{{.TESTCLUSTER}}" != "rig-integration-test" ]'
+        msg: "TESTCLUSTER={{.TESTCLUSTER}} is de naam van een ander cluster. Kies een eigen naam."
     cmds:
       - |
-        PREVIOUS_CONTEXT=$(kubectl config current-context 2>/dev/null || true)
-        echo "Deleting Kind cluster 'rig-integration-test'..."
-        kind delete cluster --name rig-integration-test
-        # Restore previous context if it was switched to the integration test cluster
-        if [ "$PREVIOUS_CONTEXT" = "kind-rig-integration-test" ]; then
-          # Integration test context is gone, try to switch to sandbox or default
+        if kind get clusters 2>/dev/null | grep -qx "{{.TESTCLUSTER}}"; then
+          echo "Cluster {{.TESTCLUSTER}} bestaat al; de stappen hieronder zijn herhaalbaar."
+        else
+          echo "Cluster {{.TESTCLUSTER}} aanmaken met {{.NODE_IMAGE}}..."
+          TESTCLUSTER_NODE_IMAGE="{{.NODE_IMAGE}}" \
+          TESTCLUSTER_FORGEJO_PORT="{{.FORGEJO_PORT}}" \
+            envsubst < operations-manager/python/tests/cluster/kind-config.yaml \
+            | kind create cluster --name "{{.TESTCLUSTER}}" --config - --wait 180s
+        fi
+      # kind zet de context alleen bij een verse create. Bij een herhaalde run zouden de
+      # stappen hieronder op de context van een ander cluster landen, en de ArgoCD-CR
+      # hieronder heet net als die van de sandbox `argocd` in `rig-system`.
+      - kubectl config use-context "kind-{{.TESTCLUSTER}}"
+      - |
+        echo "Forgejo neerzetten ({{.FORGEJO_IMAGE}})..."
+        TESTCLUSTER_FORGEJO_IMAGE="{{.FORGEJO_IMAGE}}" \
+        TESTCLUSTER_FORGEJO_PORT="{{.FORGEJO_PORT}}" \
+          envsubst < operations-manager/python/tests/cluster/forgejo.yaml | kubectl apply -f -
+      - task: sandbox:wait-forgejo
+      - task: sandbox:init-forgejo
+      # De operator en zijn nep-CRD's komen van de sandbox-route; CLUSTER_TYPE hier is
+      # sandboxed-local omdat de context nu een lokaal kind-cluster is, wat de precondition
+      # van die taak toetst.
+      - task: prepare-argocd-operator
+        vars:
+          CLUSTER_TYPE: sandboxed-local
+      - |
+        kubectl -n argocd-operator-system rollout status deployment/argocd-operator-controller-manager --timeout=300s
+      - |
+        echo "ArgoCD neerzetten ({{.ARGOCD_IMAGE}}:{{.ARGOCD_VERSION}})..."
+        # De CMP-sidecar hoort erbij: het Application-sjabloon van OPI noemt de plugin
+        # kustomize-sops, dus zonder hem rendert ArgoCD geen enkele tenant-app. De
+        # ConfigMap, de ServiceAccount en het hele spec.repo-blok komen uit de component
+        # die de clusters ook gebruiken, zodat de sidecar hier niet van productie afdrijft.
+        kubectl apply -f bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml
+        kubectl apply -f bootstrap/rig-system/kustomize/components/sops-plugin/serviceaccount-cmp.yaml
+
+        RENDER=$(mktemp -d)
+        yq '.patches[] | select(.target.kind == "ArgoCD") | .patch' \
+          bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml \
+          | yq '.[0].value' > "$RENDER/repo.yaml"
+        TESTCLUSTER_ARGOCD_IMAGE="{{.ARGOCD_IMAGE}}" \
+        TESTCLUSTER_ARGOCD_VERSION="{{.ARGOCD_VERSION}}" \
+          envsubst < operations-manager/python/tests/cluster/argocd.yaml > "$RENDER/argocd.yaml"
+        REPO="$RENDER/repo.yaml" yq -i '.spec.repo = load(strenv(REPO))' "$RENDER/argocd.yaml"
+        kubectl apply -f "$RENDER/argocd.yaml"
+        rm -rf "${RENDER:?}"
+        # De operator maakt de Deployments pas na zijn eerste reconcile; wachten op de
+        # toestand zelf, niet op de klok.
+        until kubectl -n rig-system get deployment argocd-server >/dev/null 2>&1; do sleep 2; done
+        kubectl -n rig-system rollout status deployment/argocd-server --timeout=300s
+        kubectl -n rig-system rollout status statefulset/argocd-application-controller --timeout=300s
+      - |
+        echo ""
+        echo "Cluster {{.TESTCLUSTER}} staat. Forgejo: http://localhost:{{.FORGEJO_PORT}} (rig-admin/admin1234)"
+        echo "Draai nu: task test-kubernetes, task test-argocd"
+    silent: true
+
+  test-cluster-down:
+    desc: "Verwijder het wegwerpcluster van test-cluster-up en zet je kubectl-context terug"
+    vars:
+      TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
+    preconditions:
+      # Dezelfde grendel als in test-cluster-up: deze taak verwijdert het cluster, dus een
+      # naam die met rig-sandbox of rig-integration-test samenvalt zou dat van iemand
+      # anders weggooien.
+      - sh: '[ "{{.TESTCLUSTER}}" != "rig-sandbox" ] && [ "{{.TESTCLUSTER}}" != "rig-integration-test" ]'
+        msg: "TESTCLUSTER={{.TESTCLUSTER}} is de naam van een ander cluster. Kies een eigen naam."
+    cmds:
+      - |
+        kind delete cluster --name "{{.TESTCLUSTER}}"
+        # kind verwijdert de context mee; stond je erop, val dan terug op een ander cluster.
+        if ! kubectl config current-context >/dev/null 2>&1; then
           FALLBACK=$(kubectl config get-contexts -o name 2>/dev/null | grep -m1 "sandbox\|kind-rig" || true)
           if [ -n "$FALLBACK" ]; then
             kubectl config use-context "$FALLBACK"
-            echo "Switched kubectl context to: $FALLBACK"
+            echo "kubectl-context terug op: $FALLBACK"
           fi
-        else
-          # Was already on a different context, nothing to do (kind delete removes the integration context)
-          echo "kubectl context remains: $(kubectl config current-context 2>/dev/null || echo 'none')"
         fi
-        echo "Cluster deleted."
-    silent: false
-
-  test-kind-logs:
-    desc: "View logs from test deployment in Kind cluster"
-    cmds:
-      - kubectl logs -n test-project deployment/log-generator -f
-    silent: false
+    silent: true
 
   # ==========================================================================
   # Sandboxed Local Development Environment

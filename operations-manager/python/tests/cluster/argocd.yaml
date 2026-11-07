@@ -1,0 +1,46 @@
+# De ArgoCD van het testcluster, in dezelfde versie als de sandbox en productie.
+#
+# Image en version komen uit bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml,
+# ingevuld door task test-cluster-up: zo meet deze groep de ArgoCD die het platform uitrolt.
+# Het rbac-blok is dat van de sandbox, want wat OPI mag is deel van wat hier gemeten wordt.
+#
+# Verschillen met de sandbox, en waarom: insecure (plain HTTP, de toetsen gaan via een
+# port-forward en er is geen certificaat) en geen ingress. De CMP-sidecar staat hier niet in
+# het bestand maar wordt door task test-cluster-up in spec.repo gezet, uit de component
+# bootstrap/rig-system/kustomize/components/sops-plugin, zodat hij niet van productie
+# afdrijft: zonder hem rendert ArgoCD geen enkele app van een tenant.
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: rig-system
+spec:
+  image: ${TESTCLUSTER_ARGOCD_IMAGE}
+  version: ${TESTCLUSTER_ARGOCD_VERSION}
+  extraConfig:
+    accounts.opi: apiKey
+    timeout.reconciliation: "6m"
+    timeout.hard.reconciliation: "0s"
+    server.rbac.log.enforce.enable: "true"
+  rbac:
+    defaultPolicy: 'role:none'
+    policy: |-
+      p, role:zad-opi, applications, get, */*, allow
+      p, role:zad-opi, applications, sync, */*, allow
+      g, opi, role:zad-opi
+    scopes: '[groups]'
+  server:
+    insecure: true
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  prometheus:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  controller:
+    extraCommandArgs:
+      - --sync-timeout=600
