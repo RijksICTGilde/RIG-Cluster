@@ -4,7 +4,7 @@ Checklist for reviewing a PR on this repo. Most of these are strong expectations
 
 ## Code quality
 
-- UI components use the Lord of the Components tags wherever possible - zie `features/lotc-bouwlijn.md`. A `<button>` where `<c-button>` belongs is a finding.
+- UI components come from the NLDD Designsysteem (`<nldd-*>`, `@nldd/design-system`). A plain `<button>` where `<nldd-button>` belongs is a finding, and so is a new `<c-*>` tag: Lord of the Components is legacy. Existing `<c-*>` in markup the change touches anyway may be replaced by the NLDD equivalent; it is not a finding when it stays.
 - No duplicated logic. Look for similarly named patterns elsewhere before accepting a new helper; prefer reuse (DRY).
 - Methods live in the file/class where they belong (connectors for external calls, managers for orchestration, services for business logic, forms for wizard/edit behaviour).
 - Python imports are at the top of the file, never inline or local. Verify with `ruff check --select I`.

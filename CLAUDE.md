@@ -188,7 +188,7 @@ Plans, TODO lists, run reports, design briefs for unbuilt work (the old `feature
 - **Modern type hints**: `dict`, `list`, `tuple` (lowercase), `str | None` (not `Optional`)
 - **Type annotations**: Always for function parameters and return types
 - **Error handling**: Specific exception types, avoid generic `except Exception`
-- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md` en `features/roos-eruit.md`
+- **Frontend**: Jinja2 + het NLDD Designsysteem (`<nldd-*>`, `@nldd/design-system`), zie `features/nldd-app-shell.md`. Lord of the Components (`<c-*>`, `features/lotc-bouwlijn.md`) is legacy en mag worden vervangen als je het tegenkomt
 
 ## Uitleg in code en tekst
 

@@ -226,7 +226,7 @@ config:
 Declarative Kustomize manifests that bootstrap the cluster itself - PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{sandboxed-local,odcn}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
 
 ### Application (OPI)
-A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-thema) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
+A Python 3.14 FastAPI app with a web UI (Jinja2 + the NLDD Designsysteem; Lord of the Components is legacy) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
 
 ## Where To Find Things
 
@@ -305,9 +305,9 @@ Fetch it to see every path, method, and auth scheme when reviewing endpoint cove
 - Type annotations required on all function parameters and return types
 - Specific exceptions only - no `except Exception`. Let exceptions bubble up in new code
 - No emojis anywhere (code, comments, logs)
-- Components: attributes are kebab-case, samenstellingen krijgen kinderen in plaats van data-props, en Jinja mag niet op attribuutpositie (`:prop="expr"` / `:attrs="<dict>"`). Zie `features/lotc-bouwlijn.md`; de oude ROOS-referentie is met de bibliotheek verdwenen.
+- Components: gebruik de `<nldd-*>` web components van het NLDD Designsysteem (https://nederlandsedigitaledienst.github.io/design-system/). Lord of the Components (`<c-*>`) is legacy en mag worden vervangen als je het tegenkomt; voor bestaande `<c-*>` gelden nog de regels uit `features/lotc-bouwlijn.md` (kebab-case attributen, kinderen in plaats van data-props, geen Jinja op attribuutpositie). De oude ROOS-referentie is met de bibliotheek verdwenen.
 - Principles: KISS, YAGNI, SOLID, DRY - no premature abstractions, no "just in case" features
 
 ## Tech Stack Summary
 
-FastAPI, Python 3.14, SQLAlchemy 2.0 (async) + AsyncPG, Alembic, Keycloak (python-keycloak + authlib), Jinja2 + lord-of-the-components, OpenTelemetry + Prometheus, uv (package manager), Ruff (linter/formatter), Pyright (type checker), SOPS + AGE (secrets), Playwright (E2E)
+FastAPI, Python 3.14, SQLAlchemy 2.0 (async) + AsyncPG, Alembic, Keycloak (python-keycloak + authlib), Jinja2 + NLDD Designsysteem (Lord of the Components is legacy), OpenTelemetry + Prometheus, uv (package manager), Ruff (linter/formatter), Pyright (type checker), SOPS + AGE (secrets), Playwright (E2E)
