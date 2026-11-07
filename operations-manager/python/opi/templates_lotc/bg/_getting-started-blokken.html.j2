@@ -2,9 +2,7 @@
   The text of bg/getting-started.html.j2. Variable names must exist in the service catalog;
   tests/test_getting_started_pagina.py enforces that.
 
-  nldd-code-viewer directly, not c-code-viewer: that wrapper puts newlines around its content,
-  and the viewer shows them as an empty first and last line. The same goes for <code> and
-  c-code: inside a paragraph, c-code shows those newlines as spaces in the code box.
+  Use nldd-code-viewer directly, not c-code-viewer: the latter adds empty first and last lines.
 #}
 
 {% macro begrippen() %}
@@ -88,7 +86,7 @@ var conn = DriverManager.getConnection(url,
         {% endfor %}
     </tbody>
 </table></nldd-rich-text>
-<c-paragraph size="sm">Admin is gebruikersbeheer: wil je zelf ook bouwen, neem er dan Ontwikkelaar of Ops bij. Wijzigen op productie vraagt de code van je 2-factor. Wat elke rol per handeling mag: <c-link href="/rollen" label="Rollen en rechten" /></c-paragraph>
+<c-paragraph size="sm">Admin is gebruikersbeheer: wil je zelf ook bouwen, neem er dan Ontwikkelaar of Ops bij. Verwijderen, omgevingsvariabelen, de OTAP-markering en het beheer van leden en tokens vragen de code van je 2-factor. Wat elke rol per handeling mag: <c-link href="/rollen" label="Rollen en rechten" /></c-paragraph>
 
 <c-heading type="h3" size="6" label="Een pipeline" />
 <c-paragraph>Een pipeline is geen persoon en kan geen 2-factor geven. Voeg daarvoor op hetzelfde tabblad een service account toe met de rol Developer CI of Ops CI, en geef dat een eigen token.</c-paragraph>

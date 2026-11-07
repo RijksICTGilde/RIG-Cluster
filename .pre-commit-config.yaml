@@ -18,7 +18,8 @@ repos:
       # Patch files are byte-exact by nature: a context line that is an empty line
       # must be a single space. Stripping it makes `git am` reject the patch, which
       # is exactly what images/argocd-rig/Taskfile.yaml `src:verify` runs.
-      # Vendored bundles (mermaid, redoc, swagger-ui) blijven byte-gelijk aan de release.
+      # Vendored bundles (mermaid, redoc, swagger-ui) blijven byte-gelijk aan de release,
+      # en js/zad-map.js is een bouwsel van `task zad-map:build` dat de hooks zouden wijzigen.
       - id: trailing-whitespace
         exclude: (\.patch$|^operations-manager/python/static/(js/mermaid\.min\.js|js/zad-map\.js|redoc/|swagger-ui/))
       - id: end-of-file-fixer

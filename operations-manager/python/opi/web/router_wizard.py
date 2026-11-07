@@ -476,7 +476,7 @@ async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
 
         state.base_data = load_project_template()
 
-        # Seed the team step with the current user as administrator
+        # Seed the team step with the current user as the first member
         user_email = (user or {}).get("email", "")
 
         # The same peer-project list the edit flow gets. Without it the cross-domain step had

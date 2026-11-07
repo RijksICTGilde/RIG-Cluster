@@ -80,6 +80,6 @@ semgrep:
   - id: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
     statement: >-
       _blob_sha in opi/connectors/git_repo.py berekent de object-id van een git-blob, en git
-      schrijft daar sha1 voor voor. Het is geen beveiligingsfunctie; de aanroep draagt
+      schrijft daar sha1 voor. Het is geen beveiligingsfunctie; de aanroep draagt
       usedforsecurity=False. TOTP gebruikt sha1 via hmac, en die vorm vangt deze regel niet.
     expired_at: 2027-04-01
