@@ -3513,6 +3513,36 @@ tasks:
       - npm run build
 
   # ========================================
+  # Coding rules (docs/development/coding-rules.md)
+  # ========================================
+
+  lint-baseline:
+    desc: "Regenereer de ruff-ratchet-baseline: een regel die een bestand niet meer overtreedt verdwijnt"
+    dir: operations-manager/python
+    cmds:
+      - uv run python ../../scripts/lint_baseline.py
+    silent: true
+
+  lint-baseline-check:
+    desc: "Toets de ruff-ratchet-baseline op verouderde regels"
+    dir: operations-manager/python
+    cmds:
+      - uv run python ../../scripts/lint_baseline.py --check
+    silent: true
+
+  code-conventions:
+    desc: "Toets taal en commentaardichtheid tegen scripts/code-conventions-baseline.json"
+    cmds:
+      - python3 scripts/check-code-conventions.py
+    silent: true
+
+  code-conventions-baseline:
+    desc: "Verlaag de conventiebaseline naar wat de code nu is; hij kan alleen krimpen"
+    cmds:
+      - python3 scripts/check-code-conventions.py --update-baseline
+    silent: true
+
+  # ========================================
   # Testing Tasks
   # ========================================
 

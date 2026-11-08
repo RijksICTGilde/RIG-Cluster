@@ -199,6 +199,39 @@ Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt t
 de vindplaatsenlijst in `features/sops-sleutel-roteren.md` die de rotatieronde omzet --
 hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
+## De gates op de coding rules
+
+`docs/development/coding-rules.md` is de maatlat. Twee gates houden nieuwe overtredingen tegen
+zonder dat bestaande code rood wordt, elk met een baseline die alleen kan krimpen.
+
+| bestand | doet |
+|---|---|
+| `lint_baseline.py` | regenereert `operations-manager/python/ruff-baseline.toml`: per bestand de ruff-regels die het nog overtreedt. Een default run haalt alleen weg; `--check` meldt verouderde regels; `--initial` schrijft een nieuwe baseline en weigert zodra er een staat |
+| `check-code-conventions.py` | de ingang van de conventiecheck: de gate, `--update-baseline`, `--initial` en `--report` |
+| `code_conventions.py` | de meting en de ratchet: Nederlandse identifiers, Nederlands commentaar en docstrings, en functies met meer commentaar dan code |
+| `code-conventions-baseline.json` | per bestand de drie aantallen zoals ze waren |
+
+```bash
+task lint-baseline                  # een regel die een bestand niet meer overtreedt verdwijnt
+task lint-baseline-check            # faalt op een verouderde regel
+task code-conventions               # de conventiecheck (~17s over 1663 bestanden)
+task code-conventions-baseline      # verlaagt de aantallen naar wat de code nu is
+```
+
+De conventiecheck herkent Nederlands met een woordenlijst en niets anders: een taaldetector zou
+een afhankelijkheid en een kans zijn waar een reviewer een reden nodig heeft. De lijst bevat
+alleen woorden die niet als Engels te lezen zijn, en een woord dat beide kan (`met`, `op`, `na`,
+`pad`, `basis`) staat er niet in. Dat maakt de telling een ondertelling, en dat is voor een
+ratchet de goede kant op. Andere strings dan commentaar en docstrings worden niet gemeten: de
+tekst die een gebruiker ziet mag Nederlands zijn.
+
+Een regel TOEVOEGEN kan alleen met de hand, en dat staat dan in de diff. `pyproject.toml` haalt
+de baseline binnen met `extend`, dus de handgeschreven uitzonderingen staan daar in
+`extend-per-file-ignores`: anders zou de een de ander overschrijven.
+`tests/test_lint_baseline.py` faalt als de baseline een regel bevat die een bestand niet meer
+overtreedt, zodat een opgeruimd bestand ook echt van de lijst gaat, en
+`tests/test_code_conventions.py` pint de herkenning en de ratchet vast.
+
 ## De rest
 
 | bestand | doet |

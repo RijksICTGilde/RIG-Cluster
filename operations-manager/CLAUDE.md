@@ -155,11 +155,17 @@ Always specify the correct namespace when debugging. Do not assume `rig-system` 
 
 ## Code Style
 
+De volledige regels staan in `docs/development/coding-rules.md`: namen, functies, lagen,
+commentaar, fouten en types, plus de gates die ze afdwingen. Wat hieronder staat, is wat je
+het vaakst nodig hebt.
+
 - **Modern type hints**: `dict`, `list`, `str | None` (not `Optional`, `Dict`, `List`)
 - **Type annotations**: Always on function parameters and return types
 - **Error handling**: Specific exceptions, no generic `except Exception`. In new methods, let exceptions bubble up.
 - **No emojis** in code, comments, or log messages
-- **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md`
+- **Frontend**: Jinja2 + het NLDD Designsysteem (`<nldd-*>`, `@nldd/design-system`), zie
+  `features/nldd-app-shell.md`. Lord of the Components (`<c-*>`, `features/lotc-bouwlijn.md`) is
+  legacy en mag worden vervangen als je het tegenkomt.
 
 ## Utility Scripts
 

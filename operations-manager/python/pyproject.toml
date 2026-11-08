@@ -123,6 +123,10 @@ line-length = 120
 target-version = "py314"
 src = ["opi","tests"]
 exclude = ["opi/migrations"]
+# De gegenereerde ratchet-baseline: per bestand de regels die daar nog overtreden worden.
+# Regenereren met `task lint-baseline`; de baseline kan alleen krimpen. De handgeschreven
+# uitzonderingen hieronder staan in extend-per-file-ignores, zodat beide samenvoegen.
+extend = "ruff-baseline.toml"
 
 [tool.ruff.format]
 line-ending = "lf"
@@ -143,8 +147,20 @@ extension = "html.j2"
 ignore = "T003,H021,H025,T027,T001,T028,J018,H030,H031"
 
 [tool.ruff.lint]
-select = ["I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY", "RUF", "ANN", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH"]
+select = [
+    "I", "SIM", "B", "UP", "F", "E", "S", "C90", "DTZ", "LOG", "PIE", "PT", "ERA", "W", "C", "TRY",
+    "RUF", "A", "ICN", "RSE", "FLY", "ISC", "PLE", "FURB", "PERF", "TCH",
+    # De regels uit docs/development/coding-rules.md. Bestaande overtredingen staan in
+    # ruff-baseline.toml; nieuwe code valt er meteen onder.
+    "N",                                                  # naamgeving (hoofdstuk 2)
+    "PLR0912", "PLR0913", "PLR0915",                      # takken, parameters, lengte (hoofdstuk 3)
+    "B904", "BLE001",                                     # raise from, kale except (hoofdstuk 7)
+    "ANN001", "ANN201", "ANN202", "ANN204", "ANN401",     # annotaties (hoofdstuk 8)
+]
 fixable = ["ALL"]
+# De pre-commit-hook draait ruff met --fix. ERA001 zou uitgecommentarieerde code dan stil
+# weghalen, en dat is een beslissing van de auteur en niet van een hook.
+unfixable = ["ERA001"]
 task-tags = ["TODO"]
 # Pre-existing issues to be fixed in a separate PR
 ignore = [
@@ -157,11 +173,8 @@ ignore = [
     "TRY301",   # Abstract raise to inner function
     # B rules - bugbear
     "B008",     # Function call in defaults (FastAPI Body() idiom)
-    "B904",     # Raise from err (73 violations)
     # E rules - pycodestyle errors
     "E501",     # Line too long (handled by ruff format)
-    # ANN rules - annotations
-    "ANN",      # Missing type annotations
     # RUF rules - ruff-specific
     "RUF059",   # Unpacked variable never used
     # F rules - pyflakes
@@ -170,25 +183,33 @@ ignore = [
     # S rules - security
     "S104",     # Binding to all interfaces (intentional server config)
     "S108",     # Probable insecure temp file (intentional config paths)
-    # ERA rules
-    "ERA001",   # Commented out code
     # PT rules - pytest
     "PT009",    # Use pytest.raises
 ]
 
-[tool.ruff.lint.per-file-ignores]
-# Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions
-"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
-"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+# De handgeschreven uitzonderingen. Ze staan onder extend-per-file-ignores zodat ze
+# samenvoegen met de gegenereerde per-file-ignores uit ruff-baseline.toml.
+[tool.ruff.lint.extend-per-file-ignores]
+# Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions.
+# PLR0913: een testfunctie krijgt zijn fixtures als parameters. ANN en C901: een annotatie op een
+# test voegt niets toe, en de complexiteit van een testhelper is geen productiecode.
+"tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN", "TRY300", "S106", "PLR0913", "C901"]
+"functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN", "TRY300", "S106", "PLR0913", "C901"]
 # Het harnas van de aanvalsproef is testcode: asserts, wegwerpsleutels en subprocess-aanroepen
 # horen erbij.
-"security_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
-# C901 blijft: de complexiteitsdrempel van bestaande orchestratiefuncties is een eigen
-# opruimtaak, niet een beveiligingsregel.
-"opi/**.py" = ["C901"]
+"security_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN", "TRY300", "S106", "PLR0913", "C901"]
+# PLR0913: FastAPI injecteert zijn dependencies als parameters, dus het aantal zegt in een
+# routemodule niets over de functie (hoofdstuk 3 van docs/development/coding-rules.md).
+"opi/api/**.py" = ["PLR0913"]
+"opi/web/**.py" = ["PLR0913"]
+"opi/services/catalog/**/router.py" = ["PLR0913"]
+"opi/services/catalog/**/web.py" = ["PLR0913"]
+
+[tool.ruff.lint.pylint]
+max-args = 4
 
 [tool.ruff.lint.mccabe]
-max-complexity = 30
+max-complexity = 10
 
 [tool.pyright]
 pythonVersion = "3.14"

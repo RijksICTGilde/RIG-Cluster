@@ -47,6 +47,17 @@ repos:
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
 
+      # Taal en commentaardichtheid tegen scripts/code-conventions-baseline.json. Draait over
+      # de hele boom en niet over de staged bestanden: de baseline is de vergelijking, dus
+      # pass_filenames zou alleen de scope verkleinen zonder iets toe te voegen. Zie
+      # docs/development/coding-rules.md, hoofdstuk 11.
+      - id: code-conventions
+        name: code-conventions
+        entry: python3 scripts/check-code-conventions.py
+        language: system
+        files: ^operations-manager/python/.*\.py$
+        pass_filenames: false
+
       # quick secret scan - zie ook features/sops-sleutel-roteren.md.
       - id: secret-scan
         name: secret-scan
