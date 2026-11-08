@@ -1,9 +1,9 @@
-"""Een aiohttp-aanroep herhalen zolang de verbinding niet tot stand komt.
+"""Repeat an aiohttp call while the connection cannot be established.
 
-Hier en niet in een connector, want twee connectors hebben hem: ArgoCD rijdt er de
-herstart van zijn eigen API-server mee uit (docs/post-mortems/argocd-server-herstart-elke-40-minuten.md)
-en de mailrelay een podwissel, en in beide gevallen kost dat verschil anders een hele
-uitrol.
+Here and not in a connector, because two connectors hold it: ArgoCD rides out the restart of
+its own API server with it (`docs/post-mortems/argocd-server-herstart-elke-40-minuten.md`)
+and the mail relay a pod swap, and in both cases that difference otherwise costs a whole
+deployment.
 """
 
 from __future__ import annotations

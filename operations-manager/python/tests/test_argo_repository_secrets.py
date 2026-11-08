@@ -56,7 +56,7 @@ from argo_rotation import (  # noqa: E402
     write_repository_secret,
 )
 from key_rotation import (  # noqa: E402
-    ConversionFailed,
+    ConversionError,
     FinalCheck,
     Fingerprint,
     decrypt_field,
@@ -401,7 +401,7 @@ async def test_half_a_pat_round_is_refused_on_the_argo_side_too(tmp_path: Path, 
     before = raw_hashes(clone)
 
     for half in ({"new_pat": NEW_TOKEN}, {"current_pat": OLD_TOKEN}):
-        with pytest.raises(ConversionFailed, match="both the current and the new PAT"):
+        with pytest.raises(ConversionError, match="both the current and the new PAT"):
             await argo_rotation.plan_argo_round(clone, projects, platform_private, **half)
 
     assert raw_hashes(clone) == before
@@ -779,7 +779,7 @@ def test_a_secret_on_more_than_one_recipient_is_refused_and_no_plaintext_is_writ
     _private_b, public_b = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public_a, public_b])
 
-    with pytest.raises(ConversionFailed) as refused:
+    with pytest.raises(ConversionError) as refused:
         write_repository_secret(secret, NEW_TOKEN)
 
     assert "2 AGE recipients" in str(refused.value)
@@ -792,7 +792,7 @@ def test_a_file_that_is_not_a_sops_file_is_refused(tmp_path: Path) -> None:
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.yaml", [public])
 
-    with pytest.raises(ConversionFailed) as refused:
+    with pytest.raises(ConversionError) as refused:
         write_repository_secret(secret, NEW_TOKEN)
 
     assert "not a SOPS file name" in str(refused.value)
@@ -962,7 +962,7 @@ def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(
 
     with (
         patch.object(argo_rotation, "encrypt_to_sops_files"),
-        pytest.raises(ConversionFailed) as refused,
+        pytest.raises(ConversionError) as refused,
     ):
         write_repository_secret(secret, NEW_TOKEN)
 

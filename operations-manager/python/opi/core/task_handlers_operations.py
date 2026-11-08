@@ -23,7 +23,7 @@ from opi.manager.backup.base import BaseBackupManager
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_store import ProjectStoreError, get_project_store
 from opi.utils.age import decrypt_password_smart_auto, get_decoded_project_private_key, wrap_project_key
-from opi.utils.key_rotation import ConversionFailed, rotate_project_key
+from opi.utils.key_rotation import ConversionError, rotate_project_key
 from opi.utils.project_utils import validate_project_name
 from opi.utils.sops import generate_sops_key_pair
 
@@ -735,7 +735,7 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
             actor=get_actor(),
             filename=project.filename,
         )
-    except ConversionFailed as e:
+    except ConversionError as e:
         error_msg = f"Omzetten naar de nieuwe projectsleutel is mislukt: {e}"
         progress.fail_task(rotate_task, error_msg)
         progress.fail_project(error_msg)

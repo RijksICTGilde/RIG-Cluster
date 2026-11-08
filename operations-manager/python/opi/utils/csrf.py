@@ -207,8 +207,8 @@ def _validate_double_submit(request: Request, submitted_token: str | None) -> No
         HTTPException: 403 if the token is missing or does not match.
     """
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
-    # Het pad door de omzetting: een uitnodigingssleutel staat in het pad en is een
-    # bearer-geheim, en deze twee regels zijn bereikbaar zodra het CSRF-cookie weg is.
+    # The path through the redaction: an invite key sits in the path and is a bearer
+    # secret, and these two records are reachable the moment the CSRF cookie is gone.
     path = redact_invite_key_in_path(request.url.path)
     if not cookie_token or not submitted_token:
         logger.warning("CSRF check failed: token missing on %s %s", request.method, path)

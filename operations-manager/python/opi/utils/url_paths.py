@@ -10,9 +10,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# URL-path charset voor tenant-bestuurde component match/rewrite waarden;
-# voorkomt nginx-snippet-injection in ingress.yaml.jinja. ``\Z`` en niet ``$``: dat laatste
-# matcht in Python ook voor een afsluitende newline, zodat '/metrics\n' erdoor kwam.
+# URL path charset for tenant-controlled component match/rewrite values; prevents
+# nginx-snippet injection in ingress.yaml.jinja. ``\Z`` and not ``$``: in Python the latter
+# also matches before a trailing newline, which let '/metrics\n' through.
 SAFE_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9/_.~-]*\Z")
 
 
@@ -33,16 +33,14 @@ def local_redirect_path(value: str, default: str = "/") -> str:
 
 
 def sanitize_path_value(value: Any, field: str) -> str:
-    """
-    Validate a tenant-supplied URL path used for ingress routing/rewriting.
+    """Validate a tenant-supplied URL path used for ingress routing and rewriting.
 
     Raises:
-        ValueError: If the value is not a string or contains characters
-            outside the safe URL-path charset (defense against nginx
-            configuration-snippet injection).
+        ValueError: if the value is not a string or holds characters outside the safe
+            URL-path charset (defense against nginx configuration-snippet injection).
     """
     if not isinstance(value, str):
-        raise ValueError(  # noqa: TRY004
+        raise ValueError(  # noqa: TRY004  # the caller handles one error type, so a type mismatch raises ValueError too
             f"Component path '{field}' must be a string, got {type(value).__name__}"
         )
     if not value:
@@ -70,7 +68,7 @@ def normalize_logout_path(value: Any) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError(f"logout-path must be a string, got {type(value).__name__}")  # noqa: TRY004
+        raise ValueError(f"logout-path must be a string, got {type(value).__name__}")  # noqa: TRY004  # see sanitize_path_value
     stripped = value.strip()
     if not stripped:
         return None

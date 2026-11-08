@@ -6,8 +6,8 @@ from typing import ClassVar
 from opi.core.flow_id import get_flow_id
 from opi.utils.logging_redact import SecretRedactionFilter, redact_invite_key_in_path
 
-# Replace the default LogRecord factory so that every record — regardless of
-# which logger, handler, or third-party library creates it — carries flow_id.
+# Replace the default LogRecord factory so that every record carries flow_id, whichever
+# logger, handler or third-party library created it.
 _original_factory = logging.getLogRecordFactory()
 
 
@@ -21,7 +21,7 @@ logging.setLogRecordFactory(_flow_id_record_factory)
 
 
 class HealthEndpointFilter(logging.Filter):
-    """Filter to exclude health and infrastructure endpoint requests from uvicorn access logs."""
+    """Keeps the health and infrastructure endpoints out of the uvicorn access log."""
 
     EXCLUDED_PATHS: ClassVar[list[str]] = ["/health", "/readyz", "/metrics"]
 
@@ -39,12 +39,12 @@ def _resolve_level(level: str) -> tuple[int, str | None]:
 
 
 class InviteKeyPathFilter(logging.Filter):
-    """Houdt de uitnodigingssleutel uit de access-log van uvicorn.
+    """Keeps the invite key out of the uvicorn access log.
 
-    De sleutel staat in het PAD (``/invite/<sleutel>``), en de access-regel schrijft dat pad
-    letterlijk, dus zonder dit filter zet elk verzoek in de uitnodigingsflow het geheim in
-    Loki. Het pad is een van de ``args`` van de regel, dus die worden omgezet en niet de al
-    opgemaakte tekst.
+    The key sits in the PATH (``/invite/<key>``), and the access line writes that path
+    verbatim, so without this filter every request in the invite flow puts the secret in
+    Loki. The path is one of the record's ``args``, so those are rewritten and not the
+    already formatted text.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -53,10 +53,10 @@ class InviteKeyPathFilter(logging.Filter):
         return True
 
 
-#: Een instantie, want dit filter SCHRIJFT in de regel en ``setup_logging`` wordt twee keer
-#: aangeroepen (early_logging en config). ``addFilter`` slaat een filter over dat er al staat,
-#: dus een nieuwe instantie per aanroep zou het pad twee keer omzetten en de vingerafdruk in
-#: de access-log een andere maken dan die in de regels van de routes.
+#: One instance, because this filter WRITES into the record and ``setup_logging`` is called
+#: twice (early_logging and config). ``addFilter`` skips a filter that is already there, so a
+#: fresh instance per call would rewrite the path twice and give the access log a different
+#: fingerprint from the one in the records of the routes.
 _INVITE_KEY_PATH_FILTER = InviteKeyPathFilter()
 
 
@@ -67,42 +67,34 @@ def setup_logging(
     log_errors_file_path: str = "/data/logs/errors.log",
     level: str = "DEBUG",
 ) -> None:
-    """
-    Configure logging to output to stdout and optionally to file(s).
+    """Send logging to stdout, and optionally to a log file and a WARNING+ error file.
 
-    Args:
-        log_to_file: Whether to enable file logging alongside stdout
-        log_file_path: Path to log file when file logging is enabled
-        log_errors_to_file: Whether to write WARNING+ to a separate error log file
-        log_errors_file_path: Path to error log file (should be on persistent storage)
-        level: Level name for the ``opi`` logger; an unknown name falls back to INFO
+    ``log_errors_file_path`` belongs on persistent storage, since that file is what failure
+    monitoring reads back. ``level`` names the level of the ``opi`` logger; an unknown name
+    falls back to INFO.
     """
-    # Create logger configuration
     log_format = "%(asctime)s - %(name)s - %(levelname)s - [%(flow_id)s] %(message)s"
 
-    # Clear any existing handlers
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
 
-    # Set global log level to INFO to reduce noise from external packages
+    # INFO on the root logger, to keep the noise of external packages down.
     root_logger.setLevel(logging.INFO)
 
-    # Het niveau van de opi-logger bepaalt wat er uit de applicatie komt; de handlers staan
-    # op DEBUG zodat deze instelling de enige grens is.
+    # The level of the opi logger decides what comes out of the application; the handlers sit
+    # on DEBUG so that this setting is the only boundary.
     opi_level, level_warning = _resolve_level(level)
     opi_logger = logging.getLogger("opi")
     opi_logger.setLevel(opi_level)
 
-    # Tweede verdedigingslaag naast redact_sensitive_headers: maskeert een geheim dat toch
-    # in een bericht belandt, ook in dat van een bibliotheek.
+    # A second line of defence next to redact_sensitive_headers: masks a secret that ends up
+    # in a message anyway, in a library's message too.
     redaction_filter = SecretRedactionFilter()
 
-    # Filter out health endpoint requests from uvicorn access logs
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addFilter(HealthEndpointFilter())
     uvicorn_access_logger.addFilter(_INVITE_KEY_PATH_FILTER)
 
-    # Always add stdout handler
     stdout_handler = logging.StreamHandler()
     stdout_handler.setLevel(logging.DEBUG)
     stdout_handler.setFormatter(logging.Formatter(log_format))
@@ -110,19 +102,16 @@ def setup_logging(
     root_logger.addHandler(stdout_handler)
 
     if level_warning:
-        logging.warning(level_warning)  # noqa: LOG015
+        logging.warning(level_warning)  # noqa: LOG015  # this function configures the root logger itself
 
-    # Add file handler if requested
     if log_to_file:
         try:
-            # Ensure log directory exists
             log_path = Path(log_file_path)
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Create rotating file handler (max 10MB, keep 5 files)
             file_handler = logging.handlers.RotatingFileHandler(
                 log_file_path,
-                maxBytes=10 * 1024 * 1024,  # 10MB
+                maxBytes=10 * 1024 * 1024,
                 backupCount=5,
             )
             file_handler.setLevel(logging.DEBUG)
@@ -130,24 +119,24 @@ def setup_logging(
             file_handler.addFilter(redaction_filter)
             root_logger.addHandler(file_handler)
 
-            logging.info(f"File logging enabled: {log_file_path}")  # noqa: LOG015
+            logging.info(f"File logging enabled: {log_file_path}")  # noqa: LOG015  # this function configures the root logger itself
 
         except Exception as e:
-            logging.exception(f"Failed to setup file logging to {log_file_path}: {e}")  # noqa: LOG015
-            logging.info("Continuing with stdout logging only")  # noqa: LOG015
+            logging.exception(f"Failed to setup file logging to {log_file_path}: {e}")  # noqa: LOG015  # this function configures the root logger itself
+            logging.info("Continuing with stdout logging only")  # noqa: LOG015  # this function configures the root logger itself
     else:
-        logging.info("File logging disabled - using stdout only")  # noqa: LOG015
+        logging.info("File logging disabled - using stdout only")  # noqa: LOG015  # this function configures the root logger itself
 
-    # Add error-only file handler for persistent failure monitoring
+    # A WARNING+ file next to stdout, so a failure stays readable after the pod is gone.
     if log_errors_to_file:
         try:
             error_log_path = Path(log_errors_file_path)
             error_log_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Rotating file handler: 100MB max, keep 3 backups (up to 400MB total)
+            # 100MB plus 3 backups, so at most 400MB on that volume.
             error_file_handler = logging.handlers.RotatingFileHandler(
                 log_errors_file_path,
-                maxBytes=100 * 1024 * 1024,  # 100MB
+                maxBytes=100 * 1024 * 1024,
                 backupCount=3,
             )
             error_file_handler.setLevel(logging.WARNING)
@@ -155,8 +144,8 @@ def setup_logging(
             error_file_handler.addFilter(redaction_filter)
             root_logger.addHandler(error_file_handler)
 
-            logging.info(f"Error file logging enabled: {log_errors_file_path}")  # noqa: LOG015
+            logging.info(f"Error file logging enabled: {log_errors_file_path}")  # noqa: LOG015  # this function configures the root logger itself
 
         except Exception as e:
-            logging.exception(f"Failed to setup error file logging to {log_errors_file_path}: {e}")  # noqa: LOG015
-            logging.info("Continuing without error file logging")  # noqa: LOG015
+            logging.exception(f"Failed to setup error file logging to {log_errors_file_path}: {e}")  # noqa: LOG015  # this function configures the root logger itself
+            logging.info("Continuing without error file logging")  # noqa: LOG015  # this function configures the root logger itself

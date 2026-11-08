@@ -1,8 +1,8 @@
-"""
-Centralized naming utilities for generating consistent unique names across the codebase.
+"""Every name the platform composes, in one place.
 
-This module provides standardized methods for generating unique names for Kubernetes resources
-including deployments, services, PVCs, and other manifest resources.
+Kubernetes resources, hostnames, database and object-storage identities, ArgoCD
+applications, GitOps paths and registry tags all have their shape decided here, so a
+writer and a reader of the same name can never disagree about it.
 """
 
 import hashlib
@@ -17,9 +17,6 @@ from opi.utils.sops import SOPS_SUFFIX
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Domain-format templates
-# ---------------------------------------------------------------------------
 # Each format ID maps to a pair of templates: (dash_template, dot_template).
 # The dash variant joins prefix parts with hyphens; the dot variant uses dots.
 # Which variant is used depends on the domain's supports_dots in the cluster config.
@@ -43,8 +40,8 @@ DOMAIN_FORMAT_TEMPLATES: dict[str, str] = {
     "component.subdomain": "{component}.{subdomain}.{domain}",
 }
 
-# Safe fallback format — always works, no approval needed.
-# Used when the requested domain+subdomain is not yet approved.
+# Safe fallback format: always works, no approval needed. Used when the requested
+# domain plus subdomain is not approved yet.
 SAFE_FALLBACK_FORMAT = "component-deployment-project"
 
 # The type alias lives in the service package (``publish_on_web/domain_config.py``) because
@@ -52,7 +49,7 @@ SAFE_FALLBACK_FORMAT = "component-deployment-project"
 # already imports that one -- taking it from here would be an import cycle. It is re-exported
 # here so every existing reader keeps its import, and the assertion that it matches the
 # templates stays where the templates are.
-assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101  # importtijdcontrole op twee lijsten die gelijk moeten blijven
+assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  # noqa: S101  # an import-time check on two lists that have to stay equal
     "DomainFormatId and DOMAIN_FORMAT_TEMPLATES are out of sync"
 )
 
@@ -68,7 +65,7 @@ ROOT_COMPONENT_FORMAT_IDS: list[str] = [
 #: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
 #: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
 #: produces a multi-label host the single-label wildcard certificate cannot cover (the
-#: regel-k4c regression).
+#: `regel-k4c` regression).
 SELF_CONTAINED_FORMAT_IDS: list[str] = [
     f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
 ]
@@ -105,9 +102,6 @@ def generate_hostname_from_format(
         subdomain: Optional subdomain
         domain: Domain tail (resolved via resolve_domain_tail)
 
-    Returns:
-        Generated hostname string
-
     Raises:
         ValueError: If domain_format is not a known template ID.
     """
@@ -131,10 +125,6 @@ def generate_unique_name(deployment_name: str, component_name: str) -> str:
     This is the standard naming pattern used across all manifest resources within a namespace.
     The project name is not included since resources are deployed within project-specific namespaces.
 
-    Args:
-        deployment_name: Name of the deployment
-        component_name: Name of the component
-
     Returns:
         Unique name in format: deployment-component
 
@@ -155,9 +145,6 @@ def generate_storage_name(mount_path: str, index: int) -> str:
         mount_path: The mount path for the storage (e.g., "/data", "/app/logs")
         index: Index position as fallback if mount_path processing fails
 
-    Returns:
-        Storage name suitable for Kubernetes resources
-
     Example:
         generate_storage_name("/data", 0) -> "data"
         generate_storage_name("/app/logs", 1) -> "applogs"
@@ -166,13 +153,8 @@ def generate_storage_name(mount_path: str, index: int) -> str:
     if not mount_path:
         return f"storage{index}"
 
-    # Remove leading slash and replace invalid characters
     storage_name = mount_path.lstrip("/").replace("/", "").replace("-", "").replace("_", "")
-
-    # Ensure the name is valid (lowercase alphanumeric)
     storage_name = re.sub(r"[^a-z0-9]", "", storage_name.lower())
-
-    # Use fallback if processing results in empty string
     return storage_name or f"storage{index}"
 
 
@@ -268,37 +250,23 @@ def sanitize_kubernetes_name(name: str, max_length: int = 63) -> str:
     Args:
         name: The name to sanitize
         max_length: Maximum length for the name (default: 63)
-
-    Returns:
-        Sanitized name suitable for Kubernetes resources
     """
     if not name:
         return "unnamed"
 
-    # Convert to lowercase and replace invalid characters with hyphens
     sanitized = re.sub(r"[^a-z0-9-]", "-", name.lower())
-
-    # Remove leading/trailing hyphens and consecutive hyphens
     sanitized = re.sub(r"^-+|-+$", "", sanitized)
     sanitized = re.sub(r"-+", "-", sanitized)
 
-    # Truncate if too long
     if len(sanitized) > max_length:
         sanitized = sanitized[:max_length].rstrip("-")
 
-    # Ensure it's not empty after sanitization
     return sanitized or "unnamed"
 
 
 def generate_hostname(component_name: str, deployment_name: str, project_name: str, ingress_postfix: str) -> str:
     """
     Generate a hostname for ingress based on component, deployment, project names and cluster configuration.
-
-    Args:
-        component_name: Name of the component
-        deployment_name: Name of the deployment
-        project_name: Name of the project
-        ingress_postfix: Cluster-specific ingress postfix
 
     Returns:
         Hostname in format: component-deployment-project{ingress_postfix}
@@ -331,9 +299,6 @@ def generate_ingress_map(
         ingress_postfix: Cluster-specific ingress postfix (e.g., ".dev.example.com")
         subdomain: Optional subdomain for shared domain mode (either deployment name or custom)
 
-    Returns:
-        Dictionary mapping ingress names to hostnames
-
     Examples:
         # Component-specific mode (no subdomain)
         generate_ingress_map("webapp", "main", "myproject", ".dev.example.com", None)
@@ -347,28 +312,20 @@ def generate_ingress_map(
         generate_ingress_map("webapp", "main", "myproject", ".dev.example.com", "myapp")
         -> {"main-webapp": "myapp.dev.example.com"}
     """
-    # Generate the base unique name for the resource
     base_name = generate_unique_name(deployment_name, component_name)
 
-    # Determine hostname based on domain mode
     if subdomain:
-        # Shared domain mode: distinguish between deployment-name and custom subdomain
         domain = ingress_postfix.lstrip(".")
-
-        # If subdomain matches deployment_name, it's deployment-name mode -> include project name
-        if subdomain == deployment_name:  # noqa: SIM108
+        # A subdomain equal to the deployment name is deployment-name mode, and that shape
+        # needs the project name to stay unique across projects.
+        if subdomain == deployment_name:  # noqa: SIM108  # an if/else reads better than a ternary across two shapes
             hostname = f"{subdomain}-{project_name}.{domain}"
         else:
-            # Custom subdomain mode -> use subdomain as-is without project name
             hostname = f"{subdomain}.{domain}"
     else:
-        # Component-specific mode: each component gets unique URL
         hostname = generate_hostname(component_name, deployment_name, project_name, ingress_postfix)
 
     return {base_name: hostname}
-
-
-# Simple resource naming utilities
 
 
 def generate_resource_identifier(project_name: str, postfix: str, separator: str = "_", max_length: int = 63) -> str:
@@ -385,27 +342,22 @@ def generate_resource_identifier(project_name: str, postfix: str, separator: str
         separator: Character to use between parts ('_' for identifiers, '-' for names)
         max_length: Maximum length for the result (default: 63 for most systems)
 
-    Returns:
-        Resource identifier string
-
     Example:
         generate_resource_identifier("myproject", "frontend", "_") -> "myproject_frontend"
         generate_resource_identifier("myproject", "frontend", "-") -> "myproject-frontend"
     """
-    # Clean the inputs - just lowercase
     project_clean = project_name.lower()
     postfix_clean = postfix.lower()
 
-    # Combine with separator
     identifier = f"{project_clean}{separator}{postfix_clean}"
 
-    # Final character normalization based on separator choice
+    # The separator choice decides the whole character set: an identifier takes no hyphen,
+    # a name no underscore.
     if separator == "_":
         identifier = identifier.replace("-", "_")
     elif separator == "-":
         identifier = identifier.replace("_", "-")
 
-    # Truncate if needed
     if len(identifier) > max_length:
         original_identifier = identifier
         identifier = identifier[:max_length]
@@ -424,12 +376,6 @@ def _sanitize_for_identifier(value: str) -> str:
     Sanitize a string for use in database/system identifiers.
 
     Replaces hyphens with underscores and ensures valid identifier format.
-
-    Args:
-        value: String to sanitize
-
-    Returns:
-        Sanitized string safe for use as identifier
     """
     return value.replace("-", "_").lower()
 
@@ -439,12 +385,6 @@ def _sanitize_for_lowercase(value: str) -> str:
     Sanitize a string for use in lowercase-only contexts.
 
     Keeps hyphens but ensures lowercase.
-
-    Args:
-        value: String to sanitize
-
-    Returns:
-        Lowercase string with original separators
     """
     return value.lower()
 
@@ -452,13 +392,6 @@ def _sanitize_for_lowercase(value: str) -> str:
 def _truncate_if_needed(name: str, max_length: int) -> str:
     """
     Truncate name if it exceeds maximum length.
-
-    Args:
-        name: Name to potentially truncate
-        max_length: Maximum allowed length
-
-    Returns:
-        Truncated name if needed
     """
     if len(name) <= max_length:
         return name
@@ -470,13 +403,6 @@ def generate_database_username(project_name: str, deployment_name: str) -> str:
     Generate a consistent database username.
 
     Format: {project}_{deployment} (no proj_ prefix)
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        Database username string
     """
     project_clean = _sanitize_for_identifier(project_name)
     deployment_clean = _sanitize_for_identifier(deployment_name)
@@ -489,13 +415,6 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     Generate a consistent database schema name.
 
     Format: {project}_{deployment} (no proj_ prefix)
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        Database schema name string
     """
     project_clean = _sanitize_for_identifier(project_name)
     deployment_clean = _sanitize_for_identifier(deployment_name)
@@ -503,10 +422,10 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
-#: De tekenset van een container-image-verwijzing. Eén bron voor de drie plekken die hem
-#: toetsen: ``$defs/component.image`` in project_v2.json (zelfde tekst),
-#: ``ContainerImageValidator`` op het formulier en het databasemodel van een eigen
-#: PostgreSQL-cluster.
+#: The character shape of a container image reference. One source for the three places that
+#: check it: ``$defs/component.image`` in project_v2.json (the same text),
+#: ``ContainerImageValidator`` on the form, and the database model of a project's own
+#: PostgreSQL cluster.
 CONTAINER_IMAGE_PATTERN = r"^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\Z"
 
 #: The character shape of an extra-schema postfix (RC-17): lowercase letters, digits and
@@ -570,9 +489,6 @@ def generate_database_name(project_name: str, deployment_name: str, generation: 
             - None: no version suffix (default, for resources without generation tracking)
             - 0: no version suffix (backward compatibility)
             - >0: adds _v{generation} suffix
-
-    Returns:
-        Database name string
 
     Example:
         generate_database_name("amt", "prod") -> "amt_prod"
@@ -652,13 +568,6 @@ def generate_minio_username(project_name: str, deployment_name: str) -> str:
     Generate a consistent MinIO username.
 
     Format: {project}_{deployment} (no proj_ prefix, underscore separated)
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        MinIO username string
     """
     project_clean = _sanitize_for_identifier(project_name)
     deployment_clean = _sanitize_for_identifier(deployment_name)
@@ -671,13 +580,6 @@ def generate_redis_username(project_name: str, deployment_name: str) -> str:
     Generate a consistent Redis ACL username.
 
     Format: {deployment}-{project} (hyphen separated, matching domain convention)
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        Redis ACL username string
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
@@ -712,12 +614,6 @@ def generate_mail_account_name(project_name: str) -> str:
     ``MAIL_PROJECT_ACCOUNT_PREFIX``. It is injective, so two projects still cannot end up
     on one account.
 
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        SMTP account name
-
     Example:
         >>> generate_mail_account_name("algor-odc")
         'project-algor-odc'
@@ -728,29 +624,28 @@ def generate_mail_account_name(project_name: str) -> str:
 #: Longest local part an e-mail address may carry (RFC 5321, section 4.5.3.1.1).
 MAIL_LOCAL_PART_MAX_LENGTH = 64
 
-#: De domeinen waarin een ingesteld afzenderadres mag liggen.
+#: The domains a configured sender address may lie in.
 #:
-#: Een instelbaar afzenderadres is een spoofingknop, en sinds RC-399 bedient een project
-#: hem zelf: het vraagt een adres aan en een platformbeheerder keurt het goed. Deze lijst
-#: is wat de goedkeurder niet hoeft te bewaken. Uitlijning met de envelope is wat een
-#: bericht door DMARC krijgt (wij ondertekenen niet met DKIM), dus een adres buiten dit
-#: domein zou niet alleen andermans identiteit zijn, het zou ook bij elke ontvanger buiten
-#: de Rijksoverheid stuiten.
+#: A configurable sender address is a spoofing button, and since RC-399 a project operates
+#: that button itself: it requests an address and a platform admin approves it. This list is
+#: what the approver does not have to watch. Alignment with the envelope is what gets a
+#: message through DMARC (we do not sign with DKIM), so an address outside this domain would
+#: not only be somebody else's identity, it would also bounce at every recipient outside the
+#: Rijksoverheid.
 MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})
 
-#: Het lokale deel van een ingesteld afzenderadres. Bewust nauwer dan RFC 5321 toelaat: een
-#: lokaal deel tussen aanhalingstekens mag daar een spatie, een aanhalingsteken en een
-#: backslash bevatten, en dit adres gaat een sieve-stringliteraal in.
+#: The local part of a configured sender address. Deliberately narrower than RFC 5321
+#: allows: a quoted local part may hold a space, a quote and a backslash there, and this
+#: address goes into a sieve string literal.
 _MAIL_SENDER_LOCAL_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9._+-]*\Z")
 
 
 def mail_sender_address_error(address: str) -> str | None:
-    """Waarom dit afzenderadres niet gebruikt mag worden, of ``None`` als het mag.
+    """Why this sender address may not be used, or ``None`` when it may.
 
-    DE ENE REGEL, en daarom hier en niet in de connector: het formulier, de API en de
-    connector toetsen hiermee, zodat een adres dat het formulier aanneemt de verwerking
-    niet halverwege laat struikelen. Een lege waarde is geldig en betekent "leid het adres
-    af uit de accountnaam".
+    THE ONE RULE, and therefore here instead of in the connector: the form, the API and the
+    connector all check with this, so an address the form accepts cannot trip the processing
+    halfway. An empty value is valid and means "derive the address from the account name".
     """
     if not address:
         return None
@@ -867,9 +762,6 @@ def generate_mail_sender_address(base_address: str, project_name: str) -> str:
         base_address: The cluster's bare sender address, e.g. ``noreply-rijksapp@rijksoverheid.nl``
         project_name: Name of the project
 
-    Returns:
-        The project's sender address
-
     Example:
         >>> generate_mail_sender_address("noreply-rijksapp@rijksoverheid.nl", "algor-odc")
         'noreply-rijksapp+algor-odc@rijksoverheid.nl'
@@ -907,10 +799,6 @@ def generate_redis_key_prefix(project_name: str, deployment_name: str) -> str:
     separator (ActiveSupport: "namespace:key") or parse env values as structured
     data (a trailing ':' is valid YAML for a hash).
 
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
     Returns:
         Redis key prefix token (no trailing ':' or '*')
     """
@@ -932,9 +820,6 @@ def generate_bucket_name(project_name: str, deployment_name: str, generation: in
             - None: no version suffix (default, for resources without generation tracking)
             - 0: no version suffix (backward compatibility)
             - >0: adds -v{generation} suffix
-
-    Returns:
-        Bucket name string (lowercase with hyphens)
 
     Example:
         generate_bucket_name("amt", "prod") -> "amt-prod"
@@ -958,13 +843,6 @@ def generate_minio_policy_name(project_name: str, deployment_name: str) -> str:
     This must match the connector's grant_bucket_access naming convention where
     policies are named using both username and bucket name.
 
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        MinIO policy name string
-
     Example:
         generate_minio_policy_name("amt-136", "deployment-1")
         -> "amt_136_deployment_1-amt-136-deployment-1-policy"
@@ -976,10 +854,10 @@ def generate_minio_policy_name(project_name: str, deployment_name: str) -> str:
 
 
 def validate_bucket_name(bucket_name: str) -> str:
-    """Toets een bucketnaam tegen de S3-regels en geef hem terug.
+    """Check a bucket name against the S3 rules and return it.
 
-    Hier en niet bij een connector: beide object-storage-services stellen dezelfde eis aan
-    een naam die van buiten komt (RC-331).
+    Here and not at a connector: both object storage services place the same demand on a
+    name that comes from outside (RC-331).
     """
     if not bucket_name:
         raise ValueError("Bucket name cannot be empty")
@@ -1006,7 +884,7 @@ def validate_bucket_name(bucket_name: str) -> str:
 
 
 def validate_object_store_username(username: str) -> str:
-    """Toets de naam van een object-storage-identiteit; die naam IS de access key."""
+    """Check the name of an object storage identity; that name IS the access key."""
     if not username:
         raise ValueError("Username cannot be empty")
 
@@ -1025,10 +903,10 @@ def validate_object_store_username(username: str) -> str:
 
 
 def validate_policy_name(policy_name: str) -> str:
-    """Toets de naam van een object-storage-policy en geef hem terug.
+    """Check the name of an object storage policy and return it.
 
-    Zelfde reden als de twee toetsen hierboven: beide object-storage-services stellen
-    dezelfde eis (RC-331).
+    Same reason as the two checks above: both object storage services place the same demand
+    (RC-331).
     """
     if not policy_name:
         raise ValueError("Policy name cannot be empty")
@@ -1052,9 +930,6 @@ def generate_keycloak_client_id(project_name: str, deployment_name: str, compone
         project_name: Name of the project
         deployment_name: Name of the deployment
         component_name: Optional component name for component-specific clients
-
-    Returns:
-        Keycloak client ID string
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
@@ -1068,28 +943,29 @@ def generate_keycloak_client_id(project_name: str, deployment_name: str, compone
     return _truncate_if_needed(client_id, 255)  # Keycloak client ID limit
 
 
-#: De map met de PROJECTbrede manifesten, naast die van de deployments. De underscore is
-#: bewust: een deploymentnaam is een DNS-label, dus deze map kan nooit botsen.
+#: The directory holding the PROJECT-wide manifests, next to those of the deployments. The
+#: underscore is deliberate: a deployment name is a DNS label, so this directory can never
+#: collide with one.
 PROJECT_LEVEL_DIR = "_project"
 
-#: Deploymentnamen die het platform zelf gebruikt. ``project`` botst met de
-#: ArgoCD-applicatie van het projectniveau (``{project}-project``).
+#: Deployment names the platform uses itself. ``project`` collides with the ArgoCD
+#: application of the project level (``{project}-project``).
 RESERVED_DEPLOYMENT_NAMES: frozenset[str] = frozenset({"project"})
 
 
 def generate_project_service_account_name(project_name: str) -> str:
-    """De eigen serviceaccount van een project, waar zijn pods op draaien.
+    """A project's own service account, the one its pods run on.
 
-    Niet de ``default``: die draagt elk gerepliceerd pull-secret in de namespace, ook dat
-    van een ander project.
+    Not the ``default``: that one carries every replicated pull secret in the namespace,
+    including one of another project.
     """
     return sanitize_kubernetes_name(f"{project_name}-sa")
 
 
 def generate_argocd_project_application_name(project_name: str) -> str:
-    """``{project}-project``, dezelfde vorm als een deployment-applicatie.
+    """``{project}-project``, the same shape as a deployment application.
 
-    Vandaar ``project`` in ``RESERVED_DEPLOYMENT_NAMES``.
+    Hence ``project`` in ``RESERVED_DEPLOYMENT_NAMES``.
     """
     return _truncate_if_needed(f"{_sanitize_for_lowercase(project_name)}-project", 253)
 
@@ -1100,13 +976,6 @@ def generate_argocd_application_name(project_name: str, deployment_name: str) ->
 
     Format: {project}-{deployment} (hyphen separated, lowercase)
     This is the name used within ArgoCD for the application resource.
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        ArgoCD application name string
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
@@ -1120,13 +989,6 @@ def generate_argocd_application_filename(project_name: str, deployment_name: str
 
     Format: {project}-{deployment}-argocd-application.yaml
     This is the filename used for storing ArgoCD application manifests in git.
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        ArgoCD application filename
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
@@ -1140,14 +1002,6 @@ def generate_gitops_manifests_folder_path(cluster: str, project_name: str, deplo
 
     Format: {cluster}/{project}/{deployment}
     This is the folder structure used in the GitOps repository.
-
-    Args:
-        cluster: Name of the cluster
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        GitOps folder path
     """
     cluster_clean = _sanitize_for_lowercase(cluster)
     project_clean = _sanitize_for_lowercase(project_name)
@@ -1160,14 +1014,6 @@ def generate_gitops_argocd_application_path(cluster: str, project_name: str, dep
     Generate the full path to the ArgoCD application file in the GitOps repository.
 
     Format: {cluster}/{project}/{project}-{deployment}-argocd-application.yaml
-
-    Args:
-        cluster: Name of the cluster
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        Full path to the ArgoCD application file
     """
     cluster_clean = _sanitize_for_lowercase(cluster)
     project_clean = _sanitize_for_lowercase(project_name)
@@ -1176,14 +1022,14 @@ def generate_gitops_argocd_application_path(cluster: str, project_name: str, dep
 
 
 class RepositoryPathError(ValueError):
-    """Een ``repositories[].path`` dat het manifestpad buiten de repo laat vallen."""
+    """A ``repositories[].path`` that puts the manifest path outside the repository."""
 
 
 def _under_repo_path(repo_path: str, relative: str) -> str:
-    """``relative`` onder ``repo_path``, of een weigering als de uitkomst de repo verlaat.
+    """``relative`` under ``repo_path``, or a refusal when the result leaves the repository.
 
-    Geeft het samengestelde pad ongenormaliseerd terug: ``./cluster/...`` staat zo in
-    bestaande ArgoCD-applicaties, en normaliseren zou die allemaal laten verschuiven.
+    Returns the composed path unnormalised: ``./cluster/...`` is how it sits in existing
+    ArgoCD applications, and normalising would shift every one of them.
     """
     if not repo_path:
         return relative
@@ -1197,27 +1043,27 @@ def _under_repo_path(repo_path: str, relative: str) -> str:
 
 
 def generate_cluster_manifest_folder_path(cluster: str, repo_path: str = "") -> str:
-    """De ``{cluster}/``-boom in de deployments-repo: ``{repo_path}/{cluster}``.
+    """The ``{cluster}/`` tree in the deployments repo: ``{repo_path}/{cluster}``.
 
-    De boom met de mappen van ALLE projecten eronder. Alleen de lezers over alle projecten
-    gebruiken hem (``rendered_kinds``); geschreven wordt er nooit op dit niveau.
+    The tree holding the directories of ALL projects below it. Only the readers that span
+    every project use it (``rendered_kinds``); nothing is ever written at this level.
     """
     return _under_repo_path(repo_path, _sanitize_for_lowercase(cluster))
 
 
 def generate_project_manifest_folder_path(cluster: str, project_name: str, repo_path: str = "") -> str:
-    """De map van een project in de deployments-repo: ``{repo_path}/{cluster}/{project}``.
+    """A project's directory in the deployments repo: ``{repo_path}/{cluster}/{project}``.
 
-    Daaronder staat alles wat een taak van dit project schrijft: een map per deployment,
-    ``_project`` en ``infrastructure``. Het is daarmee de scope van een write naar die
-    repo, en de drie functies hieronder leiden hun pad hiervandaan af zodat de scope en
-    wat erin staat niet uit elkaar kunnen lopen.
+    Below it sits everything a task of this project writes: a directory per deployment,
+    ``_project`` and ``infrastructure``. It is therefore the scope of a write to that repo,
+    and the three functions below derive their path from here so that the scope and what is
+    in it cannot drift apart.
     """
     cluster_clean = _sanitize_for_lowercase(cluster)
     project_clean = _sanitize_for_lowercase(project_name)
 
-    # In één keer onder de guard: een projectnaam met '..' moet de repo net zo goed niet
-    # kunnen verlaten als een clusternaam met '..'.
+    # Both parts under the guard at once: a project name holding '..' must be no more able
+    # to leave the repository than a cluster name holding '..'.
     return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}")
 
 
@@ -1234,9 +1080,6 @@ def generate_deployment_manifest_path(
         project_name: Name of the project
         deployment_name: Name of the deployment
         repo_path: Optional repository base path
-
-    Returns:
-        Deployment manifest path
     """
     deployment_clean = _sanitize_for_lowercase(deployment_name)
 
@@ -1249,13 +1092,6 @@ def generate_project_deployment_prefix(project_name: str, deployment_name: str) 
 
     Format: {project}-{deployment} (hyphen separated, lowercase)
     This prefix is used for various ArgoCD resources and filenames.
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-
-    Returns:
-        Project-deployment prefix string
     """
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
@@ -1270,12 +1106,6 @@ def generate_infrastructure_namespace_base(project_name: str) -> str:
 
     This is the base name that will be prefixed with cluster-specific prefix
     using get_prefixed_namespace() to create the final namespace name.
-
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        Base infrastructure namespace name
 
     Example:
         generate_infrastructure_namespace_base("myproject") -> "myproject-infrastructure"
@@ -1296,9 +1126,6 @@ def generate_argocd_appproject_prefix(project_name: str, namespace: str) -> str:
     Args:
         project_name: Name of the project
         namespace: Target namespace (already prefixed with cluster)
-
-    Returns:
-        Project-namespace prefix string
     """
     project_clean = _sanitize_for_lowercase(project_name)
     namespace_clean = _sanitize_for_lowercase(namespace)
@@ -1326,9 +1153,6 @@ def generate_argocd_repository_secret_name(
         repository_name: Name of the repository from project configuration
         credential_hash: Optional 8-character hash of credentials for versioning
 
-    Returns:
-        Sanitized secret name suitable for Kubernetes resources
-
     Example:
         >>> generate_argocd_repository_secret_name("my-project", "main-repo")
         'my-project-main-repo'
@@ -1337,14 +1161,9 @@ def generate_argocd_repository_secret_name(
         >>> generate_argocd_repository_secret_name("my-project", "main-repo", "a1b2c3d4")
         'my-project-main-repo-a1b2c3d4'
     """
-    # Combine project and repository name
     combined = f"{project_name}-{repository_name}"
-
-    # Add credential hash if provided for versioning
     if credential_hash:
         combined = f"{combined}-{credential_hash}"
-
-    # Sanitize to ensure Kubernetes compliance
     return sanitize_kubernetes_name(combined)
 
 
@@ -1355,13 +1174,8 @@ def get_output_filename_from_template(template_filename: str, prefix: str = "") 
     Args:
         template_filename: Template filename (e.g., "argocd-application.yaml.jinja")
         prefix: Optional prefix to add to the output filename
-
-    Returns:
-        Output filename (e.g., "my-app-argocd-application.yaml")
     """
-    # Remove .jinja extension if present
     base_filename = template_filename.removesuffix(".jinja")
-    # Add prefix if provided
     return f"{prefix}-{base_filename}" if prefix else base_filename
 
 
@@ -1377,9 +1191,6 @@ def generate_public_url(hostname: str, use_https: bool = True, path: str = "/") 
         use_https: Whether to use HTTPS protocol (default: True)
         path: Optional ingress match path (e.g., "/api"); root ("/") is omitted
             to keep the URL clean.
-
-    Returns:
-        Full URL string
 
     Example:
         generate_public_url("webapp-frontend-myproject.dev.example.com")
@@ -1403,9 +1214,6 @@ def ensure_url_has_protocol(url: str, use_https: bool = True) -> str:
         url: The URL or hostname (e.g., "example.com" or "https://example.com")
         use_https: Whether to use HTTPS protocol if adding (default: True)
 
-    Returns:
-        URL with protocol prefix
-
     Example:
         ensure_url_has_protocol("example.com")
         -> "https://example.com"
@@ -1426,9 +1234,6 @@ def extract_domain_from_url(url: str) -> str:
     Args:
         url: The URL or hostname (e.g., "https://example.com" or "example.com")
 
-    Returns:
-        Domain without protocol
-
     Example:
         extract_domain_from_url("https://example.com")
         -> "example.com"
@@ -1443,7 +1248,6 @@ def extract_domain_from_url(url: str) -> str:
         url = url[8:]
     elif url.startswith("http://"):
         url = url[7:]
-    # Remove any path, query string, or fragment
     for sep in ("/", "?", "#"):
         if sep in url:
             url = url.split(sep)[0]
@@ -1460,10 +1264,6 @@ def make_argocd_repository_url_unique(repo_url: str, project_name: str) -> str:
 
     This function safely handles URLs that already contain usernames by replacing them.
     It only modifies HTTPS URLs from known Git hosting services.
-
-    Args:
-        repo_url: Original repository URL
-        project_name: Project name to use as unique identifier
 
     Returns:
         Modified URL with project name as username, or original URL if not applicable
@@ -1489,24 +1289,21 @@ def make_argocd_repository_url_unique(repo_url: str, project_name: str) -> str:
     """
     from urllib.parse import urlparse, urlunparse
 
-    # Only modify HTTPS URLs
     if not repo_url.startswith("https://"):
         return repo_url
 
-    # Only modify known Git hosting services to avoid breaking custom URLs
+    # Only the known hosts, so a custom URL is not broken by a username it cannot carry.
     known_hosts = ["github.com", "gitlab.com", "bitbucket.org"]
     if not any(host in repo_url for host in known_hosts):
         return repo_url
 
-    # Parse the URL
     parsed = urlparse(repo_url)
 
-    # Build netloc with project name as username (replaces existing username if present)
+    # The project name as the username, replacing an existing one.
     netloc = f"{project_name}@{parsed.hostname}"
     if parsed.port:
         netloc += f":{parsed.port}"
 
-    # Reconstruct URL with new username
     return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
@@ -1516,13 +1313,6 @@ def generate_project_admin_username(project_name: str, cluster: str) -> str:
 
     Format: {project}_{cluster}_admin (underscore separated for identifier)
     This is the username for the project administrator in the master realm.
-
-    Args:
-        project_name: Name of the project
-        cluster: Name of the cluster
-
-    Returns:
-        Project admin username string
 
     Example:
         generate_project_admin_username("myproject", "production")
@@ -1541,13 +1331,6 @@ def generate_project_realm_name(project_name: str, cluster: str) -> str:
     Format: {project}-{cluster} (hyphen separated, lowercase)
     This is the name of the realm created for the project in Keycloak.
 
-    Args:
-        project_name: Name of the project
-        cluster: Name of the cluster
-
-    Returns:
-        Project realm name string
-
     Example:
         generate_project_realm_name("myproject", "production")
         -> "myproject-production"
@@ -1564,13 +1347,6 @@ def generate_project_platform_client_id(project_name: str, cluster: str) -> str:
 
     Format: {project}-{cluster}-platform (hyphen separated, lowercase)
     This is the client ID in the RIG Platform realm that federates to the project realm.
-
-    Args:
-        project_name: Name of the project
-        cluster: Name of the cluster
-
-    Returns:
-        Platform client ID string
 
     Example:
         generate_project_platform_client_id("myproject", "production")
@@ -1590,12 +1366,6 @@ def generate_postgres_superuser_secret_name(project_name: str) -> str:
     This secret is stored in the infrastructure namespace and contains
     the superuser credentials for the project's dedicated PostgreSQL cluster.
 
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        Secret name string
-
     Example:
         generate_postgres_superuser_secret_name("myproject")
         -> "myproject-postgres-superuser"
@@ -1611,12 +1381,6 @@ def generate_infrastructure_application_name(project_name: str) -> str:
     Format: {project}-infrastructure (hyphen separated, lowercase)
     This application manages the infrastructure resources like PostgreSQL clusters.
 
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        Infrastructure application name string
-
     Example:
         generate_infrastructure_application_name("myproject")
         -> "myproject-infrastructure"
@@ -1626,19 +1390,16 @@ def generate_infrastructure_application_name(project_name: str) -> str:
 
 
 def generate_project_level_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
-    """Het PROJECTniveau van de deployments-repo: ``{cluster}/{project}/_project``.
+    """The PROJECT level of the deployments repo: ``{cluster}/{project}/_project``.
 
-    Zelfde vorm als ``generate_infrastructure_manifest_path``, een map ernaast. De
-    schrijver van de map en de ArgoCD-applicatie die ernaar wijst leiden hem allebei
-    hiervandaan af, zodat de twee niet uit elkaar kunnen lopen.
+    The same shape as ``generate_infrastructure_manifest_path``, a directory beside it. The
+    writer of the directory and the ArgoCD application pointing at it both derive it from
+    here, so the two cannot drift apart.
 
     Args:
         cluster: Name of the cluster
         project_name: Name of the project
         repo_path: Optional repository base path
-
-    Returns:
-        Project-level manifest path
 
     Example:
         generate_project_level_manifest_path("production", "myproject")
@@ -1659,9 +1420,6 @@ def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_
         project_name: Name of the project
         repo_path: Optional repository base path
 
-    Returns:
-        Infrastructure manifest path string
-
     Example:
         generate_infrastructure_manifest_path("production", "myproject")
         -> "production/myproject/infrastructure"
@@ -1678,12 +1436,6 @@ def generate_infrastructure_argocd_application_filename(project_name: str) -> st
 
     Format: {project}-infrastructure-argocd-application.yaml
 
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        Infrastructure ArgoCD application filename
-
     Example:
         generate_infrastructure_argocd_application_filename("myproject")
         -> "myproject-infrastructure-argocd-application.yaml"
@@ -1698,12 +1450,6 @@ def generate_infrastructure_argocd_appproject_filename(project_name: str) -> str
 
     Format: {project}-infrastructure-argocd-appproject.yaml
 
-    Args:
-        project_name: Name of the project
-
-    Returns:
-        Infrastructure ArgoCD AppProject filename
-
     Example:
         generate_infrastructure_argocd_appproject_filename("myproject")
         -> "myproject-infrastructure-argocd-appproject.yaml"
@@ -1713,16 +1459,9 @@ def generate_infrastructure_argocd_appproject_filename(project_name: str) -> str
 
 
 def generate_argocd_project_folder_path(cluster: str, project_name: str) -> str:
-    """De map in de argo-applications repo waar de ArgoCD-manifesten van een project staan.
+    """The directory in the argo-applications repo holding a project's ArgoCD manifests.
 
     Format: {cluster}/{project}
-
-    Args:
-        cluster: Name of the cluster
-        project_name: Name of the project
-
-    Returns:
-        ArgoCD project folder path
 
     Example:
         generate_argocd_project_folder_path("production", "myproject")
@@ -1739,13 +1478,6 @@ def generate_infrastructure_argocd_folder_path(cluster: str, project_name: str) 
 
     Format: {cluster}/{project}-infrastructure/
 
-    Args:
-        cluster: Name of the cluster
-        project_name: Name of the project
-
-    Returns:
-        Infrastructure ArgoCD folder path
-
     Example:
         generate_infrastructure_argocd_folder_path("production", "myproject")
         -> "production/myproject-infrastructure"
@@ -1760,13 +1492,6 @@ def generate_infrastructure_argocd_application_path(cluster: str, project_name: 
     Generate the full path to the infrastructure ArgoCD application file in the GitOps repository.
 
     Format: {cluster}/{project}-infrastructure/{project}-infrastructure-argocd-application.yaml
-
-    Args:
-        cluster: Name of the cluster
-        project_name: Name of the project
-
-    Returns:
-        Full path to the infrastructure ArgoCD application file
 
     Example:
         generate_infrastructure_argocd_application_path("production", "myproject")
@@ -1803,12 +1528,6 @@ def generate_tls_secret_name(ingress_name: str) -> str:
     The secret name follows the pattern {ingress_name}-tls, which cert-manager
     uses to store the generated TLS certificate and key.
 
-    Args:
-        ingress_name: Name of the ingress resource
-
-    Returns:
-        TLS secret name string
-
     Example:
         >>> generate_tls_secret_name("main-webapp")
         'main-webapp-tls'
@@ -1829,9 +1548,6 @@ def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
         base_domain: The domain to normalize (e.g., "rijksapp.com")
         max_length: Maximum length for the normalized string (default: 50 to leave room for prefixes)
 
-    Returns:
-        Normalized domain string suitable for Kubernetes names
-
     Example:
         >>> normalize_base_domain("rijksapp.com")
         'rijksapp-com'
@@ -1841,17 +1557,11 @@ def normalize_base_domain(base_domain: str, max_length: int = 50) -> str:
     if not base_domain:
         return ""
 
-    # Replace dots with hyphens and lowercase
     normalized = base_domain.lower().replace(".", "-")
-
-    # Remove any other invalid characters
     normalized = re.sub(r"[^a-z0-9-]", "", normalized)
-
-    # Remove leading/trailing hyphens and consecutive hyphens
     normalized = re.sub(r"^-+|-+$", "", normalized)
     normalized = re.sub(r"-+", "-", normalized)
 
-    # Truncate if needed
     if len(normalized) > max_length:
         normalized = normalized[:max_length].rstrip("-")
 
@@ -1871,9 +1581,6 @@ def generate_issuer_name(base_domain: str, issuer_type: str = "letsencrypt", dep
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
         deployment_name: Optional deployment name to scope the issuer
-
-    Returns:
-        Issuer name string
 
     Example:
         >>> generate_issuer_name("rijksapp.com")
@@ -1903,9 +1610,6 @@ def generate_issuer_secret_name(
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
         deployment_name: Optional deployment name to scope the secret
 
-    Returns:
-        Secret name string
-
     Example:
         >>> generate_issuer_secret_name("rijksapp.com")
         'letsencrypt-rijksapp-com-key'
@@ -1928,9 +1632,6 @@ def generate_issuer_manifest_name(
         base_domain: The base domain (e.g., "rijksapp.com")
         issuer_type: The issuer type ("letsencrypt" or "letsencrypt-staging")
         deployment_name: Optional deployment name to scope the manifest
-
-    Returns:
-        Manifest filename string
 
     Example:
         >>> generate_issuer_manifest_name("rijksapp.com")
@@ -1956,9 +1657,6 @@ def generate_network_policy_name(purpose: str, deployment_name: str | None = Non
         purpose: The purpose of the network policy (e.g., "acme-http")
         deployment_name: Optional deployment name to scope the policy
 
-    Returns:
-        NetworkPolicy name string
-
     Example:
         >>> generate_network_policy_name("acme-http")
         'acme-http-network-policy'
@@ -1977,9 +1675,6 @@ def generate_network_policy_manifest_name(purpose: str, deployment_name: str | N
     Args:
         purpose: The purpose of the network policy (e.g., "acme-http")
         deployment_name: Optional deployment name to scope the manifest
-
-    Returns:
-        Manifest filename string (without .yaml extension)
 
     Example:
         >>> generate_network_policy_manifest_name("acme-http")
@@ -2001,9 +1696,6 @@ def resolve_effective_base_domain(base_domain: str | None, ingress_postfix: str)
         base_domain: Optional explicit base domain from deployment config
         ingress_postfix: Cluster's ingress postfix (e.g., ".kind", ".local")
 
-    Returns:
-        Effective base domain to use for hostname generation
-
     Example:
         >>> resolve_effective_base_domain("rijksapp.com", ".kind")
         'rijksapp.com'
@@ -2014,7 +1706,6 @@ def resolve_effective_base_domain(base_domain: str | None, ingress_postfix: str)
     """
     if base_domain:
         return base_domain
-    # Strip leading dot from ingress_postfix
     return ingress_postfix.lstrip(".")
 
 
@@ -2027,9 +1718,6 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     Args:
         subdomain: The subdomain part (e.g., "myapp")
         base_domain: The base domain (e.g., "rijksapp.com")
-
-    Returns:
-        Full hostname string
 
     Example:
         >>> generate_external_hostname("myapp", "rijksapp.com")
@@ -2048,9 +1736,6 @@ def generate_root_hostname(subdomain: str, base_domain: str) -> str:
     Args:
         subdomain: User-configured subdomain (e.g., "myapp") - globally unique
         base_domain: The base domain (e.g., "rijks.app")
-
-    Returns:
-        Root hostname in pattern subdomain.base_domain
 
     Examples:
         >>> generate_root_hostname("myapp", "rijks.app")
@@ -2073,9 +1758,6 @@ def generate_bare_domain_hostname(base_domain: str) -> str:
 
     Args:
         base_domain: The custom base domain (e.g., "voorbeeld.nl")
-
-    Returns:
-        Bare domain hostname
 
     Examples:
         >>> generate_bare_domain_hostname("voorbeeld.nl")
@@ -2135,9 +1817,6 @@ def apply_domain_approval_fallback(
         ingress_postfix: Cluster ingress postfix (for fallback domain)
         project_data: Project YAML data (for approval check)
         cluster: Cluster name (for approval check)
-
-    Returns:
-        (effective_format, effective_base_domain) tuple
     """
     from opi.connectors.subdomain import is_deployment_domain_approved
 
@@ -2189,18 +1868,15 @@ def get_component_ingress_map(
         base_domain: Optional custom base domain (e.g., "rijks.app")
         domain_format: Optional domain-format template ID from project YAML
 
-    Returns:
-        Dict mapping ingress name to hostname
-
     Examples:
-        # Custom domain without a format: subdomain.base_domain
+        # A custom domain without a format: subdomain.base_domain.
         >>> get_component_ingress_map(
         ...     "frontend", "prod", "myapp", ".kind",
         ...     subdomain="myapp", base_domain="custom.nl"
         ... )
         {'prod-frontend': 'myapp.custom.nl'}
 
-        # Cluster domain: component-deployment-project.cluster
+        # The cluster domain: component-deployment-project.cluster.
         >>> get_component_ingress_map(
         ...     "frontend", "prod", "myapp", ".kind"
         ... )
@@ -2240,7 +1916,7 @@ def get_component_ingress_map(
         )
         return {base_name: hostname}
 
-    # --- Legacy dispatch (no domain_format, and the domain it names IS approved) ---
+    # Legacy dispatch: no domain_format, and the domain it names IS approved.
 
     # Custom/external domain (base_domain with subdomain)
     if base_domain and subdomain:
@@ -2282,9 +1958,6 @@ def get_deployment_hostnames(
             or False/empty when disabled
         root_component: Component that serves the root address
             (``subdomain.base-domain``), or None when no component does
-
-    Returns:
-        List of unique hostnames for the deployment
     """
     # Local, like in apply_domain_approval_fallback: connectors.subdomain imports this
     # module, so a module-scope import would be a cycle.
@@ -2348,9 +2021,6 @@ def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypt
         chart_name: Name of the helm chart
         encrypted: Whether to generate the encrypted (.sops.yaml) or decrypted (.yaml) filename
 
-    Returns:
-        Helm values filename string
-
     Examples:
         >>> generate_helm_values_filename("local-deployment", "docs")
         'local-deployment-docs-helm-values.sops.yaml'
@@ -2376,9 +2046,6 @@ def generate_ingress_name_from_path(base_name: str, path: str, max_length: int =
         path: The URL path (e.g., "/api", "/v1/users")
         max_length: Maximum length for Kubernetes names (default: 63)
 
-    Returns:
-        Unique ingress name suitable for Kubernetes resources
-
     Examples:
         >>> generate_ingress_name_from_path("main-api", "/")
         'main-api'
@@ -2389,11 +2056,9 @@ def generate_ingress_name_from_path(base_name: str, path: str, max_length: int =
         >>> generate_ingress_name_from_path("main-api", "/health-check")
         'main-api-healthcheck'
     """
-    # Root path doesn't add suffix
     if path == "/" or not path:
         return sanitize_kubernetes_name(base_name, max_length)
 
-    # Normalize path: remove leading slash, replace / with empty, lowercase
     path_suffix = path.lstrip("/").replace("/", "").lower()
     path_suffix = re.sub(r"[^a-z0-9]", "", path_suffix)
 
@@ -2414,9 +2079,6 @@ def generate_backup_prefix(cluster: str, namespace: str) -> str:
     Args:
         cluster: Name of the cluster (e.g., "local", "odcn-production")
         namespace: Name of the namespace (e.g., "example-project", "rig-system")
-
-    Returns:
-        S3 prefix string for backups
 
     Examples:
         >>> generate_backup_prefix("local", "example-project")
@@ -2439,9 +2101,6 @@ def generate_backup_snapshot_name(pvc_name: str, timestamp: str) -> str:
         pvc_name: Name of the PVC being backed up
         timestamp: Timestamp string (e.g., "20250112-143022")
 
-    Returns:
-        VolumeSnapshot name
-
     Example:
         >>> generate_backup_snapshot_name("app-data", "20250112-143022")
         'app-data-backup-20250112-143022'
@@ -2460,9 +2119,6 @@ def generate_backup_clone_pvc_name(pvc_name: str, timestamp: str) -> str:
         pvc_name: Name of the original PVC
         timestamp: Timestamp string (e.g., "20250112-143022")
 
-    Returns:
-        Clone PVC name
-
     Example:
         >>> generate_backup_clone_pvc_name("app-data", "20250112-143022")
         'app-data-backup-clone-20250112-143022'
@@ -2478,9 +2134,6 @@ def generate_backup_pod_name(pvc_name: str, timestamp: str) -> str:
         pvc_name: Name of the PVC being backed up
         timestamp: Timestamp string (e.g., "20250112-143022")
 
-    Returns:
-        Backup pod name
-
     Example:
         >>> generate_backup_pod_name("app-data", "20250112-143022")
         'backup-app-data-20250112-143022'
@@ -2495,9 +2148,6 @@ def generate_restore_pod_name(pvc_name: str, timestamp: str) -> str:
     Args:
         pvc_name: Name of the PVC being restored
         timestamp: Timestamp string (e.g., "20250112-143022")
-
-    Returns:
-        Restore pod name
 
     Example:
         >>> generate_restore_pod_name("app-data", "20250112-143022")
@@ -2517,9 +2167,6 @@ def generate_restored_pvc_name(pvc_name: str, timestamp: str) -> str:
         pvc_name: Original PVC name
         timestamp: Timestamp string (e.g., "20250112-143022")
 
-    Returns:
-        Restored PVC name
-
     Example:
         >>> generate_restored_pvc_name("app-data", "20250112-143022")
         'app-data-restored-20250112-143022'
@@ -2536,9 +2183,6 @@ def generate_backup_run_id() -> str:
     restoration of an entire deployment.
 
     Format: YYYYMMDDHHmmss (Europe/Amsterdam local time)
-
-    Returns:
-        Backup run ID string
 
     Example:
         >>> generate_backup_run_id()
@@ -2561,9 +2205,6 @@ def ensure_fqdn(hostname: str) -> str:
         hostname: Service hostname, e.g. ``rig-db-rw`` or
             ``rig-db-rw.rig-system.svc.cluster.local``
 
-    Returns:
-        Fully qualified hostname.
-
     Examples:
         >>> ensure_fqdn("rig-db-rw")
         'rig-db-rw.rig-system.svc.cluster.local'
@@ -2572,7 +2213,6 @@ def ensure_fqdn(hostname: str) -> str:
         >>> ensure_fqdn("my-db:5432")
         'my-db.rig-system.svc.cluster.local:5432'
     """
-    # Strip port if present
     port_suffix = ""
     host = hostname
     if ":" in host and not host.endswith(".local"):
@@ -2590,8 +2230,6 @@ def ensure_fqdn(hostname: str) -> str:
     return f"{host}.{namespace}.svc.cluster.local{port_suffix}"
 
 
-# --- Container registry tags -------------------------------------------------
-#
 # The platform pushes every uploaded image into ONE registry repository (the robot
 # account's own repo), because Quay has no nested repositories under a single
 # robot-account scope. That makes the tag the only place where ownership can live,
@@ -2616,9 +2254,6 @@ def build_registry_tag(project_name: str, image_name: str, tag: str) -> str:
         project_name: The project the image belongs to (the API key's project).
         image_name: Image name as supplied by the caller.
         tag: Image tag as supplied by the caller.
-
-    Returns:
-        ``{project_name}_{image_name}-{tag}``.
     """
     return f"{project_name}{REGISTRY_TAG_OWNER_SEPARATOR}{image_name}-{tag}"
 
@@ -2640,8 +2275,8 @@ def registry_tag_owner(registry_tag: str) -> str | None:
 def upstream_host(upstream: str) -> str:
     """``code.overheid.nl/robbert`` -> ``code.overheid.nl``.
 
-    Staat hier en niet bij de dienst image-registries, want de skopeo-connector heeft hem
-    ook nodig en een connector hoort niet van een dienstpakket af te hangen.
+    Here and not with the image-registries service, because the skopeo connector needs it
+    too and a connector should not depend on a service package.
     """
     return upstream.split("/", 1)[0]
 

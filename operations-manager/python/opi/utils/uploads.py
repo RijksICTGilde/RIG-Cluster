@@ -1,17 +1,17 @@
-"""Een upload lezen met een plafond erop, en niet meer dan een paar tegelijk.
+"""Reading an upload with a ceiling on it, and no more than a few at a time.
 
-``await file.read()`` zonder argument zet het hele bestand in het geheugen voordat er
-iets getoetst kan worden, dus kost een upload van een gigabyte een gigabyte, ook als het
-plafond 64 KB is. Deze lezers breken af op het eerste blok dat het plafond passeert.
+``await file.read()`` without an argument puts the whole file in memory before anything can
+be checked, so an upload of a gigabyte costs a gigabyte even when the ceiling is 64 KB.
+These readers stop on the first chunk that passes the ceiling.
 
-Drie lezers op dezelfde telling: ``iter_capped`` voor wie de blokken zelf verwerkt,
-``read_capped`` voor wie de bytes in het geheugen wil, en ``spill_capped`` voor wie ze
-alleen in het geheugen wil houden zolang het er weinig zijn.
+Three readers on the same count: ``iter_capped`` for a caller that handles the chunks
+itself, ``read_capped`` for one that wants the bytes in memory, and ``spill_capped`` for one
+that wants to keep them in memory only while there are few of them.
 
-``upload_slot`` begrenst daarnaast hoeveel uploads er tegelijk lopen. Zonder dat plafond
-kunnen genoeg gelijktijdige uploads het geheugen en de tempschijf van de pod samen
-leegtrekken, elk netjes onder zijn eigen plafond. Boven dat plafond wacht een upload in
-een begrensde wachtrij; pas als die vol is volgt een 503.
+``upload_slot`` additionally caps how many uploads run at the same time. Without that
+ceiling, enough concurrent uploads can drain the pod's memory and temp disk together, each
+one neatly below its own ceiling. Above that ceiling an upload waits in a bounded queue;
+only when that is full does a 503 follow.
 """
 
 from __future__ import annotations
@@ -33,19 +33,19 @@ if TYPE_CHECKING:
 
     from fastapi import UploadFile
 
-#: Leesblok, gedeeld door alle uploadroutes.
+#: Read chunk, shared by every upload route.
 CHUNK_SIZE = 64 * 1024
 
 
 class UploadTooLargeError(Exception):
-    """Een upload die het meegegeven plafond passeert."""
+    """An upload that passes the ceiling it was given."""
 
 
 async def iter_capped(upload: UploadFile, max_bytes: int) -> AsyncIterator[bytes]:
-    """De blokken van ``upload``, tot en met het plafond.
+    """The chunks of ``upload``, up to and including the ceiling.
 
-    Gooit ``UploadTooLargeError`` op het blok dat ``max_bytes`` passeert; wat erachter
-    zit wordt niet meer gelezen.
+    Raises ``UploadTooLargeError`` on the chunk that passes ``max_bytes``; what sits behind
+    it is not read at all.
     """
     total = 0
     while chunk := await upload.read(CHUNK_SIZE):
@@ -56,7 +56,7 @@ async def iter_capped(upload: UploadFile, max_bytes: int) -> AsyncIterator[bytes
 
 
 async def read_capped(upload: UploadFile, max_bytes: int) -> bytes | None:
-    """De bytes van ``upload``, of ``None`` zodra hij meer dan ``max_bytes`` draagt."""
+    """The bytes of ``upload``, or ``None`` the moment it carries more than ``max_bytes``."""
     try:
         return b"".join([chunk async for chunk in iter_capped(upload, max_bytes)])
     except UploadTooLargeError:
@@ -65,14 +65,14 @@ async def read_capped(upload: UploadFile, max_bytes: int) -> bytes | None:
 
 @dataclass
 class CappedUpload:
-    """Een gelezen upload: ``content`` zolang hij in het geheugen paste, anders ``path``."""
+    """A read upload: ``content`` while it fitted in memory, otherwise ``path``."""
 
     size: int
     content: bytes | None = None
     path: str | None = None
 
     def cleanup(self) -> None:
-        """Ruimt het tempbestand op. Geen bewerking voor een upload die in het geheugen bleef."""
+        """Remove the temp file. A no-op for an upload that stayed in memory."""
         if self.path:
             with contextlib.suppress(FileNotFoundError):
                 os.remove(self.path)
@@ -80,10 +80,10 @@ class CappedUpload:
 
 
 async def spill_capped(upload: UploadFile, max_bytes: int, *, spill_after: int | None = None) -> CappedUpload | None:
-    """``upload`` in het geheugen tot ``spill_after`` bytes, daarboven naar een tempbestand.
+    """``upload`` in memory up to ``spill_after`` bytes, above that into a temp file.
 
-    Geeft ``None`` zodra de upload ``max_bytes`` passeert; een half weggeschreven
-    tempbestand is dan al opgeruimd. De beller ruimt het bestand op met ``cleanup()``.
+    Returns ``None`` the moment the upload passes ``max_bytes``; a half-written temp file is
+    cleaned up by then. The caller removes the file with ``cleanup()``.
     """
     if spill_after is None:
         spill_after = settings.UPLOAD_SPILL_AFTER_BYTES
@@ -95,8 +95,8 @@ async def spill_capped(upload: UploadFile, max_bytes: int, *, spill_after: int |
         async for chunk in iter_capped(upload, max_bytes):
             staged.size += len(chunk)
             if handle is None and staged.size > spill_after:
-                # Mode 0o600, net als de staging-store: wat hier langskomt kan een
-                # private key zijn.
+                # Mode 0o600, as in the staging store: what passes here can be a private
+                # key.
                 fd, staged.path = tempfile.mkstemp(dir=settings.TEMP_DIR)
                 os.fchmod(fd, 0o600)
                 handle = os.fdopen(fd, "wb")
@@ -110,8 +110,8 @@ async def spill_capped(upload: UploadFile, max_bytes: int, *, spill_after: int |
         staged.cleanup()
         return None
     except BaseException:
-        # Ook een afgebroken upload laat niets achter. Een client die wegvalt geeft een
-        # CancelledError, en dat is geen Exception.
+        # An aborted upload leaves nothing behind either. A client that drops out gives a
+        # CancelledError, and that is not an Exception.
         staged.cleanup()
         raise
     finally:
@@ -124,21 +124,21 @@ async def spill_capped(upload: UploadFile, max_bytes: int, *, spill_after: int |
 
 
 def too_large_detail(max_bytes: int) -> str:
-    """De melding bij een bestand boven het plafond, in KB."""
+    """The message for a file above the ceiling, in KB."""
     return f"Bestand te groot (max {max_bytes // 1024} KB)"
 
 
 _slot: asyncio.Semaphore | None = None
 _slot_size = 0
-_wachtend = 0
+_waiting = 0
 
 
 def _upload_semaphore() -> asyncio.Semaphore:
-    """Het slot op het aantal gelijktijdige uploads.
+    """The lock on the number of concurrent uploads.
 
-    OPI draait één proces zonder extra workers, dus dit is een echt globaal plafond. Hij
-    wordt opnieuw gemaakt zodra de setting een andere waarde heeft, zodat een test hem
-    kan verzetten; in productie staat die waarde vast na het starten.
+    OPI runs one process without extra workers, so this is a truly global ceiling. It is
+    rebuilt the moment the setting holds another value, so a test can move it; in production
+    that value is fixed after the start.
     """
     global _slot, _slot_size
     if _slot is None or _slot_size != settings.MAX_CONCURRENT_UPLOADS:
@@ -147,7 +147,7 @@ def _upload_semaphore() -> asyncio.Semaphore:
     return _slot
 
 
-def _bezet() -> HTTPException:
+def _too_busy() -> HTTPException:
     return HTTPException(
         status_code=503,
         detail="Te veel uploads tegelijk, probeer het over een paar seconden opnieuw",
@@ -155,47 +155,47 @@ def _bezet() -> HTTPException:
     )
 
 
-async def _neem_plek(semaphore: asyncio.Semaphore) -> None:
-    """Een plek in het slot, eventueel na een wachtrij van ``UPLOAD_QUEUE_SIZE`` diep."""
-    global _wachtend
+async def _take_slot(semaphore: asyncio.Semaphore) -> None:
+    """A place in the lock, possibly after a queue ``UPLOAD_QUEUE_SIZE`` deep."""
+    global _waiting
     if not semaphore.locked():
         await semaphore.acquire()
         return
-    if _wachtend >= settings.UPLOAD_QUEUE_SIZE:
-        raise _bezet()
-    _wachtend += 1
+    if _waiting >= settings.UPLOAD_QUEUE_SIZE:
+        raise _too_busy()
+    _waiting += 1
     try:
         async with asyncio.timeout(settings.UPLOAD_QUEUE_WAIT_SECONDS):
             await semaphore.acquire()
     except TimeoutError:
-        raise _bezet() from None
+        raise _too_busy() from None
     finally:
-        _wachtend -= 1
+        _waiting -= 1
 
 
-#: Markering in de ASGI-scope: het slot is voor dit verzoek al genomen.
+#: Marker in the ASGI scope: this request already holds a place in the lock.
 SLOT_HELD_IN_SCOPE = "zad_upload_slot_held"
 
 
 @asynccontextmanager
 async def upload_slot(scope: MutableMapping[str, Any] | None = None) -> AsyncIterator[None]:
-    """Neemt een plek in het uploadslot, zo nodig via de wachtrij.
+    """Take a place in the upload lock, through the queue when needed.
 
-    Draagt ``scope`` de markering van ``BodyLimitMiddleware``, dan is dit geen bewerking:
-    die heeft de plek al vóór de multipart-parser genomen en houdt hem tot het antwoord.
+    When ``scope`` carries the marker of ``BodyLimitMiddleware`` this is a no-op: that one
+    took the place before the multipart parser and holds it until the response.
 
-    Een upload is meestal in een oogwenk gelezen, dus wachten tot er een plek vrijkomt is
-    beter dan meteen weigeren. Maar die wachtrij is zelf begrensd: elk wachtend verzoek
-    houdt zijn verbinding en zijn stream vast, en een onbegrensde rij is weer precies de
-    opstapeling die dit plafond moet voorkomen. Is de rij vol, of staat een verzoek er
-    langer dan ``UPLOAD_QUEUE_WAIT_SECONDS`` in, dan volgt een 503 met een ``Retry-After``.
+    An upload is usually read in a blink, so waiting for a place to come free beats refusing
+    straight away. But that queue is itself bounded: every waiting request holds on to its
+    connection and its stream, and an unbounded queue is exactly the pile-up this ceiling is
+    meant to prevent. When the queue is full, or a request sits in it longer than
+    ``UPLOAD_QUEUE_WAIT_SECONDS``, a 503 with a ``Retry-After`` follows.
     """
     if scope is not None and scope.get(SLOT_HELD_IN_SCOPE):
         yield
         return
 
     semaphore = _upload_semaphore()
-    await _neem_plek(semaphore)
+    await _take_slot(semaphore)
     try:
         yield
     finally:

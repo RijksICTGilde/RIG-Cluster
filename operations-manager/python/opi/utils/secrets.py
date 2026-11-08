@@ -1,8 +1,7 @@
-"""
-Centralized secrets configuration and management for OPI.
+"""The Kubernetes secrets OPI writes per deployment, one dataclass per service.
 
-This module provides a type-safe, declarative way to define and manage
-Kubernetes secrets with consistent key mappings and validation.
+Each class knows its secret name, its service type and how its fields map to secret keys,
+so the key mapping lives in one place instead of at every writer and reader.
 """
 
 import logging
@@ -35,11 +34,11 @@ class SecretContext:
 class BaseSecret(ABC):
     """Base class for all secret types with generic create/get methods."""
 
-    # Each subclass defines these
+    # Set by every concrete subclass.
     SECRET_NAME_TEMPLATE: ClassVar[str] = ""
     SERVICE_TYPE: ClassVar[ServiceType]
 
-    def __post_init__(self) -> None:  # noqa: B027
+    def __post_init__(self) -> None:  # noqa: B027  # an optional hook; the base deliberately does nothing
         """Default post-initialization hook. Subclasses can override for custom validation."""
 
     @classmethod
@@ -50,21 +49,15 @@ class BaseSecret(ABC):
         """Convert dataclass fields to Kubernetes secret key-value pairs including aliases."""
         secret_data: dict[str, str] = {}
 
-        # Get all variables from service definition
         variables = self._get_service_variables()
 
         for var_def in variables:
             if var_def.source == "secret" and var_def.secret_key:
                 value_str = str(getattr(self, var_def.secret_key))
-
-                # Add main key
                 secret_data[var_def.name] = value_str
-
-                # Add all aliases
                 for alias in var_def.aliases:
                     secret_data[alias] = value_str
 
-        # Allow subclasses to add computed/additional keys
         additional_keys = self._get_additional_keys()
         secret_data.update(additional_keys)
 
@@ -91,18 +84,15 @@ class BaseSecret(ABC):
                 if hasattr(cls, "__dataclass_fields__") and var_def.secret_key not in cls.__dataclass_fields__:
                     continue
 
-                # Try main key first, then aliases
                 k8s_keys_to_try = [var_def.name, *var_def.aliases]
 
                 for k8s_key in k8s_keys_to_try:
                     if k8s_key in secret_data:
                         value = secret_data[k8s_key]
-                        # Handle type conversion if needed
                         value = cls._convert_field_value(var_def.secret_key, value)
                         kwargs[var_def.secret_key] = value
                         break
 
-        # This method should only be called on concrete subclasses, not the abstract base class
         return cls(**kwargs)
 
     @classmethod
@@ -166,12 +156,11 @@ class DatabaseSecret(BaseSecret):
     # dynamic), so it defaults empty and is populated when the secret is authored.
     extra_schemas: list[tuple[str, str]] = field(default_factory=list)
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-database"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.POSTGRESQL_DATABASE
 
     def __post_init__(self) -> None:
-        """Validate database secret data."""
-        super().__post_init__()  # Call parent's default implementation
+        super().__post_init__()
 
     def _search_path(self) -> str:
         """The role's schema search order: the default schema, then every extra schema.
@@ -184,15 +173,16 @@ class DatabaseSecret(BaseSecret):
 
     @property
     def connection_string(self) -> str:
-        """Generate PostgreSQL connection string."""
-        # Literal commas, exactly as before: with no extra schemas this yields the
-        # unchanged ``--search_path=<schema>,public``.
+        """The PostgreSQL connection string, with the search_path as literal commas.
+
+        With no extra schemas that yields the unchanged ``--search_path=<schema>,public``.
+        """
         return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}?options=--search_path%3D{self._search_path()}"
 
     def _get_additional_keys(self) -> dict[str, str]:
         """Add computed keys that are not defined in service definitions."""
         keys = {
-            # Connection string - this is computed and not in service definition
+            # Computed, so it is not in the service definition.
             "DATABASE_SERVER_FULL": self.connection_string,
             "APP_DATABASE_SERVER_FULL": self.connection_string,
         }
@@ -226,12 +216,11 @@ class MinIOSecret(BaseSecret):
     bucket_name: str
     region: str = "us-east-1"  # Default region - will be overridden by settings.MINIO_REGION
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-minio"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-minio"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
 
     def __post_init__(self) -> None:
-        """Validate MinIO secret data."""
-        super().__post_init__()  # Call parent's default implementation
+        super().__post_init__()
 
     @property
     def url(self) -> str:
@@ -265,19 +254,19 @@ class MinIOSecret(BaseSecret):
 
 @dataclass
 class SeaweedFSSecret(MinIOSecret):
-    """Hetzelfde secret als MinIO, met een eigen naam en service (RC-331).
+    """The same secret as MinIO, with a name and service of its own (RC-331).
 
-    Een applicatie ziet dus precies dezelfde variabelen (``MinIOVariables``); alleen host,
-    poort en sleutels verschillen. Overstappen is een endpoint wisselen, geen code.
+    An application therefore sees exactly the same variables (``MinIOVariables``); only
+    host, port and keys differ. Switching over is swapping an endpoint, not code.
     """
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-seaweedfs"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-seaweedfs"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
 
 
-#: De twee diensten die dezelfde ``OBJECT_STORE_*``-variabelen leveren. Wie "de objectopslag
-#: van deze deployment" bedoelt noemt deze lijst, zodat een nieuwe afnemer er niet één
-#: vergeet; ``validate_project`` van seaweedfs-storage weigert ze samen op één deployment.
+#: The two services that deliver the same ``OBJECT_STORE_*`` variables. Whoever means "the
+#: object storage of this deployment" names this list, so a new consumer cannot forget one;
+#: the ``validate_project`` of seaweedfs-storage refuses both on one deployment.
 OBJECT_STORAGE_SERVICE_TYPES: list[str] = [
     ServiceType.MINIO_STORAGE.value,
     ServiceType.SEAWEEDFS_STORAGE.value,
@@ -287,14 +276,14 @@ OBJECT_STORAGE_SERVICE_TYPES: list[str] = [
 async def get_object_storage_secret(
     kubectl_connector: KubectlConnector, namespace: str, prefix: str
 ) -> MinIOSecret | None:
-    """Het objectopslag-secret van een deployment, van welke van de twee diensten het ook is.
+    """The object storage secret of a deployment, whichever of the two services it is.
 
-    De twee secrets hebben dezelfde velden en verschillen alleen in naam, dus een afnemer
-    (back-up, restore) hoeft het verschil niet te kennen. Eén van de twee kan bestaan, want
-    beide op één deployment is geweigerd.
+    The two secrets have the same fields and differ only in name, so a consumer (backup,
+    restore) does not need to know the difference. At most one of the two can exist, because
+    both on one deployment is refused.
     """
-    for klasse in (MinIOSecret, SeaweedFSSecret):
-        secret = await klasse.get_data(kubectl_connector=kubectl_connector, namespace=namespace, prefix=prefix)
+    for secret_class in (MinIOSecret, SeaweedFSSecret):
+        secret = await secret_class.get_data(kubectl_connector=kubectl_connector, namespace=namespace, prefix=prefix)
         if secret is not None:
             return secret
     return None
@@ -311,12 +300,11 @@ class KeycloakSecret(BaseSecret):
     base_url: str
     realm: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-keycloak"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-keycloak"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.KEYCLOAK
 
     def __post_init__(self) -> None:
-        """Validate Keycloak secret data."""
-        super().__post_init__()  # Call parent's default implementation
+        super().__post_init__()
 
     @property
     def hostname(self) -> str:
@@ -330,8 +318,8 @@ class KeycloakSecret(BaseSecret):
         from urllib.parse import urlparse
 
         parsed = urlparse(self.base_url)
-        # netloc includes host[:port]; falls back to path for bare hostnames
-        # passed without a scheme (defensive — base_url should always have one).
+        # netloc holds host[:port]; the path is the fallback for a bare hostname passed
+        # without a scheme, which base_url should always have.
         return parsed.netloc or parsed.path
 
 
@@ -345,11 +333,10 @@ class RedisSecret(BaseSecret):
     password: str
     key_prefix: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-redis"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.REDIS
 
     def __post_init__(self) -> None:
-        """Validate Redis secret data."""
         super().__post_init__()
 
     @property
@@ -390,7 +377,7 @@ class SendEmailSecret(BaseSecret):
     password: str
     from_address: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-send-email"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-send-email"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEND_EMAIL
 
     @classmethod
@@ -415,7 +402,7 @@ class MetricsAuthSecret(BaseSecret):
 
     token: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-metrics-auth"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.METRICS_SCRAPER
 
 
@@ -426,7 +413,7 @@ class PlatformSecret(BaseSecret):
     deployment_name: str
     component_name: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-platform"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.PLATFORM
 
 
@@ -436,11 +423,10 @@ class UserSecret(BaseSecret):
 
     env_vars: dict[str, str]
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-user"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-user"  # noqa: S105  # a template for the secret name, not a secret
 
     def __post_init__(self) -> None:
-        """Validate user secret data."""
-        super().__post_init__()  # Call parent's default implementation
+        super().__post_init__()
 
     def to_k8s_secret_data(self) -> dict[str, str]:
         """For user secrets, the env_vars dict is the secret data."""
@@ -460,19 +446,15 @@ class RegistrySecret(BaseSecret):
     username: str
     password: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-registry"  # noqa: S105  # a template for the secret name, not a secret
 
     def __post_init__(self) -> None:
-        """Validate registry secret data."""
         super().__post_init__()
 
     def to_dockerconfigjson(self) -> str:
-        """
-        Generate .dockerconfigjson content in auth-only format.
+        """The .dockerconfigjson content in auth-only format.
 
-        Returns:
-            JSON string with docker config in format:
-            {"auths": {"registry.example.com": {"auth": "base64(username:password)"}}}
+        The shape is ``{"auths": {"registry.example.com": {"auth": "base64(user:pass)"}}}``.
         """
         import base64
         import json
@@ -497,7 +479,6 @@ class RegistrySecret(BaseSecret):
         dockerconfig_json = secret_data.get(".dockerconfigjson", "{}")
         config = json.loads(dockerconfig_json)
 
-        # Extract first registry from auths
         auths = config.get("auths", {})
         if not auths:
             msg = "No registry found in .dockerconfigjson"
@@ -506,7 +487,6 @@ class RegistrySecret(BaseSecret):
         registry_url = next(iter(auths.keys()))
         auth_data = auths[registry_url]
 
-        # Decode auth field if present
         if "auth" in auth_data:
             auth_decoded = base64.b64decode(auth_data["auth"]).decode()
             if ":" not in auth_decoded:

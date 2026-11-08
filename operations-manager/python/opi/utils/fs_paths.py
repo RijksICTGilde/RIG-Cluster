@@ -1,9 +1,9 @@
-"""Padcomponenten van buiten: één insluitingstoets voor het bestandssysteem.
+"""Path components from outside: one containment check for the file system.
 
-Een chartpad uit een projectbestand en een `file://`-dependency uit de `Chart.yaml` van
-een geclonede repo worden allebei aan een werkmap geplakt. `os.path.join` negeert zijn
-eerste argument zodra het tweede absoluut is, en een symlink in de clone kan buiten die
-werkmap wijzen, dus elke samenstelling loopt via `safe_join` en elke kopie langs
+A chart path from a project file and a `file://` dependency from the `Chart.yaml` of a
+cloned repo are both glued onto a working directory. `os.path.join` ignores its first
+argument the moment the second is absolute, and a symlink in the clone can point outside
+that working directory, so every join goes through `safe_join` and every copy past
 `reject_escaping_symlinks`.
 """
 
@@ -14,10 +14,11 @@ from pathlib import Path
 
 
 def safe_join(root: str, *parts: str) -> str:
-    """Plak `parts` achter `root` en geef het genormaliseerde pad terug.
+    """Join `parts` onto `root` and return the normalised path.
 
     Raises:
-        ValueError: Als het pad na normalisatie en symlink-resolutie buiten `root` ligt.
+        ValueError: when the path lies outside `root` after normalisation and symlink
+            resolution.
     """
     resolved_root = Path(root).resolve()
     candidate = Path(root).joinpath(*parts).resolve()
@@ -29,26 +30,26 @@ def safe_join(root: str, *parts: str) -> str:
 
 
 def single_segment(value: object, field: str) -> str:
-    """Toets dat `value` één padsegment is: geen scheidingsteken, geen '.' of '..'.
+    """Check that `value` is a single path segment: no separator, no '.' or '..'.
 
     Raises:
-        ValueError: Als de waarde geen string is, leeg is, een scheidingsteken bevat,
-            of met een punt begint.
+        ValueError: when the value is not a string, is empty, holds a separator, or
+            starts with a dot.
     """
     if not isinstance(value, str):
-        raise ValueError(f"Veld '{field}' moet een string zijn, niet {type(value).__name__}")  # noqa: TRY004
+        raise ValueError(f"Veld '{field}' moet een string zijn, niet {type(value).__name__}")  # noqa: TRY004  # the caller handles one error type, so a type mismatch raises ValueError too
     if not value or "/" in value or "\\" in value or value.startswith("."):
         raise ValueError(f"Ongeldige waarde '{value}' voor '{field}': verwacht één padsegment")
     return value
 
 
 def reject_escaping_symlinks(root: str) -> None:
-    """Weiger een boom met een symlink die buiten `root` wijst.
+    """Refuse a tree holding a symlink that points outside `root`.
 
-    `.git` blijft buiten de toets: de kopielus slaat die map ook over.
+    `.git` stays out of the check: the copy loop skips that directory as well.
 
     Raises:
-        ValueError: Bij de eerste symlink onder `root` waarvan het doel erbuiten ligt.
+        ValueError: on the first symlink under `root` whose target lies outside it.
     """
     resolved_root = Path(root).resolve()
 

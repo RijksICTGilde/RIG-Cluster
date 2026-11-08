@@ -45,7 +45,7 @@ from argo_rotation import (  # type: ignore[reportMissingImports]
 )
 from key_rotation import (  # type: ignore[reportMissingImports]
     PROJECT_FIELD_PRIVATE_KEY,
-    ConversionFailed,
+    ConversionError,
     Fingerprint,
     LooseValue,
     MissingKey,
@@ -982,7 +982,7 @@ async def run_backup_round(
             continue
         try:
             conversion = await convert_value(content, platform_private, kek_public)
-        except ConversionFailed as e:
+        except ConversionError as e:
             result.unreadable.append(f"{name}: {e}")
             continue
         result.fingerprint_before.set(name, conversion.sha256_before)

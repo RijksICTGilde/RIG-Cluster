@@ -89,7 +89,7 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
     if tracking_id:
         app_name = application_name_from_tracking_id(tracking_id)
     else:
-        # The label method. Taken only in the annotation's absence, so a resource ArgoCD
+        # The label method. Used only in the annotation's absence, so a resource ArgoCD
         # tracks by annotation is never claimed by a label another tool left behind.
         app_name = ((metadata.get("labels") or {}).get(INSTANCE_LABEL) or "").strip() or None
 

@@ -81,7 +81,7 @@ from opi.utils.age import (  # noqa: E402
 # rondes ernaast en door de toetsen: die kennen dit bestand als de ingang.
 from opi.utils.key_rotation import (  # noqa: E402
     Conversion,  # noqa: F401
-    ConversionFailed,
+    ConversionError,
     Form,  # noqa: F401
     convert_value,
     decrypt_field,
@@ -503,7 +503,7 @@ def sops_rotate(path: str | Path, old_public_key: str, new_public_key: str, old_
         env={**os.environ, "SOPS_AGE_KEY": old_private_key},
     )
     if process.returncode != 0:
-        raise ConversionFailed(f"sops rotate failed on {path}: {process.stderr.strip()}")
+        raise ConversionError(f"sops rotate failed on {path}: {process.stderr.strip()}")
 
 
 # places 2 and 3: loose encrypted values, outside a SOPS file and outside a project file
@@ -585,13 +585,13 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
     if field_.line_number is None:
         text = path.read_text(encoding="utf-8")
         if field_.value not in text:
-            raise ConversionFailed(f"{path} no longer holds the expected value")
+            raise ConversionError(f"{path} no longer holds the expected value")
         content = text.replace(field_.value, new_value)
     else:
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         index = field_.line_number - 1
         if field_.value not in lines[index]:
-            raise ConversionFailed(f"{path}:{field_.line_number} no longer holds the expected value")
+            raise ConversionError(f"{path}:{field_.line_number} no longer holds the expected value")
         lines[index] = lines[index].replace(field_.value, new_value)
         content = "".join(lines)
 
@@ -801,7 +801,7 @@ def set_project_field(data: dict[str, Any], field_name: str, new_value: str) -> 
         return
     match = re.fullmatch(r"repositories\[(\d+)\]\.password", field_name)
     if not match:
-        raise ConversionFailed(f"unknown project field: {field_name}")
+        raise ConversionError(f"unknown project field: {field_name}")
     data["repositories"][int(match.group(1))]["password"] = to_write
 
 
@@ -913,7 +913,7 @@ async def rotate_project_file(
     round_report = ProjectRound(path=path)
     new_public_key = new_public_key or public_key_of(new_private_key)
     if new_pat is not None and current_pat is None:
-        raise ConversionFailed("a PAT round needs the current PAT: without it every value is replaced blindly")
+        raise ConversionError("a PAT round needs the current PAT: without it every value is replaced blindly")
 
     data = load_yaml_from_path(str(path))
     if not isinstance(data, dict):

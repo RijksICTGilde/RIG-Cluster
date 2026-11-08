@@ -1,21 +1,21 @@
-"""De omgeving voor kindprocessen: `os.environ` zonder de geheimen van het platform.
+"""The environment for child processes: `os.environ` without the platform secrets.
 
-Elke git, kubectl, mc, kopia, pg_dump en sops die OPI start erfde de volledige omgeving,
-en daarmee de platformsleutel en elk beheerwachtwoord, zichtbaar in `/proc/<pid>/environ`.
-Wat een kindproces echt nodig heeft, geeft de aanroeper mee via `extra`.
+Every git, kubectl, mc, kopia, pg_dump and sops OPI starts used to inherit the full
+environment, and with it the platform key and every admin password, visible in
+`/proc/<pid>/environ`. What a child process really needs, the caller passes in `extra`.
 """
 
 from __future__ import annotations
 
 import os
 
-# De prefix weert ook SOPS_AGE_KEY_FILE: sops leest die naam zelf en zou dan op de
-# platformsleutel ontsleutelen zonder dat de aanroeper iets meegaf. PROJECT_KEK_ staat er
-# om dezelfde reden: dat is de sleutel die elk projectgeheim opent (RC-334).
+# The prefix also keeps out SOPS_AGE_KEY_FILE: sops reads that name itself and would then
+# decrypt on the platform key without the caller passing anything. PROJECT_KEK_ is here for
+# the same reason: it is the key that opens every project secret (RC-334).
 PLATFORM_SECRET_PREFIXES: tuple[str, ...] = ("SOPS_AGE_", "PROJECT_KEK_")
 
-# Volledige inhoud van deployment env-bronnen; toets faalt op onbekende secretRef. Ook wat
-# geen sleutelmateriaal is erft niet mee: ADMIN_EMAILS en ALLOWED_EMAILS zijn persoonsgegevens.
+# The full contents of the deployment env sources; a test fails on an unknown secretRef. What
+# is not key material is kept out too: ADMIN_EMAILS and ALLOWED_EMAILS are personal data.
 PLATFORM_SECRET_NAMES: frozenset[str] = frozenset(
     {
         "ADMIN_EMAILS",
@@ -66,12 +66,11 @@ PLATFORM_SECRET_NAMES: frozenset[str] = frozenset(
 
 
 def is_platform_secret(name: str) -> bool:
-    """Draagt deze omgevingsnaam een geheim van het platform."""
     return name in PLATFORM_SECRET_NAMES or name.startswith(PLATFORM_SECRET_PREFIXES)
 
 
 def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    """De omgeving van dit proces zonder platformgeheimen, aangevuld met `extra`."""
+    """This process's environment without the platform secrets, with `extra` on top."""
     env = {name: value for name, value in os.environ.items() if not is_platform_secret(name)}
     if extra:
         env.update(extra)

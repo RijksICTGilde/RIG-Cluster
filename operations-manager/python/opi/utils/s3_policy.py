@@ -1,26 +1,25 @@
-"""Het policy-document dat een identiteit toegang geeft tot een bucket, en niets anders.
+"""The policy document that gives an identity access to one bucket and nothing else.
 
-Eén plek voor twee object-storage-services (RC-331 besluit 3): `minio-storage` en
-`seaweedfs-storage` delen de isolatie, dus ze delen het document. Wijkt het per service,
-dan wijkt de isolatie per service.
+One place for two object storage services (RC-331, decision 3): `minio-storage` and
+`seaweedfs-storage` share the isolation, so they share the document. If it differs per
+service, the isolation differs per service.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-#: De rechten die de managers altijd samen vragen. Een losse keuze bestaat nergens in de
-#: codebase; het argument blijft omdat `MinioConnector.grant_bucket_access` hem publiek
-#: aanbiedt.
+#: The permissions the managers always ask for together. No caller picks a subset; the
+#: argument stays because `MinioConnector.grant_bucket_access` offers it publicly.
 ALL_BUCKET_PERMISSIONS = ["read", "write", "delete", "list"]
 
 
 def bucket_access_policy(bucket: str, permissions: list[str]) -> dict[str, Any]:
-    """Het document voor ``bucket``, met de acties die ``permissions`` toestaat.
+    """The document for ``bucket``, with the actions ``permissions`` allows.
 
-    Op de bucket-ARN alleen opsommen en lezen van bucket-eigenschappen, op de objecten de
-    datarechten. Geen ``s3:ListAllMyBuckets``: wie deze policy heeft, ziet de andere
-    buckets niet.
+    Listing and reading bucket properties on the bucket ARN, the data permissions on the
+    objects. No ``s3:ListAllMyBuckets``: whoever holds this policy does not see the other
+    buckets.
     """
     statements: list[dict[str, Any]] = []
 
@@ -30,11 +29,11 @@ def bucket_access_policy(bucket: str, permissions: list[str]) -> dict[str, Any]:
                 "Effect": "Allow",
                 "Action": [
                     "s3:ListBucket",
-                    # SeaweedFS eist deze actie voor ListObjectVersions (RC-331, rij G7);
-                    # MinIO dekt die aanroep al met s3:ListBucket, dus daar geeft hij niets
-                    # nieuws. Staat op de bucket-ARN en niet op *.
+                    # SeaweedFS demands this action for ListObjectVersions (RC-331, row G7);
+                    # MinIO already covers that call with s3:ListBucket, so it adds nothing
+                    # there. Sits on the bucket ARN and not on *.
                     "s3:ListBucketVersions",
-                    # Nodig voor applicaties als Grist, die de versioning-stand uitlezen.
+                    # Needed by applications such as Grist, which read the versioning state.
                     "s3:GetBucketVersioning",
                     "s3:GetBucketLocation",
                 ],

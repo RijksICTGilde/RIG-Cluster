@@ -37,7 +37,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
-    ConversionFailed,
+    ConversionError,
     FinalCheck,
     Fingerprint,
     Form,
@@ -241,7 +241,7 @@ async def test_a_value_that_does_not_open_with_the_old_key_is_refused(
 @pytest.mark.asyncio
 async def test_plain_text_never_reaches_the_loop(key_pair_a: tuple[str, str]) -> None:
     private_a, _public_a = key_pair_a
-    with pytest.raises(ConversionFailed):
+    with pytest.raises(ConversionError):
         await convert_value("just-a-password", private_a, "age1whatever")
 
 
@@ -496,7 +496,7 @@ def test_write_loose_value_refuses_when_the_line_moved(tmp_path: Path) -> None:
     path.write_text(f"A={SHAPED}\n")
     field_ = loose_values(path)[0]
     path.write_text("A=something-else\n")
-    with pytest.raises(ConversionFailed):
+    with pytest.raises(ConversionError):
         write_loose_value(field_, SHAPED_TOO)
 
 
@@ -894,7 +894,7 @@ async def test_a_pat_round_without_the_current_pat_is_refused(
     await _write_project(path, public_a, generate_sops_key_pair())
     before = path.read_text()
 
-    with pytest.raises(ConversionFailed, match="needs the current PAT"):
+    with pytest.raises(ConversionError, match="needs the current PAT"):
         await rotate_project_file(path, private_a, private_b, new_pat="ghp_brand_new", dry_run=False)
 
     assert path.read_text() == before

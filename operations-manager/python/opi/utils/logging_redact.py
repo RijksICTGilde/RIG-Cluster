@@ -5,13 +5,13 @@ carry credentials (``Authorization: Bearer …``, ``X-API-Key``, cookies). Loggi
 them verbatim leaks live tokens into the log stream. Always run header dicts
 through :func:`redact_sensitive_headers` before logging them.
 
-:class:`SecretRedactionFilter` vangt geheimen op in berichten van elke bibliotheek;
-:func:`redact_text` doet hetzelfde voor tekst buiten logregels, zoals ``error_message``,
-en :func:`redact_structure` voor de tekstvelden in een dict die naar de client gaat.
+:class:`SecretRedactionFilter` catches secrets in the messages of any library;
+:func:`redact_text` does the same for text outside log records, such as ``error_message``,
+and :func:`redact_structure` for the text fields of a dict that goes to the client.
 
-Een geheim dat je wel moet kunnen VOLGEN door de log (een uitnodigingssleutel over een
-reeks verzoeken) gaat door :func:`fingerprint_for_log`. Staat het geheim in een URL-PAD,
-dan is dat :func:`redact_invite_key_in_path`.
+A secret you do have to FOLLOW through the log (an invite key across a series of requests)
+goes through :func:`fingerprint_for_log`. When the secret sits in a URL PATH, that is
+:func:`redact_invite_key_in_path`.
 """
 
 import hashlib
@@ -34,45 +34,45 @@ _SENSITIVE_HEADERS = frozenset(
 
 _REDACTED = "***REDACTED***"
 
-# Dezelfde namen, maar zonder "cookie": dat woord staat ook in gewone logregels
-# ("Failed to decode session cookie: <fout>") en zou daar de fouttekst opvreten. Een
-# cookiewaarde in een header-dict loopt al door redact_sensitive_headers.
+# The same names, but without "cookie": that word also appears in ordinary log records
+# ("Failed to decode session cookie: <error>") where it would eat the error text. A cookie
+# value in a header dict already passes through redact_sensitive_headers.
 _HEADER_NAMES = "|".join(sorted(_SENSITIVE_HEADERS - {"cookie", "set-cookie"}, key=len, reverse=True))
 
-# Elk patroon maskeert alleen de waarde, zodat de logregel zijn vorm houdt.
+# Every pattern masks the value only, so the log record keeps its shape.
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Een credential-header met zijn waarde, bijvoorbeeld "X-API-Key: abc123". Het schema
-    # hoort bij de waarde, zodat "Authorization: Bearer x" een keer wordt gemaskeerd.
-    # Basic staat erbij naast Bearer: zonder dat blijft de base64-credential naast het
-    # merkteken staan, en dan meldt de regel een redactie die niet gebeurd is.
+    # A credential header with its value, for instance "X-API-Key: abc123". The scheme
+    # belongs to the value, so that "Authorization: Bearer x" is masked once. Basic sits
+    # beside Bearer: without it the base64 credential stays next to the marker, and the
+    # record then reports a redaction that did not happen.
     (
         re.compile(rf"(?i)\b({_HEADER_NAMES})(['\"]?\s*[:=]\s*['\"]?)(?:(?:Bearer|Basic)\s+)?[^\s,;'\"}}]+"),
         rf"\1\2{_REDACTED}",
     ),
-    # Een Bearer-token in vrije tekst. Minimaal 20 tekens, anders vangt dit ook een zin
-    # als "Bearer authentication failed for route".
+    # A Bearer token in free text. At least 20 characters, otherwise this also catches a
+    # sentence such as "Bearer authentication failed for route".
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]{20,}=*"), rf"\1{_REDACTED}"),
-    # password=waarde, zoals in een URL, een commandoregel of een env-dump.
+    # password=value, as in a URL, a command line or an env dump.
     (re.compile(r"(?i)(password\s*=\s*)[^\s,;&'\"]+"), rf"\1{_REDACTED}"),
-    # "password": "waarde" in JSON. De sleutel moet gequoteerd zijn, anders vangt dit ook
-    # "Failed to decrypt registry password: <fout>".
+    # "password": "value" in JSON. The key has to be quoted, otherwise this also catches
+    # "Failed to decrypt registry password: <error>".
     (re.compile(r"(?i)(\"password\"\s*:\s*\")[^\"]*"), rf"\1{_REDACTED}"),
-    # PASSWORD 'waarde' uit SQL: CREATE ROLE, ALTER ROLE en ALTER USER zetten het wachtwoord
-    # zo neer, en ENCRYPTED PASSWORD valt onder hetzelfde patroon. De optionele = dekt
-    # password='waarde', dat het patroon hierboven laat staan omdat de waarde gequoteerd is.
-    # Dollar-quoting staat er niet bij: die vorm komt in deze codebase niet voor.
-    # De twee quantifiers zijn possessief (``*+``): met gewone ``*`` is dit patroon
-    # kwadratisch op "password" gevolgd door een lange witruimtereeks zonder ``'`` erna,
-    # en dit filter draait synchroon op de event loop. Witruimte, ``=`` en ``'`` sluiten
-    # elkaar uit, dus terugkrabbelen kan hier nooit een match opleveren.
+    # PASSWORD 'value' from SQL: CREATE ROLE, ALTER ROLE and ALTER USER write the password
+    # that way, and ENCRYPTED PASSWORD falls under the same pattern. The optional = covers
+    # password='value', which the pattern above leaves alone because the value is quoted.
+    # Dollar quoting is not here: that shape does not occur in this codebase.
+    # The two quantifiers are possessive (``*+``): with a plain ``*`` this pattern is
+    # quadratic on "password" followed by a long run of whitespace with no ``'`` after it,
+    # and this filter runs synchronously on the event loop. Whitespace, ``=`` and ``'``
+    # exclude one another, so backtracking can never produce a match here.
     (re.compile(r"(?i)(password\s*+=?\s*+)'[^']*'"), rf"\1'{_REDACTED}'"),
-    # Een AGE-privésleutel, waar hij ook in de regel staat.
+    # An AGE private key, wherever it sits in the record.
     (re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]+"), f"AGE-SECRET-KEY-{_REDACTED}"),
-    # Een API-token (RC-322): ``zad_`` plus 43 url-veilige tekens. Het voorvoegsel maakt de
-    # vorm zelfstandig herkenbaar, dus dit vangnet werkt ook waar het token NIET in een
-    # bekende header staat. Vandaag logt niets de waarde; dit is er voor de volgende
-    # logregel die hem per ongeluk meeneemt. De 40 is lager dan de 43 van
-    # ``secrets.token_urlsafe(32)``, zodat een afgekapte waarde ook valt.
+    # An API token (RC-322): ``zad_`` plus 43 url-safe characters. The prefix makes the shape
+    # recognisable on its own, so this net also works where the token is NOT in a known
+    # header. Nothing logs the value today; this is here for the next log record that takes
+    # it along by accident. The 40 is below the 43 of ``secrets.token_urlsafe(32)``, so a
+    # truncated value falls in as well.
     (re.compile(r"zad_[A-Za-z0-9_-]{40,}"), f"zad_{_REDACTED}"),
 )
 
@@ -87,17 +87,17 @@ def redact_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:
 
 
 def redact_text(text: str) -> str:
-    """Maskeer bekende geheimvormen in een vrije tekst."""
+    """Mask the known secret shapes in a free text."""
     for pattern, replacement in _SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
 
 
 def redact_structure(value: Any) -> Any:
-    """Maskeer geheimvormen in elke tekenreeks binnen een dict, een lijst of een tekst.
+    """Mask the secret shapes in every string inside a dict, a list or a text.
 
-    Voor het ``result``-veld van een taak: dat gaat als JSON naar de client en draagt
-    dezelfde fouttekst als ``error_message``.
+    For the ``result`` field of a task: that goes to the client as JSON and carries the same
+    error text as ``error_message``.
     """
     if isinstance(value, str):
         return redact_text(value)
@@ -112,28 +112,27 @@ _EXCEPTION_FORMATTER = logging.Formatter()
 
 
 class SecretRedactionFilter(logging.Filter):
-    """Maskeert bekende geheimvormen in elk bericht, elke traceback en elke stack die een
-    handler bereikt."""
+    """Masks the known secret shapes in every message, traceback and stack reaching a handler."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             message = record.getMessage()
         except TypeError, ValueError:
-            # Bericht en args passen niet bij elkaar; formatter meldt de fout. De traceback
-            # eronder hoort nog wel gemaskeerd te worden.
+            # Message and args do not fit together; the formatter reports that error. The
+            # traceback below it still has to be masked.
             message = ""
 
         redacted = redact_text(message)
         if redacted != message:
-            # De args zitten al in het bericht, dus ze moeten weg: anders zet een tweede
-            # formatteerronde het geheim terug.
+            # The args are already in the message, so they have to go: a second formatting
+            # round would otherwise put the secret back.
             record.msg = redacted
             record.args = None
 
         if record.exc_info and not record.exc_text:
-            # Zelf formatteren: de formatter doet dat pas na dit filter, en dan is een geheim
-            # in het exception-bericht al in de log beland. Onze handlers gebruiken een
-            # gewone Formatter, dus de uitvoer blijft dezelfde.
+            # Formatted here: the formatter only does that after this filter, by which time a
+            # secret in the exception message has already reached the log. Our handlers use a
+            # plain Formatter, so the output stays the same.
             record.exc_text = _EXCEPTION_FORMATTER.formatException(record.exc_info)
         if record.exc_text:
             record.exc_text = redact_text(record.exc_text)
@@ -143,25 +142,25 @@ class SecretRedactionFilter(logging.Filter):
 
 
 def fingerprint_for_log(value: str) -> str:
-    """Een korte, niet terug te rekenen vingerafdruk van een geheim, voor de log.
+    """A short, non-reversible fingerprint of a secret, for the log.
 
-    Acht hex-tekens van de SHA-256: genoeg om twee logregels over hetzelfde geheim aan
-    elkaar te knopen, te weinig om het geheim zelf te zijn.
+    Eight hex characters of the SHA-256: enough to tie two log records about the same secret
+    together, too little to be the secret itself.
     """
     return hashlib.sha256(value.encode()).hexdigest()[:8]
 
 
-#: Het pad van de publieke uitnodigingsroutes. De sleutel is het segment achter
-#: ``/invite/``; wat erachter staat (``/register``, ``/sso/callback``) blijft staan.
+#: The path of the public invite routes. The key is the segment behind ``/invite/``; what
+#: follows it (``/register``, ``/sso/callback``) stays as it is.
 _INVITE_PATH = re.compile(r"(/invite/)([^/?\s]+)")
 
 
 def redact_invite_key_in_path(path: str) -> str:
-    """Vervang de uitnodigingssleutel in een URL-pad door zijn vingerafdruk.
+    """Replace the invite key in a URL path with its fingerprint.
 
-    De sleutel is een bearer-geheim en staat in het pad, dus elke regel die een pad
-    letterlijk logt zet hem in de log. De routes loggen hem zelf als vingerafdruk; dit is
-    dezelfde omzetting voor elke regel die een heel pad schrijft, van de access-log van
-    uvicorn tot de foutregels in de middleware.
+    The key is a bearer secret and sits in the path, so every record that logs a path
+    verbatim puts it in the log. The routes log it as a fingerprint themselves; this is the
+    same conversion for every record that writes a whole path, from the uvicorn access log
+    to the error records in the middleware.
     """
     return _INVITE_PATH.sub(lambda match: match.group(1) + fingerprint_for_log(match.group(2)), path)

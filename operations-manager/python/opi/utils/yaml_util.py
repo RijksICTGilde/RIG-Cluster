@@ -1,7 +1,7 @@
-"""
-Generic YAML utility module for loading, finding, and updating YAML files using JSONPath.
+"""Loading, querying and updating YAML files, with JSONPath for the queries.
 
-This module provides centralized utilities for YAML file operations using JSONPath expressions.
+The canonical writer lives here: every write path to a project file goes through
+``_create_yaml_writer``, so the styling rules hold once instead of per caller.
 """
 
 import functools
@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=4096)
 def compiled_jsonpath(path: str) -> JSONPath:
-    """Een gecompileerde jsonpath-expressie, gedeeld over alle aanroepers.
+    """A compiled jsonpath expression, shared across all callers.
 
-    ``jsonpath_ng.ext.parse`` bouwt per aanroep de ply-parser opnieuw op (7,4 ms tegen
-    0,026 ms voor de ``find()`` erna), en het refreshpad parst er tientallen per
-    deployment. Alleen de EXPRESSIE komt in de cache, nooit data of resultaten: de
-    sleutel is uitsluitend de padstring en de nodes van jsonpath_ng zetten hun
-    attributen enkel in ``__init__``, dus delen tussen projecten en taken is veilig.
-    Geef de expressie niet door aan code die er attributen op zet.
+    ``jsonpath_ng.ext.parse`` rebuilds the ply parser on every call (7.4 ms against 0.026 ms
+    for the ``find()`` after it), and the refresh path parses dozens of them per deployment.
+    Only the EXPRESSION is cached, never data or results: the key is the path string alone
+    and the nodes of jsonpath_ng set their attributes in ``__init__`` only, so sharing them
+    between projects and tasks is safe. Do not hand the expression to code that sets
+    attributes on it.
     """
     return jsonpath_parse(path)
 
@@ -97,15 +97,7 @@ def _create_yaml_writer() -> YAML:
 
 
 def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
-    """
-    Load YAML content from a file path.
-
-    Args:
-        file_path: Path to the YAML file
-
-    Returns:
-        Parsed YAML data as dictionary, or None if loading failed
-    """
+    """The parsed YAML, or None when the file is missing or does not parse."""
     try:
         if not os.path.exists(file_path):
             logger.error(f"YAML file not found: {file_path}")
@@ -126,8 +118,7 @@ def load_yaml_from_path(file_path: str) -> dict[str, Any] | None:
 
 
 def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
-    """
-    Save YAML data to a file path, atomically.
+    """Save YAML data to a file path, atomically.
 
     The dump goes to a temporary file in the same directory and is then moved into place
     with os.replace, which is atomic on a single filesystem. A reader therefore sees either
@@ -137,13 +128,6 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
     truncates first: a dump that raised partway (an unrepresentable value reaching the
     dumper) left a truncated or empty file behind, which a subsequent commit would then
     happily publish. Callers also ignored the False return, so that damage was silent.
-
-    Args:
-        file_path: Path where to save the YAML file
-        data: Dictionary containing YAML data
-
-    Returns:
-        True if the save succeeded.
 
     Raises:
         OSError, ValueError: propagated from the dump or the move. Deliberately raised
@@ -176,17 +160,7 @@ def save_yaml_to_path(file_path: str, data: dict[str, Any]) -> bool:
 
 
 def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = None) -> Any:
-    """
-    Find a value in YAML data using JSONPath expression.
-
-    Args:
-        data: YAML data as dictionary
-        json_path: JSONPath expression to query the data
-        default: Default value to return if path not found
-
-    Returns:
-        The value found at the JSONPath, or default if not found
-    """
+    """The value at ``json_path``, or ``default`` when the path matches nothing."""
     try:
         if not data:
             return default
@@ -202,15 +176,7 @@ def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = 
 
 
 def load_yaml_from_string(yaml_string: str) -> dict[str, Any] | None:
-    """
-    Load YAML content from a string.
-
-    Args:
-        yaml_string: YAML content as string
-
-    Returns:
-        Parsed YAML data as dictionary, or None if parsing failed
-    """
+    """The parsed YAML, or None when the text does not parse."""
     try:
         yaml = YAML()
         yaml.preserve_quotes = True
@@ -226,14 +192,7 @@ def load_yaml_from_string(yaml_string: str) -> dict[str, Any] | None:
 
 
 def dump_yaml_to_string(data: dict[str, Any]) -> str:
-    """
-    Dump YAML data to a string.
-
-    Args:
-        data: Dictionary containing YAML data
-
-    Returns:
-        YAML content as string
+    """Dump YAML data to a string through the canonical writer.
 
     Raises:
         Propagates any dumper error. It previously returned "" on failure, which is a
@@ -292,17 +251,7 @@ def dump_yaml_documents_to_string(documents: list[Any]) -> str:
 
 
 def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: Any) -> bool:
-    """
-    Update a value in YAML data using JSONPath expression.
-
-    Args:
-        data: YAML data as dictionary (will be modified in-place)
-        json_path: JSONPath expression to the field to update
-        new_value: New value to set
-
-    Returns:
-        True if update was successful, False otherwise
-    """
+    """Set the value at ``json_path`` in ``data`` in place. False when the path matches nothing."""
     try:
         if not data:
             logger.error("Cannot update value in empty data")
@@ -315,7 +264,6 @@ def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: An
             logger.error(f"JSONPath '{json_path}' not found in data")
             return False
 
-        # Update the first match (there should typically be only one)
         matches[0].full_path.update(data, new_value)
 
         logger.debug(f"Successfully updated JSONPath '{json_path}' to: {new_value}")

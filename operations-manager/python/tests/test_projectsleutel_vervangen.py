@@ -31,7 +31,7 @@ from opi.manager.backup.base import BaseBackupManager, derive_backup_password
 from opi.services.project_store import ProjectNotFoundError, ProjectStoreError
 from opi.utils import key_rotation
 from opi.utils.age import encrypt_age_content
-from opi.utils.key_rotation import ConversionFailed, decrypt_field, opens_with, rotate_project_key
+from opi.utils.key_rotation import ConversionError, decrypt_field, opens_with, rotate_project_key
 from opi.utils.sops import generate_sops_key_pair
 
 
@@ -111,8 +111,8 @@ async def test_een_veld_dat_niet_omgezet_kan_worden_breekt_de_hele_omzetting_af(
     before = copy.deepcopy(project_data)
 
     with (
-        patch.object(key_rotation, "convert_value", AsyncMock(side_effect=ConversionFailed("gaat niet open"))),
-        pytest.raises(ConversionFailed),
+        patch.object(key_rotation, "convert_value", AsyncMock(side_effect=ConversionError("gaat niet open"))),
+        pytest.raises(ConversionError),
     ):
         await rotate_project_key(project_data, project_pair[0], new_public)
 
@@ -130,7 +130,7 @@ async def test_een_veld_dat_de_oude_sleutel_nog_opent_is_een_fout(
 
     with (
         patch.object(key_rotation, "convert_value", AsyncMock(return_value=unchanged)),
-        pytest.raises(ConversionFailed, match="nog met de oude projectsleutel open"),
+        pytest.raises(ConversionError, match="nog met de oude projectsleutel open"),
     ):
         await rotate_project_key(project_data, project_pair[0], new_public)
 
@@ -384,8 +384,8 @@ async def test_een_mislukte_omzetting_slaat_niets_op(
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "rotate_project_key", AsyncMock(side_effect=ConversionFailed("gaat niet open"))),
-        pytest.raises(ConversionFailed),
+        patch.object(handlers, "rotate_project_key", AsyncMock(side_effect=ConversionError("gaat niet open"))),
+        pytest.raises(ConversionError),
     ):
         await handlers.handle_rotate_project_key({"project_name": "demo"}, progress)
 

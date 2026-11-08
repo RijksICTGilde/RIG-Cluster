@@ -232,6 +232,25 @@ de baseline binnen met `extend`, dus de handgeschreven uitzonderingen staan daar
 overtreedt, zodat een opgeruimd bestand ook echt van de lijst gaat, en
 `tests/test_code_conventions.py` pint de herkenning en de ratchet vast.
 
+### Aantonen dat een opruimronde alleen tekst veranderde
+
+`ast_equivalence.py` vergelijkt per bestand de AST tussen twee commits, met docstrings
+weggelaten. Commentaar staat niet in de AST, dus een bestand waarvan alleen commentaar en
+docstrings zijn herschreven komt als `SAME` uit de vergelijking; een gewijzigde string literal,
+een verschoven statement of een hernoemde naam als `DIFFER`, met de functie erbij waarin het
+verschil zit.
+
+```bash
+python3 scripts/ast_equivalence.py --base <ref> operations-manager/python/opi/utils/qr.py
+python3 scripts/ast_equivalence.py --base <ref> --rename oud=nieuw <pad>...
+```
+
+`--rename old=new` hernoemt identifiers in de BASE-boom voordat hij vergelijkt, zodat een module
+met vertaalde Nederlandse namen alsnog aantoonbaar verder onaangeroerd is: wat de tabel niet dekt,
+blijft als verschil zichtbaar. Geef zo'n tabel per module mee, niet een tabel voor alle modules
+samen: twee modules kunnen dezelfde oude naam naar een andere nieuwe hebben gezet.
+`--head` staat default op de werkboom. `tests/test_ast_equivalence.py` pint het vast.
+
 ## De rest
 
 | bestand | doet |

@@ -1,13 +1,13 @@
-"""De lus die een versleutelde waarde van de ene AGE-sleutel naar de andere zet.
+"""The loop that moves an encrypted value from one AGE key to another.
 
-Die lus (``convert_value`` en wat eraan vastzit) stond in ``scripts/key_rotation.py`` en
-staat hier, zodat OPI en de rotatiescripts er één exemplaar van delen; het script
-importeert deze namen. De tekst eromheen is daarom Engels: het is verplaatste code.
+That loop (``convert_value`` and what hangs off it) used to live in
+``scripts/key_rotation.py`` and sits here, so OPI and the rotation scripts share one copy
+of it; the script imports these names.
 
-``rotate_project_key`` is de ronde over één projectbestand. Elke waarde die met de oude
-projectsleutel opengaat gaat naar de nieuwe publieke sleutel; wat niet met die sleutel
-opengaat (``config.age-private-key`` en ``repositories[].password`` staan op de
-platformsleutel) blijft precies staan.
+``rotate_project_key`` is the round over one project file. Every value that opens with the
+old project key moves to the new public key; what does not open with that key
+(``config.age-private-key`` and ``repositories[].password`` sit on the platform key) stays
+exactly as it is.
 """
 
 from __future__ import annotations
@@ -46,11 +46,8 @@ class Form(StrEnum):
     BASE64 = "base64+age"
 
 
-class ConversionFailed(RuntimeError):
+class ConversionError(RuntimeError):
     """A field does not open with the old key, or does not open with the new one afterwards."""
-
-
-# the one loop
 
 
 def form_of(value: object) -> Form | None:
@@ -111,7 +108,7 @@ async def convert_value(
     """
     form = form_of(value)
     if form is None:
-        raise ConversionFailed("value is not encrypted and should not reach this loop")
+        raise ConversionError("value is not encrypted and should not reach this loop")
 
     plain_before = await decrypt_age_content(to_age_block(value, form), old_private_key)
     plain_after = new_plaintext if new_plaintext is not None else plain_before
@@ -142,9 +139,9 @@ async def decrypt_field(value: str, private_key: str) -> str | None:
     try:
         return await decrypt_age_content(to_age_block(value, form), private_key)
     except AgeDecryptionError, binascii.Error, UnicodeDecodeError:
-        # Alleen "deze sleutel opent het niet" of een onleesbare vorm geeft None. Elke andere
-        # fout moet doorbreken: de eindcontrole leest een None als "staat niet op de oude
-        # sleutel meer" en zou een veld dat wel degelijk achterbleef zo missen.
+        # Only "this key does not open it" or an unreadable shape gives None. Every other
+        # error has to break through: the final check reads a None as "no longer on the old
+        # key" and would miss a field that did in fact stay behind.
         return None
 
 
@@ -153,12 +150,9 @@ async def opens_with(value: str, private_key: str) -> bool:
     return await decrypt_field(value, private_key) is not None
 
 
-# de ronde over één projectbestand
-
-
 @dataclass(frozen=True)
 class EncryptedField:
-    """Een versleutelde waarde in de boom, met de plek waar hij teruggeschreven wordt."""
+    """An encrypted value in the tree, with the place it is written back to."""
 
     path: str
     value: str
@@ -171,7 +165,7 @@ class EncryptedField:
 
 @dataclass
 class RotationResult:
-    """Wat de omzetting met één projectbestand deed: veldpaden, nooit waarden."""
+    """What the conversion did with one project file: field paths, never values."""
 
     data: dict[str, Any]
     rotated: list[str] = field(default_factory=list)
@@ -179,10 +173,10 @@ class RotationResult:
 
 
 def encrypted_fields(node: Any, path: str = "") -> Iterator[EncryptedField]:
-    """Elke versleutelde waarde in de boom, met een veldpad als ``components[0].aliases``.
+    """Every encrypted value in the tree, with a field path such as ``components[0].aliases``.
 
-    Op de vorm van de waarde en niet op een lijst met velden: een dienst kan eigen
-    versleutelde config dragen, en die moet door dezelfde lus.
+    On the shape of the value and not on a list of fields: a service can carry encrypted
+    config of its own, and that has to go through the same loop.
     """
     if isinstance(node, dict):
         for key, value in node.items():
@@ -201,15 +195,15 @@ def encrypted_fields(node: Any, path: str = "") -> Iterator[EncryptedField]:
 
 
 async def rotate_project_key(project_data: dict[str, Any], old_private_key: str, new_public_key: str) -> RotationResult:
-    """Zet elk veld dat op de oude projectsleutel staat om naar de nieuwe publieke sleutel.
+    """Move every field on the old project key to the new public key.
 
-    Werkt op een kopie: ``project_data`` blijft onaangeroerd, ook als de omzetting afbreekt.
-    Het nieuwe sleutelpaar zelf zet deze functie niet in ``config``; dat doet de aanroeper,
-    na de omzetting.
+    Works on a copy: ``project_data`` stays untouched, even when the conversion breaks off.
+    This function does not put the new key pair in ``config`` itself; the caller does that,
+    after the conversion.
 
     Raises:
-        ConversionFailed: als een veld na de omzetting nog met de oude projectsleutel
-            opengaat. Dan komt er geen half omgezette boom terug.
+        ConversionError: when a field still opens with the old project key after the
+            conversion. No half-converted tree comes back then.
     """
     data = copy.deepcopy(project_data)
     result = RotationResult(data=data)
@@ -224,7 +218,7 @@ async def rotate_project_key(project_data: dict[str, Any], old_private_key: str,
 
     left_behind = [field_.path for field_ in encrypted_fields(data) if await opens_with(field_.value, old_private_key)]
     if left_behind:
-        raise ConversionFailed(
+        raise ConversionError(
             f"deze velden gaan na de omzetting nog met de oude projectsleutel open: {', '.join(left_behind)}"
         )
 

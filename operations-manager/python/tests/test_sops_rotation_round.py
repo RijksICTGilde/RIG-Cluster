@@ -47,7 +47,7 @@ import sops_rotation as tool  # noqa: E402
 from key_rotation import (  # noqa: E402
     AGE_KEY_MARKER,
     LOOSE_VALUE_FILES,
-    ConversionFailed,
+    ConversionError,
     FinalCheck,
     Fingerprint,
     decrypt_field,
@@ -1229,7 +1229,7 @@ def test_sops_rotate_names_the_file_and_leaves_it_alone_when_the_key_does_not_fi
     path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
     before = path.read_text()
 
-    with pytest.raises(ConversionFailed) as caught:
+    with pytest.raises(ConversionError) as caught:
         sops_rotate(path, old_public, new_public, stranger_private)
 
     assert str(path) in str(caught.value)

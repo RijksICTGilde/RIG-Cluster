@@ -1,8 +1,8 @@
-"""Welke git-bronnen de renderketen mag klonen.
+"""Which git sources the render chain may clone.
 
-Een helmfile- of chartbron die OPI kloont, komt integraal in de deploymentmap terecht en
-wordt daar door de CMP gerenderd. Het is dus code die op het platform draait, en
-``RENDER_SOURCE_ALLOWLIST`` zegt van welke bronnen dat mag. Leeg betekent: geen enkele.
+A helmfile or chart source OPI clones lands in the deployment directory in full and is
+rendered there by the CMP. It is therefore code running on the platform, and
+``RENDER_SOURCE_ALLOWLIST`` says which sources may do that. Empty means none at all.
 """
 
 import os
@@ -12,18 +12,18 @@ from urllib.parse import urlparse
 
 from opi.core.config import settings
 
-#: ``git@host:pad`` heeft geen schema, maar is een ssh-URL.
+#: ``git@host:path`` carries no scheme, but is an ssh URL.
 _SSH_SHORTHAND = re.compile(r"^[^/@:]+@(?P<host>[^/:]+):(?P<path>.+)$")
 
 
 def normalize_git_url(url: str) -> str:
-    """Schema, host en pad, zonder userinfo en zonder ``.git`` of afsluitende slash.
+    """Scheme, host and path, without userinfo and without ``.git`` or a trailing slash.
 
-    Userinfo eruit omdat een allowlist over de bron gaat en niet over wie hem ophaalt:
-    ``https://aanvaller@host/pad`` is dezelfde bron als ``https://host/pad``.
+    Userinfo is dropped because an allowlist is about the source and not about who fetches
+    it: ``https://attacker@host/path`` is the same source as ``https://host/path``.
 
-    Het pad wordt opgelost, want git vraagt ``/toegestaan/../../elders`` op als
-    ``/elders``: zonder dat glipt elke bron langs de allowlist.
+    The path is resolved, because git asks for ``/allowed/../../elsewhere`` as
+    ``/elsewhere``: without that, any source slips past the allowlist.
     """
     url = url.strip()
     shorthand = _SSH_SHORTHAND.match(url)
@@ -42,7 +42,7 @@ def normalize_git_url(url: str) -> str:
 
 
 def allowed_render_sources() -> list[str]:
-    """De allowlist uit de configuratie, als lijst."""
+    """The allowlist from the configuration, as a list."""
     raw = settings.RENDER_SOURCE_ALLOWLIST or ""
     return [entry.strip() for entry in raw.split(",") if entry.strip()]
 
@@ -51,19 +51,19 @@ def is_allowed_render_source(url: str) -> bool:
     target = normalize_git_url(url)
     for entry in allowed_render_sources():
         allowed = normalize_git_url(entry)
-        # Gelijk, of eronder: een prefix zonder padgrens zou
-        # ``.../mijn-bureau-infra-van-een-ander`` ook toelaten.
+        # Equal, or below it: a prefix without a path boundary would also admit
+        # ``.../my-team-infra-of-somebody-else``.
         if target == allowed or target.startswith(f"{allowed}/"):
             return True
     return False
 
 
 def require_allowed_render_source(url: str, what: str) -> None:
-    """Weiger een bron die niet op de allowlist staat.
+    """Refuse a source that is not on the allowlist.
 
-    De melding noemt de genormaliseerde URL: ``helmfile[].url`` kent geen aparte
-    credentials, dus een private bron heeft een token in de userinfo, en de melding
-    bereikt de gebruiker en de logs.
+    The message names the normalised URL: ``helmfile[].url`` has no separate credentials, so
+    a private source carries a token in its userinfo, and the message reaches the user and
+    the logs.
     """
     if is_allowed_render_source(url):
         return
@@ -74,12 +74,12 @@ def require_allowed_render_source(url: str, what: str) -> None:
 
 
 def path_inside_clone(root: str, relative: str, what: str) -> str:
-    """Los een pad uit het projectbestand op binnen een gekloonde bron, en weiger eruit.
+    """Resolve a path from the project file inside a cloned source, and refuse one outside it.
 
-    ``chart-path``, ``helmfile[].path`` en ``helmfile[].entry`` komen uit het
-    projectbestand en worden aan de clone geplakt. Zonder deze controle kopieert een
-    absoluut pad, een ``..`` of een symlink in de bron inhoud van de container naar de
-    deploymentmap, waar de CMP hem rendert.
+    ``chart-path``, ``helmfile[].path`` and ``helmfile[].entry`` come from the project file
+    and are glued onto the clone. Without this check an absolute path, a ``..`` or a symlink
+    in the source copies container content into the deployment directory, where the CMP
+    renders it.
     """
     base = os.path.realpath(root)
     resolved = os.path.realpath(os.path.join(base, relative)) if relative else base

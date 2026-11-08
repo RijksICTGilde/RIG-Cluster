@@ -1,12 +1,12 @@
-"""TOTP (OTP) secrets: genereren, tonen en verifieren.
+"""TOTP (OTP) secrets: generating, showing and verifying them.
 
-Twee gebruikers van deze module, met verschillende doelen. De OTP op de ZAD-gebruiker
-(``opi/services/user_otp_service.py``, ``features/otp-op-de-zad-gebruiker.md``) hangt aan
-een persoon en wordt door OPI zelf geverifieerd (``verify_totp``). Daaronder staat de
-oudere, gedeelde variant voor Keycloak-realm-admins, die Keycloak zelf verifieert; de
-encoding-afspraak hieronder komt daarvandaan en geldt voor beide.
+This module has two users with different goals. The OTP on the ZAD user
+(``opi/services/user_otp_service.py``, `features/otp-op-de-zad-gebruiker.md`) belongs to a
+person and is verified by OPI itself (``verify_totp``). Below it sits the older, shared
+variant for Keycloak realm admins, which Keycloak verifies itself; the encoding contract
+below comes from there and holds for both.
 
-Gedeelde TOTP-geheimen voor automatisch aangemaakte Keycloak-realm-admins:
+Shared TOTP secrets for automatically created Keycloak realm admins:
 
 The realm-admin accounts are shared service accounts: OPI generates a single
 TOTP seed, stores it (AGE-encrypted) in the project file alongside the admin
@@ -43,8 +43,8 @@ OTPAUTH_ALGORITHM = "SHA1"  # value authenticator apps expect in the URI
 _SECRET_LENGTH = 32
 _SECRET_ALPHABET = string.ascii_letters + string.digits
 
-# Tolerantie bij het verifieren: een stap terug en een vooruit, voor klokverschil
-# tussen de server en het toestel van de gebruiker.
+# Tolerance on verification: one step back and one forward, for the clock difference
+# between the server and the user's device.
 TOTP_TOLERANCE_STEPS = 1
 
 
@@ -101,8 +101,8 @@ def verify_totp(
 
     current = totp_step(now)
     accepted: int | None = None
-    # Elke kandidaat wordt nagerekend, ook na een treffer: een lus die eruit springt
-    # verraadt via zijn looptijd welke stap het was.
+    # Every candidate is computed, a hit included: a loop that breaks out gives away by its
+    # runtime which step it was.
     for step in range(current - TOTP_TOLERANCE_STEPS, current + TOTP_TOLERANCE_STEPS + 1):
         if last_used_step is not None and step <= last_used_step:
             continue

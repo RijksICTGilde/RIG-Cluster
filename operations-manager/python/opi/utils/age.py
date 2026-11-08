@@ -1,5 +1,9 @@
-"""
-Age encryption/decryption utilities.
+"""AGE encryption and decryption, in process, plus the wrapping of a project key.
+
+Encrypting and decrypting runs through pyrage instead of the age binary, so there is no
+fork and no tempfile per field. The two stored forms (the armored block and the one-line
+``base64+age:``) and the prefixes that name them live here as well, so every reader
+recognises a secret the same way.
 """
 
 import base64
@@ -15,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 class AgeDecryptionError(Exception):
-    """Age kon deze inhoud niet openen: verkeerde sleutel of beschadigde ciphertext.
+    """Age could not open this content: wrong key or damaged ciphertext.
 
-    Een eigen type zodat een aanroeper die "deze sleutel opent het niet" als normale uitkomst
-    behandelt dat kan onderscheiden van elke andere fout.
+    A type of its own, so a caller that treats "this key does not open it" as a normal
+    outcome can tell it apart from any other error.
     """
 
 
@@ -27,7 +31,7 @@ def get_global_private_key() -> str:
 
 
 def _encrypt_in_process(plain_content: str, public_key: str) -> str:
-    """Niet byte-gelijk aan age binary (niet deterministisch) maar wel leesbaar."""
+    """Not byte-identical to the age binary (it is not deterministic) but readable by it."""
     recipient = pyrage.x25519.Recipient.from_str(public_key.strip())
     return pyrage.encrypt(plain_content.encode(), [recipient], armored=True).decode("utf-8").strip()
 
@@ -41,17 +45,13 @@ def _decrypt_in_process(encrypted_content: str, private_key: str) -> str:
 
 
 async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
-    """
-    Decrypt age-encrypted content using the provided private key.
+    """Decrypt age-encrypted content with the given private key.
 
     Stays async without awaiting anything: that is what keeps every caller unchanged.
 
-    Args:
-        encrypted_content: The age-encrypted content (including BEGIN/END markers)
-        private_key: The age private key (AGE-SECRET-KEY-...)
-
-    Returns:
-        Decrypted content as string
+    Raises:
+        ValueError: when content or key is missing.
+        AgeDecryptionError: when age cannot open the content.
     """
     if not encrypted_content or not private_key:
         raise ValueError("Missing encrypted content or private key for decryption")
@@ -64,31 +64,16 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
 
 
 async def _encrypt_with_age_and_base64encode_as_prefixed_string(client_secret: str, public_key: str | None) -> str:
-    """
-    Encrypt the client secret using age+base64 encoding.
+    """Encrypt to the one-line ``base64+age:`` form.
 
-    Args:
-        client_secret: Plain text client secret
-
-    Returns:
-        Encrypted and base64 encoded client secret with prefix base64+age which can be used in f.e. .env files
-        or other places where single line values are expected.
+    That form fits where a single-line value is expected, such as a ``KEY=value`` env line.
     """
     encrypted_content = await encrypt_age_content(client_secret, public_key)
     return f"base64+age:{base64.b64encode(encrypted_content.encode()).decode()}"
 
 
 async def encrypt_age_content(plain_content: str, public_key: str | None) -> str:
-    """
-    Encrypt content using age encryption with the provided public key.
-
-    Args:
-        plain_content: The content to encrypt
-        public_key: The age public key
-
-    Returns:
-        Encrypted content as string with AGE markers
-    """
+    """Encrypt content to an armored AGE block with the given public key."""
 
     if not public_key:
         raise ValueError("Missing public age key for encryption")
@@ -103,19 +88,11 @@ async def encrypt_age_content(plain_content: str, public_key: str | None) -> str
 
 
 def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
-    """
-    Encrypt content using age encryption with the provided public key (synchronous version).
-
-    Args:
-        plain_content: The content to encrypt
-        public_key: The age public key
-
-    Returns:
-        Encrypted content as string with AGE markers
+    """Synchronous variant of :func:`encrypt_age_content`.
 
     Raises:
-        ValueError: If public_key or plain_content is missing
-        Exception: If age encryption fails
+        ValueError: when public_key or plain_content is missing.
+        Exception: when age encryption fails.
     """
     if not public_key:
         raise ValueError("Missing public age key for encryption")
@@ -130,17 +107,14 @@ def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
 
 
 def decrypt_age_content_sync(encrypted_content: str, private_key: str, *, log_failure: bool = True) -> str | None:
-    """
-    Decrypt age-encrypted content using the provided private key (synchronous version).
+    """Synchronous variant of :func:`decrypt_age_content`, returning None on failure.
 
     Args:
-        encrypted_content: The age-encrypted content (including BEGIN/END markers)
-        private_key: The age private key (AGE-SECRET-KEY-...)
-        log_failure: False wanneer de aanroeper meer sleutels probeert, zoals
-            :func:`unwrap_project_key_sync`: een kandidaat die niet past is daar geen fout.
-
-    Returns:
-        Decrypted content as string, or None if decryption failed
+        encrypted_content: the age-encrypted content, BEGIN/END markers included.
+        private_key: the age private key.
+        log_failure: False when the caller tries several keys, as
+            :func:`unwrap_project_key_sync` does: a candidate that does not fit is no
+            error there.
     """
     if not encrypted_content or not private_key:
         logger.error("Missing encrypted content or private key for decryption")
@@ -191,15 +165,7 @@ def decrypt_age_block_to_bytes_sync(age_block: str, private_key: str) -> bytes:
 
 
 def is_age_encrypted(content: str) -> bool:
-    """
-    Check if content is age-encrypted by looking for age markers.
-
-    Args:
-        content: Content to check
-
-    Returns:
-        True if content appears to be age-encrypted
-    """
+    """Whether the content carries the armored AGE markers."""
     if not content:
         return False
 
@@ -238,8 +204,7 @@ def carries_encrypted_value(value: object) -> bool:
 
 
 def parse_password_with_prefix(password: str) -> tuple[str, str]:
-    """
-    Parse password with optional namespace prefix.
+    """Split a password into its prefix type and its content.
 
     Supported prefixes:
     - age:content          -> Age encrypted content (multiline)
@@ -247,18 +212,13 @@ def parse_password_with_prefix(password: str) -> tuple[str, str]:
     - plain:content        -> Plain text (explicit)
     - content              -> Auto-detect (plain text or Age)
 
-    Args:
-        password: Password string with optional prefix
-
-    Returns:
-        Tuple of (type, content) where type is 'plain', 'age', or 'base64+age'
+    Returns the type as ``plain``, ``age`` or ``base64+age``, with the content behind it.
     """
     if not password:
         return "plain", password or ""
 
     password = password.strip()
 
-    # Check for explicit prefixes
     if password.startswith("age:"):
         content = password[4:]
         return ("age", content) if content else ("plain", password)
@@ -266,46 +226,28 @@ def parse_password_with_prefix(password: str) -> tuple[str, str]:
         content = password[11:]
         return ("base64+age", content) if content else ("plain", password)
     elif password.startswith("plain:"):
-        return "plain", password[6:]  # Remove 'plain:' prefix
+        return "plain", password[6:]
 
-    # Auto-detect: check if it looks like Age encrypted content
     if is_age_encrypted(password):
         return "age", password
 
-    # Default to plain text
     return "plain", password
 
 
 async def decrypt_password_smart_auto(password: str) -> str:
-    """
-    Smart password decryption that automatically retrieves the Age key from settings.
-
-    Args:
-        password: Password with optional prefix
-
-    Returns:
-        Decrypted or processed password
-    """
+    """:func:`decrypt_password_smart` with the platform key from the settings."""
     private_key = get_global_private_key()
     return await decrypt_password_smart(password, private_key)
 
 
 async def decrypt_password_smart(password: str, private_key: str | None) -> str:
-    """
-    Smart password decryption with prefix support.
+    """Decrypt a password by the prefix it carries, and return a plain one untouched.
 
     Supports:
     - age:encrypted_content          -> Direct Age decryption
     - base64+age:base64_content      -> Base64 decode then Age decrypt
     - plain:password                 -> Return as-is (no decryption)
     - Auto-detect for backward compatibility
-
-    Args:
-        password: Password with optional prefix
-        private_key: Age private key for decryption
-
-    Returns:
-        Decrypted or processed password
     """
     if not password:
         return password or ""
@@ -331,10 +273,7 @@ async def decrypt_password_smart(password: str, private_key: str | None) -> str:
             raise ValueError("Base64+Age encrypted password found but no private key available")
 
         try:
-            # First decode base64
             decoded_content = base64.b64decode(content).decode("utf-8")
-
-            # Then decrypt with Age
             decrypted = await decrypt_age_content(decoded_content, private_key)
             if decrypted is None:
                 raise ValueError("Failed to decrypt base64+Age password")
@@ -390,28 +329,18 @@ async def decrypt_tree(data: Any, private_key: str, *, include_prefixed: bool = 
 
 
 def get_project_public_key(project_config: dict) -> str | None:
-    """
-    Get project's AGE public key, supporting both new (age-) and legacy (sops-) key names.
-
-    Args:
-        project_config: Project configuration dictionary
-
-    Returns:
-        AGE public key or None if not found
-    """
+    """The project's AGE public key, under the current ``age-`` or the legacy ``sops-`` name."""
     config = project_config.get("config", {})
 
-    # Try new key name first
     public_key = config.get("age-public-key")
     if public_key:
         return public_key
 
-    # Fallback to legacy key name
     return config.get("sops-public-key")
 
 
-# De projectsleutels zitten onder de project-KEK, die alleen in de OPI-pod staat; de
-# platformsleutel is de terugval zolang niet elk projectbestand is omgezet (RC-334).
+# The project keys sit under the project KEK, which exists only in the OPI pod; the platform
+# key is the fallback for as long as not every project file has been converted (RC-334).
 PROJECT_KEK_LABEL = "project-kek"
 PLATFORM_KEY_LABEL = "platformsleutel"
 
@@ -419,24 +348,25 @@ PLATFORM_KEY_LABEL = "platformsleutel"
 def project_key_candidates_for(
     platform_private_key: str | None, kek_private_key: str | None = None
 ) -> list[tuple[str, str]]:
-    """Sleutels die een projectsleutel kunnen openen, KEK eerst.
+    """Keys that can open a project key, KEK first.
 
-    Voor migratiescripts die de sleutels van het BRONcluster kennen, niet die van eigen settings.
+    For migration scripts that know the keys of the SOURCE cluster, not those of their own
+    settings.
     """
     labelled = ((PROJECT_KEK_LABEL, kek_private_key), (PLATFORM_KEY_LABEL, platform_private_key))
     return [(label, key) for label, key in labelled if key]
 
 
 def project_key_candidates() -> list[tuple[str, str]]:
-    """Sleutels die een projectsleutel kunnen openen: KEK, dan platform.
+    """Keys that can open a project key: KEK, then platform.
 
-    Zonder KEK wordt alleen platform gebruikt, dus sandbox en lokale dev hoeven niets.
+    Without a KEK only the platform key is used, so the sandbox and local dev need nothing.
     """
     return project_key_candidates_for(settings.SOPS_AGE_PRIVATE_KEY, settings.PROJECT_KEK_PRIVATE_KEY)
 
 
 def project_wrapping_public_key() -> str:
-    """De publieke helft waarmee een projectsleutel wordt ingepakt: de KEK zodra die er is."""
+    """The public half a project key is wrapped with: the KEK as soon as there is one."""
     public_key = settings.PROJECT_KEK_PUBLIC_KEY or settings.SOPS_AGE_PUBLIC_KEY
     if not public_key:
         raise ValueError("No AGE public key available to wrap a project private key with")
@@ -444,7 +374,7 @@ def project_wrapping_public_key() -> str:
 
 
 def unwrap_project_key_sync(wrapped: str, candidates: list[tuple[str, str]] | None = None) -> str:
-    """Pak een projectsleutel uit met de eerste sleutel die past, en log welke het was."""
+    """Unwrap a project key with the first candidate that fits, and log which one it was."""
     if not wrapped:
         raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
     candidates = project_key_candidates() if candidates is None else candidates
@@ -452,8 +382,8 @@ def unwrap_project_key_sync(wrapped: str, candidates: list[tuple[str, str]] | No
         raise ValueError("No AGE private key available to unwrap the project private key with")
     for label, private_key in candidates:
         try:
-            # log_failure uit: tijdens de overgang past de KEK niet op een nog niet omgezet
-            # bestand, en dat is de verwachte stand, geen fout.
+            # log_failure off: during the transition the KEK does not fit a file that has not
+            # been converted yet, and that is the expected state, not an error.
             decoded = decrypt_password_smart_sync(wrapped, private_key, log_failure=False)
         except ValueError, pyrage.DecryptError, pyrage.IdentityError:
             continue
@@ -464,30 +394,22 @@ def unwrap_project_key_sync(wrapped: str, candidates: list[tuple[str, str]] | No
 
 
 async def unwrap_project_key(wrapped: str, candidates: list[tuple[str, str]] | None = None) -> str:
-    """De async kant van :func:`unwrap_project_key_sync`; zelfde volgorde en terugval."""
+    """The async side of :func:`unwrap_project_key_sync`; same order and same fallback."""
     return unwrap_project_key_sync(wrapped, candidates)
 
 
 def wrap_project_key_sync(private_key: str, public_key: str | None = None) -> str:
-    """Pak een projectsleutel in met de KEK, of de gegeven public_key voor migraties."""
+    """Wrap a project key with the KEK, or with the given public_key for a migration."""
     return encrypt_age_content_sync(private_key, public_key or project_wrapping_public_key())
 
 
 async def wrap_project_key(private_key: str, public_key: str | None = None) -> str:
-    """De async kant van :func:`wrap_project_key_sync`."""
+    """The async side of :func:`wrap_project_key_sync`."""
     return await encrypt_age_content(private_key, public_key or project_wrapping_public_key())
 
 
 async def get_decoded_project_private_key(project_config: dict) -> str:
-    """
-    Get project's AGE private key
-
-    Args:
-        project_config: Project configuration dictionary
-
-    Returns:
-        decrypted AGE private key
-    """
+    """The project's AGE private key, unwrapped."""
     config = project_config.get("config", {})
     return await unwrap_project_key(config.get("age-private-key"))
 
@@ -506,36 +428,13 @@ def get_decoded_project_private_key_sync(project_config: dict) -> str:
 
 
 def decrypt_password_smart_auto_sync(password: str) -> str:
-    """
-    Smart password decryption that automatically retrieves the Age key from settings (synchronous version).
-
-    Args:
-        password: Password with optional prefix
-
-    Returns:
-        Decrypted or processed password
-    """
+    """:func:`decrypt_password_smart_sync` with the platform key from the settings."""
     private_key = get_global_private_key()
     return decrypt_password_smart_sync(password, private_key)
 
 
 def decrypt_password_smart_sync(password: str, private_key: str | None, *, log_failure: bool = True) -> str:
-    """
-    Smart password decryption with prefix support (synchronous version).
-
-    Supports:
-    - age:encrypted_content          -> Direct Age decryption
-    - base64+age:base64_content      -> Base64 decode then Age decrypt
-    - plain:password                 -> Return as-is (no decryption)
-    - Auto-detect for backward compatibility
-
-    Args:
-        password: Password with optional prefix
-        private_key: Age private key for decryption
-
-    Returns:
-        Decrypted or processed password
-    """
+    """Synchronous variant of :func:`decrypt_password_smart`, with the same prefixes."""
 
     if not password:
         return password or ""
@@ -561,9 +460,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None, *, log_f
         if not private_key:
             raise ValueError("Base64+Age encrypted password found but no private key available")
 
-        # First decode base64
         decoded_content = base64.b64decode(content).decode("utf-8")
-        # Then decrypt with Age
         decrypted = decrypt_age_content_sync(decoded_content, private_key, log_failure=log_failure)
         if decrypted is None:
             raise ValueError("Failed to decrypt base64+Age password")

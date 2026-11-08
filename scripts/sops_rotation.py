@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # cannot drift apart on what a repository secret is.
 from argo_rotation import check_repository_secrets  # type: ignore[reportMissingImports]
 from key_rotation import (  # type: ignore[reportMissingImports]
-    ConversionFailed,
+    ConversionError,
     FinalCheck,
     Fingerprint,
     KeyExists,
@@ -475,7 +475,7 @@ async def run_rotation(
     for planned in plan.projects:
         report = await rotate_project_file(planned.path, old_private, new_private, dry_run=False)
         if not report.rewritten:
-            raise ConversionFailed(f"{planned.path} was not written: {report.skipped}")
+            raise ConversionError(f"{planned.path} was not written: {report.skipped}")
         print(f"  converted  {short(report.path)}  {', '.join(report.fields)}")
 
 

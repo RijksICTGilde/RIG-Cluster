@@ -1,8 +1,7 @@
-"""
-Project utility functions for validation and YAML generation.
+"""Validation and project-file generation shared by the creation paths.
 
-This module contains functions that are used across multiple modules for project operations.
-Extracted to avoid circular import issues.
+Sits apart from the managers that use it to avoid a circular import: the wizard, the
+creation API and the add-component API all reach these functions.
 """
 
 import logging
@@ -70,23 +69,17 @@ def validate_root_component(
     deployment_component_names: list[str],
     domain_format: str | None = None,
 ) -> None:
-    """
-    Validate root-component constraints on a deployment.
+    """Validate the root-component constraints on a deployment.
 
-    root-component only applies when the deployment's domain setup exposes a root
-    host: a domain-format whose template has a droppable ``{component}`` prefix
-    (``ROOT_COMPONENT_FORMAT_IDS``). On any other format (e.g. the dash formats) it
-    is inert, so a value that was inherited -- a clone copying the source's
-    root-component -- is ignored rather than rejected.
-
-    Args:
-        root_component_name: Value of ``root-component`` on the deployment, or None
-        deployment_component_names: Names of components referenced by this deployment
-        domain_format: The deployment's domain-format id, if set
+    root-component only applies when the deployment's domain setup exposes a root host: a
+    domain-format whose template has a droppable ``{component}`` prefix
+    (``ROOT_COMPONENT_FORMAT_IDS``). On any other format (the dash formats for instance) it
+    is inert, so an inherited value, a clone copying the source's root-component, is
+    ignored rather than rejected.
 
     Raises:
-        ComponentValidationError: If root-component applies but names a component
-            that is not part of this deployment
+        ComponentValidationError: when root-component applies but names a component that
+            is not part of this deployment.
     """
     if not root_component_name:
         return
@@ -102,20 +95,14 @@ def validate_root_component(
 
 
 def parse_aliases(aliases_str: str) -> dict[str, Any]:
-    """
-    Parse a YAML aliases string into a dictionary.
+    """Parse a YAML aliases string into a dictionary.
 
-    Aliases allow components to reference system-provided variables using
-    $VARIABLE_NAME syntax (e.g., DATABASE_URL: $HOST:$PORT/$DB_NAME).
-
-    Args:
-        aliases_str: YAML-formatted string of alias definitions
-
-    Returns:
-        Parsed dictionary of aliases
+    Aliases let components reference platform-provided variables in ``$VARIABLE_NAME``
+    syntax (``DATABASE_URL: $HOST:$PORT/$DB_NAME``). Valid YAML that is not a mapping comes
+    back as an empty dict.
 
     Raises:
-        ValueError: If the aliases string is not valid YAML or not a dict
+        ComponentValidationError: when the string is not valid YAML.
     """
     try:
         yaml_instance = YAML()
@@ -179,37 +166,29 @@ async def build_component_config(
     ports: list[int] | None = None,
     description: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Build a complete component config dict.
-
-    This is the shared component building logic used by both project creation
-    and the add-component API.
+    """Build one component config, for project creation and the add-component API alike.
 
     Args:
-        name: Component name
-        component_type: Component type (e.g., "single", "frontend", "backend")
-        port: Inbound port (None for background workers)
-        path: Ingress path (e.g., "/", "/api")
-        services: Component's services list as strings
-        rewrite: Path the ingress rewrites the match to before the request reaches the
-            container (e.g. "/" for a component that listens on the root). Left out
-            entirely when not given, which keeps the path unchanged.
-        cpu_limit: CPU limit (e.g., "1", "500m")
-        memory_limit: Memory limit (e.g., "256Mi", "1Gi")
-        env_vars: Environment variables in KEY=value format (will be encrypted)
-        aliases: YAML string of alias definitions
-        public_key: AGE public key for encrypting env vars
-        default_port: Default port if none specified (e.g., 8080 for project creation)
-        ports: Inbound ports as a list (takes precedence over the single-port `port`)
-        description: Free text saying what the component does. Left out when empty.
-
-    Returns:
-        Component configuration dictionary
+        name: component name.
+        component_type: "single", "frontend", "backend" and the like.
+        port: inbound port, None for a background worker.
+        path: ingress path.
+        services: the component's services as strings.
+        rewrite: the path the ingress rewrites the match to before the request reaches the
+            container ("/" for a component listening on the root). Left out entirely when
+            not given, which keeps the path unchanged.
+        cpu_limit: CPU limit, "1" or "500m".
+        memory_limit: memory limit, "256Mi" or "1Gi".
+        env_vars: environment variables in KEY=value form; encrypted here.
+        aliases: YAML string of alias definitions.
+        public_key: the AGE public key the env vars are encrypted with.
+        default_port: the port to fall back to when neither ports nor port is given.
+        ports: inbound ports as a list; takes precedence over the single-port `port`.
+        description: free text saying what the component does. Left out when empty.
     """
     # `ports` (array) takes precedence over the single-port `port` alias; fall back
     # to default_port (e.g. project creation) when neither is given.
     inbound_ports = ports or ([port] if port else ([default_port] if default_port else []))
-    # Build services list in v2 format (mixed string/dict)
     services_list = ServiceAdapter.build_component_service_entries(services)
 
     # A rewrite is only written when the caller asked for one. Absent means "pass the
@@ -272,18 +251,9 @@ async def build_component_config(
 
 
 def normalize_container_image(image: str) -> tuple[str, bool]:
-    """
-    Normalize a container image reference to lowercase.
+    """Lowercase a container image reference, and say whether that changed anything.
 
     The OCI Distribution Specification requires repository names to be lowercase.
-    This function ensures compliance and reports if normalization was needed.
-
-    Args:
-        image: Container image reference (e.g., "ghcr.io/Org/Repo:tag")
-
-    Returns:
-        Tuple of (normalized_image, was_normalized) where was_normalized is True
-        if the original image contained uppercase characters that were lowercased.
     """
     normalized = image.lower()
     was_normalized = normalized != image
@@ -295,8 +265,8 @@ def normalize_container_image(image: str) -> tuple[str, bool]:
 
 
 def deployments_using_component(project_data: dict[str, Any], component_name: str) -> list[str]:
-    """De namen van de deployments die naar dit component verwijzen, op bestandsvolgorde."""
-    namen = []
+    """The names of the deployments referencing this component, in file order."""
+    names = []
     for deployment in project_data.get("deployments") or []:
         if not isinstance(deployment, dict) or not deployment.get("name"):
             continue
@@ -304,8 +274,8 @@ def deployments_using_component(project_data: dict[str, Any], component_name: st
             isinstance(component, dict) and component.get("reference") == component_name
             for component in deployment.get("components") or []
         ):
-            namen.append(str(deployment["name"]))
-    return namen
+            names.append(str(deployment["name"]))
+    return names
 
 
 def affected_deployments(
@@ -314,31 +284,31 @@ def affected_deployments(
     deployment_name: str | None = None,
     component_names: list[str] | None = None,
 ) -> list[str] | None:
-    """De deployments die een wijziging raakt, of None voor projectbreed.
+    """The deployments a change touches, or None for a project-wide change.
 
-    Een wijziging op EEN deployment raakt alleen die. Een wijziging op een component raakt
-    de deployments die hem gebruiken, en dat kunnen er meer zijn dan een. Zonder beide is
-    de wijziging projectbreed, en dan mag er niets versmald worden.
+    A change on ONE deployment touches only that one. A change on a component touches the
+    deployments using it, and there can be more than one. Without either, the change is
+    project-wide and nothing may be narrowed.
 
-    Wie hiermee een ronde versmalt moet dezelfde lijst ook als taakscope vastleggen
-    (``opi.core.task_supersede.scope_of``): een scope die breder is dan wat de ronde echt
-    verwerkt zou een wachtende taak verdringen waarvan de deployments niemand meer doet.
+    Whoever narrows a round with this has to record the same list as the task scope
+    (``opi.core.task_supersede.scope_of``): a scope wider than what the round really
+    processes would supersede a waiting task whose deployments nobody does afterwards.
     """
     if deployment_name:
         return [deployment_name]
     if component_names:
-        namen: list[str] = []
+        names: list[str] = []
         for component_name in component_names:
-            namen.extend(deployments_using_component(project_data, component_name))
-        return list(dict.fromkeys(namen))
+            names.extend(deployments_using_component(project_data, component_name))
+        return list(dict.fromkeys(names))
     return None
 
 
 def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """De deployment die het PROJECTNIVEAU van dit project draagt, of None.
+    """The deployment carrying the PROJECT LEVEL of this project, or None.
 
-    De alfabetisch eerste wijst de repository aan. Een gedeelde regel, zodat de schrijver
-    en de ArgoCD-applicatie nooit een andere repository kiezen.
+    The alphabetically first one names the repository. A shared rule, so that the writer
+    and the ArgoCD application never pick a different repository.
     """
     on_cluster = [d for d in deployments if isinstance(d, dict) and d.get("name")]
     if not on_cluster:
@@ -346,8 +316,8 @@ def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any
     return min(on_cluster, key=lambda d: str(d["name"]))
 
 
-#: De melding bij een gereserveerde projectnaam, zodat wizard, API en git dezelfde zin
-#: geven. Zie is_reserved_project_name in opi.core.cluster_config.
+#: The message for a reserved project name, so the wizard, the API and git all give the
+#: same sentence. See is_reserved_project_name in opi.core.cluster_config.
 RESERVED_PROJECT_NAME_MESSAGE = (
     "Projectnaam '{name}' is niet beschikbaar: de namespace van dit project zou samenvallen "
     "met een namespace van het platform zelf. Kies een andere naam."
@@ -357,11 +327,11 @@ RESERVED_PROJECT_NAME_MESSAGE = (
 def namespace_level_deployment(
     deployments: list[dict[str, Any]], cluster: str, namespace: str
 ) -> dict[str, Any] | None:
-    """De deployment die de NAMESPACE-brede manifests van deze namespace schrijft, of None.
+    """The deployment writing the NAMESPACE-wide manifests of this namespace, or None.
 
-    Dezelfde regel als ``project_level_deployment``, een laag lager: de alfabetisch
-    eerste deployment in de namespace is de eigenaar. Zonder zo'n eigenaar zetten twee
-    deployments in dezelfde namespace hetzelfde object in twee ArgoCD-applicaties.
+    The same rule as ``project_level_deployment``, one layer down: the alphabetically first
+    deployment in the namespace is the owner. Without such an owner, two deployments in the
+    same namespace put the same object in two ArgoCD applications.
     """
     in_namespace = [
         d
@@ -374,20 +344,11 @@ def namespace_level_deployment(
 
 
 def validate_project_name(name: str) -> bool:
-    """
-    Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.
-
-    Args:
-        name: The project name to validate
-
-    Returns:
-        True if valid, False otherwise
-    """
+    """A project name starts on a lowercase letter and holds a-z, 0-9 and dashes, max 20."""
     if not name:
         return False
     if len(name) > 20:
         return False
-    # Must start with a lowercase letter, then can contain lowercase letters, numbers, and dashes
     return re.match(r"^[a-z][a-z0-9-]*$", name) is not None
 
 
@@ -395,22 +356,11 @@ def validate_project_name(name: str) -> bool:
 
 
 async def generate_self_service_project_yaml(project_data: Any, *, api_token: str | None = None) -> str:
+    """Build the project file for a self-service creation, as a YAML string.
+
+    ``project_data`` is a ``SelfServiceProjectRequest``, or any object carrying the same
+    attributes; ``generate_base_project_file`` passes a ``SimpleNamespace``.
     """
-    Generate project YAML from self-service form data.
-
-    This creates a comprehensive project configuration with:
-    - Multiple components if specified
-    - Team member configurations
-    - Service integrations
-    - Resource limits
-
-    Args:
-        project_data: The self-service project request data (SelfServiceProjectRequest)
-
-    Returns:
-        YAML string representing the project configuration
-    """
-    # Generate AGE key pair for this project
     try:
         private_key, public_key = generate_sops_key_pair()
         encrypted_private_key = await wrap_project_key(private_key)
@@ -419,15 +369,14 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         logger.error(f"Failed to generate AGE key pair: {e}")
         raise HTTPException(status_code=500, detail=f"Cannot create project: AGE key generation failed. {e!s}")
 
-    # Het eerste bewijsmiddel van dit project: een token van het service account
-    # ``project-api``. Geen ``config.api-key`` meer (schemaversie 2.12): alleen de hash
-    # gaat het bestand in, dus de waarde is hierna door niemand meer terug te lezen en
-    # moet de aanroeper hem nu bewaren.
+    # The first credential of this project: a token of the ``project-api`` service account.
+    # No ``config.api-key`` any more (schema version 2.12): only the hash goes into the
+    # file, so nobody can read the value back afterwards and the caller has to keep it now.
     #
-    # Alleen als de aanroeper die waarde ook KRIJGT, en dat is bij de API-aanmaak. De
-    # wizard krijgt hem niet, dus daar blijft het account zonder token: een token dat
-    # niemand kent is een bewijsmiddel dat niemand kan gebruiken en niemand opruimt. De
-    # beheerder geeft er een uit op het tabblad Team.
+    # Only when the caller actually RECEIVES that value, which is the case on creation
+    # through the API. The wizard does not receive it, so there the account stays without a
+    # token: a token nobody knows is a credential nobody can use and nobody cleans up. The
+    # admin issues one on the Team tab.
     token_hash = hash_van(api_token) if api_token else None
 
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
@@ -437,9 +386,9 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
             status_code=500,
             detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
         )
-    # Het projectbestand mag nooit een platte PAT dragen: waar de env hem meegeeft in
-    # platte vorm versleutelen we hem hier voor hij op schijf landt; blijft hij als
-    # base64+age staan dan is hij al versleuteld en laten we hem precies zo.
+    # The project file must never carry a plain PAT: where the environment supplies it in
+    # plain form it is encrypted here before it lands on disk; a value that is already
+    # base64+age is encrypted and is left exactly as it is.
     from opi.utils.age import (
         _encrypt_with_age_and_base64encode_as_prefixed_string,
         decrypt_password_smart,
@@ -479,8 +428,6 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
 
             components_list.append(component_config)
     else:
-        # Default component if none specified
-        # Create fallback component with project-level services (v2 format)
         fallback_services_list = ServiceAdapter.build_component_service_entries([svc.value for svc in project_services])
 
         fallback_component_config: dict[str, Any] = {
@@ -493,17 +440,14 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
 
         components_list.append(fallback_component_config)
 
-    # Build deployments list - create ONE deployment with all components
+    # ONE deployment holding every component.
     deployments_list = []
     if project_data.components:
-        # Build component references for all components
         component_refs = []
         for idx, comp in enumerate(project_data.components):
             image, _ = normalize_container_image(comp.image or "nginx:latest")
             component_refs.append({"reference": f"component-{idx + 1}", "image": image})
 
-        # Create a single deployment with all components
-        # Use deployment_name from form data (defaults to "main")
         deployment_name = project_data.deployment_name
         deployment_config = {
             "name": deployment_name,
@@ -520,8 +464,6 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
 
         deployments_list.append(deployment_config)
     else:
-        # Default deployment
-        # Use deployment_name from form data (defaults to "main")
         deployment_name = project_data.deployment_name
         deployment_config = {
             "name": deployment_name,
@@ -535,7 +477,6 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
 
         deployments_list.append(deployment_config)
 
-    # Build config section
     config_section = {
         "age-public-key": public_key,
         "age-private-key": LiteralScalarString(encrypted_private_key),
@@ -545,7 +486,6 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
     if hasattr(project_data, "contact_email") and project_data.contact_email:
         config_section["contact-email"] = project_data.contact_email
 
-    # Create project structure
     from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 
     project_config = {
@@ -570,16 +510,15 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         "deployments": deployments_list,
     }
 
-    # Add users if provided
     users: list[dict[str, Any]] = []
     if project_data.user_email and project_data.user_roles:
-        for email, rollen in zip(project_data.user_email, project_data.user_roles, strict=False):
-            if email and email.strip():  # Skip empty entries
-                gekozen = sorted(rol.value for rol in roles_from_value(rollen))
-                users.append({"email": email.strip(), "roles": gekozen or list(PROJECT_API_ROLLEN)})
+        for email, role_value in zip(project_data.user_email, project_data.user_roles, strict=False):
+            if email and email.strip():
+                chosen = sorted(role.value for role in roles_from_value(role_value))
+                users.append({"email": email.strip(), "roles": chosen or list(PROJECT_API_ROLLEN)})
 
-    # Het service account dat de API-toegang van dit project draagt. De rollen van een
-    # beheerder, want het vervangt de projectsleutel en die opende de hele schrijfkant.
+    # The service account carrying the API access of this project. The roles of an admin,
+    # because it replaces the project key and that one opened the whole write side.
     users.append(
         {
             "type": "service-account",
@@ -666,13 +605,13 @@ async def generate_base_project_file(
         issuer=None,
         contact_email=None,
         user_email=[owner_email],
-        user_roles=[sorted(rol.value for rol in CREATOR_ROLES)],
+        user_roles=[sorted(role.value for role in CREATOR_ROLES)],
         services=[],
         components=None,
     )
 
-    waarde, _ = nieuw_token()
-    yaml_content = await generate_self_service_project_yaml(project_data, api_token=waarde)
+    token_value, _ = nieuw_token()
+    yaml_content = await generate_self_service_project_yaml(project_data, api_token=token_value)
     project_dict = load_yaml_from_string(yaml_content)
     if not project_dict:
         raise ProjectApiKeyError(f"Kon het gegenereerde projectbestand voor '{project_name}' niet inlezen")
@@ -684,15 +623,15 @@ async def generate_base_project_file(
     project_dict.pop("components", None)
     project_dict.pop("deployments", None)
 
-    # Het token staat alleen gehasht in het bestand, dus deze waarde is de enige die er
-    # ooit van bestaat. Controleren dat de hash erin staat, zodat de aanroeper nooit een
-    # token krijgt dat nergens tegen matcht.
+    # The token is in the file as a hash only, so this value is the only one that will ever
+    # exist of it. Checking that the hash is in there, so the caller never receives a token
+    # that matches nothing.
     summary = get_project_service().build_project_from_data(dict(project_dict), f"projects/{project_name}.yaml")
-    hashes = {t.hash for lid in (summary.users or []) for t in lid.tokens} if summary else set()
-    if hash_van(waarde) not in hashes:
+    hashes = {t.hash for member in (summary.users or []) for t in member.tokens} if summary else set()
+    if hash_van(token_value) not in hashes:
         raise ProjectApiKeyError(
             f"Het eerste API-token voor '{project_name}' staat niet in het projectbestand; "
             f"het project is niet aangemaakt."
         )
 
-    return project_dict, waarde
+    return project_dict, token_value

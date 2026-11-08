@@ -1,9 +1,4 @@
-"""
-Chisel tunnel helper utilities.
-
-Provides an async context manager for Chisel tunnel setup/teardown with
-automatic password decryption support.
-"""
+"""An async context manager around a Chisel tunnel, including the password decryption."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -23,32 +18,12 @@ async def chisel_tunnel(
     remote_port: int,
     project_data: dict[str, Any] | None = None,
 ) -> AsyncGenerator[dict[str, Any]]:
+    """Set up a Chisel tunnel and tear it down again, yielding the local endpoint.
+
+    ``chisel_config`` carries ``server-url``, ``username`` and ``password``, the last one
+    possibly AGE-encrypted; ``project_data`` supplies the private key that opens it. The
+    yielded endpoint is ``host`` (always localhost) and ``port``.
     """
-    Async context manager for Chisel tunnel setup/teardown.
-
-    Handles password decryption and tunnel lifecycle management.
-
-    Args:
-        chisel_config: Chisel configuration dict with keys:
-            - server-url: Chisel server URL (e.g., "https://chisel.example.com")
-            - username: Authentication username
-            - password: Authentication password (may be encrypted)
-        remote_host: Remote service hostname
-        remote_port: Remote service port
-        project_data: Project configuration data containing the AGE private key for decryption
-
-    Yields:
-        Dict with local endpoint information:
-            - host: Local hostname (always "localhost")
-            - port: Local port number for the tunnel
-
-    Example:
-        async with chisel_tunnel(chisel_config, "postgres.svc", 5432, project_data) as endpoint:
-            source_host = endpoint["host"]
-            source_port = endpoint["port"]
-            # Connect to localhost:{port} to reach remote service
-    """
-    # Get project's AGE private key for decryption
     private_key = None
     if project_data:
         private_key = await get_decoded_project_private_key(project_data)
@@ -64,8 +39,8 @@ async def chisel_tunnel(
         password=chisel_password,
     )
 
-    # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect en
-    # stop_tunnel wacht op het afsluiten van het proces.
+    # In a thread: start_tunnel polls up to 30s on a synchronous socket connect and
+    # stop_tunnel waits for the process to exit.
     try:
         await asyncio.to_thread(connector.start_tunnel, remote_host=remote_host, remote_port=remote_port)
         endpoint = connector.get_local_endpoint()
