@@ -40,8 +40,6 @@ def _cp(*segments: str) -> str:
     return config_path(ConfigLayer.PROJECT, ServiceType.INVITE, "config", *segments)
 
 
-# --- project-level -----------------------------------------------------------
-
 INVITE_DEFAULT_LANGUAGE_EDITABLE = Editable(
     yaml_path=_cp("default-language"),
     values_provider="InviteLanguageOptionsProvider",
@@ -49,8 +47,6 @@ INVITE_DEFAULT_LANGUAGE_EDITABLE = Editable(
     default="nl",
     virtualize=SERVICE_VIRTUALIZE,
 )
-
-# --- per-invite item fields --------------------------------------------------
 
 # Optional; left empty it is filled with a generated random key at save time
 # (InviteService.config_form_section post_merge). A self-chosen key is kept as-is.
@@ -62,13 +58,12 @@ INVITE_KEY_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
-# ``values_must_exist``: de rol moet ook BESTAAN. ``RealmRoleValidator`` keurt alleen de
-# tekenset, dus 'allowd-user' kwam er ongehinderd doorheen -- en keycloak kent die rol niet,
-# dus bij het inwisselen wordt hij overgeslagen (``assign_realm_roles_to_user`` zet hem
-# onder ``not_found``) en komt de uitgenodigde gebruiker zonder rol binnen. Staat
-# ``restrict-access`` aan, dan komt hij helemaal niet binnen. De geldige verzameling wordt
-# hier niet herhaald: ze komt uit dezelfde provider die de keuzelijst vult en die de API als
-# ``x-choices-source`` publiceert.
+# ``values_must_exist``: the role has to EXIST as well. ``RealmRoleValidator`` only judges the
+# character set, so a typo like 'allowd-user' passes it unhindered; keycloak does not know that
+# role, redemption skips it (``assign_realm_roles_to_user`` puts it under ``not_found``) and the
+# invited user arrives without a role -- with ``restrict-access`` on, not at all. The valid set
+# is not repeated here: it comes from the same provider that fills the option list and that the
+# API publishes as ``x-choices-source``.
 INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "realm-roles[*]"),
     values_provider="InviteRealmRoleOptionsProvider",
@@ -77,10 +72,10 @@ INVITE_REALM_ROLE_ITEM_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
-#: Het schema laat meerdere rollen toe en de opslag blijft een lijst, maar in de praktijk
-#: is het er altijd een. Vandaar min_items == max_items == 1: de sequence-template laat de
-#: toevoeg- en verwijderknoppen dan weg en toont precies een keuzelijst, altijd zichtbaar.
-#: Wie geen rol wil toekennen kiest de lege optie; dat schrijft geen rol weg.
+#: The schema allows several roles and storage stays a list, but in practice there is always
+#: one. Hence min_items == max_items == 1: the sequence template then leaves out the add and
+#: remove buttons and shows exactly one option list, always visible. Whoever wants to assign no
+#: role picks the empty option; that writes no role.
 INVITE_REALM_ROLES_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "realm-roles"),
     min_items=1,
@@ -91,10 +86,10 @@ INVITE_REALM_ROLES_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
-# Kept, but no longer offered in the form (see visualizers): it restricts by email DOMAIN
+# Accepted, but not offered in the form (see visualizers): it restricts by email DOMAIN
 # ("@rijksoverheid.nl"), which reads like a list of allowed addresses and is not that.
 # Existing files keep validating and the restriction keeps being enforced in
-# InviteManager.validate_email_domain; only the UI stopped offering it.
+# InviteManager.validate_email_domain.
 INVITE_RESTRICT_DOMAIN_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "restrict-domain"),
     converter=EmptyToNoneConverter(),
@@ -121,8 +116,7 @@ INVITE_CONTACT_EMAIL_EDITABLE = Editable(
 # change, and then a stored address points at a hostname that does not exist while
 # everything needed to work out the new one is still in the project file. So the field
 # writes ``application-target`` -- ``component:deployment[:/pad]``, the choice -- and the
-# address is derived again every time the success page is rendered. The list the user sees
-# is unchanged; only what a save records did (RC-136).
+# address is derived again every time the success page is rendered.
 #
 # ``application-url`` is still accepted, still valid and NOT deprecated: it is the shape for
 # a destination OUTSIDE this project, and it is what every existing invitation still stores,
@@ -158,9 +152,8 @@ INVITE_AUTH_METHODS_EDITABLE = Editable(
     virtualize=SERVICE_VIRTUALIZE,
 )
 
-# --- i18n texts (two editables per text: nl + en) ----------------------------
-
-# All six are required and all six carry a computed default, so a fresh invite starts out
+# The i18n texts: two editables per text, nl and en. All six are required and all six carry a
+# computed default, so a fresh invite starts out
 # filled in rather than blank. Required without a default would just be an obstacle; a
 # default without required would let someone empty the field and end up with a page that
 # shows nothing.
@@ -255,11 +248,11 @@ INVITE_ITEM_CHILD_EDITABLES = [
 # being served) while the form pins it to exactly one: min == max == 1 and no add/remove.
 # Raise these two numbers to hand the list back to the user; nothing else has to change.
 #
-# De API doet sinds kort hetzelfde, met een eigen schakelaar: ``InviteService`` zet
-# ``api_singular_lists = {"active"}``, waardoor de PUT en de GET één uitnodiging tonen in
-# plaats van een lijst van een. Twee lagen, twee knoppen, dezelfde aanleiding -- ze zijn
-# bewust niet aan elkaar geknoopt (het formulier gaat over een widget, de gevel over een
-# body), dus wie de een omzet, kijkt ook even naar de ander.
+# The API does the same, with a switch of its own: ``InviteService`` sets
+# ``api_singular_lists = {"active"}``, which makes the PUT and the GET show one invitation
+# instead of a list of one. Two layers, two switches, the same reason: they are deliberately
+# not tied together (the form is about a widget, the facade about a body), so whoever flips one
+# takes a look at the other.
 INVITE_ACTIVE_EDITABLE = Editable(
     yaml_path=_cp("active"),
     min_items=1,

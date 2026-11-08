@@ -1,7 +1,8 @@
-"""Of het realm van dit project een SSO-identiteit op e-mailadres koppelt.
+"""Whether this project's realm links an SSO identity on email address.
 
-Eén lezer voor die vraag, omdat er drie zijn: de uitnodigingsweg (``get_invite_auth_methods``),
-de weigering bij opslaan (``InviteService.validate_project``) en de keuzelijst in het formulier.
+One reader for that question, because there are three askers: the invite path
+(``get_invite_auth_methods``), the refusal on save (``InviteService.validate_project``) and the
+option list in the form.
 """
 
 from __future__ import annotations
@@ -12,22 +13,21 @@ from opi.services.catalog.keycloak.config_model import AccountLink
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 
-#: De standen waarvoor ``KeycloakYamlHandler`` de first-broker-login-flow met ``idp-auto-link``
-#: installeert. Elke andere stand, ``verify`` en niets gekozen inbegrepen, laat Keycloaks eigen
-#: flow staan, en die laat de gebruiker het bestaande account eerst bewijzen.
+#: The settings for which ``KeycloakYamlHandler`` installs the first-broker-login flow with
+#: ``idp-auto-link``. Every other setting, ``verify`` and nothing chosen included, leaves
+#: Keycloak's own flow in place, which makes the user prove the existing account first.
 LINKING_MODES: tuple[AccountLink, ...] = (AccountLink.AUTOMATIC, AccountLink.CONFIRM)
 
 
 def account_link_mode(keycloak_config: Any) -> str | None:
-    """De koppelstand in één keycloak-config, of None als die niet op e-mail koppelt.
+    """The link setting in one keycloak config, or None when it does not link on email.
 
-    Losse ingang naast ``realm_account_link_mode``, want het formulier heeft de config al
-    (de wizard houdt hem onder een andere root dan het projectbestand) en zou hem hier
-    anders een tweede keer moeten opzoeken.
+    A separate entry point next to ``realm_account_link_mode``, because the form already has
+    the config (the wizard keeps it under a different root than the project file) and would
+    otherwise have to look it up a second time here.
 
-    Beide schrijfwijzen van de sleutel worden gelezen: ``KeycloakConfig`` valideert ze dankzij
-    ``populate_by_name`` allebei, dus alleen de koppeltekenvorm lezen maakt de andere een
-    stille no-op.
+    Both spellings of the key are read: thanks to ``populate_by_name`` ``KeycloakConfig``
+    validates both, so reading only the hyphenated shape would make the other a silent no-op.
     """
     if not isinstance(keycloak_config, dict):
         return None
@@ -36,7 +36,7 @@ def account_link_mode(keycloak_config: Any) -> str | None:
 
 
 def realm_account_link_mode(project_data: dict[str, Any]) -> str | None:
-    """De koppelstand van het projectrealm, of None als het realm niet op e-mail koppelt."""
+    """The link setting of the project realm, or None when the realm does not link on email."""
     for entry in project_data.get("services") or []:
         if service_entry_name(entry) == ServiceType.KEYCLOAK.value:
             return account_link_mode(service_entry_config(entry))
@@ -44,10 +44,10 @@ def realm_account_link_mode(project_data: dict[str, Any]) -> str | None:
 
 
 def realm_links_on_email(project_data: dict[str, Any]) -> bool:
-    """True als een brokered SSO-identiteit in dit realm op e-mailadres gekoppeld wordt.
+    """True when a brokered SSO identity in this realm is linked on email address.
 
-    Het koppeldoel is dan elk account in het realm met hetzelfde adres, dus een account dat
-    met een zelf ingetypt adres is aangemaakt neemt een identiteit over die iemand anders
-    toekomt. Vandaar dat de lokale uitnodigingsweg hier dicht is.
+    The link target is then every account in the realm with the same address, so an account
+    created with a hand-typed address takes over an identity that belongs to someone else.
+    Hence the local invite path is closed here.
     """
     return realm_account_link_mode(project_data) is not None

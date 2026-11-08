@@ -1,8 +1,7 @@
-"""Editable definitions for the redis service (project-level ACL setting) -- RC-25.
+"""Editable definitions for the redis service (project-level ACL setting).
 
-``acl-key-prefix`` has always been a real user setting on the model and reachable through
-the API, but it had no form field anywhere, so the only way to widen a project's Redis ACL
-was to hand-edit the project file. This is that field.
+``acl-key-prefix`` is the field that widens a project's Redis ACL beyond its own key
+prefix; the model and the API carry it too.
 """
 
 from __future__ import annotations

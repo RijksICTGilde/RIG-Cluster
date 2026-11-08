@@ -8,14 +8,14 @@ instead of being copied into both packages.
 
 Written and read by ``opi/manager/revision_manager.py``. This is OPI-managed state, not a
 user setting: nothing in the forms layer edits it, and it has no editables or visualizers.
-Modelling it anyway is the point of the service contract, that a service can say what may
-appear in its config block.
+Modelling it anyway is the point of the service contract: a service says what may appear in
+its config block.
 
-Both fields therefore carry ``x-platform-managed``. Saying "Written by the platform" in a
-description was not enough: prose is not a rule, so the API still accepted these fields and
-``service describe`` still listed the required fields of a revision as though a caller had
-to supply them (gemeld door zad-cli, punt 28). With the marking the API refuses them, the
-read side leaves them out of a config response, and the schema fragment says so as well.
+Both fields therefore carry ``x-platform-managed``: a description saying "Written by the
+platform" is prose and not a rule, so without the marking the API accepts these fields and
+``service describe`` lists the required fields of a revision as though a caller had to supply
+them. With the marking the API refuses them, the read side leaves them out of a config
+response, and the schema fragment says so as well.
 
 **The layer is the composing service's choice.** Both services put it on the deployment
 today, but nothing here assumes that. A service that needs per-component clone state adds
@@ -24,8 +24,8 @@ actually doing that, both tracked separately: ``$defs/deployment-service-config`
 ``project_v2.json`` is a closed object, and ``revision_manager._get_service_config`` hardcodes
 a JSONPath that assumes the deployment layer and the ``reference`` entry form.
 
-Required fields follow what 33 real revisions across the production project files actually
-carry: everything except ``superseded_at``, which only appears once a revision is retired.
+Required fields follow what a real revision carries: everything except ``superseded_at``,
+which only appears once a revision is retired.
 """
 
 from __future__ import annotations

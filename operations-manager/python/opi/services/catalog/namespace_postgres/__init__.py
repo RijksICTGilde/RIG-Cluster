@@ -31,7 +31,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         icon="database",
         color="donkerblauw",
         shared_per_deployment=True,
-        secret_class="DatabaseSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="DatabaseSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in DatabaseVariables],
         hidden=True,
         cleanup_strategy=CleanupStrategy.DEFERRED,
@@ -43,7 +43,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
     cleanup_manager_key = ManagerKey.DATABASE
     config_model = NamespacePostgresConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): every field of the project-level config reproduces
+    # May enrol itself: every field of the project-level config reproduces
     # DatabaseManager.DEFAULT_CONFIG, so an empty config is the same cluster the wizard
     # would have created.
     allows_implicit_project_selection = True
@@ -60,8 +60,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         ]
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        # Full config surface, derived from NamespacePostgresConfig (broader than the
-        # UI section, which only exposes instances + storage).
+        # The full config surface, broader than the UI section.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
     def config_editables(self, layer: ConfigLayer):

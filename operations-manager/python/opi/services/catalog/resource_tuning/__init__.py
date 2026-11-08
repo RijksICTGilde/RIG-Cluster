@@ -34,13 +34,13 @@ class ResourceTuningService(Service):
         # keeps it out of the picker, so no explicit hidden is needed).
         kind=ServiceKind.SYSTEM,
     )
-    # May enrol itself (RC-84): a system service is not a user choice, so there is no
+    # May enrol itself: a system service is not a user choice, so there is no
     # project-level decision to make first.
     allows_implicit_project_selection = True
 
     @on(ActionEvent.AFTER_SYNC)
     async def tune_after_oom(self, ctx: DeploymentObservationContext) -> list[ObservationOutcome]:
-        """After a sync, tune the memory of any component that OOM'd (tasks 2, 7, 10).
+        """After a sync, tune the memory of any component that OOM'd.
 
         Reads the OOM signals from the context, tunes only the OOM'd components on the
         OOM path, compacts history, and reports the outcome. It only mutates
@@ -104,9 +104,9 @@ class ResourceTuningService(Service):
 
         if not changes:
             # Distinguish "no limit could be computed" from "a limit was computed and
-            # refused". The second is the escalation ceiling, and it needs its own text:
-            # the old wording sent people looking for missing metrics while the real
-            # answer is that this component has outgrown its declared limit.
+            # refused". The second is the escalation ceiling and needs its own text, or the
+            # reader goes looking for missing metrics while the real answer is that this
+            # component has outgrown its declared limit.
             blocked = [
                 message
                 for ref in oom_components

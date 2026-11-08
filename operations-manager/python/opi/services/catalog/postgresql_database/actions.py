@@ -1,5 +1,5 @@
 """The deployment-card buttons of postgresql-database: the shared database buttons plus
-the per-deployment connection limit (RC-201)."""
+the per-deployment connection limit."""
 
 from __future__ import annotations
 

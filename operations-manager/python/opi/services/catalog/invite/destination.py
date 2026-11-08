@@ -110,8 +110,8 @@ def resolve_invite_url(invite: dict[str, Any], project_data: dict[str, Any]) -> 
         return url
     url = invite.get("application_url") or ""
     if url and not re.match(HTTPS_URL_PATTERN, url):
-        # Tweede laag achter de validator in het configmodel, voor een bestand dat ooit
-        # buiten hem om is geschreven: de waarde landt in een href, dus geen knop.
+        # A second layer behind the validator in the config model, for a file once written
+        # around it: the value lands in an href, so no button.
         logger.warning("Invite destination is geen https-adres, de knop blijft weg")
         return ""
     return url

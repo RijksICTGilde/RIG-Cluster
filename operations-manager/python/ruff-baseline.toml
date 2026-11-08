@@ -211,7 +211,7 @@
 "opi/services/catalog/shared/noncurrent_versions.py" = ["ANN401"]
 "opi/services/catalog/shared/postgres.py" = ["N815"]
 "opi/services/catalog/sleep_mode/__init__.py" = ["ANN201"]
-"opi/services/catalog/sleep_mode/flow.py" = ["ANN204", "ANN401", "N818", "PLR0913", "PLR0915"]
+"opi/services/catalog/sleep_mode/flow.py" = ["ANN204", "ANN401", "PLR0913", "PLR0915"]
 "opi/services/catalog/sleep_mode/manifests.py" = ["PLR0913"]
 "opi/services/catalog/sleep_mode/scheduler.py" = ["C901", "PLR0912"]
 "opi/services/catalog/sleep_mode/task.py" = ["ANN401"]

@@ -34,14 +34,13 @@ class MetricsScraperService(Service):
     )
     config_model = MetricsScraperConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): scraping is configured on the component and there is
+    # May enrol itself: scraping is configured on the component and there is
     # nothing at project level to choose.
     allows_implicit_project_selection = True
     manifest_secret_class = MetricsAuthSecret
     manifest_order = 50
     config_component_order = 40
 
-    # --- config field ownership (component-level; hooks into the component form) ----
     # metrics-scraper is a component-level service: no standalone wizard step. It hooks
     # its port/path fieldset into the per-component form via config_component_layout().
 
@@ -72,19 +71,11 @@ class MetricsScraperService(Service):
             )
         ]
 
-    # GEEN blok op UIEvent.DEPLOYMENT_SECTIONS meer. Hier hing "Resource Metrics", en dat
-    # haalde exact hetzelfde fragment op als het tabblad Metrics doet
-    # (/projects/details/<project>/metrics/<deployment>, id metrics-content-<naam>): dezelfde
-    # grafieken, twee keer, op twee tabbladen. Het blok was er eerder dan het tabblad; bij het
-    # toevoegen van het tabblad is het blijven staan.
-    #
-    # Dezelfde afweging die bij de backups al gemaakt is en die in project-tabs.html.j2
-    # opgeschreven staat: twee weergaven van dezelfde gegevens lopen uit de pas. Het tabblad
-    # is bovendien ruimer - het toont de grafieken voor ELK project met deployments, ook zonder
-    # deze dienst, omdat verbruik geen dienst-extraatje is.
-    #
-    # De twee meldingen die dit blok droeg zijn niet verdwenen maar verhuisd naar het fragment
-    # zelf (opi/web/router.py), zodat ze op EEN plek staan in plaats van naast een tweede kopie.
+    # NO block on UIEvent.DEPLOYMENT_SECTIONS. The Metrics tab shows these charts for every
+    # project with deployments, including projects without this service, because usage is not
+    # a per-service extra; a block here would be the same fragment on a second tab, and two
+    # views of the same data drift apart (see project-tabs.html.j2). The two messages that
+    # belong with the charts live in the fragment itself (opi/web/router.py).
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
         # Contribute the scrape port/path as a template var so the deployment's
@@ -113,6 +104,6 @@ class MetricsScraperService(Service):
             SecretFileSpec(
                 secret_name=MetricsAuthSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=MetricsAuthSecret(token=token).to_k8s_secret_data(),
-                secret_type="metrics",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+                secret_type="metrics",  # noqa: S106  # the name of the key or the secret class, not a secret
             )
         ]

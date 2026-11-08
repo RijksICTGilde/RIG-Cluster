@@ -4,11 +4,10 @@ Publish-on-web is the service that decides whether a component is reachable from
 internet and under which hostname, so the derivation lives here rather than in the page
 that happens to show it first.
 
-Two readers today: the project detail page lists these as links, and the invite form
-offers them as the destination of its success button. That second one is why this moved
-out of ``web/router.py`` -- a user setting up an invitation knows which deployment and
-component they want people to land on, not the URL, so the form has to derive it for
-them.
+Two readers: the project detail page lists these as links, and the invite form offers them
+as the destination of its success button. A user setting up an invitation knows which
+deployment and component they want people to land on, not the URL, so the form derives it
+for them.
 """
 
 from __future__ import annotations
@@ -101,9 +100,8 @@ def public_url_map_for_deployment(
     present with a guessed hostname -- an address that answers 404 is worse than no
     address, because a client stores it and passes it on.
 
-    This is the one source for that answer. The refresh task reports it, the deployment
-    endpoint returns it and the detail page links it; deriving it three times is how they
-    came to disagree (RC-104, vraag 13).
+    This is the one source for that answer: the refresh task reports it, the deployment
+    endpoint returns it and the detail page links it.
     """
     cluster = deployment.get("cluster")
     if not cluster:

@@ -35,7 +35,7 @@ class KeycloakService(Service):
         help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
-        secret_class="KeycloakSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_class="KeycloakSecret",  # noqa: S106  # the name of the key or the secret class, not a secret
         variables=[var.value for var in KeycloakVariables],
         requires=["services/publish-on-web"],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
@@ -56,16 +56,13 @@ class KeycloakService(Service):
             rotate_client_secret=self.service_type.value in ctx.rotate_credentials,
         )
 
-    # --- config field ownership -------------------------------------------------
-
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         return self.service_type.value in [
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        # Full KeycloakConfig surface (broader than the UI section, which shows
-        # template / restrict-access / additional-clients).
+        # The full KeycloakConfig surface, broader than the UI section.
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []
 
     def config_editables(self, layer: ConfigLayer):
@@ -98,10 +95,8 @@ class KeycloakService(Service):
     @on(UIEvent.PROJECT_SECTIONS)
     def realm_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # Realm admin details (host / realm / admin credentials) for the detail page.
-        # Admin-only, and only when realms exist. Read from the service config where
-        # RC-5 relocated them; the general template used to read the old project-level
-        # ``config.keycloak``, which no longer exists, so the section silently stopped
-        # rendering. Owning the block here keeps it pinned to the config's real home.
+        # Admin-only, and only when realms exist. Read from the service config, which is where
+        # they live; owning the block here keeps it pinned to that location.
         if not ctx.can(Action.PROJECT_KEY_READ):
             return []
         from opi.services.project import Project

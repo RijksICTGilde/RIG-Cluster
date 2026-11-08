@@ -1,4 +1,4 @@
-"""Typed config model for the ``user-env-vars`` system service (RC-25).
+"""Typed config model for the ``user-env-vars`` system service.
 
 The value is what a component (or a deployment's component) carries under the
 ``user-env-vars`` key. Three shapes are legal:

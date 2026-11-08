@@ -1,4 +1,4 @@
-"""De twee bronnen van de regellijst: de clustertabel en de registries van het project."""
+"""The two sources of the rule list: the cluster table and the project's registries."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ from opi.services.catalog.image_registries.rules import RegistryRule, ResolvedIm
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 
-#: Dockerconfigjson-secret in de namespace, image ongewijzigd.
-BACKEND_DIRECT_SECRET = "direct-secret"  # noqa: S105  # naam van de backendkeuze, geen secret
-#: ``Organization`` met proxyCache in RCR, image herschreven naar die organisatie.
+#: Dockerconfigjson secret in the namespace, image unchanged.
+BACKEND_DIRECT_SECRET = "direct-secret"  # noqa: S105  # the name of the backend choice, not a secret
+#: ``Organization`` with proxyCache in RCR, image rewritten to that organization.
 BACKEND_QUAY_PROXY = "quay-proxy-organization"
 
 
 def project_registries(project_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """De registries uit de projectconfig van deze dienst, in bestandsvolgorde."""
+    """The registries from this service's project config, in file order."""
     for entry in project_data.get("services", []) or []:
         if service_entry_name(entry) != ServiceType.IMAGE_REGISTRIES.value:
             continue
@@ -30,7 +30,7 @@ def project_registries(project_data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def find_registry(project_data: dict[str, Any], name: str) -> dict[str, Any] | None:
-    """De registry-entry met deze naam, of None."""
+    """The registry entry with this name, or None."""
     for registry in project_registries(project_data):
         if registry.get("name") == name:
             return registry
@@ -38,17 +38,17 @@ def find_registry(project_data: dict[str, Any], name: str) -> dict[str, Any] | N
 
 
 def component_registry_name(component: dict[str, Any] | None) -> str | None:
-    """De registry die dit component aanwijst, uit zijn eigen dienstvermelding.
+    """The registry this component points at, from its own service entry.
 
-    Werkt op allebei de vormen die het schema kent: ``services`` als lijst op een gewoon
-    component, als dict op een deployment-component. Geen vermelding betekent automatisch.
+    Works on both shapes the schema knows: ``services`` as a list on a plain component, as a
+    dict on a deployment component. No entry means automatic.
     """
     if not isinstance(component, dict):
         return None
     services = component.get("services")
     config: Any = None
     if isinstance(services, dict):
-        # De dienstnaam is hier de sleutel, dus de waarde is de record zelf.
+        # The service name is the key here, so the value is the record itself.
         record = services.get(ServiceType.IMAGE_REGISTRIES.value)
         config = record.get("config") if isinstance(record, dict) else None
     elif isinstance(services, list):
@@ -63,10 +63,10 @@ def component_registry_name(component: dict[str, Any] | None) -> str | None:
 
 
 def set_deployment_component_registry(component: dict[str, Any], registry_name: str) -> None:
-    """Zet de registrykeuze op een DEPLOYMENT-component, als dienstvermelding.
+    """Put the registry choice on a DEPLOYMENT component, as a service entry.
 
-    De tegenhanger van ``component_registry_name`` op de dict-vorm. De losse sleutel
-    ``registry:`` bestaat sinds v2.9 niet meer en wordt door het schema geweigerd.
+    The counterpart of ``component_registry_name`` on the dict shape. The separate
+    ``registry:`` key is gone since v2.9 and the schema refuses it.
     """
     services = component.get("services")
     if not isinstance(services, dict):
@@ -84,10 +84,10 @@ def set_deployment_component_registry(component: dict[str, Any], registry_name: 
 
 
 def registry_rule(registry: dict[str, Any], project_name: str, cluster: str) -> RegistryRule | None:
-    """De regel die bij één private registry hoort, of None als er niets te regelen valt.
+    """The rule belonging to one private registry, or None when there is nothing to rule on.
 
-    Bij ``direct-secret`` en bij een entry met een bestaand ``secretName`` is de
-    bestemming de upstream zelf, dus blijft de image ongewijzigd.
+    With ``direct-secret`` and with an entry that has an existing ``secretName`` the
+    destination is the upstream itself, so the image stays unchanged.
     """
     upstream = registry.get("upstream")
     if not isinstance(upstream, str) or not upstream:
@@ -112,7 +112,7 @@ def registry_rule(registry: dict[str, Any], project_name: str, cluster: str) -> 
 
 
 def cluster_rules(cluster: str) -> list[RegistryRule]:
-    """De gedeelde proxy-caches die het platform op dit cluster aanbiedt."""
+    """The shared proxy caches the platform offers on this cluster."""
     rules = get_image_registries_config(cluster).get("rules") or []
     return [
         RegistryRule(match=rule["match"], to=rule["to"], secret=rule["secret"])
@@ -122,10 +122,10 @@ def cluster_rules(cluster: str) -> list[RegistryRule]:
 
 
 def build_rules(project_data: dict[str, Any], cluster: str, preferred: str | None = None) -> list[RegistryRule]:
-    """De hele regellijst voor dit project op dit cluster, in voorrangsvolgorde.
+    """The whole rule list for this project on this cluster, in precedence order.
 
-    Projectregels vóór de gedeelde proxy, en ``preferred`` (de registry die een component
-    zelf aanwijst) vóór de andere projectregels.
+    Project rules before the shared proxy, and ``preferred`` (the registry a component points
+    at itself) before the other project rules.
     """
     project_name = project_data.get("name", "")
     registries = project_registries(project_data)
@@ -137,10 +137,10 @@ def build_rules(project_data: dict[str, Any], cluster: str, preferred: str | Non
 
 
 def display_image(image: str, cluster: str, project_data: dict[str, Any] | None = None) -> str:
-    """De image zoals de AFNEMER hem kent, terug uit zijn platformvorm.
+    """The image as the CONSUMER knows it, back out of its platform shape.
 
-    Zonder ``project_data`` alleen de clustertabel, ermee ook de eigen
-    proxy-organisaties van dit project.
+    Without ``project_data`` only the cluster table, with it also this project's own proxy
+    organizations.
     """
     rules = build_rules(project_data, cluster) if project_data else cluster_rules(cluster)
     return original_image(image, rules)
@@ -152,9 +152,9 @@ def resolve_deployment_component_image(
     component_def: dict[str, Any] | None,
     cluster: str,
 ) -> ResolvedImage:
-    """De image van één deployment-component, opgelost tegen de regels van dit project.
+    """The image of one deployment component, resolved against this project's rules.
 
-    De keuze van het component geldt, tenzij de deployment hem overschrijft.
+    The component's choice applies unless the deployment overrides it.
     """
     preferred = component_registry_name(deployment_component) or component_registry_name(component_def)
     return resolve_project_image(deployment_component.get("image", ""), project_data, cluster, preferred)
@@ -163,5 +163,5 @@ def resolve_deployment_component_image(
 def resolve_project_image(
     image: str, project_data: dict[str, Any], cluster: str, preferred: str | None = None
 ) -> ResolvedImage:
-    """Los één image op tegen de regels van dit project op dit cluster."""
+    """Resolve one image against this project's rules on this cluster."""
     return resolve_image(image, build_rules(project_data, cluster, preferred))

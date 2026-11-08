@@ -1,13 +1,11 @@
 """Typed config for the resource-tuning system service.
 
-The tuning parameters used to be thirteen loose ``RESOURCE_TUNING_*`` fields on
-``Settings`` that nothing validated as a coherent whole. They belong to the service,
-so they live here as a single typed, validated unit -- the same shape the plan calls
-for and the pattern sleep-mode uses (a dict of values plus a Pydantic model over it).
+The tuning parameters belong to the service, so they live here as a single typed,
+validated unit: the values in ``config.py``, this model over them -- the pattern
+sleep-mode uses.
 
-These are deliberately NOT environment-driven: they have never been set via env vars
-in practice, and a system service owns its own configuration rather than reading it
-from the platform's ``Settings``.
+These are deliberately NOT environment-driven: a system service owns its own
+configuration rather than reading it from the platform's ``Settings``.
 """
 
 from __future__ import annotations
@@ -30,8 +28,8 @@ class ResourceTuningConfig(BaseModel):
     memory_buffer_percent: int
     #: Memory limit = observed peak x this factor (burst headroom above the peak).
     memory_limit_factor: float
-    #: Legacy symmetric threshold, superseded by the asymmetric deviation gate.
-    #: Kept for parity; read by nothing today.
+    #: Symmetric threshold, read by nothing today; the asymmetric deviation gate below is
+    #: what decides.
     threshold_percent: int
     #: An OOM floor may expire after this many days...
     oom_floor_min_age_days: int
@@ -39,9 +37,8 @@ class ResourceTuningConfig(BaseModel):
     oom_floor_stable_percent: int
     #: A value a user set by hand may expire after this many days...
     user_intent_min_age_days: int
-    #: ...if the measured usage stays below this percent of what they set. Starts equal
-    #: to the OOM-floor pair so the two are explainable together, but stands apart so it
-    #: can be tuned on its own.
+    #: ...if the measured usage stays below this percent of what they set. Equal to the
+    #: OOM-floor pair so the two are explainable together, but tunable on its own.
     user_intent_stable_percent: int
     #: Apply an increase once the request grows by at least this percent.
     increase_threshold: int
@@ -62,11 +59,11 @@ class ResourceTuningConfig(BaseModel):
     min_limit_headroom_mi: int
     #: Hard ceiling for the automatic path, as a multiple of the memory limit declared
     #: on the catalog component: an OOM-driven bump may raise a deployment override to
-    #: at most ``declared limit x this factor``. Without it the only bound was the
-    #: cluster ceiling, and a component declared at 45Mi climbed to 4096Mi in nine
-    #: automated rounds (asses-k2n/pr-494). The catalog value is a stable anchor
-    #: precisely because the tuner never writes to it -- it only writes deployment
-    #: overrides -- so the ratio cannot drift along with the increases.
+    #: at most ``declared limit x this factor``. Without it the only bound is the cluster
+    #: ceiling, and a component can climb two orders of magnitude in a handful of
+    #: automated rounds. The catalog value is a stable anchor precisely because the tuner
+    #: never writes to it -- it only writes deployment overrides -- so the ratio cannot
+    #: drift along with the increases.
     max_growth_factor: float
     #: Below this observed max (Mi) the measurement is treated as "no data" rather
     #: than as a real value. A container that actually ran uses more than this within

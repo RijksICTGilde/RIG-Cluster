@@ -1,6 +1,6 @@
 """Editable definitions for the postgresql-database service (project-level config).
 
-The one user-editable thing at the project layer is the list of extra schemas (RC-17):
+The one user-editable thing at the project layer is the list of extra schemas:
 ``services/postgresql-database/config/schemas``, a sequence of ``{postfix, description,
 marked-for-deletion}`` items. Paths are built with ``config_path`` and every editable
 carries ``virtualize=SERVICE_VIRTUALIZE`` so project-level service config does not
@@ -23,8 +23,6 @@ def _cp(*segments: str) -> str:
     return config_path(ConfigLayer.PROJECT, ServiceType.POSTGRESQL_DATABASE, "config", *segments)
 
 
-# --- per-schema item fields --------------------------------------------------
-
 SCHEMA_POSTFIX_EDITABLE = Editable(
     yaml_path=_cp("schemas[*]", "postfix"),
     validator=SchemaPostfixValidator(),
@@ -37,7 +35,7 @@ SCHEMA_DESCRIPTION_EDITABLE = Editable(
 )
 
 # A safety gate, not a delete: marking keeps the schema (and its data) in the database
-# but stops the provisioner from managing it and exposing its variable (RC-17 section 6).
+# but stops the provisioner from managing it and exposing its variable.
 SCHEMA_MARKED_EDITABLE = Editable(
     yaml_path=_cp("schemas[*]", "marked-for-deletion"),
     converter=BooleanConverter(),

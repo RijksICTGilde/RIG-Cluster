@@ -1,10 +1,10 @@
-"""Editables owned by the ``user-env-vars`` system service (RC-25).
+"""Editables owned by the ``user-env-vars`` system service.
 
 Two layers, one field each, and both yaml_paths are plain component properties rather
 than ``config_path`` blocks inside the ``services`` list: this service owns
-``components[*]/user-env-vars`` and ``deployments[*]/components[*]/user-env-vars`` where
-they have always lived. Modelling them as a service adds the config model, the schema
-fragment, the validator and the declared form sections; it moves no data.
+``components[*]/user-env-vars`` and ``deployments[*]/components[*]/user-env-vars``. Being a
+service gives them the config model, the schema fragment, the validator and the declared
+form sections; the data stays where it is.
 
 The deployment-component value wins over the component value on a collision (merged in
 ``ProjectManager``), which is why the same service carries both.

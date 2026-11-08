@@ -2,9 +2,9 @@
 
 This service carries config on two layers with different content, and ``config_model`` is one
 class per service, so both live in one model with every field optional:
-
-- project: ``enable-versioning`` plus the grens op oude versies (RC-380), the real user settings.
-- deployment: dezelfde grens per bucket, plus clone state (``generation`` + ``revisions``),
+- project: ``enable-versioning`` plus the limit on noncurrent versions, the real user
+  settings.
+- deployment: the same limit per bucket, plus clone state (``generation`` + ``revisions``),
   OPI-managed and written by ``opi/manager/revision_manager.py``.
 
 A project-level block therefore validates with the clone fields absent, and a deployment-level

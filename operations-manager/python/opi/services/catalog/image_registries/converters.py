@@ -1,7 +1,7 @@
-"""Converters voor de dienst ``image-registries``.
+"""Converters for the ``image-registries`` service.
 
-Versleuteld met de sleutel van het PROJECT en niet met de systeemsleutel, dus
-``AGEEncryptConverter`` (die ``settings.SOPS_AGE_PUBLIC_KEY`` gebruikt) kan dit niet.
+Encrypted with the PROJECT key and not with the system key, so ``AGEEncryptConverter``
+(which uses ``settings.SOPS_AGE_PUBLIC_KEY``) cannot do this.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 class UpstreamConverter:
-    """Maakt van wat er geplakt is de upstream die wij nodig hebben.
+    """Turns whatever was pasted into the upstream we need.
 
-    Dezelfde functie als de ``BeforeValidator`` in ``config_model.py``: de editable-laag
-    kan niet bij een pydantic before-validator.
+    The same job as the ``BeforeValidator`` in ``config_model.py``: the editable layer
+    cannot reach a pydantic before-validator.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
@@ -36,18 +36,18 @@ class UpstreamConverter:
 
 
 class ProjectAgeSecretConverter:
-    """Leest een opgeslagen geheim als leesbare tekst en schrijft het terug als AGE-blok.
+    """Reads a stored secret as readable text and writes it back as an AGE block.
 
-    De leeskant kent alle drie de vormen die het veld mag dragen (armored blok,
-    ``base64+age:``, ``plain:``); een onherkende vorm zou bij de volgende opslag als nieuw
-    token versleuteld worden.
+    The read side knows all three shapes the field may carry (armored block,
+    ``base64+age:``, ``plain:``); an unrecognised shape would be encrypted as a new token on
+    the next save.
     """
 
     def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         if not isinstance(value, str) or not value:
             return ""
         if not carries_encrypted_value(value):
-            # Haalt een ``plain:``-prefix eraf en laat kale tekst met rust.
+            # Strips a ``plain:`` prefix and leaves bare text alone.
             return decrypt_password_smart_sync(value, None)
         private_key = resolve_project_private_key(context_data)
         if private_key:
@@ -55,7 +55,7 @@ class ProjectAgeSecretConverter:
                 return decrypt_password_smart_sync(value, private_key)
             except ValueError:
                 logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen met de projectsleutel")
-        # Niet "" teruggeven: de schrijfkant leest een leeg veld als "gewist".
+        # Not "" : the write side reads an empty field as "cleared".
         logger.warning("[ProjectAgeSecretConverter] Token niet te ontsleutelen; de opgeslagen waarde blijft staan")
         return value
 
@@ -65,8 +65,8 @@ class ProjectAgeSecretConverter:
         text = str(value).strip()
         if not text:
             return ""
-        # Beide versleutelde vormen, anders wordt een ``base64+age:``-waarde opnieuw
-        # versleuteld en is het echte token weg.
+        # Both encrypted shapes, otherwise a ``base64+age:`` value is encrypted again and
+        # the real token is gone.
         if carries_encrypted_value(text):
             return value
         public_key = (context_data or {}).get("config", {}).get("age-public-key")

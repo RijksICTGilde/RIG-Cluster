@@ -1,14 +1,7 @@
-"""Where a deployment's web-address settings live, and the only way to reach them (RC-60).
+"""Where a deployment's web-address settings live, and the only way to reach them.
 
-The fields that together describe how publish-on-web composes a hostname and with
-which certificate used to sit loose in the deployment root::
-
-    deployments:
-      - name: productie
-        domain-format: component-deployment-project
-        base-domain: rijksapp.nl
-
-They now live under the service that owns them, at the layer where the value applies::
+The fields that together describe how publish-on-web composes a hostname and with which
+certificate live under the service that owns them, at the layer where the value applies::
 
     deployments:
       - name: productie
@@ -19,15 +12,15 @@ They now live under the service that owns them, at the layer where the value app
               base-domain: rijksapp.nl
 
 This module is the single authority on that location -- the same role
-``connectors/subdomain.py`` plays for the project-level ``domains`` block, and for the same
-reason. The v2.6 -> v2.7 migration relocates through :func:`relocate_domain_settings` and the
-runtime reads through :func:`get_domain_setting`, so the migration and the running code can
-never disagree about where a value is.
+``connectors/subdomain.py`` plays for the project-level ``domains`` block. The v2.6 -> v2.7
+migration relocates through :func:`relocate_domain_settings` and the runtime reads through
+:func:`get_domain_setting`, so the migration and the running code can never disagree about
+where a value is.
 
-Readers accept BOTH locations: service config first, deployment root as fallback. A file that
-has not been migrated yet keeps working and relocates on its next load. Writers only ever use
-:func:`ensure_domain_config` / :func:`set_domain_setting`, which land on the service path and
-remove the root copy, so the state cannot split.
+Readers accept BOTH locations: service config first, the deployment root as fallback. A file
+that has not been migrated yet keeps working and relocates on its next load. Writers only ever
+use :func:`ensure_domain_config` / :func:`set_domain_setting`, which land on the service path
+and remove the root copy, so the state cannot split.
 """
 
 from __future__ import annotations
@@ -43,8 +36,7 @@ from opi.services.services_enums import ServiceType
 #:
 #: It lives here rather than beside ``DOMAIN_FORMAT_TEMPLATES`` in ``opi/utils/naming.py``
 #: for one reason: ``config_model.py`` needs it to type its field, and ``naming`` already
-#: imports this module, so taking it from there is an import cycle (measured: "cannot
-#: import name 'DomainFormatId' from partially initialized module"). The templates keep the
+#: imports this module, so taking it from there is an import cycle. The templates keep the
 #: assertion that the two stay in sync, so there is still exactly one authority.
 #:
 #: WHICH of these ids fits a given deployment is a second, narrower question, answered by
@@ -71,9 +63,9 @@ class DomainSetting(StrEnum):
 
     An enum rather than six string literals so the set is enumerable (the migration and
     the "no direct root access" guard both need to walk it) and every reader names the same
-    key. The values are the on-disk key spelling, unchanged by the relocation. The legacy
-    ``domain-mode`` is no longer a member: the v2.8 migration removes it wholesale, and it
-    handles the raw key itself so retiring it here cannot orphan old files.
+    key. The values are the on-disk key spelling. The legacy ``domain-mode`` is NOT a
+    member: the v2.8 migration removes it wholesale and handles the raw key itself, so
+    retiring it here cannot orphan old files.
     """
 
     BASE_DOMAIN = "base-domain"
@@ -167,9 +159,10 @@ def has_domain_setting(deployment: dict[str, Any], setting: DomainSetting) -> bo
     """Whether the setting is PRESENT in either location, whatever its value.
 
     Presence is not the same as truth, and neither is it the same as ``is not None``: an
-    explicitly stored ``subdomain: null`` says "configured, deliberately empty". Callers that
-    used to ask ``"subdomain" not in deployment`` mean this, not ``get_domain_setting(...) is
-    None`` -- collapsing the two would let them overwrite a value someone stored on purpose.
+    explicitly stored ``subdomain: null`` says "configured, deliberately empty". A caller
+    asking "does this deployment have a subdomain key" means this, not
+    ``get_domain_setting(...) is None`` -- collapsing the two lets it overwrite a value
+    someone stored on purpose.
     """
     config = get_domain_config(deployment)
     return (config is not None and setting.value in config) or setting.value in deployment
@@ -261,9 +254,9 @@ def clear_domain_settings(deployment: dict[str, Any]) -> None:
 def clear_domain_name_settings(deployment: dict[str, Any]) -> None:
     """Remove only what NAMES a web address, leaving the shape half in place.
 
-    The clone's half of :func:`clear_domain_settings`. Dropping the shape as well did not
-    give a clone "no format", it gave it the platform default of the day it was processed
-    (RC-217, ``features/kloon-erft-de-vorm-van-het-webadres.md``).
+    The clone's half of :func:`clear_domain_settings`. Dropping the shape as well does not
+    give a clone "no format", it gives it the platform default of the day it is processed
+    (``features/kloon-erft-de-vorm-van-het-webadres.md``).
 
     Which formats survive the loss of the name is a question about the formats, not about
     the settings, so it is answered where the templates live
@@ -323,10 +316,9 @@ def domain_setting_path(setting: DomainSetting, deployment_index: int | None = N
 
     The forms counterpart of the accessors above, and it lives here for the same reason:
     one statement of where a setting is. The resolver map and several
-    ``get_effective_value`` callers key on the exact path an editable declares, and those
-    call sites used to spell ``f"deployments[{i}]/base-domain"`` by hand. A hand-written
-    path that no longer exists fails silently -- the resolver is simply never found and the
-    field falls back to its own default.
+    ``get_effective_value`` callers key on the exact path an editable declares, and a
+    hand-written path that does not exist fails silently -- the resolver is never found and
+    the field falls back to its own default.
 
     Built from ``config_path``, so the layer prefix comes from ``catalog/base.py`` and this
     cannot drift from what the editables declare.
@@ -344,13 +336,12 @@ def custom_domain_certificate_note(cluster: str, base_domain: str | None) -> str
     supported domain is covered by the platform certificate, and a cluster that can issue
     for a domain of the user's own has no news either.
 
-    It exists because the situation it describes is invisible in every other way. The
-    ingress is created, the Issuer is created, ArgoCD reports Synced, the deployment
-    reports Healthy, and the browser is served the wrong certificate; nothing in the
-    portal, in the API or in the cluster says why (zad-cli, bevinding 22). The fact is
-    knowable from the cluster configuration alone at the moment the domain is set, so that
-    is where it is said -- and it names the way out, because "this will not work" without
-    one is half an answer.
+    The situation it describes is invisible in every other way. The ingress is created, the
+    Issuer is created, ArgoCD reports Synced, the deployment reports Healthy, and the
+    browser is served the wrong certificate; nothing in the portal, in the API or in the
+    cluster says why. The fact is knowable from the cluster configuration alone at the
+    moment the domain is set, so that is where it is said -- and it names the way out,
+    because "this will not work" without one is half an answer.
 
     The sentence lives with publish-on-web because publish-on-web owns both halves of it:
     the ``base-domain`` that causes it and the ``tls`` mode that resolves it.

@@ -37,7 +37,7 @@ class HealthCheckService(Service):
     )
     config_model = HealthCheckConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): the probe is configured on the component and there is
+    # May enrol itself: the probe is configured on the component and there is
     # nothing at project level to choose.
     allows_implicit_project_selection = True
     # Runs after the secret services (10-50). This provider only overrides probe_*
@@ -45,7 +45,6 @@ class HealthCheckService(Service):
     manifest_order = 55
     config_component_order = 45
 
-    # --- config field ownership (component-level; hooks into the component form) ----
     # health-check is a component-level service: no standalone wizard step. It hooks
     # its probe fieldset into the per-component form via config_component_layout().
 

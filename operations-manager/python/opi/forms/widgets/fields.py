@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.forms.editables.sequence_identity import IDENTITY_KEYS
 from opi.forms.widgets.base import WidgetAdapter
-from opi.services.catalog.aliases.overzicht import alias_variabelen
+from opi.services.catalog.aliases.overview import alias_variabelen
 
 if TYPE_CHECKING:
     from opi.forms.field import FormField

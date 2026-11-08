@@ -1,6 +1,6 @@
 """Environment variables the send-email service provides -- single source of truth.
 
-Lives in the service's own package (RC-36). The names are the ones an application
+Lives in the service's own package. The names are the ones an application
 library already expects (``SMTP_HOST``, ``SMTP_PORT``, ...), so a project that already
 speaks SMTP needs no alias to use the platform relay.
 """
@@ -17,29 +17,29 @@ class SendEmailVariables(Enum):
         name="SMTP_HOST",
         description="Hostname van de mailrelay binnen het cluster",
         source="secret",
-        secret_key="host",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="host",  # noqa: S106  # the name of the key or the secret class, not a secret
     )
     PORT = VariableDefinition(
         name="SMTP_PORT",
         description="Submission-poort van de mailrelay (587)",
         source="secret",
-        secret_key="port",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="port",  # noqa: S106  # the name of the key or the secret class, not a secret
     )
     USERNAME = VariableDefinition(
         name="SMTP_USERNAME",
         description="SMTP-account van dit project op de relay",
         source="secret",
-        secret_key="username",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="username",  # noqa: S106  # the name of the key or the secret class, not a secret
     )
     PASSWORD = VariableDefinition(
         name="SMTP_PASSWORD",
         description="Wachtwoord van het SMTP-account van dit project",
         source="secret",
-        secret_key="password",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="password",  # noqa: S106  # the name of the key or the secret class, not a secret
     )
     FROM = VariableDefinition(
         name="SMTP_FROM",
         description="Afzenderadres dat de relay voor dit project afdwingt (de weergavenaam stel je in bij de dienst)",
         source="secret",
-        secret_key="from_address",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
+        secret_key="from_address",  # noqa: S106  # the name of the key or the secret class, not a secret
     )

@@ -1,8 +1,8 @@
-"""Resource-tuning config values, owned by the service (was ``RESOURCE_TUNING_*``).
+"""Resource-tuning config values, owned by the service.
 
 The values live here as a plain dict and are validated once through
-``ResourceTuningConfig``. Mirrors the sleep-mode pattern (values in the service, a
-Pydantic model over them) so the service stays self-contained -- explicitly not in
+``ResourceTuningConfig``. The sleep-mode pattern (values in the service, a Pydantic model
+over them), so the service stays self-contained: explicitly not in
 ``core/config.py``/``Settings`` and not environment-driven.
 """
 

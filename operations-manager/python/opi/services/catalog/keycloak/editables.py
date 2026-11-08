@@ -1,7 +1,7 @@
 """Editable definitions for the keycloak service (project-level SSO config).
 
-Includes the nested, hand-authored sequences (additional-clients, realm-roles) that
-stay hand-written rather than derived from the config model (the hard 10%).
+Includes the nested, hand-authored sequences (additional-clients, realm-roles), which are
+not derived from the config model.
 """
 
 from __future__ import annotations
@@ -10,18 +10,14 @@ from opi.forms.editables.converters import EmptyToNoneConverter, LogoutPathConve
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import LogoutPathValidator, RealmRoleValidator, RedirectUriValidator
 
-#: GEEN default, en dat is de hele reparatie.
+#: NO default, deliberately.
 #:
-#: Hier stond ``default="sso-support"``, terwijl het configmodel, het API-schema en
-#: ``KeycloakManager.DEFAULT_CONFIG`` alle drie ``sso-only`` gebruiken. Een projectbestand
-#: zonder ``template`` liet het scherm dus "SSO Rijk of een lokaal account" zien terwijl het
-#: platform de realm uit "Alleen SSO Rijk" bouwde: het formulier verzon een waarde die
-#: nergens anders gold, en opslaan schreef die verzinsels ook nog het bestand in.
-#:
-#: Een van de twee kanten laten winnen was niet de keuze: welke blauwdruk een project krijgt
-#: is een beslissing van de projectbeheerder en niet iets om stilzwijgend voor hem in te
-#: vullen. Zonder default toont het veld wat er in het bestand staat, en anders niets - en
-#: ``required`` dwingt dan een keuze af in plaats van er een te verzinnen.
+#: A default here invents a value. The config model, the API schema and
+#: ``KeycloakManager.DEFAULT_CONFIG`` all three use ``sso-only``, so a form default of its own
+#: shows one blueprint on screen while the platform builds the realm from another -- and
+#: writes that invention into the file on save. Which blueprint a project gets is a decision
+#: for the project administrator, so the field shows what is in the file and otherwise nothing,
+#: and ``required`` forces a choice instead of inventing one.
 KEYCLOAK_TEMPLATE_EDITABLE = Editable(
     yaml_path="services/keycloak/config/template",
     values_provider="KeycloakTemplateOptionsProvider",

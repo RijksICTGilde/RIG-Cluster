@@ -1,7 +1,7 @@
-"""Wie welke proxy-organisatie mag noemen.
+"""Who may name which proxy organization.
 
-Een organisatienaam is tenantbreed en ODCN repliceert het pull-secret naar elke
-namespace, dus deze regels kijken naar de andere projecten op het cluster.
+An organization name is tenant wide and ODCN replicates the pull secret into every namespace,
+so these rules look at the other projects on the cluster.
 """
 
 from __future__ import annotations
@@ -15,15 +15,14 @@ from opi.utils.naming import normalize_registry_repo, split_image_reference
 
 
 def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[str]:
-    """Weiger een image die naar de proxy-organisatie van een ANDER project wijst.
+    """Refuse an image pointing at ANOTHER project's proxy organization.
 
-    De zusterregel van ``validate_platform_registry_image_ownership``: wie de naam van
-    zo'n organisatie kent haalt er met ANDERMANS credentials bovenstrooms uit op. Een
-    gedeelde proxy (``ghcr-rig``) draagt geen projectnaam en blijft bruikbaar. De
-    projectnamen komen uit de projectenlijst, want een friendlyName mag zelf koppeltekens
-    bevatten.
+    The sister rule of ``validate_platform_registry_image_ownership``: whoever knows the name
+    of such an organization pulls from upstream with SOMEONE ELSE's credentials. A shared proxy
+    (``ghcr-rig``) carries no project name and stays usable. The project names come from the
+    project list, because a friendlyName may itself contain hyphens.
     """
-    # Lazy: importcyclus via project_validation en de dienstenlijst.
+    # Lazy: import cycle through project_validation and the services list.
     from opi.services.project_store import get_project_store
 
     project_name = project_data.get("name", "")
@@ -63,20 +62,18 @@ def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[
 
 
 def _belongs_to_project(organization: str, customer_name: str, project: str) -> bool:
-    """Of een proxy-organisatie van ``project`` is.
+    """Whether a proxy organization belongs to ``project``.
 
-    Elke organisatie heeft de vorm ``<friendly>-<customer>-<project>-<hash>``, dus aan
-    beide kanten op een segmentgrens matchen: anders eist ``demo`` die van
-    ``demonstratie`` op.
+    Every organization has the shape ``<friendly>-<customer>-<project>-<hash>``, so match on a
+    segment boundary at both ends: otherwise ``demo`` claims the one of ``demonstratie``.
     """
     return f"-{customer_name}-{project}-" in organization
 
 
 def _project_clusters(project_data: dict[str, Any]) -> list[str]:
-    """Elk cluster waar dit project iets op draait, zonder dubbelen.
+    """Every cluster this project runs something on, without duplicates.
 
-    Een deployment mag een cluster noemen dat niet in ``clusters:`` staat, dus beide
-    bronnen tellen mee.
+    A deployment may name a cluster that is not in ``clusters:``, so both sources count.
     """
     clusters: list[str] = []
     for cluster in project_data.get("clusters", []) or []:
@@ -90,11 +87,11 @@ def _project_clusters(project_data: dict[str, Any]) -> list[str]:
 
 
 def _foreign_owner_of_organization(organization: str, cluster: str, project_name: str) -> str | None:
-    """Het ANDERE project waarvan deze proxy-ORGANISATIE is, of None.
+    """The OTHER project this proxy ORGANIZATION belongs to, or None.
 
-    Een gedeelde proxy draagt geen projectnaam en levert dus None op.
+    A shared proxy carries no project name and therefore yields None.
     """
-    # Lazy: importcyclus via project_validation en de dienstenlijst.
+    # Lazy: import cycle through project_validation and the services list.
     from opi.services.project_store import get_project_store
 
     customer_name = get_image_registries_config(cluster).get("customer_name")
@@ -105,11 +102,11 @@ def _foreign_owner_of_organization(organization: str, cluster: str, project_name
 
 
 def foreign_proxy_organization_owner(reference: str, cluster: str, project_name: str) -> str | None:
-    """Het ANDERE project waarvan ``reference`` de proxy-organisatie noemt, of None.
+    """The OTHER project whose proxy organization ``reference`` names, or None.
 
-    ``reference`` is een image of een kale registry-verwijzing; alles buiten de
-    proxy-registry van dit cluster levert None op. Publiek, want de ad-hoc jobpod gebruikt
-    dezelfde toets zonder projectbestand.
+    ``reference`` is an image or a bare registry reference; anything outside this cluster's
+    proxy registry yields None. Public, because the ad-hoc job pod uses the same check without
+    a project file.
     """
     registry_host = get_image_registries_config(cluster).get("registry_host")
     if not registry_host:
@@ -121,19 +118,19 @@ def foreign_proxy_organization_owner(reference: str, cluster: str, project_name:
 
 
 def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]:
-    """Weiger een registry-entry die naar de proxy-organisatie van een ANDER project wijst.
+    """Refuse a registry entry pointing at ANOTHER project's proxy organization.
 
-    De andere helft van ``validate_proxy_organization_ownership``, die de images toetst.
-    Een entry alleen bouwt al een regel die op elke image onder die upstream slaat, ook op
-    de ad-hoc jobpod. Twee velden, want de ``upstream`` bepaalt welke images de regel raakt
-    en het ``secretName`` welk credential eraan hangt.
+    The other half of ``validate_proxy_organization_ownership``, which checks the images. An
+    entry on its own already builds a rule that applies to every image under that upstream,
+    including on the ad-hoc job pod. Two fields, because the ``upstream`` decides which images
+    the rule touches and the ``secretName`` which credential hangs off it.
     """
     project_name = project_data.get("name", "")
     registries = project_registries(project_data) if project_name else []
     if not registries:
         return []
 
-    # Meerdere clusters met dezelfde klantnaam leveren dezelfde melding op.
+    # Several clusters with the same customer name yield the same message.
     errors: list[str] = []
     for cluster in _project_clusters(project_data):
         for registry in registries:
@@ -142,7 +139,7 @@ def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]
                 if not isinstance(value, str) or not value:
                     continue
                 if field == "secretName":
-                    # Een secretName noemt de organisatie als naam, niet als pad.
+                    # A secretName names the organization as a name, not as a path.
                     owner = _foreign_owner_of_organization(
                         value.removesuffix(f"-{PULL_SECRET_POSTFIX}"), cluster, project_name
                     )
@@ -157,14 +154,14 @@ def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]
 
 
 def validate_proxy_organization_claims(project_data: dict[str, Any]) -> list[str]:
-    """Weiger een organisatienaam die al door een ANDER project geclaimd is.
+    """Refuse an organization name another project already claimed.
 
-    De naam is tenantbreed: twee CR's met dezelfde ``metadata.name`` sturen EEN organisatie
-    in RCR aan. ``organization_suffix`` maakt dat bij normaal gebruik onmogelijk, maar de
-    naam wordt op 63 tekens afgekapt, dus dit meet de UITKOMST. Binnen het project zelf
-    geldt hetzelfde: twee entries op één naam is één bestand op het projectniveau.
+    The name is tenant wide: two CRs with the same ``metadata.name`` drive ONE organization in
+    RCR. ``organization_suffix`` makes that impossible under normal use, but the name is cut to
+    63 characters, so this measures the OUTCOME. Within the project itself the same holds: two
+    entries on one name is one file at the project layer.
     """
-    # Lazy: importcyclus via project_validation en de dienstenlijst.
+    # Lazy: import cycle through project_validation and the services list.
     from opi.services.project_store import get_project_store
 
     project_name = project_data.get("name", "")

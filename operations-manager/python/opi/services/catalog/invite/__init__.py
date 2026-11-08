@@ -2,13 +2,10 @@
 
 An invite is a configuration-as-code unit at the PROJECT layer. It owns its typed config
 model (``InviteConfig``), its drift-locked schema fragment (``invite.v1.1.json``), its
-wizard/edit form section, and its read-only detail-page block. It replaces the old top-level
-``invites:`` section, which sat outside the service contract and could only be created by
-hand-editing YAML.
+wizard/edit form section, and its read-only detail-page block.
 
-An invite provisions nothing, so most service hooks stay on their no-op default. That is not
-a weakness of the contract (a behaviourless service is a few lines); it is recorded here so
-the next reader does not go looking for something that is deliberately absent:
+An invite provisions nothing, so most service hooks stay on their no-op default. Recorded
+here so the next reader does not go looking for something that is deliberately absent:
 
 - ``provision`` / ``provision_order`` -- no deployment resource. The realm user is created
   when the invite is REDEEMED (the public /invite routes), outside the deploy cycle.
@@ -24,28 +21,21 @@ the next reader does not go looking for something that is deliberately absent:
 The one deviation from keycloak/sleep-mode is ``post_save_action="save_only"``: editing an
 invite changes no manifests, so it does not trigger a deploy.
 
-De uitnodigingscode komt WEL uit een leesantwoord (bewust besluit)
------------------------------------------------------------------
+The invite code comes back in a read response, on purpose
+---------------------------------------------------------
 
-``key`` is het geheim in de link, en toch geeft de gewone lezing van de invite-config hem
-terug -- en het aanmaken meldt hem als het platform hem genereerde. Dat ziet eruit als een
-fout en is het niet; het is een besluit van de eigenaar, en dit staat hier zodat de
-volgende lezer hem niet "herstelt". Drie argumenten:
+``key`` is the secret in the link, and the ordinary read of the invite config returns it;
+creating one reports it when the platform generated it. Do not "fix" that. The code IS the
+invitation: whoever cannot read it back cannot send the invitation, only replace it, which
+invalidates one already on its way. Whoever has the link can redeem it, so the code is
+exactly as secret as the channel it travels over, and the project owner already holds the
+project key with which they can overwrite the invite, change the roles and switch the
+service off.
 
-1. **De code IS de uitnodiging.** Je nodigt iemand uit door hem die link te sturen. Wie de
-   code niet kan teruglezen kan de uitnodiging niet versturen, alleen vervangen -- en dat
-   maakt een uitnodiging die al onderweg is ongeldig.
-2. **Hij is niet geheim in de gewone zin.** Wie de link heeft kan hem inwisselen, dus hij
-   is precies zo geheim als het kanaal waarover je hem stuurt. Er valt niets te beschermen
-   dat het versturen zelf niet al opgeeft.
-3. **Verbergen voor de projecteigenaar beschermt niemand.** Die heeft de projectsleutel
-   al, waarmee hij de invite kan overschrijven, de rollen kan veranderen en de hele dienst
-   kan uitzetten.
-
-Dit is NIET het antwoord voor ``user-env-vars``. Daar geldt een andere afweging: die
-waarden kunnen langlevende geheimen bevatten die met het lezen zelf niets te maken hebben,
-en ze blijven ontoegankelijk via de API (zie ``Service.owned_value_is_secret``). De twee
-gevallen consistent maken is precies de fout die hier niet gemaakt moet worden.
+This is NOT the answer for ``user-env-vars``: those values may carry long-lived secrets that
+have nothing to do with reading them, and they stay unreachable over the API (see
+``Service.owned_value_is_secret``). Making the two cases consistent is exactly the mistake
+not to make here.
 """
 
 from __future__ import annotations
@@ -64,14 +54,14 @@ from opi.services.services_enums import ServiceType, UIEvent
 logger = logging.getLogger(__name__)
 
 
-#: De ondergrens voor een ZELFGEKOZEN sleutel. De link is de enige barriere, dus een korte
-#: sleutel is te raden; een gegenereerde sleutel is er 22. Geldt alleen voor een sleutel die
-#: nog niet in het projectbestand stond: zie :meth:`InviteService.validate_project_change`.
+#: The lower bound for a SELF-CHOSEN key. The link is the only barrier, so a short key is
+#: guessable; a generated key is 22 characters. Applies only to a key that was not already in
+#: the project file: see :meth:`InviteService.validate_project_change`.
 INVITE_KEY_MIN_LENGTH = 16
 
 
 def _invite_keys(project_data: dict[str, Any]) -> set[str]:
-    """De sleutels van de actieve uitnodigingen, via de ene lezer van dat veld."""
+    """The keys of the active invitations, through the one reader of that field."""
     from opi.handlers.project_file_handler import ProjectFileHandler
 
     invites = ProjectFileHandler().get_all_active_invites(project_data)
@@ -104,20 +94,20 @@ class InviteService(Service):
         help_template="invite/help.md",
         icon="envelop",
         color="lichtblauw",
-        # Een uitnodiging geldt voor het Keycloak-realm van het project, dus er valt per
-        # component niets aan te vinken.
+        # An invitation applies to the project's Keycloak realm, so there is nothing to tick
+        # per component.
         selectable_per_component=False,
         variables=[],
         # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
         # at submit that keycloak is present. An invite assigns a realm role, so keycloak
         # must exist. Do NOT build a second dependency mechanism next to this.
         requires=["services/keycloak"],
-        # De voorwaardelijke tegenhanger van ``requires``, en met opzet geen tweede eis:
-        # een uitnodiging zonder rol is volkomen geldig -- ze levert een kaal account op --
-        # totdat keycloak alleen nog rolhouders binnenlaat. Vanaf dat moment geeft dezelfde
-        # link geen toegang meer, en tot vandaag kwam niemand daar achter tot iemand hem
-        # probeerde. De verwachting staat hier, bij de dienst die het VELD bezit, en wijst
-        # met een pad naar de voorwaarde elders; generieke code leest allebei.
+        # The conditional counterpart of ``requires``, and deliberately not a second
+        # requirement: an invitation without a role is perfectly valid, it yields a bare
+        # account, until keycloak only lets role holders in. From that moment the same link
+        # grants no access, and until today nobody found out before someone tried it. The
+        # expectation lives here, with the service that owns the FIELD, and points at the
+        # condition elsewhere with a path; generic code reads both.
         config_advice=[
             ConfigAdvice(
                 when=config_path(ConfigLayer.PROJECT, ServiceType.KEYCLOAK, "config", "restrict-access", "enabled"),
@@ -138,20 +128,17 @@ class InviteService(Service):
     # the link, so converting its destination silently changes where that person ends up,
     # and on a wrong match ends them up somewhere else entirely. ``application-url`` stays
     # valid and equal; the two shapes live side by side with a fixed precedence (see
-    # ``destination.resolve_invite_url``). This being the catalog's FIRST version bump, it
-    # is worth something that it is one that rewrites nothing.
+    # ``destination.resolve_invite_url``).
     config_schema_version = "1.1"
     config_section_id = "invite-config"
     modal_flow_id = "modal-edit-invite-config"
 
-    # Tijdelijke gevel: naar buiten toe is een uitnodiging er ÉÉN, geen lijst van één. Het
-    # bestand houdt de lijst (zie ``InviteConfig.active`` en het schemafragment), het
-    # formulier pint hem al af op precies een (``INVITE_ACTIVE_EDITABLE``, min == max == 1),
-    # en deze regel doet hetzelfde voor de API. Waarom het een hack is, wat er bij meerdere
-    # entries gebeurt en hoe je hem terugdraait: ``Service.api_singular_lists``.
+    # Temporary facade: from the outside an invitation is ONE, not a list of one. The file
+    # keeps the list (see ``InviteConfig.active`` and the schema fragment), the form already
+    # pins it to exactly one (``INVITE_ACTIVE_EDITABLE``, min == max == 1), and this line does
+    # the same for the API. Why it is a hack, what happens with several entries and how to
+    # undo it: ``Service.api_singular_lists``.
     api_singular_lists = frozenset({"active"})
-
-    # --- helpers ----------------------------------------------------------------
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         """Section visibility: whether this project selected the invite service."""
@@ -173,10 +160,8 @@ class InviteService(Service):
         key. A self-chosen key is left untouched.
 
         Both write paths run this: the wizard through ``post_merge`` and the API through
-        ``registry.generate_missing_values``. It used to be the wizard's alone, so an
-        invite created over the API kept the empty string the caller sent and its link was
-        ``/invite/`` -- an invitation nobody could redeem. Returned keyed by yaml path,
-        because a generated key that the caller cannot read is the same dead invitation.
+        ``registry.generate_missing_values``. Returned keyed by yaml path, because a
+        generated key the caller cannot read is a dead invitation.
         """
         from opi.services.project import Project
 
@@ -234,16 +219,16 @@ class InviteService(Service):
                 entry.pop(stale, None)
 
     def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
-        """Een NIEUWE uitnodigingssleutel is minstens ``INVITE_KEY_MIN_LENGTH`` tekens lang.
+        """A NEW invite key is at least ``INVITE_KEY_MIN_LENGTH`` characters long.
 
-        Alleen nieuw: een sleutel die al in de vorige versie stond blijft geldig. De vier
-        projectbestanden die ouder zijn dan deze dienst dragen zelfgekozen sleutels, en die
-        afkeuren zou hun bestand onopslaanbaar maken terwijl de eigenaar niet kan voldoen
-        (de sleutel verlengen maakt de link die al rondgaat ongeldig). Dezelfde valkuil als
-        het opslagplafond, zie ``STORED_CONTEXT_KEY``.
+        New only: a key that was already in the previous version stays valid. Project files
+        older than this service carry self-chosen keys, and rejecting those would make their
+        file unsaveable while the owner cannot comply (lengthening the key invalidates the
+        link already going round). The same pitfall as the storage ceiling, see
+        ``STORED_CONTEXT_KEY``.
 
-        De sleutel zelf komt NIET in de melding: die gaat naar een gebruiker en een waarde
-        die iemand ergens vandaan plakte hoort niet teruggeciteerd te worden.
+        The key itself does NOT appear in the message: that goes to a user, and a value
+        somebody pasted from somewhere should not be quoted back.
         """
         stored = _invite_keys(previous)
         too_short = sum(
@@ -257,16 +242,16 @@ class InviteService(Service):
         ]
 
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """Geen uitnodiging met een lokaal account in een realm dat op e-mailadres koppelt.
+        """No invitation with a local account in a realm that links on email address.
 
-        Zo'n realm koppelt een SSO-identiteit aan elk account met hetzelfde adres, dus een
-        account dat hier met een zelf ingetypt adres ontstaat, neemt de identiteit over van
-        wie dat adres via SSO aanlevert. De uitnodigingsweg weigert ``local`` daar al
-        (``get_invite_auth_methods``); dit houdt de keuze ook uit het projectbestand, zodat
-        het bestand niet belooft wat de link niet doet.
+        Such a realm links an SSO identity to every account with the same address, so an
+        account created here with a hand-typed address takes over the identity of whoever
+        supplies that address over SSO. The invite path already refuses ``local`` there
+        (``get_invite_auth_methods``); this keeps the choice out of the project file too, so
+        the file does not promise what the link does not do.
 
-        Gelezen via de handler, dezelfde weg als de uitnodigingsweg: die kent naast de
-        dienstlocatie ook de oude ``invites:``-sectie en levert één schrijfwijze op.
+        Read through the handler, the same route the invite path takes: besides the service
+        location it also knows the old ``invites:`` section and yields one spelling.
         """
         from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.services.catalog.keycloak.account_link import realm_account_link_mode
@@ -275,8 +260,8 @@ class InviteService(Service):
         if mode is None:
             return []
 
-        # De sleutel staat NIET in de melding: deze gaat als ProjectIntegrityError langs
-        # een logger.warning op de schrijfwegen, en de sleutel is een bearer-geheim.
+        # The key is NOT in the message: this passes a logger.warning on the write paths as a
+        # ProjectIntegrityError, and the key is a bearer secret.
         return [
             "een uitnodiging staat een lokaal account toe, maar het "
             f"keycloak-realm van dit project koppelt automatisch op e-mailadres "
@@ -284,8 +269,6 @@ class InviteService(Service):
             for invite in ProjectFileHandler().get_all_active_invites(project_data)
             if "local" in (invite.get("auth_methods") or [])
         ]
-
-    # --- config field ownership -------------------------------------------------
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
         return self.config_model_field_names() if layer is ConfigLayer.PROJECT else []

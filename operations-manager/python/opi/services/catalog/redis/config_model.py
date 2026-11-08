@@ -3,7 +3,7 @@
 One project-level setting. Each deployment gets a dedicated Redis ACL user restricted to
 keys prefixed with ``{deployment}-{project}:``; applications that cannot prefix their keys
 (Grist, for one) turn that restriction off. Read in ``opi/manager/redis_manager.py``, where
-the default has always been ``True``, so leaving the key out keeps the restriction on.
+the default is ``True``, so leaving the key out keeps the restriction on.
 Turning it off is a request: it only takes effect once a platform admin approved it
 (``acl-key-prefix-approval``, written by the approval flow).
 
@@ -19,17 +19,17 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from opi.services.config_managed import PLATFORM_MANAGED
 
-#: De sleutel van het veld in het projectbestand, gedeeld door het model en de goedkeuring
-#: die eraan hangt.
+#: The key of the field in the project file, shared by the model and the approval hanging off
+#: it.
 ACL_KEY_PREFIX_FIELD = "acl-key-prefix"
 
 
 class AclKeyPrefixApproval(BaseModel):
-    """Of een platformbeheerder het uitzetten van de sleutelbeperking heeft toegestaan.
+    """Whether a platform administrator allowed switching off the key restriction.
 
-    Zelfde vorm als het goedkeuringsblok van send-email, met de goedgekeurde ``value``
-    erbij: een oordeel geldt voor de waarde waarover het ging. Geschreven door de
-    goedkeuringsroute (``opi/services/approvals.py``).
+    The same shape as send-email's approval block, with the approved ``value`` alongside: a
+    verdict applies to the value it was about. Written by the approval route
+    (``opi/services/approvals.py``).
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)

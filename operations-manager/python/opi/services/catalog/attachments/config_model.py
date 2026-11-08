@@ -5,12 +5,10 @@ the component receives it, as a mounted file or as an environment variable. Vali
 therefore goes through the provider's list-aware ``validate_config``, like the storage
 services.
 
-The project-level entry is deliberately not covered here. It holds the catalog itself under
-``data`` rather than under ``config`` (``{attachments: {data: [...]}}``), and
+The project-level entry is not covered here. It holds the catalog itself under ``data``
+rather than under ``config`` (``{attachments: {data: [...]}}``), and
 ``Project.service_config`` returns None for it, so the project-level walk in
-``validate_service_configs`` skips it. Modelling the catalog is a separate question: its
-``content`` is an AGE-encrypted blob whose shape belongs to the crypto layer, not here.
-
+``validate_service_configs`` skips it; ``catalog_model.py`` is the model for that side.
 Mirrors ``$defs/attachment-use-entry`` in ``project_v2.json``, including its conditional
 requirement, so a coupling without a destination fails validation instead of producing a
 Secret nothing mounts.

@@ -9,10 +9,8 @@ address is one of the project's own people, and the texts read better with the p
 name in them than with a placeholder. Both come straight out of the project data the form
 is already working on, so no lookup or connector is involved.
 
-The texts follow the shape of what projects were filling in by hand (see
-``tests/fixtures/upgrade_safety/invites-legacy.yaml``): one short welcoming line, not a
-letter. They are a starting point that a project is expected to rewrite, which is exactly
-why they must not be empty.
+The texts are one short welcoming line, not a letter: a starting point that a project is
+expected to rewrite, which is exactly why they must not be empty.
 """
 
 from __future__ import annotations
@@ -41,8 +39,8 @@ def default_contact_email(yaml_data: dict[str, Any]) -> str | None:
     mail when this does not work" hint that the project is expected to adjust, and
     picking by role would suggest an authority the value does not carry.
 
-    Alleen de MENSEN: een service account heeft geen postvak, dus mailen naar een
-    service-accountnaam zou een adres opleveren dat nergens aankomt.
+    The PEOPLE only: a service account has no mailbox, so mailing a service account name
+    would yield an address that arrives nowhere.
     """
     for user in menselijke_leden_uit_data(yaml_data):
         email = user.get("email")

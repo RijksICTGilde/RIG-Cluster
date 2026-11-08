@@ -16,8 +16,8 @@ POSTGRESQL_INSTANCES_EDITABLE = Editable(
 
 POSTGRESQL_STORAGE_EDITABLE = Editable(
     yaml_path=POSTGRES_STORAGE.yaml_path(ServiceType.NAMESPACE_POSTGRESQL_DATABASE, ConfigLayer.PROJECT),
-    # Een keuzelijst is geen toets: de grens staat in de declaratie, en die toetst ook een
-    # met de hand geposte waarde.
+    # An option list is not a check: the bound lives in the declaration, which also judges a
+    # hand-posted value.
     validator=ConfigSettingValidator(POSTGRES_STORAGE),
     values_provider="PostgresStorageSizeOptionsProvider",
     virtualize=SERVICE_VIRTUALIZE,

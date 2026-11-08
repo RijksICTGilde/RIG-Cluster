@@ -2,11 +2,11 @@
 
 Two, and they are not interchangeable. ``VLAM_API_URL`` is the TERMINATED path: plain
 HTTP to the in-cluster proxy, which sets up the verified TLS session towards VLAM itself.
-``VLAM_API_URL_DIRECT`` is the DOORLUS (RC-167), where the consumer speaks TLS to VLAM
-directly and verifies the certificate itself -- against the standard trust store of its
-own runtime, because the certificate of VLAM is publicly trusted (RC-414).
+``VLAM_API_URL_DIRECT`` is the DOORLUS, where the consumer speaks TLS to VLAM directly and
+verifies the certificate itself -- against the standard trust store of its own runtime,
+because the certificate of VLAM is publicly trusted.
 
-Lives in the service's own package (RC-36).
+Lives in the service's own package.
 """
 
 from enum import Enum

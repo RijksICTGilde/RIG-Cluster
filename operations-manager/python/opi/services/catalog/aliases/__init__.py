@@ -1,19 +1,16 @@
-"""aliases service package (RC-25).
+"""aliases service package.
 
-A SYSTEM service, for the same reason as ``user-env-vars``: an alias map is part of what
-a component is, not something a user switches on. See that package for the shape
-argument; aliases differ from it in two ways.
+A SYSTEM service, like ``user-env-vars``: an alias map is part of what a component is, not
+something a user switches on. Aliases differ from it in two ways.
 
 They live on one layer only (the component), and their values are resolved *strictly*:
-``substitute_variables`` raises on a reference it cannot resolve, where a user env-var
-goes through the lenient ``substitute_known_variables`` because a dollar in a password is
-not a typo. That difference is deliberate and is the reason aliases still exist next to
-env-vars now that ``substitute_known_variables`` resolves ``$VAR`` in an env-var too; it
-has to land somewhere before aliases can be folded into env-vars.
+``substitute_variables`` raises on a reference it cannot resolve, where a user env-var goes
+through the lenient ``substitute_known_variables`` because a dollar in a password is not a
+typo.
 
 Like ``user-env-vars`` this service owns a plain component property
 (``components[*]/aliases``) rather than a block in a ``services:`` list, declared through
-``owned_property``. No project file changes.
+``owned_property``.
 """
 
 from __future__ import annotations
@@ -45,20 +42,17 @@ class AliasesService(Service):
     )
     config_model = AliasesConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): a system service whose values are a property of the
-    # component, so there is no project-level decision to make first.
+    # May enrol itself: a system service whose values are a property of the component, so
+    # there is no project-level decision to make first.
     allows_implicit_project_selection = True
     owned_property = "aliases"
-    # One AGE block for the whole set, exactly like user-env-vars (RC-106). Stored per
-    # value before that, which made every reader depend on a decrypt step of its own.
+    # One AGE block for the whole set, exactly like user-env-vars.
     owned_values_map = True
-    # Directly above user-env-vars, matching the order of the hand-authored "Variabelen"
-    # fieldset this replaces.
+    # Directly above user-env-vars in the "Variabelen" fieldset.
     config_component_order = 5
 
     def validate_owned_value(self, key: str, value: str) -> None:
-        # The promise in the description ("Een onbekende verwijzing is hier een harde
-        # fout") now holds at the moment of writing instead of only at deploy time.
+        # Enforced at write time, not only at deploy time, as the description promises.
         validate_alias_value(key, value)
 
     def owned_value_is_secret(self, key: str, value: str) -> bool:

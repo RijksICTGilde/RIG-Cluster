@@ -1,8 +1,8 @@
-"""Het endpoint dat het detailblok van deze dienst met clusterstatus vult.
+"""The endpoint that fills this service's detail block with cluster status.
 
-Of de proxy klaar is staat in de ``Organization`` in het cluster en niet in het
-projectbestand, en een renderend blok mag geen connector aanroepen; vandaar een
-htmx-lazyload, dezelfde vorm als de backups.
+Whether the proxy is ready lives in the ``Organization`` in the cluster and not in the project
+file, and a rendering block may not call a connector; hence an htmx lazy load, the same shape
+as the backups.
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ image_registries_router = APIRouter()
 @action(Action.SERVICE_READ)
 @requires_sso
 async def registry_status_fragment(request: Request, project_name: str) -> HTMLResponse:
-    """De toestand van de proxy-organisaties van dit project, opgehaald uit het cluster.
+    """The state of this project's proxy organizations, read from the cluster.
 
-    Alleen zinvol op een cluster met de Quay-operator; elders is er geen organisatie en
-    zegt het fragment dat er niets te wachten valt.
+    Only meaningful on a cluster with the Quay operator; elsewhere there is no organization and
+    the fragment says there is nothing to wait for.
     """
     user = get_current_user(request) or {}
     if not is_user_authorized_for_project(project_name, user.get("email", "").lower()):
@@ -52,7 +52,7 @@ async def registry_status_fragment(request: Request, project_name: str) -> HTMLR
     if cluster_config.get("backend") != BACKEND_QUAY_PROXY:
         return render(request, template=STATUS_TEMPLATE, context={"applicable": False, "statuses": []})
 
-    # ``get()`` en niet ``get_decrypted()``: dit fragment leest alleen ``name`` en ``upstream``.
+    # ``get()`` and not ``get_decrypted()``: this fragment reads only ``name`` and ``upstream``.
     project = get_project_store().get(project_name)
     project_data = project.data if project else None
     registries = project_registries(project_data or {})
@@ -81,9 +81,9 @@ async def registry_status_fragment(request: Request, project_name: str) -> HTMLR
 async def _organization_status(
     kubectl: Any, namespace: str, registry_name: str, upstream: str, customer_name: str, project_name: str
 ) -> dict[str, Any]:
-    """Wat het cluster over een proxy-organisatie zegt, in de woorden van het scherm.
+    """What the cluster says about a proxy organization, in the words of the screen.
 
-    Een organisatie die er nog niet is, is geen fout: ArgoCD maakt hem aan.
+    An organization that is not there yet is not an error: ArgoCD creates it.
     """
     organization = organization_name(upstream, customer_name, project_name)
     stdout, stderr, code = await kubectl.run_command(
@@ -123,12 +123,12 @@ async def _organization_status(
     }
 
 
-#: Hoeveel dagen voor het verlopen van het token de melding dringend wordt.
+#: How many days before the token expires the message turns urgent.
 EXPIRY_WARNING_DAYS = 14
 
 
 def _expires_soon(expires_at: str) -> bool:
-    """Of het token binnen ``EXPIRY_WARNING_DAYS`` verloopt; een onleesbare datum niet."""
+    """Whether the token expires within ``EXPIRY_WARNING_DAYS``; an unreadable date does not."""
     if not expires_at:
         return False
     try:

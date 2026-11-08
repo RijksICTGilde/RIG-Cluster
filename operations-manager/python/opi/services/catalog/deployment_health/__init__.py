@@ -1,14 +1,14 @@
-"""deployment-health service package (RC-28).
+"""deployment-health service package.
 
 A system service (``kind=SYSTEM``): never in a project's services list, not selectable.
 It owns the *judgement* over a running deployment -- what an observed pod state means --
 while the observing itself (the kubectl calls, the scheduling, the remediation) stays in
-``opi/services/oom_watcher.py``. That is the same split resource-tuning already has: the
-service is the declarative home of the decision, the business module does the work.
+``opi/services/oom_watcher.py``. The same split resource-tuning has: the service is the
+declarative home of the decision, the business module does the work.
 
-Why it is a service at all: the check has to weigh what OTHER services report about a
-deployment (``UIEvent.DEPLOYMENT_STATE``), and "a check that consults the registry"
-belongs in the catalog next to the services it consults, not as loose platform code.
+It is a service and not loose platform code because the check weighs what OTHER services
+report about a deployment (``UIEvent.DEPLOYMENT_STATE``), so it belongs in the catalog next
+to the services it consults.
 
 The judgement is deliberately asymmetric, and that asymmetry is the safety property:
 
@@ -52,23 +52,21 @@ class DeploymentHealthService(Service):
         # keeps it out of the picker, so no explicit hidden is needed).
         kind=ServiceKind.SYSTEM,
     )
-    # May enrol itself (RC-84): a system service is not a user choice, so there is no
+    # May enrol itself: a system service is not a user choice, so there is no
     # project-level decision to make first.
     allows_implicit_project_selection = True
 
     @on(UIEvent.DEPLOYMENT_STATE)
     def report_disabled_state(self, ctx: DeploymentStateContext) -> list[DeploymentStateFact]:
-        """Report that this deployment is switched off, wholly or in part (RC-31).
+        """Report that this deployment is switched off, wholly or in part.
 
-        ``disabled: true`` is a field on a component, so no ordinary service owns it --
-        and that is exactly why it is reported here rather than through a second,
-        event-bypassing path in ``collect_deployment_state``. The event is the contract
-        ("who knows something about this deployment, say so"); a generic contribution
-        alongside it would mean two ways to add a fact and two places to look for one.
-        This service is the system service that already speaks for the platform itself,
-        so the platform's own fact belongs to it.
+        ``disabled: true`` is a field on a component, so no ordinary service owns it. It is
+        reported through the event like every other fact, and not through a second path in
+        ``collect_deployment_state``: the event is the contract ("who knows something about
+        this deployment, say so"), and this system service is the one that speaks for the
+        platform itself.
 
-        Facts, not verdicts, and the split matters here as much as it did for sleep-mode:
+        Facts, not verdicts, and the split matters here as much as it does for sleep-mode:
 
         * fully off -- nothing of the application is meant to be running, so
           ``expects_no_application_pods``. It excuses ABSENT pods and nothing else: a
@@ -93,8 +91,8 @@ class DeploymentHealthService(Service):
                     ),
                     expects_no_application_pods=True,
                     badge="Uitgeschakeld",
-                    # Een display dat de componenten zelf opsomt, mét de reden per stuk,
-                    # zegt dit al en zegt het preciezer. Deze zin hoeft daar niet naast.
+                    # A display that lists the components itself, with the reason per
+                    # component, already says this and says it more precisely.
                     superseded_by_component_details=True,
                     details={"disabled": state.disabled_count, "total": state.total_count},
                 )
@@ -122,7 +120,7 @@ class DeploymentHealthService(Service):
 
     @on(ActionEvent.REDEPLOY)
     async def reenable_on_rollout(self, ctx: RedeployContext) -> list[str]:
-        """Switch a component back on when new content is rolled out onto it (RC-37).
+        """Switch a component back on when new content is rolled out onto it.
 
         Every automatic disable is a judgement about the content that was running:
         ``ImagePullBackOff`` about an image that could not be fetched, ``OOMKilled`` about
@@ -130,24 +128,17 @@ class DeploymentHealthService(Service):
         rollout replaces exactly that content, so the judgement is about something that is
         no longer there and the component goes back on -- whatever the reason said.
 
-        This is deliberately unconditional, and the alternative was really considered: an
-        OOM will probably come back, so only lifting an image-pull disable would avoid one
-        cycle of off-on-off. It is the wrong trade. A new image is often precisely the
-        memory-leak fix, nothing else ever clears an OOM disable (the re-enable sweep keys
-        on ``disabled-image``, which only image-pull disables carry), and a component that
-        is off forever with no path back is a worse failure than one that goes off again
-        five minutes later -- with the reason then pointing at the image that actually
-        caused it. It also cannot flap on its own: the only thing that lifts a disable
-        here is a person rolling something out.
+        Unconditional, on purpose. Nothing else ever clears an OOM disable (the re-enable
+        sweep keys on ``disabled-image``, which only image-pull disables carry), and a
+        component that is off forever with no path back is worse than one that goes off
+        again five minutes later, with the reason then pointing at the image that caused it.
+        It cannot flap on its own either: only a person rolling something out lifts a
+        disable here.
 
-        Every disable is cleared, wherever it sits. An earlier version spared a
-        ``disabled`` flag on the component *definition*, on the reading that it was a
-        deliberate project-wide decision. Measured on 6 August, that reading is wrong:
-        ``set_component_disabled`` (the definition-level setter) has NO callers, there is
-        no editable and no route for it, so a user cannot make that decision anywhere in
-        OPI. Sparing it protected a case that does not occur, while a value that did end
-        up in a file by hand would have kept the component off forever -- new image and
-        all. Rolling out new content says plainly enough that it is meant to run.
+        Every disable is cleared, wherever it sits, including a ``disabled`` flag on the
+        component DEFINITION. No editable and no route sets that flag
+        (``set_component_disabled`` has no callers), so a value there was written by hand and
+        would otherwise keep the component off forever, new image and all.
         """
         from opi.handlers.project_file_handler import ProjectFileHandler
 
@@ -176,9 +167,8 @@ class DeploymentHealthService(Service):
 
         ``state`` is accepted and deliberately not consulted: a problem observed here is
         observed on an application pod (pods a service runs alongside are excluded by
-        ``application_pod_selector``), so no service may talk it away. Taking the
-        parameter and ignoring it is the point -- it documents at the call site that the
-        state was available and did not get a vote.
+        ``application_pod_selector``), so no service may talk it away. The parameter
+        documents at the call site that the state was available and got no vote.
         """
         return bool(health.oom_detected or health.image_pull_error or health.crash_loop_detected)
 

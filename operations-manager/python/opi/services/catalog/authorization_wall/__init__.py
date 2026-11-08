@@ -28,12 +28,10 @@ class AuthorizationWallService(Service):
     service_type = ServiceType.AUTHORIZATION_WALL
     definition = ServiceDefinition(
         name="Authorization Wall",
-        # De uitleg over de 403 (een verzoek zonder sessie krijgt 403 met een inlogpagina en
-        # geen redirect, dus een healthcheck die op 200 controleert ziet het component als
-        # kapot) stond HIER, in de omschrijving die op elke dienstkaart staat. Dat is de
-        # verkeerde plek: het is een detail voor wie de dienst al gebruikt, en op de
-        # keuzekaart drukte het de omschrijving van een regel naar vier. Het staat in
-        # authorization_wall/help.md, achter het vraagteken op de kaart.
+        # The note about the 403 (a request without a session gets a 403 with a login page
+        # and no redirect, so a health check that looks for 200 reads the component as
+        # broken) is in authorization_wall/help.md, behind the question mark on the card: it
+        # is a detail for someone already using the service, not for the choice card.
         description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties.",
         icon="schild-met-vinkje-erop",
         color="groen",
@@ -48,31 +46,30 @@ class AuthorizationWallService(Service):
     config_model = AuthorizationWallConfig
     config_schema_version = "1.0"
 
-    # Hem aan een component hangen schrijft hem ook op projectniveau bij. Mag hier, want dat
-    # projectniveau draagt geen BESLISSING: er staat een optionele bannertekst en verder
-    # niets, dus er valt voor de gebruiker niets te kiezen dat wij anders voor hem zouden
-    # invullen. Vergelijk keycloak, waar het projectniveau een blueprint en een realm kiest;
-    # daar moet de gebruiker eerst zelf iets zeggen en blijft impliciet inschrijven uit.
+    # Attaching it to a component enrols it at project level as well. Allowed here, because
+    # that project level carries no DECISION: it holds an optional banner text and nothing
+    # else, so there is nothing for the user to choose that we would fill in differently.
+    # Compare keycloak, where the project level picks a blueprint and a realm; there the user
+    # has to say something first and implicit enrolment stays off.
     #
-    # De startconfiguratie blijft bewust leeg (``implicit_project_config`` niet overschreven,
-    # dus een kale selectie): een leeg ``config``-blok zou suggereren dat er iets ingesteld
-    # is. Wie een banner wil, zet hem daarna.
+    # The starting config is deliberately left empty (``implicit_project_config`` not
+    # overridden, so a bare selection): an empty ``config`` block would suggest something was
+    # configured. Whoever wants a banner sets it afterwards.
     #
-    # Wat dit NIET wegneemt is de eis dat publish-on-web en keycloak er zijn (zie
-    # ``requires``). Dat is geen keuze maar een feit: zonder die twee kan een auth wall niet
-    # werken, en dat hoort de aanroeper te horen in plaats van het zelf te ontdekken.
+    # What this does NOT remove is the requirement that publish-on-web and keycloak are there
+    # (see ``requires``). That is not a choice but a fact: without those two an auth wall
+    # cannot work, and the caller should be told instead of finding out.
     allows_implicit_project_selection = True
     config_section_id = "auth-wall-config"
     modal_flow_id = "modal-edit-auth-wall-config"
     # After the secret services (10-50); an auth wall fronts the pod, so its
-    # service_port override applies last (RC-5 Phase 6b).
+    # service_port override applies last.
     manifest_order = 60
 
-    # --- config field ownership -------------------------------------------------
-    # auth-wall owns its single project-level field (banner). The wizard/edit layer
-    # sources this section from here instead of hand-authoring it in wizard_sections.
-    # Forms building blocks are imported lazily so the catalog stays forms-free at
-    # import time (avoids the forms -> registry -> catalog cycle).
+    # auth-wall owns its single project-level field (banner), and the wizard/edit layer
+    # sources this section from here. Forms building blocks are imported lazily so the
+    # catalog stays forms-free at import time (avoids the forms -> registry -> catalog
+    # cycle).
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
         """Section visibility: derived from this service's service_type, not a
@@ -93,25 +90,21 @@ class AuthorizationWallService(Service):
         return [AUTH_WALL_BANNER_EDITABLE]
 
     def component_form_notices(self):
-        """Een wegwijzer in het componentformulier, geen configuratie.
+        """A signpost in the component form, not configuration.
 
-        Deze dienst is de enige in de catalogus die je op het ENE niveau aanzet en op het
-        ANDERE instelt: aanvinken doe je per component (daar komt de oauth2-proxy voor de
-        pod), maar de bannertekst is er een voor het hele project. Wie hem aanvinkte kreeg
-        daarna niets te zien en had geen enkele aanwijzing waar die instelling dan wel
-        staat.
+        This service is the only one in the catalog that is switched on at ONE layer and
+        configured at ANOTHER: ticking happens per component (that is where the oauth2-proxy
+        joins the pod), while the banner text is one for the whole project.
 
-        Vandaar deze haak en niet ``config_component_visualizers``: die hoort bij
-        ``config_component_layout``, en dat telt mee in ``config_layers()``. Deze dienst
-        heeft op componentniveau niets te bewaren, dus ``config_editables(COMPONENT)``
-        blijft leeg, ``config_form_section(COMPONENT)`` blijft None en de API krijgt er geen
-        configroute bij voor iets wat je niet kunt instellen.
+        Hence this hook and not ``config_component_visualizers``: that one belongs with
+        ``config_component_layout``, which counts towards ``config_layers()``. This service
+        has nothing to store at component level, so ``config_editables(COMPONENT)`` stays
+        empty, ``config_form_section(COMPONENT)`` stays None and the API gains no config
+        route for something that cannot be configured.
 
-        Het blijft bij een verwijzing. De echte oplossing is dat de projectconfiguratie
-        bereikbaar is ongeacht hoe de dienst is aangezet -- vandaag hangt de knop
-        'Configureer' aan de dienstenlijst op PROJECTniveau, dus een project dat de auth
-        wall alleen op een component heeft staan, kan er helemaal niet bij. Dat is een
-        eigen taak; dit is de wegwijzer tot die er is.
+        A pointer is all it can be while the 'Configureer' button hangs off the PROJECT-level
+        services list: a project that has the auth wall on a component only cannot reach that
+        config at all.
         """
         from opi.services.catalog.authorization_wall.visualizers import AUTH_WALL_COMPONENT_INFO
 
@@ -147,8 +140,7 @@ class AuthorizationWallService(Service):
         keycloak_secret = ctx.get_secret(ctx.deployment_name, "keycloak", KeycloakSecret)
         if keycloak_secret is None:
             # Component asked for an auth wall but no keycloak service is configured;
-            # contribute nothing (matches the old warn-and-skip branch -- the manager
-            # still logs the warning).
+            # contribute nothing. The manager logs the warning.
             return ManifestContribution()
 
         banner_text = None
@@ -176,7 +168,7 @@ class AuthorizationWallService(Service):
             sidecars=["authorization-wall"],
             # The oauth2-proxy needs a random cookie-signing secret; the shared writer
             # SOPS-encrypts it. Its <deployment>-<component>- prefix survives the prune.
-            # A new value on every run logged every user out after each deploy.
+            # A new value on every run logs every user out after each deploy.
             secret_files=[
                 SecretFileSpec(
                     secret_name=cookie_secret_name,

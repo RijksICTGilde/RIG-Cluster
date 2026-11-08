@@ -26,8 +26,8 @@ class PersistentStorageService(BackupsPageMixin, Service):
         icon="server",
         color="bruin",
         backup_label="pvc",
-        # Gelijk aan temp-storage: een startwaarde, geen inschatting. Een PVC kan wel
-        # groeien en niet krimpen, dus te ruim beginnen is duurder dan te krap beginnen.
+        # The same as temp-storage: a starting value, not an estimate. A PVC can grow but not
+        # shrink, so starting too large costs more than starting too small.
         storage_config={"name": "data", "type": "persistent", "size": DEFAULT_STORAGE_SIZE, "mount-path": "/data"},
         variables=[var.value for var in PersistentStorageVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
@@ -35,7 +35,7 @@ class PersistentStorageService(BackupsPageMixin, Service):
     cleanup_manager_key = ManagerKey.PVC
     config_model = StorageConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): the mounts live on the component; the project layer holds
+    # May enrol itself: the mounts live on the component; the project layer holds
     # no storage decision.
     allows_implicit_project_selection = True
     config_component_order = 10

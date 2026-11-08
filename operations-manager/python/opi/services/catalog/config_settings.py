@@ -1,12 +1,8 @@
-"""What a project may set on a service, and how far it may go (RC-168).
+"""What a project may set on a service, and how far it may go.
 
-Three things keep turning up together whenever a service field becomes user-settable:
-a *bound* on what is responsible, a *value* a project picks inside it, and something
-that checks the choice. Today each of those sits somewhere else -- a ``le=`` on a
-pydantic field, a hardcoded number in a connector, a dropdown in the wizard -- and the
-second service that needs one builds a second variant.
-
-This module is the one shape for it. A service declares, per field:
+Three things belong together whenever a service field becomes user-settable: a *bound* on
+what is responsible, a *value* a project picks inside it, and something that checks the
+choice. This module is the one shape for all three. A service declares, per field:
 
 * the **room**: minimum, maximum (or the allowed set), and the default;
 * the **layers** on which a project may set the field at all.
@@ -17,12 +13,12 @@ declaration -- never against a number that happens to sit in a model.
 
 ::
 
-    dienst declareert:    min 1,  max 100,  standaard 20
+    service declares:     min 1,  max 100,  default 20
                                   |
-    projectbestand kiest:         60          <- getoetst aan het bovenstaande
-    deployment overschrijft:      80          <- idem
+    project file picks:           60          <- judged against the above
+    deployment overrides:         80          <- likewise
                                   |
-    connector krijgt:             80
+    connector receives:           80
 
 Three rules follow, and they are what the code below implements:
 
@@ -37,7 +33,7 @@ Three kinds of bound, and deliberately no fourth: whole numbers, Kubernetes quan
 (``100m`` and ``2`` are both CPU, ``512Mi`` and ``1Gi`` both memory, so they are parsed
 and compared as numbers rather than as text), and a value out of a closed set.
 
-A service that declares none behaves exactly as it did.
+A service that declares none has nothing extra checked and nothing extra settable.
 """
 
 from __future__ import annotations
@@ -80,18 +76,16 @@ class QuantityKind(Enum):
     """Which Kubernetes quantity a bound is expressed in.
 
     The two are not interchangeable: ``2`` means two cores for CPU and two bytes for
-    memory. Naming the kind picks the parser, which is the whole reason quantities are
-    compared as numbers here instead of as strings -- ``1Gi`` sorts before ``512Mi``
-    alphabetically and is four times as large.
+    memory. Naming the kind picks the parser. Compare the parsed numbers, never the text:
+    ``1Gi`` sorts before ``512Mi`` alphabetically and is four times as large.
     """
 
     MEMORY = "memory"
     CPU = "cpu"
 
 
-#: The parser per kind. Both already existed and are reused rather than rewritten:
-#: ``opi/services/resource_analyzer.py`` is where the platform turns a Kubernetes
-#: quantity into a number, for auto-tune and for the storage ceiling.
+#: The parser per kind. ``opi/services/resource_analyzer.py`` is where the platform turns a
+#: Kubernetes quantity into a number, for auto-tune and for the storage ceiling.
 _QUANTITY_PARSERS: Final[dict[QuantityKind, Callable[[str], float]]] = {
     QuantityKind.MEMORY: parse_k8s_memory_to_mi,
     QuantityKind.CPU: parse_k8s_cpu_to_m,
@@ -188,11 +182,10 @@ class ConfigSetting(ABC):
         """Whether this setting judges a CHANGE, i.e. overrides ``check_change``.
 
         Read by ``__post_init__``, because a rule about a change is only sound on a field
-        that lives on exactly one layer -- see the refusal there. Answered by asking the
-        class rather than by a flag someone has to remember to set: giving
-        ``check_change`` a body IS the answer, so a next kind of bound cannot inherit the
-        gap that refusal closes. A subclass whose hook only judges under a condition of
-        its own (``QuantitySetting.grow_only``) narrows it down from here.
+        that lives on exactly one layer -- see the refusal there. Giving ``check_change`` a
+        body IS the answer; there is no flag to remember. A subclass whose hook only judges
+        under a condition of its own (``QuantitySetting.grow_only``) narrows it down from
+        here.
         """
         return type(self).check_change is not ConfigSetting.check_change
 
@@ -303,9 +296,9 @@ class QuantitySetting(ConfigSetting):
                 f"'{self.path}' moet een Kubernetes-hoeveelheid zijn zoals {self.minimum} of {self.maximum}; "
                 f"je gaf {value!r}."
             )
-        # Eerst de VORM, dan het getal: de parsers strippen en laten een spatie tussen
-        # getal en eenheid door, dus '1 Gi' en '1Gi\n' kwamen als geldige hoeveelheid
-        # binnen. Hetzelfde pattern als het projectschema gebruikt.
+        # The SHAPE first, then the number: the parsers strip and let a space between number
+        # and unit through, so '1 Gi' and '1Gi\n' would pass as a valid quantity. The same
+        # pattern the project schema uses.
         if not re.match(K8S_QUANTITY_PATTERN, value):
             raise SettingError(
                 f"'{self.path}' is geen geldige Kubernetes-hoeveelheid: {value!r}. "
@@ -395,10 +388,9 @@ def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSet
     """What one ``services`` list says about ``setting`` for ``service``, or None.
 
     The layer is the list: a project's ``services``, or a deployment's. Reads the entry
-    format-agnostically (``service_entry_name``/``service_entry_config``), because a
-    configured service that happens to be written as a uniform record was otherwise read
-    as unconfigured. None means "says nothing", which is exactly what ``resolve_setting``
-    skips.
+    format-agnostically (``service_entry_name``/``service_entry_config``), so a configured
+    service written as a uniform record is not read as unconfigured. None means "says
+    nothing", which is exactly what ``resolve_setting`` skips.
     """
     for entry in entries or []:
         if service_entry_name(entry) == service.value:

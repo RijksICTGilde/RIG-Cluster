@@ -1,4 +1,4 @@
-"""Visualizers owned by the ``user-env-vars`` system service (RC-25)."""
+"""Visualizers owned by the ``user-env-vars`` system service."""
 
 from __future__ import annotations
 

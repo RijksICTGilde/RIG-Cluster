@@ -13,18 +13,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Same constraint the retired component ``probe`` block enforced on these paths in
-# project_v2.json (and that all sibling manifest-bound strings still carry): an
-# absolute path built only from safe URL characters. This is the guard that keeps a
-# tenant-supplied path from injecting sibling YAML keys into the generated pod spec,
-# where the value is interpolated unquoted.
+# An absolute path built only from safe URL characters, the same constraint every sibling
+# manifest-bound string carries. This is the guard that keeps a tenant-supplied path from
+# injecting sibling YAML keys into the generated pod spec, where the value is interpolated
+# unquoted.
 PATH_PATTERN = r"^/[A-Za-z0-9/_.\-]*\Z"
 
 
 class HealthCheckConfig(BaseModel):
-    # python-re engine so the path ``\Z`` end-of-string anchor compiles (the default
-    # rust-regex engine rejects ``\Z``) and behaves exactly like the pattern the
-    # retired ``probe`` block enforced through project_v2.json's jsonschema validator.
+    # python-re engine so the path ``\Z`` end-of-string anchor compiles; the default
+    # rust-regex engine rejects ``\Z``.
     model_config = ConfigDict(extra="forbid", populate_by_name=True, regex_engine="python-re")
 
     scheme: Literal["none", "tcp", "http", "https"] | None = Field(

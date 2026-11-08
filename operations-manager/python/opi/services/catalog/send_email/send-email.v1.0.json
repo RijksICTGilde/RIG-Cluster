@@ -2,7 +2,7 @@
   "$defs": {
     "SendEmailApproval": {
       "additionalProperties": true,
-      "description": "Whether an administrator has allowed this project to send mail (aanvulling 6).\n\nShaped like the domain/subdomain entries publish-on-web stores: a status plus the\nverdict history, so the file is the audit trail. Written only through the generic\napproval flow (``opi/services/approvals.py``).",
+      "description": "Whether an administrator has allowed this project to send mail.\n\nShaped like the domain/subdomain entries publish-on-web stores: a status plus the\nverdict history, so the file is the audit trail. Written only through the generic\napproval flow (``opi/services/approvals.py``).",
       "properties": {
         "history": {
           "description": "Verdict history: one {date, status, by, message} entry per decision.",

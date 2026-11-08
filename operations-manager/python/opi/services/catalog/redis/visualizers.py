@@ -1,4 +1,4 @@
-"""Visualizers for the redis service (project-level ACL setting) -- RC-25."""
+"""Visualizers for the redis service (project-level ACL setting)."""
 
 from __future__ import annotations
 

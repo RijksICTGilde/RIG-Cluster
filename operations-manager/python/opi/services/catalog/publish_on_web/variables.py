@@ -1,7 +1,7 @@
 """Environment variables the publish-on-web service provides -- single source of truth.
 
-Lives in the service's own package (RC-36): what a service hands to a deployment
-is part of that service, not of a shared module.
+Lives in the service's own package: what a service hands to a deployment is part of that
+service, not of a shared module.
 """
 
 from enum import Enum

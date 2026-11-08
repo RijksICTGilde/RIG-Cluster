@@ -1,23 +1,20 @@
-"""Whether a deployment runs, runs partly, or is switched off entirely (RC-31).
+"""Whether a deployment runs, runs partly, or is switched off entirely.
 
 A component with ``disabled: true`` is rendered with ``replicas: 0``. ArgoCD calls zero
-replicas healthy -- nothing is failing -- and that verdict used to travel unfiltered to
-the dashboard banner, the deployment card and the V2 API. The result was a page that said
-"uitgeschakeld" and "Healthy" on the same line.
+replicas healthy -- nothing is failing -- so that verdict alone puts "uitgeschakeld" and
+"Healthy" on the same line.
 
 This reading lives inside the deployment-health package because that service is the one
-that reports it (RC-35): "switched off" is a fact about a deployment like any other, and
-it reaches every display through ``UIEvent.DEPLOYMENT_STATE`` -- there is no second
-mechanism beside the hook any more, and no display reads this module to decide what to
-show. Two callers outside the hook remain, and both need something the generic facts
-deliberately do not express: the V2 API needs ``DeploymentStatus.Disabled`` as its own
-value, and the dashboard has to tell "switched off" (stays off until someone acts) apart
-from "parked by a service" (comes back by itself). A shared "not running" would answer
-neither.
+that reports it: "switched off" is a fact about a deployment like any other, and it reaches
+every display through ``UIEvent.DEPLOYMENT_STATE``. Two callers outside the hook remain, and
+both need something the generic facts deliberately do not express: the V2 API needs
+``DeploymentStatus.Disabled`` as its own value, and the dashboard has to tell "switched off"
+(stays off until someone acts) apart from "parked by a service" (comes back by itself). A
+shared "not running" would answer neither.
 
-It reads the PROJECT FILE only, never the cluster, for the same reason RC-28's
-deployment-state hook does: zero replicas in the cluster can also mean something went
-wrong, so the intent has to come from where the intent is recorded.
+It reads the PROJECT FILE only, never the cluster, for the same reason the deployment-state
+hook does: zero replicas in the cluster can also mean something went wrong, so the intent
+has to come from where the intent is recorded.
 
 Three states, not two: a deployment with one of four components off is a different
 situation than one that is off entirely, and collapsing them loses the difference that
@@ -43,9 +40,9 @@ class DisabledState(StrEnum):
 class DeploymentDisabledState:
     """The switched-off state of one deployment, with the counts behind it.
 
-    The counts are part of the answer, not a detail: "2 van de 4 componenten
-    uitgeschakeld" is what a partially disabled deployment has to say, and deriving that
-    again at each of the three call sites is how they drift apart.
+    The counts are part of the answer, not a detail: a partially disabled deployment has to
+    say "2 van de 4 componenten uitgeschakeld", and the three call sites must not each
+    derive that again.
     """
 
     state: DisabledState

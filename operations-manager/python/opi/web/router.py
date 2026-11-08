@@ -589,7 +589,7 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
 def _require_deployment(project_data: dict, project_name: str, deployment_name: str) -> None:
     """404 straight away when the deployment does not exist.
 
-    The inline version raised DeploymentNotFound from flow.sleep, so the caller heard it
+    The inline version raised DeploymentNotFoundError from flow.sleep, so the caller heard it
     immediately. Now that the work runs as a task, an unknown name would otherwise only
     surface as a task that fails a moment later -- further from the click and harder to
     read. It also keeps a name the project does not have out of the task, and so out of

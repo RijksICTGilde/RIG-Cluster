@@ -7,8 +7,8 @@ This service carries config at two layers, with two different shapes:
   Modelled as a Pydantic *discriminated union* on ``scope`` so that a field that only
   belongs to a dedicated cluster (``storage``, ``instances``, ...) fails loudly on a
   ``shared`` database instead of being silently ignored. ``scope`` defaults to
-  ``shared``, so a bare ``postgresql-database`` entry, or one with no ``scope`` key,
-  keeps today's behaviour exactly.
+  ``shared``, so a bare ``postgresql-database`` entry, or one with no ``scope`` key, is a
+  shared database.
 * **Deployment layer** (``deployments[*].services[{postgresql-database}].config``):
   clone state, written and read by ``opi/manager/revision_manager.py``, plus the
   user's ``connection-limit`` override for that deployment.
@@ -58,8 +58,8 @@ class PostgresqlDatabaseConfig(CloneState):
 
     The shape is shared with ``minio-storage`` (see ``catalog/shared/revisions.py``);
     this service only decides that it uses it. The generation lives in the *database
-    name*, not the schema name, which is exactly why extra schemas (RC-17) can share a
-    database without disturbing generations, clones or backups.
+    name*, not the schema name, which is exactly why extra schemas can share a database
+    without disturbing generations, clones or backups.
     """
 
     connection_limit: int | None = _connection_limit_field(
@@ -99,7 +99,7 @@ def schema_description_field() -> Any:
 
 
 class SchemaEntry(BaseModel):
-    """One extra schema, project-wide (RC-17 decision 10.5).
+    """One extra schema, project-wide.
 
     ``postfix`` is the user-chosen short name; the full schema becomes
     ``{project}_{deployment}_{postfix}`` per deployment and an env variable
@@ -114,8 +114,8 @@ class SchemaEntry(BaseModel):
     postfix: str = schema_postfix_field()
     description: str = schema_description_field()
     # Removing a schema from the list marks it rather than dropping it, so a schema (and
-    # its data) is never silently discarded on a routine save (RC-17 section 6). The
-    # provisioner leaves a marked schema in place and stops exposing its variable.
+    # its data) is never silently discarded on a routine save. The provisioner leaves a
+    # marked schema in place and stops exposing its variable.
     marked_for_deletion: bool = Field(
         default=False,
         alias="marked-for-deletion",
@@ -161,8 +161,8 @@ class ProjectScopeConfig(ConnectionLimitConfig, DedicatedPostgresFields):
 class PostgresqlDatabaseProjectConfig(RootModel):
     """Project-layer config: a ``scope``-discriminated union of the two shapes above.
 
-    ``scope`` defaults to ``shared`` when absent, so an existing project that sets no
-    scope validates as a shared database and its behaviour is unchanged.
+    ``scope`` defaults to ``shared`` when absent, so a project that sets no scope validates
+    as a shared database.
     """
 
     root: Annotated[

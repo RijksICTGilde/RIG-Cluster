@@ -211,7 +211,7 @@ async def test_een_app_die_niet_terugkomt_laat_de_taak_falen(monkeypatch: pytest
     omgeving = _omgeving(monkeypatch, cached=data, ready=[False])
     progress = _progress()
 
-    with pytest.raises(flow.WakeTimeout) as exc:
+    with pytest.raises(flow.WakeTimeoutError) as exc:
         await _wektaak(progress)
 
     assert "de slaapstand-sweeper zet de deployment terug op wakker" in str(exc.value)
@@ -233,7 +233,7 @@ async def test_een_onleesbare_deadline_houdt_de_wacht_toch_begrensd(
     data = _project_data({"state": "waking", "expires-at": "ooit"})
     omgeving = _omgeving(monkeypatch, cached=data, ready=[False])
 
-    with pytest.raises(flow.WakeTimeout):
+    with pytest.raises(flow.WakeTimeoutError):
         await flow.finish_wake(PROJECT, DEPLOYMENT)
 
     assert omgeving.commits == []
@@ -338,7 +338,7 @@ async def test_de_achtergrondafronding_laat_een_mislukte_wek_aan_de_sweeper() ->
     """Niemand kijkt mee achter de route, dus een time-out wordt gelogd, niet gegooid."""
     from opi.services.catalog.sleep_mode.router import finish_wake_after_response
 
-    with patch.object(flow, "finish_wake", AsyncMock(side_effect=flow.WakeTimeout("kwam niet terug"))):
+    with patch.object(flow, "finish_wake", AsyncMock(side_effect=flow.WakeTimeoutError("kwam niet terug"))):
         await finish_wake_after_response(PROJECT, DEPLOYMENT)
 
 

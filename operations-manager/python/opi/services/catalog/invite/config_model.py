@@ -1,27 +1,24 @@
-"""Typed config model for the ``invite`` service (RC-13).
+"""Typed config model for the ``invite`` service.
 
 The project-level ``services/invite/config`` block is validated against this model
-(convert-then-validate, like every other service). It replaces the old top-level
-``invites:`` section and its hand-authored ``$defs/invites`` / ``$defs/invite`` /
-``$defs/i18n-text`` in ``project_v2.json``.
+(convert-then-validate, like every other service).
 
 Key spelling. Like the thirteen other services, the on-disk config keys are hyphenated
 (``realm-roles``, ``restrict-domain``, ...). The model carries the hyphen aliases and
 ``populate_by_name=True`` so a file written with EITHER the hyphen alias (new, UI-created)
-or the legacy underscore field name (the four production files that predate this service,
-relocated verbatim by the schema migration) validates. The redemption flow reads invites
-through the model at the ``ProjectFileHandler`` chokepoint (``extract_invites_config``),
-which dumps with field names, so ``invite_manager`` / ``invite_routes`` keep reading the
-underscore keys they already read -- no change to the public redemption surface.
+or the underscore field name (which the files predating this service carry) validates. The
+redemption flow reads invites through the model at the ``ProjectFileHandler`` chokepoint
+(``extract_invites_config``), which dumps with field names, so ``invite_manager`` /
+``invite_routes`` read the underscore keys.
 
 ``roles`` and ``realm_roles`` do the same thing: ``assign_invite_permissions``
 (``opi/manager/invite_manager.py``) merges both into one realm-role assignment. Both are
-kept so existing files keep validating; the UI only offers ``realm_roles`` and ``roles``
-is documented here as deprecated.
+accepted so existing files keep validating; the UI only offers ``realm_roles`` and ``roles``
+is deprecated.
 
-``groups`` and ``client_roles`` are advanced pass-through: none of the four live projects
-use them and the UI does not offer them, but they stay in the model so hand-authored YAML
-keeps validating (like ``KeycloakClientEntry``'s pass-through fields).
+``groups`` and ``client_roles`` are advanced pass-through: the UI does not offer them, but
+they stay in the model so hand-authored YAML keeps validating (like
+``KeycloakClientEntry``'s pass-through fields).
 """
 
 from __future__ import annotations
@@ -38,8 +35,8 @@ from opi.services.catalog.invite.target_format import split_target
 #: Literal in the model (the guardrail) rather than relying on the form widget's options.
 AuthMethod = Literal["sso", "local"]
 
-#: De vorm van ``application-url``, ook voor het schemafragment. Alleen ``https://``, en
-#: hoofdlettergevoelig: een pattern in JSON Schema is dat ook.
+#: The shape of ``application-url``, for the schema fragment too. Only ``https://``, and case
+#: sensitive: a pattern in JSON Schema is case sensitive as well.
 HTTPS_URL_PATTERN = r"^https://[^\s/]+"
 
 
@@ -193,18 +190,16 @@ class InviteEntry(BaseModel):
 class InviteConfig(BaseModel):
     """Project-level invite config: a default language and the list of active invites.
 
-    ``settings`` is gone (it was a second level meaning the same as ``config``);
     ``default-language`` sits next to ``active``.
     """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    #: ``active`` is patchable entry by entry, keyed on the invite's own ``key``. Without
-    #: it only the PUT existed, and the PUT wants every invite resent, so a second invite
-    #: cost the first one. The keys ARE readable (see the module docstring of
-    #: ``opi/services/catalog/invite``), so resending is possible in principle -- but a
-    #: read-modify-write over a whole list is still how entries get lost, and that is what
-    #: the PATCH is for. See ``opi/services/config_lists.py``.
+    #: ``active`` is patchable entry by entry, keyed on the invite's own ``key``. The PUT
+    #: wants every invite resent, and a read-modify-write over a whole list is how entries
+    #: get lost; the keys ARE readable (see the module docstring of
+    #: ``opi/services/catalog/invite``), so the PATCH is the safe road. See
+    #: ``opi/services/config_lists.py``.
     ITEM_KEYS: ClassVar[dict[str, str | None]] = {"active": "key"}
 
     default_language: str = Field(

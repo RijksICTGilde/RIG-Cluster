@@ -1,4 +1,4 @@
-"""The deployment-card button for the per-deployment cross-domain patch (RC-42).
+"""The deployment-card button for the per-deployment cross-domain patch.
 
 The service owns its own button. A ``{% if 'cross-domain-access' in ... %}`` in the general
 project-details templates would be this service's knowledge written down somewhere it cannot

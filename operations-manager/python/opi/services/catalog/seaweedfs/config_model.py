@@ -1,10 +1,9 @@
-"""Typed config model voor de dienst ``seaweedfs-storage``.
+"""Typed config model for the ``seaweedfs-storage`` service.
 
-Dezelfde velden als bij ``minio-storage``, zonder de kloonstatus van ``CloneState``: deze
-dienst kloont wel, maar houdt geen bucketgeneraties, dus er is geen generatie of revisie om
-op te slaan. ``enable-versioning`` staat op de projectlaag, de grens op oude versies
-(RC-380) op de projectlaag en per deployment. Eén model voor beide lagen, dus elk veld is
-optioneel.
+The same fields as ``minio-storage``, without the clone state of ``CloneState``: this service
+does clone, but keeps no bucket generations, so there is no generation or revision to store.
+``enable-versioning`` sits on the project layer, the limit on noncurrent versions on the
+project layer and per deployment. One model for both layers, so every field is optional.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from opi.services.catalog.shared.noncurrent_versions import (
 
 
 class SeaweedfsStorageConfig(BaseModel):
-    """Bucketinstellingen van de dienst."""
+    """The bucket settings of the service."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

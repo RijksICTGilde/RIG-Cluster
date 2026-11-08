@@ -1,21 +1,15 @@
-"""Config model for the ``keycloak`` service (RC-5 Phase 2).
+"""Config model for the ``keycloak`` service.
 
-Keycloak is the polymorphic hard case the plan flags. Its config today is read and
-heavily normalised in ``KeycloakManager._get_keycloak_service_config`` (hyphen ->
-underscore keys, nested restrict-access, template-file existence check on disk, and
-an entirely different key set when the service is external: ``host/realm/client-id/
-client-secret``).
+This config is polymorphic, which is why the model is as loose as it is. The reading and
+normalisation (hyphen -> underscore keys, nested restrict-access, the template-file
+existence check on disk) stay in ``KeycloakManager._get_keycloak_service_config``: that last
+one is I/O, not a data guardrail.
 
-So v1.0 deliberately does the achievable part, not the hard 10%:
-- It types and guardrails the common *internal* fields (template, redirect URIs,
-  restrict-access, account-link) that users actually set.
-- It keeps ``extra="allow"`` because the config is polymorphic: external keycloak
-  carries a different key set, and ``additional-clients`` / ``realm-roles`` entries
-  carry advanced pass-through keys. Forbidding extras would reject real files
-  (e.g. the external ``type: external`` project). This mirrors today's permissive
-  reader.
-- The template-exists-on-disk check stays in the manager (it is I/O, not a data
-  guardrail).
+What the model does type and guardrail are the common *internal* fields (template, redirect
+URIs, restrict-access, account-link). ``extra="allow"`` stays: an external keycloak carries a
+different key set (``host/realm/client-id/client-secret``) and ``additional-clients`` /
+``realm-roles`` entries carry advanced pass-through keys, so forbidding extras rejects real
+project files.
 
 Keys use the on-disk spelling (mostly hyphenated) via aliases; ``populate_by_name``
 lets both the alias and the Python name validate.
@@ -35,34 +29,30 @@ from opi.utils.url_paths import normalize_logout_path
 
 
 class AccountLink(StrEnum):
-    """De standen die iets DOEN.
+    """The settings that DO something.
 
-    Hier stond ook ``VERIFY``, en die deed niets: ``keycloak_yaml_handler`` bouwt alleen
-    voor ``automatic`` en ``confirm`` een eigen first-broker-login-flow en laat de rest op
-    Keycloaks eigen flow staan - precies wat je krijgt als je niets kiest. Wie ``verify``
-    koos kreeg dus dezelfde uitkomst als wie het veld leeg liet, terwijl de keuzelijst
-    deed alsof er een verschil was.
+    ``keycloak_yaml_handler`` builds a first-broker-login flow of its own for ``automatic``
+    and ``confirm`` only; every other value leaves Keycloak's own flow in place, which is
+    exactly what choosing nothing gives.
     """
 
     AUTOMATIC = "automatic"
     CONFIRM = "confirm"
 
 
-#: De weggevallen stand, zoals hij in bestaande projectbestanden staat.
+#: The dropped setting, as it appears in existing project files.
 LEGACY_ACCOUNT_LINK = "verify"
 
 
-#: De eis "aan zetten kan alleen mét een rol", uitgedrukt in standaard JSON Schema.
+#: The requirement "switching it on only works WITH a role", expressed in standard JSON
+#: Schema.
 #:
-#: Diezelfde eis stond alleen in ``KeycloakManager._get_keycloak_service_config`` en sloeg
-#: dus pas toe bij de UITROL, terwijl een client die het schema leest niets zag dat hem
-#: tegenhield. Een ``model_validator`` alleen repareert dat half: die bewaakt de API, maar
-#: verschijnt niet in het gegenereerde schema en dus niet in het OpenAPI-document. Beide
-#: dus, uit één model: de ``anyOf`` beschrijft de regel voor wie hem leest, de validator
-#: dwingt hem af voor wie hem negeert.
+#: Both halves out of one model: the ``anyOf`` describes the rule for whoever reads the schema
+#: (a ``model_validator`` does not reach the generated schema and therefore not the OpenAPI
+#: document), the validator enforces it for whoever ignores it.
 #:
-#: De takken, op volgorde: ``enabled`` staat uit (of ontbreekt, dan geldt de default False),
-#: of er staat een niet-lege ``role``, of er staat een niet-lege ``realm-role``.
+#: The branches, in order: ``enabled`` is off (or absent, where the default False applies), or
+#: there is a non-empty ``role``, or there is a non-empty ``realm-role``.
 ROLE_REQUIRED_WHEN_ENABLED: dict[str, Any] = {
     "anyOf": [
         {"properties": {"enabled": {"const": False}}},
@@ -94,8 +84,8 @@ class RestrictAccessConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _rol_verplicht_als_ingeschakeld(self) -> RestrictAccessConfig:
-        """De regel zelf. De tekst is die van de uitrolfout, zodat wie hem kent hem herkent."""
+    def _role_required_when_enabled(self) -> RestrictAccessConfig:
+        """The rule itself. The text is the deploy error's, so whoever knows it recognises it."""
         if self.enabled and not self.role and not self.realm_role:
             raise ValueError(
                 "restrict-access.role or restrict-access.realm-role is required when restrict-access.enabled is True"
@@ -108,8 +98,8 @@ class KeycloakClientEntry(BaseModel):
 
     Pass-through keys are allowed for advanced configurations."""
 
-    # Geen ``populate_by_name``, anders dan op ``KeycloakConfig``: alleen de schrijfwijze met
-    # koppeltekens valideert, want dat is de sleutel die ``_create_additional_clients`` leest.
+    # No ``populate_by_name``, unlike on ``KeycloakConfig``: only the hyphenated spelling
+    # validates, because that is the key ``_create_additional_clients`` reads.
     model_config = ConfigDict(extra="allow")
 
     name: str = Field(description="Client id of the extra client to create in the realm.")
@@ -131,8 +121,8 @@ class KeycloakClientEntry(BaseModel):
 
     @field_validator("redirect_uris")
     @classmethod
-    def _toets_redirect_uris(cls, waarde: list[str]) -> list[str]:
-        return validate_redirect_uris(waarde, "additional-clients.redirect-uris")
+    def _validate_redirect_uris(cls, value: list[str]) -> list[str]:
+        return validate_redirect_uris(value, "additional-clients.redirect-uris")
 
 
 class KeycloakRealmRoleEntry(BaseModel):
@@ -146,10 +136,9 @@ class KeycloakRealmRoleEntry(BaseModel):
 class KeycloakRealm(BaseModel):
     """Per-realm admin connection (OPI-managed, one per cluster).
 
-    Relocated verbatim from the old project-level ``config.keycloak`` (RC-5 B). Kept
-    as-is -- matched by ``realm`` (deterministic ``{project}-{cluster}``) as before.
-    ``extra="allow"`` tolerates fields written over time (e.g. ``service_client_secret``);
-    password is stored AGE-encrypted or ``plain:``-prefixed, so it's just a string here.
+    Matched by ``realm`` (deterministic ``{project}-{cluster}``). ``extra="allow"`` tolerates
+    fields written over time (e.g. ``service_client_secret``); password is stored
+    AGE-encrypted or ``plain:``-prefixed, so it's just a string here.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -183,7 +172,7 @@ class KeycloakConfig(BaseModel):
     realms: list[KeycloakRealm] = Field(
         default_factory=list,
         # Platform-written, and the ONLY place the realm-admin password lives. A PUT that
-        # leaves the field out used to wipe it; now the stored value is carried over. See
+        # leaves the field out carries the stored value over. See
         # opi/services/config_managed.py.
         json_schema_extra={PLATFORM_MANAGED: True},
         description=(
@@ -196,14 +185,14 @@ class KeycloakConfig(BaseModel):
     )
     additional_redirect_uris: list[str] = Field(
         default_factory=list,
-        # Het enige samengestelde veld hier zonder koppelteken-schrijfwijze; alle broers
-        # en zussen (restrict-access, additional-clients, realm-roles, account-link)
-        # hebben er wel een. Twee schrijfwijzen door elkaar in hetzelfde blok is precies
-        # waar iemand een keer de andere typt, en ``extra="allow"`` slikt die stil.
+        # The only compound field here without a hyphenated spelling; all its siblings
+        # (restrict-access, additional-clients, realm-roles, account-link) have one. Two
+        # spellings mixed in the same block is exactly where somebody types the other one some
+        # day, and ``extra="allow"`` swallows that silently.
         #
-        # Beide worden dus gelezen, en het pythonpad blijft leidend: de veldNAAM
-        # verandert niet, dus bestaande bestanden blijven zoals ze zijn en de API blijft
-        # dezelfde sleutel noemen. Een migratie die bestanden herschrijft hoort hier niet.
+        # Both are therefore read, and the python path stays leading: the field NAME does not
+        # change, so existing files stay as they are and the API keeps naming the same key. A
+        # migration that rewrites files does not belong here.
         validation_alias=AliasChoices("additional_redirect_uris", "additional-redirect-uris"),
         description="Extra redirect URIs the client accepts, on top of the deployment URLs (e.g. localhost for development).",
     )
@@ -250,29 +239,28 @@ class KeycloakConfig(BaseModel):
 
     @field_validator("additional_redirect_uris")
     @classmethod
-    def _toets_extra_redirect_uris(cls, waarde: list[str]) -> list[str]:
-        """Dezelfde regel als op de extra clients; het formulier leest hem via dezelfde functie."""
-        return validate_redirect_uris(waarde, "additional_redirect_uris")
+    def _validate_extra_redirect_uris(cls, value: list[str]) -> list[str]:
+        """The same rule as on the extra clients; the form reads it through the same function."""
+        return validate_redirect_uris(value, "additional_redirect_uris")
 
     @field_validator("logout_path", mode="before")
     @classmethod
-    def _normaliseer_logout_pad(cls, waarde: Any) -> Any:
-        """Eén normalisatie voor dit veld; ``KeycloakManager`` leest hem via dezelfde functie."""
-        return normalize_logout_path(waarde)
+    def _normalize_logout_path(cls, value: Any) -> Any:
+        """One normalisation for this field; ``KeycloakManager`` reads it through the same function."""
+        return normalize_logout_path(value)
 
     @field_validator("account_link", mode="before")
     @classmethod
-    def _laat_de_oude_stand_door(cls, waarde: Any) -> Any:
-        """Een bestaand projectbestand met ``account-link: verify`` blijft verwerkbaar.
+    def _allow_legacy_account_link(cls, value: Any) -> Any:
+        """An existing project file with ``account-link: verify`` stays processable.
 
-        ``verify`` is uit de enum gehaald omdat hij niets deed. Hem daarna hard afkeuren
-        zou het GEVAARLIJKE deel zijn: een waarde die niet meer valideert blokkeert elke
-        volgende verwerking van dat project, en dat faalt stil - niemand kijkt naar een
-        project dat prima stond te draaien.
+        ``verify`` is not in the enum: it did the same as choosing nothing, since both land on
+        Keycloak's own flow. Hard-refusing the stored value would be the DANGEROUS part -- a
+        value that no longer validates blocks every further processing of that project, and
+        silently, because nobody looks at a project that was running fine.
 
-        Hij wordt dus gelezen als "niets gekozen", en dat is geen interpretatie maar
-        precies wat hij deed: beide standen komen op de eigen flow van Keycloak uit. Het
-        projectbestand wordt hier niet herschreven; bij de eerstvolgende opslag via het
-        formulier verdwijnt de waarde vanzelf, want de keuzelijst kent hem niet meer.
+        It is therefore read as "nothing chosen". The project file is not rewritten here; on
+        the next save through the form the value disappears by itself, because the option list
+        does not know it.
         """
-        return None if waarde == LEGACY_ACCOUNT_LINK else waarde
+        return None if value == LEGACY_ACCOUNT_LINK else value

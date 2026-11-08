@@ -34,7 +34,7 @@ from opi.core.template_helpers import (
 from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, field_attrs
 from opi.middleware.security_headers import csp_nonce
-from opi.services.catalog.aliases.overzicht import alias_variabelen
+from opi.services.catalog.aliases.overview import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
 from opi.services.registry import deployment_action_key

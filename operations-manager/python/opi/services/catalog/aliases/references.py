@@ -1,15 +1,13 @@
-"""What an alias value points at, and whether it points at anything (RC-66).
+"""What an alias value points at, and whether it points at anything.
 
 An alias is a reference: ``POSTGRES_HOST: $DATABASE_SERVER_HOST`` says "give my
-component the platform's database host under the name my application expects". Two
-things follow from that, and both were missing.
+component the platform's database host under the name my application expects". Two things
+follow from that.
 
 **A reference the platform does not provide is a typo.** The service says so itself
-("Een onbekende verwijzing is hier een harde fout, anders dan bij een eigen
-omgevingsvariabele") and ``project_manager._categorize_alias`` enforces it -- but only
-at deploy time, so ``{"KAPOT": "$BESTAAT_ECHT_NIET"}`` was accepted by the API and only
-surfaced much later, when the container came up. :func:`validate_alias_value` is that
-same rule at the moment of writing.
+("Een onbekende verwijzing is hier een harde fout, anders dan bij een eigen omgevingsvariabele");
+``project_manager._categorize_alias`` enforces it at deploy time, and
+:func:`validate_alias_value` is that same rule at the moment of writing.
 
 **A reference is not a secret.** The value IS the coupling, so masking it hides exactly
 what a reader asks about. :func:`is_reference` is the distinction that lets the read
@@ -59,7 +57,7 @@ def is_reference(value: str) -> bool:
 
     True when it references at least one platform variable and every reference it makes
     is one the platform provides. Such a value carries no secret of its own: it names
-    where the value comes from, which is the whole point of asking for it.
+    where the value comes from.
     """
     references = extract_variable_references(value)
     if not references:

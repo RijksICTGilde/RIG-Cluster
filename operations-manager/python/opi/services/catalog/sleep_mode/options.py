@@ -1,13 +1,11 @@
 """The durations sleep-mode offers, owned by the service instead of by the form layer.
 
-The two lists used to sit in ``opi/forms/visualizers/providers.py``, next to every other
-service's options, while sleep-mode's cluster defaults already lived in this package. A
-service that decides how it behaves should also decide what it offers, so both now sit
-together and the providers just ask.
+A service that decides how it behaves also decides what it offers: the lists live here,
+next to the cluster defaults, and the form's providers ask for them.
 
-That also makes the per-cluster extra possible. The sandbox needs a five-minute sleep to
-make a sleep/wake cycle observable inside a test run; production must not offer that,
-because five minutes is a footgun on a real deployment. So the extras are declared per
+That is also what makes the per-cluster extra possible. The sandbox needs a five-minute
+sleep to make a sleep/wake cycle observable inside a test run; production must not offer
+that, because five minutes is a footgun on a real deployment. So the extras are declared per
 cluster and added to the shared list, rather than the list being made configurable in
 general.
 """

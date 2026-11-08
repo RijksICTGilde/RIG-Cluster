@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Deployment layer: how this deployment's web address is composed (RC-60).\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. The legacy ``domain-mode`` field is gone: the v2.8\nmigration converts ``nice-url`` to ``domain-format: component.subdomain`` and drops\nthe key.",
+  "description": "Deployment layer: how this deployment's web address is composed.\n\nEvery field is optional because a deployment on the platform's own cluster domain\nneeds none of them: the format defaults, the base domain comes from the cluster and the\nissuer from the domain entry. The legacy ``domain-mode`` field is gone: the v2.8\nmigration converts ``nice-url`` to ``domain-format: component.subdomain`` and drops\nthe key.",
   "properties": {
     "base-domain": {
       "anyOf": [

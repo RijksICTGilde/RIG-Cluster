@@ -29,15 +29,15 @@ logger = logging.getLogger(__name__)
 WAKE_POLL_SECONDS = 5
 
 
-class DeploymentNotFound(Exception):
+class DeploymentNotFoundError(Exception):
     """The project or deployment does not exist."""
 
 
-class InvalidWakeToken(Exception):
+class InvalidWakeTokenError(Exception):
     """A wake token was missing or did not match the deployment's stored token."""
 
 
-class WakeTimeout(Exception):
+class WakeTimeoutError(Exception):
     """The app did not come back before the waking deadline, so the wake really failed."""
 
 
@@ -99,10 +99,10 @@ async def _verify_token(project_data: dict, deployment_name: str, presented_toke
 
     stored = read(project_data, deployment_name).wake_token
     if not stored:
-        raise InvalidWakeToken(f"No wake token set for deployment '{deployment_name}'")
+        raise InvalidWakeTokenError(f"No wake token set for deployment '{deployment_name}'")
     plain = await token_mod.decrypt(stored, project_data)
     if not token_mod.compare(presented_token, plain):
-        raise InvalidWakeToken("Wake token mismatch")
+        raise InvalidWakeTokenError("Wake token mismatch")
 
 
 async def app_is_ready(project_data: dict, deployment: dict, config: Any) -> bool:
@@ -161,7 +161,7 @@ async def wake(
     steps = _Steps(progress)
     project = get_project_store().get(project_name)
     if not project:
-        raise DeploymentNotFound(f"Project '{project_name}' not found")
+        raise DeploymentNotFoundError(f"Project '{project_name}' not found")
     filename = project.filename
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
@@ -171,7 +171,7 @@ async def wake(
         deployment = _find_deployment(project_data, deployment_name)
         if deployment is None:
             steps.failed(progress_steps.deployment_not_in_project(deployment_name))
-            raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+            raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
         if presented_token is not None:
             await _verify_token(project_data, deployment_name, presented_token)
@@ -186,7 +186,7 @@ async def wake(
             # ``disabled``, not the stored state: sleep-mode does not apply here, and
             # ``/status`` already says exactly that for this same case. Reporting the
             # stored ``awake`` would make one word mean two things across the two
-            # endpoints again -- the thing this pair of fields exists to end.
+            # endpoints -- the thing this pair of fields exists to prevent.
             return WakeResult(changed=False, state=DISABLED)
 
         waking_timeout = timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
@@ -221,11 +221,11 @@ async def wake(
 async def finish_wake(project_name: str, deployment_name: str, *, progress: Any | None = None) -> WakeResult:
     """Wait for the app to come back, then move ``waking -> awake`` and prune the waker.
 
-    This is the second half of a wake, and the reason a wake no longer takes half an
-    hour: in ``waking`` the ArgoCD application cannot become Healthy (the waker's
-    readiness is inverted on purpose), so nothing else would notice the app is back
-    until the sweeper's next round. Waiting ends at the ``waking`` deadline the wake
-    itself stamped; past that the deployment is left alone and the sweeper reverts it.
+    This is the second half of a wake: in ``waking`` the ArgoCD application cannot become
+    Healthy (the waker's readiness is inverted on purpose), so without this nothing would
+    notice the app is back until the sweeper's next round. Waiting ends at the ``waking``
+    deadline the wake itself stamped; past that the deployment is left alone and the sweeper
+    reverts it.
 
     Idempotent against both the sweeper and a second wake: the state is re-read from git
     and anything that is no longer ``waking`` is a no-op with no commit.
@@ -241,14 +241,14 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
     steps = _Steps(progress)
     project = get_project_store().get(project_name)
     if not project or not project.data:
-        raise DeploymentNotFound(f"Project '{project_name}' not found")
+        raise DeploymentNotFoundError(f"Project '{project_name}' not found")
     # The cached data for the wait: read-only, and the wake that got us here wrote
     # through the cache. The mutation below re-reads from git.
     project_data = project.data
     filename = project.filename
     deployment = _find_deployment(project_data, deployment_name)
     if deployment is None:
-        raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+        raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
     config = sleep_config.load(project_data, deployment.get("cluster", ""))
     if config is None:
@@ -276,7 +276,7 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
             logger.warning(
                 "sleep-mode: %s/%s did not come back before its waking deadline", project_name, deployment_name
             )
-            raise WakeTimeout(message)
+            raise WakeTimeoutError(message)
         await asyncio.sleep(WAKE_POLL_SECONDS)
     steps.done()
 
@@ -345,7 +345,7 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
     steps = _Steps(progress)
     project = get_project_store().get(project_name)
     if not project:
-        raise DeploymentNotFound(f"Project '{project_name}' not found")
+        raise DeploymentNotFoundError(f"Project '{project_name}' not found")
     filename = project.filename
 
     project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
@@ -355,7 +355,7 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
         deployment = _find_deployment(project_data, deployment_name)
         if deployment is None:
             steps.failed(progress_steps.deployment_not_in_project(deployment_name))
-            raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+            raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
         cluster = deployment.get("cluster", "")
         config = sleep_config.load(project_data, cluster)
@@ -401,16 +401,14 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
 async def status(project_name: str, deployment_name: str, *, presented_token: str | None = None) -> dict:
     """Read-only status: what the waker polls, and the deployment's real sleep state.
 
-    Two fields, because one word cannot mean two things (RC-119). ``state`` is the waker's
-    poll contract and nothing else: ``starting`` until the app behind the waker has a ready
-    pod, then ``ready``, which tells the waker to step out of the EndpointSlice. That field
-    is frozen -- the waker image is pulled from a registry and may be older than this code.
+    Two fields, because one word cannot mean two things. ``state`` is the waker's poll
+    contract and nothing else: ``starting`` until the app behind the waker has a ready pod,
+    then ``ready``, which tells the waker to step out of the EndpointSlice. That field is
+    frozen -- the waker image is pulled from a registry and may be older than this code.
 
     ``sleep_state`` is the answer to the question a client actually asks: is this deployment
     awake, sleeping, waking, or is sleep-mode not configured for it at all (``disabled``).
-    That last case used to report a hardcoded ``starting`` without looking at anything,
-    which is why a project without sleep-mode looked like a deployment that was forever
-    starting up. No pod is queried for it: there is nothing to be ready.
+    No pod is queried for that last case: there is nothing to be ready.
 
     Reads the cached project data (this is hot, polled every few seconds) and only hits
     kubectl when there is a waker component to ask about.
@@ -424,11 +422,11 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
 
     project = get_project_store().get(project_name)
     if not project or not project.data:
-        raise DeploymentNotFound(f"Project '{project_name}' not found")
+        raise DeploymentNotFoundError(f"Project '{project_name}' not found")
     project_data = project.data
     deployment = _find_deployment(project_data, deployment_name)
     if deployment is None:
-        raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+        raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
     if presented_token is not None:
         await _verify_token(project_data, deployment_name, presented_token)

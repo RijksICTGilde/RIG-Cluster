@@ -1,11 +1,6 @@
-"""How a service hooks in: one decorator, two event lists (RC-39).
+"""How a service hooks in: one decorator, two event lists.
 
-Before this, every extension point was a new named method on the ``Service`` base class
-plus a new place that scanned the registry for services overriding it. That is two edits
-outside the service for every event, and six of those methods had exactly one inhabitant
--- bespoke code on a shared base class rather than a contract.
-
-A service now declares what it listens to at the one place that also does the work::
+A service declares what it listens to at the one place that also does the work::
 
     class SleepModeService(Service):
         @on(ActionEvent.REDEPLOY)
@@ -13,12 +8,12 @@ A service now declares what it listens to at the one place that also does the wo
             ...
 
 ``opi.services.registry`` indexes those declarations once, so "who listens to X" is one
-lookup instead of a scan written per event, and adding an event is an enum member plus a
-payload type -- never a method on the base class.
+lookup. Adding an event is an enum member plus a payload type, never a method on the base
+class.
 
-Two families, because hooks do two genuinely different things and one enum would hide the
-difference: see ``ActionEvent`` (changes state, never commits, async) and ``UIEvent``
-(returns something to show, mutates nothing, sync).
+Two families, because hooks do two genuinely different things: see ``ActionEvent``
+(changes state, never commits, async) and ``UIEvent`` (returns something to show, mutates
+nothing, sync).
 
 Three rules hold the whole mechanism together:
 
@@ -58,8 +53,7 @@ def on(event: ServiceEvent, *, order: int = 100) -> Callable[[F], F]:
     handler builds on what an earlier one left behind -- state it explicitly there rather
     than depending on registry order.
 
-    The method's name is free: it describes what the service does at that moment, which is
-    the point of moving away from one fixed method name per extension point.
+    The method's name is free: it describes what the service does at that moment.
     """
 
     def decorate(func: F) -> F:

@@ -1,8 +1,8 @@
-"""Typed config-modellen voor de dienst ``image-registries``.
+"""Typed config models for the ``image-registries`` service.
 
-Projectniveau draagt de registries zelf, componentniveau alleen een verwijzing bij naam.
-Wat wij eruit afleiden (de RCR-URL, de secretnaam) wordt niet opgeslagen maar berekend,
-zie ``naming.py``.
+The project layer carries the registries themselves, the component layer only a reference by
+name. What we derive from them (the RCR URL, the secret name) is not stored but computed, see
+``naming.py``.
 """
 
 from __future__ import annotations
@@ -15,12 +15,12 @@ from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.config_managed import PLATFORM_MANAGED
 
-#: Een hostnaam met eventueel een pad, in kleine letters, zonder protocol en zonder tag.
-#: Ook een veiligheidsgrendel, zie features/image-registries.md.
+#: A host name with an optional path, lowercase, without protocol and without tag. Also a
+#: safety guard, see features/image-registries.md.
 #:
-#: ``$`` en niet ``\Z``, want de rust-engine (waar pydantic op draait) kent ``\Z`` niet.
-#: In de Python-engine laat ``$`` een afsluitende newline door: wie het fragment
-#: ``image-registries.v1.0.json`` als poort gaat gebruiken, zet er ``\Z`` bij.
+#: ``$`` and not ``\Z``, because the rust engine pydantic runs on does not know ``\Z``. In the
+#: Python engine ``$`` lets a trailing newline through: whoever starts using the
+#: ``image-registries.v1.0.json`` fragment as a guard adds ``\Z``.
 _HOST_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 _PORT = r"[0-9]{1,5}"
 UPSTREAM_PATTERN = (
@@ -28,15 +28,15 @@ UPSTREAM_PATTERN = (
     r"(?:/[a-z0-9][a-z0-9._-]*)*$"
 )
 
-#: De uitleg bij dat patroon; de pydantic-melding zelf is Engels en praat over patronen.
+#: The explanation for that pattern; pydantic's own message is English and talks about patterns.
 UPSTREAM_MESSAGE = (
     "Vul de registry in als hostnaam met eventueel een pad, in kleine letters, zonder "
     "protocol en zonder tag, bijvoorbeeld code.overheid.nl/jouw-naam"
 )
 
-#: AGE-versleuteld, of expliciet als platte tekst gemarkeerd met ``plain:``. Niet alleen
-#: een vormregel: ``find_plaintext_service_config_violations`` herkent een AGE-veld AAN
-#: dit patroon en weigert platte tekst ook zonder ``enforce_validation``.
+#: AGE encrypted, or explicitly marked as plain text with ``plain:``. Not only a shape rule:
+#: ``find_plaintext_service_config_violations`` recognises an AGE field BY this pattern and
+#: refuses plain text even without ``enforce_validation``.
 AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+age:|^plain:)"
 
 
@@ -50,42 +50,43 @@ QUOTA_FREE_MAX_GIB = 10
 #: cannot look inside a list, and the quota is per registry.
 QUOTA_MAX_GIB = 20
 
-#: Een DNS-1123-achtige naam die met een kleine LETTER begint, zodat hij nooit als
-#: YAML-getal gelezen wordt.
+#: A DNS-1123-like name starting with a lowercase LETTER, so it is never read as a YAML
+#: number.
 REGISTRY_NAME_PATTERN = r"^[a-z]([-a-z0-9]*[a-z0-9])?$"
 
-#: De uitleg bij dat patroon.
+#: The explanation for that pattern.
 REGISTRY_NAME_MESSAGE = (
     "Registrynaam moet met een kleine letter beginnen en mag alleen kleine letters, "
     "cijfers en streepjes bevatten, geen spaties of hoofdletters"
 )
 
-#: Een RFC-1123-subdomeinnaam: precies wat kubernetes een secret laat heten. Net als
-#: ``UPSTREAM_PATTERN`` een veiligheidsgrendel, en met ``$`` om dezelfde reden.
-SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"  # noqa: S105  # vormregel voor secretnamen, geen secret
+#: An RFC-1123 subdomain name: exactly what kubernetes lets a secret be called. Like
+#: ``UPSTREAM_PATTERN`` a safety guard, and with ``$`` for the same reason.
+SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"  # noqa: S105  # a shape rule for secret names, not a secret
 
 
 def _normalize_upstream(value: object, info: ValidationInfo) -> object:
-    """De invoerhulp, VOOR de vormregel: wat een afnemer plakt is zelden de upstream.
+    """The input aid, BEFORE the shape rule: what a consumer pastes is rarely the upstream.
 
-    Niet onder ``STORED_CONTEXT_KEY``: valideren schrijft niet terug, dus een opgeslagen
-    ``https://ghcr.io`` zou door de hele-bestandspoort komen en ongewijzigd blijven staan,
-    waarna ``normalize_prefix`` hem nooit matcht en de registry stil niet meer geldt.
+    Not under ``STORED_CONTEXT_KEY``: validating does not write back, so a stored
+    ``https://ghcr.io`` would pass the whole-file guard and stay unchanged, after which
+    ``normalize_prefix`` never matches it and the registry silently stops applying.
     """
     if info.context and info.context.get(STORED_CONTEXT_KEY):
         return value
     return normalize_upstream(value) if isinstance(value, str) else value
 
 
-#: Als geannoteerd type en niet als losse ``field_validator``, want ``ModelFieldValidator``
-#: bouwt zijn toets uit de ANNOTATIE: anders wijst het formulier een geplakte URL af die de
-#: API accepteert. Het patroon staat VOOR de before-validator, anders valt het uit het
-#: gerenderde JSON-schema (pydantic beschrijft dan de invoer) terwijl de toets blijft draaien.
+#: As an annotated type and not as a separate ``field_validator``, because
+#: ``ModelFieldValidator`` builds its check from the ANNOTATION: otherwise the form rejects a
+#: pasted URL the API accepts. The pattern comes BEFORE the before-validator, otherwise it
+#: falls out of the rendered JSON schema (pydantic then describes the input) while the check
+#: keeps running.
 Upstream = Annotated[str, Field(pattern=UPSTREAM_PATTERN), BeforeValidator(_normalize_upstream)]
 
 
 class RegistryEntry(BaseModel):
-    """Eén private registry van het project."""
+    """One private registry of the project."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -154,10 +155,10 @@ class RegistryEntry(BaseModel):
 
     @model_validator(mode="after")
     def _has_something_to_be_called(self) -> RegistryEntry:
-        """Een entry zonder naam EN zonder label is nergens naar te verwijzen.
+        """An entry without a name AND without a label cannot be referenced at all.
 
-        Zonder allebei valt er geen naam af te leiden en is de entry onzichtbaar voor
-        ``project_registries``, dus voor de hele dienst.
+        Without either there is no name to derive and the entry is invisible to
+        ``project_registries``, so to the whole service.
         """
         if not self.name and not self.display_name:
             msg = "Geef een 'name' of een 'display-name'"
@@ -166,14 +167,14 @@ class RegistryEntry(BaseModel):
 
     @model_validator(mode="after")
     def _has_exactly_one_way_to_pull(self) -> RegistryEntry:
-        """Een entry draagt OF een ``secretName`` OF een token.
+        """An entry carries EITHER a ``secretName`` OR a token.
 
-        Zonder een van beide komt hij overal doorheen en schrijft de backend stil geen
-        pull-secret; de afnemer merkt het pas als de pod niet kan pullen, met een melding die
-        niet over een ontbrekend token gaat. Mengen kan ook niet: met een ``secretName``
-        slaat de backend gebruikersnaam en token over.
+        With neither it passes everything and the backend silently writes no pull secret; the
+        consumer only notices when the pod cannot pull, with a message that is not about a
+        missing token. Mixing is impossible too: with a ``secretName`` the backend skips
+        username and token.
 
-        De gebruikersnaam is optioneel, zie ``PULL_USERNAME_PLACEHOLDER``.
+        The username is optional, see ``PULL_USERNAME_PLACEHOLDER``.
         """
         if self.secret_name and (self.username or self.password):
             msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"
@@ -212,7 +213,7 @@ class QuotaApproval(BaseModel):
 
 
 class ImageRegistriesConfig(BaseModel):
-    """Projectniveau: de lijst private registries."""
+    """Project layer: the list of private registries."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -232,7 +233,7 @@ class ImageRegistriesConfig(BaseModel):
 
 
 class ComponentRegistryConfig(BaseModel):
-    """Component- en deployment-componentniveau: welke registry bij deze image hoort."""
+    """Component and deployment-component layer: which registry this image belongs to."""
 
     model_config = ConfigDict(extra="forbid")
 

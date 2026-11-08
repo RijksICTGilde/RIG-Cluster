@@ -15,16 +15,16 @@ AUTH_WALL_BANNER = EditableVisualizer(
     label="Welkomstbanner tekst",
 )
 
-#: Zie AUTH_WALL_COMPONENT_INFO_EDITABLE voor het waarom. Een DISPLAY_CARD zonder waarde
-#: rendert als kop plus hulptekst, en dat is precies wat een wegwijzer nodig heeft.
+#: See AUTH_WALL_COMPONENT_INFO_EDITABLE for the why. A DISPLAY_CARD without a value renders
+#: as a heading plus help text, which is exactly what a signpost needs.
 AUTH_WALL_COMPONENT_INFO = EditableVisualizer(
     editable=AUTH_WALL_COMPONENT_INFO_EDITABLE,
     widget=WidgetType.DISPLAY_CARD,
     label="Authorization wall",
     readonly=True,
-    # gap md en niet de standaard xs: die is bedoeld voor een kaart met een waarde onder
-    # zijn label (een sleutel, een tag), en dan hoort het dicht op elkaar. Dit is een lopende
-    # tekst onder een kop, en die plakte eraan vast.
+    # gap md and not the default xs: that one is meant for a card with a value under its
+    # label (a key, a tag), where close together is right. This is running text under a
+    # heading.
     attributes={"icon": "schild-met-vinkje-erop", "icon_color": "groen", "gap": "md"},
     help_text=(
         "Dit component komt achter een inlogpagina te staan. De instellingen daarvan "

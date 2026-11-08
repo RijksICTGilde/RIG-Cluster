@@ -44,9 +44,9 @@ SCHEMA_MARKED = EditableVisualizer(
     editable=SCHEMA_MARKED_EDITABLE,
     widget=WidgetType.CHECKBOX,
     label="Markeer voor verwijdering",
-    # Niet in de aanmaakwizard: daar ben je een schema aan het VERZINNEN, en de vraag of je
-    # het beheer ervan wilt stoppen slaat dan nergens op - je laat het schema gewoon weg.
-    # Het veld gaat over een schema dat er AL is, en dat is precies het geval bij bewerken.
+    # Not in the create wizard: there a schema is being INVENTED, and the question whether to
+    # stop managing it makes no sense then, you simply leave the schema out. The field is about
+    # a schema that ALREADY exists, which is exactly the editing case.
     alleen_bij_bewerken=True,
     help_text=(
         "Aangevinkt stopt het beheer van dit schema en verbergt zijn variabele, maar het schema "

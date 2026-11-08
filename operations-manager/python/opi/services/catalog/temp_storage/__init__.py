@@ -24,17 +24,17 @@ class TempStorageService(Service):
         help_template="temp_storage/help.md",
         icon="klok",
         color="oranje",
-        # De kleinste maat die voor echt gebruik iets voorstelt, en een waarde die in de
-        # keuzelijst van het formulier staat (StorageSizeOptionsProvider). Wie meer nodig
-        # heeft zet het bij; een startwaarde hoort niet groter te zijn dan wat de meeste
-        # componenten werkelijk gebruiken. Het getal staat in DEFAULT_STORAGE_SIZE, want
-        # het formulier en de manifestgeneratie leunen op dezelfde startmaat.
+        # The smallest size that means anything in real use, and a value the form's option
+        # list carries (StorageSizeOptionsProvider). Whoever needs more adds it; a starting
+        # value should not be larger than what most components really use. The number lives in
+        # DEFAULT_STORAGE_SIZE, because the form and the manifest generation lean on the same
+        # starting size.
         storage_config={"name": "temp", "type": "ephemeral", "size": DEFAULT_STORAGE_SIZE, "mount-path": "/tmp"},
         variables=[var.value for var in TempStorageVariables],
     )
     config_model = StorageConfig
     config_schema_version = "1.0"
-    # May enrol itself (RC-84): the mounts live on the component; the project layer holds
+    # May enrol itself: the mounts live on the component; the project layer holds
     # no storage decision.
     allows_implicit_project_selection = True
     config_component_order = 20

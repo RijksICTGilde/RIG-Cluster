@@ -211,7 +211,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Project layer: which domains this project may publish on, plus the TLS default.\n\nTwo things, because the code already holds both there. ``domains`` is the approval\nblock the v2.5 migration relocated here. ``tls`` / ``attachment`` are inherited rather\nthan repeated: level 3 of the cascade in\n``project_file_handler._resolve_publish_on_web_config`` is the project-level entry, so\na project can set one certificate mode for every component that does not override it.\nDropping them here would have made every such project file fail validation.",
+  "description": "Project layer: which domains this project may publish on, plus the TLS default.\n\nTwo things, because the code already holds both there. ``domains`` is the approval\nblock. ``tls`` / ``attachment`` are inherited rather than repeated: level 3 of the\ncascade in ``project_file_handler._resolve_publish_on_web_config`` is the project-level\nentry, so a project can set one certificate mode for every component that does not\noverride it.",
   "properties": {
     "attachment": {
       "anyOf": [

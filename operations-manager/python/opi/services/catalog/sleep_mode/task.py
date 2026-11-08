@@ -1,9 +1,9 @@
 """Sleeping and waking as a followable task, instead of a request that hangs.
 
 Both transitions commit to git and then run the whole reprocessing pipeline, ArgoCD sync
-included. Done inline, the browser sat on an open POST for tens of seconds with nothing
-to show, which reads as a button that did nothing -- so this runs as an async task and
-the page polls it, exactly like reprocessing a deployment already does.
+included. Inline that is an open POST for tens of seconds with nothing to show, which reads
+as a button that did nothing -- so this runs as an async task and the page polls it, exactly
+like reprocessing a deployment already does.
 
 The handler lives in the service package because the work is sleep-mode's; only the
 registration is central, next to the other task types.

@@ -5,8 +5,7 @@ is given, and the NetworkPolicy PEER that pod is allowed to reach. Deriving them
 entry is the point -- an address that names one pod while the rule opens another fails as
 a network timeout and is in truth a configuration mistake, which is the most expensive
 kind to debug from the consumer's side.
-
-Since RC-167 the same entry also yields the DOORLUS half: poort 8443 of that same proxy
+The same entry also yields the DOORLUS half: port 8443 of that same proxy
 passes the TLS session through instead of terminating it, so the consumer speaks to VLAM
 itself and verifies the certificate itself. That takes two things: the address and the
 name the URL must carry (TLS compares the hostname from the URL against the certificate).
@@ -29,16 +28,16 @@ from opi.utils.naming import generate_unique_name
 
 @dataclass(frozen=True)
 class VlamPassthrough:
-    """The doorlus (RC-167): the two things a consumer needs to speak to VLAM itself.
+    """The doorlus: the two things a consumer needs to speak to VLAM itself.
 
     Built only when the cluster configuration carries all three keys. Missing one means
     the path cannot work, and an address without the name it must be reached under is
     exactly the half-configured state this design exists to prevent, so the whole thing
     is absent instead.
 
-    No CA material here (RC-414): the certificate of ``api_host`` comes from DigiCert and
-    is in every standard trust store, so the consumer verifies it the way it verifies any
-    other public endpoint.
+    No CA material here: the certificate of ``api_host`` comes from DigiCert and is in
+    every standard trust store, so the consumer verifies it the way it verifies any other
+    public endpoint.
     """
 
     #: What the consumer connects to, e.g. ``https://vlam-api.overheid-i.nl:8443``. It

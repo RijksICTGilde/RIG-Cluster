@@ -1,5 +1,5 @@
-"""The connection limit of a deployment's database roles (RC-201). The bound is a
-platform decision, so it lives here and not in the project file."""
+"""The connection limit of a deployment's database roles. The bound is a platform
+decision, so it lives here and not in the project file."""
 
 from __future__ import annotations
 

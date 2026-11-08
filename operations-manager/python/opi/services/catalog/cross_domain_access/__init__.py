@@ -17,16 +17,14 @@ The receiver decides. An inbound rule in project A is the permission; project B 
 itself access. B's outbound list is (a) required for ports other than 80/443 and (b)
 explicit intent.
 
-Design notes recorded so the next reader does not go looking for something deliberately
-absent:
+Deliberately absent, so the next reader does not go looking:
 
 * ``provision`` / ``cleanup_manager_key`` -- none. The effect is entirely in generated
   manifests; the generic service-manifest prune removes the policy files when the service is
   switched off (see ``project_manager._prune_obsolete_service_manifests``).
 * ``manifest_secret_class`` / ``build_secret_files`` -- no secret, no envFrom.
-* ``config_approvals`` -- none today. Platform-admin approval of an inbound rule is a
-  deliberate future step (this is the only service that loosens tenant isolation), but out of
-  scope now.
+* ``config_approvals`` -- none, although this is the only service that loosens tenant
+  isolation.
 """
 
 from __future__ import annotations
@@ -62,7 +60,7 @@ def _group_by_peer(rules: list[ResolvedRule]) -> list[dict]:
     Two rules from one own component to the same peer become one policy peer entry with two
     ports, so the rendered YAML stays compact. Sorted for a stable render.
 
-    Open rules (no peer, RC-142) fold together into ONE entry with ``peer: None``, which the
+    Open rules (no peer) fold together into ONE entry with ``peer: None``, which the
     template renders as an ingress entry without a ``from`` selector. It sorts first, so the
     rendered policy reads "this port is open" before "and these peers may also in".
     """
@@ -104,20 +102,19 @@ class CrossDomainAccessService(Service):
         help_template="cross_domain_access/help.md",
         icon="netwerk",
         color="donkerblauw",
-        # De componentkeuze bestaat wel, maar zit in de regel zelf (``to.component`` /
-        # ``from.component``) en dat is configuratie. Een vinkje voegt er niets aan toe.
+        # The component choice does exist, but it sits in the rule itself (``to.component`` /
+        # ``from.component``) and that is configuration. A tick box adds nothing to it.
         selectable_per_component=False,
         variables=[],
-        # Het effect leeft volledig in gegenereerde manifesten, dus er is niets
-        # server-side op te ruimen: de generieke manifestprune haalt de policybestanden
-        # weg zodra de dienst uit gaat.
+        # The effect lives entirely in generated manifests, so there is nothing to clean up
+        # server side: the generic manifest prune removes the policy files as soon as the
+        # service is switched off.
         cleanup_strategy=CleanupStrategy.NONE,
     )
     config_model = CrossDomainAccessConfig
-    # 1.1 (RC-142): the inbound peer project accepts the wildcard "*". Purely additive --
-    # every 1.0 config is a valid 1.1 config and means the same thing -- so migrate_config
-    # stays the identity default. The version is bumped anyway because a client that reads
-    # the fragment for 1.0 would not know the value exists.
+    # 1.1: the inbound peer project accepts the wildcard "*". Purely additive -- every 1.0
+    # config is a valid 1.1 config and means the same thing -- so migrate_config stays the
+    # identity default.
     config_schema_version = "1.1"
     config_section_id = "cross-domain-access-config"
     modal_flow_id = "modal-edit-cross-domain-config"
@@ -128,7 +125,6 @@ class CrossDomainAccessService(Service):
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    # --- config field ownership -------------------------------------------------
     # The same config shape lives at the project and the deployment layer (the deployment
     # layer is a patch on the project layer, but the stored shape is identical), so both
     # layers accept the model's fields and validate against config_model.
@@ -149,8 +145,7 @@ class CrossDomainAccessService(Service):
             return CROSS_DOMAIN_DEPLOYMENT_EDITABLES
         return []
 
-    # Both layers have a form now (RC-42): the deployment layer got the patch editor this
-    # entry used to record as missing.
+    # Both layers have a form: the project-level editor and the per-deployment patch editor.
     form_exempt_layers: ClassVar[dict[ConfigLayer, str]] = {}
 
     def config_form_section(self, layer: ConfigLayer):
@@ -241,8 +236,6 @@ class CrossDomainAccessService(Service):
         """The patch form materialized for one deployment; the modal flow's single step."""
         return self._deployment_form_section(deployment_index)
 
-    # --- config reading ---------------------------------------------------------
-
     def _project_config(self, project_data: dict[str, Any]) -> Any:
         """This service's project-level config block, or None if not selected."""
         for entry in project_data.get("services", []) or []:
@@ -256,8 +249,6 @@ class CrossDomainAccessService(Service):
             if service_entry_name(entry) == self.service_type.value:
                 return service_entry_config(entry)
         return None
-
-    # --- effect: per-deployment NetworkPolicies ---------------------------------
 
     def _resolve_direction(
         self,
@@ -330,7 +321,7 @@ class CrossDomainAccessService(Service):
         for component in components:
             component_ingress = _group_by_peer([rule for rule in ingress if rule.local_component == component])
             component_egress = _group_by_peer([rule for rule in egress if rule.local_component == component])
-            # No peers means no file: let the prune remove any stale one (2.8).
+            # No peers means no file: let the prune remove any stale one.
             if not component_ingress and not component_egress:
                 continue
             specs.append(
@@ -352,6 +343,6 @@ class CrossDomainAccessService(Service):
 # The per-deployment patch button lives in actions.py: the service owns the condition for
 # showing it (see that module). Bound after the class so the import order holds, exactly as
 # sleep-mode does it.
-from opi.services.catalog.cross_domain_access.actions import cross_domain_actions  # noqa: E402
+from opi.services.catalog.cross_domain_access.actions import cross_domain_actions  # noqa: E402  # bound after the class
 
 CrossDomainAccessService.definition.actions_provider = cross_domain_actions

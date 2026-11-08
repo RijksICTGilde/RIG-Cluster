@@ -1,15 +1,11 @@
-"""The API actions the attachments service declares for itself (RC-38).
+"""The API actions the attachments service declares for itself.
 
 Everything an API client needs in order to *define* an attachment and to *use and bind*
-one lives here, next to the service's model, editables and templates -- the RC-36 rule
-that all of a service is in its own directory.
+one lives here, next to the service's model, editables and templates.
 
-Why this exists at all. The generic config endpoints are generated from the editables a
-service declares, which is the right default and covers the rest of the catalog. It could
-not cover this: an attachment's content is a file, it arrives as multipart, and it belongs
-to the catalog rather than to any component's config block. The result was an API that let
-a client point a component at attachment ``my-cert`` while giving it no way to put
-``my-cert`` in the project. Two actions close that:
+The generic config endpoints are generated from the editables a service declares, and they
+cannot cover this: an attachment's content is a file, it arrives as multipart, and it
+belongs to the catalog rather than to any component's config block. Two actions cover it:
 
 * project level -- put a file in the catalog (DEFINE);
 * component level -- put a file in the catalog *and* couple it in the same request
@@ -18,8 +14,7 @@ a client point a component at attachment ``my-cert`` while giving it no way to p
   (USE + BIND) and leave its content alone.
 
 Each field points at the shared ``Editable`` that already defines what a valid value looks
-like, exactly as ``opi/api/validation.py`` does for the component endpoints. The one field
-without an editable is the file itself, and it says why.
+like. The one field without an editable is the file itself, and it says why.
 """
 
 from __future__ import annotations
@@ -54,14 +49,12 @@ from opi.services.catalog.base import ConfigLayer, ConfigRole
 
 logger = logging.getLogger(__name__)
 
-#: The verbs both actions support, and what each one promises about an id that is taken.
+#: The verbs both actions support, and what each one promises about an id that already exists.
 _VERBS = (ActionVerb.CREATE, ActionVerb.UPDATE, ActionVerb.UPSERT)
 
 #: The name of the acknowledgement that lets a delete proceed on an attachment that is
-#: still in use. Named for what the caller *states* rather than for what it overrides:
-#: "delete when in use" would describe the effect while saying nothing about the caller
-#: having seen the consequences, and "force" says only that something was overruled. The
-#: caller is confirming a fact they were told in the 409 -- same reasoning as ``rollout``.
+#: still in use. The caller is confirming a fact they were told in the 409 -- same
+#: reasoning as ``rollout``.
 CONFIRM_IN_USE = "confirm_in_use"
 
 _CONFIRM_IN_USE_FLAG = ActionFlag(
@@ -269,9 +262,8 @@ async def _store(ctx: ActionContext, binding: dict[str, Any] | None) -> ActionRe
 async def _remove_attachment(ctx: ActionContext) -> ActionResult:
     """Take one attachment out of the project's catalog.
 
-    The counterpart the catalog never had: files could be added and replaced but not
-    removed, so they accumulated with no way back. Two answers, and which one you get is
-    decided by the project rather than by the request:
+    Two answers, and which one you get is decided by the project rather than by the
+    request:
 
     * nothing uses it -- it goes, and that needs no confirmation;
     * something uses it -- 409 with ``used_by``, naming every place, so the caller learns

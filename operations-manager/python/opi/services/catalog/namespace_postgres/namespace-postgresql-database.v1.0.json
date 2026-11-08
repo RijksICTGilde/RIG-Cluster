@@ -1,7 +1,7 @@
 {
   "$defs": {
     "DatabasePrivilege": {
-      "description": "PostgreSQL role privileges accepted for the dedicated database user.\n\nMatches the allow-list previously enforced inline in DatabaseManager.",
+      "description": "PostgreSQL role privileges accepted for the dedicated database user.",
       "enum": [
         "SUPERUSER",
         "NOSUPERUSER",
@@ -65,7 +65,7 @@
     },
     "RequestsQuantities": {
       "additionalProperties": false,
-      "description": "CPU/memory *requests*. Per-field defaults preserve the old deep-merge: a\nconfig overriding only ``requests.memory`` keeps the default ``cpu``.",
+      "description": "CPU/memory *requests*. Per-field defaults, so a config overriding only\n``requests.memory`` keeps the default ``cpu``.",
       "properties": {
         "cpu": {
           "default": "100m",
@@ -85,7 +85,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "Typed config for a dedicated (namespace) PostgreSQL cluster.\n\nField defaults reproduce ``DatabaseManager.DEFAULT_CONFIG`` so validating an\nexisting (untyped) config through this model yields the same merged result the\nold ``dict.get()`` merge produced.",
+  "description": "Typed config for a dedicated (namespace) PostgreSQL cluster.\n\nField defaults reproduce ``DatabaseManager.DEFAULT_CONFIG``, so an existing untyped\nconfig validates to the same merged result.",
   "properties": {
     "image": {
       "default": "ghcr.io/cloudnative-pg/postgresql:17",

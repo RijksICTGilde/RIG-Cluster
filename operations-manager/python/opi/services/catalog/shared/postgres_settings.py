@@ -1,11 +1,11 @@
-"""De speelruimte van een eigen (CNPG) PostgreSQL-cluster (RC-327).
+"""The room a project has on its own (CNPG) PostgreSQL cluster.
 
-De velden zelf staan in ``shared/postgres.py``; hier staat hoe ver een project ermee mag
-gaan. Via het mechanisme van RC-168 (``config_settings``), zodat de grens een keer wordt
-opgeschreven en het formulier, de service-config-API en een met de hand bijgewerkt
-projectbestand erlangs dezelfde kant op komen. Beide diensten die ``DedicatedPostgresFields``
-gebruiken (``postgresql-database`` met ``scope: project`` en ``namespace-postgresql-database``)
-dragen deze config op de projectlaag, dus ze delen deze declaraties.
+The fields themselves live in ``shared/postgres.py``; how far a project may go with them lives
+here. Through ``config_settings``, so the bound is written down once and the form, the
+service-config API and a hand-edited project file all come past the same side of it. Both
+services using ``DedicatedPostgresFields`` (``postgresql-database`` with ``scope: project``
+and ``namespace-postgresql-database``) carry this config on the project layer, so they share
+these declarations.
 """
 
 from __future__ import annotations
@@ -17,13 +17,11 @@ from opi.services.catalog.config_settings import ConfigSetting, QuantityKind, Qu
 from opi.services.catalog.shared.postgres import DatabaseResources
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 
-#: ``grow_only``, want een PVC krimpt niet: een kleinere waarde doet of niets of hij laat
-#: de uitrol vastlopen. De ondergrens is de kleinste maat die het platform aanbiedt. De
-#: bovengrens is NIET die lijst: die loopt tot 1Gi, en gemeten over de beschikbare
-#: projectbestanden staat er al 2Gi op een databasevolume (tests/fixtures/upgrade_safety/
-#: multi-service.yaml, gesaneerd uit productie). 20Gi is de grootste maat die voor dit veld
-#: ergens is opgeschreven, in features/namespace-postgresql-database.md; de meting over de
-#: productie-repo kon in deze ronde niet, dus ligt de grens op wat er staat en niet lager.
+#: ``grow_only``, because a PVC does not shrink: a smaller value either does nothing or jams
+#: the rollout. The lower bound is the smallest size the platform offers. The upper bound is
+#: NOT that list: it runs to 1Gi, while a database volume in practice already carries 2Gi.
+#: 20Gi is the largest size written down for this field anywhere, in
+#: features/namespace-postgresql-database.md.
 POSTGRES_STORAGE: Final = QuantitySetting(
     path="storage",
     layers=(ConfigLayer.PROJECT,),
@@ -35,13 +33,13 @@ POSTGRES_STORAGE: Final = QuantitySetting(
     label="Opslag",
 )
 
-#: De bovengrenzen zijn die van een gewone pod op dit platform: ``max_memory_request_mi``,
-#: ``max_memory_limit_mi``, ``max_cpu_request_m`` en ``max_cpu_limit_m`` uit
-#: ``opi/core/cluster_config.py``, met ``min_memory_limit_mi`` en ``min_cpu_m`` als
-#: ondergrens. Als tekst en niet als aanroep, want een ``QuantitySetting`` heeft een vaste
-#: grens en die van cluster_config hangt aan een cluster; alle drie de clusters dragen
-#: vandaag dezelfde getallen. Gaan ze uit elkaar lopen, dan is een grens die het cluster
-#: kan bevragen de eerstvolgende stap, niet een tweede lijstje hier.
+#: The upper bounds are those of an ordinary pod on this platform: ``max_memory_request_mi``,
+#: ``max_memory_limit_mi``, ``max_cpu_request_m`` and ``max_cpu_limit_m`` from
+#: ``opi/core/cluster_config.py``, with ``min_memory_limit_mi`` and ``min_cpu_m`` as the lower
+#: bound. As literals and not as a call, because a ``QuantitySetting`` has a fixed bound while
+#: cluster_config's hangs on a cluster; all three clusters carry the same numbers today. Should
+#: they drift apart, a bound that can query the cluster is the next step, not a second list
+#: here.
 POSTGRES_RESOURCES: Final[tuple[ConfigSetting, ...]] = (
     QuantitySetting(
         path="resources.requests.memory",
@@ -81,9 +79,9 @@ POSTGRES_RESOURCES: Final[tuple[ConfigSetting, ...]] = (
     ),
 )
 
-#: Wat een project van een eigen PostgreSQL-cluster mag zetten. ``image`` staat er NIET
-#: bij: daarvoor zou een ``ChoiceSetting`` een gesloten lijst images nodig hebben, en die
-#: is niet af te leiden uit wat er staat (productie draait een eigen CNPG-image met een
-#: eigen tag, en features/namespace-postgresql-database.md laat eigen images toe). De vorm
-#: van dat veld wordt getoetst op het model zelf.
+#: What a project may set on its own PostgreSQL cluster. ``image`` is NOT among them: a
+#: ``ChoiceSetting`` would need a closed list of images for that, and such a list cannot be
+#: derived from what is written (production runs its own CNPG image with its own tag, and
+#: features/namespace-postgresql-database.md allows private images). The shape of that field is
+#: checked on the model itself.
 DEDICATED_POSTGRES_SETTINGS: Final[tuple[ConfigSetting, ...]] = (POSTGRES_STORAGE, *POSTGRES_RESOURCES)

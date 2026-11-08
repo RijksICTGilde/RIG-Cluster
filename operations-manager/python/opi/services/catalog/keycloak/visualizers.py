@@ -23,14 +23,13 @@ from opi.services.catalog.keycloak.editables import (
     KEYCLOAK_TEMPLATE_EDITABLE,
 )
 
-# Het enige veld van een regel die je zelf toevoegt heet "URI", en lotc-forms zet
-# "Optioneel" achter elk niet-verplicht veld (rijksconventie: markeer optioneel, niet
-# verplicht). "URI Optioneel" zegt niets: dat je een regel toevoegt IS de keuze. Dit
-# merk-attribuut laat alleen de badge weg en beweert - anders dan de omweg required -
-# niets over wat er ingevuld moet worden. Onze kopie van templates_lotc/components/
-# _forms.j2 leest het. Per veld een eigen kopie: de bundel gaat als dict door naar het
-# veld en daar wordt hij verderop nog aangevuld.
-GEEN_OPTIONEEL_BADGE = {"data-no-optional-badge": "1"}
+# The only field of a row you add yourself is called "URI", and lotc-forms puts "Optioneel"
+# behind every non-required field (government convention: mark optional, not required). "URI
+# Optioneel" says nothing: adding a row IS the choice. This marker attribute only leaves out
+# the badge and, unlike the required detour, claims nothing about what has to be filled in. Our
+# copy of templates_lotc/components/_forms.j2 reads it. A copy of its own per field: the bundle
+# travels to the field as a dict and gets added to further on.
+NO_OPTIONAL_BADGE = {"data-no-optional-badge": "1"}
 
 KEYCLOAK_TEMPLATE = EditableVisualizer(
     editable=KEYCLOAK_TEMPLATE_EDITABLE,
@@ -47,7 +46,7 @@ KEYCLOAK_REDIRECT_URI_ITEM = EditableVisualizer(
     editable=KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE,
     widget=WidgetType.TEXT,
     label="URI",
-    attributes=dict(GEEN_OPTIONEEL_BADGE),
+    attributes=dict(NO_OPTIONAL_BADGE),
 )
 
 KEYCLOAK_REDIRECT_URIS = EditableVisualizer(
@@ -133,7 +132,7 @@ KEYCLOAK_CLIENT_REDIRECT_URI = EditableVisualizer(
     editable=KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
     widget=WidgetType.TEXT,
     label="URI",
-    attributes=dict(GEEN_OPTIONEEL_BADGE),
+    attributes=dict(NO_OPTIONAL_BADGE),
 )
 
 KEYCLOAK_CLIENT_REDIRECT_URIS = EditableVisualizer(

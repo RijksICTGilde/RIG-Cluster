@@ -39,18 +39,17 @@ logger = logging.getLogger(__name__)
 
 
 def _attachments_summary(data: dict[str, Any]) -> list[tuple[str, str]]:
-    """De bijlagen die het project heeft, als naam en bestandsnaam.
+    """The attachments the project has, as name and filename.
 
-    Wat de gebruiker op deze stap doet is bestanden uploaden, dus dat is wat een
-    samenvatting hoort te tonen. Niet de dienstenlijst die deze sectie toevallig
-    meedraagt om te weten welke diensten aanstaan.
+    What a user does on this step is upload files, so that is what a summary shows. Not the
+    services list this section happens to carry along to know which services are on.
     """
     from opi.handlers.project_file_handler import extract_attachment_catalog
 
-    catalogus = extract_attachment_catalog(data)
-    if not catalogus:
+    catalog = extract_attachment_catalog(data)
+    if not catalog:
         return [("Bijlagen", "geen")]
-    return [(entry.get("filename") or naam, naam) for naam, entry in catalogus.items()]
+    return [(entry.get("filename") or name, name) for name, entry in catalog.items()]
 
 
 class AttachmentsService(Service):
@@ -72,36 +71,22 @@ class AttachmentsService(Service):
     def data_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """The catalog model, at the project layer where the catalog lives.
 
-        This is what closes the gap the ``attachment-data-entry`` ``$def`` describes: the
-        catalog sat under ``data``, the config walk only looks at ``config``, so nothing
-        validated it. ``validate_service_configs`` now asks every service for this and
-        validates the ``data`` block against it.
+        The catalog sits under ``data`` and the config walk only looks at ``config``, so
+        ``validate_service_configs`` asks every service for this model and validates the
+        ``data`` block against it.
         """
         return AttachmentCatalog if layer is ConfigLayer.PROJECT else None
 
     def summarize_data(self, data: Any, private_key: str) -> Any:
         """The catalog as facts about each file: id, filename, size and sha256.
 
-        Never the content, and that stays the rule -- a read response is not a download.
-        What it fixes is the other half of that rule: with the coupling visible and the
-        content invisible there was nothing at all to check, so "the right file is on the
-        mount" was the one thing two practice runs could not demonstrate. A size and a
-        digest let a client compare against the bytes it sent, which is the whole
-        question, without a byte coming back.
+        Never the content: a read response is not a download. The size and the digest let a
+        client compare against the bytes it sent without a byte coming back.
 
-        The digest is over the DECRYPTED content, because a digest over the ciphertext
-        answers nothing: AGE is not deterministic, so encrypting the same file twice
-        gives two different blocks and therefore two different digests, and none of them
-        equals what the client can compute over the file on its disk.
-
-        That is not a leak. Reaching this response already requires the project's API key,
-        and the same key can replace this attachment, read every component and deploy the
-        project -- a sha256 of a file that holder uploaded gives them nothing they do not
-        already have. It is a one-way digest of at most 64 KB, so it hands out no bytes;
-        what it does hand out is confirmability, which is what was asked for. The one
-        thing worth naming: for a file whose plaintext is guessable from a small set, a
-        digest confirms which one it is. That is a property of any checksum, it is scoped
-        to holders of the project key, and it is the price of the answer.
+        The digest is over the DECRYPTED content. A digest over the ciphertext answers
+        nothing: AGE is not deterministic, so encrypting the same file twice gives two
+        different blocks and two different digests, neither equal to what the client can
+        compute over the file on its disk.
 
         Unreadable content gives ``null`` for both facts rather than a zero: the entry
         exists, we could not measure it, and 0 bytes would be a lie about a file that is
@@ -144,10 +129,9 @@ class AttachmentsService(Service):
 
         A component couples an attachment, and a deployment-component may override that
         coupling for one deployment. The project layer holds the catalog (under ``data``)
-        and the deployment layer holds nothing at all -- yet ``config_model`` alone
-        answered at all four, which is how the API came to claim a project-level config
-        block nothing reads. Saying it per layer keeps the generated routes and the
-        validation walk on the layers that have a use to configure.
+        and the deployment layer holds nothing at all, so answering per layer is what keeps
+        the generated routes and the validation walk on the layers that have a use to
+        configure.
         """
         return AttachmentsConfig if layer in (ConfigLayer.COMPONENT, ConfigLayer.DEPLOYMENT_COMPONENT) else None
 
@@ -170,10 +154,9 @@ class AttachmentsService(Service):
     def api_actions(self) -> list[ServiceAction]:
         """Uploading an attachment, at project level and at component level.
 
-        The two things the API could not do: put a file in the catalog at all, and do
-        that plus the coupling in one request. Both are declared in this package's
-        ``api.py``; the routes and their documentation are derived from those
-        declarations.
+        Putting a file in the catalog, and doing that plus the coupling in one request.
+        Both are declared in this package's ``api.py``; the routes and their documentation
+        are derived from those declarations.
         """
         from opi.services.catalog.attachments.api import ATTACHMENT_ACTIONS
 
@@ -205,8 +188,7 @@ class AttachmentsService(Service):
         if layer is not ConfigLayer.PROJECT:
             # The component layer (which attachment a component couples, and how) is
             # edited inside the component form; the base class builds that section from
-            # this service's own component visualizers + layout (RC-25). Before that the
-            # hook answered only at PROJECT while the config lived on the component.
+            # this service's own component visualizers + layout.
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
@@ -231,29 +213,24 @@ class AttachmentsService(Service):
                 visible=self._config_selected,
                 editables=[services_carrier],
                 layout=[TemplatePartial(template="wizard/partials/attachments_upload.html.j2")],
-                # De sectie vat ZICHZELF samen. De generieke samenvatting loopt over
-                # ``editables``, en dat is het gegevenscontract en niet wat de gebruiker
-                # ziet: hier staat alleen de verborgen drager in, en die kwam als een rauwe
-                # dienstenlijst in beeld. Een sectie waarvan de layout een TemplatePartial
-                # is, valt sowieso niet samen te vatten door velden af te lopen; dan hoort
-                # ze het zelf te zeggen.
+                # The section summarises ITSELF. The generic summary walks ``editables``,
+                # which is the data contract and not what the user sees, and a section whose
+                # layout is a TemplatePartial cannot be summarised by walking fields at all.
                 summary_fn=_attachments_summary,
             )
             self._config_section_cache = cached
         return cached
 
-    # --- regels over het hele project --------------------------------------------------
-
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """De twee bijlageregels: verwijst elke koppeling naar een bestaande
-        catalogusregel, en is elke koppeling zelf te leveren.
+        """The two attachment rules: does every coupling point at a catalog entry, and can
+        every coupling itself be delivered.
 
-        Beide leggen de catalogus (projectniveau) naast de koppelingen (componenten), dus
-        ``validate_config`` kan ze niet vellen. Draaien ook zonder dat dit project de
-        dienst aanvinkt: het gaat om waar een project naar WIJST. De functies zelf blijven
-        bij de wandelaars waar ze op leunen, in ``project_file_handler``.
+        Both lay the catalog (project layer) next to the couplings (components), so
+        ``validate_config`` cannot judge them. They also run when the project does not tick
+        the service: what matters is what a project POINTS AT. The functions themselves stay
+        with the walkers they lean on, in ``project_file_handler``.
         """
-        # Lazy: die module leest via de dienstenlijst dit pakket.
+        # Lazy: that module reads this package through the services list.
         from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 
         return [*validate_attachment_references(project_data), *validate_attachment_couplings(project_data)]
@@ -261,9 +238,8 @@ class AttachmentsService(Service):
     @on(UIEvent.PROJECT_SECTIONS)
     def attachments_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
         # The Bijlagen block is this service's, including the question whether it shows
-        # at all: the general template used to ask "is attachments in project.services"
-        # before including it -- service knowledge in the page. Being asked at all means
-        # the project uses the service, so there is no condition left here.
+        # at all. Being asked at all means the project uses the service, so there is no
+        # condition left here.
         from opi.handlers.project_file_handler import extract_attachment_catalog, extract_attachment_usage
 
         usage = extract_attachment_usage(ctx.project_data)

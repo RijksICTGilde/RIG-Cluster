@@ -1,8 +1,8 @@
-"""Layer merge for cross-domain-access rules (RC-15, pure functions).
+"""Layer merge for cross-domain-access rules (pure functions).
 
 The deployment layer is a partial patch on the project layer, keyed on a rule's ``name``.
 ``merge_rules`` does the structural patch; ``to_merged_rule`` validates one merged rule
-against the full model (Step 2) and normalizes inbound and outbound down to one
+against the full model and normalizes inbound and outbound down to one
 direction-independent shape (``MergedRule``) so the resolver need not know the direction.
 
 Effective rules for a deployment D = the root rules, each patched by D's same-named rule,

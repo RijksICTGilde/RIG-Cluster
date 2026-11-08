@@ -2,18 +2,14 @@
 
 Component level: the TLS mode and the certificate attachment.
 
-Deployment level (RC-60): the six fields that decide the web address itself. They used
-to live in ``forms/editables/fields/domains.py`` AND, with different providers and
-validators, a second time in ``forms/editables/fields/deployments.py`` -- two definitions
-for one path, in two flows, which is exactly the kind of duplication where converting one
-leaves the other writing the old shape. There is one set now, it belongs to the service
-that owns the values, and both flows use it.
+Deployment level: the six fields that decide the web address itself. One set, owned by the
+service that owns the values, used by both the wizard and the edit modal: two definitions
+for one path is where converting one leaves the other writing the old shape.
 
-Deployment-component level (RC-78): the same ``tls``/``attachment`` pair once more, as an
-override for one component inside one deployment -- which is what the deployment-component
-entry exists for. It is declared here, not in the forms layer, so the deployment form picks
-it up through ``deployment_component_service_visualizers()`` without knowing this service
-exists.
+Deployment-component level: the same ``tls``/``attachment`` pair once more, as an override
+for one component inside one deployment -- which is what the deployment-component entry
+exists for. It is declared here, not in the forms layer, so the deployment form picks it up
+through ``deployment_component_service_visualizers()`` without knowing this service exists.
 
 Every deployment-level path is built with ``config_path(ConfigLayer.DEPLOYMENT, ...)``
 rather than written out, so the storage location is stated once (in
@@ -65,7 +61,7 @@ PUBLISH_ON_WEB_ATTACHMENT_EDITABLE = Editable(
 )
 
 
-# --- the deployment-component layer: the same pair, as an override (RC-78) ------------
+# The deployment-component layer: the same pair, as an override.
 #
 # The model is the same one (``PublishOnWebComponentConfig``, twice): the entry exists
 # precisely to override the component's. The fields are therefore DERIVED from the two
@@ -124,7 +120,7 @@ PUBLISH_ON_WEB_DEPLOYMENT_COMPONENT_EDITABLES = [
 ]
 
 
-# --- the deployment layer: the web address ------------------------------------------
+# The deployment layer: the web address.
 
 
 def _path(setting: DomainSetting) -> str:
@@ -135,15 +131,13 @@ def _path(setting: DomainSetting) -> str:
 #: field: it is form transport, not configuration of the service.
 CUSTOM_BASE_DOMAIN_PATH = "deployments[*]/base-domain:custom"
 
-#: Deliberately WITHOUT ``values_must_exist``, and the reason is measured rather than
-#: assumed. That flag judges a stored value against the field's own provider built with no
-#: project context, and ``DomainFormatOptionsProvider`` filters its list by base-domain:
-#: constructed without one it offers the six dash variants and hides the five dotted ones.
-#: The failure mode is therefore not the usual "an empty source makes the check vacuous" --
-#: the list is never empty here -- but its opposite: the check would refuse five legitimate
-#: ids. Replayed over the production projects that is four deployments in two projects
-#: (pm-5sj, regel-k4c) whose dotted format is valid for their own base-domain, and every one
-#: of them would have become unsaveable on its next edit.
+#: Deliberately WITHOUT ``values_must_exist``. That flag judges a stored value against the
+#: field's own provider built with no project context, and ``DomainFormatOptionsProvider``
+#: filters its list by base-domain: constructed without one it offers the six dash variants
+#: and hides the five dotted ones. The failure mode is therefore not the usual "an empty
+#: source makes the check vacuous" -- the list is never empty here -- but its opposite: the
+#: check refuses five legitimate ids, and a deployment whose dotted format is valid for its
+#: own base-domain becomes unsaveable on its next edit.
 #:
 #: The question splits in two, so it is answered in two places:
 #:

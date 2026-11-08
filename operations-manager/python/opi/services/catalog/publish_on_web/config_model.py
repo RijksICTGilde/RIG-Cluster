@@ -4,14 +4,12 @@ The three layers this service carries config on each answer a different question
 gets its own model, selected by ``PublishOnWebService.config_model_for(layer)``:
 
 - **project** (:class:`PublishOnWebProjectConfig`) -- *which domains is this project allowed
-  to publish on*: the ``domains`` approval block, which the v2.5 migration relocated here
-  from the project root (``normalize_domains_location``). ``connectors/subdomain.py`` is the
-  single authority on where it lives; this model only says what may be in it. It also
-  carries the project-wide ``tls`` default, which is level 3 of the certificate cascade.
+  to publish on*: the ``domains`` approval block. ``connectors/subdomain.py`` is the single
+  authority on where it lives; this model only says what may be in it. It also carries the
+  project-wide ``tls`` default, which is level 3 of the certificate cascade.
 - **deployment** (:class:`PublishOnWebDeploymentConfig`) -- *how this deployment's hostname
-  is composed and with which certificate*: the seven fields the v2.7 migration relocated
-  here from the deployment root (RC-60). ``domain_config.py`` is the single authority on
-  where they live.
+  is composed and with which certificate*: seven fields, with ``domain_config.py`` as the
+  single authority on where they live.
 - **component** (and the per-deployment-component override,
   :class:`PublishOnWebComponentConfig`) -- *this component uses the service, thus*: ``tls``,
   plus ``attachment`` when the certificate is supplied by the project. Resolution is
@@ -109,7 +107,7 @@ class DomainsConfig(BaseModel):
 
 
 class PublishOnWebDeploymentConfig(BaseModel):
-    """Deployment layer: how this deployment's web address is composed (RC-60).
+    """Deployment layer: how this deployment's web address is composed.
 
     Every field is optional because a deployment on the platform's own cluster domain
     needs none of them: the format defaults, the base domain comes from the cluster and the
@@ -186,14 +184,14 @@ class PublishOnWebDeploymentConfig(BaseModel):
     @field_validator("subdomain")
     @classmethod
     def _subdomain_form(cls, value: str | None) -> str | None:
-        # Punten horen hier thuis: of ze op een domein mogen, beslist de regel per domein
-        # (``supports-dots``). Niet validate_subdomain: dat lowercaset en eist één label.
+        # Dots belong here: whether a domain allows them is decided by the per-domain rule
+        # (``supports-dots``). Not validate_subdomain: that lowercases and demands one label.
         from opi.connectors.subdomain import DOTTED_SUBDOMAIN_FORMAT_MESSAGE, SUBDOMAIN_MAX_LENGTH
 
         if value is None:
             return value
-        # fullmatch, want ``$`` in DNS1123_SUBDOMAIN laat een afsluitende newline door;
-        # de labellengte staat niet in het patroon.
+        # fullmatch, because ``$`` in DNS1123_SUBDOMAIN lets a trailing newline through; the
+        # label length is not in the pattern.
         too_long = any(len(label) > SUBDOMAIN_MAX_LENGTH for label in value.split("."))
         if too_long or not re.fullmatch(DNS1123_SUBDOMAIN, value):
             raise ValueError(DOTTED_SUBDOMAIN_FORMAT_MESSAGE)
@@ -237,9 +235,9 @@ class PublishOnWebComponentConfig(BaseModel):
         # Mirrors the if/then in $defs/publish-on-web-config: without the PEM there is
         # nothing to terminate with, and the failure would surface at render time.
         #
-        # De tekst zegt wat je moet DOEN en niet alleen wat er mis is: hij komt via
-        # ``project_validation.validation_reasons`` ongewijzigd op het scherm van iemand
-        # die een webadres wijzigt, en die stond eerder met een afkeuring zonder uitweg.
+        # The text says what to DO and not only what is wrong: it reaches the screen of
+        # somebody changing a web address unchanged through
+        # ``project_validation.validation_reasons``.
         if self.tls == "provided" and not self.attachment:
             raise ValueError(
                 "tls 'provided' vereist een 'attachment' met het certificaat: kies 'Standaard certificaat', "
@@ -252,19 +250,18 @@ class PublishOnWebProjectConfig(PublishOnWebComponentConfig):
     """Project layer: which domains this project may publish on, plus the TLS default.
 
     Two things, because the code already holds both there. ``domains`` is the approval
-    block the v2.5 migration relocated here. ``tls`` / ``attachment`` are inherited rather
-    than repeated: level 3 of the cascade in
-    ``project_file_handler._resolve_publish_on_web_config`` is the project-level entry, so
-    a project can set one certificate mode for every component that does not override it.
-    Dropping them here would have made every such project file fail validation.
+    block. ``tls`` / ``attachment`` are inherited rather than repeated: level 3 of the
+    cascade in ``project_file_handler._resolve_publish_on_web_config`` is the project-level
+    entry, so a project can set one certificate mode for every component that does not
+    override it.
     """
 
     domains: DomainsConfig | None = Field(
         default=None,
         # Platform-written, and it shares this block with the inherited user settings tls
-        # and attachment -- so a PUT that sets only tls used to take every domain verdict
-        # and its history with it. An approval is an approver's decision plus an audit
-        # trail; a caller may not clear it by not mentioning it. See
+        # and attachment -- so without this marking a PUT that sets only tls takes every
+        # domain verdict and its history with it. An approval is an approver's decision plus
+        # an audit trail; a caller may not clear it by not mentioning it. See
         # opi/services/config_managed.py.
         json_schema_extra={PLATFORM_MANAGED: True},
         description=(

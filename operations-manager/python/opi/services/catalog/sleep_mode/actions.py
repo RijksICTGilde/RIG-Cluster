@@ -26,11 +26,11 @@ def _find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict
 def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[DeploymentAction]:
     """The wake/sleep toggle for a deployment, or no button when sleep-mode is off.
 
-    Shown whenever sleep-mode is enabled for this project/cluster. Deliberately NOT
-    scoped by ``match``: that selects which deployments the sweeper puts to sleep on a
-    deadline, and this button is the manual half. Gating both on it meant that switching
-    the service on and leaving ``match`` empty produced no button anywhere, on any
-    deployment, with nothing to say why -- and ``match`` is empty by default.
+    Shown whenever sleep-mode is enabled for this project/cluster. Deliberately NOT scoped
+    by ``match``: that selects which deployments the sweeper puts to sleep on a deadline,
+    and this button is the manual half. Gating on it as well means a project that switches
+    the service on and leaves ``match`` empty (the default) gets no button on any
+    deployment, with nothing to say why.
 
     Nothing in the mechanism needs the scope. Sleeping is carried out from the stored
     state: replicas go to zero and the waker renders on ``sleep.state`` alone (see
@@ -70,13 +70,13 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
     return [
         DeploymentAction(
             label="Applicatie wekken",
-            # "uitvoering" staat NIET in de vertaaltabel van navigation_lotc.py, dus
-            # to_nldd_icon() liet die naam ongewijzigd door, NLDD kent hem niet en er
-            # verscheen niets - stil, want een onbekende naam levert geen fout op.
-            # "klok" -> "timer" is het icoon dat deze dienst zelf al draagt en dat
-            # aantoonbaar rendert; de slaapstand is ook waar deze actie over gaat.
+            # "uitvoering" is NOT in the translation table of navigation_lotc.py, so
+            # to_nldd_icon() passes such a name through unchanged, NLDD does not know it and
+            # nothing appears -- silently, because an unknown name raises no error. "klok" ->
+            # "timer" is the icon this service already carries, and sleep is what this action
+            # is about.
             icon="klok",
-            # Same weight as the other deployment actions (images bewerken, herverwerken):
+            # Same weight as the other deployment actions (editing images, reprocessing):
             # waking is not more important than they are, it just happens less often.
             kind="secondary",
             endpoint=f"{base}/wake",

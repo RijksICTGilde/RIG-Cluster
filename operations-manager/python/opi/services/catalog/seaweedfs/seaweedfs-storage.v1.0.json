@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Bucketinstellingen van de dienst.",
+  "description": "The bucket settings of the service.",
   "properties": {
     "enable-versioning": {
       "anyOf": [

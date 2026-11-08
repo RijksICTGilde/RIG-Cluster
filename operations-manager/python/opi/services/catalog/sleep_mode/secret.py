@@ -22,7 +22,7 @@ class WakeTokenSecret(BaseSecret):
 
     token: str
 
-    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-waker-token"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-waker-token"  # noqa: S105  # a template for the secret name, not a secret
     SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SLEEP_MODE
 
     def to_k8s_secret_data(self) -> dict[str, str]:

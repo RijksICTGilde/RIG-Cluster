@@ -2,13 +2,12 @@
 
 The ``issuer`` field in a deployment's publish-on-web config is a stored OVERRIDE, not the
 only source of truth. The portal writes it (``IssuerGenerator`` derives it from the chosen
-base domain at submit time), but the API and task write paths do not: ``configure_service``
-runs no editable generators, and no service fills this field in. A deployment configured
-through zad-cli or the deploy action therefore arrived with a base domain and no issuer,
-which left its ingress without a cert-manager annotation AND without a ``secretName``, so
-the platform issued nothing and the router served its own wildcard certificate instead.
-Nothing failed anywhere: the manifests were valid, ArgoCD was green, and only the browser
-knew. Measured on mzs-3ik/site-admin (moza-site.rijks.app, 2026-09-20).
+base domain at submit time); the API and task write paths do not, because
+``configure_service`` runs no editable generators and no service fills this field in. A
+deployment with a base domain and no issuer gets an ingress without a cert-manager
+annotation AND without a ``secretName``, so the platform issues nothing and the router
+serves its own wildcard certificate instead. Nothing fails anywhere: the manifests are
+valid, ArgoCD is green, and only the browser knows.
 
 So the manifest generation derives the issuer itself when the field is absent
 (:func:`effective_issuer`) rather than trusting whoever wrote the file, and every write path

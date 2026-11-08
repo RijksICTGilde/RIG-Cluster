@@ -1,9 +1,9 @@
 """Typed config models for the ``send-email`` service.
 
-Two layers since RC-401. The PROJECT layer decides for every deployment: whether an
-administrator allowed the project to send at all, the display name, the sender address and
-the daily budget. A DEPLOYMENT may override the last three, because the account is per
-deployment and so is its budget. What a deployment leaves out, it inherits.
+Two layers. The PROJECT layer decides for every deployment: whether an administrator allowed
+the project to send at all, the display name, the sender address and the daily budget. A
+DEPLOYMENT may override the last three, because the account is per deployment and so is its
+budget. What a deployment leaves out, it inherits.
 
 Rules that make mail arrive (envelope, pinned domain, DKIM) are enforced on the relay and
 are not configurable (``plans/mailrelay.md``). The account's own credentials are not here
@@ -24,9 +24,9 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from opi.services.config_managed import PLATFORM_MANAGED
 from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH, MAIL_SENDER_DOMAIN_ALLOWLIST, mail_sender_address_error
 
-#: Schemaplafond tegen tikfouten, niet tegen te grote aanvragen. De relay dwingt het getal
-#: per account af (``queue.limiter.inbound.zad-<account>``), dus dit getal is niet meer het
-#: echte plafond.
+#: A schema ceiling against typos, not against requests that are too large. The relay enforces
+#: the number per account (``queue.limiter.inbound.zad-<account>``), so this number is not the
+#: real ceiling.
 MAX_MESSAGES_PER_DAY = 1_000_000
 
 #: Longest display name a project may choose. Not a technical ceiling (RFC 5322 allows a
@@ -58,15 +58,15 @@ FROM_NAME_PATTERN = r'^[^@<>"$\\\x00-\x1F\x7F]*$'
 
 
 def _valid_sender_address(address: str) -> str:
-    """De regel uit ``opi.utils.naming``, zodat het model en de connector er een delen."""
+    """The rule from ``opi.utils.naming``, so the model and the connector share one."""
     error = mail_sender_address_error(address)
     if error:
         raise ValueError(error)
     return address
 
 
-#: De uitleg die het formulier en de API geven als een adres niet mag. Een zin voor alle
-#: weigeringen samen: de pydantic-melding is Engels en praat over patronen.
+#: The explanation the form and the API give when an address is not allowed. One sentence for
+#: all refusals together: pydantic's message is English and talks about patterns.
 _ALLOWED_DOMAINS = ", ".join(sorted(MAIL_SENDER_DOMAIN_ALLOWLIST))
 FROM_ADDRESS_MESSAGE = (
     f"Het afzenderadres moet een adres in {_ALLOWED_DOMAINS} zijn, met voor de @ hoogstens "
@@ -77,7 +77,7 @@ FROM_ADDRESS_MESSAGE = (
 
 
 class SendEmailApproval(BaseModel):
-    """Whether an administrator has allowed this project to send mail (aanvulling 6).
+    """Whether an administrator has allowed this project to send mail.
 
     Shaped like the domain/subdomain entries publish-on-web stores: a status plus the
     verdict history, so the file is the audit trail. Written only through the generic
@@ -116,9 +116,9 @@ class SendEmailValueApproval(BaseModel):
     )
 
 
-#: De drie velden die een project kiest en een deployment mag overschrijven. Als fabrieken,
-#: zodat de twee lagen EEN definitie delen: de regels gaan over een mailheader, en twee
-#: beschrijvingen die uit elkaar lopen zijn twee regels.
+#: The three fields a project chooses and a deployment may override. As factories, so the two
+#: layers share ONE definition: the rules are about a mail header, and two descriptions that
+#: drift apart are two rules.
 _FromName = Annotated[str, StringConstraints(max_length=MAX_FROM_NAME_LENGTH, pattern=FROM_NAME_PATTERN)]
 _FromAddress = Annotated[str, AfterValidator(_valid_sender_address)]
 _MessagesPerDay = Annotated[int, Field(ge=1, le=MAX_MESSAGES_PER_DAY)]
@@ -196,7 +196,7 @@ class SendEmailConfig(BaseModel):
 
 
 class SendEmailDeploymentConfig(BaseModel):
-    """What ONE deployment may decide about its own outgoing mail (RC-401).
+    """What ONE deployment may decide about its own outgoing mail.
 
     The account is per deployment, so the budget and the sender are too. A field left out
     is inherited from the project; a field that is filled in is this deployment's own, and
