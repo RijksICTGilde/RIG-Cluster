@@ -415,6 +415,7 @@ def _db_manager(pg: FakePostgres) -> tuple[DatabaseManager, MagicMock]:
     pm = MagicMock()
     pm._revision_manager = RevisionManager(MagicMock())
     pm.mark_clone_started = AsyncMock()
+    pm.commit_clone_state = AsyncMock()
     manager = DatabaseManager(pm, db_host="postgres", admin_username="admin", admin_password="admin")
     manager._postgres_connector = pg  # type: ignore[assignment]
     return manager, pm
@@ -900,6 +901,20 @@ async def test_force_clone_still_gets_a_new_remote_generation_during_an_interrup
     assert result["success"] is True
     assert pg.clone_calls == [f"{TARGET_DB}_v1"]
     manager.project_manager.mark_clone_started.assert_not_awaited()
+
+
+async def test_the_new_generation_of_a_force_clone_is_committed() -> None:
+    """The clone tasks kept the generation in memory, so the next run pointed back at the old database."""
+    pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
+    manager = _remote_manager(pg)
+
+    await _remote(manager, interrupted=False, force=True)
+
+    manager.project_manager.commit_clone_state.assert_awaited_once()
+    committed, deployment = manager.project_manager.commit_clone_state.await_args.args
+    assert deployment == "staging"
+    generation = ProjectFileHandler().get_deployment_service_generation(committed, "staging", "postgresql-database")
+    assert generation == 1
 
 
 def _remote_project(chisel: dict[str, str] | None = None) -> dict[str, Any]:

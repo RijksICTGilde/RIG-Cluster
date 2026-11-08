@@ -5,7 +5,7 @@ eigen code tegen mocks. Toen Keycloak 26.8.1 een dubbele config-alias ging weige
 alles groen, en een gebruiker meldde de fout op productie. Een mock die vertelt wat wij
 denken dat de afhankelijkheid doet, meet precies het verkeerde.
 
-Daarom vijf lagen. Kies de laagste laag die het gedrag echt meet.
+Daarom zes lagen. Kies de laagste laag die het gedrag echt meet.
 
 | Laag | Wat hij meet | Waar hij staat | Hoe je hem draait |
 |---|---|---|---|
@@ -13,6 +13,7 @@ Daarom vijf lagen. Kies de laagste laag die het gedrag echt meet.
 | live per afhankelijkheid | het contract met de ECHTE afhankelijkheid in de versie die productie draait | `tests/integration/test_*_live.py` | `task test-keycloak`, `task test-postgres`, `task test-minio`, `task test-forgejo`, `task test-kubernetes`, `task test-argocd` |
 | scenario | de ORDE van meerdere acties, met een invariant na elke stap | `tests/integration/test_*_scenarios.py` | dezelfde task als de groep |
 | het opstarten | de hele opstartvolgorde over ALLE afhankelijkheden tegelijk, in drie rondes | `tests/integration/test_startup_live.py` | `task test-startup` |
+| de taken | elk `TaskType` van begin tot eind, via de echte taakweg, met een invariant per taak | `tests/integration/test_tasks_live.py` | `task test-taken` |
 | e2e | het portaal in een browser, en de sandbox | `tests/e2e/` | `uv run pytest tests/e2e -m "e2e and not sandbox"`, `task test-e2e-sandbox` |
 
 De standaardrun (`uv run pytest`, `task test`) draait de snelle helft van de unit-laag en
@@ -138,8 +139,9 @@ Vul naar waarheid: wat alleen met mocks gemeten wordt, is `planned`.
 Volg `keycloak_live`; dat is het voorbeeld, en de rest is eraan gelijk gemaakt.
 
 - **Een marker per afhankelijkheid** (`keycloak_live`, `postgres_live`, `minio_live`,
-  `forgejo_live`, `kubernetes_live`, `argocd_live`, en `startup_live` voor het opstarten over
-  alle zeven), plus `requires_infra`, zodat de standaardrun ze overslaat.
+  `forgejo_live`, `kubernetes_live`, `argocd_live`, plus `startup_live` voor het opstarten en
+  `tasks_live` voor de taken, beide over alle zeven), plus `requires_infra`, zodat de
+  standaardrun ze overslaat.
 - **De image komt uit de pin**, gelezen door de task. `IMAGE=` voor een andere tag.
   Niet elke image start zichzelf: de PostgreSQL van het platform is een CNPG-image zonder
   ENTRYPOINT, die de operator opstart. Elke plek die hem los start geeft daarom
@@ -149,27 +151,28 @@ Volg `keycloak_live`; dat is het voorbeeld, en de rest is eraan gelijk gemaakt.
   daar betekent "overgeslagen" dat de job groen is zonder meting.
 - **De groep ruimt op wat hij maakt**, ook bij falen, en weigert tegen iets anders dan
   localhost te draaien (`LiveGroup.assert_local`). Alles wat hij maakt begint met het
-  voorvoegsel van die groep (`zadlive`, `zadstart`), zodat een mens ziet wat van de toetsen is
-  en twee groepen elkaars opruiming niet meenemen.
+  voorvoegsel van die groep (`zadlive`, `zadstart`, `zadta`), zodat een mens ziet wat van de
+  toetsen is en twee groepen elkaars opruiming niet meenemen.
 - **Een job in `.github/workflows/integration-tests.yaml`**, op de paden van die connector,
   zijn manager, zijn handlers, zijn pin en de groep zelf. Geen geplande run erbij: een groep
   meet een gepinde image, dus hij veroudert niet stil zolang het padfilter de pin omvat.
-  Lokaal draait `task test-live-groepen` ze alle zeven achter elkaar.
+  Lokaal draait `task test-live-groepen` ze alle acht achter elkaar.
 
 De gedeelde hulp staat in `tests/integration/live.py` (de omgeving lezen, de
 localhost-grendel) en per afhankelijkheid in `tests/integration/<naam>_live.py` (de
 opstelling en het terugleeskanaal). De opstartroute van een groep staat in de Taskfile, met
 `_wacht-op` voor het wachten. Schrijf geen tweede exemplaar ernaast.
 
-## Het wegwerpcluster van kubernetes_live, argocd_live en startup_live
+## Het wegwerpcluster van kubernetes_live, argocd_live, startup_live en tasks_live
 
-Drie groepen hebben een cluster nodig in plaats van een container, en ze delen er een:
+Vier groepen hebben een cluster nodig in plaats van een container, en ze delen er een:
 
 ```bash
 task test-cluster-up      # kind + ArgoCD + Forgejo, met de pins van de sandbox
 task test-kubernetes      # de groep kubernetes_live
 task test-argocd          # de groep argocd_live
 task test-startup         # de groep startup_live
+task test-taken           # de groep tasks_live
 task test-cluster-down    # cluster weg, kubectl-context terug
 ```
 
@@ -190,10 +193,16 @@ Wat erin zit, en waarom:
 - **Eigen naam en eigen poorten**, dus hij draait naast `rig-sandbox`. kind zet je
   kubectl-context op dit cluster; `task test-cluster-down` zet hem terug.
 
-De drie groepen die erop meten (`kubernetes_live`, `argocd_live` en `startup_live`) draaien
-met een eigen KUBECONFIG en weigeren tegen iets anders dan een `kind-`context te meten. Elke
-groep heeft zijn EIGEN voorvoegsel (`zadlive`, `zadstart`), want de opruiming gaat op dat
-voorvoegsel en zou anders de namespaces van een andere groep weghalen.
+De vier groepen die erop meten (`kubernetes_live`, `argocd_live`, `startup_live` en
+`tasks_live`) draaien met een eigen KUBECONFIG en weigeren tegen iets anders dan een
+`kind-`context te meten. Elke groep heeft zijn EIGEN voorvoegsel (`zadlive`, `zadstart`,
+`zadta`), want de opruiming gaat op dat voorvoegsel en zou anders de namespaces van een
+andere groep weghalen.
+
+`task test-startup` en `task test-taken` delen hun hele opstelling: die staat als een eigen
+interne taak in de Taskfile (`_live-opstelling`), en de aanroeper zegt alleen welke toetsen
+eroverheen gaan. Twee kopieen zouden betekenen dat de groepen uit elkaar lopen zodra er een
+adres bij komt.
 
 Wat alleen op ODCN bestaat (de webhook van Capsule, de VPA-operator) staat met een reden op de
 kaart: die operators hebben in deze repo geen gepinde versie.
@@ -236,6 +245,39 @@ Wat met opzet buiten de groep blijft, staat met een reden op `actions.yaml`: de 
 (TransIP is een externe dienst zonder image), de metrics-probe (die mag zijn bron missen, dat is
 bedoeld gedrag), `_resolve_running_image` (leest de eigen pod, en die is er niet) en de
 federatie (die vraagt een tweede cluster).
+
+## De groep tasks_live: elke taak van begin tot eind
+
+Alles wat ZAD voor een project doet, loopt via een taak. `tasks_live` draait ze alle
+vijfentwintig langs de ECHTE taakweg: aangemaakt zoals het portaal of de zad-cli dat doet,
+uitgevoerd door de echte `TaskWorker`, en na elke taak een invariant die de toestand
+terugleest uit de afhankelijkheid zelf.
+
+```bash
+task test-cluster-up      # hetzelfde wegwerpcluster
+task test-taken           # de groep tasks_live
+task test-cluster-down
+```
+
+- **Dezelfde opstelling als `startup_live`** (zie hierboven), met kopia erbij uit de pin van
+  de OPI-image: de backup- en restore-scenario's draaien de binary die in productie draait,
+  met de bestemming in de wegwerp-MinIO.
+- **OPI draait als echte HTTP-server in de event loop van de toets.** Een echte server en
+  geen ASGI-transport, zodat de helpers van de sandboxsuite (`tests/e2e/helpers/sandbox_api.py`)
+  er onveranderd op kunnen; dezelfde loop, zodat de worker en de pools er maar een keer zijn.
+  Een blokkerende aanroep uit de toets gaat daarom via `asyncio.to_thread`.
+- **Een keten op EEN project**, in de orde waarin een project leeft: aanmaken, een component,
+  twee deployments, elke dienst, de configuratie, de bijlagen, de klonen, slapen en wekken,
+  een backup en een restore, de rotaties, en alles weer weg. De laatste invariant is dat er na
+  het verwijderen niets meer van het project in een van de zeven afhankelijkheden staat.
+- **De autorisaties zijn de echte.** De aanmaak over de API vraagt een SSO-token, en dat
+  haalt de groep met authorization code plus PKCE uit de Keycloak van de opstelling. De taken
+  die alleen een webroute hebben (verwijderen, slapen en wekken) gaan met een sessie en een
+  CSRF-token, zoals het portaal.
+
+Wat met opzet buiten de groep blijft, staat met een reden op `actions.yaml`: SeaweedFS en
+Redis (de opstelling heeft er geen server voor) en de chisel-tunnel van de kloontaken (die
+vraagt een tweede omgeving).
 
 ## Achtergrond
 

@@ -29,6 +29,7 @@ from opi.core.config import settings
 from opi.core.platform_database_access import PLATFORM_BACKUP_ROLE, PLATFORM_DATABASE_ROLES
 from opi.core.project_schema import latest_schema_version, validate_project_schema
 from opi.utils.age import wrap_project_key_sync
+from prometheus_client import REGISTRY
 from tests.integration import argocd_live, forgejo_live, keycloak_image, kubernetes_live, minio_live, postgres_live
 from tests.integration.live import STARTUP
 
@@ -360,6 +361,17 @@ def enable_background_tasks(patch: pytest.MonkeyPatch) -> None:
     patch.setattr(settings, "RECONCILIATION_SCHEDULER_ENABLED", True)
     patch.setattr(settings, "SLEEP_MODE_SCHEDULER_ENABLED", True)
     patch.setattr(settings, "DB_CONSOLE_ENABLED", True)
+
+
+def forget_collectors() -> None:
+    """De eigen collectors uit het prometheus-register halen.
+
+    ``REGISTRY`` weigert een duplicaat, en een nieuw proces heeft ze niet staan: zonder dit
+    valt een tweede opstart in hetzelfde proces om op de registratie.
+    """
+    for collector in list(REGISTRY._collector_to_names):
+        if type(collector).__name__ in ("OPICollector", "TracmallocCollector"):
+            REGISTRY.unregister(collector)
 
 
 def resolve_platform_names(patch: pytest.MonkeyPatch) -> None:

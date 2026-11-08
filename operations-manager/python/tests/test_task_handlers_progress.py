@@ -186,7 +186,7 @@ class TestHandleCloneDatabase:
                 "success": True,
                 "source": "db.example.com",
                 "target": {},
-                "operations": {"rows_copied": 100},
+                "operations": [{"type": "clone", "status": "success"}],
             }
         )
         mock_pm.close = AsyncMock()
@@ -198,7 +198,7 @@ class TestHandleCloneDatabase:
         progress.add_task.assert_any_call(progress_steps.PROJECT_DATA_FETCH)
         progress.add_task.assert_any_call(progress_steps.DATABASE_CLONE, subject="mydb via een directe verbinding")
         assert progress.complete_task.call_count == 2
-        assert result["rows_copied"] == 100
+        assert result == {"source": "db.example.com", "target": {}}
 
     @pytest.mark.asyncio
     async def test_clone_failure_calls_fail_project(self, payload):
@@ -302,7 +302,7 @@ class TestHandleCloneBucket:
                 "success": True,
                 "source": "minio.example.com",
                 "target": {},
-                "operations": {"objects_copied": 42},
+                "operations": [{"type": "clone", "status": "success"}],
             }
         )
         mock_pm.close = AsyncMock()
@@ -314,7 +314,7 @@ class TestHandleCloneBucket:
         progress.add_task.assert_any_call(progress_steps.PROJECT_DATA_FETCH)
         progress.add_task.assert_any_call(progress_steps.BUCKET_CLONE, subject="mybucket")
         assert progress.complete_task.call_count == 2
-        assert result["objects_copied"] == 42
+        assert result == {"source": "minio.example.com", "target": {}}
 
     @pytest.mark.asyncio
     async def test_clone_failure_calls_fail_project(self, payload):

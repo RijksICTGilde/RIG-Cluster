@@ -2486,23 +2486,25 @@ tasks:
             -m argocd_live -q
     silent: false
 
-  test-startup:
-    desc: "Draai de groep startup_live: het hele opstarten van OPI tegen echte afhankelijkheden"
+  _live-opstelling:
+    internal: true
+    desc: "De volledige wegwerpopstelling, en een groep ertegen (PYTEST_DOEL en MARKER)"
     summary: |
-      Het opstarten van OPI van begin tot eind, in drie rondes (leeg cluster, direct nog
-      een keer, en na een herstart) plus het geval dat een afhankelijkheid bij de start
-      onbereikbaar is. OPI draait in het proces van de toets met de echte lifespan; na elke
-      ronde leest een invariant de hele toestand terug uit de afhankelijkheden zelf.
+      De opstelling die startup_live en tasks_live delen: het wegwerpcluster van task
+      test-cluster-up (Kubernetes, ArgoCD en Forgejo) plus een PostgreSQL, een Keycloak,
+      een MinIO en een Stalwart, alle vier in de versie die het platform uitrolt. De
+      Keycloak start via _keycloak-container, dezelfde opstart als de groep keycloak_live.
 
-      Deze taak zet de opstelling neer die de groepen van fase 1 en 2 al hadden en voegt
-      alleen de mailrelay toe: het wegwerpcluster van task test-cluster-up (Kubernetes,
-      ArgoCD en Forgejo) plus een PostgreSQL, een Keycloak, een MinIO en een Stalwart, alle
-      vier in de versie die het platform uitrolt. De Keycloak start via _keycloak-container,
-      dezelfde opstart als de groep keycloak_live.
+      Een gedeelde taak en geen tweede kopie: de twee groepen meten tegen EEN opstelling,
+      en twee lijsten met adressen zouden betekenen dat ze uit elkaar lopen zodra er een
+      instelling bij komt. De aanroeper zegt welke toetsen eroverheen gaan (PYTEST_DOEL en
+      MARKER) en of kopia erbij hoort (KOPIA).
 
       De relay krijgt de configmap van productie, met een enkele regel omgezet: de
       wegwerp-PostgreSQL draagt geen certificaat, dus de store doet geen TLS. Er gaat geen
-      post de deur uit; wat gemeten wordt zijn de accounts die het opstarten aanmaakt.
+      post de deur uit; wat gemeten wordt zijn de accounts die een groep aanmaakt.
+    requires:
+      vars: [PYTEST_DOEL, MARKER]
     vars:
       TESTCLUSTER: '{{.TESTCLUSTER | default "rig-testcluster"}}'
       NAME: zad-startup-live-test
@@ -2529,6 +2531,10 @@ tasks:
         sh: |
           printf 'ghcr.io/minbzk/base-images/mc:%s\n' \
             "$(sed -n 's/^ARG MC_VERSION=//p' operations-manager/Dockerfile | head -1)"
+      # Uit dezelfde pin als de OPI-image: de backup-taken draaien de kopia die in
+      # productie draait, en een opstelling die zelf een versie noemt drijft af.
+      KOPIA_VERSION:
+        sh: sed -n 's/^ARG KOPIA_VERSION=//p' operations-manager/Dockerfile | head -1
       MAIL_CONFIG: infrastructure/bootstrap/infrastructure/mail/controller/base/config.toml
       INIT_SQL:
         sh: |
@@ -2642,14 +2648,40 @@ tasks:
           CHECK: 'curl -sf -o /dev/null "http://localhost:{{.MINIO_PORT}}/minio/health/live"'
       - |
         # De mc die de OPI-image meebrengt, uit diezelfde image gehaald: de opstartstap
-        # check_minio_availability meet de binary die in productie draait.
+        # check_minio_availability meet de binary die in productie draait. OPI draait hier
+        # in het proces van de toets, op de host, en die Linux-binary draait alleen op een
+        # Linux-host (CI). Op een andere host geldt de mc uit de eigen pin van het repo
+        # (.tool-versions): MinIO levert geen losse mc-downloads meer.
         rm -rf {{.MC_DIR}}
         mkdir -p {{.MC_DIR}}/bin {{.MC_DIR}}/config
-        docker rm -f {{.NAME}}-mc >/dev/null 2>&1
-        docker create --name {{.NAME}}-mc {{.MC_IMAGE}} >/dev/null
-        docker cp {{.NAME}}-mc:/usr/bin/mc {{.MC_DIR}}/bin/mc
-        docker rm -f {{.NAME}}-mc >/dev/null
-        chmod +x {{.MC_DIR}}/bin/mc
+        if [ "$(uname -s)" = "Linux" ]; then
+          docker rm -f {{.NAME}}-mc >/dev/null 2>&1
+          docker create --name {{.NAME}}-mc {{.MC_IMAGE}} >/dev/null
+          docker cp {{.NAME}}-mc:/usr/bin/mc {{.MC_DIR}}/bin/mc
+          docker rm -f {{.NAME}}-mc >/dev/null
+          chmod +x {{.MC_DIR}}/bin/mc
+        else
+          command -v mc >/dev/null || { echo "mc ontbreekt: installeer hem uit .tool-versions (asdf install)" >&2; exit 1; }
+          mc --version | head -1
+        fi
+      - |
+        # Kopia alleen voor een groep die backup en restore meet; de andere heeft hem niet
+        # nodig en hoeft er dus ook niet op te wachten.
+        if [ "{{.KOPIA}}" = "ja" ]; then
+          ARCH=x64
+          [ "$(uname -m)" = "aarch64" ] && ARCH=arm64
+          [ "$(uname -m)" = "arm64" ] && ARCH=arm64
+          # De build voor de host, want OPI draait hier op de host; zelfde versie als de image.
+          OS=linux
+          [ "$(uname -s)" = "Darwin" ] && OS=macOS
+          NAAM="kopia-{{.KOPIA_VERSION}}-$OS-$ARCH"
+          curl -fsSL -o "{{.MC_DIR}}/$NAAM.tar.gz" \
+            "https://github.com/kopia/kopia/releases/download/v{{.KOPIA_VERSION}}/$NAAM.tar.gz"
+          tar -xzf "{{.MC_DIR}}/$NAAM.tar.gz" -C "{{.MC_DIR}}" "$NAAM/kopia"
+          mv "{{.MC_DIR}}/$NAAM/kopia" {{.MC_DIR}}/bin/kopia
+          chmod +x {{.MC_DIR}}/bin/kopia
+          {{.MC_DIR}}/bin/kopia --version
+        fi
       - task: _keycloak-container
         vars:
           NAME: '{{.NAME}}-kc'
@@ -2697,12 +2729,15 @@ tasks:
         # De vereist-variabelen van de groepen waarvan deze groep de helpers leest, volgen
         # STARTUP_LIVE_REQUIRED: in CI moet een ontbrekend adres daar ook een FOUT zijn en
         # geen skip, anders is de job groen zonder meting.
-        VEREIST="${STARTUP_LIVE_REQUIRED:-}"
+        # Een van de twee is genoeg: de aanroeper zet de vereist-variabele van ZIJN groep,
+        # en alle groepen waarvan hij de helpers leest volgen die.
+        VEREIST="${STARTUP_LIVE_REQUIRED:-}${TASKS_LIVE_REQUIRED:-}"
         # DATABASE_SSLMODE=disable: de connector eist sinds RC-275 TLS, en een
         # wegwerpserver zonder certificaat weigert elke verbinding.
         PATH="{{.MC_DIR}}/bin:$PATH" \
         MC_CONFIG_DIR="{{.MC_DIR}}/config" \
         STARTUP_LIVE_REQUIRED="$VEREIST" \
+        TASKS_LIVE_REQUIRED="$VEREIST" \
         KEYCLOAK_LIVE_REQUIRED="$VEREIST" \
         POSTGRES_LIVE_REQUIRED="$VEREIST" \
         MINIO_LIVE_REQUIRED="$VEREIST" \
@@ -2728,18 +2763,56 @@ tasks:
         ARGOCD_LIVE_PORT="{{.ARGOCD_PORT}}" \
         ARGOCD_LIVE_TOKEN="$TOKEN" \
         ARGOCD_LIVE_ADMIN_PASSWORD="$ARGOCD_ADMIN" \
-          uv run pytest tests/integration/test_startup_live.py -m startup_live -q
+          uv run pytest {{.PYTEST_DOEL}} -m {{.MARKER}} -q
     silent: false
 
+  test-startup:
+    desc: "Draai de groep startup_live: het hele opstarten van OPI tegen echte afhankelijkheden"
+    summary: |
+      Het opstarten van OPI van begin tot eind, in drie rondes (leeg cluster, direct nog
+      een keer, en na een herstart) plus het geval dat een afhankelijkheid bij de start
+      onbereikbaar is. OPI draait in het proces van de toets met de echte lifespan; na elke
+      ronde leest een invariant de hele toestand terug uit de afhankelijkheden zelf.
+
+      De opstelling komt uit _live-opstelling en staat daar beschreven.
+    cmds:
+      - task: _live-opstelling
+        vars:
+          PYTEST_DOEL: tests/integration/test_startup_live.py
+          MARKER: startup_live
+
+  test-taken:
+    desc: "Draai de groep tasks_live: elk TaskType van begin tot eind tegen echte afhankelijkheden"
+    summary: |
+      Elke taak van ZAD, taak voor taak, op EEN project: aanmaken, een component, twee
+      deployments, de diensten, de configuratie, de bijlagen, de klonen, slapen en wekken,
+      een backup en een restore, de rotaties, en alles weer weg. De taak wordt aangemaakt
+      zoals het portaal of de zad-cli dat doet, de echte TaskWorker voert hem uit, en na
+      elke taak leest een invariant de toestand terug uit de afhankelijkheid zelf.
+
+      Dezelfde opstelling als task test-startup (zie _live-opstelling), met kopia uit de
+      pin van de OPI-image erbij: de backup- en restore-scenario's draaien de kopia die in
+      productie draait.
+
+      Deze groep is de zwaarste van allemaal: hij wacht op echte ArgoCD-syncs.
+    cmds:
+      - task: _live-opstelling
+        vars:
+          PYTEST_DOEL: tests/integration/test_tasks_live.py
+          MARKER: tasks_live
+          KOPIA: ja
+
+
   test-live-groepen:
-    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO, Forgejo, Kubernetes, ArgoCD en het opstarten"
+    desc: "Draai alle live groepen: Keycloak, PostgreSQL, MinIO, Forgejo, Kubernetes, ArgoCD, het opstarten en de taken"
     summary: |
       Wat je lokaal draait voor een merge die een connector of een gepinde versie raakt.
       In CI draait elke groep als eigen job, op de paden van die groep. Elke groep ruimt
       zijn eigen containers op.
 
-      kubernetes_live, argocd_live en startup_live meten op het wegwerpcluster van task
-      test-cluster-up; zet dat eerst op, en ruim het daarna op met task test-cluster-down.
+      kubernetes_live, argocd_live, startup_live en tasks_live meten op het wegwerpcluster
+      van task test-cluster-up; zet dat eerst op, en ruim het daarna op met task
+      test-cluster-down.
     cmds:
       - task: test-keycloak
       - task: test-postgres
@@ -2748,6 +2821,7 @@ tasks:
       - task: test-kubernetes
       - task: test-argocd
       - task: test-startup
+      - task: test-taken
 
   test-keycloak:
     desc: "Draai de groep keycloak_live tegen de image die productie draait (IMAGE= voor een andere)"
@@ -4010,6 +4084,31 @@ tasks:
         kubectl -n rig-system rollout status deployment/argocd-server --timeout=300s
         kubectl -n rig-system rollout status statefulset/argocd-application-controller --timeout=300s
       - |
+        # Wat het app-of-apps van de sandbox nodig heeft: zijn AppProject en de credentials
+        # voor de interne Forgejo (de repo's zijn prive). Dezelfde bestanden als de sandbox.
+        # De Application `user-applications` zelf en de sleutel waarmee hij rendert zet de
+        # groep tasks_live neer: die hoort bij een verse argo-repo, en de sleutel is nieuw
+        # per run.
+        OVERLAY=bootstrap/rig-system/kustomize/overlays/sandboxed-local
+        yq 'select(.metadata.name == "forgejo-repo-secret")' "$OVERLAY/argocd-repo-forgejo-secret.yaml" | kubectl apply -f -
+        kubectl apply -f "$OVERLAY/argocd-appproject-zad-app-of-apps.yaml"
+      # De ingress-controller van de sandbox: zonder hem krijgt geen Ingress een adres, en
+      # houdt ArgoCD elke app die op het web publiceert op Progressing.
+      - task: install-ingress-nginx
+      - |
+        # De CSI-hostpath-driver met csi-hostpath-sc en csi-hostpath-snapclass, de base die
+        # de sandbox-overlay ook neemt: de clusterconfiguratie van sandboxed-local vraagt die
+        # StorageClass voor persistent-storage, en de PVC-backup maakt er VolumeSnapshots
+        # mee. Twee keer toepassen: de eerste keer bestaan de snapshot-CRD's nog niet als de
+        # VolumeSnapshotClass langskomt.
+        RENDER=$(mktemp)
+        kustomize build bootstrap/rig-system/kustomize/csi-snapshot/base > "$RENDER"
+        kubectl apply -f "$RENDER" >/dev/null 2>&1 || true
+        kubectl wait --for=condition=Established crd/volumesnapshotclasses.snapshot.storage.k8s.io --timeout=120s
+        kubectl apply -f "$RENDER"
+        rm -f "$RENDER"
+        kubectl rollout status statefulset/csi-hostpathplugin --timeout=300s
+      - |
         echo ""
         echo "Cluster {{.TESTCLUSTER}} staat. Forgejo: http://localhost:{{.FORGEJO_PORT}} (rig-admin/admin1234)"
         echo "Draai nu: task test-kubernetes, task test-argocd"
@@ -5124,6 +5223,20 @@ tasks:
             fi
           done
         '
+
+        # The bootstrap folder that keeps user-applications from rendering empty; why is in
+        # bootstrap/argo-user-applications/_bootstrap/user-applications-never-empty.yaml.
+        echo "Seeding sandboxed-local/_bootstrap in zad-argo-user-applications..."
+        SEED=bootstrap/argo-user-applications/_bootstrap
+        FILES=""
+        for f in "$SEED"/*.yaml; do
+          FILES="$FILES{\"operation\":\"create\",\"path\":\"sandboxed-local/_bootstrap/$(basename "$f")\",\"content\":\"$(base64 < "$f" | tr -d '\n')\"},"
+        done
+        kubectl exec -n rig-system forgejo-0 -- curl -sf -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"message\":\"Bootstrap folder that keeps user-applications from rendering empty\",\"branch\":\"main\",\"files\":[${FILES%,}]}" \
+          "http://rig-admin:admin1234@localhost:3000/api/v1/repos/rig-admin/zad-argo-user-applications/contents" \
+          >/dev/null 2>&1 || echo "  sandboxed-local/_bootstrap may already exist"
 
         echo ""
         echo "Forgejo initialized with rig-admin/admin1234 and 4 repositories"

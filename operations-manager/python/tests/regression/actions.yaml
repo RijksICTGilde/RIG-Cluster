@@ -24,8 +24,9 @@ phases:
   "1-postgres-minio-forgejo": "gedaan: PostgreSQL, MinIO en git/Forgejo, de kaart en de dekkingstoetsen"
   "2-kubernetes-argocd": "gedaan: kind met de gepinde node-image en de ArgoCD van het platform, en de kubectl- en Argo-connectoren methode voor methode"
   "3-opstarten": "gedaan: het hele opstarten (lifespan en run_startup_tasks) tegen alle echte afhankelijkheden tegelijk, in drie rondes plus een storing (groep startup_live)"
-  "4-taken": "elk TaskType als scenario tegen de echte afhankelijkheden, met een invariant per stap"
-  later: "SeaweedFS, de mailconnector buiten het opstarten, metrics en DNS"
+  "4-taken": "gedaan: elk TaskType als scenario tegen de echte afhankelijkheden, via de echte taakweg met een invariant per taak (groep tasks_live)"
+  "5-in-cluster": "OPI en zijn afhankelijkheden als pod in het testcluster, zodat ook een taak die zelf een pod start echt gemeten wordt (issue #362)"
+  later: "SeaweedFS, de mailconnector buiten het opstarten, metrics, DNS en wat de periodieke schedulers op hun interval doen"
 
 startup:
   - step: print_boot_banner
@@ -92,14 +93,24 @@ startup:
   - step: AsyncTaskService
     where: lifespan
     dependencies:
-      postgres: {status: planned, phase: "4-taken"}
+      postgres:
+        status: measured
+        test: test_create_project_writes_the_project_file
+        note: >-
+          elk scenario van de groep tasks_live zet zijn taak via deze service in de echte
+          PostgreSQL en leest de uitkomst daar terug
   - step: set_task_service
     where: lifespan
     dependencies: {}
   - step: TaskWorker
     where: lifespan
     dependencies:
-      postgres: {status: planned, phase: "4-taken"}
+      postgres:
+        status: measured
+        test: test_create_project_writes_the_project_file
+        note: >-
+          de echte worker pakt elke taak van de groep tasks_live uit de rij en voert hem uit;
+          een worker die niet draait laat elk scenario op zijn wachtpunt vallen
   - step: FederationService
     where: lifespan
     dependencies:
@@ -111,7 +122,12 @@ startup:
   - step: ReconciliationScheduler
     where: lifespan
     dependencies:
-      git: {status: planned, phase: "4-taken"}
+      git:
+        status: planned
+        phase: later
+        note: >-
+          de groepen startup_live en tasks_live zetten de scheduler aan en meten dat hij
+          start, maar niets van de reconciliatie die hij op zijn interval doet
   - step: ResourceTuningScheduler
     where: lifespan
     dependencies:
@@ -127,7 +143,12 @@ startup:
   - step: AuditRetentionScheduler
     where: lifespan
     dependencies:
-      postgres: {status: planned, phase: "4-taken"}
+      postgres:
+        status: planned
+        phase: later
+        note: >-
+          zelfde reden als ReconciliationScheduler: wat de scheduler op zijn interval opruimt
+          toetst geen groep
   - step: SleepModeScheduler
     where: lifespan
     dependencies:
@@ -322,12 +343,12 @@ tasks:
           wait_for_capsule_tenant_label wacht op de admission-webhook van Capsule, die alleen op
           ODCN staat en in deze repo geen gepinde versie heeft. Het LEZEN van het tenant-label is
           gemeten (test_wait_for_capsule_tenant_label_sees_the_label_once_it_is_there), de webhook niet
-      git: {status: planned, phase: "4-taken"}
-      keycloak: {status: planned, phase: "4-taken"}
-      postgres: {status: planned, phase: "4-taken"}
-      minio: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_create_project_writes_the_project_file}
+      keycloak: {status: measured, test: test_create_project_from_a_complete_file_provisions_everything}
+      postgres: {status: measured, test: test_create_project_from_a_complete_file_provisions_everything}
+      minio: {status: measured, test: test_create_project_from_a_complete_file_provisions_everything}
+      kubernetes: {status: measured, test: test_create_project_from_a_complete_file_provisions_everything}
+      argocd: {status: measured, test: test_create_project_from_a_complete_file_provisions_everything}
   - task: UPSERT_DEPLOYMENT
     dependencies:
       vpa:
@@ -336,147 +357,177 @@ tasks:
           get_vpa_recommendation leest een VerticalPodAutoscaler, en de VPA-operator staat alleen op
           ODCN en heeft in deze repo geen gepinde versie. De tak zonder VPA is gemeten
           (test_get_vpa_recommendation_answers_none_without_a_vpa), het lezen van een advies niet
-      git: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_upsert_deployment_rolls_the_first_one_out}
+      kubernetes: {status: measured, test: test_upsert_deployment_rolls_the_first_one_out}
+      argocd: {status: measured, test: test_upsert_deployment_rolls_the_first_one_out}
       postgres:
         status: measured
-        test: test_two_deployments_each_reach_only_their_own_database
-        note: de stap van de DatabaseManager is gemeten; de taak met git en ArgoCD staat in fase 4
+        test: test_upsert_deployment_adds_a_second_one_with_every_service
+        note: een deployment erbij op een project dat de dienst al heeft, met zijn eigen database naast die van de buur
       minio:
         status: measured
-        test: test_two_deployments_each_reach_only_their_own_bucket
-        note: de stap van de MinioManager is gemeten; de taak met git en ArgoCD staat in fase 4
-      keycloak: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+        test: test_upsert_deployment_adds_a_second_one_with_every_service
+        note: dezelfde invariant voor de bucket
+      keycloak: {status: measured, test: test_upsert_deployment_adds_a_second_one_with_every_service}
   - task: UPDATE_IMAGE
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_update_image_reaches_the_cluster}
+      argocd: {status: measured, test: test_update_image_reaches_the_cluster}
+      kubernetes: {status: measured, test: test_update_image_reaches_the_cluster}
   - task: DELETE_DEPLOYMENT
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      postgres:
-        status: measured
-        test: test_deleting_a_deployment_leaves_no_database_or_role_behind
-        note: de stap van de DatabaseManager is gemeten; de taak met git en ArgoCD staat in fase 4
-      minio:
-        status: measured
-        test: test_deleting_a_deployment_leaves_no_bucket_or_user_behind
-        note: de stap van de MinioManager is gemeten; de taak met git en ArgoCD staat in fase 4
-      keycloak: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_delete_deployment_leaves_nothing_of_it}
+      postgres: {status: measured, test: test_delete_deployment_leaves_nothing_of_it}
+      minio: {status: measured, test: test_delete_deployment_leaves_nothing_of_it}
+      keycloak: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
+      kubernetes: {status: measured, test: test_delete_deployment_leaves_nothing_of_it}
+      argocd: {status: measured, test: test_delete_deployment_leaves_nothing_of_it}
   - task: DELETE_PROJECT
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      keycloak: {status: planned, phase: "4-taken"}
-      postgres: {status: planned, phase: "4-taken"}
-      minio: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
+      keycloak: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
+      postgres: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
+      minio: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
+      kubernetes: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
+      argocd: {status: measured, test: test_delete_project_leaves_nothing_anywhere}
   - task: DELETE_COMPONENT
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_delete_component_removes_it}
+      argocd: {status: measured, test: test_delete_component_removes_it}
   - task: DELETE_ATTACHMENT
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_delete_attachment_removes_it_everywhere}
+      kubernetes: {status: measured, test: test_delete_attachment_removes_it_everywhere}
   - task: CONFIGURE_ATTACHMENT
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_configure_attachment_reaches_the_namespace}
+      kubernetes: {status: measured, test: test_configure_attachment_reaches_the_namespace}
   - task: CLONE_DATABASE
     dependencies:
-      postgres:
-        status: measured
-        test: test_clone_schema_copies_the_rows_to_the_target_owner
-        note: de kloonpijplijn is gemeten; de taak met git en de voortgang staat in fase 4
-      git: {status: planned, phase: "4-taken"}
+      postgres: {status: measured, test: test_clone_database_copies_the_rows}
+      git: {status: measured, test: test_clone_database_copies_the_rows}
+      chisel:
+        status: exempt
+        reason: >-
+          een bron BUITEN het cluster loopt over een chisel-tunnel naar een andere omgeving, en
+          die tweede omgeving heeft deze opstelling niet. Het scenario meet de kloonpijplijn met
+          een bron binnen de opstelling; wat de tunnel toevoegt is het transport
   - task: CLONE_BUCKET
     dependencies:
-      minio:
-        status: measured
-        test: test_mirror_bucket_cross_alias_copies_every_object
-        note: de spiegelstap is gemeten; de taak met git en de voortgang staat in fase 4
-      git: {status: planned, phase: "4-taken"}
+      minio: {status: measured, test: test_clone_bucket_copies_the_objects}
+      git: {status: measured, test: test_clone_bucket_copies_the_objects}
+      chisel:
+        status: exempt
+        reason: >-
+          zelfde reden als bij CLONE_DATABASE, de tunnel vraagt een tweede omgeving
   - task: REFRESH_DEPLOYMENT
     dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+      git: {status: measured, test: test_refresh_deployment_syncs_one}
+      argocd: {status: measured, test: test_refresh_deployment_syncs_one}
   - task: ROTATE_CREDENTIALS
-    dependencies:
-      postgres: {status: planned, phase: "4-taken"}
-      minio: {status: planned, phase: "4-taken"}
-      keycloak: {status: planned, phase: "4-taken"}
-      git: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
-  - task: SLEEP_DEPLOYMENT
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: WAKE_DEPLOYMENT
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: REFRESH_PROJECT
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: ROTATE_PROJECT_KEY
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
-  - task: ADD_COMPONENT
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: ADD_COMPONENT_TO_DEPLOYMENT
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: UPDATE_COMPONENT
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: ADD_SERVICE
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      keycloak: {status: planned, phase: "4-taken"}
-      postgres: {status: planned, phase: "4-taken"}
-      minio: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: CONFIGURE_SERVICE
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      keycloak: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: CONFIGURE_SERVICE_VALUES
-    dependencies:
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
-  - task: MANAGE_DATABASE_SCHEMAS
     dependencies:
       postgres:
         status: measured
-        test: test_an_extra_schema_comes_and_goes_without_touching_the_rest
-        note: de stap van de DatabaseManager is gemeten; de handler met git en ArgoCD staat in fase 4
-      git: {status: planned, phase: "4-taken"}
-      argocd: {status: planned, phase: "4-taken"}
+        test: test_rotate_credentials_replaces_the_secrets
+        note: niet alleen dat het Secret anders is, maar dat het nieuwe wachtwoord ook werkt
+      minio: {status: measured, test: test_rotate_credentials_replaces_the_secrets}
+      keycloak: {status: measured, test: test_rotate_credentials_replaces_the_secrets}
+      git: {status: measured, test: test_rotate_credentials_replaces_the_secrets}
+      kubernetes: {status: measured, test: test_rotate_credentials_replaces_the_secrets}
+  - task: SLEEP_DEPLOYMENT
+    dependencies:
+      git: {status: measured, test: test_sleep_deployment_scales_it_down}
+      argocd: {status: measured, test: test_sleep_deployment_scales_it_down}
+      kubernetes: {status: measured, test: test_sleep_deployment_scales_it_down}
+  - task: WAKE_DEPLOYMENT
+    dependencies:
+      git: {status: measured, test: test_wake_deployment_scales_it_back_up}
+      argocd: {status: measured, test: test_wake_deployment_scales_it_back_up}
+      kubernetes: {status: measured, test: test_wake_deployment_scales_it_back_up}
+  - task: REFRESH_PROJECT
+    dependencies:
+      git: {status: measured, test: test_refresh_project_syncs_everything}
+      argocd: {status: measured, test: test_refresh_project_syncs_everything}
+  - task: ROTATE_PROJECT_KEY
+    dependencies:
+      git: {status: measured, test: test_rotate_project_key_replaces_the_keypair}
+      kubernetes: {status: measured, test: test_rotate_project_key_replaces_the_keypair}
+  - task: ADD_COMPONENT
+    dependencies:
+      git: {status: measured, test: test_add_component_declares_it_without_rolling_out}
+      argocd:
+        status: measured
+        test: test_add_component_declares_it_without_rolling_out
+        note: de tak met rollout=false, waar de uitrol juist UIT hoort te blijven; de uitgerolde tak zit in ADD_COMPONENT_TO_DEPLOYMENT
+  - task: ADD_COMPONENT_TO_DEPLOYMENT
+    dependencies:
+      git: {status: measured, test: test_add_component_to_deployment_hangs_it_on_one}
+      argocd: {status: measured, test: test_add_component_to_deployment_hangs_it_on_one}
+  - task: UPDATE_COMPONENT
+    dependencies:
+      git: {status: measured, test: test_update_component_changes_its_resources}
+      argocd: {status: measured, test: test_update_component_changes_its_resources}
+  - task: ADD_SERVICE
+    dependencies:
+      git: {status: measured, test: test_add_service_provisions_every_dependency}
+      keycloak: {status: measured, test: test_add_service_provisions_every_dependency}
+      postgres: {status: measured, test: test_add_service_provisions_every_dependency}
+      minio: {status: measured, test: test_add_service_provisions_every_dependency}
+      argocd: {status: measured, test: test_add_service_provisions_every_dependency}
+      seaweedfs:
+        status: planned
+        phase: later
+        note: de opstelling heeft geen SeaweedFS-server, dus het scenario neemt die dienst niet
+      redis:
+        status: planned
+        phase: later
+        note: zelfde reden als seaweedfs
+      mail:
+        status: planned
+        phase: later
+        note: >-
+          de dienst send-email; de opstelling heeft de relay wel, maar het scenario neemt die
+          dienst niet en meet dus niet wat het aanzetten ervan provisioneert
+  - task: CONFIGURE_SERVICE
+    dependencies:
+      git: {status: measured, test: test_configure_service_changes_the_realm}
+      keycloak: {status: measured, test: test_configure_service_changes_the_realm}
+      argocd: {status: measured, test: test_configure_service_changes_the_realm}
+  - task: CONFIGURE_SERVICE_VALUES
+    dependencies:
+      git: {status: measured, test: test_configure_service_values_reaches_the_namespace}
+      argocd: {status: measured, test: test_configure_service_values_reaches_the_namespace}
+      kubernetes: {status: measured, test: test_configure_service_values_reaches_the_namespace}
+  - task: MANAGE_DATABASE_SCHEMAS
+    dependencies:
+      postgres: {status: measured, test: test_manage_database_schemas_adds_and_removes_one}
+      git: {status: measured, test: test_manage_database_schemas_adds_and_removes_one}
+      argocd: {status: measured, test: test_manage_database_schemas_adds_and_removes_one}
   - task: BACKUP
     dependencies:
-      kopia: {status: planned, phase: later}
-      seaweedfs: {status: planned, phase: later}
-      postgres: {status: planned, phase: "4-taken"}
-      minio: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
+      kopia:
+        status: planned
+        phase: 5-in-cluster
+        note: >-
+          de backup draait als pod in kind en bereikt de PostgreSQL en MinIO naast het cluster
+          niet; test_backup_writes_a_run_to_the_destination staat klaar en wordt dan groen
+      postgres: {status: planned, phase: 5-in-cluster, note: zelfde reden als kopia}
+      minio: {status: planned, phase: 5-in-cluster, note: zelfde reden als kopia}
+      kubernetes: {status: planned, phase: 5-in-cluster, note: zelfde reden als kopia}
+      seaweedfs:
+        status: planned
+        phase: later
+        note: een bestemming op SeaweedFS in plaats van MinIO; de opstelling heeft er geen server voor
   - task: RESTORE
     dependencies:
-      kopia: {status: planned, phase: later}
-      seaweedfs: {status: planned, phase: later}
-      postgres: {status: planned, phase: "4-taken"}
-      minio: {status: planned, phase: "4-taken"}
-      kubernetes: {status: planned, phase: "4-taken"}
+      kopia: {status: planned, phase: 5-in-cluster, note: zelfde reden als bij BACKUP}
+      postgres: {status: planned, phase: 5-in-cluster, note: zelfde reden als bij BACKUP}
+      minio: {status: planned, phase: 5-in-cluster, note: zelfde reden als bij BACKUP}
+      kubernetes: {status: planned, phase: 5-in-cluster, note: zelfde reden als bij BACKUP}
+      seaweedfs:
+        status: planned
+        phase: later
+        note: zelfde reden als bij BACKUP
 
 # De opstelling van de toetsen zelf hoort ook op de kaart: wat een test start, start de
 # versie die productie draait. ``tests/test_test_images_follow_pins.py`` bewaakt dat.

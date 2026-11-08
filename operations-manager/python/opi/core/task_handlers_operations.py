@@ -58,7 +58,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
-        Dict with source, target, and rows_copied fields.
+        Dict with source and target fields.
     """
     from opi.manager.project_manager import ProjectManager
 
@@ -158,7 +158,6 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
         return {
             "source": clone_result["source"],
             "target": clone_result.get("target", {}),
-            "rows_copied": clone_result.get("operations", {}).get("rows_copied"),
         }
 
     except Exception as exc:
@@ -193,7 +192,7 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
-        Dict with source, target, and objects_copied fields.
+        Dict with source and target fields.
     """
     from opi.manager.project_manager import ProjectManager
 
@@ -292,7 +291,6 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
         return {
             "source": clone_result["source"],
             "target": clone_result.get("target", {}),
-            "objects_copied": clone_result.get("operations", {}).get("objects_copied"),
         }
 
     except Exception as exc:

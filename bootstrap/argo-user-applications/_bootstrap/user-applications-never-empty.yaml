@@ -1,0 +1,24 @@
+# Keeps the render of user-applications from ever being empty.
+#
+# user-applications syncs with allowEmpty: false: an empty render means a broken or wiped
+# repo, and then ArgoCD refuses to prune every tenant Application. Deleting the last project
+# on a cluster is also an empty render, but a wanted one; ArgoCD refused that too and the
+# project's AppProject stayed behind. This AppProject is never removed, so a wanted deletion
+# syncs while a wiped repo still trips the guard.
+#
+# It allows nothing: no source repos, no destinations, no resource kinds.
+#
+# Placed once by the bootstrap in <cluster>/_bootstrap/ of the argo-applications repo; the
+# source is bootstrap/argo-user-applications/_bootstrap/ in RIG-Cluster. OPI never writes
+# here. No namespace on purpose: it lands in the destination namespace of user-applications,
+# which is the ArgoCD namespace on every cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: user-applications-never-empty
+spec:
+  description: "Keeps user-applications from rendering empty when the last project is deleted. Allows nothing."
+  sourceRepos: []
+  destinations: []
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist: []

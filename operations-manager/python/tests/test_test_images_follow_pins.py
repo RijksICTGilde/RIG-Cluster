@@ -34,6 +34,8 @@ EXEMPT: dict[str, str] = {
     "amazon/aws-cli:2.31.11": "gereedschap van de meting (een S3-client), geen dienst die het platform uitrolt",
     "ghcr.io/minbzk/base-images/rig-backup:latest": "gereedschap van de meting (mc en kopia); de cronjob pint dezelfde image op een digest",
     "busybox:1.37": "gereedschap van de meting (een shell in een pod), geen dienst die het platform uitrolt",
+    "nginxinc/nginx-unprivileged:1.27-alpine": "de werklast van tasks_live: een app die blijft draaien, geen dienst die het platform uitrolt",
+    "nginxinc/nginx-unprivileged:1.26-alpine": "dezelfde werklast op een ANDERE tag, zodat het update-image-scenario de wijziging kan zien",
     "busybox:latest": "bronimage om een registry te vullen; welke tag dat is, doet voor die meting niet mee",
     "ghcr.io/minbzk/base-images/e2e-allservices:latest": "de applicatie die de e2e-projecten draaien, geen platformdienst",
     "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo:0a611d9d": "testdata: een image-verwijzing in een projectbestand, er start niets",

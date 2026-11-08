@@ -2097,6 +2097,9 @@ class MinioManager:
                     {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
                 )
 
+            # Before the manifests below, so they are built on the recorded generation.
+            await self.project_manager.commit_clone_state(project_data, deployment_name)
+
             # STEP 9: Sync secrets to Git
             if deployment_name in self.project_manager._secrets_to_create:
                 logger.info(f"External clone updated secrets for {deployment_name}, syncing to Git for ArgoCD")

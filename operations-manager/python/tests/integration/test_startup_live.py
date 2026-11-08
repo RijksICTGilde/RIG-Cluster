@@ -45,7 +45,6 @@ from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME
 from opi.server import create_app, lifespan
 from opi.services import project_store as project_store_module
 from opi.services.project_store import get_project_store, reset_project_store
-from prometheus_client import REGISTRY
 from tests.integration import forgejo_live, keycloak_image, kubernetes_live, postgres_live, startup_live
 from tests.integration.keycloak_image import assert_realm_consistent
 from tests.integration.startup_live import PREFIX, PROJECT, RelayApi
@@ -158,7 +157,7 @@ async def _drop_everything(kubectl: kubernetes_live.Kubectl, relay: RelayApi) ->
 async def _restart() -> None:
     """Vergeet module-state zodat een nieuw proces dit niet heeft staan.
 
-    Warme git-kopie en prometheus REGISTRY moeten vers (ProjectStore reset --hard; REGISTRY weigert duplicaten).
+    Warme git-kopie, prometheus-register en readiness moeten vers.
     The database pools go too: a new process has none, and a pool left open would answer
     the readiness check while the database is down.
     """
@@ -166,9 +165,7 @@ async def _restart() -> None:
     readiness_module._state = None
     reset_project_store()
     reset_git_repos()
-    for collector in list(REGISTRY._collector_to_names):
-        if type(collector).__name__ in ("OPICollector", "TracmallocCollector"):
-            REGISTRY.unregister(collector)
+    startup_live.forget_collectors()
 
 
 # ==================== De invariant ====================

@@ -435,6 +435,11 @@ def _existing_secret_pairs(sops_path: str, private_key: str | None) -> dict[str,
     return {key: value for key, value in string_data.items() if isinstance(value, str)}
 
 
+def _attachment_secret_prefix(deployment_name: str) -> str:
+    """Prefix of the Secrets that carry the file-mode attachments of a deployment."""
+    return f"{deployment_name}-attch-"
+
+
 def _select_obsolete_component_manifests(
     directory: str,
     component_names: set[str],
@@ -2111,6 +2116,16 @@ class ProjectManager:
             base=base,
         )
         self._process_run = (project_data, self.__contents_as_read)
+
+    async def commit_clone_state(self, project_data: dict[str, Any], deployment_name: str) -> None:
+        """Commit the generation and revision an external clone wrote into its own read.
+
+        The clone tasks kept them in memory only: the deployment's secret pointed at the new
+        database or bucket, the project file did not, and the next run of the project pointed
+        the deployment back at the old one. Inside process_project the clone works on its own
+        read too, so the end-of-run save would not carry them either.
+        """
+        await self.save_and_commit_project(project_data, f"Clone state for {deployment_name}", enforce_validation=False)
 
     async def save_and_commit_project(
         self,
@@ -4618,6 +4633,9 @@ class ProjectManager:
         """
         deployment_name = deployment["name"]
         service_prefixes = {f"{deployment_name}-{service.value}-" for service in ServiceType}
+        # The attachment Secrets predate the RC-15 naming; renaming them would recreate every
+        # mounted Secret, so their own prefix joins the set instead.
+        service_prefixes.add(_attachment_secret_prefix(deployment_name))
         obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
         if not obsolete:
             return
@@ -6468,43 +6486,38 @@ class ProjectManager:
         # Validate the layout's requirements BEFORE subdomain registration
         # This prevents orphaned subdomain entries when validation fails
         root_component_name = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
-        if uses_dotted_subdomain_layout and subdomain and base_domain:
-            # Validate that all components with publish-on-web have ports configured
-            # In this layout, each component gets its own ingress at component.subdomain.base_domain
-            components_missing_ports = []
-            for component in components:
-                component_name = component.get("reference") or component.get("name")
-                if not component_name:
-                    continue
+        # Every component with publish-on-web gets an ingress, in every layout, and an ingress
+        # points at the component's Service on its first inbound port. A component without
+        # one gets no Service, so its ingress would carry `port.number: None` and ArgoCD
+        # refuses the whole Application. This check used to run for the dotted layouts only.
+        components_missing_ports = []
+        for component in components:
+            component_name = component.get("reference") or component.get("name")
+            if not component_name:
+                continue
+            has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                project_data, component_name
+            )
+            if has_publish_on_web and not self._project_file_handler.component_has_ports(project_data, component_name):
+                components_missing_ports.append(component_name)
 
-                # Check if component has publish-on-web enabled
-                has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
-                    project_data, component_name
-                )
-                if has_publish_on_web:
-                    # Component needs a port for its ingress
-                    has_ports = self._project_file_handler.component_has_ports(project_data, component_name)
-                    if not has_ports:
-                        components_missing_ports.append(component_name)
+        if components_missing_ports:
+            raise ValueError(
+                f"Components with 'publish-on-web' must have at least one port configured. "
+                f"Missing ports for: {', '.join(components_missing_ports)}. "
+                f"Add 'ports.inbound' to the component definition."
+            )
 
-            if components_missing_ports:
+        # Validate that root component has publish-on-web (required for root ingress creation)
+        if uses_dotted_subdomain_layout and subdomain and base_domain and root_component_name:
+            root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
+                project_data, root_component_name
+            )
+            if not root_has_publish_on_web:
                 raise ValueError(
-                    f"Components with 'publish-on-web' on domain-format '{domain_format}' must have at least "
-                    f"one port configured. "
-                    f"Missing ports for: {', '.join(components_missing_ports)}. "
-                    f"Add 'ports.inbound' to the component definition."
+                    f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
+                    f"Root components must have a service exposed for the root URL to work."
                 )
-
-            # Validate that root component has publish-on-web (required for root ingress creation)
-            if root_component_name:
-                root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
-                    project_data, root_component_name
-                )
-                if not root_has_publish_on_web:
-                    raise ValueError(
-                        f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
-                        f"Root components must have a service exposed for the root URL to work."
-                    )
 
         if uses_dotted_subdomain_layout and subdomain and base_domain:
             subdomain_connector = SubdomainConnector()
@@ -6773,7 +6786,7 @@ class ProjectManager:
                     # Content was verified UTF-8 decodable in resolve(); expose as an env-var value.
                     user_env_vars[att["env-name"]] = att["content_bytes"].decode("utf-8")
                 else:
-                    secret_name = f"{deployment_name}-attch-{reference}"
+                    secret_name = f"{_attachment_secret_prefix(deployment_name)}{reference}"
                     attachment_file_secrets[secret_name] = {
                         reference: base64.b64encode(att["content_bytes"]).decode("ascii")
                     }

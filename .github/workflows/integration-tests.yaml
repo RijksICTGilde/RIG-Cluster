@@ -11,7 +11,8 @@
 # 1. Unit tests - fastest, no infrastructure
 # 2. Mock integration tests - fast, mocked external services
 # 3. Live groepen - langzaam, tegen een echte Keycloak, PostgreSQL, MinIO, Forgejo,
-#    Kubernetes en ArgoCD, en het opstarten tegen alle zeven tegelijk (startup-live).
+#    Kubernetes en ArgoCD, het opstarten tegen alle zeven tegelijk (startup-live) en elke
+#    taak van begin tot eind (tasks-live).
 #    Zie docs/development/toetsen.md.
 
 name: Integration Tests
@@ -639,6 +640,75 @@ jobs:
         if: always()
         run: task test-cluster-down
 
+  # De paden van deze job zijn die van het hele filter bovenaan: de handlers, opi/manager,
+  # opi/connectors en opi/services/catalog vallen onder operations-manager/**, en de pins
+  # en de Taskfile staan er apart bij. Geen geplande run: hij hoort bij een wijziging.
+  tasks-live:
+    name: Elke taak (live, alle afhankelijkheden)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: lint
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      # Dezelfde tools als startup-live: de opstelling is dezelfde task.
+      - name: Install pwgen, kind, kubectl and Task
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pwgen
+          curl -fsSL -o kind https://kind.sigs.k8s.io/dl/v0.24.0/kind-linux-amd64
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          curl -fsSLO "https://dl.k8s.io/release/v1.32.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          curl -fsSL -o task.tar.gz \
+            https://github.com/go-task/task/releases/download/v3.54.0/task_linux_amd64.tar.gz
+          tar -xzf task.tar.gz task
+          sudo mv task /usr/local/bin/task
+          kind version && kubectl version --client && task --version
+
+      - name: Set up the throwaway cluster
+        run: task test-cluster-up
+
+      # TASKS_LIVE_REQUIRED: een ontbrekend adres is hier een FOUT en geen skip. Zonder dat
+      # is deze job groen zodra de opstelling niet staat, en dan is er niets gemeten.
+      - name: Run the tasks_live group
+        env:
+          TASKS_LIVE_REQUIRED: '1'
+        run: task test-taken
+
+      - name: Setup state on failure
+        if: failure()
+        run: |
+          docker logs --tail 200 zad-startup-live-test-mail || true
+          docker logs --tail 100 zad-startup-live-test-db || true
+          docker logs --tail 100 zad-startup-live-test-kc || true
+          kubectl --context kind-rig-testcluster get all -A || true
+          kubectl --context kind-rig-testcluster get applications -n rig-system -o wide || true
+
+      - name: Tear the throwaway cluster down
+        if: always()
+        run: task test-cluster-down
+
   # Summary job that depends on all tests
   tests-passed:
     name: All Tests Passed
@@ -655,6 +725,7 @@ jobs:
       - kubernetes-live
       - argocd-live
       - startup-live
+      - tasks-live
     if: always()
     steps:
       - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
@@ -672,7 +743,8 @@ jobs:
              [[ "${{ needs.forgejo-live.result }}" != "success" ]] || \
              [[ "${{ needs.kubernetes-live.result }}" != "success" ]] || \
              [[ "${{ needs.argocd-live.result }}" != "success" ]] || \
-             [[ "${{ needs.startup-live.result }}" != "success" ]]; then
+             [[ "${{ needs.startup-live.result }}" != "success" ]] || \
+             [[ "${{ needs.tasks-live.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

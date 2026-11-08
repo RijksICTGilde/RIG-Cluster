@@ -2424,6 +2424,9 @@ class DatabaseManager:
                     {"type": "credentials_stored_in_memory", "status": "warning", "error": str(e)}
                 )
 
+            # Before the manifests below, so they are built on the recorded generation.
+            await self.project_manager.commit_clone_state(project_data, deployment_name)
+
             # STEP 8: Sync secrets to Git if credentials were updated
             # Check if secrets were added to _secrets_to_create and need to be written to Git
             if deployment_name in self.project_manager._secrets_to_create:

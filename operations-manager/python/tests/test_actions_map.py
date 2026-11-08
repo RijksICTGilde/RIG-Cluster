@@ -24,6 +24,15 @@ PYTHON_ROOT = Path(__file__).resolve().parent.parent
 MAP = PYTHON_ROOT / "tests" / "regression" / "actions.yaml"
 SERVER = PYTHON_ROOT / "opi" / "server.py"
 STARTUP = PYTHON_ROOT / "opi" / "core" / "startup.py"
+WORKER = PYTHON_ROOT / "opi" / "worker_main.py"
+
+#: De TaskTypes die ``opi/worker_main.py`` met opzet niet registreert. Die losse worker
+#: wordt vandaag niet uitgerold (``infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml``
+#: laat zien dat de taken in het OPI-proces lopen), en backup en restore vragen meer dan een
+#: registratie: ze hebben kopia in de image en de gelijktijdigheidsgrens van
+#: ``BACKUP_MAX_CONCURRENT`` nodig. Een regel hier is dus een BESLISSING: wie ze daar
+#: registreert, haalt ze hier weg en laat deze toets meekijken.
+WORKER_WITHOUT_HANDLER = frozenset({"BACKUP", "RESTORE"})
 
 #: Waar een toets mag staan die de kaart als ``measured`` noemt.
 TEST_ROOTS = (PYTHON_ROOT / "tests",)
@@ -52,6 +61,53 @@ def _called_names(path: Path, function: str) -> set[str]:
         for node in ast.walk(body)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not hasattr(builtins, node.func.id)
     }
+
+
+def _registered_task_types(path: Path) -> set[str]:
+    """De TaskTypes waarvoor dit bestand een handler registreert.
+
+    Uit de AST en niet uit een import: een registratie staat in de ``lifespan`` van de
+    server, en die uitvoeren zou de hele opstelling vragen.
+    """
+    tree = ast.parse(path.read_text())
+    return {
+        node.args[0].attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "register_handler"
+        and node.args
+        and isinstance(node.args[0], ast.Attribute)
+    }
+
+
+def test_the_server_registers_a_handler_for_every_task_type() -> None:
+    """Een TaskType zonder handler komt in de rij en blijft daar liggen.
+
+    Dat is geen fout die een toets op de handler zelf vangt: de taak wordt aangenomen, de
+    aanroeper krijgt een taak-id, en er gebeurt nooit iets.
+    """
+    missing = sorted({task.name for task in TaskType} - _registered_task_types(SERVER))
+    assert not missing, (
+        f"TaskTypes zonder register_handler in opi/server.py: {missing}. Een taak van dat "
+        "type komt in de rij en wordt nooit uitgevoerd."
+    )
+
+
+def test_the_standalone_worker_registers_what_it_claims_to() -> None:
+    """Dezelfde eis voor de losse worker, op zijn eigen uitzonderingslijst.
+
+    De lijst hoort te krimpen en niet te groeien: staat een type er wel, dan hoort het uit
+    ``WORKER_WITHOUT_HANDLER``.
+    """
+    registered = _registered_task_types(WORKER)
+    expected = {task.name for task in TaskType} - WORKER_WITHOUT_HANDLER
+
+    missing = sorted(expected - registered)
+    assert not missing, f"TaskTypes zonder register_handler in opi/worker_main.py: {missing}"
+
+    gone = sorted(WORKER_WITHOUT_HANDLER & registered)
+    assert not gone, f"opi/worker_main.py registreert {gone} wel; haal ze uit WORKER_WITHOUT_HANDLER in deze toets."
 
 
 def _test_names() -> set[str]:
@@ -125,3 +181,22 @@ def test_every_named_test_exists() -> None:
         if entry.get("status") == "measured" and entry["test"] not in available
     )
     assert not missing, f"De kaart noemt toetsen die niet bestaan: {missing}"
+
+
+def test_a_finished_phase_carries_no_planned_rows() -> None:
+    """Een fase met ``gedaan:`` komt niet terug, dus een planned regel ernaar meet nooit iets.
+
+    Dat is de stille fout die de kaart te somber of te rooskleurig laat staan: de fase is af,
+    de regel blijft wachten op een ronde die niet meer volgt.
+    """
+    finished = {phase for phase, description in _map()["phases"].items() if description.startswith("gedaan:")}
+    waiting = sorted(
+        f"{name} -> {dependency}: fase '{entry['phase']}'"
+        for name, row in _rows()
+        for dependency, entry in (row["dependencies"] or {}).items()
+        if entry.get("status") == "planned" and entry.get("phase") in finished
+    )
+    assert not waiting, (
+        f"planned regels die naar een afgeronde fase wijzen: {waiting}. Zet ze op measured met "
+        "de toets die ze draait, of op een fase die nog komt, of op exempt met een reden."
+    )

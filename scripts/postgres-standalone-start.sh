@@ -15,7 +15,10 @@ if [ ! -s "$PGDATA/PG_VERSION" ]; then
     install -d -m 700 "$PGDATA"
     pwfile=$(mktemp)
     printf '%s' "$POSTGRES_PASSWORD" >"$pwfile"
-    initdb --username=postgres --pwfile="$pwfile" --auth-host=scram-sha-256 >/dev/null
+    # UTF8 met locale C, zoals CNPG zijn initdb draait. Zonder --encoding volgt initdb de
+    # lege locale van de image en wordt alles SQL_ASCII, en daarin weigert JSONB elke
+    # niet-ASCII-tekst (de voortgang van een taak met een "…" erin).
+    initdb --username=postgres --pwfile="$pwfile" --auth-host=scram-sha-256 --encoding=UTF8 --locale=C >/dev/null
     rm -f "$pwfile"
     # Docker mapt de poort via het bridge-netwerk, dus een client komt niet van 127.0.0.1
     # en valt buiten de regels die initdb schrijft.

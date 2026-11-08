@@ -10,6 +10,11 @@ apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
   - role: control-plane
     image: ${TESTCLUSTER_NODE_IMAGE}
+    # Where the ingress-nginx of the sandbox runs (install-ingress-nginx selects on it).
+    # Without a controller no Ingress gets an address, and ArgoCD keeps every app that
+    # publishes on the web on Progressing.
+    labels:
+      ingress-ready: "true"
     extraPortMappings:
       # De Forgejo van dit cluster, als NodePort. De toetsen pushen hun manifesten er
       # vanaf de host naartoe; ArgoCD haalt ze binnen het cluster op via zijn Service.
