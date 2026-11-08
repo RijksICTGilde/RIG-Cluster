@@ -33,12 +33,6 @@ def friendly_name(upstream: str) -> str:
     return sanitize_kubernetes_name("".join(stem))
 
 
-def upstream_namespace(upstream: str) -> str:
-    """Het pad achter de host, leeg als de upstream alleen een host is."""
-    _, _, path = upstream.partition("/")
-    return path.strip("/")
-
-
 def upstream_hash(upstream: str) -> str:
     """Het onderscheidende deel van de suffix.
 

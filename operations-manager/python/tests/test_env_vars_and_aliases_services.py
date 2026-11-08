@@ -325,8 +325,3 @@ class TestNoUserEnvVarNamesInLogs:
         assert "parsed_env_vars.keys()" not in source, (
             "web/router.py logs user-env-var key names again; log how many, not which"
         )
-
-    def test_the_config_handler_logs_neither_key_nor_value(self) -> None:
-        source = (_OPI / "handlers" / "configuration_handler.py").read_text(encoding="utf-8")
-        assert "key='{key}', value='{value}'" not in source
-        assert "add_env_var called for component" in source

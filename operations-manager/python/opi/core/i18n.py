@@ -68,8 +68,3 @@ def get_translation(lang: str) -> NullTranslations:
         return Translations.load(str(LOCALE_DIR), locales=locale_str)
     except FileNotFoundError:
         return NullTranslations()
-
-
-def get_current_translation(request: Request) -> NullTranslations:
-    """Get the translation object for the current request."""
-    return get_translation(get_requested_language(request))

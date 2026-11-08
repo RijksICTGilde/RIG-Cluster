@@ -13,10 +13,6 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class APIKeyEncryptionError(Exception):
-    """Raised when API key encryption fails."""
-
-
 class SOPSKeyNotAvailableError(Exception):
     """Raised when SOPS AGE key is not available for encryption."""
 

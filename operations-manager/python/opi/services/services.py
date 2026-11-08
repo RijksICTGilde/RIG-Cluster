@@ -406,7 +406,6 @@ class ServiceDefinition:
     database, bucket or cache. Says nothing about who ticks it: postgres is both.
     """
     secret_class: str | None = None
-    # TODO: specific definitions should not be here
     storage_config: dict[str, Any] | None = None
     component_flag: str | None = None
     hidden: bool = False
@@ -555,12 +554,6 @@ class ServiceAdapter:
     def get_service_by_value(cls, value: str) -> ServiceType:
         """Get a service enum by its string value."""
         return ServiceType(value)
-
-    @classmethod
-    def get_component_flag(cls, service: ServiceType) -> str | None:
-        """Get the component flag name for a service if it has one."""
-        definition = cls.get_service_definition(service)
-        return definition.component_flag if definition is not None else None
 
     @classmethod
     def get_storage_config(cls, service: ServiceType) -> dict[str, Any] | None:
@@ -793,15 +786,6 @@ class ServiceAdapter:
         """Get the list of variable definitions provided by a service."""
         definition = cls.get_service_definition(service)
         return definition.variables if definition is not None else []
-
-    @classmethod
-    def get_variable_names(cls, service: ServiceType) -> list[str]:
-        """Get all variable names (including aliases) provided by a service."""
-        variables = cls.get_variables(service)
-        all_names: list[str] = []
-        for var in variables:
-            all_names.extend(var.get_all_names())
-        return all_names
 
     @classmethod
     def get_variables_by_source(cls, service: ServiceType, source: str) -> list[VariableDefinition]:

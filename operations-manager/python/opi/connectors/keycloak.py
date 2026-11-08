@@ -1609,29 +1609,6 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             return []
 
-    async def get_identity_provider(self, realm_name: str, provider_alias: str) -> dict[str, Any] | None:
-        """
-        Get identity provider configuration.
-
-        Args:
-            realm_name: Name of the realm
-            provider_alias: Alias of the identity provider
-
-        Returns:
-            Provider configuration dict or None if not found
-        """
-        try:
-            # Switch to target realm
-            self.admin.change_current_realm(realm_name)
-            provider = self.admin.get_idp(idp_alias=provider_alias)
-            # Switch back to master
-            self.admin.change_current_realm("master")
-            return provider
-        except KeycloakGetError:
-            # Switch back to master
-            self.admin.change_current_realm("master")
-            return None
-
     async def get_identity_provider_mappers(self, realm_name: str, provider_alias: str) -> list[dict[str, Any]]:
         """
         Get all identity provider mappers for a specific provider.
@@ -2097,23 +2074,6 @@ class KeycloakConnector:
             # Switch back to master
             self.admin.change_current_realm("master")
             return []
-
-    async def get_client_scope(self, realm_name: str, scope_name: str) -> dict[str, Any] | None:
-        """
-        Get client scope configuration.
-
-        Args:
-            realm_name: Name of the realm
-            scope_name: Name of the client scope
-
-        Returns:
-            Client scope configuration dict or None if not found
-        """
-        scopes = await self.get_client_scopes(realm_name)
-        for scope in scopes:
-            if scope.get("name") == scope_name:
-                return scope
-        return None
 
     async def assign_client_scope_to_client(
         self, realm_name: str, client_internal_id: str, scope_id: str, default: bool = True

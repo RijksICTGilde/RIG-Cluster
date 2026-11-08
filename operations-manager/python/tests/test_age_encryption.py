@@ -12,7 +12,6 @@ import pytest
 from opi.utils.age import (
     _encrypt_with_age_and_base64encode_as_prefixed_string,
     decrypt_age_content,
-    decrypt_if_encrypted,
     encrypt_age_content,
     get_project_public_key,
     is_age_encrypted,
@@ -72,31 +71,6 @@ class TestEncryptWithAgeAndBase64Encode:
         b64_part = result[len("base64+age:") :]
         decoded = base64.b64decode(b64_part).decode()
         assert decoded == encrypted
-
-
-class TestDecryptIfEncrypted:
-    """Tests for decrypt_if_encrypted."""
-
-    @pytest.mark.asyncio
-    async def test_returns_plain_text_unchanged(self):
-        """Should return non-encrypted content as-is."""
-        result = await decrypt_if_encrypted("plain text", "some-key")
-        assert result == "plain text"
-
-    @pytest.mark.asyncio
-    async def test_raises_without_private_key(self):
-        """Should raise ValueError when content is encrypted but no key provided."""
-        encrypted = "-----BEGIN AGE ENCRYPTED FILE-----\ndata\n-----END AGE ENCRYPTED FILE-----"
-        with pytest.raises(ValueError, match="no private key"):
-            await decrypt_if_encrypted(encrypted, None)
-
-    @pytest.mark.asyncio
-    async def test_decrypts_encrypted_content(self):
-        """Should decrypt age-encrypted content."""
-        encrypted = "-----BEGIN AGE ENCRYPTED FILE-----\ndata\n-----END AGE ENCRYPTED FILE-----"
-        with patch("opi.utils.age.decrypt_age_content", return_value="decrypted"):
-            result = await decrypt_if_encrypted(encrypted, "AGE-SECRET-KEY-1ABC")
-        assert result == "decrypted"
 
 
 class TestIsAgeEncrypted:

@@ -263,9 +263,3 @@ class WidgetAdapter(ABC):
         if text is None:
             return ""
         return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
-
-    def render_html_attributes(self, attrs: dict[str, str]) -> str:
-        """Render a dict of HTML attributes to a string."""
-        if not attrs:
-            return ""
-        return " ".join(f'{self.escape_html(k)}="{self.escape_html(v)}"' for k, v in attrs.items())

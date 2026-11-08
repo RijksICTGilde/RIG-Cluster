@@ -132,31 +132,6 @@ class InviteManager:
 
         return True
 
-    def get_valid_invite(
-        self,
-        project_data: dict[str, Any],
-        key: str,
-    ) -> dict[str, Any]:
-        """
-        Get and validate an invite by key.
-
-        Args:
-            project_data: The project configuration data
-            key: The invite key
-
-        Returns:
-            The invite configuration
-
-        Raises:
-            InviteNotFoundError: If invite not found
-        """
-        invite = self.project_file_handler.get_invite_by_key(project_data, key)
-
-        if not invite:
-            raise InviteNotFoundError(key)
-
-        return invite
-
     async def _assign_client_roles(
         self,
         keycloak: KeycloakConnector,
@@ -593,13 +568,3 @@ class InviteManager:
                 "local": True,
                 "identity_providers": [],
             }
-
-
-def create_invite_manager() -> InviteManager:
-    """
-    Create and return an InviteManager instance.
-
-    Returns:
-        InviteManager instance
-    """
-    return InviteManager()

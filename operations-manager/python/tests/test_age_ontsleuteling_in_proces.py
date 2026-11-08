@@ -232,8 +232,8 @@ class TestRandenVanDeInvoer:
 
     @pytest.mark.asyncio
     async def test_een_blok_zonder_inhoud_geeft_een_lege_tekst_terug(self, age_keypair: tuple[str, str]) -> None:
-        """Leeg blijft leeg in plaats van een fout te worden: ``decrypt_if_encrypted`` en
-        ``decrypt_password_smart`` toetsen hierna alleen op ``None``.
+        """Leeg blijft leeg in plaats van een fout te worden: ``decrypt_password_smart``
+        toetst hierna alleen op ``None``.
         """
         prive, publiek = age_keypair
         blok = _binary_versleutelt("", publiek)

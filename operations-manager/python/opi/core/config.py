@@ -120,7 +120,6 @@ def _get_env_files() -> list[str]:
         "/etc/config/.env",  # Standard ConfigMap mount path
         "/app/config/.env",  # Alternative app-specific mount path
         "/config/.env",  # Simple config mount path
-        # TODO: do we want to support this? and if so, we should document it
         os.environ.get("CONFIG_ENV_FILE_PATH", ""),  # Configurable via env var
     ]
 
@@ -878,8 +877,8 @@ def _load_sops_key_from_local_file() -> str | None:
     """
     Load SOPS key content from local file for development environments.
 
-    FIXME: Remove this local file fallback when proper Kubernetes secret is configured.
-    This is a temporary solution for local development environments.
+    This local file fallback exists for development environments, where there is no
+    Kubernetes secret to mount.
 
     Returns:
         SOPS key content from local file, or None if not found/readable

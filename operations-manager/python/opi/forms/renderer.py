@@ -177,60 +177,6 @@ class FormRenderer:
 
         return f"{form_start}\n{content_html}\n{form_end}"
 
-    def render_fields(
-        self,
-        schema: type[BaseModel],
-        layout: LayoutElement | list[LayoutElement | str] | None = None,
-        data: dict[str, Any] | None = None,
-        errors: dict[str, list[str]] | None = None,
-        edit_mode: bool = False,
-    ) -> str:
-        """
-        Render form fields without the form wrapper.
-
-        Useful for HTMX partial updates or embedding in existing forms.
-
-        Args:
-            schema: Pydantic model class defining the form structure
-            layout: Optional layout definition
-            data: Current field values
-            errors: Validation errors per field path
-            edit_mode: If True, fields with readonly_on_edit will be readonly
-
-        Returns:
-            Form fields HTML string (no <form> wrapper)
-        """
-        self._edit_mode = edit_mode
-        data = data or {}
-        errors = errors or {}
-
-        # Extract fields from schema
-        fields = extract_fields_from_model(schema, data, errors)
-
-        # Build field lookup by name
-        fields_by_name: dict[str, FormField] = {f.name: f for f in fields}
-
-        # Resolve options for select fields
-        self._resolve_options(fields)
-
-        # Translate field labels/descriptions
-        self._translate_fields(fields)
-
-        # Apply edit mode constraints (readonly_on_edit -> readonly)
-        if self._edit_mode:
-            self._apply_edit_mode(fields)
-
-        # Generate layout if not provided
-        if layout is None:
-            layout = self._generate_default_layout(fields)
-
-        # Render using layout
-        if isinstance(layout, list):
-            content_parts = [self._render_layout_element(elem, fields_by_name) for elem in layout]
-            return "\n".join(content_parts)
-        else:
-            return self._render_layout_element(layout, fields_by_name)
-
     def render_field(
         self,
         field: FormField,

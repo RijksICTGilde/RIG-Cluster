@@ -21,7 +21,6 @@ class AgeDecryptionError(Exception):
     """
 
 
-# TODO: replace this method with direct configuration value
 def get_global_private_key() -> str:
     return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
 
@@ -235,30 +234,6 @@ def carries_encrypted_value(value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
     return is_age_encrypted(value) or value.strip().startswith(BASE64_AGE_PREFIX)
-
-
-async def decrypt_if_encrypted(content: str, private_key: str | None) -> str:
-    """
-    Decrypt content if it's age-encrypted, otherwise return as-is.
-
-    Args:
-        content: Content that may or may not be encrypted
-        private_key: Age private key for decryption
-
-    Returns:
-        Decrypted content or original content if not encrypted
-    """
-    if not is_age_encrypted(content):
-        return content
-
-    if not private_key:
-        raise ValueError("Can not decode content if no private key is provided")
-
-    decrypted = await decrypt_age_content(content, private_key)
-    if decrypted is None:
-        raise ValueError("Failed to decrypt content")
-
-    return decrypted
 
 
 def parse_password_with_prefix(password: str) -> tuple[str, str]:

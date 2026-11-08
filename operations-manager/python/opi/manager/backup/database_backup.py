@@ -4,7 +4,6 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
 
 from opi.core.backup_constants import (
     BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
@@ -731,56 +730,6 @@ class DatabaseBackupManager(BaseBackupManager):
         except Exception as e:
             logger.warning(f"Failed to list database snapshots via Kopia CLI: {e}")
             return []
-
-    async def backup_project_database(
-        self,
-        project_name: str,
-        project_data: dict[str, Any],
-        deployment_name: str,
-        namespace: str,
-        cluster: str,
-        component_name: str,
-        reference_name: str,
-    ) -> DatabaseBackupResult:
-        """
-        Backup a database for a project deployment with full metadata context.
-
-        This method extracts database connection information from the project file
-        and performs the backup with proper metadata.
-
-        Args:
-            project_name: Name of the project
-            project_data: Project configuration data
-            deployment_name: Name of the deployment
-            namespace: Kubernetes namespace (with cluster prefix)
-            cluster: Cluster name
-            component_name: Component name containing the database
-            reference_name: Database reference name
-
-        Returns:
-            DatabaseBackupResult with operation details
-        """
-        # TODO: Extract database connection info from project_data
-        # For now, this would need to be passed in or discovered from the cluster
-        # The actual implementation would need to:
-        # 1. Look up the database service in the namespace
-        # 2. Get connection details from secrets/configmaps
-        # 3. Call backup_database with the extracted info
-
-        logger.warning(
-            f"backup_project_database is a placeholder - database connection info extraction not yet implemented. "
-            f"Project: {project_name}, Deployment: {deployment_name}, Database: {reference_name}"
-        )
-
-        return DatabaseBackupResult(
-            namespace=namespace,
-            pvc_name=reference_name,
-            success=False,
-            database_name=reference_name,
-            reference_name=reference_name,
-            error="Database connection info extraction not yet implemented - use backup_database directly",
-            duration_seconds=0,
-        )
 
 
 def create_database_backup_manager(config: BackupConfig | None = None) -> DatabaseBackupManager:

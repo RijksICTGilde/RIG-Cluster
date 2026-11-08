@@ -3,7 +3,6 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any
 
 from opi.core.backup_constants import (
     BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
@@ -823,59 +822,6 @@ class BucketBackupManager(BaseBackupManager):
         except Exception as e:
             logger.warning(f"Failed to list bucket snapshots via Kopia CLI: {e}")
             return []
-
-    async def backup_project_bucket(
-        self,
-        project_name: str,
-        project_data: dict[str, Any],
-        deployment_name: str,
-        namespace: str,
-        cluster: str,
-        component_name: str,
-        reference_name: str,
-        use_kopia: bool = True,
-    ) -> BucketBackupResult:
-        """
-        Backup a bucket for a project deployment with full metadata context.
-
-        This method is a placeholder - actual implementation would need to
-        extract MinIO connection information from the project file or cluster.
-
-        Args:
-            project_name: Name of the project
-            project_data: Project configuration data
-            deployment_name: Name of the deployment
-            namespace: Kubernetes namespace (with cluster prefix)
-            cluster: Cluster name
-            component_name: Component name containing the bucket
-            reference_name: Bucket reference name
-            use_kopia: True for Kopia backup, False for mc mirror
-
-        Returns:
-            BucketBackupResult with operation details
-        """
-        # TODO: Extract MinIO connection info from project_data
-        # For now, this would need to be passed in or discovered from the cluster
-        # The actual implementation would need to:
-        # 1. Look up the MinIO service in the namespace
-        # 2. Get connection details from secrets/configmaps
-        # 3. Call backup_bucket with the extracted info
-
-        logger.warning(
-            f"backup_project_bucket is a placeholder - MinIO connection info extraction not yet implemented. "
-            f"Project: {project_name}, Deployment: {deployment_name}, Bucket: {reference_name}"
-        )
-
-        return BucketBackupResult(
-            namespace=namespace,
-            pvc_name=reference_name,
-            success=False,
-            bucket_name=reference_name,
-            reference_name=reference_name,
-            use_kopia=use_kopia,
-            error="MinIO connection info extraction not yet implemented - use backup_bucket directly",
-            duration_seconds=0,
-        )
 
 
 def create_bucket_backup_manager(config: BackupConfig | None = None) -> BucketBackupManager:

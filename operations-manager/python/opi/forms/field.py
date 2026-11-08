@@ -110,15 +110,3 @@ class FormField:
         for child in self.children:
             all_errors.extend(child.get_error_messages())
         return all_errors
-
-    def get_htmx_attributes(self) -> str:
-        """Generate HTMX attribute string for HTML rendering."""
-        if not self.htmx_attrs:
-            return ""
-        return " ".join(f'{k}="{v}"' for k, v in self.htmx_attrs.items())
-
-    def get_html_attributes(self) -> str:
-        """Generate HTML attribute string for additional attributes."""
-        if not self.attributes:
-            return ""
-        return " ".join(f'{k}="{v}"' for k, v in self.attributes.items())

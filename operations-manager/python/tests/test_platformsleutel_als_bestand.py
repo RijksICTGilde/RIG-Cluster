@@ -250,38 +250,6 @@ def test_overlays_zetten_de_sleutel_niet_terug_in_de_omgeving() -> None:
             assert "SECRET_TEMP_DIR" not in env, manifest
 
 
-async def test_sops_handler_schrijft_in_de_secret_temp_dir(
-    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from opi.core.config import settings
-    from opi.handlers.sops import SopsHandler
-
-    secret_temp_dir = tmp_path / "secret-tmp"
-    secret_temp_dir.mkdir()
-    monkeypatch.setattr(settings, "SECRET_TEMP_DIR", str(secret_temp_dir))
-    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path / "schijf"))
-
-    gebruikte_paden: list[str] = []
-
-    class Resultaat:
-        returncode = 0
-        stdout = "versleuteld"
-        stderr = ""
-
-    async def nep_run_command(cmd: list[str], env: dict[str, str] | None = None) -> Resultaat:
-        gebruikte_paden.append(cmd[-1])
-        return Resultaat()
-
-    handler = SopsHandler()
-    monkeypatch.setattr(handler, "_run_command", nep_run_command)
-
-    await handler.encrypt_content("geheim", "age1publiek")
-    await handler.decrypt_content("geheim", "AGE-SECRET-KEY-1")
-
-    assert gebruikte_paden
-    assert all(pathlib.Path(pad).parent == secret_temp_dir for pad in gebruikte_paden)
-
-
 def _mist_een_echte_env(knoop: ast.Call) -> bool:
     """`env=None` erft net als een ontbrekende `env=` de volle omgeving."""
     for sleutelwoord in knoop.keywords:

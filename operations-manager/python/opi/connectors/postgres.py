@@ -56,10 +56,6 @@ class SchemaInventory:
     public_objects: list[str]
 
 
-class PostgresConnectionError(Exception):
-    """Exception raised when PostgreSQL connection is not available."""
-
-
 class PostgresExecutionError(Exception):
     """Exception raised when PostgreSQL operation execution fails."""
 

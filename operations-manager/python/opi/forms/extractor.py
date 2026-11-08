@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
 from pydantic import BaseModel
 
 from opi.forms.field import FormField
-from opi.forms.schema import FormMeta, get_form_meta, infer_widget_type
+from opi.forms.schema import get_form_meta, infer_widget_type
 
 if TYPE_CHECKING:
     from pydantic.fields import FieldInfo
@@ -217,22 +217,6 @@ def _extract_sequence_children(
         children.append(item_field)
 
     return children
-
-
-def get_field_order(form_meta: FormMeta | None) -> int:
-    """Get the order value from FormMeta, defaulting to 0."""
-    return form_meta.order if form_meta else 0
-
-
-def sort_fields_by_order(fields: list[FormField]) -> list[FormField]:
-    """
-    Sort fields by their order attribute.
-
-    Fields without order are placed after ordered fields.
-    """
-    # We need to extract FormMeta again for ordering
-    # This is a simplified version - in practice, order should be stored on FormField
-    return fields  # TODO: Implement proper ordering
 
 
 def group_fields_by_section(fields: list[FormField], model: type[BaseModel]) -> dict[str | None, list[FormField]]:

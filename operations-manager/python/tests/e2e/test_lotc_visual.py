@@ -240,6 +240,7 @@ REDESIGNED_PAGES = [
     "invite-success",
     "invite-error",
     "introductie",
+    "getting-started",
     "admin-gedeelde-diensten",
     "security",
     "router",

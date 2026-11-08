@@ -11,7 +11,6 @@ import hashlib
 import logging
 import os
 import posixpath
-import secrets
 import shutil
 import tempfile
 import time
@@ -179,8 +178,6 @@ from opi.services.services import deployment_index, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
-    decrypt_password_smart_auto,
-    decrypt_tree,
     encrypt_age_content,
     encrypt_file_to_age_block_sync,
     get_decoded_project_private_key,
@@ -775,7 +772,6 @@ class ProjectManager:
 
         # Service managers for handling service-specific operations
         # Import here to avoid circular dependencies
-        # TODO: fix me, we don't want this
         from opi.manager.argo_manager import ArgoManager
         from opi.manager.bootstrap_manager import BootstrapManager
         from opi.manager.delete_project_manager import DeleteProjectManager
@@ -1064,13 +1060,6 @@ class ProjectManager:
             self.__owns_git_connector_for_project_files = False
         return self.__git_connector_for_project_files
 
-    async def set_git_connector_for_project_files(self, git_connector: GitConnector) -> None:
-        if self.__git_connector_for_project_files:
-            raise Exception("git_connector_for_projectfiles already set")
-        self.__git_connector_for_project_files = git_connector
-        # Injected connector is not owned by this instance
-        self.__owns_git_connector_for_project_files = False
-
     async def close_git_connector_for_project_files(self) -> None:
         if self.__git_connector_for_project_files and self.__owns_git_connector_for_project_files:
             await self.__git_connector_for_project_files.close()
@@ -1153,81 +1142,6 @@ class ProjectManager:
             )
 
         return cast("T", secret)
-
-    def _get_expected_secrets(
-        self, deployment_name: str, deployment: dict[str, Any], project_data: dict[str, Any]
-    ) -> dict[str, str]:
-        """
-        Determine which secrets should be referenced in deployment based on:
-        - Services used (database, keycloak, minio)
-        - User environment variables from components
-
-        This is used to build the envFrom list in deployment manifests, ensuring
-        all required secrets are referenced even if they're not in the _secrets_to_create map.
-
-        Args:
-            deployment_name: Name of the deployment
-            deployment: Deployment configuration
-            project_data: Full project configuration
-
-        Returns:
-            Dictionary mapping secret_type to secret_name
-            Example: {"database": "deployment1-database", "keycloak": "deployment1-keycloak"}
-        """
-        expected_secrets = {}
-
-        # Check all components in this deployment to determine which services are used
-        components = deployment.get("components", [])
-
-        # Track which services are used across all components
-        uses_postgresql = False
-        uses_minio = False
-        uses_sso = False
-
-        for component in components:
-            component_reference = component.get("reference")
-            if not component_reference:
-                continue
-
-            # Check services used by this component
-
-            component = self._project_file_handler._find_component(project_data, component_reference)
-            all_services = extract_service_names_from_component(component) if component else []
-
-            # Check for each service type
-            # Check for both postgresql-database (shared) and namespace-postgresql-database (dedicated)
-            if (
-                ServiceType.POSTGRESQL_DATABASE.value in all_services
-                or ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value in all_services
-            ):
-                uses_postgresql = True
-
-            if ServiceType.MINIO_STORAGE.value in all_services:
-                uses_minio = True
-
-            if ServiceType.KEYCLOAK.value in all_services:
-                # TODO: fix this, using keycloak only is sso if the configuration is provided for it
-                uses_sso = True
-
-        # Build expected secrets based on services used
-        if uses_postgresql:
-            expected_secrets["database"] = DatabaseSecret.get_secret_name(deployment_name)
-            logger.debug(f"Deployment {deployment_name} expects database secret")
-
-        if uses_minio:
-            expected_secrets["minio"] = MinIOSecret.get_secret_name(deployment_name)
-            logger.debug(f"Deployment {deployment_name} expects MinIO secret")
-
-        if uses_sso:
-            expected_secrets["keycloak"] = KeycloakSecret.get_secret_name(deployment_name)
-            logger.debug(f"Deployment {deployment_name} expects Keycloak secret")
-
-        # Note: User secrets are per-component, not per-deployment
-        # They will be added during component processing
-
-        logger.info(f"Expected secrets for deployment {deployment_name}: {list(expected_secrets.keys())}")
-
-        return expected_secrets
 
     def _get_service_category_name(self, service_type: ServiceType) -> str:
         """
@@ -2070,7 +1984,6 @@ class ProjectManager:
         self.__deployment_workspaces = {}
         self.__deployment_workspaces_by_remote = {}
 
-    # TODO: we may want to process a file anyway
     async def has_deployments_for_current_cluster(self) -> bool:
         """Check if project has any deployments for the current cluster."""
         current_cluster_deployments = await self.get_deployments(cluster_filter=True)
@@ -3569,7 +3482,6 @@ class ProjectManager:
                 git_connector_for_project_files = await self.get_git_connector_for_project_files()
 
                 # Use the file handler to analyze changes
-                # TODO: change detection may turn out too difficult or unpredictable, so perhaps we should use API calls instead for partial changes
                 analysis = await self._project_file_handler.analyze_project_changes(
                     git_connector_for_project_files, relative_project_file_path
                 )
@@ -4553,7 +4465,6 @@ class ProjectManager:
         # De stap begint en eindigt in een keer, want het werk is al gedaan.
         self._end_step(self._begin_step(steps.running_sync_terminated(terminated)))
 
-    # TODO: maybe this should be moved to project_file manager
     async def get_repository_path(self, repository_name: str) -> str | None:
         project_data = await self.get_contents()
         repositories = project_data.get("repositories") or []
@@ -6217,26 +6128,12 @@ class ProjectManager:
             process_base = self.__contents_as_read
             self._process_run = (project_data, process_base)
 
-            # # 1.5. Create configuration handler to collect deployment info
-            # config_handler = create_configuration_handler(project_name, self.project_data)
-
             # 2. Extract changes (dummy for now - all marked as "added")
             self._extract_added_changes(project_data)
-
-            # TODO: most likely remove creating repositories
-            # 3. Process repositories
-            # repositories = self._get_project_repositories(added_changes)
-            # missing_repos = await self._get_missing_repositories(repositories)
-            # if missing_repos and not await self._create_repositories(missing_repos, project_data):
-            #     logger.error("Failed to create repositories, aborting")
-            #     return False
-
-            # TODO: consider checking if a deployment needs to be done for this cluster instead of checking per method call
 
             self._begin_phase(steps.PHASE_CONFIGURATION)
 
             # Create namespaces first (always first task)
-            # TODO: move methods to a kubernetes manager?
             await self.check_and_create_namespaces(deployment_names=targets)
             await self.check_and_create_sops_secrets_in_namespaces(deployment_names=targets)
 
@@ -6393,8 +6290,6 @@ class ProjectManager:
             return False
         finally:
             self._process_run = None
-            # TODO: we may need to close it here, but the project manager is still used in a flow which should change
-            # await self.close()
 
     async def _record_reconciliation(
         self,
@@ -6932,11 +6827,6 @@ class ProjectManager:
                         logger.debug(f"Substituted variable references in a user-env-var of {component_name}")
                 user_env_vars = substituted_user_env_vars
 
-            # # IMPORTANT: Add component FIRST to prevent fallback creation with namespace=None
-            # if config_handler:
-            #     logger.debug(f"Config DEBUG: Adding component {component_name} with namespace: {namespace}")
-            #     config_handler.add_component(component_name, "component", namespace)
-
             # Service contributions (envFrom, sidecars, template vars, secret files) are
             # driven generically off the provider registry (RC-5 Phase 6). Only the
             # auth-wall observability log below still needs an explicit flag.
@@ -7073,40 +6963,6 @@ class ProjectManager:
             }
 
             logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")
-
-            # Collect additional configuration information if handler is provided
-            # if config_handler:
-            # Component was already added above before SSO processing
-
-            # Add environment variables
-            # for env_key, env_value in env_vars.items():
-            #     config_handler.add_env_var(component_name, env_key, str(env_value))
-            #
-            # # Add web address (hostname) only if publish-on-web is enabled
-            # if publish_on_web:
-            #     web_address = f"https://{hostname}"
-            #     logger.info(f"Adding web address to config: {component_name} -> {web_address}")
-            #     config_handler.add_web_address(component_name, web_address)
-            # else:
-            #     logger.debug(f"Skipping web address for {deployment_name}-{component_name} (publish-on-web: false)")
-
-            # Add storage configuration
-            # for storage_config in processed_storage_configs:
-            #     config_handler.add_storage_config(
-            #         component_name,
-            #         "pvc",
-            #         {
-            #             "name": storage_config.get("name"),
-            #             "mount_path": storage_config.get("mount-path"),
-            #             "size": storage_config.get("size"),
-            #             "access_mode": storage_config.get("access-mode"),
-            #         },
-            #     )
-
-            # Add custom configuration
-            # config_handler.add_custom_config(component_name, "image", image_url)
-            # config_handler.add_custom_config(component_name, "port", application_port)
-            # config_handler.add_custom_config(component_name, "unique_name", unique_name)
 
             # Merge each service's manifest contribution into the template context
             # (RC-5 Phase 6b). The contributions were collected once, above, before the
@@ -7855,7 +7711,6 @@ class ProjectManager:
         self._pending_subdomain_rollback = None
         return created_files
 
-    # TODO: this should be moved to manifests.py
     async def create_kustomization_file(
         self,
         git_connector: GitRepoWorkspace,
@@ -7944,29 +7799,6 @@ class ProjectManager:
         if record_base:
             self.__contents_as_read = copy.deepcopy(data)
         return data
-
-    async def get_decrypted_view(self) -> dict[str, Any]:
-        """
-        Return a throwaway deep copy of the project data with all AGE-encrypted
-        values decrypted. This is for display purposes only -- the returned dict
-        must never be stored or written back to git.
-        """
-        import copy
-
-        project_data = await self.get_contents(record_base=False)
-        view = copy.deepcopy(project_data)
-
-        try:
-            private_key = await get_decoded_project_private_key(project_data)
-        except Exception as e:
-            logger.warning(f"Could not get project private key for decrypted view: {e}")
-            return view
-
-        if not private_key:
-            return view
-
-        await decrypt_tree(view, private_key)
-        return view
 
     async def _get_by_json_path(self, json_path: str) -> Any:
         """
@@ -10099,40 +9931,6 @@ class ProjectManager:
         """
         return validate_component_references(project_data, components, context)
 
-    async def update_project_field_by_path(
-        self, project_name: str, json_path: str, new_value: Any, commit_message: str
-    ) -> bool:
-        """
-        Update a specific field in a project file using JSON path and commit the change.
-
-        Args:
-            project_name: Name of the project
-            json_path: JSON path to the field (e.g., "deployments[?(@.name=='api')].components[?(@.reference=='backend')].image")
-            new_value: New value to set
-            commit_message: Commit message for the change
-
-        Returns:
-            True if update was successful, False otherwise
-        """
-        try:
-            project_data = await self.get_contents()
-            jsonpath_expr = compiled_jsonpath(json_path)
-            matches = jsonpath_expr.find(project_data)
-
-            if not matches:
-                logger.error(f"JSON path '{json_path}' not found in project {project_name}")
-                return False
-
-            # Update the first match (there should typically be only one)
-            matches[0].full_path.update(project_data, new_value)
-
-            logger.info(f"Successfully updated {json_path} in project {project_name}")
-            return True
-
-        except Exception as e:
-            logger.exception(f"Error updating project field for {project_name}: {e}")
-            return False
-
     async def find_value_by_jsonpath(self, json_path: str, default: Any = None) -> Any:
         """
         Retrieve a specific value from project configuration using JSONPath.
@@ -10156,157 +9954,6 @@ class ProjectManager:
         except Exception as e:
             logger.exception(f"Error extracting value from project at path '{json_path}': {e}")
             raise HTTPException(status_code=500, detail=f"Error extracting project value: {e!s}")
-
-    async def clone_deployment(
-        self, project_name: str, target_deployment_name: str, source_deployment_name: str, force_clone: bool = False
-    ) -> dict[str, Any]:
-        """
-        Clone resources from source deployment to target deployment.
-
-        This method orchestrates cloning of:
-        1. Database resources (schema, user, data)
-        2. MinIO resources (bucket, user, objects)
-
-        By default, cloning only happens on initial setup when target resources don't exist yet.
-        Use force_clone=True to clone even if target resources already exist.
-
-        Args:
-            project_name: Name of the project
-            target_deployment_name: Name of the target deployment
-            source_deployment_name: Name of the source deployment to clone from
-            force_clone: If True, clone even if target resources already exist (default: False)
-
-        Returns:
-            Dictionary containing clone results and status
-
-        Raises:
-            HTTPException: If critical operations fail
-        """
-        clone_results = {
-            "project": project_name,
-            "source_deployment": source_deployment_name,
-            "target_deployment": target_deployment_name,
-            "operations": [],
-            "success": True,
-            "errors": [],
-        }
-
-        logger.info(
-            f"Starting clone operation: {source_deployment_name} -> {target_deployment_name} for project {project_name}"
-        )
-
-        try:
-            # Load project data
-            project_data = await self.config_handler.get_project_file_content(project_name)
-            if not project_data:
-                raise HTTPException(status_code=404, detail=f"Project {project_name} not found")
-
-            # Find target deployment using helper method
-            target_deployment = await self.get_deployment_by_name(target_deployment_name)
-
-            if not target_deployment:
-                raise HTTPException(status_code=404, detail=f"Target deployment {target_deployment_name} not found")
-
-            # Verify source deployment exists using helper method
-            source_deployment = await self.get_deployment_by_name(source_deployment_name)
-
-            if not source_deployment:
-                raise HTTPException(status_code=404, detail=f"Source deployment {source_deployment_name} not found")
-
-            # Clone database resources if target deployment uses PostgreSQL
-            if await self.database_manager._deployment_uses_postgresql(project_data, target_deployment_name):
-                try:
-                    logger.info(f"Cloning database resources from {source_deployment_name} to {target_deployment_name}")
-                    await self.database_manager.clone_database_from_deployment(
-                        project_data, target_deployment, source_deployment_name, force_clone
-                    )
-                    clone_results["operations"].append(
-                        {
-                            "type": "database_clone",
-                            "status": "success",
-                            "message": f"Successfully cloned database from {source_deployment_name}",
-                        }
-                    )
-                except Exception as e:
-                    logger.exception(f"Failed to clone database resources: {e}")
-                    clone_results["errors"].append(f"Database clone failed: {e}")
-                    clone_results["operations"].append({"type": "database_clone", "status": "failed", "error": str(e)})
-
-            # Clone MinIO resources if target deployment uses MinIO
-            if await self._minio_manager._deployment_uses_minio(project_data, target_deployment_name):
-                try:
-                    logger.info(f"Cloning MinIO resources from {source_deployment_name} to {target_deployment_name}")
-                    await self._minio_manager.clone_minio_from_deployment(
-                        project_data, target_deployment, source_deployment_name
-                    )
-                    clone_results["operations"].append(
-                        {
-                            "type": "minio_clone",
-                            "status": "success",
-                            "message": f"Successfully cloned MinIO from {source_deployment_name}",
-                        }
-                    )
-                except Exception as e:
-                    logger.exception(f"Failed to clone MinIO resources: {e}")
-                    clone_results["errors"].append(f"MinIO clone failed: {e}")
-                    clone_results["operations"].append({"type": "minio_clone", "status": "failed", "error": str(e)})
-
-            # Update success status based on errors
-            clone_results["success"] = len(clone_results["errors"]) == 0
-
-            if clone_results["success"]:
-                logger.info(
-                    f"Clone operation completed successfully: {source_deployment_name} -> {target_deployment_name}"
-                )
-            else:
-                logger.warning(f"Clone operation completed with errors: {clone_results['errors']}")
-
-            return clone_results
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Error during clone operation: {e}")
-            raise HTTPException(status_code=500, detail=f"Clone operation failed: {e!s}") from e
-
-    async def validate_project_api_key(self, project_name: str, provided_api_key: str) -> bool:
-        """
-        Validate that the provided API key matches the project's API key.
-
-        This method uses the reusable encrypted value retrieval system to get and decrypt
-        the project's API key, then compares it with the provided key.
-
-        Args:
-            project_name: Name of the project
-            provided_api_key: API key provided in the request header
-
-        Returns:
-            True if the API key is valid
-
-        Raises:
-            HTTPException: If project not found or API key is invalid
-        """
-        try:
-            # Get the raw API key value
-            raw_api_key = await self.find_value_by_jsonpath(project_name, "config.api-key")
-            if raw_api_key is None:
-                raise HTTPException(status_code=404, detail=f"No API key found for project '{project_name}'")
-
-            # Use the smart decryption logic from age.py
-            decrypted_api_key = await decrypt_password_smart_auto(str(raw_api_key))
-
-            # Compare API keys
-            if not secrets.compare_digest(decrypted_api_key, provided_api_key):
-                raise HTTPException(status_code=401, detail="Invalid project API key")
-
-            logger.debug(f"Project API key validated successfully for project: {project_name}")
-            return True
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception(f"Error validating project API key for {project_name}: {e}")
-            raise HTTPException(status_code=500, detail=f"Error validating project API key: {e!s}") from e
 
     # Manual external cloning methods (for direct API operations)
     async def clone_database_from_external_with_tunnel(

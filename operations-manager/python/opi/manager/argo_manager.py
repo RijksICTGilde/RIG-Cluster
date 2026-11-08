@@ -441,55 +441,6 @@ class ArgoManager:
             "ssh_private_key": ssh_private_key,
         }
 
-    async def generate_repository_manifest(
-        self, name: str, namespace: str, repository: dict[str, Any], repo_type: str, project_name: str
-    ) -> str:
-        """
-        Generate an ArgoCD repository manifest using the template file.
-
-        Supports both SSH and HTTPS authentication methods.
-
-        Args:
-            name: Repository name
-            namespace: ArgoCD namespace
-            repository: Repository configuration dictionary
-            repo_type: Repository type (e.g., "git")
-            project_name: Project name to make URL unique
-
-        Returns:
-            String containing the YAML manifest
-        """
-        repository_url = repository.get("url", "")
-
-        # Prepare variables with unique URL
-        variables = await self.prepare_repository_variables(name, namespace, repository, repo_type, project_name)
-
-        # Choose template based on authentication method
-        is_https = repository_url.startswith("https://")
-
-        if is_https:
-            # Use HTTPS template for all HTTPS repositories
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "argo-repository-https.yaml.jinja")
-            logger.info(
-                f"Using HTTPS template for repository {name} (credentials: "
-                f"{'YES' if variables.get('username') and variables.get('password') else 'NO'})"
-            )
-        else:
-            # Use SSH template for SSH and git:// repositories
-            manifest_path = os.path.join(settings.MANIFESTS_PATH, "argo-repository.yaml.jinja")
-            logger.info(f"Using SSH template for repository {name}")
-
-        # Read and process the manifest template
-        try:
-            with open(manifest_path) as f:
-                manifest_template = f.read()
-
-            # Process the template with the variables
-            return self.project_manager._manifest_generator.template_manifest(manifest_template, variables)
-        except Exception:
-            logger.exception("Error generating ArgoCD repository manifest")
-            raise
-
     async def create_app_projects(
         self,
         project_data: dict[str, Any],

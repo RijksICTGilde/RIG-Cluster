@@ -448,7 +448,6 @@ class ManifestGenerator:
             ]
 
             # Remove project_name from paths if provided (for structure: given_path/project_name/deployment_name/)
-            # TODO: why would we do this?
             if project_name:
 
                 def remove_project_from_path(file_path: str) -> str:
@@ -473,7 +472,6 @@ class ManifestGenerator:
             logger.error(f"Error collecting manifest files: {e}")
             return [], []
 
-    # TODO: this logic is in the cluster config and should be retrieved from there
     def _determine_namespace_with_prefix(
         self, namespace: str | None, deployment: dict[str, Any] | None = None
     ) -> str | None:
@@ -674,17 +672,3 @@ class ManifestGenerator:
         except Exception as e:
             logger.error(f"Error in generate_manifests_with_kustomization: {e}")
             return False
-
-
-def create_manifest_generator(kubectl_connector=None) -> ManifestGenerator:
-    """
-    Create and return a ManifestGenerator instance.
-
-    Args:
-        kubectl_connector: Optional kubectl connector for advanced templating
-
-    Returns:
-        ManifestGenerator instance
-    """
-    logger.debug("Creating ManifestGenerator")
-    return ManifestGenerator()

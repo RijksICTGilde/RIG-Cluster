@@ -76,7 +76,8 @@ class ComponentFormModel(BaseModel):
         ),
     ] = Field(default=None, ge=1, le=65535)
 
-    # TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
+    # What image means on a top-level component is undecided; see
+    # features/component-image-field-clarification.md.
     image: Annotated[
         str,
         FormMeta(

@@ -713,7 +713,6 @@ def create_test_app():
                 "opi.connectors.argo.create_argo_connector",
                 return_value=MagicMock(ensure_authenticated=AsyncMock(return_value=False)),
             ),
-            patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
             # version_of() clones the real repo, hier niet beschikbaar. Stand-in: een vaste
             # geldige blob-SHA (40 hex per _BLOB_SHA_RE); de nagemaakte save negeert hem.

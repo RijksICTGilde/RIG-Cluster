@@ -52,35 +52,6 @@ class BackupResultModel(BaseModel):
     duration_seconds: float = 0
 
 
-class BackupResponse(BaseModel):
-    """Response for backup operations."""
-
-    status: OperationStatus = Field(..., description="Operation status: success, partial, or failed")
-    message: str = Field(..., description="Human-readable message")
-    results: list[BackupResultModel] = Field(
-        default_factory=lambda: list[BackupResultModel](),
-        description="Backup results for each PVC",
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "status": "success",
-                "message": "Backed up 2 PVC(s) in namespace project-alpha",
-                "results": [
-                    {
-                        "namespace": "project-alpha",
-                        "pvc_name": "app-data",
-                        "success": True,
-                        "snapshot_name": "app-data-backup-20250112-143022",
-                        "duration_seconds": 45.3,
-                    }
-                ],
-            }
-        }
-    }
-
-
 class BackupStatusResponse(BaseModel):
     """Response for backup status."""
 
@@ -187,14 +158,6 @@ class DatabaseBackupResultModel(BaseModel):
     duration_seconds: float = 0
 
 
-class DatabaseBackupResponse(BaseModel):
-    """Response for database backup operations."""
-
-    status: OperationStatus = Field(..., description="Operation status: success or failed")
-    message: str = Field(..., description="Human-readable message")
-    result: DatabaseBackupResultModel
-
-
 # Bucket Backup Models
 
 
@@ -209,14 +172,6 @@ class BucketBackupResultModel(BaseModel):
     use_kopia: bool = True
     error: str | None = None
     duration_seconds: float = 0
-
-
-class BucketBackupResponse(BaseModel):
-    """Response for bucket backup operations."""
-
-    status: OperationStatus = Field(..., description="Operation status: success or failed")
-    message: str = Field(..., description="Human-readable message")
-    result: BucketBackupResultModel
 
 
 # Deployment Backup Request Model

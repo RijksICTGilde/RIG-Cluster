@@ -87,7 +87,6 @@ opi/
 |
 |-- handlers/              # Request processing
 |   |-- project_file_handler.py # Project file CRUD
-|   |-- configuration_handler.py # Config management
 |   +-- sops.py            #   SOPS-specific handling
 |
 |-- middleware/            # HTTP middleware

@@ -348,8 +348,7 @@
       "comment-heavy-functions": 1
     },
     "opi/forms/extractor.py": {
-      "dutch-comments": 2,
-      "comment-heavy-functions": 1
+      "dutch-comments": 2
     },
     "opi/forms/layout.py": {
       "dutch-comments": 2
@@ -632,7 +631,7 @@
     },
     "opi/services/catalog/image_registries/naming.py": {
       "dutch-identifiers": 1,
-      "dutch-comments": 20
+      "dutch-comments": 19
     },
     "opi/services/catalog/image_registries/ownership.py": {
       "dutch-comments": 10
@@ -1108,7 +1107,7 @@
       "comment-heavy-functions": 1
     },
     "opi/utils/sops.py": {
-      "dutch-comments": 10
+      "dutch-comments": 5
     },
     "opi/utils/subprocess_env.py": {
       "dutch-comments": 8
@@ -1142,7 +1141,7 @@
     },
     "opi/web/lotc_switch.py": {
       "dutch-identifiers": 34,
-      "dutch-comments": 174,
+      "dutch-comments": 173,
       "comment-heavy-functions": 1
     },
     "opi/web/menu.py": {
@@ -3020,8 +3019,8 @@
       "dutch-comments": 11
     },
     "tests/test_kubectl_connector.py": {
-      "dutch-identifiers": 5,
-      "dutch-comments": 4
+      "dutch-identifiers": 4,
+      "dutch-comments": 3
     },
     "tests/test_kyverno_en_falco_schotten.py": {
       "dutch-identifiers": 12,
@@ -3131,7 +3130,7 @@
     },
     "tests/test_lotc_geen_rvo_resten.py": {
       "dutch-identifiers": 15,
-      "dutch-comments": 27
+      "dutch-comments": 25
     },
     "tests/test_lotc_geheimveld_vorm.py": {
       "dutch-identifiers": 13,
@@ -3459,7 +3458,7 @@
       "dutch-comments": 2
     },
     "tests/test_platformsleutel_als_bestand.py": {
-      "dutch-identifiers": 37,
+      "dutch-identifiers": 35,
       "dutch-comments": 23
     },
     "tests/test_pod_security_labels.py": {

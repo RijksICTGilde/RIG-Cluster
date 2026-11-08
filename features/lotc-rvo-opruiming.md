@@ -129,8 +129,8 @@ als de grijstrap-vraag hierboven beantwoord is; en wat de pagina daarna nog is, 
 inline styles in een enkel blok. Dat is een pagina om opnieuw te bouwen op componenten, en
 dat is een eigen opdracht.
 
-Tot dat gebeurt staat hij als uitzondering in `tests/test_lotc_geen_rvo_resten.py`, met
-zijn aantallen erbij, zodat de uitzondering zichtbaar is en niet stilzwijgend.
+Met RC-441 is de pagina weggehaald in plaats van vervangen: ze hing aan geen enkele
+route. De uitzondering in `tests/test_lotc_geen_rvo_resten.py` is daarmee ook weg.
 
 ### De 41 onbereikbare templates
 
@@ -139,9 +139,11 @@ eigen besluit over dode templates. Ze staan hier op een lijst en zijn verder nie
 aangeraakt; hun aantallen staan in de guard-test, zodat een van deze bestanden niet
 stilletjes weer in gebruik genomen wordt met zijn rvo-klassen erin.
 
+Dat besluit is met RC-441 voor een deel genomen: vijftien van deze bestanden zijn
+weggehaald, en hun regels in de guard-test ermee.
+
 De zwaarste zijn `project-details/_argocd-deployment-card.html.j2` (27),
-`wizard/partials/approval_items.html.j2` (13), `formulier-template.html.j2` (13),
-`wizard/partials/backup_select_deployment.html.j2` (12)
+`wizard/partials/approval_items.html.j2` (13), `formulier-template.html.j2` (13)
 en `project-details/_resource-usage.html.j2` (12). De volledige lijst met aantallen staat
 in `NOG_MET_KLASSEN` in de guard-test.
 

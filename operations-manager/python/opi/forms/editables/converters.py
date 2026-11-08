@@ -250,23 +250,6 @@ class ServiceListConverter:
         return self.read(value)
 
 
-class NewlineSeparatedListConverter:
-    """Converts list to/from newline-separated string."""
-
-    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        if isinstance(value, list):
-            return "\n".join(str(v) for v in value)
-        return str(value or "")
-
-    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> list[str]:
-        if isinstance(value, list):
-            return value
-        return [line.strip() for line in str(value).split("\n") if line.strip()]
-
-    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
-        return self.read(value)
-
-
 class IntegerConverter:
     """Converts a single integer to/from string for text input."""
 

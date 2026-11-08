@@ -128,26 +128,6 @@ class UserService:
 
         return "Unknown User"
 
-    def get_users_by_organization(self, organization_name: str) -> dict[str, dict[str, Any]]:
-        """
-        Get all users belonging to a specific organization.
-
-        Args:
-            organization_name: Name of the organization
-
-        Returns:
-            Dictionary mapping email addresses to user information for users in the organization
-        """
-        matching_users = {}
-
-        for email, user_info in self._users.items():
-            org_info = user_info.get("organization", {})
-            if org_info.get("name") == organization_name:
-                matching_users[email] = user_info
-
-        logger.debug(f"Found {len(matching_users)} users in organization '{organization_name}'")
-        return matching_users
-
     def get_organization_stats(self) -> dict[str, Any]:
         """
         Get statistics about organizations and users.
@@ -238,22 +218,6 @@ class UserService:
         del self._users[email_key]
         logger.info(f"Removed user: {email}")
         return True
-
-    def get_all_users(self) -> dict[str, dict[str, Any]]:
-        """
-        Get all stored users.
-
-        Returns:
-            Dictionary mapping email addresses to user information
-        """
-        logger.debug(f"Retrieved all users - count: {len(self._users)}")
-        return self._users.copy()
-
-    def clear_all_users(self) -> None:
-        """Clear all stored users (mainly for testing purposes)."""
-        user_count = len(self._users)
-        self._users.clear()
-        logger.info(f"Cleared all users from memory - removed {user_count} users")
 
     # Email Access Control Methods
 
@@ -355,12 +319,6 @@ class UserService:
             List of allowed email addresses
         """
         return sorted(self._allowed_emails)
-
-    def clear_allowed_emails(self) -> None:
-        """Clear all allowed emails (mainly for testing purposes)."""
-        email_count = len(self._allowed_emails)
-        self._allowed_emails.clear()
-        logger.info(f"Cleared all allowed emails - removed {email_count} emails")
 
     def get_access_stats(self) -> dict[str, Any]:
         """

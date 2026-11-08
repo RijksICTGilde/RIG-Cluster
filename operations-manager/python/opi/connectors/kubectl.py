@@ -119,7 +119,6 @@ class KubectlExecutionError(Exception):
     """Exception raised when kubectl command execution fails."""
 
 
-# TODO: consider using the kubernetes API instead of kubectl commands
 class KubectlConnector:
     """Connector for interacting with Kubernetes clusters using kubectl."""
 
@@ -1199,45 +1198,6 @@ class KubectlConnector:
             logger.debug(f"Capsule tenant label not yet present on namespace '{namespace}', waiting...")
             await asyncio.sleep(poll_interval)
 
-    async def encrypt_file_with_sops(self, file_path: str, public_key: str, output_path: str) -> bool:
-        """
-        Encrypt a file using SOPS with the specified AGE public key.
-
-        Args:
-            file_path: Path to the file to encrypt
-            public_key: The AGE public key for encryption
-            output_path: Path where the encrypted file should be saved
-
-        Returns:
-            True if the file was encrypted successfully, False otherwise
-        """
-        logger.debug(f"Encrypting file {file_path} with SOPS")
-
-        try:
-            # Run SOPS encrypt command
-            args = ["sops", "--encrypt", "--age", public_key, file_path]
-
-            process = await asyncio.create_subprocess_exec(
-                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=self.env
-            )
-
-            stdout, stderr = await process.communicate()
-
-            if process.returncode != 0:
-                logger.error(f"Failed to encrypt file with SOPS: {stderr.decode()}")
-                return False
-
-            # Write the encrypted content to the output file
-            with open(output_path, "w") as f:
-                f.write(stdout.decode())
-
-            logger.info(f"Successfully encrypted file: {output_path}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error encrypting file with SOPS: {e}")
-            return False
-
     async def apply_labels_to_resource(
         self,
         resource_type: str,
@@ -1983,7 +1943,6 @@ class KubectlConnector:
             return []
 
 
-# TODO: remove this method and make direct calles to create KubectlConnector()
 def create_kubectl_connector() -> KubectlConnector:
     """
     Create and return a KubectlConnector instance.

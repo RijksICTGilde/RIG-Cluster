@@ -45,7 +45,6 @@ SEAWEEDFS_OPS_EGRESS = {
     "ports": [SEAWEEDFS_S3_PORT],
 }
 
-# TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
     "local": {
         # Development offers a choice of target clusters in the create wizard; production
@@ -280,7 +279,6 @@ CLUSTER_CONFIG = {
         },
         "ingress": {
             "enable_tls": True,
-            # "cluster_issuer": "letsencrypt-production",  # TODO: verify correct issuer name
             "ip_whitelist": "0.0.0.0/0,::/0",  # VPN only: "147.181.0.0/16"
         },
         "storage": {

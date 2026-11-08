@@ -434,19 +434,6 @@ class GrafanaPrometheusConnector:
 
         return all_results
 
-    def _convert_grafana_response(self, grafana_result: dict[str, Any], instant: bool = True) -> list[dict[str, Any]]:
-        """
-        Convert Grafana API response to Prometheus API format.
-
-        Grafana returns data in a different format than the Prometheus API.
-        This method converts it to match the prometheus_api_client format.
-        """
-        batch = self._convert_batch_grafana_response(grafana_result, grafana_result.get("results", {}).keys(), instant)
-        results: list[dict[str, Any]] = []
-        for ref_results in batch.values():
-            results.extend(ref_results)
-        return results
-
     def _convert_frames(self, frames: list[dict[str, Any]], instant: bool) -> list[dict[str, Any]]:
         """Convert Grafana data frames to Prometheus API format."""
         results: list[dict[str, Any]] = []

@@ -101,8 +101,7 @@ Niet overgenomen: de pagina was 1999 regels Engels, met `rvo-`klassen waar in de
 geen regel bij hoort (`base.css` komt niet mee), 85 inline stijlen, een `mermaid`-script van
 een CDN, en een hero die niets rendert. Dat is geen lange pagina maar een pagina uit een
 ander systeem; er valt niets aan te knippen. Het bestand
-(`opi/templates_lotc/architecture-overview.html.j2`) staat er nog en heeft nog steeds geen
-route.
+(`opi/templates_lotc/architecture-overview.html.j2`) is met RC-441 weggehaald.
 
 Ook niet overgenomen: de promotievideo (`static/promo.mp4`) en de wolkenfoto
 (`static/cloud.jpg`). Van de video kan niemand zeggen welke versie van het platform erin te

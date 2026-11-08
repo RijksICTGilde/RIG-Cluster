@@ -43,7 +43,8 @@ COMPONENT_DESCRIPTION_EDITABLE = Editable(
     remove_when_none=True,
 )
 
-# TODO: clarify purpose of image on top-level components — see features/component-image-field-clarification.md
+# What image means on a top-level component is undecided; the trade-off is in
+# features/component-image-field-clarification.md.
 COMPONENT_IMAGE_EDITABLE = Editable(
     yaml_path="components[*]/image",
     validator=ContainerImageValidator(),

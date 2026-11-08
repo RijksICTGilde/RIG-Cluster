@@ -172,21 +172,6 @@ class PersistentTaskProgressManager:
                 logger.exception("Failed final flush during close for task %s", self._task_id)
 
     # ------------------------------------------------------------------
-    # Legacy compat helpers
-    # ------------------------------------------------------------------
-
-    def _update_legacy_project(self) -> None:
-        """Sync relevant fields back into the legacy _projects dict."""
-        project = _projects.get(self._task_id)
-        if project is None:
-            return
-        project.current_step = self._current_step
-        project.logs = self._logs or None
-        project.events = self._events or None
-        project.web_addresses = self._web_addresses or None
-        project.namespace = self._namespace
-
-    # ------------------------------------------------------------------
     # Public interface -- mirrors TaskProgressManager
     # ------------------------------------------------------------------
 

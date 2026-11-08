@@ -550,7 +550,6 @@ class GitConnector:
         logger.debug(f"Using branch: {self.branch}")
 
         # Set up working directory
-        # TODO: rethink cleanup logic!
         if working_dir:
             self.__working_dir = working_dir
             self.should_cleanup = False
@@ -1495,26 +1494,6 @@ class GitConnector:
 
         logger.debug(f"Successfully deleted and staged file {file_path}")
 
-    async def delete_folder(self, folder_path: str) -> None:
-        """
-        Delete a folder and all its contents, staging all deletions.
-
-        Args:
-            folder_path: Path to the folder relative to the repository root
-        """
-        logger.debug(f"Deleting folder: {folder_path}")
-
-        # Ensure the repository is cloned
-        await self.ensure_repo_cloned()
-
-        # Use git rm -rf to remove folder and stage all deletions (force needed
-        # because earlier steps in a workflow may have modified files)
-        rm_cmd = ["rm", "-rf", self._get_full_path(folder_path)]
-        stdout, stderr, code = await self._run_git_command(rm_cmd, cwd=self.__working_dir)
-        self._check_git_command_result(code, stderr, f"delete folder {folder_path}")
-
-        logger.debug(f"Successfully deleted and staged folder {folder_path}")
-
     async def read_file(self, file_path: str) -> str:
         """
         Read a file from the repository.
@@ -1739,30 +1718,6 @@ class GitConnector:
         abs_path = self.get_absolute_file_path(file_path)
         return os.path.exists(abs_path)
 
-    async def check_overwrite_project_file(self, file_path: str) -> None:
-        """
-        Check if a project file can be overwritten based on settings.
-
-        Raises an exception if the file exists and overwriting is not allowed.
-        Does nothing if overwriting is allowed or file doesn't exist.
-
-        Args:
-            file_path: Path to the project file relative to the repository root
-
-        Raises:
-            RuntimeError: If file exists and ALLOW_PROJECTFILES_OVERWRITE is False
-        """
-        from opi.core.config import settings
-
-        if await self.file_exists(file_path):
-            if not settings.ALLOW_PROJECTFILES_OVERWRITE:
-                # Extract project name from file path (e.g., "projects/myproject.yaml" -> "myproject")
-                project_name = os.path.splitext(os.path.basename(file_path))[0]
-                raise RuntimeError(
-                    f"Project '{project_name}' already exists. Set ALLOW_PROJECTFILES_OVERWRITE=True to allow overwriting existing projects."
-                )
-            logger.warning(f"Overwriting existing project file: {file_path}")
-
     async def has_changes(self) -> bool:
         """
         Check if there are any uncommitted changes in the repository.
@@ -1884,7 +1839,6 @@ class GitConnector:
         logger.debug(f"Successfully committed changes: {message}")
         return True
 
-    # TODO: update push changes to handle rebase, and if rebase fails, commit and push to temporary branch
     async def push_changes(self, branch: str | None = None, max_retries: int = 5, allow_rebase: bool = True) -> None:
         """
         Push committed changes to remote repository.
@@ -1998,10 +1952,10 @@ class GitConnector:
         ``--filter=blob:none`` clone). On a ``--depth 1`` clone ``git log`` sees only one
         commit and this returns None.
 
-        TODO: this reconstructs from git what we already knew at mutation time. The robust
-        approach is to pass the pre-change project state from the mutation (add/delete/update
-        component, wizard save) into generation instead of diffing git history. Tracked in
-        #161; this git-diff path stays while changes still arrive via raw git.
+        This reconstructs from git what the mutation already knew. Passing the pre-change
+        project state from the mutation (add/delete/update component, wizard save) into
+        generation would be robuster; tracked in #161. This git-diff path stays while
+        changes still arrive via raw git.
 
         Args:
             file_path: Path to the file within the repository
@@ -2285,8 +2239,7 @@ class GitConnector:
         if self._closed:
             return
         self._closed = True
-        # TODO: rethink cleanup logic.. for now, we always remove the working directory on close
-        # if self.should_cleanup and self.working_dir and os.path.exists(self.working_dir):
+        # The working directory always goes at close, even when should_cleanup is False.
         # has_changes() kloont opnieuw en zou de clone-fout over de task-fout heen gooien.
         if self._repo_cloned and await self.has_changes():
             logger.warning(
@@ -2529,7 +2482,6 @@ async def create_git_connector_from_repo_config(
     )
 
 
-# TODO: replace factory method with direct calls to the GitConnector?
 async def create_git_connector_for_project_files(
     project_name: str, full_history: bool = True, working_dir: str | None = None
 ) -> GitConnector:

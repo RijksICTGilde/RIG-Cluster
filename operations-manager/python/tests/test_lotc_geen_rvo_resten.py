@@ -36,11 +36,6 @@ JINJA_COMMENT = re.compile(r"\{#.*?#\}", re.DOTALL)
 CLASS_ATTR = re.compile(r'class="([^"]*)"')
 VAR_RVO = re.compile(r"var\(\s*--rvo-")
 
-#: Wat fase 4 nog niet gedaan heeft: 158 klassen in de pagina die het LOTC-plan apart
-#: beoordeelt. Er 158 klassen uit poetsen vooruitlopend op een mogelijke vervanging is
-#: verspilde moeite, dus die staat hier tot dat besluit valt.
-ARCHITECTURE_OVERVIEW = "architecture-overview.html.j2"
-
 #: Bestanden die hun rvo-klassen nog dragen, met het aantal. Ze stonden hier als
 #: "vanaf geen enkele route bereikbaar": zolang roos bestond rendeerde de wizard zijn
 #: TemplatePartials en zijn bijlagenfragmenten uit de roos-boom, en waren deze
@@ -70,28 +65,20 @@ NOG_MET_KLASSEN = {
     "invite-register.html.j2": 2,
     "invite-success.html.j2": 3,
     "partials/deployment_metrics.html.j2": 3,
-    "project-creation-error.html.j2": 4,
-    "project-creation-partial.html.j2": 4,
-    "project-creation-result.html.j2": 3,
-    "project-creation-success.html.j2": 5,
     "wizard/modal_wizard_review.html.j2": 1,
     "wizard/partials/approval_items.html.j2": 12,
     "wizard/partials/attachments_list.html.j2": 6,
     "wizard/partials/attachments_upload.html.j2": 2,
-    "wizard/partials/backup_select_deployment.html.j2": 8,
     "wizard/partials/deployment_info.html.j2": 3,
     "wizard/partials/restore_select_backup.html.j2": 4,
     "wizard/partials/restore_select_target.html.j2": 9,
 }
 
-#: Zelfde opzet voor de ontwerpvariabelen. Die zijn geen dode letter maar een LEVENDE
-#: verwijzing: het shimblok onderaan static/css/lotc-app.css vult ze in. Wie er een
-#: weghaalt zonder vervanging, verandert een kleur of een afstand.
-KLASSEN_UITZONDERINGEN = {ARCHITECTURE_OVERVIEW: 158, **NOG_MET_KLASSEN}
-VARIABELEN_UITZONDERINGEN = {
-    ARCHITECTURE_OVERVIEW: 79,
-    "wizard/partials/backup_select_deployment.html.j2": 4,
-}
+#: Zelfde opzet voor de ontwerpvariabelen, en leeg sinds de laatste pagina met
+#: var(--rvo-)-verwijzingen weg is. Zet er een terug, en dat is geen dode letter maar een
+#: LEVENDE verwijzing: het shimblok onderaan static/css/lotc-app.css vult ze in, dus wie
+#: er een weghaalt zonder vervanging verandert een kleur of een afstand.
+VARIABELEN_UITZONDERINGEN: dict[str, int] = {}
 
 
 def _tel(patroon_teller) -> dict[str, int]:
@@ -119,7 +106,7 @@ def _vergelijk(gevonden: dict[str, int], verwacht: dict[str, int], wat: str) -> 
 
 def test_geen_nieuwe_rvo_klassen_in_de_lotc_templates() -> None:
     """Geen rvo-klasse in een class-attribuut, buiten de aftellijst."""
-    _vergelijk(_tel(_tel_klassen), KLASSEN_UITZONDERINGEN, "rvo-klassen")
+    _vergelijk(_tel(_tel_klassen), NOG_MET_KLASSEN, "rvo-klassen")
 
 
 def test_geen_nieuwe_rvo_variabelen_in_de_lotc_templates() -> None:
@@ -137,6 +124,6 @@ def test_de_bereikbare_templates_zijn_schoon() -> None:
     resten = {
         naam: aantal
         for naam, aantal in {**_tel(_tel_klassen), **_tel(lambda t: len(VAR_RVO.findall(t)))}.items()
-        if naam not in KLASSEN_UITZONDERINGEN and naam not in VARIABELEN_UITZONDERINGEN
+        if naam not in NOG_MET_KLASSEN and naam not in VARIABELEN_UITZONDERINGEN
     }
     assert not resten, f"rvo-resten buiten de aftellijst: {resten}"

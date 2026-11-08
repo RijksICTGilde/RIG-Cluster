@@ -59,9 +59,8 @@ laadt `base.css` niet en heeft wat het nodig heeft in zijn eigen bestand staan.
 - een element met twee `class`-attributen.
 
 Elke uitzondering staat in de test met de reden erbij, zodat hij zichtbaar is en niet
-stilzwijgend. Er zijn er nu twee soorten: `architecture-overview.html.j2`, dat in zijn
-geheel apart beoordeeld wordt, en zeven `style=`-attributen met een waarde die de template
-zelf uitrekent (de breedte van een voortgangsbalk, een kleur uit een servicedefinitie).
+stilzwijgend. Wat er nu staat zijn `style=`-attributen met een waarde die de template zelf
+uitrekent, zoals de breedte van een voortgangsbalk.
 
 ## Valkuilen bij ROOS-componenten
 
@@ -161,8 +160,7 @@ van de metrics explorer, en de tweede deployment op de detailpagina. De fixture
 
 `architecture-overview.html.j2` is niet aangeraakt: 1.500 regels in een blok met 85 inline
 styles en een eigen `<style>`. Dat is geen pagina om op te delen maar een om apart te
-beoordelen, en misschien te vervangen in plaats van te verbouwen. De uitzondering staat met
-die reden in de test.
+beoordelen. Met RC-441 is ze weggehaald, want ze hing aan geen enkele route.
 
 Componentnamen zijn ongemoeid gelaten. `c-p` blijft `c-p`; de hernoeming naar de
 LOTC-woordenschat is een eigen stap.

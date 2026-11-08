@@ -228,31 +228,6 @@ def get_database_pool(name: str = "main") -> DatabasePool:
     return pool
 
 
-def list_database_pools() -> dict[str, bool]:
-    """List all database pools and their initialization status.
-
-    Returns:
-        Dictionary mapping pool names to their initialization status
-    """
-    return {name: pool.is_initialized for name, pool in _pools.items()}
-
-
-def get_pool_stats(name: str = "main") -> dict[str, any]:
-    """Get detailed statistics for a specific database pool.
-
-    Args:
-        name: Name of the pool to get stats for
-
-    Returns:
-        Dictionary containing pool statistics
-    """
-    if name not in _pools:
-        return {"error": f"Pool '{name}' not found. Available pools: {list(_pools.keys())}"}
-
-    pool = _pools[name]
-    return pool.get_connection_stats()
-
-
 def get_all_pool_stats() -> dict[str, dict[str, any]]:
     """Get statistics for all database pools.
 
@@ -260,19 +235,6 @@ def get_all_pool_stats() -> dict[str, dict[str, any]]:
         Dictionary mapping pool names to their statistics
     """
     return {name: pool.get_connection_stats() for name, pool in _pools.items()}
-
-
-def log_active_connections_for_all_pools() -> None:
-    """Log active connection information for all pools."""
-    if not _pools:
-        logger.info("No database pools available")
-        return
-
-    logger.info("=== ACTIVE CONNECTION REPORT FOR ALL POOLS ===")
-    for name, pool in _pools.items():
-        logger.info(f"Pool '{name}':")
-        pool.log_active_connections()
-    logger.info("=== END ACTIVE CONNECTION REPORT ===")
 
 
 def log_active_connections(name: str = "main") -> None:

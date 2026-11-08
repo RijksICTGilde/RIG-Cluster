@@ -7,7 +7,6 @@ Pure logic module with no I/O - all data is passed in as arguments.
 import logging
 import math
 import re
-from dataclasses import dataclass
 from typing import Final
 
 logger = logging.getLogger(__name__)
@@ -19,20 +18,6 @@ logger = logging.getLogger(__name__)
 #: gelijk. Grenzen horen hier niet: die liggen per cluster (cluster_config) of per dienst
 #: (``QuantitySetting``).
 K8S_QUANTITY_PATTERN: Final[str] = r"^[0-9]+(\.[0-9]+)?([munk]|Ki|[MGTP]i?)?\Z"
-
-
-@dataclass
-class ResourceRecommendation:
-    """A recommendation for adjusting a component's resource limits."""
-
-    component: str
-    current_limits_memory: str
-    recommended_limits_memory: str
-    current_requests_memory: str
-    recommended_requests_memory: str
-    max_observed_memory_mb: float
-    has_oom_kills: bool
-    reason: str
 
 
 def parse_k8s_memory_to_mi(value: str) -> float:

@@ -8,7 +8,7 @@ setting up shared SOPS keys, and other initialization tasks.
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import aiohttp
 import httpx
@@ -47,7 +47,7 @@ from opi.core.platform_database_access import restrict_platform_databases
 from opi.core.project_schema import check_schema_versions
 from opi.core.version import set_running_image
 from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, SopsHandler
-from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.manager.project_manager import ProjectManager
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import SCHEMA_VERSIONS
@@ -236,84 +236,6 @@ Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
 # PROJECT_STORE_RECONCILE_INTERVAL_SECONDS) bounds how long such an edit --
 # notably an out-of-band revocation of a member or invite key -- can go unseen.
 # Both start with an ls-remote check so an idle tick costs nothing.
-
-
-async def ensure_project_sops_secrets(project_data: Any, kubectl: KubectlConnector) -> bool:
-    """
-    Ensure that all project namespaces have project-specific SOPS secrets.
-
-    This function:
-    1. Checks all project namespaces
-    2. For namespaces without SOPS secrets, creates project-specific keys
-    3. Preserves existing project-specific keys
-
-    Returns:
-        True if all operations were successful, False otherwise
-    """
-    logger.info("Ensuring project-specific SOPS secrets in project namespaces")
-
-    project_name = project_data.get("name")
-    deployments = project_data.get("deployments", [])
-
-    # Perform explicit recovery check for each namespace
-    project_manager = create_project_manager()
-    try:
-        recovery_needed = False
-
-        # Check each deployment namespace for missing SOPS secrets
-        for deployment in (d for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER):
-            deployment_name = deployment.get("name")
-
-            # TODO: namespace is too kubernetes specific; maybe 'target: 'shared' or target: 'unique'?
-            namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, deployment.get("namespace"))
-
-            logger.info(f"Checking SOPS secret in namespace: {namespace}")
-
-            # Check if SOPS secret exists in namespace
-            existing_secret = await kubectl.get_sops_secret_from_namespace(namespace)
-            if existing_secret:
-                logger.info(f"SOPS secret already exists in namespace: {namespace}")
-                continue
-
-            logger.warning(f"Missing SOPS secret in namespace: {namespace} - attempting recovery")
-            recovery_needed = True
-    finally:
-        await project_manager.close()
-
-        # Try to recover from GitOps backup
-        try:
-            # TODO: missing git_connector ?
-            recovered_keys = await project_manager._sops_handler.retrieve_project_sops_key_from_gitops(
-                project_name, git_connector
-            )
-
-            if recovered_keys:
-                private_key, public_key = recovered_keys
-                logger.info(f"Successfully recovered SOPS key from GitOps backup for project: {project_name}")
-
-                # Store recovered key in the namespace
-                result = await project_manager._sops_handler.store_project_sops_key_in_namespace(
-                    namespace, private_key, public_key
-                )
-
-                if result:
-                    logger.info(f"Successfully restored SOPS secret to namespace: {namespace}")
-                else:
-                    logger.error(f"Failed to restore SOPS secret to namespace: {namespace}")
-            else:
-                logger.error(
-                    f"No SOPS key backup found for project: {project_name} - cannot recover namespace: {namespace}"
-                )
-
-        except Exception as recovery_error:
-            logger.error(f"Error during SOPS key recovery for project {project_name}: {recovery_error}")
-
-    if recovery_needed:
-        logger.info(f"Completed SOPS secret recovery process for project: {project_name}")
-    else:
-        logger.info(f"All SOPS secrets verified for project: {project_name}")
-
-    return True
 
 
 def _cluster_deployment_namespaces() -> dict[str, str]:

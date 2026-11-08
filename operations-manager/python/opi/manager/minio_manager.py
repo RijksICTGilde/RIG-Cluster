@@ -424,8 +424,6 @@ class MinioManager:
                     )
                     return
                 elif user_result["status"] == "exists":
-                    # TODO: this flow part feels very weird.. maybe it should not exist
-
                     # User exists but we don't have the secret key, update it
                     logger.info(f"MinIO user {minio_username} already exists, updating secret key")
 
@@ -1279,89 +1277,6 @@ class MinioManager:
         except Exception as e:
             logger.debug(f"Error checking bucket existence for {bucket_name}: {e}")
             return False
-
-    async def _delete_existing_target_resources(
-        self,
-        minio_connector: MinioConnector,
-        alias_name: str,
-        project_name: str,
-        deployment_name: str,
-        delete_user: bool = False,
-    ) -> None:
-        """
-        Delete existing target MinIO resources (bucket and policy) for force clone.
-
-        Optionally deletes the user if delete_user=True (when we don't have valid credentials).
-
-        Args:
-            minio_connector: MinIO connector instance
-            alias_name: MinIO alias name
-            project_name: Project name
-            deployment_name: Deployment name
-            delete_user: If True, also delete the user (only when credentials are invalid)
-        """
-        target_username = generate_minio_username(project_name, deployment_name)
-        target_bucket = generate_bucket_name(project_name, deployment_name, None)
-
-        if delete_user:
-            logger.info(
-                f"Deleting existing MinIO resources: bucket '{target_bucket}', policy, and user '{target_username}'"
-            )
-        else:
-            logger.info(
-                f"Deleting existing MinIO resources: bucket '{target_bucket}' and policy "
-                f"(keeping user '{target_username}')"
-            )
-
-        # STEP 1: Detach policy from user (required before deleting policy)
-        policy_name = generate_minio_policy_name(project_name, deployment_name)
-        try:
-            detach_result = await minio_connector.detach_policy(alias_name, policy_name, target_username)
-            if detach_result["status"] == "success":
-                logger.info(f"Detached policy {policy_name} from user {target_username}")
-            else:
-                logger.debug(f"Could not detach policy (may not be attached): {detach_result.get('message')}")
-        except Exception as e:
-            logger.debug(f"Error detaching policy (may not be attached): {e}")
-
-        # STEP 2: Delete policy
-        try:
-            policy_result = await minio_connector.remove_policy(alias_name, policy_name)
-            if policy_result["status"] == "success":
-                logger.info(f"Deleted existing policy: {policy_name}")
-            elif policy_result["status"] == "not_found":
-                logger.info(f"Policy {policy_name} was already deleted or does not exist")
-        except Exception as e:
-            logger.debug(f"Error deleting policy (may not exist): {e}")
-
-        # STEP 3: Delete bucket
-        try:
-            bucket_result = await minio_connector.delete_bucket(alias_name, target_bucket, force=True)
-            if bucket_result["status"] in ["deleted", "success"]:
-                logger.info(f"Deleted existing bucket: {target_bucket}")
-            elif bucket_result["status"] == "not_found":
-                logger.info(f"Bucket {target_bucket} was already deleted or does not exist")
-            else:
-                logger.warning(
-                    f"Could not delete bucket {target_bucket}: {bucket_result.get('message', 'Unknown error')}"
-                )
-        except Exception as e:
-            logger.warning(f"Error deleting bucket {target_bucket}: {e}")
-
-        # STEP 4: Only delete user if explicitly requested (when credentials are invalid)
-        if delete_user:
-            try:
-                user_result = await minio_connector.delete_user(alias_name, target_username)
-                if user_result["status"] in ["deleted", "success"]:
-                    logger.info(f"Deleted existing user: {target_username}")
-                elif user_result["status"] == "not_found":
-                    logger.info(f"User {target_username} was already deleted or does not exist")
-                else:
-                    logger.warning(
-                        f"Could not delete user {target_username}: {user_result.get('message', 'Unknown error')}"
-                    )
-            except Exception as e:
-                logger.warning(f"Error deleting user {target_username}: {e}")
 
     async def _validate_and_fix_credentials(
         self,

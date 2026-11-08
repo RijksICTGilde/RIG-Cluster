@@ -125,10 +125,6 @@ programma echt nodig heeft.
 allow-list (`_KOPIA_ENV_PASSTHROUGH`), en laat daarmee ook weg wat vandaag nog geen geheim
 is. Strikter mag, ruimer niet.
 
-`decrypt_sops_file` in `opi/utils/sops.py` is daarbij de enige die een platformgeheim
-expliciet terugkrijgt: hij ontsleutelt platformbestanden, en zonder `SOPS_AGE_KEY` kan dat
-niet. Die twee functies hebben vandaag geen aanroeper.
-
 Platte SOPS-inhoud gaat tijdelijk naar `SECRET_TEMP_DIR`, een `emptyDir` met
 `medium: Memory`, en niet naar `TEMP_DIR` op de schijf van de node.
 

@@ -1023,9 +1023,3 @@ SCHEME_COOKIE = "zad_scheme"
 #: De drie standen. "" is systeem: dan zet de pagina geen data-scheme en volgt NLDD de
 #: voorkeur van het besturingssysteem.
 SCHEMES = ("", "light", "dark")
-
-
-def chosen_scheme(request: Request) -> str:
-    """De weergave die deze gebruiker koos: ``light``, ``dark``, of leeg voor systeem."""
-    stored = request.cookies.get(SCHEME_COOKIE, "")
-    return stored if stored in SCHEMES else ""

@@ -7,7 +7,7 @@
   },
   "$defs": {
     "invites": {
-      "comment": "LEGACY (pre-v2.6). Relocated to the invite service config (services/invite/config) by relocate_invites_to_service; extract_invites_config reads both locations during rollout. Kept, like the domains defs, because the root additionalProperties is false and 30/47 production files still predate v2.5, so removing it would reject unmigrated files. Removal is gated on per-version schema validation (TODO.md).",
+      "comment": "LEGACY (pre-v2.6). Relocated to the invite service config (services/invite/config) by relocate_invites_to_service; extract_invites_config reads both locations during rollout. Kept, like the domains defs, because the root additionalProperties is false and 30/47 production files still predate v2.5, so removing it would reject unmigrated files. Removal is gated on per-version schema validation.",
       "type": "object",
       "additionalProperties": false,
       "properties": {

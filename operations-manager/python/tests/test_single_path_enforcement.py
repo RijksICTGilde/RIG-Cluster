@@ -31,7 +31,7 @@ _SCANNED_DIRS = ["opi/api", "opi/web", "opi/core", "opi/services"]
 _FORBIDDEN_PATTERNS = (
     "do_commit_and_push=True",  # raw create_or_update_file commit, no validation
     "commit_project_yaml(",  # removed legacy helper, must never come back
-    "save_project_file(",  # low-level writer; only the central save may call it
+    "save_project_file(",  # removed low-level writer, must never come back
 )
 
 # Files allowed to still contain a forbidden pattern, with the reason. These are

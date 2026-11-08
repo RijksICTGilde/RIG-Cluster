@@ -1542,58 +1542,6 @@ class KeycloakManager:
                     flow_alias=post_broker_flow_alias,
                 )
 
-    async def _get_keycloak_credentials_from_config(
-        self, project_data: dict[str, Any], deployment_name: str, project_name: str
-    ) -> dict[str, Any] | None:
-        """
-        Retrieve existing Keycloak credentials from project config.
-
-        Args:
-            project_data: The project configuration data
-            deployment_name: Name of the deployment
-            project_name: Name of the project
-
-        Returns:
-            Dictionary with Keycloak credentials, or None if not found
-        """
-        try:
-            # Look for credentials in project data under deployments
-            deployments = project_data.get("deployments", [])
-            for deployment in deployments:
-                if deployment.get("name") == deployment_name:
-                    keycloak_config = deployment.get("keycloak", {})
-                    if keycloak_config.get("client_id") and keycloak_config.get("client_secret"):
-                        logger.debug(f"Found existing Keycloak credentials in config for {deployment_name}")
-                        return {
-                            "client_id": keycloak_config["client_id"],
-                            "client_secret": keycloak_config["client_secret"],
-                            "discovery_url": keycloak_config.get("discovery_url", ""),
-                            "issuer_url": keycloak_config.get("issuer_url", ""),
-                        }
-
-            return None
-
-        except Exception as e:
-            logger.exception(f"Error retrieving Keycloak credentials from config: {e}")
-            return None
-
-    async def _store_keycloak_credentials_in_config(
-        self, deployment_name: str, project_name: str, credentials: dict[str, Any]
-    ) -> None:
-        """
-        Store Keycloak credentials in the project configuration.
-
-        NOTE: This method is deprecated and no longer used. In the new architecture,
-        deployment client credentials are stored in K8s secrets via secrets map only.
-
-        Args:
-            deployment_name: Name of the deployment
-            project_name: Name of the project
-            credentials: Keycloak credentials to store
-        """
-        # Deployment credentials are stored in K8s secrets via secrets map, not in project config
-        logger.debug("Deployment credentials are stored in K8s secrets, not storing in project config")
-
     async def _ensure_realm_authentication_flow(
         self,
         realm_name: str,
@@ -2087,7 +2035,6 @@ class KeycloakManager:
         if ingress_hosts:
             # Build redirect URIs from ingress hosts based on cluster protocol support
             # Use first host as frontend_redirect_uris (templates expect single value)
-            # TODO: Support multiple redirect URIs using forEach in templates
             if support_http:
                 # Local cluster: support both HTTP and HTTPS
                 first_redirect_uri = f"http://{ingress_hosts[0]}/*"

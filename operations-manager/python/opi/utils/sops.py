@@ -1,5 +1,3 @@
-# TODO: check all except, and remove if None is returned, we allways raise exceptions
-
 """
 SOPS encryption/decryption utilities.
 
@@ -18,7 +16,6 @@ from typing import NamedTuple
 
 import yaml
 from opi.core.config import settings
-from opi.utils.age import wrap_project_key
 from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
@@ -67,64 +64,6 @@ def get_sops_private_key() -> str | None:
         The SOPS AGE private key, or None if not available
     """
     return settings.SOPS_AGE_PRIVATE_KEY
-
-
-def decrypt_sops_file(file_path: str) -> str | None:
-    """
-    Decrypt a SOPS-encrypted file.
-
-    Args:
-        file_path: Path to the SOPS-encrypted file
-
-    Returns:
-        Decrypted content as string, or None if decryption failed
-    """
-    cmd = ["sops", "--decrypt", file_path]
-    logger.debug(f"Running SOPS decryption command: {' '.join(cmd)}")
-
-    # De platformsleutel gaat expliciet mee: child_env weert SOPS_AGE_KEY_FILE, en zonder
-    # sleutel kan sops een platformbestand niet ontsleutelen.
-    process = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-        env=child_env({"SOPS_AGE_KEY": settings.SOPS_AGE_PRIVATE_KEY} if settings.SOPS_AGE_PRIVATE_KEY else None),
-    )
-
-    if process.returncode != 0:
-        error_msg = process.stderr.strip()
-        logger.error(f"SOPS decryption failed: {error_msg}")
-        return None
-
-    decrypted_content = process.stdout
-    logger.debug("Successfully decrypted SOPS file")
-    return decrypted_content
-
-
-def encrypt_sops_file(file_path: str) -> bool:
-    """
-    Encrypt a file using SOPS.
-
-    Args:
-        file_path: Path to the file to encrypt
-
-    Returns:
-        True if encryption was successful, False otherwise
-    """
-    cmd = ["sops", "--encrypt", "--in-place", file_path]
-    logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
-
-    # Versleutelen haalt de recipients uit .sops.yaml, niet uit een sleutel in de omgeving.
-    process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-
-    if process.returncode != 0:
-        error_msg = process.stderr.strip()
-        logger.error(f"SOPS encryption failed: {error_msg}")
-        return False
-
-    logger.debug("Successfully encrypted file with SOPS")
-    return True
 
 
 def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_key: str) -> bool:
@@ -382,19 +321,3 @@ def generate_sops_key_pair() -> tuple[str, str]:
         raise SOPSKeyEncryptionError(f"age-keygen command failed: {e.stderr}") from e
     except Exception as e:
         raise SOPSKeyEncryptionError(f"Failed to generate SOPS key pair: {e}") from e
-
-
-async def generate_and_encrypt_sops_key_pair() -> tuple[str, str, str]:
-    """
-    Generate a SOPS AGE key pair and encrypt the private key using the global AGE key.
-    Returns:
-        Tuple of (plain_private_key, encrypted_private_key, public_key)
-    Raises:
-        SOPSKeyEncryptionError: When key generation or encryption fails
-    """
-    try:
-        private_key, public_key = generate_sops_key_pair()
-        encrypted_private_key = await wrap_project_key(private_key)
-        return private_key, encrypted_private_key, public_key
-    except Exception as e:
-        raise SOPSKeyEncryptionError(f"Failed to generate encrypted SOPS key pair: {e}") from e

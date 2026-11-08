@@ -98,7 +98,7 @@ is the one the audit records.
 | File | Purpose |
 |------|---------|
 | `opi/core/backup_tasks.py` | Background task wrappers (`run_backup_task`, `run_restore_task`) with `TaskProgressManager` |
-| `opi/templates/wizard/partials/backup_select_deployment.html.j2` | Deployment + resource type selection |
+| `opi/forms/visualizers/wizard_sections.py` (`BACKUP_SELECT_SECTION`) | Deployment + resource type selection |
 | `opi/templates/wizard/partials/restore_select_backup.html.j2` | Backup run selection |
 | `opi/templates/wizard/partials/restore_select_target.html.j2` | Target deployment selection (mode toggle) |
 | `opi/forms/visualizers/wizard_sections.py` (`build_restore_new_deployment_sections`) | New deployment config editables (steps 3 to 5, conditional) |

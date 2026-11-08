@@ -229,30 +229,6 @@ def ensure_csrf_token(request: Request) -> str:
     return request.state.csrf_token
 
 
-def validate_csrf_token(request: Request, form_data: dict | None) -> None:
-    """Validate CSRF token from form/header matches cookie.
-
-    Kept for backwards compatibility with call sites that validate explicitly.
-    Enforcement is now central in :class:`CSRFMiddleware`; calling this in a
-    handler is idempotent (the middleware already validated the same token).
-
-    Args:
-        request: The FastAPI request object
-        form_data: Dictionary containing form data with csrf_token field
-
-    Raises:
-        HTTPException: If CSRF token is missing or invalid
-    """
-    submitted = None
-    if form_data:
-        candidate = form_data.get(CSRF_FORM_FIELD)
-        if isinstance(candidate, str):
-            submitted = candidate
-    if submitted is None:
-        submitted = request.headers.get(CSRF_HEADER_NAME)
-    _validate_double_submit(request, submitted)
-
-
 def validate_csrf_origin(request: Request) -> None:
     """Validate the Origin/Referer header against the request Host.
 

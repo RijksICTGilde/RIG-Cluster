@@ -711,23 +711,6 @@ class ProjectFileModel(BaseModel):
             raise ValueError(f"Dubbele broncodelinks: {', '.join(duplicates)}")
         return self
 
-    @classmethod
-    def from_yaml_dict(cls, data: dict) -> ProjectFileModel:
-        """
-        Create a ProjectFileModel from a parsed YAML dict.
-
-        Handles the translation of YAML keys to model field names.
-        """
-        return cls.model_validate(data)
-
-    def to_yaml_dict(self) -> dict:
-        """
-        Convert to a dict suitable for YAML serialization.
-
-        Uses the alias names for YAML compatibility.
-        """
-        return self.model_dump(by_alias=True, exclude_none=True)
-
 
 def get_project_file_form_layout() -> Fieldset:
     """

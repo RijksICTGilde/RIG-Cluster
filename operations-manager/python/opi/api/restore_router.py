@@ -182,10 +182,6 @@ class ProjectRestoreRequest(BaseModel):
     )
 
 
-class BackupRunRestoreRequest(BaseModel):
-    """Request body for restoring all PVCs from a backup run (currently empty, reserved for future options)."""
-
-
 class RestoreResultModel(BaseModel):
     """Result of a restore operation."""
 

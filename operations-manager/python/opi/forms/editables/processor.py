@@ -1060,47 +1060,6 @@ class EditableFormProcessor:
                         deferred_path,
                     )
 
-    def _restore_sentinel_values(
-        self,
-        data: dict[str, Any],
-        editables: list[EditableVisualizer],
-    ) -> None:
-        """Restore sentinel values after deferral for wizard state preservation.
-
-        After deferral copies the transient value to the parent, we restore the
-        parent back to its sentinel value (e.g., "__custom__") so that:
-        1. Form display logic can detect the sentinel
-        2. Transient field value can be restored during form rendering
-        3. Both values are preserved in wizard state for navigation
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        for ed, concrete_path in self._collect_editables_with_paths(editables, data):
-            if not ed.defers_to or not ed.defer_when:
-                continue
-
-            # Get the transient field value (what was copied TO the parent)
-            deferred_path = ed.defers_to
-            transient_value = smart_get_value(data, deferred_path)
-
-            # If the transient has a value, restore parent to sentinel
-            if transient_value is not None:
-                # Determine the sentinel value (usually "__custom__")
-                sentinel = "__custom__"
-                if isinstance(ed.defer_when, object) and hasattr(ed.defer_when, "sentinel"):
-                    sentinel = ed.defer_when.sentinel
-
-                smart_set_value(data, concrete_path, sentinel)
-                logger.debug(
-                    "[restore_sentinel] restored %s -> %s (sentinel=%s, kept transient=%s)",
-                    concrete_path,
-                    sentinel,
-                    sentinel,
-                    transient_value,
-                )
-
     def strip_transients_from(
         self,
         data: dict[str, Any],

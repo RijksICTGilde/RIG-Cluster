@@ -18,7 +18,7 @@ from ruamel.yaml import YAML
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
-from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
+from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.catalog.keycloak.account_link import realm_links_on_email
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
@@ -29,7 +29,7 @@ from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_syn
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.project_utils import apply_resource_limits
 from opi.utils.url_paths import sanitize_path_value
-from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string, save_yaml_to_path
+from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -658,7 +658,6 @@ class ProjectFileHandler:
         """Whether the last committed-file read required schema migration."""
         return self._was_migrated
 
-    # TODO: should this method be here or moved?
     async def get_previous_yaml_content(self, git_connector: GitConnector, file_path: str) -> dict[str, Any] | None:
         """
         Get the previous version of a YAML file from git history.
@@ -913,29 +912,6 @@ class ProjectFileHandler:
             return self._decrypt_with_private_key(value, private_key)
         else:
             return value
-
-    def extract_component_port(self, project_data: dict[str, Any], component_name: str, default_port: int = 80) -> int:
-        """
-        Extract the first inbound port from a component definition by name.
-
-        Args:
-            project_data: The parsed project data
-            component_name: Name of the component to find
-            default_port: Default port to return if not found
-
-        Returns:
-            The first inbound port of the component or default_port if not found
-        """
-        # Use JSONPath with extended parser to find the component by name and extract its first inbound port
-        path = f"$.components[?(@.name='{component_name}')].ports.inbound[0]"
-        port = self.extract_value_by_path(project_data, path, default_port)
-
-        if port != default_port:
-            logger.info(f"Found port {port} for component '{component_name}'")
-        else:
-            logger.warning(f"No inbound port found for component '{component_name}', using default {default_port}")
-
-        return port
 
     def extract_component_inbound_ports(self, project_data: dict[str, Any], component_name: str) -> list[int]:
         """Return all inbound ports of a component in declared order, or [] if none."""
@@ -1258,20 +1234,6 @@ class ProjectFileHandler:
         persistent_storage = [storage for storage in storage_configs if storage.get("type") == "persistent"]
         logger.debug(f"Found {len(persistent_storage)} persistent storage configurations")
         return persistent_storage
-
-    def get_ephemeral_storage(self, storage_configs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """
-        Filter storage configurations to get only ephemeral storage items.
-
-        Args:
-            storage_configs: List of storage configurations
-
-        Returns:
-            List of ephemeral storage configurations
-        """
-        ephemeral_storage = [storage for storage in storage_configs if storage.get("type") == "ephemeral"]
-        logger.debug(f"Found {len(ephemeral_storage)} ephemeral storage configurations")
-        return ephemeral_storage
 
     def extract_component_publish_on_web(self, project_data: dict[str, Any], component_name: str) -> bool:
         """
@@ -2772,25 +2734,6 @@ class ProjectFileHandler:
         logger.debug(f"Found {len(remote_sources)} remote source(s)")
         return remote_sources
 
-    def get_remote_source_by_name(self, project_data: dict[str, Any], name: str) -> dict[str, Any] | None:
-        """
-        Get a specific remote source by name.
-
-        Args:
-            project_data: The parsed project data
-            name: Name of the remote source to find
-
-        Returns:
-            Remote source configuration or None if not found
-        """
-        remote_sources = self.extract_remote_sources(project_data)
-        source = Project.locate(remote_sources, name=name)
-        if source is not None:
-            logger.debug(f"Found remote source: {name}")
-            return source
-        logger.warning(f"Remote source '{name}' not found")
-        return None
-
     def extract_deployment_clone_from_config(
         self, project_data: dict[str, Any], deployment_name: str
     ) -> dict[str, Any] | None:
@@ -2971,41 +2914,6 @@ class ProjectFileHandler:
         else:
             logger.debug("No container registries configured in project file")
         return registries
-
-    def extract_component_registry(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
-        """
-        Extract registry configuration for a component by resolving its registry reference.
-
-        Args:
-            project_data: The parsed project data
-            component_name: Name of the component
-
-        Returns:
-            Registry config dict with keys: name, upstream, username, password
-            or None if the component points at no registry
-        """
-        component = next(
-            (
-                c
-                for c in project_data.get("components", []) or []
-                if isinstance(c, dict) and c.get("name") == component_name
-            ),
-            None,
-        )
-        registry_ref = component_registry_name(component)
-
-        if not registry_ref:
-            return None
-
-        # Find registry by name in registries list
-        registries = self.extract_registries(project_data)
-        for registry in registries:
-            if registry.get("name") == registry_ref:
-                logger.info(f"Component '{component_name}' uses registry '{registry_ref}'")
-                return registry
-
-        logger.warning(f"Component '{component_name}' references registry '{registry_ref}' which does not exist")
-        return None
 
     def extract_helm_charts(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
         """
@@ -4619,22 +4527,6 @@ def _filter_empty_service_entries(services: list[str | dict]) -> list[str | dict
         )
 
     return [entry for entry in services if keep(entry)]
-
-
-def save_project_file(file_path: str, project_data: dict[str, Any]) -> None:
-    """
-    Save project data to a YAML file.
-
-    This function writes the project data back to disk, preserving
-    the YAML structure as much as possible.
-
-    Args:
-        file_path: Full path to the project YAML file
-        project_data: The project data dictionary to save
-    """
-    logger.info(f"Saving project file: {file_path}")
-    save_yaml_to_path(file_path, project_data)
-    logger.debug(f"Successfully saved project file: {file_path}")
 
 
 def create_project_file_handler() -> ProjectFileHandler:

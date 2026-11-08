@@ -90,10 +90,6 @@ def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
 subdomain_check_rate_limiter = IPRateLimiter(requests_per_minute=30, burst=10)
 
 
-class ProjectProcessRequest(BaseModel):
-    project_file_path: str
-
-
 class ProjectRepository(BaseModel):
     url: str
     username: str
@@ -112,32 +108,6 @@ class ProjectDeployment(BaseModel):
     name: str
     cluster: str
     image: str
-
-
-class ProjectCreateRequest(BaseModel):
-    projectName: str
-    cluster: str
-    repository: ProjectRepository
-    component: ProjectComponent
-    deployment: ProjectDeployment
-
-
-class BasicProjectCreateRequest(BaseModel):
-    projectName: str
-    description: str | None = None
-    cluster: str
-    imageUrl: str
-    appPort: int | None = None
-    userEnvVars: str | None = Field(
-        None,
-        description="User env vars in KEY=value format, newline-separated (will be encrypted). "
-        "Example: 'DB_HOST=localhost\\nAPI_KEY=secret123'",
-    )
-    exposeWeb: bool = False
-    ssoRijk: bool = False
-    persistentStorage: bool = False
-    ephemeralStorage: bool = False
-    sharedRigDatabase: bool = False
 
 
 class ComponentReference(BaseModel):
@@ -1929,8 +1899,8 @@ async def update_deployment_image(
             logger.info(f"Service actions requested: {service_actions}")
 
         # Handle the update-image action with optional service actions
-        # TODO: this method exist because we do not 'diff' yet between project files
-        #  in the future, a diff would show what has changed and we could determine what actions to take
+        # This route exists because nothing diffs two project files yet: the caller has to
+        # name the actions, since the change itself does not say what they are.
         result = await project_manager.update_image_and_regenerate(
             deployment_name=deployment_name,
             component_name=image_data.componentName,
@@ -1958,36 +1928,6 @@ async def update_deployment_image(
     finally:
         if project_manager:
             await project_manager.close()
-
-
-# @api_router.post("/projects")
-# async def create_project(
-#     request: Request, project_data: SelfServiceProjectRequest = Body(...)
-# ) -> JSONResponse:
-#     """
-#     Create a new project from the self-service portal form.
-#
-#     Example:
-#     ```bash
-#     curl -X POST "http://localhost:9595/api/projects" \
-#       -H "Content-Type: application/json" \
-#       -d '{
-#         "project_name": "my-project",
-#         "display_name": "My Awesome Project",
-#         "project_description": "Test project",
-#         "cluster": "local",
-#         "user_email": ["user@example.com"],
-#         "user_roles": ["Developer"],
-#         "services": ["service-web", "service-sso"],
-#         "components": [{
-#           "type": "deployment",
-#           "port": 8080,
-#           "image": "nginx:latest"
-#         }]
-#       }'
-#     ```
-#     """
-#     return await create_self_service_project(request, project_data)
 
 
 @api_router.get(
@@ -2408,7 +2348,6 @@ async def delete_project_deployment(
             status_code=500, detail="De deployment kon niet worden verwijderd. Probeer het over een minuut opnieuw."
         ) from e
     finally:
-        # TODO: maybe the project manager should close itself when done..
         if project_manager:
             await project_manager.close()
 
@@ -2494,8 +2433,6 @@ async def clone_database_from_external(
     # Sync path (backward compatibility)
     project_manager = None
     try:
-        # TODO: we need a method to create a project manager from a given project_name
-        #  like: init(projectname)
         project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
 
         # Determine if we're using Chisel tunnel or direct connection

@@ -2,7 +2,6 @@
 Simple task tracking for FastAPI BackgroundTasks.
 """
 
-# TODO: make the task manager actually add and finish tasks where they are created and done
 import asyncio
 import logging
 import time
@@ -423,20 +422,6 @@ def fail_task(task_id: str, error: str) -> None:
         logger.error(f"Task {task_id} failed: {error} (task not found)")
 
 
-def set_task_namespace(task_id: str, namespace: str) -> None:
-    """Set the namespace for a task."""
-    if task_id in _projects:
-        _projects[task_id].namespace = namespace
-        logger.debug(f"Task {task_id}: set namespace to {namespace}")
-    else:
-        logger.debug(f"Task {task_id}: set namespace to {namespace} (task not found)")
-
-
-def add_component_status(task_id: str, component_name: str) -> None:
-    """Add a component status to track for a task. (Legacy function - no-op in new system)"""
-    logger.debug(f"Task {task_id}: component status add called for {component_name} - no-op in new system")
-
-
 def update_component_deployment(task_id: str, component_name: str, deployment_name: str) -> None:
     """Update the deployment name for a component. (Legacy function - no-op in new system)"""
     logger.debug(
@@ -458,20 +443,6 @@ def update_component_readiness(task_id: str, component_name: str, deployment_rea
     )
 
 
-def update_task_logs(task_id: str, logs: list[str]) -> None:
-    """Update logs for a task."""
-    if task_id in _projects:
-        _projects[task_id].logs = logs
-        logger.debug(f"Task {task_id}: updated logs ({len(logs)} lines)")
-
-
-def update_task_events(task_id: str, events: list[dict[str, str]]) -> None:
-    """Update events for a task."""
-    if task_id in _projects:
-        _projects[task_id].events = events
-        logger.debug(f"Task {task_id}: updated events ({len(events)} events)")
-
-
 async def start_task_monitoring(task_id: str) -> None:
     """
     Start background monitoring for a task to collect logs, events, and deployment status.
@@ -491,155 +462,6 @@ async def start_task_monitoring(task_id: str) -> None:
 
     # Start monitoring in the background using new system (deduplicated)
     _start_monitoring_if_not_active(task_id)
-
-
-async def _monitor_task_progress(task_id: str) -> None:
-    """
-    Legacy monitoring function - now delegated to new project monitoring system.
-    """
-    logger.debug(f"Legacy task monitoring called for {task_id} - delegating to new project monitoring")
-    # Delegate to the new monitoring system
-    await _monitor_project_progress(task_id)
-
-
-async def monitor_argocd_deployment(task_id: str, project_name: str, progress_manager: TaskProgressManager) -> None:
-    """
-    Monitor ArgoCD application synchronization and deployment.
-
-    This polls ArgoCD to check if the application is synced and healthy.
-
-    Args:
-        task_id: The task ID for tracking
-        project_name: The name of the project being deployed
-        progress_manager: The progress manager for updating subtasks
-    """
-    from opi.connectors import create_argo_connector
-    from opi.connectors.kubectl import KubectlConnector
-
-    logger.info(f"Starting ArgoCD monitoring for project {project_name}")
-
-    # Update current step to show ArgoCD monitoring
-    from opi.core.task_manager import update_progress
-
-    update_progress(task_id, 75, f"ArgoCD applicaties zoeken voor {project_name}...")
-
-    argo_connector = create_argo_connector()
-    kubectl = KubectlConnector()
-
-    max_wait_time = 600  # 10 minutes max for initial sync and healthy status
-    check_interval = 5  # Check every 5 seconds
-    elapsed_time = 0
-
-    # Check for the user-applications app first
-    user_apps_synced = False
-    project_apps_found = []
-
-    while elapsed_time < max_wait_time:
-        try:
-            # First ensure user-applications is synced
-            if not user_apps_synced and await argo_connector.application_exists("user-applications"):
-                app_info = await argo_connector.get_application_status("user-applications")
-                if app_info and app_info.get("status", {}).get("sync", {}).get("status") == "Synced":
-                    user_apps_synced = True
-                    logger.info("User applications synced, checking for project applications")
-                    update_progress(
-                        task_id,
-                        78,
-                        f"User applications gesynchroniseerd, zoeken naar {project_name} applicaties...",
-                    )
-
-            # If user-applications is synced, look for project applications
-            if user_apps_synced:
-                # List all applications and find ones for this project
-                all_apps = await argo_connector.list_applications()
-                for app in all_apps:
-                    app_name = app.get("metadata", {}).get("name", "")
-                    if app_name.startswith(f"{project_name}-") and app_name not in project_apps_found:
-                        project_apps_found.append(app_name)
-                        logger.info(f"Found ArgoCD application: {app_name}")
-                        update_progress(task_id, 80, f"ArgoCD applicatie gevonden: {app_name}")
-
-                        # Extract namespace from the application
-                        namespace = app.get("spec", {}).get("destination", {}).get("namespace")
-                        if namespace and task_id in _projects:
-                            # Set the correct namespace for monitoring
-                            _projects[task_id].namespace = namespace
-                            logger.info(f"Set monitoring namespace to: {namespace}")
-                            # Start background monitoring (deduplicated)
-                            _start_monitoring_if_not_active(task_id)
-
-                # Check if all found applications are synced and healthy
-                if project_apps_found:
-                    all_synced = True
-                    all_healthy = True
-                    detailed_statuses = []
-
-                    for app_name in project_apps_found:
-                        app_info = await argo_connector.get_application_status(app_name)
-                        if app_info:
-                            sync_status = app_info.get("status", {}).get("sync", {}).get("status")
-                            health_status = app_info.get("status", {}).get("health", {}).get("status")
-
-                            # Get additional status details
-                            sync_message = app_info.get("status", {}).get("sync", {}).get("message", "")
-                            health_message = app_info.get("status", {}).get("health", {}).get("message", "")
-                            operation_state = app_info.get("status", {}).get("operationState", {})
-                            operation_phase = operation_state.get("phase", "")
-
-                            detailed_statuses.append(
-                                {
-                                    "name": app_name,
-                                    "sync": sync_status,
-                                    "health": health_status,
-                                    "sync_message": sync_message,
-                                    "health_message": health_message,
-                                    "operation_phase": operation_phase,
-                                }
-                            )
-
-                            if sync_status != "Synced":
-                                all_synced = False
-                            if health_status != "Healthy":
-                                all_healthy = False
-
-                            logger.debug(
-                                f"App {app_name}: sync={sync_status}, health={health_status}, operation={operation_phase}"
-                            )
-
-                    # Display detailed status in progress update
-                    if detailed_statuses:
-                        status_summary = []
-                        for app_status in detailed_statuses:
-                            app_short_name = app_status["name"].replace(f"{project_name}-", "")
-                            sync_status = app_status["sync"]
-                            health_status = app_status["health"]
-
-                            status_text = f"{app_short_name}: sync={sync_status} health={health_status}"
-                            if app_status["operation_phase"]:
-                                status_text += f" ({app_status['operation_phase']})"
-                            status_summary.append(status_text)
-
-                        progress_text = " | ".join(status_summary)
-                        update_progress(task_id, 81, f"ArgoCD status: {progress_text}")
-
-                    if all_synced and all_healthy:
-                        logger.info(f"All {len(project_apps_found)} ArgoCD applications are synced and healthy")
-                        update_progress(task_id, 82, f"Alle {len(project_apps_found)} ArgoCD applicaties zijn gezond")
-
-                        # Start continuous monitoring for the newly created project applications (deduplicated)
-                        _start_app_monitoring_if_not_active(task_id, project_name, project_apps_found)
-                        break
-
-        except Exception as e:
-            logger.warning(f"Error checking ArgoCD status: {e}")
-
-        await asyncio.sleep(check_interval)
-        elapsed_time += check_interval
-
-    if elapsed_time >= max_wait_time:
-        logger.warning(f"ArgoCD monitoring timeout after {max_wait_time} seconds")
-
-    logger.info(f"Completed initial ArgoCD monitoring for project {project_name}")
 
 
 # Kubernetes event reasons that indicate unrecoverable deployment failures.
@@ -980,8 +802,3 @@ def fail_subtask(task_id: str, subtask_id: str, error: str) -> None:
     logger.debug(
         f"Task {task_id}: Legacy fail_subtask called for '{subtask_id}' with error: {error} - no-op in new system"
     )
-
-
-def _update_task_progress_from_subtasks(task_id: str) -> None:
-    """Update main task progress based on subtask completion. (Legacy function - no-op in new system)"""
-    logger.debug(f"Task {task_id}: Legacy progress update from subtasks called - no-op in new system")

@@ -41,7 +41,6 @@ TOEGESTAAN: dict[tuple[str, str], str] = {
     ("opi/utils/age.py", "project_key_candidates"): "de naad: de platformsleutel als terugval bij uitpakken",
     ("opi/utils/age.py", "project_wrapping_public_key"): "de naad: de platformsleutel zolang er geen KEK is",
     ("opi/utils/sops.py", "get_sops_private_key"): "platformsecrets: de SOPS-bestanden van het platform",
-    ("opi/utils/sops.py", "decrypt_sops_file"): "platformsecrets: sops krijgt de sleutel per aanroep mee",
     (
         "opi/api/router.py",
         "_encrypt_for_task",

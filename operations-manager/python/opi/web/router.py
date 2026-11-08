@@ -1538,7 +1538,6 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # Generate CSRF token for form protection (domain settings modal)
         csrf_token = ensure_csrf_token(request)
 
-        # TODO: this logic has to be centralized
         user_email = user.get("email", "").lower()
 
         # Ensure project data is fresh (refreshes from Git if stale)

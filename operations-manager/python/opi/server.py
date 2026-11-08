@@ -106,7 +106,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Logging is already initialized via early_logging import
     logger.info(f"Starting {PROJECT_NAME} version {VERSION}")
-    # logger.info(f"Settings: {mask.secrets(get_settings().model_dump())}")
 
     # De CLI-connector-singletons alvast bouwen: hun eenmalige binary-check viel anders
     # midden in de eerste taak die ze nodig had.

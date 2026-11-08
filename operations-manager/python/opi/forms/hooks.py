@@ -47,24 +47,12 @@ class FormState:
         original = self.original_data.get(field_name)
         return current != original
 
-    def get_changed_fields(self) -> list[str]:
-        """Get list of field names that have changed."""
-        return [key for key in set(self.data.keys()) | set(self.original_data.keys()) if self.has_changed(key)]
-
     def add_error(self, field_name: str, message: str) -> None:
         """Add an error message to a field."""
         if field_name not in self.errors:
             self.errors[field_name] = []
         self.errors[field_name].append(message)
         self.is_valid = False
-
-    def clear_errors(self, field_name: str | None = None) -> None:
-        """Clear errors for a field or all fields."""
-        if field_name:
-            self.errors.pop(field_name, None)
-        else:
-            self.errors.clear()
-        self.is_valid = len(self.errors) == 0
 
     def get_field_value[T](self, field_name: str, default: T = None) -> T:  # type: ignore[assignment]
         """Get a field value with optional default."""
@@ -389,26 +377,6 @@ class FormProcessor:
         self.pre_submit_hooks: list[FormHook] = []
         self.post_submit_hooks: list[FormHook] = []
 
-    def add_enforcer(self, enforcer: EnforcerHook) -> FormProcessor:
-        """Add an enforcer hook."""
-        self.enforcers.append(enforcer)
-        return self
-
-    def add_validator(self, field_name: str, validator: ValidatorHook) -> FormProcessor:
-        """Add a validator hook for a specific field."""
-        self.validators.append((field_name, validator))
-        return self
-
-    def add_pre_submit_hook(self, hook: FormHook) -> FormProcessor:
-        """Add a pre-submission hook."""
-        self.pre_submit_hooks.append(hook)
-        return self
-
-    def add_post_submit_hook(self, hook: FormHook) -> FormProcessor:
-        """Add a post-submission hook."""
-        self.post_submit_hooks.append(hook)
-        return self
-
     async def process(self, state: FormState) -> FormState:
         """
         Process form through the hook pipeline.
@@ -428,31 +396,5 @@ class FormProcessor:
             errors = await validator.validate(state)
             for error in errors:
                 state.add_error(field_name, error)
-
-        return state
-
-    async def process_submission(self, state: FormState) -> FormState:
-        """
-        Process a form submission through the full pipeline.
-
-        Args:
-            state: Form state with submitted data
-
-        Returns:
-            Processed form state
-        """
-        state.is_submitted = True
-
-        # Run pre-submit hooks
-        for hook in self.pre_submit_hooks:
-            state = await hook.execute(state)
-
-        # Process enforcers and validators
-        state = await self.process(state)
-
-        # Run post-submit hooks only if valid
-        if state.is_valid:
-            for hook in self.post_submit_hooks:
-                state = await hook.execute(state)
 
         return state

@@ -113,37 +113,6 @@ class FormTranslator:
         full_key = f"{self._prefix}{key}" if self._prefix else key
         return self._translator(full_key)
 
-    def translate_field_label(self, key: str) -> str:
-        """Translate a field label."""
-        return self(key)
-
-    def translate_field_description(self, key: str) -> str:
-        """Translate a field description."""
-        return self(key)
-
-    def translate_error(self, key: str, **kwargs: str) -> str:
-        """
-        Translate a validation error message.
-
-        Args:
-            key: Error message key
-            **kwargs: Format arguments for the message
-
-        Returns:
-            Translated and formatted error message
-        """
-        translated = self(key)
-        if kwargs:
-            try:
-                return translated.format(**kwargs)
-            except KeyError:
-                return translated
-        return translated
-
-    def translate_button(self, key: str) -> str:
-        """Translate a button label."""
-        return self(key)
-
 
 # Default Dutch translations for OPI forms
 DEFAULT_NL_TRANSLATIONS = {

@@ -602,13 +602,6 @@ class DbConsoleManager:
         )
         return session, ready
 
-    async def list_sessions(self, project_name: str) -> list[DbConsoleSession]:
-        """List live console sessions for a project (read from cluster labels)."""
-        cluster = settings.CLUSTER_MANAGER
-        namespace = f"{get_namespace_prefix(cluster)}{project_name}"
-        pods = await self._kubectl.get_resources_by_label("pod", namespace, f"{LABEL_PROJECT}={project_name}")
-        return [self._session_from_pod(pod, namespace, project_name) for pod in pods]
-
     @staticmethod
     def _session_from_pod(pod: dict[str, Any], namespace: str, project_name: str) -> DbConsoleSession:
         meta = pod.get("metadata", {})

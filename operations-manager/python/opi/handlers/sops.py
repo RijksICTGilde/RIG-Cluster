@@ -1,22 +1,17 @@
 """
-SOPS (Secrets OPerationS) connector for handling encryption and decryption operations.
+SOPS (Secrets OPerationS) connector for the project-specific SOPS key.
 
 This module provides functionality for:
-- Generating age key pairs for SOPS encryption
-- Encrypting and decrypting content using SOPS
 - Managing project-specific SOPS keys
 - Interacting with Kubernetes secrets for SOPS keys
 """
 
 import asyncio
 import logging
-import os
-import tempfile
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
-from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
@@ -46,7 +41,6 @@ def format_age_key_file(private_key: str, public_key: str) -> str:
     return f"# created: project-specific key\n# public key: {public_key}\n{private_key}\n"
 
 
-# TODO: maybe this handler has to go.. it conflicts with the utils/sops.py
 class SopsHandler:
     """
     Connector for handling SOPS encryption/decryption operations.
@@ -66,143 +60,6 @@ class SopsHandler:
         """
         self.kubectl = kubectl_connector
         self.logger = logging.getLogger(__name__)
-
-    # TODO maybe this  in age.py as well
-    async def generate_age_key_pair(self) -> tuple[str, str]:
-        """
-        Generate a new age key pair for SOPS encryption.
-
-        Returns:
-            Tuple of (private_key, public_key)
-
-        Raises:
-            RuntimeError: If key generation fails
-        """
-        self.logger.info("Generating new age key pair for SOPS")
-
-        try:
-            # Use age-keygen to generate a new key pair
-            result = await self._run_command(["age-keygen"])
-
-            if result.returncode != 0:
-                raise RuntimeError(f"Failed to generate age key pair: {result.stderr}")
-
-            # Parse the output to extract private and public keys
-            output_lines = result.stdout.strip().split("\n")
-            private_key = None
-            public_key = None
-
-            for line in output_lines:
-                line = line.strip()
-                if line.startswith("AGE-SECRET-KEY-"):
-                    private_key = line
-                elif line.startswith("# public key: age"):
-                    public_key = line.replace("# public key: ", "")
-
-            if not private_key or not public_key:
-                raise RuntimeError("Failed to parse generated age key pair")
-
-            self.logger.info("Successfully generated age key pair")
-            self.logger.debug(f"Public key: {public_key}")
-
-            return private_key, public_key
-
-        except Exception as e:
-            self.logger.error(f"Error generating age key pair: {e}")
-            raise RuntimeError(f"Failed to generate age key pair: {e}") from e
-
-    async def encrypt_content(self, content: str, public_key: str) -> str:
-        """
-        Encrypt content using SOPS with the provided public key.
-
-        Args:
-            content: Content to encrypt
-            public_key: Age public key for encryption
-
-        Returns:
-            Encrypted content as string
-
-        Raises:
-            RuntimeError: If encryption fails
-        """
-        self.logger.debug("Encrypting content with SOPS")
-
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
-            ) as temp_file:
-                temp_file.write(content)
-                temp_file_path = temp_file.name
-
-            try:
-                # Encrypt the file using SOPS
-                cmd = ["sops", "--encrypt", "--age", public_key, temp_file_path]
-
-                result = await self._run_command(cmd)
-
-                if result.returncode != 0:
-                    raise RuntimeError(f"SOPS encryption failed: {result.stderr}")
-
-                encrypted_content = result.stdout
-                self.logger.debug("Successfully encrypted content with SOPS")
-
-                return encrypted_content
-
-            finally:
-                # Clean up temporary file
-                os.unlink(temp_file_path)
-
-        except Exception as e:
-            self.logger.error(f"Error encrypting content: {e}")
-            raise RuntimeError(f"Failed to encrypt content: {e}") from e
-
-    async def decrypt_content(self, encrypted_content: str, private_key: str) -> str:
-        """
-        Decrypt SOPS-encrypted content using the provided private key.
-
-        Args:
-            encrypted_content: SOPS-encrypted content
-            private_key: Age private key for decryption
-
-        Returns:
-            Decrypted content as string
-
-        Raises:
-            RuntimeError: If decryption fails
-        """
-        self.logger.debug("Decrypting content with SOPS")
-
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
-            ) as temp_file:
-                temp_file.write(encrypted_content)
-                temp_file_path = temp_file.name
-
-            try:
-                # Set the age key in environment for SOPS
-                env = child_env({"SOPS_AGE_KEY": private_key})
-
-                # Decrypt the file using SOPS
-                cmd = ["sops", "--decrypt", temp_file_path]
-
-                result = await self._run_command(cmd, env=env)
-
-                if result.returncode != 0:
-                    raise RuntimeError(f"SOPS decryption failed: {result.stderr}")
-
-                decrypted_content = result.stdout
-                self.logger.debug("Successfully decrypted content with SOPS")
-
-                return decrypted_content
-
-            finally:
-                # Clean up temporary file
-                os.unlink(temp_file_path)
-
-        except Exception as e:
-            self.logger.error(f"Error decrypting content: {e}")
-            raise RuntimeError(f"Failed to decrypt content: {e}") from e
 
     async def store_project_sops_key_in_namespace(self, namespace: str, private_key: str, public_key: str) -> bool:
         """
@@ -450,78 +307,3 @@ class SopsHandler:
         except Exception as e:
             self.logger.error(f"Error extracting keys from age contents: {e}")
             return "", ""
-
-    async def retrieve_project_sops_key_from_namespace(self, namespace: str) -> str | None:
-        """
-        Retrieve a project-specific SOPS private key from a Kubernetes namespace.
-
-        Args:
-            namespace: Source namespace
-
-        Returns:
-            Private key string if found, None otherwise
-        """
-        if not self.kubectl:
-            self.logger.error("KubectlConnector not available for retrieving SOPS key")
-            return None
-
-        self.logger.debug(f"Retrieving project-specific SOPS key from namespace: {namespace}")
-
-        try:
-            private_key = await self.kubectl.get_sops_secret_from_namespace(namespace)
-
-            if private_key:
-                self.logger.debug(f"Successfully retrieved SOPS key from namespace: {namespace}")
-                return private_key
-            else:
-                self.logger.warning(f"No SOPS key found in namespace: {namespace}")
-                return None
-
-        except Exception as e:
-            self.logger.error(f"Error retrieving SOPS key from namespace {namespace}: {e}")
-            return None
-
-    async def _run_command(self, cmd: list[str], env: dict[str, str] | None = None) -> Any:
-        """
-        Run a command asynchronously and return the result.
-
-        Args:
-            cmd: Command and arguments to run
-            env: Optional environment variables
-
-        Returns:
-            CompletedProcess result
-        """
-        if env is None:
-            env = child_env()
-
-        try:
-            self.logger.debug(f"Running command: {' '.join(cmd)}")
-
-            from opi.core.metrics import track_subprocess_memory
-
-            process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
-            )
-
-            async with track_subprocess_memory("sops"):
-                stdout, stderr = await process.communicate()
-
-            # Create a result object similar to subprocess.CompletedProcess
-            class AsyncResult:
-                def __init__(self, returncode: int, stdout: str, stderr: str):
-                    self.returncode = returncode
-                    self.stdout = stdout
-                    self.stderr = stderr
-
-            # communicate() has awaited the exit, so returncode is set; the annotation
-            # cannot know that, and defaulting to 0 would report a failure as a success.
-            return AsyncResult(
-                returncode=process.returncode if process.returncode is not None else -1,
-                stdout=stdout.decode("utf-8") if stdout else "",
-                stderr=stderr.decode("utf-8") if stderr else "",
-            )
-
-        except Exception as e:
-            self.logger.error(f"Error running command {' '.join(cmd)}: {e}")
-            raise
