@@ -9,7 +9,7 @@ from unittest.mock import mock_open, patch
 
 import pytest
 from opi.core.config import (
-    PROEFBAAR_CLUSTER,
+    PROOF_TARGET_CLUSTER,
     Settings,
     _check_env_file_for_environment_var,
     _get_env_files,
@@ -296,7 +296,7 @@ class TestProeftokenAlleenOpDeSandbox:
     """SECURITY_PROOF_TOKEN maakt een instantie een doel van de aanvalsproef."""
 
     def test_de_sandbox_mag_een_proeftoken_dragen(self):
-        settings = Settings(CLUSTER_MANAGER=PROEFBAAR_CLUSTER, SECURITY_PROOF_TOKEN="een-token-van-deze-run")
+        settings = Settings(CLUSTER_MANAGER=PROOF_TARGET_CLUSTER, SECURITY_PROOF_TOKEN="een-token-van-deze-run")
         assert settings.SECURITY_PROOF_TOKEN == "een-token-van-deze-run"
 
     @pytest.mark.parametrize("cluster", ["odcn-production", "odcn-staging", "local"])

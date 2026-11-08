@@ -1,8 +1,8 @@
 """Watches the tenant quota (Capsule GlobalCustomQuota) and warns via ntfy when room runs out.
 
-A stopgap until there is real monitoring: one file, wired in ``server.py``, so it can go
-again in one cut. OPI's service account cannot read ``gcq`` (it silently gets an empty
-list), so the numbers come from the Capsule metrics in the billing Mimir via Grafana.
+A stopgap until there is real monitoring, in one file wired in ``server.py``. OPI's
+service account cannot read ``gcq`` (it silently gets an empty list), so the numbers come
+from the Capsule metrics in the billing Mimir via Grafana.
 Growth is compared against the same metric 24h earlier in Mimir, so there is no state
 to keep and a restart loses nothing but the dedup.
 """

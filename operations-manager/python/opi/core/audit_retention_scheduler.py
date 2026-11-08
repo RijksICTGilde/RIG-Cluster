@@ -1,8 +1,8 @@
-"""De dagelijkse bewaarlus van het audittrail.
+"""The daily retention loop of the audit trail.
 
-Zonder deze lus bewaart ``notification_events`` persoonsgegevens zonder termijn. Daarom
-is er geen schakelaar om hem uit te zetten; hij start met de taakwerker mee en draait één
-keer per etmaal. De twee passes zelf staan in ``opi/services/audit.py``.
+Without this loop, ``notification_events`` keeps personal data without a term. That is why
+there is no switch to turn it off; it starts along with the task worker and runs once every
+24 hours. The two passes themselves live in ``opi/services/audit.py``.
 """
 
 from __future__ import annotations
@@ -21,14 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 class AuditRetentionScheduler:
-    """Draait de bewaarlus één keer per nacht."""
-
     def __init__(self) -> None:
         self._running = False
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start de lus als achtergrondtaak."""
         self._running = True
         self._task = asyncio.create_task(self._run())
         logger.info(
@@ -38,7 +35,6 @@ class AuditRetentionScheduler:
         )
 
     async def stop(self) -> None:
-        """Stop de lus."""
         self._running = False
         if self._task is not None:
             self._task.cancel()
@@ -48,7 +44,7 @@ class AuditRetentionScheduler:
         logger.info("Audit retention scheduler stopped")
 
     async def _run(self) -> None:
-        """Slapen tot het nachtelijke uur, één ronde draaien, opnieuw."""
+        """Sleep until the nightly hour, run one round, again."""
         set_actor(scheduler_actor("audit-retention"))
         while self._running:
             try:
@@ -64,7 +60,7 @@ class AuditRetentionScheduler:
                 logger.exception("Error in nightly audit retention run")
 
     async def run_once(self) -> dict[str, int]:
-        """Eén ronde, met het resultaat in de log."""
+        """One round, with the result in the log."""
         result = await run_retention()
         logger.info(
             "Audit retention: %d rijen gepseudonimiseerd, %d rijen verwijderd",

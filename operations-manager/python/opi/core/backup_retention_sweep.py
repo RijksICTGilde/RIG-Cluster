@@ -82,15 +82,9 @@ def classify_snapshot(
 ) -> str:
     """Classify a snapshot for the retention sweep.
 
-    Args:
-        snapshot: The snapshot to classify.
-        active_deployments: Deployment names that currently have a backup
-            schedule (for the namespace this snapshot lives in).
-        cutoff: Snapshots older than this moment are expired orphans.
-
-    Returns:
-        One of PROTECTED, UNCLASSIFIABLE, ACTIVE, ORPHAN_YOUNG,
-        ORPHAN_EXPIRED.
+    ``active_deployments`` are the deployment names that currently have a backup schedule,
+    for the namespace this snapshot lives in; snapshots older than ``cutoff`` are expired
+    orphans.
     """
     # Manual backups are never touched, regardless of identity. The trigger
     # tag also covers legacy manual snapshots written under a broken source
@@ -117,13 +111,10 @@ def classify_snapshot(
 
 
 class BackupRetentionSweep:
-    """Sweeps orphaned backup snapshots across all projects on this cluster."""
-
     def __init__(self, cluster: str):
         self._cluster = cluster
 
     async def run(self) -> None:
-        """Run one sweep over all projects' backup repositories."""
 
         dry_run = settings.BACKUP_SWEEP_DRY_RUN
         cutoff = datetime.now(UTC) - timedelta(days=settings.BACKUP_ORPHAN_RETENTION_DAYS)

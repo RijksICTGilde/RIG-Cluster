@@ -4,20 +4,15 @@ Once a night (off-peak, when deployments are idle so resize-triggered pod
 restarts don't disrupt traffic) this analyzes every project on this cluster and
 applies any resource change that clears the deviation deadband.
 
-Why a nightly full sweep instead of a paced/capped schedule:
-- Checking is cheap and read-only (VPA `.status` reads, a few Prometheus
-  queries). The real cost — git commit, reprocess, ArgoCD sync, pod rollout —
-  is only incurred when a project actually drifts enough to warrant a change.
-- So the cost scales with how many projects *drift*, not how many we check. A
-  converged fleet costs almost nothing per night.
-- The deadband (percentage + absolute floor, enforced in the analyzer) is what
-  prevents night-to-night churn, so no explicit cooldown is needed: a
-  right-sized project's recommendation stays within the deadband of its current
-  size and simply produces no change.
+Checking is cheap and read-only (VPA `.status` reads, a few Prometheus queries); the cost
+(git commit, reprocess, ArgoCD sync, pod rollout) falls only on a project that drifts far
+enough. The deadband (percentage plus absolute floor, enforced in the analyzer) is what
+prevents night-to-night churn, so there is no cooldown: a right-sized project's
+recommendation stays within the deadband and produces no change.
 
-The first sweep after enabling (or a big VPA shift) is the one heavy night —
-many projects change at once — so changed projects are paced apart to spread
-the pod rollouts rather than bouncing the whole fleet simultaneously.
+A night with many changes at once (the first sweep after enabling, or a big VPA shift)
+paces the changed projects apart, so the pod rollouts spread instead of bouncing the whole
+fleet at once.
 """
 
 from __future__ import annotations
@@ -49,15 +44,12 @@ def _seconds_until_next_run(hour: int, now: datetime) -> float:
 
 
 class ResourceTuningScheduler:
-    """Runs a nightly resource-tuning sweep across all projects on this cluster."""
-
     def __init__(self, cluster: str):
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the nightly scheduler loop as a background task."""
         self._running = True
         self._task = asyncio.create_task(self._run())
         logger.info(
@@ -68,7 +60,6 @@ class ResourceTuningScheduler:
         )
 
     async def stop(self) -> None:
-        """Stop the scheduler loop."""
         self._running = False
         if self._task is not None:
             self._task.cancel()

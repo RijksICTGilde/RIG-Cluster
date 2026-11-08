@@ -15,7 +15,7 @@ _draining = False
 
 
 def begin_drain() -> None:
-    """Enter drain mode. Called on SIGTERM before lifespan teardown."""
+    """Called on SIGTERM, before the lifespan teardown."""
     global _draining
     if not _draining:
         _draining = True
@@ -23,5 +23,4 @@ def begin_drain() -> None:
 
 
 def is_draining() -> bool:
-    """True when the application is shutting down gracefully."""
     return _draining

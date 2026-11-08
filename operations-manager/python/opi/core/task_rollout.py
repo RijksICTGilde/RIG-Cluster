@@ -6,7 +6,7 @@ the cluster. The project file then runs ahead of the cluster until someone calls
 ``POST /api/v2/projects/{project_name}/:refresh``.
 
 The flag travels in the task payload and is read here, at the single point where a
-handler is about to process the project -- not rebuilt per endpoint.
+handler is about to process the project, and is not rebuilt per endpoint.
 
 Not every task may skip. A refresh reprocesses what the project file declares; it
 does not remove cluster resources the file no longer mentions. So a deferred delete

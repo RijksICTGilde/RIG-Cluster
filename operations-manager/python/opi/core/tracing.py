@@ -19,11 +19,7 @@ _tracer_provider = None
 
 
 def setup_tracing(app: FastAPI) -> None:
-    """Initialize OpenTelemetry tracing if OTEL_ENABLED is True.
-
-    Configures a TracerProvider with OTLP gRPC exporter and instruments
-    FastAPI, httpx, aiohttp, asyncpg, and logging for trace correlation.
-    """
+    """Does nothing when OTEL_ENABLED is False."""
     global _tracer_provider
 
     if not settings.OTEL_ENABLED:
@@ -42,7 +38,6 @@ def setup_tracing(app: FastAPI) -> None:
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-    # Build resource attributes
     resource = Resource.create(
         {
             "service.name": settings.OTEL_SERVICE_NAME,
@@ -51,30 +46,23 @@ def setup_tracing(app: FastAPI) -> None:
         }
     )
 
-    # Configure sampler
     sampler = TraceIdRatioBased(float(settings.OTEL_TRACES_SAMPLER_ARG))
 
-    # Create tracer provider
     _tracer_provider = TracerProvider(resource=resource, sampler=sampler)
 
-    # OTLP gRPC exporter
     exporter = OTLPSpanExporter(endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT, insecure=True)
     _tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
 
-    # Set as global tracer provider
     trace.set_tracer_provider(_tracer_provider)
 
     # Instrument FastAPI (exclude health/metrics endpoints)
     FastAPIInstrumentor.instrument_app(app, excluded_urls="health,healthz,readyz,metrics")
 
-    # Instrument outbound HTTP clients
     HTTPXClientInstrumentor().instrument()
     AioHttpClientInstrumentor().instrument()
 
-    # Instrument database
     AsyncPGInstrumentor().instrument()
 
-    # Inject trace_id/span_id into log records
     if settings.OTEL_LOG_CORRELATION:
         LoggingInstrumentor().instrument(set_logging_format=True)
 

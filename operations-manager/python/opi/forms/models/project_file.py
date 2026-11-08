@@ -11,7 +11,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.core.project_environment import Omgeving
 from opi.forms.layout import (
     ButtonGroup,
@@ -94,7 +94,7 @@ class ProjectUserModel(BaseModel):
     een lijst die zegt wie bij dit project hoort, in plaats van twee die uit de pas lopen.
     """
 
-    type: LidSoort = Field(default=LidSoort.PERSOON)
+    type: MemberKind = Field(default=MemberKind.PERSON)
 
     email: Annotated[
         str | None,
@@ -130,7 +130,7 @@ class ProjectUserModel(BaseModel):
         lezer die alleen naar ``email`` kijkt, en dat is precies de verwarring die
         :func:`opi.services.project_leden.human_members` moet voorkomen.
         """
-        if self.type is LidSoort.SERVICE_ACCOUNT:
+        if self.type is MemberKind.SERVICE_ACCOUNT:
             if not self.name:
                 raise ValueError("Een service account heeft een name nodig")
             if self.email:
@@ -693,7 +693,7 @@ class ProjectFileModel(BaseModel):
         if not self.users:
             return self  # Empty users list is handled by min_items constraint
 
-        admin_users = [u for u in self.users if "admin" in u.roles and u.type is not LidSoort.SERVICE_ACCOUNT]
+        admin_users = [u for u in self.users if "admin" in u.roles and u.type is not MemberKind.SERVICE_ACCOUNT]
         if not admin_users:
             raise ValueError("At least one user must have the 'admin' role")
         return self

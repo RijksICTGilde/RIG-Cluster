@@ -13,18 +13,13 @@ error does not: the ``error`` argument of ``fail_task``, ``fail_project`` and
 else under ``opi/``.
 """
 
-# ----------------------------------------------------------------------
 # Phases: the few lines a rollout shows once it is done. Every step that starts
 # while a phase is open lands under it (``begin_phase`` on the progress manager).
-# ----------------------------------------------------------------------
 PHASE_CHECK_AND_SAVE = "Wijziging controleren en opslaan"
 PHASE_CHECK = "Projectbestand controleren"
 PHASE_CONFIGURATION = "Configuratie bijwerken"
 # The rollout phase is the ArgoCD wait itself: its per-deployment rows are its children.
 
-# ----------------------------------------------------------------------
-# Rollout: reading the project file, provisioning, publishing, deploying
-# ----------------------------------------------------------------------
 PROJECT_FILE_FETCH = "Projectbestand ophalen"
 PROJECT_FILE_VALIDATE = "Projectbestand valideren"
 PROJECT_FILE_MIGRATE = "Projectbestand bijwerken naar de nieuwste versie"
@@ -40,7 +35,7 @@ DATABASE_CONFIG_APPLY = "Databaseconfiguratie toepassen"
 STORAGE_CONFIG_APPLY = "Opslagconfiguratie toepassen"
 LOGIN_CONFIG_APPLY = "Inlogconfiguratie toepassen"
 CACHE_CONFIG_APPLY = "Cacheconfiguratie toepassen"
-# "Bootstrap" blijft staan: dat is de term die het team gebruikt.
+# "Bootstrap" stays: that is the term the team uses.
 BOOTSTRAP_ACTIONS = "Bootstrap-acties uitvoeren"
 CONNECTION_LIMIT = "Connectielimiet"
 CLONE = "Kloon"
@@ -112,9 +107,6 @@ def sync_not_finished(detail: str) -> str:
     )
 
 
-# ----------------------------------------------------------------------
-# Creating a project
-# ----------------------------------------------------------------------
 PROJECT_NAME_CHECK = "Projectnaam controleren"
 NAMES_CHECK = "Namen controleren"
 PROJECT_FILE_BUILD = "Projectbestand opstellen"
@@ -133,9 +125,6 @@ NEW_PROJECT_NOTICE = (
     "opgeslagen, de deployments zijn niet uitgerold."
 )
 
-# ----------------------------------------------------------------------
-# Components, services and other project-file changes
-# ----------------------------------------------------------------------
 COMPONENT_ADD = "Component toevoegen"
 COMPONENT_UPDATE = "Component bijwerken"
 COMPONENT_ADD_TO_DEPLOYMENT = "Component aan deployment toevoegen"
@@ -150,15 +139,12 @@ IMAGE_UPDATE = "Image bijwerken"
 DATABASE_CLONE = "Database kopiëren"
 BUCKET_CLONE = "Bucket kopiëren"
 PROJECT_KEY_ROTATE = "Nieuwe projectsleutel maken, de velden omzetten en opslaan"
-BACKUP_PASSWORD_CARRY = "Backupwachtwoord meeverhuizen"  # noqa: S105  # staptekst, geen secret
+BACKUP_PASSWORD_CARRY = "Backupwachtwoord meeverhuizen"  # noqa: S105  # a step text, not a secret
 
-# ----------------------------------------------------------------------
-# Backup and restore
-# ----------------------------------------------------------------------
 BACKUP_RUN = "Backup uitvoeren"
 BACKUP_RUN_LOOKUP = "Backup-run opzoeken"
 PROJECT_DEPLOYMENT_LOOKUP = "Project en deployment opzoeken"
-# PVC is a vakterm, so it stays.
+# PVC is a domain term, so it stays.
 PVC_BACKUP = "PVC backup"
 DATABASE_BACKUP = "Database backup"
 OBJECT_STORAGE_BACKUP = "Objectopslag backup"
@@ -167,9 +153,6 @@ PVC_RESTORE = "PVC data herstellen"
 BACKUP_RESTORE = "Backup herstellen"
 RESTORE_ITEM = "Herstellen"
 
-# ----------------------------------------------------------------------
-# Deleting
-# ----------------------------------------------------------------------
 PROJECT_DELETE = "Project verwijderen"
 PROJECT_FILE_DELETE = "Projectbestand verwijderen"
 PROJECT_INFRA_CLEANUP = "Projectinfrastructuur opruimen"
@@ -185,9 +168,6 @@ MANIFESTS_DELETE = "Manifesten verwijderen"
 DEPLOYMENT_REMOVE_FROM_PROJECT_FILE = "Deployment uit het projectbestand verwijderen"
 DELETE_VERIFY = "Controleren dat alles verwijderd is"
 
-# ----------------------------------------------------------------------
-# Sleep mode
-# ----------------------------------------------------------------------
 SLEEP_HEADING = "Deployment in slaapstand zetten"
 SLEEP_DONE = "Deployment slaapt"
 WAKE_HEADING = "Deployment wekken"
@@ -208,9 +188,6 @@ def deployment_not_in_project(deployment_name: str) -> str:
     return f"Deployment '{deployment_name}' bestaat niet in dit project"
 
 
-# ----------------------------------------------------------------------
-# Waiting on another task
-# ----------------------------------------------------------------------
 def waiting_for_task(task_type: str, subject: str) -> str:
     return f"Wacht op {task_type} ({subject})"
 

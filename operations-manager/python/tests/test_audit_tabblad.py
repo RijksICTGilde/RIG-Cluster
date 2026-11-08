@@ -22,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.db import session_scope
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
 from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
 from opi.services.persistence.notification_events import NotificationEvent
@@ -56,8 +56,8 @@ def _project(naam: str = "demo") -> ProjectSummary:
         filename=f"{naam}.yaml",
         data={"name": naam},
         users=[
-            ProjectUser(email=BEHEERDER, roles=["admin"], type=LidSoort.PERSOON),
-            ProjectUser(email=BOUWER, roles=["developer"], type=LidSoort.PERSOON),
+            ProjectUser(email=BEHEERDER, roles=["admin"], type=MemberKind.PERSON),
+            ProjectUser(email=BOUWER, roles=["developer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -140,7 +140,7 @@ async def test_een_admin_van_project_a_krijgt_403_op_project_b() -> None:
     # Op project 'ander' is deze aanroeper geen lid, dus geen enkele rol.
     def _ander(naam: str) -> ProjectSummary:
         project = _project(naam)
-        project.users = [ProjectUser(email="iemand@rijksoverheid.nl", roles=["admin"], type=LidSoort.PERSOON)]
+        project.users = [ProjectUser(email="iemand@rijksoverheid.nl", roles=["admin"], type=MemberKind.PERSON)]
         return project
 
     store.get.side_effect = _ander

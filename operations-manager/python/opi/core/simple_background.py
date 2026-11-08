@@ -1,6 +1,4 @@
-"""
-Simple background task processor using the new TaskProgressManager.
-"""
+"""The ArgoCD wait that runs after a deploy, on the TaskProgressManager."""
 
 from __future__ import annotations
 
@@ -43,9 +41,9 @@ async def _monitor_argocd_and_deployment(
 
     ``deployment_names`` scopes the wait to the deployments this task actually
     touched. Without it the wait covers every app of the project, so one
-    permanently Degraded app -- typically a PR environment whose own pods do not
-    start -- makes every later deploy of that project time out, forever, no
-    matter how well the deploy itself went.
+    permanently Degraded app, typically a PR environment whose own pods do not
+    start, makes every later deploy of that project time out, forever, no matter
+    how well the deploy itself went.
     """
     try:
         logger.info(f"Starting ArgoCD monitoring for project: {project_name}")
@@ -54,14 +52,10 @@ async def _monitor_argocd_and_deployment(
 
         argo_connector = create_argo_connector()
 
-        # Direct beginnen met kijken, zonder voorslaap. De vaste sleep(5)+sleep(8) die hier
-        # stonden ("give ArgoCD time to pick up" / "allow syncs to propagate") stammen uit de
-        # tijd dat de status in de Application CR seconden-tot-minuten achterliep op de
-        # werkelijkheid; sinds argocd-rig v3.5.1-rig1 werkt de controller status.health bij op
-        # elk cluster-event, en process_project_from_git heeft hiervoor al per app een refresh
-        # gedaan en op Synced+Healthy gewacht. Bij een al-groene stand kost deze controle nu
-        # een enkele lijst-aanroep in plaats van dertien seconden; is er nog niets te zien,
-        # dan vangt de retry-lus hieronder dat op.
+        # Start looking at once, without sleeping first: the controller updates status.health
+        # on every cluster event, and process_project_from_git has already refreshed every app
+        # and waited for Synced+Healthy before this. A state that is not there yet is caught
+        # by the retry loop below.
         wanted_apps = {f"{project_name}-{name}" for name in deployment_names} if deployment_names else None
         max_retries = 15  # Wait up to ~30 seconds for project apps
         argo_synced = False
@@ -85,10 +79,8 @@ async def _monitor_argocd_and_deployment(
                     await asyncio.sleep(2)
                     continue
 
-                # Full snapshot, not a break on the first offender: on timeout the
-                # message has to name what was blocking, and "which app and in what
-                # state" is the question that was previously unanswerable without
-                # turning on debug logging in production.
+                # Full snapshot, not a break on the first offender: on timeout the message
+                # has to name which app was blocking and in what state.
                 last_seen = [_app_status(app) for app in project_apps]
                 logger.debug(
                     "ArgoCD apps for %s: %s",
@@ -108,17 +100,12 @@ async def _monitor_argocd_and_deployment(
                 await asyncio.sleep(2)
 
         if not argo_synced:
-            # Neither outcome below is a failure of this deploy, so neither is logged
-            # as an error: the change was committed, pushed and picked up by ArgoCD
-            # before we ever got here, and failing the step fed the log watcher, which
-            # turned each one into a push notification.
-            #
-            # Dit is ook de ENIGE wacht waarvoor dat geldt: de wachten die de uitrol
-            # bepalen zitten ervoor (het projectniveau en de sync per
-            # deployment-applicatie) en zijn fail-closed. Daarom staat de geruststelling
-            # in de melding hieronder, op het moment dat ze opgaat, en niet meer vooraf
-            # bij het uitrollen van een nieuw project: daar was ze met RC-229 onwaar
-            # geworden (task_handlers_project.py).
+            # Neither outcome below is a failure of this deploy, so neither is logged as an
+            # error: the change was committed, pushed and picked up by ArgoCD before we got
+            # here. This is also the ONLY wait that holds for, because the waits that decide
+            # the rollout sit before it (the project level and the sync per deployment
+            # application) and are fail-closed. So the reassurance belongs in the message
+            # below and nowhere earlier.
             blocking = [(n, s, h) for n, s, h in last_seen if not (s == "Synced" and h in ("Healthy", "Progressing"))]
             detail = ", ".join(f"{n} (sync={s}, health={h})" for n, s, h in blocking) or "geen app-status ontvangen"
             degraded = [n for n, _, h in blocking if h in ("Degraded", "Missing")]

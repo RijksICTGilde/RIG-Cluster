@@ -135,171 +135,26 @@
     "opi/connectors/subdomain.py": {
       "dutch-comments": 8
     },
-    "opi/core/actor.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 15,
-      "comment-heavy-functions": 1
-    },
-    "opi/core/app_database_owner.py": {
-      "dutch-comments": 5
-    },
     "opi/core/async_task_service.py": {
-      "dutch-comments": 45
-    },
-    "opi/core/audit_retention_scheduler.py": {
-      "dutch-comments": 4
-    },
-    "opi/core/audit_trail.py": {
-      "dutch-identifiers": 8,
-      "dutch-comments": 15
-    },
-    "opi/core/auth_decorators.py": {
-      "dutch-identifiers": 15,
-      "dutch-comments": 11
-    },
-    "opi/core/authz/__init__.py": {
-      "dutch-comments": 3
-    },
-    "opi/core/authz/actions.py": {
-      "dutch-comments": 28
-    },
-    "opi/core/authz/engine.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 41
-    },
-    "opi/core/authz/matrix.py": {
-      "dutch-identifiers": 6,
-      "dutch-comments": 11
-    },
-    "opi/core/authz/rules.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 43
-    },
-    "opi/core/backup_scheduler.py": {
-      "dutch-comments": 1
-    },
-    "opi/core/buttons.py": {
-      "dutch-comments": 6
-    },
-    "opi/core/cluster_config.py": {
-      "dutch-comments": 123
-    },
-    "opi/core/config.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 114
-    },
-    "opi/core/database_pool.py": {
-      "dutch-comments": 1
-    },
-    "opi/core/database_pools.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 4
-    },
-    "opi/core/db.py": {
-      "dutch-comments": 5
-    },
-    "opi/core/dns_config.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 19
-    },
-    "opi/core/errors.py": {
-      "dutch-identifiers": 6,
-      "dutch-comments": 10
-    },
-    "opi/core/leden.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 4
-    },
-    "opi/core/loop_watchdog.py": {
-      "dutch-identifiers": 5,
-      "dutch-comments": 18
-    },
-    "opi/core/mail_relay_watcher.py": {
-      "dutch-identifiers": 2,
-      "dutch-comments": 6
-    },
-    "opi/core/metrics.py": {
-      "dutch-identifiers": 2,
-      "dutch-comments": 13
-    },
-    "opi/core/no_mail_reconciler.py": {
-      "dutch-comments": 1
-    },
-    "opi/core/persistent_task_progress.py": {
-      "dutch-comments": 8
-    },
-    "opi/core/platform_database_access.py": {
-      "dutch-comments": 8
-    },
-    "opi/core/probe_server.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 14
-    },
-    "opi/core/progress_steps.py": {
       "dutch-comments": 2
     },
-    "opi/core/project_environment.py": {
-      "dutch-comments": 15
+    "opi/core/authz/actions.py": {
+      "dutch-comments": 1
     },
-    "opi/core/project_schema.py": {
-      "dutch-comments": 10
+    "opi/core/authz/engine.py": {
+      "dutch-comments": 1
+    },
+    "opi/core/cluster_config.py": {
+      "dutch-comments": 1
+    },
+    "opi/core/config.py": {
+      "dutch-comments": 5
+    },
+    "opi/core/project_environment.py": {
+      "dutch-comments": 1
     },
     "opi/core/rrule_utils.py": {
       "dutch-comments": 1
-    },
-    "opi/core/session_cache.py": {
-      "dutch-comments": 8
-    },
-    "opi/core/session_guard.py": {
-      "dutch-comments": 3
-    },
-    "opi/core/simple_background.py": {
-      "dutch-comments": 13
-    },
-    "opi/core/startup.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 30
-    },
-    "opi/core/static_files.py": {
-      "dutch-comments": 5
-    },
-    "opi/core/step_up.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 17
-    },
-    "opi/core/task_errors.py": {
-      "dutch-comments": 13
-    },
-    "opi/core/task_handlers_backup.py": {
-      "dutch-comments": 9
-    },
-    "opi/core/task_handlers_components.py": {
-      "dutch-comments": 16
-    },
-    "opi/core/task_handlers_operations.py": {
-      "dutch-comments": 15
-    },
-    "opi/core/task_handlers_project.py": {
-      "dutch-comments": 27
-    },
-    "opi/core/task_helpers.py": {
-      "dutch-comments": 1
-    },
-    "opi/core/task_manager.py": {
-      "dutch-comments": 10
-    },
-    "opi/core/task_supersede.py": {
-      "dutch-comments": 3
-    },
-    "opi/core/task_worker.py": {
-      "dutch-comments": 27
-    },
-    "opi/core/template_helpers.py": {
-      "dutch-comments": 11
-    },
-    "opi/core/templates_lotc.py": {
-      "dutch-identifiers": 1,
-      "dutch-comments": 60
     },
     "opi/forms/editables/conditions.py": {
       "dutch-comments": 4

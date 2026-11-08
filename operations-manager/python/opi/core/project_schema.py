@@ -66,9 +66,9 @@ class ProjectSchemaError(Exception):
     about the file as a whole (an unknown or missing schema version).
 
     ``reason`` says WHY the field was rejected without repeating the rejected
-    value. The message itself does repeat it -- jsonschema embeds the instance --
-    and a caller that shows the rejection to a user or writes it to a log has to
-    be able to say what is wrong without echoing what may be a stored secret.
+    value. The message itself does repeat it (jsonschema embeds the instance), and
+    a caller that shows the rejection to a user or writes it to a log has to be
+    able to say what is wrong without echoing what may be a stored secret.
     """
 
     def __init__(self, message: str, *, field_path: str | None = None, reason: str | None = None) -> None:
@@ -88,19 +88,20 @@ class ProjectIntegrityError(Exception):
     """
 
 
-#: Een schemaversie als tekst: MAJOR, of MAJOR.MINOR. Het aantal cijfers is begrensd omdat
-#: int() boven 4300 cijfers een ValueError geeft, en dit pad hoort altijd ProjectSchemaError
-#: te geven: de gate in git_monitor vangt alleen die, en de waarde komt uit een projectbestand.
+#: A schema version as text: MAJOR, or MAJOR.MINOR. The number of digits is bounded because
+#: int() raises ValueError above 4300 digits, and this path has to raise ProjectSchemaError
+#: always: the gate in git_monitor catches only that one, and the value comes from a project
+#: file.
 _VERSION_TEXT = re.compile(r"^(\d{1,9})(?:\.(\d{1,9}))?$")
 
 
 @dataclass(frozen=True, order=True)
 class SchemaVersion:
-    """Een schemaversie als MAJOR.MINOR, vergeleken per deel: 2.10 is nieuwer dan 2.9.
+    """A schema version as MAJOR.MINOR, compared part by part: 2.10 is newer than 2.9.
 
-    Een float wordt via zijn tekstvorm gelezen, dus de float ``2.1`` is altijd (2, 1) en
-    alleen de string ``"2.10"`` is (2, 10). Daarom schrijft OPI een nieuwe versie als
-    string weg: als getal zou 2.10 gelijk zijn aan 2.1.
+    A float is read through its text form, so the float ``2.1`` is always (2, 1) and only the
+    string ``"2.10"`` is (2, 10). That is why OPI writes a new version out as a string: as a
+    number 2.10 would equal 2.1.
     """
 
     major: int
@@ -111,11 +112,11 @@ class SchemaVersion:
 
 
 def _float_text(value: float) -> str:
-    """De tekst van een float, met de nullen achteraan die de YAML-bron nog had.
+    """The text of a float, with the trailing zeroes the YAML source still had.
 
-    Een ongequote ``schema-version: 2.10`` is voor YAML het getal 2.1, en dat is een andere,
-    oudere versie. ruamel onthoudt de breedte van het getal zoals het er stond (``_width``,
-    met ``_prec`` als positie van de punt), dus daarmee wordt het weer 2.10 en geen 2.1.
+    An unquoted ``schema-version: 2.10`` is the number 2.1 to YAML, and that is a different,
+    older version. ruamel remembers the width of the number as it was written (``_width``,
+    with ``_prec`` as the position of the dot), so that turns it back into 2.10 and not 2.1.
     """
     width, prec = getattr(value, "_width", None), getattr(value, "_prec", None)
     if isinstance(width, int) and isinstance(prec, int) and width > prec + 1:
@@ -124,11 +125,10 @@ def _float_text(value: float) -> str:
 
 
 def parse_schema_version(version: SchemaVersion | int | float | str) -> SchemaVersion:
-    """Lees een schemaversie uit een getal, een float of tekst.
+    """Read a schema version out of an int, a float or text.
 
-    Raises:
-        ProjectSchemaError: bij een waarde die geen MAJOR of MAJOR.MINOR is. De waarde
-            zelf komt niet in de melding: hij komt uit een projectbestand.
+    Raises ``ProjectSchemaError`` for a value that is neither MAJOR nor MAJOR.MINOR. The
+    value itself does not end up in the message: it comes from a project file.
     """
     if isinstance(version, SchemaVersion):
         return version
@@ -209,9 +209,9 @@ def _get_validator(version: SchemaVersion | None = None) -> Draft202012Validator
             with (LEGACY_PATCH_DIR / f"v{version_key(patch_version)}.json").open(encoding="utf-8") as patch_file:
                 schema = _merge_patch(schema, json.load(patch_file))
     Draft202012Validator.check_schema(schema)
-    # Met een format_checker doet "format" iets; zonder is het decoratie. Het echte werk
-    # doet het "pattern" ernaast: jsonschema toetst "email" alleen op een apenstaartje, en
-    # slaat "date-time" over zolang rfc3339-validator niet geinstalleerd is.
+    # With a format_checker "format" does something; without one it is decoration. The real
+    # work is done by the "pattern" next to it: jsonschema checks "email" for an at sign only,
+    # and skips "date-time" as long as rfc3339-validator is not installed.
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
@@ -224,8 +224,7 @@ def check_schema_versions(migration_versions: tuple[SchemaVersion, ...]) -> None
     migration without adding its patch is a programming error and stops startup
     here rather than surfacing as a rejected project file months later.
 
-    Raises:
-        ProjectSchemaError: if the chain and the schemas on disk disagree.
+    Raises ``ProjectSchemaError`` when the chain and the schemas on disk disagree.
     """
     latest = latest_schema_version()
     if migration_versions[-1] != latest:
@@ -252,9 +251,9 @@ def _describe_violation(error: ValidationError) -> str:
 
     jsonschema's own message quotes the instance ("'geheim' does not match ..."),
     so it can carry a stored secret (``config/api-key``, ``user-env-vars``) or
-    attacker-chosen text into a browser or a log line. The keyword and the limit
-    it was given come from the schema, never from the file, so a description built
-    from those two is safe to show.
+    attacker-chosen text into a browser or a log line. The keyword and the limit it
+    was given come from the schema, never from the file, so a description built from
+    those two is safe to show.
     """
     keyword = str(error.validator)
     limit = error.validator_value
@@ -279,16 +278,12 @@ def _describe_violation(error: ValidationError) -> str:
 def validate_project_schema(project_data: dict[str, Any], *, schema_version: SchemaVersion | None = None) -> None:
     """Validate a parsed project dict against the project schema.
 
-    Args:
-        project_data: The parsed project file content.
-        schema_version: Validate against the schema of this version. Defaults to
-            the latest schema, which is what every write path wants: it validates
-            the FINAL state, and that state is migrated.
+    ``schema_version`` validates against the schema of that version; it defaults to the
+    latest schema, which is what every write path wants: it validates the FINAL state, and
+    that state is migrated.
 
-    Raises:
-        ProjectSchemaError: If the project does not conform to the schema.
-            The exception message is a Dutch user-facing error that names the
-            first offending field path and the validation message.
+    Raises ``ProjectSchemaError`` when the project does not conform. Its message is a Dutch
+    user-facing error naming the first offending field path and the validation message.
     """
     validator = _get_validator(schema_version)
     errors = sorted(validator.iter_errors(project_data), key=lambda e: list(e.absolute_path))
@@ -303,13 +298,11 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: Sch
         f"Projectbestand '{project_name}' is afgekeurd: het voldoet niet aan het projectschema "
         f"(versie {described}). Veld '{location}': {first.message}"
     )
-    # Een patroon zegt de gebruiker niets; de beschrijving van het veld wel.
+    # A pattern says nothing to the user; the description of the field does.
     if first.validator == "pattern" and isinstance(first.schema, dict) and first.schema.get("description"):
         message = f"{message}. {first.schema['description']}"
-    # Do not log at ERROR here: the message is carried on the exception and the
-    # caller logs it once with context. Self-logging made one rejection surface as
-    # several ERR alerts (validator + orchestrator + task-progress). debug keeps a
-    # breadcrumb without feeding the log-watch.
+    # Not at ERROR: the message is carried on the exception and the caller logs it once
+    # with context. Logging it here too turns one rejection into several ERR alerts.
     logger.debug(message)
     raise ProjectSchemaError(
         message,
@@ -323,9 +316,8 @@ def validate_declared_project_schema(project_data: dict[str, Any]) -> None:
 
     This is the git-monitor gate. It runs before any migration on purpose: a
     hostile file that happens to migrate clean must not be written back under our
-    own identity. Validating it against the latest schema was the reason the
-    latest schema could never drop an old form; validating it against the version
-    the file declares removes that pressure without opening the gate.
+    own identity. Validating against the version the file DECLARES is what lets the
+    latest schema drop a form whose migration is written.
 
     The declared version comes from the same untrusted file, so it is treated as
     input, not as a hint: a missing, malformed or unknown ``schema-version``
@@ -333,8 +325,7 @@ def validate_declared_project_schema(project_data: dict[str, Any]) -> None:
     would let an old file through against rules it never had to meet) and none to
     the loosest (that would let anything through by declaring version 1).
 
-    Raises:
-        ProjectSchemaError: on a rejected version declaration or a schema violation.
+    Raises ``ProjectSchemaError`` on a rejected version declaration or a schema violation.
     """
     project_name = project_data.get("name", "(onbekend)") if isinstance(project_data, dict) else "(onbekend)"
     declared = project_data.get("schema-version") if isinstance(project_data, dict) else None
@@ -390,8 +381,8 @@ def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
 
     Separate from ``validate_project_schema`` because this specific class of
     violation must fail closed on EVERY write path. ``enforce_validation=False``
-    exists so a recovery write is not blocked by pre-existing structural drift --
-    it is not a licence to commit a decrypted secret, which is what writing back a
+    exists so a recovery write is not blocked by pre-existing structural drift; it
+    is not a licence to commit a decrypted secret, which is what writing back a
     ``get_decrypted()`` view would do.
 
     Covers only what ``project_v2.json`` describes. A secret that lives in a SERVICE

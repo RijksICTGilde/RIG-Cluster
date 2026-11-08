@@ -26,7 +26,7 @@ from opi.api.principal import (
     tel_gebruik,
 )
 from opi.core.authz.actions import Action
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service
@@ -58,7 +58,7 @@ def _project(naam: str = "bouwput") -> ProjectSummary:
             ),
             ProjectUser(email=DEV, role="developer", tokens=[_token("cli", TOKEN_DEV)]),
             ProjectUser(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
                 role="admin",
                 tokens=[_token("pijplijn", TOKEN_BOUWSTRAAT)],

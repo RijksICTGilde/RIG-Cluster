@@ -1,16 +1,14 @@
 """Nightly reconciliation run.
 
-``opi.jobs.reconciliation.reconcile`` had exactly one caller: the admin endpoint
-``POST /api/v2/admin/reconciliation/trigger``. So nothing was ever unmarked or purged
-unless someone remembered to call it by hand, and in practice nobody did: manifests that
-``delete_deployment`` deferred (step 7 skips them while an ArgoCD finalizer may still need
-the source path) and resources confirmed through the orphan sweep sat marked forever, long
-past their grace period. This scheduler is the missing tick.
+The tick of ``opi.jobs.reconciliation.reconcile``, which is otherwise only called by the
+admin endpoint ``POST /api/v2/admin/reconciliation/trigger``. Without it a deferred
+manifest or a resource confirmed through the orphan sweep stays marked past its grace
+period.
 
-It runs off-peak and does NOT scan for new orphans - detection stays report-first in
-``opi.jobs.service_orphan_sweep`` on purpose (a wrong expected set would schedule live
-resources for deletion; see the waggl-9et near-miss). All this does is finish work that a
-human already authorized: unmark what reappeared, purge what is marked and expired.
+It runs off-peak and does NOT scan for new orphans: detection stays report-first in
+``opi.jobs.service_orphan_sweep``, because a wrong expected set would schedule live
+resources for deletion. All this does is finish work that a human already authorized:
+unmark what reappeared, purge what is marked and expired.
 """
 
 from __future__ import annotations
@@ -39,15 +37,12 @@ def _seconds_until_next_run(hour: int, now: datetime) -> float:
 
 
 class ReconciliationScheduler:
-    """Runs the reconciliation job once a night."""
-
     def __init__(self, cluster: str):
         self._cluster = cluster
         self._running = False
         self._task: asyncio.Task | None = None
 
     async def start(self) -> None:
-        """Start the nightly scheduler loop as a background task."""
         self._running = True
         self._task = asyncio.create_task(self._run())
         logger.info(
@@ -59,7 +54,6 @@ class ReconciliationScheduler:
         )
 
     async def stop(self) -> None:
-        """Stop the scheduler loop."""
         self._running = False
         if self._task is not None:
             self._task.cancel()

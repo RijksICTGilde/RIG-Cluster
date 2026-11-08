@@ -32,7 +32,7 @@ from fastapi import HTTPException
 from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
 from opi.api.step_up_router import StepUpRequest, StepUpWindow, activate_token_step_up, end_token_step_up
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.core.step_up import StepUpAction
 from opi.services.api_step_up_service import personal_token_credential
 from opi.services.project_leden import hash_van
@@ -62,7 +62,7 @@ def _project(*, met_oude_sleutel: bool = False) -> ProjectSummary:
         users=[
             ProjectUser(email=LID, role="admin", tokens=[_token("cli", TOKEN_MENS)]),
             ProjectUser(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="project-api",
                 role="admin",
                 tokens=[_token("pijplijn", TOKEN_BOUWSTRAAT)],

@@ -1,9 +1,4 @@
-"""
-Database connection pool management.
-
-This module provides a DatabasePool class that manages asyncpg connection pools
-with proper lifecycle management and dependency injection support.
-"""
+"""One asyncpg connection pool, with the leak detection that goes with it."""
 
 import asyncio
 import logging
@@ -19,8 +14,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConnectionInfo:
-    """Information about an acquired connection."""
-
     connection_id: int
     acquired_at: float
     acquired_by_task: str | None
@@ -29,12 +22,10 @@ class ConnectionInfo:
 
 
 class DatabasePoolError(Exception):
-    """Exception raised when database pool operations fail."""
+    """Raised when an operation on the pool fails."""
 
 
 class DatabasePool:
-    """Manages a PostgreSQL connection pool with lifecycle management."""
-
     def __init__(
         self,
         host: str,
@@ -48,19 +39,10 @@ class DatabasePool:
         *,
         sslmode: str,
     ) -> None:
-        """Initialize the database pool configuration.
+        """``sslmode`` is the libpq sslmode for every connection in the pool.
 
-        Args:
-            host: Database host
-            user: Database username
-            password: Database password
-            database: Database name
-            port: Database port
-            min_size: Minimum pool size
-            max_size: Maximum pool size
-            sslmode: libpq sslmode for every connection in the pool. Verplicht en zonder
-                default, zodat een nieuwe aanroeper settings.DATABASE_SSLMODE niet
-                stilzwijgend kan overslaan.
+        Required and without a default, so a new caller cannot quietly skip
+        ``settings.DATABASE_SSLMODE``.
         """
         self.host = host
         self.user = user
@@ -73,12 +55,10 @@ class DatabasePool:
         self.sslmode = sslmode
         self.pool: asyncpg.Pool | None = None
         self._initialized = False
-        # Connection tracking for leak detection
         self._active_connections: dict[int, ConnectionInfo] = {}
         self._tracking_lock = threading.Lock()
 
     async def initialize(self) -> None:
-        """Initialize the connection pool."""
         if self._initialized:
             logger.warning("Database pool already initialized")
             return
@@ -102,12 +82,10 @@ class DatabasePool:
             raise DatabasePoolError(f"Pool initialization failed: {e}") from e
 
     async def close(self) -> None:
-        """Close the connection pool."""
         if not self._initialized or self.pool is None:
             logger.warning("Database pool not initialized or already closed")
             return
 
-        # Check for unreleased connections before closing
         with self._tracking_lock:
             if self._active_connections:
                 logger.error(
@@ -139,7 +117,6 @@ class DatabasePool:
             self.pool = None
             self._initialized = False
 
-            # Clear tracking after successful close
             with self._tracking_lock:
                 self._active_connections.clear()
 
@@ -149,44 +126,33 @@ class DatabasePool:
             raise DatabasePoolError(f"Pool closure failed: {e}") from e
 
     async def acquire(self) -> asyncpg.Connection:
-        """Acquire a connection from the pool.
-
-        Returns:
-            Database connection from the pool
-
-        Raises:
-            DatabasePoolError: If pool not initialized or acquisition fails
-        """
+        """Raises ``DatabasePoolError`` when the pool is not up or acquisition fails."""
         if not self._initialized or self.pool is None:
             raise DatabasePoolError("Database pool not initialized. Call initialize() first.")
 
         try:
-            # Add timeout to prevent infinite waits during database issues
+            # A timeout, so a database in trouble does not make this wait forever.
             conn = await asyncio.wait_for(self.pool.acquire(), timeout=30.0)
 
-            # Track connection with caller information
             conn_id = id(conn)
             current_time = time.time()
 
-            # Capture stack trace (exclude this method and asyncpg internals)
+            # Without this method itself, which is never the caller being looked for.
             stack = traceback.extract_stack()[:-1]
             stack_trace = "".join(traceback.format_list(stack))
 
-            # Get current task name if available
             try:
                 current_task = asyncio.current_task()
                 task_name = current_task.get_name() if current_task else None
             except Exception:
                 task_name = None
 
-            # Find the first meaningful caller (skip internal pool/connector methods)
             caller_info = "unknown"
             for frame_summary in reversed(stack):
                 filename = frame_summary.filename
                 function_name = frame_summary.name
                 line_no = frame_summary.lineno
 
-                # Skip internal pool and asyncpg methods
                 if (
                     "database_pool.py" not in filename
                     and "postgres.py" not in filename
@@ -196,7 +162,6 @@ class DatabasePool:
                     caller_info = f"{filename}:{function_name}():{line_no}"
                     break
 
-            # Store connection info
             connection_info = ConnectionInfo(
                 connection_id=conn_id,
                 acquired_at=current_time,
@@ -220,21 +185,13 @@ class DatabasePool:
             raise DatabasePoolError(f"Connection acquisition failed: {e}") from e
 
     async def release(self, connection: asyncpg.Connection) -> None:
-        """Release a connection back to the pool.
-
-        Args:
-            connection: Connection to release back to the pool
-
-        Raises:
-            DatabasePoolError: If pool not initialized or release fails
-        """
+        """Raises ``DatabasePoolError`` when the pool is not up or the release fails."""
         if not self._initialized or self.pool is None:
             raise DatabasePoolError("Database pool not initialized")
 
         try:
             conn_id = id(connection)
 
-            # Remove from tracking
             connection_info = None
             with self._tracking_lock:
                 connection_info = self._active_connections.pop(conn_id, None)
@@ -252,23 +209,21 @@ class DatabasePool:
 
     @property
     def is_initialized(self) -> bool:
-        """Check if the pool is initialized."""
         return self._initialized
 
     def get_active_connections_count(self) -> int:
-        """Get the number of active (unreleased) connections being tracked."""
+        """How many tracked connections are acquired and not released."""
         with self._tracking_lock:
             return len(self._active_connections)
 
     def get_connection_stats(self) -> dict[str, any]:
-        """Get detailed connection statistics for monitoring."""
+        """The connection statistics the monitoring reads."""
         if not self.pool:
             return {"error": "pool not initialized"}
 
         with self._tracking_lock:
             active_count = len(self._active_connections)
 
-            # Get the oldest connection age if any exist
             oldest_age = 0.0
             current_time = time.time()
             if self._active_connections:
@@ -286,7 +241,6 @@ class DatabasePool:
         }
 
     def log_active_connections(self) -> None:
-        """Log information about all currently active connections."""
         with self._tracking_lock:
             if not self._active_connections:
                 logger.info(f"Pool ({self.host}) has no active tracked connections")
@@ -302,7 +256,6 @@ class DatabasePool:
                 )
 
     def __repr__(self) -> str:
-        """String representation of the pool."""
         status = "initialized" if self._initialized else "not initialized"
         active_count = self.get_active_connections_count()
         return f"DatabasePool(host={self.host}, database={self.database}, {status}, active={active_count})"

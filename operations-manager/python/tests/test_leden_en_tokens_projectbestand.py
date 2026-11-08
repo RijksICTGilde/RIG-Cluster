@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pytest
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.forms.models.project_file import ProjectUserModel
 from opi.services.project_leden import hash_van, is_verlopen, service_accounts
@@ -148,7 +148,7 @@ def test_een_niet_verplaatste_projectsleutel_houdt_het_bestand_geldig() -> None:
 
 def test_het_model_eist_een_naam_bij_een_service_account() -> None:
     with pytest.raises(ValidationError):
-        ProjectUserModel(type=LidSoort.SERVICE_ACCOUNT, role="admin")
+        ProjectUserModel(type=MemberKind.SERVICE_ACCOUNT, role="admin")
 
 
 def test_het_model_eist_een_e_mailadres_bij_een_mens() -> None:
@@ -176,7 +176,7 @@ def test_de_projectsleutel_wordt_een_token_van_project_api() -> None:
     assert "api-key" not in gemigreerd["config"]
 
     account = next(lid for lid in gemigreerd["users"] if lid.get("name") == PROJECT_API_ACCOUNT)
-    assert account["type"] == LidSoort.SERVICE_ACCOUNT.value
+    assert account["type"] == MemberKind.SERVICE_ACCOUNT.value
     # 2.12 schrijft role: admin; de stap naar 2.13 maakt er [admin, ops] van.
     assert account["roles"] == ["admin", "ops"]
     assert account["tokens"][0]["hash"] == hash_van("de-oude-sleutel")
@@ -277,7 +277,7 @@ def test_service_accounts_laat_alleen_de_service_accounts_zien() -> None:
         filename="projects/bouwput.yaml",
         users=[
             ProjectUser(email="mens@rijksoverheid.nl", role="admin"),
-            ProjectUser(type=LidSoort.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
+            ProjectUser(type=MemberKind.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
         ],
     )
 
@@ -287,7 +287,7 @@ def test_service_accounts_laat_alleen_de_service_accounts_zien() -> None:
 def test_project_user_eist_een_naam_bij_een_service_account() -> None:
     """Zonder deze eis matcht een lid met een leeg principaal elke lege vergelijking."""
     with pytest.raises(ValidationError, match="name"):
-        ProjectUser(type=LidSoort.SERVICE_ACCOUNT, role="developer")
+        ProjectUser(type=MemberKind.SERVICE_ACCOUNT, role="developer")
 
 
 def test_project_user_eist_een_e_mailadres_bij_een_mens() -> None:

@@ -1,17 +1,16 @@
-"""Een handeling in productie vraagt een verse step-up (RC-332).
+"""An action in production asks for a fresh step-up (RC-332).
 
-Sinds RC-377 vraagt ook elke wijzigende beheerroute er een, ongeacht de omgeving: een
-handeling van platformbeheer raakt het hele cluster. Sinds RC-387 geldt dat ook voor een
-token of een lidmaatschap: wie een bewijsmiddel krijgt of houdt kan blijvend bij een
-project, ook buiten productie. Sinds RC-388 geldt het voor de omgevingsvariabelen van een
-component: die kunnen geheimen bevatten en staan daarom niet meer op een pagina.
+So does every mutating administration route, whatever the environment: an action of
+platform administration touches the whole cluster. So does a token or a membership:
+whoever gets or keeps a credential has lasting access to a project, outside production
+too. And so do the environment variables of a component, which can hold secrets.
 
-Hier staat WANNEER een handeling er een vraagt en of er een verse is. Hoe het portaal
-erom vraagt staat in ``opi/web/router_step_up.py``; hoe een handeling hem oplegt in
+This is WHEN an action asks for one, and whether there is a fresh one. How the portal asks
+for it is in ``opi/web/router_step_up.py``; how an action imposes it is in
 :func:`opi.core.auth_decorators.requires_step_up`.
 
-Het venster schuift niet mee: een handeling LEEST de stempel en zet hem nooit opnieuw,
-zodat het venster na de code ook echt zo lang duurt als ingesteld.
+The window does not slide along: an action READS the stamp and never sets it again, so the
+window after the code really lasts as long as configured.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from opi.core.config import settings
-from opi.core.leden import ledenlijst_wijzigt
+from opi.core.members import member_list_changed
 from opi.core.project_environment import (
     Omgeving,
     effective_environment,
@@ -37,10 +36,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Hoe lang een step-up een volgende handeling dekt.
+#: How long a step-up covers a following action.
 STEP_UP_WINDOW = timedelta(minutes=settings.STEP_UP_WINDOW_MINUTES)
 
-#: De sessiesleutel met het moment van de laatste geslaagde step-up.
+#: The session key holding the moment of the last successful step-up.
 STEP_UP_SESSION_KEY = "step_up_at"
 
 #: Whether caller has a fresh step-up. Service-layer has no request. Default False
@@ -49,7 +48,7 @@ step_up_fresh: ContextVar[bool] = ContextVar("step_up_fresh", default=False)
 
 
 class StepUpKind(StrEnum):
-    """Waar de handeling over gaat, en daarmee hoe "in productie" gelezen wordt."""
+    """What the action is about, and with that how "in production" is read."""
 
     DEPLOYMENT = "deployment"
     COMPONENT = "component"
@@ -57,11 +56,11 @@ class StepUpKind(StrEnum):
 
 
 class StepUpAction(StrEnum):
-    """Welke handeling een step-up vraagt, zoals een client hem leest.
+    """Which action asks for a step-up, as a client reads it.
 
-    De waarde gaat als ``action`` mee in het problem-detail van de API, en is daarmee het
-    enige deel van de weigering waarop een client mag sturen. Daarnaast hangen hier de
-    twee teksten die bij de handeling horen, zodat een route er maar een ding over zegt.
+    The value travels as ``action`` in the problem detail of the API, and is with that the
+    only part of the refusal a client may steer on. Next to it hang the two texts that
+    belong to the action, so a route says only one thing about it.
     """
 
     PROJECT_DELETE = "project-delete"
@@ -74,9 +73,9 @@ class StepUpAction(StrEnum):
     ORPHANS_CONFIRM = "orphans-confirm"
     PROJECTS_RELOAD = "projects-reload"
     PROJECT_KEY_REPLACE = "project-key-replace"
-    TOKEN_ISSUE = "token-issue"  # noqa: S105 -- naam van een handeling, geen secret
-    TOKEN_ROTATE = "token-rotate"  # noqa: S105 -- naam van een handeling, geen secret
-    TOKEN_REVOKE = "token-revoke"  # noqa: S105 -- naam van een handeling, geen secret
+    TOKEN_ISSUE = "token-issue"  # noqa: S105  # the name of an action, not a secret
+    TOKEN_ROTATE = "token-rotate"  # noqa: S105  # the name of an action, not a secret
+    TOKEN_REVOKE = "token-revoke"  # noqa: S105  # the name of an action, not a secret
     ROLE_CHANGE = "role-change"
     SERVICE_ACCOUNT_ADD = "service-account-add"
     SERVICE_ACCOUNT_REMOVE = "service-account-remove"
@@ -90,12 +89,12 @@ class StepUpAction(StrEnum):
 
     @property
     def phrase(self) -> str:
-        """De handeling als te-infinitief, voor de dialoog en de log."""
+        """The action as a Dutch "te"-infinitive, for the dialog and the log."""
         return _PHRASE[self]
 
-    def reason(self, doelwit: str, *, project: str = "") -> str:
-        """Waarom DEZE aanroep een step-up vraagt, voor het problem-detail."""
-        return _REASON[self].format(doelwit=doelwit, project=project)
+    def reason(self, target: str, *, project: str = "") -> str:
+        """Why THIS call asks for a step-up, for the problem detail."""
+        return _REASON[self].format(doelwit=target, project=project)
 
 
 _PHRASE = {
@@ -170,18 +169,18 @@ def _uses_component(deployment: dict[str, Any], component_name: str) -> bool:
 
 
 def production_marking_change(before: dict[str, Omgeving], after: dict[str, Omgeving]) -> bool:
-    """Of deze opslag een deployment NAAR of VAN ``productie`` zet.
+    """Whether this save puts a deployment ON or OFF ``productie``.
 
-    Alleen die overgang is "de markering zetten" (``environment.set``): wie een deployment
-    van productie haalt omzeilt elke productieregel met een klik, en wie hem erop zet
-    bepaalt waar die regels gelden. Een NIEUWE deployment die meteen op productie komt telt
-    mee.
+    Only that transition is "setting the marking" (``environment.set``): whoever takes a
+    deployment off production sidesteps every production rule with one click, and whoever
+    puts it on decides where those rules hold. A NEW deployment that lands on production
+    straight away counts.
 
-    Een overgang tussen de andere stages (ontwikkeling, test, acceptatie) valt er bewust
-    niet onder: dat is een deployment schrijven, en de regel daarvan weegt hem al. Zo kan
-    een developer of een pijplijn met ``developer-ci`` een deployment van test naar
-    acceptatie zetten. Een deployment die VERDWIJNT valt er ook niet onder: het
-    verwijderen heeft zijn eigen regel, met zijn eigen tekst.
+    A transition between the other stages (ontwikkeling, test, acceptatie) deliberately
+    does not: that is writing a deployment, and the rule for that already weighs it. So a
+    developer or a pipeline with ``developer-ci`` can move a deployment from test to
+    acceptatie. A deployment that DISAPPEARS does not fall under it either: deleting has a
+    rule of its own, with a text of its own.
     """
     for name, after_value in after.items():
         before_value = before.get(name)
@@ -196,10 +195,10 @@ def requires_production_step_up(
     target: str | None = None,
     change: tuple[dict[str, Omgeving], dict[str, Omgeving]] | None = None,
 ) -> bool:
-    """Of deze handeling een verse step-up vraagt.
+    """Whether this action asks for a fresh step-up.
 
-    ``target`` is de naam van de deployment of het component; ``change`` zijn de
-    markeringen van voor en na, en alleen bij :attr:`StepUpKind.ENVIRONMENT` gevuld.
+    ``target`` is the name of the deployment or the component; ``change`` is the markings
+    before and after, and is filled only for :attr:`StepUpKind.ENVIRONMENT`.
     """
     match kind:
         case StepUpKind.DEPLOYMENT:
@@ -216,49 +215,49 @@ def requires_production_step_up(
 
 
 def log_step_up_refusal(
-    handeling: str,
+    action_phrase: str,
     *,
     project_name: str,
     actor: str,
-    doelwit: str | None = None,
+    target: str | None = None,
 ) -> str:
-    """Log een geweigerde handeling en geef de tekst die de gebruiker te zien krijgt.
+    """Log a refused action and return the text the user gets to see.
 
-    Drie plekken weigeren een handeling (de decorator, de modal-opslag en de wizard) met
-    verschillende antwoordvormen, maar met dezelfde regel en dezelfde tekst.
+    Three places refuse an action (the decorator, the modal save and the wizard) with
+    different answer shapes, but with the same rule and the same text.
     """
     logger.warning(
         "Geweigerd, geen verse step-up om %s: doel '%s', project '%s', door %s",
-        handeling,
-        doelwit or project_name,
+        action_phrase,
+        target or project_name,
         project_name,
         actor,
     )
-    return f"Om {handeling} is een verse code uit je 2-factor nodig."
+    return f"Om {action_phrase} is een verse code uit je 2-factor nodig."
 
 
 def record_step_up(request: Request) -> None:
-    """Leg vast dat deze gebruiker zojuist een geldige code gaf."""
+    """Record that this user just gave a valid code."""
     request.session[STEP_UP_SESSION_KEY] = datetime.now(UTC).isoformat()
 
 
 def step_up_until(request: Request) -> datetime | None:
-    """Het moment waarop de verse step-up in de sessie verloopt, of None als er geen is.
+    """The moment the fresh step-up in the session expires, or None when there is none.
 
-    Geen sessie is geen step-up: op een ``/api/``-pad draait de sessiemiddleware niet, en
-    Starlette werpt daar een AssertionError op ``request.session``. Sinds RC-392 leest ook
-    het rechtensysteem deze functie, en dat doet het op beide paden.
+    No session is no step-up: on an ``/api/`` path the session middleware does not run, and
+    Starlette raises an AssertionError on ``request.session`` there. The authorization
+    system reads this function as well, and it does so on both paths.
     """
     try:
-        sessie = request.session
+        session = request.session
     except AssertionError, AttributeError:
         return None
-    return session_step_up_until(sessie)
+    return session_step_up_until(session)
 
 
-def session_step_up_until(sessie: Any) -> datetime | None:
+def session_step_up_until(session: Any) -> datetime | None:
     """:func:`step_up_until` for a caller holding only the session, such as a WebSocket."""
-    stamp = sessie.get(STEP_UP_SESSION_KEY)
+    stamp = session.get(STEP_UP_SESSION_KEY)
     if not isinstance(stamp, str):
         return None
     try:
@@ -270,7 +269,7 @@ def session_step_up_until(sessie: Any) -> datetime | None:
 
 
 def has_fresh_step_up(request: Request) -> bool:
-    """Of er een step-up van minder dan :data:`STEP_UP_WINDOW` geleden in de sessie staat."""
+    """Whether the session holds a step-up from less than :data:`STEP_UP_WINDOW` ago."""
     return step_up_until(request) is not None
 
 
@@ -293,22 +292,22 @@ def _names(items: Any) -> set[str]:
 
 
 def save_requires_step_up(before: dict[str, Any], after: dict[str, Any]) -> str | None:
-    """Hoe deze opslag productie raakt, als te-infinitief voor de dialoog, of None.
+    """How this save touches production, as a "te"-infinitive for the dialog, or None.
 
-    De portaalwegen die NIET door een verwijderroute lopen komen hier samen: de
-    modal-wizard haalt een deployment of een component uit de lijst, en dezelfde opslag
-    kan de markering verlagen.
+    The portal routes that do NOT run through a delete route come together here: the modal
+    wizard takes a deployment or a component out of the list, and the same save can lower
+    the marking.
     """
-    for naam in sorted(_names(before.get("deployments")) - _names(after.get("deployments"))):
-        if requires_production_step_up(StepUpKind.DEPLOYMENT, before, naam):
-            return f"de deployment '{naam}' te verwijderen"
-    for naam in sorted(_names(before.get("components")) - _names(after.get("components"))):
-        if requires_production_step_up(StepUpKind.COMPONENT, before, naam):
-            return f"het component '{naam}' te verwijderen"
+    for name in sorted(_names(before.get("deployments")) - _names(after.get("deployments"))):
+        if requires_production_step_up(StepUpKind.DEPLOYMENT, before, name):
+            return f"de deployment '{name}' te verwijderen"
+    for name in sorted(_names(before.get("components")) - _names(after.get("components"))):
+        if requires_production_step_up(StepUpKind.COMPONENT, before, name):
+            return f"het component '{name}' te verwijderen"
     if requires_production_step_up(
         StepUpKind.ENVIRONMENT, before, change=(environment_markings(before), environment_markings(after))
     ):
         return StepUpAction.MARKING_SET.phrase
-    if ledenlijst_wijzigt(before, after):
+    if member_list_changed(before, after):
         return StepUpAction.ROLE_CHANGE.phrase
     return None

@@ -1,6 +1,6 @@
-"""De handelende partij van de huidige uitvoering.
+"""The acting party of the current execution.
 
-SERVER-SIDE bepaald op de ingang die legitimeert, nooit uit request-body gelezen.
+Determined SERVER-SIDE at the entrance that legitimises, never read from a request body.
 """
 
 import contextvars
@@ -9,14 +9,14 @@ from enum import StrEnum
 
 
 class ActorKind(StrEnum):
-    """Wat voor partij er handelde, los van wie het was."""
+    """What kind of party acted, apart from who it was."""
 
     USER = "user"
     PROJECT_API_KEY = "project-api-key"
     SERVICE_ACCOUNT = "service-account"
     PLATFORM_API_KEY = "platform-api-key"
-    # Geen ingang zet deze soort nog; hij bestaat om opgeslagen created_by-waarden van
-    # voor RC-377 terug te lezen (actor_from_stored).
+    # No entrance sets this kind; it is only read back out of stored created_by values
+    # (actor_from_stored).
     ADMIN_API_KEY = "admin-api-key"
     SCHEDULER = "scheduler"
     UNKNOWN = "onbekend"
@@ -24,68 +24,64 @@ class ActorKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Actor:
-    """Soort en identiteit apart, zodat een lezer geen tekst hoeft te ontleden.
-
-    ``str()`` geeft de vorm voor de git-trailer en voor ``async_tasks.created_by``.
-    """
+    """``str()`` gives the shape for the git trailer and for ``async_tasks.created_by``."""
 
     kind: ActorKind
     identity: str | None = None
 
     def __str__(self) -> str:
-        # Een e-mailadres identificeert zichzelf al, en een opgeslagen waarde zonder
-        # soort heeft niets om voor te zetten. Die twee blijven kaal, zodat de waarde
-        # heen en terug door created_by komt, waar hij met een e-mailadres wordt
-        # vergeleken (_caller_started_this_task).
+        # An email address identifies itself, and a stored value without a kind has nothing to
+        # prefix. Those two stay bare, so the value survives a round trip through created_by,
+        # where it is compared against an email address (_caller_started_this_task).
         if self.kind in (ActorKind.USER, ActorKind.UNKNOWN):
             return self.identity or self.kind.value
         return f"{self.kind.value}:{self.identity}" if self.identity else self.kind.value
 
 
 ACTOR_UNKNOWN = Actor(ActorKind.UNKNOWN)
-"""Geen ingang heeft een actor gezet. Expliciet, zodat een gat zichtbaar is."""
+"""No entrance set an actor. Explicit, so that a gap is visible."""
 
 ACTOR_PLATFORM_API_KEY = Actor(ActorKind.PLATFORM_API_KEY)
-"""Platforminstantie of operator, geen persoon."""
+"""A platform instance or an operator, not a person."""
 
 actor: contextvars.ContextVar[Actor] = contextvars.ContextVar("actor", default=ACTOR_UNKNOWN)
 
 
 def set_actor(value: Actor) -> None:
-    """Leg vast wie deze uitvoering startte."""
+    """Record who started this execution."""
     actor.set(value)
 
 
 def get_actor() -> Actor:
-    """De handelende partij, of ``ACTOR_UNKNOWN`` als geen ingang hem zette."""
+    """The acting party, or ``ACTOR_UNKNOWN`` when no entrance set one."""
     return actor.get()
 
 
 def user_actor(email: str) -> Actor:
-    """Een geverifieerd e-mailadres uit een sessie of een bearer-token."""
+    """A verified email address out of a session or a bearer token."""
     return Actor(ActorKind.USER, email)
 
 
 def project_api_key_actor(project_name: str) -> Actor:
-    """Een projectsleutel legitimeert een project, geen persoon."""
+    """A project key legitimises a project, not a person."""
     return Actor(ActorKind.PROJECT_API_KEY, project_name)
 
 
-def service_account_actor(project_name: str, naam: str) -> Actor:
-    """Een service account van een project, met een naam die het logboek kan noemen."""
-    return Actor(ActorKind.SERVICE_ACCOUNT, f"{project_name}/{naam}")
+def service_account_actor(project_name: str, name: str) -> Actor:
+    """A service account of a project, with a name the audit trail can mention."""
+    return Actor(ActorKind.SERVICE_ACCOUNT, f"{project_name}/{name}")
 
 
 def scheduler_actor(name: str) -> Actor:
-    """Een achtergrondproces dat zonder aanroeper draait."""
+    """A background process that runs without a caller."""
     return Actor(ActorKind.SCHEDULER, name)
 
 
 def actor_from_stored(value: str | None) -> Actor:
-    """Een opgeslagen ``created_by`` terug naar soort en identiteit.
+    """A stored ``created_by`` back into kind and identity.
 
-    Niet elke producent van dat veld schrijft deze vorm ("API", "backup-scheduler");
-    zo'n waarde houdt zijn tekst als identiteit en krijgt geen soort toegedicht.
+    Not every producer of that field writes this shape ("API", "backup-scheduler"); such a
+    value keeps its text as identity and is not credited with a kind.
     """
     if not value:
         return ACTOR_UNKNOWN

@@ -1,19 +1,19 @@
-"""Wat DIT verzoek onderweg achterliet, voor de auditrij aan het eind.
+"""What THIS request left behind on the way, for the audit row at the end.
 
-De hook rond de rechtenbeslissing (``opi/middleware/audit.py``) schrijft de rij na het
-antwoord, en kent op dat moment drie dingen niet die alleen tijdens het verzoek bekend
-zijn: welke commits van het projectbestand het maakte, welke taak het startte, en wat de
-route zelf aan velden noemde. Ze staan hier als contextvar per verzoek, zoals de actor in
-``opi/core/actor.py``, zodat de schrijvers (de projectstore, de taakdienst, de poort) de
-hook niet hoeven te kennen.
+The hook around the authorization decision (``opi/middleware/audit.py``) writes the row
+after the answer, and at that moment does not know three things that are only known during
+the request: which commits of the project file it made, which task it started, and what
+fields the route itself named. They sit here as a contextvar per request, like the actor in
+``opi/core/actor.py``, so the writers (the project store, the task service, the gate) need
+not know the hook.
 
-Het spoor wordt door de hook GEOPEND (``begin_trail``) en bestaat alleen binnen een
-verzoek. Buiten een verzoek legt een schrijver niets vast: een commit uit de nachtelijke
-``ResourceTuningScheduler`` draait in een enkele langlevende taak, en zonder die grens
-zou de contextvar daar eindeloos doorgroeien zonder dat iemand hem ooit leest.
+The trail is OPENED by the hook (``begin_trail``) and exists only inside a request. Outside
+a request a writer records nothing: a commit out of the nightly
+``ResourceTuningScheduler`` runs in a single long-lived task, and without that boundary the
+contextvar would grow there endlessly without anyone ever reading it.
 
-Elk verzoek draait in zijn eigen kopie van de context, dus een ander verzoek ziet deze
-waarden niet.
+Every request runs in its own copy of the context, so another request does not see these
+values.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import contextvars
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from opi.core.auth_decorators import velden_uit_formulier
+from opi.core.auth_decorators import fields_from_form
 from opi.core.authz.actions import audit_fields_of
 
 if TYPE_CHECKING:
@@ -30,25 +30,25 @@ if TYPE_CHECKING:
 
     from starlette.requests import Request
 
-#: De enige body die voor de audit wordt gelezen. Een ``multipart``-body blijft erbuiten:
-#: dat is de vorm van een image-upload, en die in zijn geheel ontleden om er een veldnaam
-#: uit te halen zou de upload door het geheugen halen voor een logregel.
-FORMULIER_TYPE = "application/x-www-form-urlencoded"
+#: The only body that is read for the audit. A ``multipart`` body stays out of it: that is
+#: the shape of an image upload, and parsing it whole to pull one field name out of it would
+#: push the upload through memory for a log line.
+FORM_TYPE = "application/x-www-form-urlencoded"
 
-#: De lengte waarop een veldwaarde wordt afgekapt, zoals ``record_action`` dat voor
-#: ``origin``, ``actor`` en ``summary`` doet. ``data`` is JSONB en heeft geen
-#: kolombreedte, dus zonder deze grens zet een aanroeper er zoveel in als zijn body
-#: groot is, en dat blijft een jaar staan. Een image met digest past er ruim in.
-MAX_VELDWAARDE = 256
+#: The length a field value is truncated to, as ``record_action`` does for ``origin``,
+#: ``actor`` and ``summary``. ``data`` is JSONB and has no column width, so without this
+#: bound a caller puts as much in it as its body is big, and that stays for a year. An image
+#: with a digest fits in it comfortably.
+MAX_FIELD_VALUE = 256
 
 
 @dataclass(slots=True)
 class Trail:
-    """Het spoor van een verzoek, in de vorm waarin de rij het draagt."""
+    """The trail of a request, in the shape the row carries it."""
 
     commit_shas: list[str] = field(default_factory=list)
     task_id: uuid.UUID | None = None
-    #: ``object`` en niet ``str``, want dat is de vorm die ``record_action`` leest.
+    #: ``object`` and not ``str``, because that is the shape ``record_action`` reads.
     fields: dict[str, object] = field(default_factory=dict)
 
 
@@ -56,56 +56,56 @@ _trail: contextvars.ContextVar[Trail | None] = contextvars.ContextVar("audit_tra
 
 
 def begin_trail() -> None:
-    """Open het spoor van dit verzoek; alleen de hook doet dit."""
+    """Open the trail of this request; only the hook does this."""
     _trail.set(Trail())
 
 
 def record_commit(ref: str) -> None:
-    """Leg een commit van een projectbestand vast; een verzoek kan er meer dan een maken."""
-    spoor = _trail.get()
-    if spoor is not None:
-        spoor.commit_shas.append(ref)
+    """Record a commit of a project file; a request can make more than one."""
+    trail_now = _trail.get()
+    if trail_now is not None:
+        trail_now.commit_shas.append(ref)
 
 
 def record_task(task_id: uuid.UUID) -> None:
-    """Leg de taak vast die dit verzoek startte. De eerste blijft staan.
+    """Record the task this request started. The first one stays.
 
-    De rij heeft er een kolom voor en geen lijst: hij noemt de taak waarin het werk van
-    dit verzoek verderliep, en dat is de eerste die eruit kwam.
+    The row has a column for it and not a list: it names the task the work of this request
+    continued in, and that is the first one that came out of it.
     """
-    spoor = _trail.get()
-    if spoor is not None and spoor.task_id is None:
-        spoor.task_id = task_id
+    trail_now = _trail.get()
+    if trail_now is not None and trail_now.task_id is None:
+        trail_now.task_id = task_id
 
 
 async def capture_fields(request: Request, endpoint: Any) -> None:
-    """Leg de velden vast die DEZE route zelf noemt, met hun ingediende waarde.
+    """Record the fields THIS route names itself, with their submitted value.
 
-    Alleen de genoemde velden, nooit een hele body, en elk afgekapt op
-    :data:`MAX_VELDWAARDE`: wat hier in komt blijft een jaar staan, ook nadat de
-    bewaarlus ``actor`` en ``origin`` heeft leeggemaakt, dus een route noemt nooit een
-    veld dat een persoon kan aanwijzen (``features/audit.md``).
+    Only the named fields, never a whole body, and each truncated at
+    :data:`MAX_FIELD_VALUE`: what goes in here stays for a year, also after the retention
+    loop has emptied ``actor`` and ``origin``, so a route never names a field that can point
+    at a person (``features/audit.md``).
 
-    Bij de poort en niet in de hook: de hook draait na het antwoord, en het formulier van
-    dit verzoek is dan niet meer te lezen. Wel pas NADAT de poort de aanroeper heeft
-    toegelaten, want een aanroeper die niets mag hoort geen body te laten ontleden.
+    At the gate and not in the hook: the hook runs after the answer, and the form of this
+    request can no longer be read then. And only AFTER the gate has let the caller in,
+    because a caller who may do nothing should not get a body parsed.
     """
-    spoor = _trail.get()
-    namen = audit_fields_of(endpoint)
-    if spoor is None or not namen:
+    trail_now = _trail.get()
+    names = audit_fields_of(endpoint)
+    if trail_now is None or not names:
         return
-    gevonden = {
-        naam: str(waarde)[:MAX_VELDWAARDE]
-        for naam, waarde in (*request.path_params.items(), *request.query_params.items())
-        if naam in namen
+    found = {
+        name: str(value)[:MAX_FIELD_VALUE]
+        for name, value in (*request.path_params.items(), *request.query_params.items())
+        if name in names
     }
-    ontbreekt = tuple(naam for naam in namen if naam not in gevonden)
-    if ontbreekt and request.headers.get("content-type", "").startswith(FORMULIER_TYPE):
-        uit_formulier = await velden_uit_formulier(request, ontbreekt)
-        gevonden.update({naam: waarde[:MAX_VELDWAARDE] for naam, waarde in uit_formulier.items()})
-    spoor.fields = dict(gevonden)
+    missing = tuple(name for name in names if name not in found)
+    if missing and request.headers.get("content-type", "").startswith(FORM_TYPE):
+        from_form = await fields_from_form(request, missing)
+        found.update({name: value[:MAX_FIELD_VALUE] for name, value in from_form.items()})
+    trail_now.fields = dict(found)
 
 
 def trail() -> Trail:
-    """Het spoor van dit verzoek, of een leeg spoor buiten een verzoek."""
+    """The trail of this request, or an empty trail outside a request."""
     return _trail.get() or Trail()

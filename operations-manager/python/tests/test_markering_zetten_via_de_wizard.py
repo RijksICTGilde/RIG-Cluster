@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.router_wizard import _save_existing_project
 
@@ -41,8 +41,8 @@ def _project(data: dict[str, Any]) -> ProjectSummary:
         filename=f"{PROJECT}.yaml",
         data=data,
         users=[
-            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=DEV, roles=["developer"], type=LidSoort.PERSOON),
+            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=DEV, roles=["developer"], type=MemberKind.PERSON),
         ],
     )
 

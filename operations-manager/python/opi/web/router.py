@@ -17,7 +17,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
-from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
+from opi.core.errors import current_reference, log_render_failure, reference_for, with_reference
 from opi.core.step_up import StepUpAction, is_elevated_admin
 from opi.core.templates_lotc import templates_lotc
 from opi.services.api_token_service import is_projectbeheerder
@@ -440,7 +440,7 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
 @web_router.post("/projects/delete/{project_name}", response_class=HTMLResponse)
 @action(Action.PROJECT_DELETE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
+@requires_step_up(action=StepUpAction.PROJECT_DELETE)
 async def delete_project_web(request: Request, project_name: str) -> HTMLResponse:
     """Delete a whole project from the UI, as a task you can follow.
 
@@ -470,7 +470,7 @@ async def delete_project_web(request: Request, project_name: str) -> HTMLRespons
 @web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}", response_class=HTMLResponse)
 @action(Action.DEPLOYMENT_DELETE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
+@requires_step_up(action=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Delete one deployment from the UI, as a task you can follow."""
     user = get_current_user(request)
@@ -497,7 +497,7 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
 @web_router.post("/projects/{project_name}/delete-component/{component_name}", response_class=HTMLResponse)
 @action(Action.COMPONENT_DELETE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.COMPONENT_DELETE)
+@requires_step_up(action=StepUpAction.COMPONENT_DELETE)
 async def delete_component_web(request: Request, project_name: str, component_name: str) -> HTMLResponse:
     """Delete a component from the UI, as a task you can follow.
 
@@ -2225,7 +2225,9 @@ async def _fetch_argocd_deployment_status(
         logger.exception("Failed to fetch ArgoCD status for %s", app_name)
         return _argocd_unavailable_result(
             app_name,
-            met_kenmerk("De status is nu niet op te halen. Probeer het over een minuut opnieuw.", kenmerk_nu()),
+            with_reference(
+                "De status is nu niet op te halen. Probeer het over een minuut opnieuw.", current_reference()
+            ),
             source="API",
         )
 
@@ -2400,7 +2402,7 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
             logger.exception("Ophalen van het resourcegebruik voor %s mislukt", project_name)
             # De kop van de melding zegt al WAT er niet lukt ("Resourcegebruik is niet
             # op te halen"), dus zegt de zin eronder wat je eraan kunt doen.
-            ctx["usage_error"] = met_kenmerk("Probeer het over een minuut opnieuw.", kenmerk_van(request))
+            ctx["usage_error"] = with_reference("Probeer het over een minuut opnieuw.", reference_for(request))
 
     # Ook dit fragment kent de LOTC-weergave. Zonder zou de projectpagina onder ?ui=lotc
     # wel LOTC zijn, maar het blokje dat htmx erin laadt nog roos - een pagina die
@@ -3080,7 +3082,7 @@ async def encrypt_text(request: Request):
         logger.exception("Versleutelen mislukt")
         bericht = "Versleutelen is niet gelukt. Controleer de publieke sleutel en de invoer."
         return JSONResponse(
-            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            content={"error": with_reference(bericht, reference_for(request))},
             status_code=500,
         )
 
@@ -3118,7 +3120,7 @@ async def decrypt_text(request: Request):
         logger.exception("Ontsleutelen mislukt")
         bericht = "Ontsleutelen is niet gelukt. Controleer de private sleutel en of de invoer echt AGE-versleuteld is."
         return JSONResponse(
-            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            content={"error": with_reference(bericht, reference_for(request))},
             status_code=500,
         )
 

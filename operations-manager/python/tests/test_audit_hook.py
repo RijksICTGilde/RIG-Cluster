@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.endpoint_util import handhaaf
 from opi.core.actor import Actor, ActorKind, get_actor, service_account_actor, user_actor
-from opi.core.audit_trail import MAX_VELDWAARDE, begin_trail, capture_fields, record_commit, record_task, trail
+from opi.core.audit_trail import MAX_FIELD_VALUE, begin_trail, capture_fields, record_commit, record_task, trail
 from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action, action_of, audit_fields_of
 from opi.core.authz.engine import (
@@ -33,7 +33,7 @@ from opi.core.authz.engine import (
     all_rules,
     rule_for,
 )
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.core.step_up import StepUpAction
 from opi.middleware.audit import AuditMiddleware, _schrijvers
 from opi.server import app
@@ -365,7 +365,7 @@ def test_een_step_up_route_noemt_daarmee_geen_auditvelden() -> None:
     """
 
     @action(Action.TOKEN_MANAGE)
-    @requires_step_up(actie=StepUpAction.TOKEN_ISSUE, velden=("tokennaam", "dagen"))
+    @requires_step_up(action=StepUpAction.TOKEN_ISSUE, fields=("tokennaam", "dagen"))
     async def route(request: Any, project_name: str) -> None: ...
 
     assert audit_fields_of(route) == ()
@@ -472,7 +472,7 @@ async def test_een_geweigerde_api_aanroep_draagt_de_actor() -> None:
             ProjectUser(
                 email="kijker@rijksoverheid.nl",
                 roles=["viewer"],
-                type=LidSoort.PERSOON,
+                type=MemberKind.PERSON,
                 tokens=[ProjectToken(name="t", hash=hash_van(token), expires=vervaldatum(30))],
             )
         ],
@@ -618,8 +618,8 @@ async def test_een_veldwaarde_wordt_afgekapt() -> None:
     verzoek.form = AsyncMock(return_value={"image": "y" * 5000})
 
     await capture_fields(verzoek, route)
-    assert len(trail().fields["deployment"]) == MAX_VELDWAARDE
-    assert len(trail().fields["image"]) == MAX_VELDWAARDE
+    assert len(trail().fields["deployment"]) == MAX_FIELD_VALUE
+    assert len(trail().fields["image"]) == MAX_FIELD_VALUE
 
 
 @pytest.mark.asyncio

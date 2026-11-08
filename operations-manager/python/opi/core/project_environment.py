@@ -1,16 +1,16 @@
-"""De OTAP-markering van een deployment.
+"""The OTAP marking of a deployment.
 
-Eén plek voor de waarden, de standaard en het aflezen. Het veld heet
-``environment`` in het projectbestand; de waarden zijn de OTAP-termen.
+One place for the values, the default and the reading. The field is called
+``environment`` in the project file; the values are the OTAP terms.
 
-De markering hoort bij een deployment en niet bij een project: de omgeving is een
-eigenschap van een draaiende instantie, en een project heeft omgevingen in plaats
-van er een te zijn. Een project toont daarom hooguit de hoogste markering van zijn
-deployments (``highest_environment``), afgeleid en niet opgeslagen.
+The marking belongs to a deployment and not to a project: the environment is a property
+of a running instance, and a project HAS environments instead of being one. A project
+therefore shows at most the highest marking of its deployments
+(``highest_environment``), derived and not stored.
 
-Naast ``opi.core.project_schema`` en niet bij de pydantic-modellen van de
-formulierlaag: de API, de manager en de migratie lezen de markering ook, en die
-mogen de formulierlaag niet importeren.
+Next to ``opi.core.project_schema`` and not with the pydantic models of the form layer:
+the API, the manager and the migration read the marking too, and those may not import the
+form layer.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class Omgeving(StrEnum):
-    """De OTAP-fase waarin een deployment zit, van laag naar hoog."""
+    """The OTAP phase a deployment is in, from low to high."""
 
     ONTWIKKELING = "ontwikkeling"
     TEST = "test"
@@ -31,11 +31,11 @@ class Omgeving(StrEnum):
     PRODUCTIE = "productie"
 
 
-#: Wat een deployment zonder markering is. Toegepast bij het LEZEN, niet in elk
-#: bestand weggeschreven: anders krijgt elk bestaand projectbestand een diff.
+#: What a deployment without a marking is. Applied on READING, not written into every
+#: file: otherwise every existing project file gets a diff.
 DEFAULT_ENVIRONMENT = Omgeving.ONTWIKKELING
 
-#: Hoe de markering op het scherm heet.
+#: What the marking is called on the screen.
 ENVIRONMENT_LABELS: dict[Omgeving, str] = {
     Omgeving.ONTWIKKELING: "Ontwikkeling",
     Omgeving.TEST: "Test",
@@ -43,14 +43,14 @@ ENVIRONMENT_LABELS: dict[Omgeving, str] = {
     Omgeving.PRODUCTIE: "Productie",
 }
 
-#: De volgorde van laag naar hoog, voor ``highest_environment``.
+#: The order from low to high, for ``highest_environment``.
 _ORDER: tuple[Omgeving, ...] = tuple(Omgeving)
 
 
 def _parse(value: Any) -> Omgeving | None:
-    """De markering zoals ze in het bestand staat, of None als ze er niet staat.
+    """The marking as it stands in the file, or None when it is not there.
 
-    Een onbekende waarde komt hier niet langs: het schema weigert hem.
+    An unknown value never gets here: the schema refuses it.
     """
     if isinstance(value, Omgeving):
         return value
@@ -60,22 +60,22 @@ def _parse(value: Any) -> Omgeving | None:
 
 
 def deployment_environment(deployment: dict[str, Any]) -> Omgeving | None:
-    """De markering zoals ze bij deze deployment in het bestand staat, of None."""
+    """The marking as it stands with this deployment in the file, or None."""
     return _parse(deployment.get("environment"))
 
 
 def effective_environment(deployment: dict[str, Any]) -> Omgeving:
-    """De markering die voor deze deployment geldt, met de standaard toegepast."""
+    """The marking that holds for this deployment, with the default applied."""
     return deployment_environment(deployment) or DEFAULT_ENVIRONMENT
 
 
 def environment_label(deployment: dict[str, Any]) -> str:
-    """De effectieve markering van een deployment als label."""
+    """The effective marking of a deployment, as a label."""
     return ENVIRONMENT_LABELS[effective_environment(deployment)]
 
 
 def highest_environment(project_data: dict[str, Any]) -> Omgeving:
-    """De hoogste markering van de deployments van het project. Standaard ``ontwikkeling``."""
+    """The highest marking among the project's deployments. ``ontwikkeling`` by default."""
     return max(
         (effective_environment(deployment) for deployment in _deployments(project_data)),
         key=_ORDER.index,
@@ -84,15 +84,15 @@ def highest_environment(project_data: dict[str, Any]) -> Omgeving:
 
 
 def is_production_downgrade(before: Omgeving, after: Omgeving) -> bool:
-    """Of deze overgang een markering ``productie`` verlaat.
+    """Whether this transition leaves a ``productie`` marking.
 
-    De haak voor de step-up uit ``verwijderen-in-productie-vraagt-een-verse-otp.md``.
+    The hook for the step-up from ``verwijderen-in-productie-vraagt-een-verse-otp.md``.
     """
     return before is Omgeving.PRODUCTIE and after is not Omgeving.PRODUCTIE
 
 
 def environment_markings(project_data: dict[str, Any]) -> dict[str, Omgeving]:
-    """De effectieve markering per deployment, om een wijziging tegen af te zetten."""
+    """The effective marking per deployment, to set a change against."""
     return {
         name: effective_environment(deployment)
         for deployment in _deployments(project_data)
@@ -107,9 +107,9 @@ def log_production_downgrades(
     project_name: str,
     actor: str,
 ) -> None:
-    """Meld elke deployment die ``productie`` verlaat op WARNING.
+    """Report every deployment that leaves ``productie`` at WARNING.
 
-    Tot het derde plan er is, logt OPI een verlaging.
+    Until the third plan exists, OPI logs a downgrade.
     """
     for name, before_value in before.items():
         after_value = after.get(name)
@@ -124,5 +124,5 @@ def log_production_downgrades(
 
 
 def _deployments(project_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """De deploymentsecties van een projectbestand, zonder de rommel ertussen."""
+    """The deployment sections of a project file, without the junk in between."""
     return [entry for entry in project_data.get("deployments") or [] if isinstance(entry, dict)]

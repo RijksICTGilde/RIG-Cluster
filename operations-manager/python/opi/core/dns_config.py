@@ -33,8 +33,7 @@ CAA_TAGS = ("issue", "issuewild")
 # Names we publish ourselves that never send and never receive mail, per managed zone.
 # Relative names, as TransIP writes them; "@" would be the apex.
 #
-# Declared, not derived: a list you can read beats a rule that is clever. Only the
-# ``router.<zone>`` names are in here, and that is on purpose:
+# Declared, not derived. Only the ``router.<zone>`` names are in here:
 # - everything else we publish under these zones (zad, keycloak, project subdomains) is
 #   a CNAME to one of these routers, and TransIP refuses a record next to a CNAME;
 # - the three apexes already carry "v=spf1 -all" and "v=DMARC1; p=reject; sp=reject".
@@ -85,36 +84,38 @@ def desired_caa_contents(zone: str) -> list[str]:
     return contents
 
 
-# De kale ingangen van het cluster: elke andere naam die wij publiceren is een CNAME naar
-# een van deze. Ze dragen geen applicatie, dus wie ze in een browser opvraagt krijgt de
-# uitleg over het aanwijzen van een eigen domein (zie opi/web/router.py).
+# The bare entrances of the cluster: every other name we publish is a CNAME to one of these.
+# They carry no application, so whoever asks for one in a browser gets the explanation about
+# pointing an own domain at it (see opi/web/router.py).
 #
-# Afgeleid uit MANAGED_DNS_ZONES en niet nog een keer uitgeschreven: een tweede lijst die
-# hetzelfde bedoelt loopt uit elkaar zodra er een zone bijkomt.
-# De sandbox staat er los bij: `sandbox.rijksapp.dev` is geen eigen zone bij TransIP maar
-# een stuk van `rijksapp.dev` (zie de kop van dit bestand), dus afleiden uit MANAGED_DNS_ZONES
-# levert hem niet op. Zonder deze regel toont de sandbox de uitleg met productienamen erin.
+# Derived from MANAGED_DNS_ZONES and not written out a second time, so adding a zone needs
+# no edit here.
+# The sandbox is listed separately: `sandbox.rijksapp.dev` is not a zone of its own at
+# TransIP but a piece of `rijksapp.dev` (see the head of this file), so deriving it from
+# MANAGED_DNS_ZONES does not produce it. Without this line the sandbox shows the explanation
+# with production names in it.
 SANDBOX_ROUTER_HOSTNAME = "router.sandbox.rijksapp.dev"
 
 ROUTER_HOSTNAMES: frozenset[str] = frozenset(
     [f"router.{zone}" for zone in MANAGED_DNS_ZONES] + [SANDBOX_ROUTER_HOSTNAME]
 )
 
-# De zones achter die namen, LANGSTE EERST: `zad.sandbox.rijksapp.dev` eindigt op allebei
-# `sandbox.rijksapp.dev` en `rijksapp.dev`, en moet de eerste krijgen.
+# The zones behind those names, LONGEST FIRST: `zad.sandbox.rijksapp.dev` ends in both
+# `sandbox.rijksapp.dev` and `rijksapp.dev`, and has to get the first one.
 ROUTER_ZONES: tuple[str, ...] = tuple(
-    sorted((naam.removeprefix("router.") for naam in ROUTER_HOSTNAMES), key=len, reverse=True)
+    sorted((name.removeprefix("router.") for name in ROUTER_HOSTNAMES), key=len, reverse=True)
 )
 
-# De adressen waar die namen naar wijzen. Ze staan op de uitlegpagina omdat iemand ze
-# overtypt in zijn eigen zone, dus ze moeten kloppen met wat er in TransIP staat.
+# The addresses those names point at. They are on the explanation page because somebody
+# retypes them in their own zone, so they have to match what is in TransIP.
 ROUTER_IPV4 = "147.181.48.71"
 ROUTER_IPV6 = "2a04:9a00:1007:4000:0:2:0:8"
 
-# Per routernaam, want ze gelden niet overal. De SANDBOX staat er bewust niet in:
-# router.sandbox.rijksapp.dev wijst naar 127.0.0.1 (gemeten 19 augustus 2026), en de
-# productieadressen tonen op een pagina die belooft alleen te zeggen wat waar is, is erger
-# dan ze weglaten. Zonder adressen toont de pagina alleen de CNAME-vorm, en die klopt daar.
+# Per router name, because they do not hold everywhere. The SANDBOX is deliberately not in
+# here: router.sandbox.rijksapp.dev points at 127.0.0.1 (measured 19 August 2026), and
+# showing the production addresses on a page that promises to say only what is true is worse
+# than leaving them out. Without addresses the page shows the CNAME form only, and that one
+# is right there.
 ROUTER_ADDRESSES: dict[str, tuple[str, str]] = {
     "router.rijksapp.nl": (ROUTER_IPV4, ROUTER_IPV6),
     "router.rijks.app": (ROUTER_IPV4, ROUTER_IPV6),
@@ -123,21 +124,21 @@ ROUTER_ADDRESSES: dict[str, tuple[str, str]] = {
 
 
 def router_addresses_for(router_host: str) -> tuple[str, str] | None:
-    """De A- en AAAA-waarde bij een routernaam, of None als we ze voor die naam niet kennen."""
+    """The A and AAAA value for a router name, or None when we do not know them for it."""
     return ROUTER_ADDRESSES.get(router_host)
 
 
-# De routernaam die het portaal noemt als iemand de uitleg opvraagt op een gewone naam.
+# The router name the portal names when somebody asks for the explanation on a plain name.
 DEFAULT_ROUTER_HOSTNAME = "router.rijksapp.nl"
 
 
 def router_hostname_for(host: str | None) -> str:
-    """De routernaam die bij een hostnaam hoort.
+    """The router name that belongs with a host name.
 
-    De uitlegpagina noemt een concrete naam die de bezoeker overtypt in zijn eigen zone, en
-    die moet bij de zone horen waarop hij kijkt: wie op rijks.app zit heeft niets aan
-    router.rijksapp.nl. Op de routernaam zelf is het antwoord die naam; op elke andere naam
-    de router van dezelfde zone, en anders de standaard.
+    The explanation page names a concrete name the visitor retypes in their own zone, and
+    that has to belong to the zone they are looking at: whoever is on rijks.app has no use
+    for router.rijksapp.nl. On the router name itself the answer is that name; on every other
+    name the router of the same zone, and otherwise the default.
     """
     if not host:
         return DEFAULT_ROUTER_HOSTNAME

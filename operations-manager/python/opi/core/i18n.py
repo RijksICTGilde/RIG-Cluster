@@ -31,11 +31,10 @@ def get_supported_language(lang: str) -> str:
 
 
 def _browser_language(request: Request) -> str:
-    """Extract preferred language from Accept-Language header."""
     accept = request.headers.get("accept-language", "")
     if not accept:
         return DEFAULT_LANGUAGE
-    # Parse first language tag (e.g., "nl-NL,nl;q=0.9,en;q=0.8")
+    # The header looks like "nl-NL,nl;q=0.9,en;q=0.8": the first supported tag wins.
     for part in accept.split(","):
         tag = part.split(";")[0].strip()
         lang = tag[:2].lower()
@@ -45,10 +44,7 @@ def _browser_language(request: Request) -> str:
 
 
 def get_requested_language(request: Request) -> str:
-    """Determine the language for this request.
-
-    Priority: cookie 'lang' > Accept-Language header > default.
-    """
+    """Priority: cookie 'lang' > Accept-Language header > default."""
     cookie_lang = request.cookies.get("lang", "")
     if cookie_lang:
         return get_supported_language(cookie_lang)

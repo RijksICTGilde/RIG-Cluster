@@ -33,7 +33,7 @@ LEZER = re.compile(r"""\.users\b|\[["']users["']\]|\.get\(\s*["']users["']""")
 BEKENDE_LEZERS: dict[str, str] = {
     "api/principal.py": "zoekt een token bij een lid; beide soorten dragen tokens",
     "core/authz/actions.py": "de naam van de action platform.users, geen ledenlijst",
-    "core/leden.py": "vergelijkt de leden en hun rollen voor en na een opslag; beide soorten",
+    "core/members.py": "vergelijkt de leden en hun rollen voor en na een opslag; beide soorten",
     "bootstrap/keycloak_setup.py": "de users van een Keycloak-sjabloon, niet van een project",
     "forms/i18n.py": "het label van de sectie",
     "forms/models/project.py": "de ledenlijst als formulierveld",
@@ -73,7 +73,7 @@ MENSENLEZERS = (
 )
 
 #: Waaraan te zien is dat een lezer de filter gebruikt.
-FILTERNAMEN = ("human_members", "human_emails", "menselijke_leden_uit_data", "LidSoort.SERVICE_ACCOUNT")
+FILTERNAMEN = ("human_members", "human_emails", "menselijke_leden_uit_data", "MemberKind.SERVICE_ACCOUNT")
 
 
 def _lezers() -> dict[str, str]:

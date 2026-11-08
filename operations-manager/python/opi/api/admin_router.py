@@ -83,7 +83,7 @@ async def list_marked_for_deletion(
 @admin_router.post("/cleanup/trigger")
 @action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.CLEANUP_START)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.CLEANUP_START)
 async def trigger_cleanup(
     request: Request,
     project_name: str = Query(..., description="Project name to clean up (required)"),
@@ -119,7 +119,7 @@ async def trigger_cleanup(
 @admin_router.post("/reconciliation/trigger")
 @action(Action.PLATFORM_RECONCILE)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.RECONCILIATION_START)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.RECONCILIATION_START)
 async def trigger_reconciliation(
     request: Request,
     dry_run: bool = Query(True, description="Preview actions without executing (default: true)"),
@@ -167,7 +167,7 @@ async def trigger_reconciliation(
 @admin_router.delete("/marked-for-deletion/{mark_id}")
 @action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.MARKING_REVOKE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.MARKING_REVOKE)
 async def delete_mark(
     request: Request,
     mark_id: str,
@@ -223,7 +223,7 @@ async def orphan_sweep_report(request: Request) -> JSONResponse:
 @admin_router.post("/orphans/confirm")
 @action(Action.PLATFORM_CLEANUP)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.ORPHANS_CONFIRM)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.ORPHANS_CONFIRM)
 async def confirm_orphans(request: Request) -> JSONResponse:
     """Mark confirmed orphan candidates for grace-period deletion.
 
@@ -313,7 +313,7 @@ async def confirm_orphans(request: Request) -> JSONResponse:
 @admin_router.post("/projects/:reconcile")
 @action(Action.PLATFORM_RECONCILE)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.PROJECTS_RELOAD)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.PROJECTS_RELOAD)
 async def reconcile_projects(request: Request) -> JSONResponse:
     """Pull the projects repo into the store now, instead of waiting for the poll.
 

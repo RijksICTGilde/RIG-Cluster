@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from opi.core.actor import user_actor
 from opi.core.authz.engine import Role, effective_roles
 from opi.core.config import settings
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_leden import TOKEN_PREFIX, hash_van, is_verlopen, lid_met_naam, nieuw_token, vervaldatum
 from opi.services.project_roles import roles_from_value
 from opi.services.project_store import get_project_store
@@ -114,7 +114,7 @@ def _zoek_lid(data: dict[str, Any], naam: str) -> dict[str, Any] | None:
     for lid in _leden(data):
         if not isinstance(lid, dict):
             continue
-        eigen = lid.get("name") if lid.get("type") == LidSoort.SERVICE_ACCOUNT.value else lid.get("email")
+        eigen = lid.get("name") if lid.get("type") == MemberKind.SERVICE_ACCOUNT.value else lid.get("email")
         if str(eigen or "").lower() == naam.lower():
             return lid
     return None
@@ -143,7 +143,7 @@ async def voeg_service_account_toe(*, project_name: str, naam: str, rollen: list
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
         if _zoek_lid(data, naam) is not None:
             return None
-        _leden(data).append({"type": LidSoort.SERVICE_ACCOUNT.value, "name": naam, "roles": gekozen, "tokens": []})
+        _leden(data).append({"type": MemberKind.SERVICE_ACCOUNT.value, "name": naam, "roles": gekozen, "tokens": []})
         return data
 
     await _wijzig(project_name, change, bericht=f"Service account '{naam}' toegevoegd", door=door)
@@ -155,7 +155,7 @@ async def verwijder_service_account(*, project_name: str, naam: str, door: str) 
 
     def change(data: dict[str, Any]) -> dict[str, Any] | None:
         lid = _zoek_lid(data, naam)
-        if lid is None or lid.get("type") != LidSoort.SERVICE_ACCOUNT.value:
+        if lid is None or lid.get("type") != MemberKind.SERVICE_ACCOUNT.value:
             return None
         _leden(data).remove(lid)
         return data
@@ -248,7 +248,7 @@ def _eis_mag_uitgeven(project_name: str, naam: str, door: str) -> int:
     if doellid is None:
         raise TokenAanvraagGeweigerd(f"'{naam}' is geen lid van dit project.")
 
-    if doellid.type is LidSoort.SERVICE_ACCOUNT:
+    if doellid.type is MemberKind.SERVICE_ACCOUNT:
         _eis_beheerder(project_name, door)
         return settings.TOKEN_MAX_DAGEN_SERVICE_ACCOUNT
     if naam.lower() != door.lower():

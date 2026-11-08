@@ -15,11 +15,9 @@ process restart.
 
 Next to what was built, the answer says *who is answering*: ``pod`` and ``image``.
 During a rolling update two pods serve the same Service, so two consecutive calls
-can legitimately report two different commits. With only a commit in the answer
-that reads as drift; with the pod name in it, it reads as "a rollout is running,
-wait". The image reference is the one thing that is true by construction - it is
-what the kubelet started - while the commit is derived from the build and can be
-wrong if the build went wrong.
+can legitimately report two different commits, and the pod name is what tells those
+apart from drift. The image reference is what the kubelet started and is therefore
+true by construction, while the commit is derived from the build.
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 
@@ -506,7 +506,7 @@ class TestGetTaskWithApiToken:
             filename=f"projects/{SAMPLE_PROJECT}.yaml",
             users=[
                 ProjectUser(
-                    type=LidSoort.SERVICE_ACCOUNT,
+                    type=MemberKind.SERVICE_ACCOUNT,
                     name="bouwstraat",
                     role=rol,
                     tokens=[

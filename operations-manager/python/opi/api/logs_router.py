@@ -24,7 +24,7 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.errors import kenmerk_van, met_kenmerk
+from opi.core.errors import reference_for, with_reference
 from opi.core.step_up import has_fresh_step_up, step_up_fresh
 from opi.middleware.authorization import get_user
 from opi.services.catalog.image_registries.resolution import display_image
@@ -210,8 +210,8 @@ async def get_deployment_logs(
                             "k8s_deployment": k8s_deployment_name,
                             "lines": [],
                             "line_count": 0,
-                            "error": met_kenmerk(
-                                "De logs van dit onderdeel zijn niet op te halen.", kenmerk_van(request)
+                            "error": with_reference(
+                                "De logs van dit onderdeel zijn niet op te halen.", reference_for(request)
                             ),
                         }
                     )

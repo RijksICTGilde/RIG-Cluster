@@ -19,7 +19,7 @@ from opi.api.endpoint_util import REQUIRES_PROJECT_NAME, handhaaf
 from opi.api.principal import PRINCIPAL_KIND_NOT_ALLOWED, PrincipalKind, gebruik_per_project, reset_gebruik
 from opi.core.actor import ACTOR_UNKNOWN, get_actor
 from opi.core.authz.actions import Action, action
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.user_service import get_user_service
@@ -44,7 +44,7 @@ def _project(*, met_oude_sleutel: bool = False, beheerder: str = BEHEERDER) -> P
         users=[
             ProjectUser(email=beheerder, role="admin", tokens=[_token("cli", TOKEN_MENS)]),
             ProjectUser(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
                 role="admin",
                 tokens=[_token("pijplijn", TOKEN_BOUWSTRAAT)],

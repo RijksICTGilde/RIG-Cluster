@@ -18,7 +18,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services import api_token_service as mod
 from opi.services.api_token_service import (
     TokenAanvraagGeweigerd,
@@ -69,7 +69,7 @@ def _summary() -> ProjectSummary:
                 tokens=[ProjectToken(name="cli", expires=vervalt, hash=hash_van("zad_oud"))],
             ),
             ProjectUser(email=DEV, roles=["developer"]),
-            ProjectUser(type=LidSoort.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
+            ProjectUser(type=MemberKind.SERVICE_ACCOUNT, name="bouwstraat", role="developer"),
         ],
     )
 

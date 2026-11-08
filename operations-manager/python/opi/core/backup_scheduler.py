@@ -18,8 +18,8 @@ A backup is due when:
      and we are still within the catch-up window after it.
   3. No scheduled snapshot exists in Kopia with timestamp >= today's target.
 
-The "have we run today?" check queries the **Kopia snapshot store** — the
-durable record of what actually backed up — rather than the async task queue
+The "have we run today?" check queries the **Kopia snapshot store**, the durable
+record of what actually backed up, rather than the async task queue
 (which is intentionally short-lived and gets cleaned up every hour, so it
 cannot serve as historical state).
 
@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 _SCHEDULE_TZ = ZoneInfo("Europe/Amsterdam")
 
 # The daily retention sweep runs on the first tick at or after this local
-# hour — after the default 02:00 backups and their catch-up window have had
+# hour, after the default 02:00 backups and their catch-up window have had
 # their chance, so the sweep never races a backup that is about to refresh
 # a source.
 _SWEEP_AFTER_HOUR = 6
@@ -119,12 +119,12 @@ def _target_today(rrule: dict[str, str], now_local: datetime) -> datetime:
 def _is_freq_target_day(rrule: dict[str, str], now_local: datetime) -> bool:
     """Return True if `now_local`'s date matches the RRULE's frequency anchor.
 
-    WEEKLY accepts a comma-separated BYDAY (e.g. "MO,WE,FR") per RFC 5545 —
-    fires on any listed day. Unknown day codes are ignored.
+    WEEKLY accepts a comma-separated BYDAY (e.g. "MO,WE,FR") per RFC 5545 and fires on
+    any listed day. Unknown day codes are ignored.
 
     For MONTHLY with BYMONTHDAY beyond this month's last day (e.g. 31 in
-    February), the last day of the month is treated as the target — matching
-    standard cron semantics for `0 2 31 * *` on short months.
+    February), the last day of the month is treated as the target, matching standard
+    cron semantics for `0 2 31 * *` on short months.
     """
     freq = rrule.get("FREQ", "")
     if freq == "DAILY":
@@ -217,8 +217,8 @@ class BackupScheduler:
         set_actor(scheduler_actor("backup"))
         while self._running:
             # Sleep first so the loop aligns to the next boundary instead of
-            # firing on pod-start time. The initial alignment skip is fine —
-            # the scheduler is a poller, not a one-shot.
+            # firing on pod-start time. The initial alignment skip is fine: the
+            # scheduler is a poller, not a one-shot.
             try:
                 await asyncio.sleep(_seconds_to_next_tick(settings.BACKUP_SCHEDULER_INTERVAL))
             except asyncio.CancelledError:
@@ -415,8 +415,9 @@ class BackupScheduler:
                 cluster=cluster, namespace=namespace, project_name=project_name
             )
         except Exception as exc:
-            # Geen ERROR: deze regel loopt per namespace per tick, en een onbereikbare
-            # bestemming meldt _log_overdue_backups al eens per 24 uur per deployment.
+            # Not an ERROR: this line runs per namespace per tick, and an unreachable
+            # destination is already reported by _log_overdue_backups once per 24 hours per
+            # deployment.
             logger.warning(
                 "Failed to list Kopia snapshots for %s/%s, skipping scheduler check this tick: %r",
                 cluster,
@@ -478,8 +479,8 @@ class BackupScheduler:
           1. Today is a target day (FREQ/BYDAY/BYMONTHDAY).
           2. Current Amsterdam time is at or after today's BYHOUR:BYMINUTE,
              AND within ``BACKUP_SCHEDULE_CATCH_UP_SECONDS`` of it. Outside
-             that window we skip and wait for the next target day — a deploy
-             at 18:00 must not re-fire a "missed" 02:00 backup at 18:00.
+             that window we skip and wait for the next target day: a deploy at
+             18:00 must not re-fire a "missed" 02:00 backup at 18:00.
           3. No scheduled backup snapshot in Kopia has timestamp >= today's
              target. (Queries the snapshot store, not the task queue, since
              tasks are short-lived and cleaned up hourly.)

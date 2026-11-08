@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.core.step_up import STEP_UP_SESSION_KEY
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import enforce_route_action
@@ -46,7 +46,7 @@ def _project(data: dict[str, Any]) -> ProjectSummary:
         name="demo",
         filename="demo.yaml",
         data=data,
-        users=[ProjectUser(email=OWNER, roles=["admin", "ops"], type=LidSoort.PERSOON)],
+        users=[ProjectUser(email=OWNER, roles=["admin", "ops"], type=MemberKind.PERSON)],
     )
 
 

@@ -22,8 +22,7 @@ logger = logging.getLogger(__name__)
 async def handle_create_project(payload: dict, progress: Any) -> dict:
     """Handle async project creation task.
 
-    Extracted from simple_background.process_project_background() and
-    process_project_yaml_background().  Supports two paths:
+    Supports two paths:
 
     1. Full generation -- payload contains SelfServiceProjectRequest fields
        (project_name, display_name, components, etc.) and the handler
@@ -52,9 +51,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     deployment_name: str | None = payload.get("deployment_name")
     deployment_names: list[str] | None = payload.get("deployment_names")
 
-    # ------------------------------------------------------------------
-    # Step 1: Validation
-    # ------------------------------------------------------------------
     validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
 
     if not validate_project_name(project_name):
@@ -81,9 +77,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
     progress.complete_task(validate_task)
 
-    # ------------------------------------------------------------------
-    # Step 2: YAML content
-    # ------------------------------------------------------------------
     if pre_built_yaml is not None:
         # Path 2: wizard-provided YAML. No step: nothing is checked here, and the
         # validation happens in "Projectbestand valideren" during processing.
@@ -121,9 +114,6 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "error_type": "internal_error",
             }
 
-    # ------------------------------------------------------------------
-    # Step 3: Git operations
-    # ------------------------------------------------------------------
     git_task = progress.add_task(steps.PROJECT_FILE_SAVE)
 
     try:
@@ -175,13 +165,13 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "error_type": "validation_error",
             }
 
-        # Geen connector injecteren: dan slaat ProjectManager de warme werkkopie van de
-        # store over en leest de verwerking hieronder een clone van voor deze write.
+        # Do not inject a connector: ProjectManager would then skip the store's warm working
+        # copy, and the processing below would read a clone from before this write.
         project_manager = ProjectManager(project_file_relative_path=project_file_path)
 
         if payload.get("project_file_already_saved", False):
-            # De aanroeper sloeg op met de store; nog een keer schrijven kan alleen
-            # schade doen. Zie tests/test_project_store_gelijktijdig_ui_en_api.py.
+            # The caller saved through the store; writing again can only do harm. See
+            # tests/test_project_store_gelijktijdig_ui_en_api.py.
             project_data_dict = await project_manager.get_contents()
             logger.info("Project file at %s was already saved by the caller; not rewriting it", project_file_path)
         else:
@@ -224,8 +214,9 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
         progress.fail_project(error_msg)
         return {"project_name": project_name, "status": "failed", "error": error_msg, "error_type": "internal_error"}
 
-    # Step 4: uitrollen. Een aanroeper die dat niet vraagt stopt hier: process_project meldt
-    # "no deployments for this cluster" als fout en zou een goed aangemaakt project falen.
+    # A caller that does not ask for the rollout stops here: process_project reports "no
+    # deployments for this cluster" as an error and would fail a project that was created
+    # correctly.
     if not rollout_requested(payload):
         await project_manager.close()
         note_rollout_skipped(progress)
@@ -250,22 +241,11 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             if dep_name := dep.get("name", ""):
                 reset_oom_tune_attempts(project_name, dep_name)
 
-    # Hier stond dat het aanmaken "door een bekende bug in ArgoCD een paar minuten kan
-    # duren, excuus daarvoor". Die zin zette de verwachting meteen op minuten, en dat is
-    # op de sandbox niet meer waar: op 14 augustus 2026 duurde het aanmaken van een heel
-    # project 42,9 seconden, waarvan 6 seconden wachten tot ArgoCD de applicatie had
-    # aangemaakt.
-    #
-    # Daarna stond hier de geruststelling dat een time-out-melding niet betekent dat het
-    # aanmaken is mislukt. Die is met RC-229 onwaar geworden, en wel op deze taak: de wacht
-    # op het projectniveau is fail-closed, dus loopt die vol, dan gaan de
-    # deployment-applicaties nooit naar git en is er niets uitgerold. De gebruiker zag de
-    # geruststelling dan naast de time-out-melding die ze ontkende.
-    #
-    # De wacht waarvoor de geruststelling nog WEL opgaat is `_monitor_argocd_and_deployment`
-    # (simple_background.py), en die schrijft hem daar zelf op het moment dat hij nodig is,
-    # met de app-status erbij. Hier staat daarom alleen nog waarom een nieuw project langer
-    # duurt, en wat een time-out betekent.
+    # The notice says why a new project takes longer, and what a timeout means. No
+    # reassurance that a timeout leaves the creation standing: the wait at project level is
+    # fail-closed, so a timeout here means the deployment applications never reached git.
+    # The wait that reassurance does hold for is `_monitor_argocd_and_deployment`
+    # (simple_background.py), and it writes it there itself, with the app status next to it.
     if payload.get("is_new_project", False):
         progress.complete_task(progress.add_task(steps.NEW_PROJECT_NOTICE))
 
@@ -279,9 +259,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             await project_manager.close()
 
         if processing_result:
-            # ArgoCD monitoring
-            # The final check belongs to the rollout phase; its own line only said the same
-            # as "uitgerold en gezond" right above it.
+            # ArgoCD monitoring, under the rollout phase: a line of its own would say the
+            # same as "uitgerold en gezond" right above it.
             monitor_task = progress.current_phase or progress.add_task(steps.ROLLOUT_CHECK)
             await _monitor_argocd_and_deployment(
                 _task_id="",  # not used by the monitor helper
@@ -313,8 +292,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "elapsed_time": f"{elapsed_time:.2f}",
                 "file_path": project_file_path,
                 "status": "success",
-                # Ook op de geslaagde tak: "uitgerold, maar niet gezond" is formeel een
-                # succes, en juist daar viel het per-component-verhaal weg.
+                # On the successful branch as well: "rolled out, but not healthy" is formally
+                # a success, and this is the channel that carries the per-component story.
                 **(
                     {"processing": {"status": "completed", "component_failures": component_failures}}
                     if (component_failures := project_manager.get_component_failures())
@@ -335,11 +314,11 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 "project_name": project_name,
                 "status": "failed",
                 "error": error_msg,
-                # Het uitrollen zelf mislukte. Bewust geen invoerfout en bewust niet
-                # "van ons": een component dat niet gezond wordt kan aan het image van
-                # de gebruiker liggen en aan het cluster, en welke van de twee staat in
-                # component_failures. Dit type valt daarom bij de client op "niet toe te
-                # schrijven", wat hier de eerlijke uitkomst is.
+                # The rollout itself failed. Deliberately not an input error and
+                # deliberately not "ours": a component that does not become healthy can be
+                # the user's image and can be the cluster, and which of the two is in
+                # component_failures. This type therefore lands at the client as "not
+                # attributable", which is the honest outcome here.
                 "error_type": "processing_failed",
                 **platform_failure_fields(project_manager),
                 "processing": {
@@ -356,10 +335,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
 
 async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
-    """Handle async upsert deployment task.
-
-    Extracted from router.upsert_deployment().
-    """
+    """Handle async upsert deployment task."""
     from opi.manager.project_manager import ProjectManager
     from opi.utils.naming import sanitize_kubernetes_name
     from opi.utils.project_utils import normalize_container_image, validate_project_name
@@ -382,9 +358,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
 
     try:
-        # ------------------------------------------------------------------
-        # Step 1: Validation
-        # ------------------------------------------------------------------
         validate_task = progress.add_task(steps.NAMES_CHECK)
 
         if not validate_project_name(project_name):
@@ -418,9 +391,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
         progress.complete_task(validate_task)
 
-        # ------------------------------------------------------------------
-        # Step 2: Upsert deployment in project YAML
-        # ------------------------------------------------------------------
         upsert_task = progress.add_task(steps.DEPLOYMENT_SAVE, subject=deployment_name)
 
         project_file_relative_path = f"projects/{project_name}.yaml"
@@ -459,9 +429,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
         progress.complete_task(upsert_task)
 
-        # ------------------------------------------------------------------
-        # Step 3: Process deployment
-        # ------------------------------------------------------------------
         # ArgoCD Application/AppProject resources only change when a new
         # deployment is created.  Image updates don't touch ArgoCD resources.
         is_new_deployment = result.get("created", False)
@@ -524,9 +491,6 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 ),
             }
 
-        # ------------------------------------------------------------------
-        # Build response
-        # ------------------------------------------------------------------
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -548,9 +512,9 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
                 "created": result.get("created", False),
             },
             "urls": urls,
-            # Een deployment met een niet-goedgekeurd domein draait wel, maar op het
-            # standaard clusteradres. Dat staat dus ook in "urls" -- en zonder dit veld
-            # is er niets dat zegt waarom daar een ander adres staat dan gevraagd.
+            # A deployment with a domain that is not approved does run, but on the default
+            # cluster address. So that is in "urls" too, and without this field there is
+            # nothing that says why a different address than the one asked for is there.
             "approvals": result.get("approvals", []),
             "processing": processing,
         }
@@ -576,10 +540,9 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 async def handle_delete_project(payload: dict, progress: Any) -> dict:
     """Handle async project deletion task.
 
-    Extracted from the web delete endpoint, which ran the whole teardown -- deployments,
-    ArgoCD, namespace, databases, buckets, the project file -- inside the request while
-    the browser sat on an open POST. As a task the dialog can follow it, and the answer
-    comes back through the same progress fragment as every other action.
+    The whole teardown: deployments, ArgoCD, namespace, databases, buckets and the project
+    file. A task and not a request, so the dialog can follow it and the answer comes back
+    through the same progress fragment as every other action.
 
     Expected payload keys:
         project_name: Name of the project to delete

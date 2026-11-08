@@ -31,34 +31,20 @@ logger = logging.getLogger(__name__)
 
 
 def terminated_sync_fields(project_manager: Any) -> dict[str, list[str]]:
-    """De deployments waarvan deze run een lopende sync afbrak, als die er zijn."""
+    """The deployments whose running sync this run aborted, when there are any."""
     terminated = project_manager.get_terminated_sync_operations()
     return {"terminated_syncs": terminated} if terminated else {}
 
 
 async def handle_clone_database(payload: dict, progress: Any) -> dict:
-    """Handle async database clone task.
+    """Clone a PostgreSQL database from an external source into a deployment, over a direct
+    connection or through a Chisel tunnel.
 
-    Clones a PostgreSQL database from an external source into a deployment.
-    Supports both direct connections and Chisel tunnel-based connections.
-
-    Args:
-        payload: Task payload containing:
-            - project_name: Target project name
-            - deployment_name: Target deployment name
-            - source_database: Source database name
-            - source_schema: Source schema name
-            - source_username: Source database username
-            - source_password: Source database password (AGE-encrypted in the task payload)
-            - force_clone: Whether to drop existing target before cloning
-            - source_host: Direct connection host (required if no tunnel)
-            - source_port: Direct connection port (required if no tunnel)
-            - tunnel: Optional dict with Chisel tunnel config:
-                - server_url, username, password, remote_host, remote_port
-        progress: PersistentTaskProgressManager for reporting progress.
-
-    Returns:
-        Dict with source and target fields.
+    The payload holds ``project_name``, ``deployment_name``, ``source_database``,
+    ``source_schema``, ``source_username`` and ``source_password`` (AGE-encrypted in the task
+    payload), plus ``force_clone`` to drop an existing target first. Either ``source_host`` and
+    ``source_port`` for a direct connection, or ``tunnel`` with the Chisel config
+    (``server_url``, ``username``, ``password``, ``remote_host``, ``remote_port``).
     """
     from opi.manager.project_manager import ProjectManager
 
@@ -171,28 +157,15 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
 
 
 async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
-    """Handle async bucket clone task.
+    """Clone a MinIO bucket from an external source into a deployment, over a direct connection
+    or through a Chisel tunnel.
 
-    Clones a MinIO bucket from an external source into a deployment.
-    Supports both direct connections and Chisel tunnel-based connections.
-
-    Args:
-        payload: Task payload containing:
-            - project_name: Target project name
-            - deployment_name: Target deployment name
-            - source_bucket: Source bucket name
-            - source_access_key: Source MinIO access key
-            - source_secret_key: Source MinIO secret key (AGE-encrypted in the task payload)
-            - source_secure: Whether source uses HTTPS (default False)
-            - force_clone: Whether to overwrite existing target bucket
-            - source_host: Direct connection host (required if no tunnel)
-            - source_port: Direct connection port (required if no tunnel)
-            - tunnel: Optional dict with Chisel tunnel config:
-                - server_url, username, password, remote_host, remote_port
-        progress: PersistentTaskProgressManager for reporting progress.
-
-    Returns:
-        Dict with source and target fields.
+    The payload holds ``project_name``, ``deployment_name``, ``source_bucket``,
+    ``source_access_key`` and ``source_secret_key`` (AGE-encrypted in the task payload), plus
+    ``source_secure`` for an HTTPS source (default False) and ``force_clone`` to overwrite an
+    existing target bucket. Either ``source_host`` and ``source_port`` for a direct connection,
+    or ``tunnel`` with the Chisel config (``server_url``, ``username``, ``password``,
+    ``remote_host``, ``remote_port``).
     """
     from opi.manager.project_manager import ProjectManager
 
@@ -305,9 +278,8 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
 async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects: bool = False) -> None:
     """Pick up outside changes, and fail the step when git does not cooperate.
 
-    Without this the step stayed open while the task had already failed, and the user read
-    nowhere what went wrong. The message is the connector's, so the user sees whether it is
-    the platform's doing.
+    Closing the step is what tells the user the task failed and why. The message is the
+    connector's, so the user sees whether it is the platform's doing.
     """
     try:
         if reconcile_projects:
@@ -319,26 +291,15 @@ async def _sync_or_fail_step(progress: Any, task_id: str, *, reconcile_projects:
 
 
 async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
-    """Handle async deployment refresh task.
+    """Reprocess ONE deployment from the project YAML file, re-running its provisioning steps.
 
-    Refreshes a single deployment by reprocessing it from the project YAML file,
-    re-running provisioning steps for the specified deployment only.
+    The payload holds ``project_name``, ``deployment_name`` and ``force_clone``.
+    ``reset_running_sync`` breaks off a sync that is still running, however young: the refresh
+    endpoints set it, an automated caller (the OOM watcher queues a refresh for itself) leaves
+    it out. ``rotate_credentials`` names the services whose credential must be replaced during
+    this run instead of reused (see ``handle_rotate_credentials``).
 
-    Args:
-        payload: Task payload containing:
-            - project_name: Project name
-            - deployment_name: Deployment to refresh
-            - force_clone: Whether to force clone even if target resources exist
-            - reset_running_sync: Whether a sync that is still running must be broken
-              off, however young. The refresh endpoints set this; an automated caller (the
-              OOM watcher queues a refresh for itself) leaves it out.
-            - rotate_credentials: Services whose credential must be replaced during this
-              run instead of reused (see ``handle_rotate_credentials``).
-        progress: PersistentTaskProgressManager for reporting progress.
-
-    Returns:
-        Dict matching the V1 sync response structure with status, message,
-        project info, urls, and processing details.
+    The result matches the V1 sync response structure.
     """
 
     from opi.manager.project_manager import create_project_manager
@@ -442,9 +403,9 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                     "status": "completed",
                     "message": f"Deployment '{deployment_name}' processed successfully",
                     "result": processing_result,
-                    # Ook op de geslaagde tak. "Uitgerold, maar niet gezond" is formeel een
-                    # succes, en juist daar viel het per-component-verhaal weg: er was geen
-                    # gestructureerd kanaal, dus werd het als proza in een staplabel geduwd.
+                    # On the successful branch as well: "rolled out, but not healthy" is
+                    # formally a success, and this is the channel that carries the
+                    # per-component story.
                     **(
                         {"component_failures": component_failures}
                         if (component_failures := project_manager.get_component_failures())
@@ -487,19 +448,15 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
 
 
 async def handle_rotate_credentials(payload: dict, progress: Any) -> dict:
-    """Vervang de credentials van een deployment en rol de deployment opnieuw uit.
+    """Replace the credentials of a deployment and roll the deployment out again.
 
-    De rotatie zelf gebeurt in de gewone verwerking: de managers maken een nieuwe waarde
-    voor elke dienst in ``rotate_credentials`` in plaats van de opgeslagen te hergebruiken.
-    Daarom is dit een refresh met die set erbij, en niet een eigen uitrolpad.
+    The rotation itself happens in the ordinary processing: the managers make a new value for
+    every service in ``rotate_credentials`` instead of reusing the stored one. That is why
+    this is a refresh with that set added, and not a rollout path of its own.
 
-    Args:
-        payload: Zoals ``handle_refresh_deployment``, met ``rotate_credentials`` als
-            niet-lege lijst dienstnamen.
-        progress: PersistentTaskProgressManager voor voortgang.
-
-    Returns:
-        Het resultaat van de refresh, met ``rotated`` erbij als alles slaagde.
+    ``payload`` is the one of ``handle_refresh_deployment``, with ``rotate_credentials`` as a
+    non-empty list of service names. Returns the result of the refresh, with ``rotated``
+    added when everything succeeded.
     """
     services: list[str] = payload["rotate_credentials"]
     result = await handle_refresh_deployment(payload, progress)
@@ -512,22 +469,12 @@ async def handle_rotate_credentials(payload: dict, progress: Any) -> dict:
 
 
 async def handle_refresh_project(payload: dict, progress: Any) -> dict:
-    """Handle async project refresh task.
+    """Reprocess EVERY deployment of a project from the project YAML file, the async V2
+    equivalent of the V1 GET /:refresh endpoint.
 
-    Refreshes all deployments in a project by reprocessing from the project
-    YAML file. This is the async V2 equivalent of the V1 GET /:refresh endpoint.
-
-    Args:
-        payload: Task payload containing:
-            - project_name: Project name
-            - force_clone: Whether to force clone even if target resources exist
-            - reset_running_sync: Whether a sync that is still running must be broken
-              off, however young. The refresh endpoints set this; the internal caller in
-              the component-delete path decides for itself.
-        progress: PersistentTaskProgressManager for reporting progress.
-
-    Returns:
-        Dict with status, message, project info, urls, and processing details.
+    The payload holds ``project_name`` and ``force_clone``. ``reset_running_sync`` breaks off a
+    sync that is still running, however young: the refresh endpoints set it, the internal
+    caller in the component-delete path decides for itself.
     """
 
     from opi.manager.project_manager import create_project_manager
@@ -600,9 +547,9 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                     "status": "completed",
                     "message": "All project resources processed successfully",
                     "result": processing_result,
-                    # Ook op de geslaagde tak. "Uitgerold, maar niet gezond" is formeel een
-                    # succes, en juist daar viel het per-component-verhaal weg: er was geen
-                    # gestructureerd kanaal, dus werd het als proza in een staplabel geduwd.
+                    # On the successful branch as well: "rolled out, but not healthy" is
+                    # formally a success, and this is the channel that carries the
+                    # per-component story.
                     **(
                         {"component_failures": component_failures}
                         if (component_failures := project_manager.get_component_failures())
@@ -647,18 +594,18 @@ async def _carry_over_backup_passwords(
     new_private_key: str,
     new_public_key: str,
 ) -> list[str]:
-    """Zet het Kopia-wachtwoord van elke namespace van dit project mee naar de nieuwe sleutel.
+    """Carry the Kopia password of every namespace of this project over to the new key.
 
-    Het wachtwoord wordt afgeleid uit het Secret ``sops-age-key``; zonder deze stap opent de
-    bestaande repository na de vervanging niet meer en staat de backup van die namespace stil.
+    The password is derived from the Secret ``sops-age-key``; without this step the existing
+    repository no longer opens after the replacement and the backup of that namespace stalls.
     """
     project_name = project_data.get("name", "")
     cluster = settings.CLUSTER_MANAGER
     new_age_key = format_age_key_file(new_private_key, new_public_key)
 
     backup_manager = BaseBackupManager()
-    # Deployments delen een namespace, dus één keer per namespace: een tweede poging met het
-    # oude wachtwoord opent niets meer.
+    # Deployments share a namespace, so once per namespace: a second attempt with the old
+    # password opens nothing any more.
     seen: set[str] = set()
     carried: list[str] = []
     for deployment in project_data.get("deployments", []) or []:
@@ -706,16 +653,18 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
 
     rotate_task = progress.add_task(steps.PROJECT_KEY_ROTATE)
     new_private_key, new_public_key = generate_sops_key_pair()
-    # Onder de project-KEK, net als bij projectaanmaak; zonder KEK valt wrap_project_key terug
-    # op de platformsleutel (RC-334).
+    # Under the project KEK, as when a project is created; without a KEK wrap_project_key
+    # falls back to the platform key (RC-334).
     encrypted_new_private_key = await wrap_project_key(new_private_key)
-    # Per poging overschreven: wat de laatste, geslaagde ronde deed is wat er landde.
+    # Overwritten per attempt: what the last, successful round did is what landed.
     rotated_fields: list[str] = []
     skipped_fields: list[str] = []
 
     async def rotate(current: dict[str, Any]) -> dict[str, Any]:
-        """De omzetting, per poging opnieuw op de verse staat uit git.
-        Zie waarom mutate beter is dan save in features/projectsleutel-vervangen.md."""
+        """The conversion, per attempt again on the fresh state out of git.
+
+        Why mutate beats save is in features/projectsleutel-vervangen.md.
+        """
         old_private_key = await get_decoded_project_private_key(current)
         rotation = await rotate_project_key(current, old_private_key, new_public_key)
         rotation.data["config"]["age-public-key"] = new_public_key
@@ -753,7 +702,8 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
     )
     progress.complete_task(rotate_task)
 
-    # Na opslag (reparatie vereist beide wachtwoorden) en voor verwerking (die de sleutel in het Secret zet).
+    # After the save (a repair needs both passwords) and before the processing, which puts
+    # the key in the Secret.
     backup_task = progress.add_task(steps.BACKUP_PASSWORD_CARRY)
     try:
         carried = await _carry_over_backup_passwords(mutation.after, new_private_key, new_public_key)

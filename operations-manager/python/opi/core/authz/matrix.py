@@ -1,7 +1,7 @@
-"""De rolmatrix, gelezen uit het regelregister.
+"""The role matrix, read out of the rule register.
 
-Niets wordt hier uitgevoerd of beslist: de matrix is een andere weergave van
-:mod:`opi.core.authz.rules`, zodat de pagina en de code nooit uit elkaar kunnen lopen.
+Nothing is executed or decided here: the matrix is another view of
+:mod:`opi.core.authz.rules`, so the page and the code can never drift apart.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from opi.core.authz.engine import (
     role_label,
 )
 
-#: De volgorde van de kolommen, zoals ontwerp paragraaf 4 ze opsomt.
+#: The order of the columns, as section 4 of the design lists them.
 COLUMNS: tuple[Role, ...] = (
     Role.VIEWER,
     Role.DEVELOPER,
@@ -34,14 +34,14 @@ COLUMNS: tuple[Role, ...] = (
 
 @dataclass(frozen=True)
 class Cell:
-    """Wat een rol op deze rij mag."""
+    """What a role may do on this row."""
 
     allowed: bool
     step_up: bool = False
 
     @property
     def mark(self) -> str:
-        """Wat het icoon in de tabel zegt, voor een schermlezer."""
+        """What the icon in the table says, for a screen reader."""
         if not self.allowed:
             return ""
         return "mag, met 2-factor" if self.step_up else "mag"
@@ -49,7 +49,7 @@ class Cell:
 
 @dataclass(frozen=True)
 class Row:
-    """Eén regel uit het register, voor één scope."""
+    """One rule out of the register, for one scope."""
 
     label: str
     section: str
@@ -60,7 +60,7 @@ class Row:
 
 @dataclass(frozen=True)
 class RoleColumn:
-    """Een kolom van de matrix, met wat een mens erover moet weten."""
+    """One column of the matrix, with what a person needs to know about it."""
 
     role: Role
     label: str
@@ -69,24 +69,24 @@ class RoleColumn:
 
 
 def _cell(rule: Rule, scope: Scope, role: Role) -> Cell:
-    """Wat *role* op de rij (regel, scope) mag.
+    """What *role* may do on the row (rule, scope).
 
-    Een grant dekt de rij als zijn scope niet meer vraagt dan die van de rij, en als de
-    rol van de grant in de omvat-sluiting van *role* zit.
+    A grant covers the row when its scope asks no more than the row's, and when the grant's
+    role sits in the covering closure of *role*.
     """
-    dekkend: list[Grant] = [
+    covering: list[Grant] = [
         grant for grant in rule.grants if grant.scope.covers(scope) and grant.role in effective_roles((role,))
     ]
-    if not dekkend:
+    if not covering:
         return Cell(allowed=False)
-    return Cell(allowed=True, step_up=all(grant.needs_step_up for grant in dekkend))
+    return Cell(allowed=True, step_up=all(grant.needs_step_up for grant in covering))
 
 
 def rows() -> tuple[Row, ...]:
-    """Elke PROJECTregel, met een rij per scope die hij noemt.
+    """Every PROJECT rule, with one row per scope it names.
 
-    Wat niet op een project werkt (de portaalpagina's, het platformbeheer) heeft geen
-    rol om te wegen en staat in :func:`other_rules`.
+    What does not work on a project (the portal pages, the platform administration) has no
+    role to weigh and sits in :func:`other_rules`.
     """
     return tuple(
         Row(
@@ -103,50 +103,50 @@ def rows() -> tuple[Row, ...]:
 
 
 def other_rules() -> tuple[tuple[str, tuple[Rule, ...]], ...]:
-    """De regels die geen projectrecht zijn, per publiek.
+    """The rules that are not a project permission, per audience.
 
-    Ze staan op de pagina omdat hun afwezigheid zou lezen als "die routes zijn vrij".
+    They are on the page because their absence would read as "those routes are free".
     """
-    per_publiek = {
+    per_audience = {
         "Elke ingelogde gebruiker": tuple(r for r in all_rules() if r.audience is Audience.SIGNED_IN),
         "Alleen een platformbeheerder": tuple(r for r in all_rules() if r.audience is Audience.PLATFORM_ADMIN),
     }
-    return tuple((naam, regels) for naam, regels in per_publiek.items() if regels)
+    return tuple((name, rules) for name, rules in per_audience.items() if rules)
 
 
 def columns() -> tuple[RoleColumn, ...]:
-    """De kolommen, met per rol of een service account hem kan dragen.
+    """The columns, with per role whether a service account can carry it.
 
-    Een service account kan nooit een step-up geven, dus een rol waarvan ELKE grant een
-    mens vraagt is voor hem onbereikbaar.
+    A service account can never give a step-up, so a role of which EVERY grant asks for a
+    human is unreachable for it.
     """
-    bereikbaar = {
-        rol: any(
+    reachable = {
+        role: any(
             not grant.needs_human
             for rule in all_rules()
             for grant in rule.grants
-            if grant.role in effective_roles((rol,))
+            if grant.role in effective_roles((role,))
         )
-        for rol in COLUMNS
+        for role in COLUMNS
     }
     return tuple(
         RoleColumn(
-            role=rol,
-            label=role_label(rol),
-            description=ROLE_DESCRIPTIONS[rol],
-            service_account_reachable=bereikbaar[rol],
+            role=role,
+            label=role_label(role),
+            description=ROLE_DESCRIPTIONS[role],
+            service_account_reachable=reachable[role],
         )
-        for rol in COLUMNS
+        for role in COLUMNS
     )
 
 
 def sections() -> tuple[tuple[str, tuple[Row, ...]], ...]:
-    """De rijen gegroepeerd per sectie, in de volgorde van het register."""
-    volgorde: list[str] = []
-    per_sectie: dict[str, list[Row]] = {}
+    """The rows grouped per section, in the order of the register."""
+    order: list[str] = []
+    per_section: dict[str, list[Row]] = {}
     for row in rows():
-        if row.section not in per_sectie:
-            volgorde.append(row.section)
-            per_sectie[row.section] = []
-        per_sectie[row.section].append(row)
-    return tuple((naam, tuple(per_sectie[naam])) for naam in volgorde)
+        if row.section not in per_section:
+            order.append(row.section)
+            per_section[row.section] = []
+        per_section[row.section].append(row)
+    return tuple((name, tuple(per_section[name])) for name in order)

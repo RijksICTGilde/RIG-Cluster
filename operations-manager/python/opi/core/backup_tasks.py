@@ -1,8 +1,4 @@
-"""Shared helper functions for backup and restore operations.
-
-These helpers are used by the async task handlers in task_handlers_backup.py
-for backup/restore orchestration with progress tracking.
-"""
+"""The helpers the backup and restore task handlers in task_handlers_backup.py share."""
 
 from __future__ import annotations
 
@@ -44,12 +40,9 @@ async def restore_items_with_progress(
     progress: AnyTaskProgressManager,
     restore_task_id: str,
 ) -> bool:
-    """Restore a list of backup items with per-item progress tracking.
+    """Restore a list of backup items, one subtask per item.
 
-    Iterates over backup_items, resolves each item's type and metadata,
-    calls _restore_single_resource(), and tracks subtask progress.
-
-    Returns True if all items restored successfully, False otherwise.
+    Returns False when at least one item did not restore.
     """
     all_success = True
 
@@ -97,9 +90,8 @@ async def _create_deployment_from_source(
     before ArgoCD syncs the project, and a save from the wizard starts the processing right
     away.
 
-    Args:
-        config_source: The deployment whose config (images and env vars included) the new
-            one inherits, or None for an empty deployment.
+    ``config_source`` is the deployment whose config (images and env vars included) the new
+    one inherits, or None for an empty deployment.
     """
     project = get_project_store().get(project_name)
     if not project or not project.data:
@@ -176,21 +168,12 @@ async def _pre_restore_pvcs(
     task_progress: AnyTaskProgressManager,
     pvc_task_id: str,
 ) -> None:
-    """Pre-create PVCs with backup data before infrastructure provisioning.
+    """Pre-create PVCs with backup data before the infrastructure is provisioned.
 
-    For new deployment restores, this creates the namespace and restores PVC data
-    before process_project_from_git runs. When ArgoCD later syncs the generated
-    manifests, it adopts the existing (already-filled) PVCs via Replace=false.
-
-    Args:
-        project_name: Name of the project
-        source_deployment: Original deployment the backup came from
-        target_deployment: New deployment being created
-        pvc_items: Backup items with resource_type=="pvc"
-        task_progress: Progress tracker
-        pvc_task_id: Parent task ID for subtask tracking
+    For a restore into a new deployment this creates the namespace and restores the PVC data
+    before process_project_from_git runs. When ArgoCD later syncs the generated manifests, it
+    adopts the existing (already filled) PVCs through Replace=false.
     """
-    # Load project data
     project = get_project_store().get(project_name)
     if not project or not project.data:
         msg = f"Project '{project_name}' niet gevonden"
@@ -199,7 +182,6 @@ async def _pre_restore_pvcs(
     project_data = project.data
     project_file_handler = create_project_file_handler()
 
-    # Resolve namespace and cluster
     raw_namespace = project_file_handler.extract_deployment_namespace(project_data, target_deployment)
     deployment_cluster = project_file_handler.extract_deployment_cluster(project_data, target_deployment)
 
@@ -224,7 +206,6 @@ async def _pre_restore_pvcs(
     finally:
         await project_manager.close()
 
-    # Build base component lookup
     base_components = {c.get("name"): c for c in project_data.get("components", [])}
 
     backup_manager = create_backup_manager()
@@ -248,7 +229,6 @@ async def _pre_restore_pvcs(
         target_unique_name = generate_unique_name(target_deployment, component_name)
         target_pvc_name = generate_pvc_name(target_unique_name, storage_name, 0)
 
-        # Get storage config from base component
         base_component = base_components.get(component_name, {})
         storage_list = extract_storage_from_component_services(base_component)
 
@@ -307,11 +287,10 @@ async def _provision_deployment_infrastructure(
     target_deployment: str,
     task_progress: AnyTaskProgressManager,
 ) -> None:
-    """Provision infrastructure for a newly created deployment.
+    """Provision the infrastructure of a newly created deployment.
 
-    Calls process_project_from_git to create namespace, PVC, database, MinIO
-    resources. Because clone-from type is "backup", managers will skip live
-    data cloning and create empty resources instead.
+    Because the clone-from type is "backup", the managers skip cloning live data and create
+    empty resources instead.
     """
     project_manager = create_project_manager()
     project_file_path = f"projects/{project_name}.yaml"
@@ -335,13 +314,10 @@ async def _resolve_deployment_info(
     project_name: str,
     deployment_name: str,
 ) -> tuple[Any, dict[str, Any], str, str]:
-    """Resolve project, data, namespace, and cluster for a deployment.
+    """The project, its data, the app namespace and the current cluster of a deployment.
 
-    Returns:
-        Tuple of (project, project_data, app_namespace, current_cluster)
-
-    Raises:
-        ValueError: If project/deployment not found or on wrong cluster.
+    Raises ``ValueError`` when the project or deployment is not found, or sits on another
+    cluster.
     """
     project = get_project_store().get(project_name)
     if not project or not project.data:
@@ -381,10 +357,8 @@ async def _restore_single_resource(
     app_namespace: str,
     current_cluster: str,
 ) -> None:
-    """Restore a single resource using the restore router's versioning logic.
-
-    Calls the appropriate _restore_*_with_versioning() function from
-    restore_router and updates the project file.
+    """Restore one resource through the restore router's versioning logic, and write the new
+    generation into the project file.
     """
     project_file_handler = create_project_file_handler()
 
@@ -433,7 +407,6 @@ async def _restore_single_resource(
         msg = f"Herstel mislukt voor {resource_type}: {error}"
         raise RuntimeError(msg)
 
-    # Update project file with new generation
     new_generation = result.get("new_generation")
     if new_generation is not None:
         project = get_project_store().get(project_name)
@@ -449,9 +422,7 @@ async def _restore_single_resource(
                         project_data, deployment_name, component_name, reference_name, new_generation
                     )
                 elif resource_type == "database":
-                    # Deployment-level: this task used to write it component-level while the
-                    # restore router wrote it deployment-level, so neither path could read
-                    # back what the other had written.
+                    # Deployment-level, the same place the restore router reads it from.
                     project_file_handler.set_database_generation(project_data, deployment_name, new_generation)
                 elif resource_type == "bucket":
                     project_file_handler.set_bucket_generation(project_data, deployment_name, new_generation)

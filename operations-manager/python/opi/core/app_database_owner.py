@@ -1,16 +1,13 @@
-"""Geef OPI's eigen database aan de app-rol, vóór ``alembic upgrade head``.
+"""Hand OPI's own database to the app role, before ``alembic upgrade head``.
 
-De database ``operations_manager`` en haar tabellen waren van de superuser, omdat OPI
-daar als ``postgres`` verbond. Sinds RC-410 opent OPI haar met een eigen rol zonder
-superuser, en die rol moet dus bezitten wat de migraties wijzigen, inclusief
-``alembic_version``.
+OPI opens its own database with a role without superuser, so that role has to own what
+the migrations change, ``alembic_version`` included.
 
-Een eigen stap in ``operations-manager/docker-entrypoint.sh`` en niet in de applicatie
-zelf: dit is het enige wat nog admin-credentials nodig heeft op deze database, en het moet
-klaar zijn voordat Alembic als de app-rol begint. Idempotent, dus elke start mag hem
-draaien.
+Runs from ``operations-manager/docker-entrypoint.sh`` and not from the application: it
+needs admin credentials on this database, and it has to be done before Alembic starts as
+the app role. Idempotent, so every start may run it.
 
-Draaien: ``python -m opi.core.app_database_owner``
+To run: ``python -m opi.core.app_database_owner``
 """
 
 from __future__ import annotations
@@ -26,13 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 async def ensure_app_database_owner() -> dict[str, int]:
-    """Verhuis de database en alles in ``public`` naar ``DATABASE_APP_USER``.
+    """Move the database and everything in ``public`` to ``DATABASE_APP_USER``.
 
-    Returns:
-        Het aantal verhuisde objecten per soort; alles nul als het eigendom al klopte.
+    Returns how many objects moved per kind; all zero when ownership was already right.
     """
-    # DATABASE_HOST en niet de clusterconfiguratie: dit is dezelfde host waarmee OPI zijn
-    # eigen database opent, en de entrypoint heeft die instelling al.
+    # DATABASE_HOST and not the cluster configuration: this is the same host OPI opens its own
+    # database with, and the entrypoint already holds that setting.
     connector = create_postgres_connector(
         settings.DATABASE_HOST,
         settings.DATABASE_ADMIN_NAME,
@@ -49,7 +45,7 @@ async def ensure_app_database_owner() -> dict[str, int]:
 
 
 def main() -> int:
-    """Afsluitcode voor de entrypoint: 0 bij succes, 1 als de overdracht faalde."""
+    """Exit code for the entrypoint: 0 on success, 1 when the transfer failed."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
         asyncio.run(ensure_app_database_owner())

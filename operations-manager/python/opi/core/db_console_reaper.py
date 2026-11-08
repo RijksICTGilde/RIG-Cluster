@@ -39,8 +39,6 @@ ORPHAN_GRACE_SECONDS = 300
 
 
 class DbConsoleReaper:
-    """Tears down expired database consoles and orphaned OIDC clients."""
-
     def __init__(self, cluster: str):
         self._cluster = cluster
         self._running = False
@@ -78,12 +76,8 @@ class DbConsoleReaper:
                 logger.exception("Error in database console reaper sweep")
 
     async def _sweep(self) -> None:
-        # A bundle can only exist if a run was started, and its `runs` row is written
-        # before the Kubernetes resources. So the DB is the authoritative list of
-        # namespaces that can hold a live bundle - we only look at those, instead of
-        # scanning every project namespace every cycle. When nothing is running this is
-        # one DB query and zero kubectl calls. (The pod's activeDeadlineSeconds remains
-        # the hard backstop.)
+        # The `runs` rows are the authoritative list of namespaces that can hold a live
+        # bundle; see the module docstring.
         active_runs = await get_runs_service().list_active_runs(self._cluster)
         namespaces = sorted({r["namespace"] for r in active_runs if r.get("namespace")})
 

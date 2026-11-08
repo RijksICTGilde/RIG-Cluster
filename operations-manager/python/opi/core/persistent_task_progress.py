@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def _now_iso() -> str:
-    """De klok van een stapgrens, als tijdstempel in de subtaak."""
+    """The clock of a step boundary, as the timestamp in the subtask."""
     return datetime.now(tz=UTC).isoformat()
 
 
@@ -45,7 +45,6 @@ class PersistentTaskProgressManager:
         self._project_name = project_name
         self._task_service = task_service
 
-        # Local subtask tracking: subtask_id -> {name, status, error, parent_id}
         self._subtasks: dict[str, dict] = {}
         self._current_step: str = "Starting..."
         self._logs: list[str] = []
@@ -59,13 +58,12 @@ class PersistentTaskProgressManager:
         self._background_tasks: set[asyncio.Task] = set()
         self._flush_task: asyncio.Task | None = None
 
-        # Start the periodic flush loop
         try:
             loop = asyncio.get_running_loop()
             self._flush_task = loop.create_task(self._flush_loop())
         except RuntimeError:
-            # No running event loop -- flush_task stays None; caller is
-            # responsible for flushing or starting the loop later.
+            # No running event loop: flush_task stays None, and the caller is responsible
+            # for flushing or starting the loop later.
             logger.warning(
                 "No running event loop when creating PersistentTaskProgressManager "
                 "for task %s; periodic flushing will not start automatically.",
@@ -87,10 +85,6 @@ class PersistentTaskProgressManager:
             task_id,
         )
 
-    # ------------------------------------------------------------------
-    # Flush machinery
-    # ------------------------------------------------------------------
-
     async def _flush_loop(self) -> None:
         """Periodically flush dirty state to the database."""
         try:
@@ -103,7 +97,7 @@ class PersistentTaskProgressManager:
                     except Exception:
                         logger.exception("Failed to flush progress for task %s", self._task_id)
         except asyncio.CancelledError:
-            # Graceful shutdown -- do one final flush if dirty
+            # Graceful shutdown: one final flush when dirty.
             if self._dirty:
                 try:
                     await self._flush_to_db()
@@ -113,9 +107,11 @@ class PersistentTaskProgressManager:
             raise
 
     async def _flush_to_db(self) -> None:
-        """Write the current local state to the database; redact secrets in current_step and errors.
+        """Write the current local state to the database, with secrets redacted in
+        current_step and in the errors.
 
-        Dit is het enige punt waar die velden de manager verlaten naar de database en client.
+        This is the only point where those fields leave the manager for the database and the
+        client.
         """
         subtask_list = [
             {
@@ -131,7 +127,6 @@ class PersistentTaskProgressManager:
             for subtask_id, info in self._subtasks.items()
         ]
 
-        # Calculate progress_percent from subtask completion ratio
         progress_percent: int | None = None
         if self._subtasks:
             total = len(self._subtasks)
@@ -153,7 +148,6 @@ class PersistentTaskProgressManager:
         )
 
     def _mark_dirty(self) -> None:
-        """Flag that local state has changed and needs flushing."""
         self._dirty = True
 
     async def close(self) -> None:
@@ -171,16 +165,12 @@ class PersistentTaskProgressManager:
             except Exception:
                 logger.exception("Failed final flush during close for task %s", self._task_id)
 
-    # ------------------------------------------------------------------
-    # Public interface -- mirrors TaskProgressManager
-    # ------------------------------------------------------------------
-
     def add_task(self, name: str, subject: str | None = None) -> str:
         """Add a task and start it immediately. Returns task ID.
 
-        ``subject`` says what the step runs for -- a deployment, component or service
-        name -- for steps that run more than once per project. It is kept next to the
-        name instead of inside it, so the page can show and group them separately.
+        ``subject`` says what the step runs for (a deployment, component or service name)
+        for steps that run more than once per project. It is kept next to the name instead
+        of inside it, so the page can show and group them separately.
         """
         task_id = str(uuid.uuid4())
         name = clamp_step_text(name)
@@ -260,26 +250,25 @@ class PersistentTaskProgressManager:
     def update_task(self, task_id: str, message: str, subject: str | None = None) -> None:
         """Update a task's name, and its subject when one is given.
 
-        Zonder ``subject`` blijft het bestaande onderwerp staan: het onderwerp is niet van
-        deze methode, zoals test_task_step_subject vastlegt. Meegeven overschrijft het, en
-        dat is wat een stap doet die per poll een nieuwe reden te melden heeft.
+        Without ``subject`` the existing subject stays: the subject is not this method's to
+        own, as test_task_step_subject records. Passing one overwrites it, which is what a
+        step does that has a new reason to report on every poll.
         """
         if task_id in self._subtasks:
             message = clamp_step_text(message)
             self._subtasks[task_id]["name"] = message
             if subject is not None:
                 self._subtasks[task_id]["subject"] = clamp_step_text(subject)
-            gecombineerd = format_step_line(message, self._subtasks[task_id]["subject"])
+            combined = format_step_line(message, self._subtasks[task_id]["subject"])
             logger.info(
                 "Task %s: Updated task: %s (%s)",
                 self._task_id,
-                gecombineerd,
+                combined,
                 task_id,
             )
-            self.update_current_step(gecombineerd)
+            self.update_current_step(combined)
 
     def complete_task(self, task_id: str) -> None:
-        """Mark a task/subtask as completed."""
         if task_id in self._subtasks:
             self._subtasks[task_id]["status"] = TaskStatus.COMPLETED.value
             self._subtasks[task_id]["completed_at"] = _now_iso()
@@ -294,9 +283,9 @@ class PersistentTaskProgressManager:
     def fail_task(self, task_id: str, error: str, client_error: bool = False) -> None:
         """Mark a task/subtask as failed.
 
-        ``client_error`` zegt dat de aanroeper iets vroeg wat niet kan (een onbekend
-        component, een ongeldige naam). Dat is geen storing van ZAD, dus dan gaat dezelfde
-        boodschap op WARNING in plaats van ERROR en komt hij niet in de alertering terecht.
+        ``client_error`` says the caller asked for something that cannot work (an unknown
+        component, an invalid name). That is not an outage of ZAD, so the same message goes
+        out at WARNING instead of ERROR and does not end up in the alerting.
         """
         if task_id in self._subtasks:
             self._subtasks[task_id]["status"] = TaskStatus.FAILED.value
@@ -313,9 +302,7 @@ class PersistentTaskProgressManager:
             self._mark_dirty()
 
     def update_current_step(self, step: str) -> None:
-        """Update the current step description."""
         self._current_step = step
-        # Update legacy dict
         if self._task_id in _projects:
             _projects[self._task_id].current_step = step
         self._mark_dirty()
@@ -374,13 +361,13 @@ class PersistentTaskProgressManager:
 
     @property
     def project_failure(self) -> str | None:
-        """De reden waarom deze taak als mislukt is gemarkeerd, of ``None``.
+        """The reason this task was marked as failed, or ``None``.
 
-        De worker leest dit als de handler zelf iets teruggeeft dat op succes lijkt: dan
-        wint wat de handler hier meldde, en eindigt de taak op ``failed`` in plaats van op
-        ``completed`` (zie :func:`opi.core.task_worker.reported_failure`). Zonder dit
-        schreef de worker ``completed`` over de fire-and-forget schrijfactie van
-        :meth:`fail_project` heen, en dat is een wedloop met de fout als verliezer.
+        The worker reads this when the handler itself returns something that looks like
+        success: what was reported here then wins, and the task ends on ``failed`` instead of
+        ``completed`` (see :func:`opi.core.task_worker.reported_failure`). Without it the
+        worker races the fire-and-forget write of :meth:`fail_project` and writes
+        ``completed`` over it.
         """
         return self._project_failure
 
@@ -389,15 +376,16 @@ class PersistentTaskProgressManager:
 
         Schedules the DB failure call as a fire-and-forget task.
         """
-        # Redactie hier: deze waarde gaat ook direct naar _fail_in_db, niet alleen via _flush_to_db.
+        # Redacted here: this value also goes straight to _fail_in_db, not only through
+        # _flush_to_db.
         error = redact_text(error)
         self._project_failure = error
         self.mark_legacy_failed(error)
         self._close_phase(TaskStatus.FAILED)
 
-        # Zonder de fouttekst: current_step hoort bij de kop en blijft 90 dagen staan,
-        # terwijl de tekst zelf bij de werkgegevens hoort (RC-282). Het detail staat in
-        # error_message en in de subtaak.
+        # Without the error text: current_step belongs to the header and stays for 90 days,
+        # while the text itself belongs to the working data (RC-282). The detail sits in
+        # error_message and in the subtask.
         self._current_step = "Failed"
         self._mark_dirty()
 
@@ -428,7 +416,6 @@ class PersistentTaskProgressManager:
             logger.exception("Failed to mark task %s as failed in DB", self._task_id)
 
     def set_namespace(self, namespace: str) -> None:
-        """Set the namespace for the project."""
         self._namespace = namespace
         if self._task_id in _projects:
             _projects[self._task_id].namespace = namespace
@@ -436,21 +423,18 @@ class PersistentTaskProgressManager:
         self._mark_dirty()
 
     def add_logs(self, logs: list[str]) -> None:
-        """Add/replace logs for the project."""
         self._logs = logs
         if self._task_id in _projects:
             _projects[self._task_id].logs = logs
         self._mark_dirty()
 
     def add_events(self, events: list[dict[str, str]]) -> None:
-        """Add/replace events for the project."""
         self._events = events
         if self._task_id in _projects:
             _projects[self._task_id].events = events
         self._mark_dirty()
 
     def update_component_web_address(self, component_name: str, web_address: str) -> None:
-        """Update the web address for a component."""
         self._web_addresses[component_name] = web_address
         if self._task_id in _projects:
             if _projects[self._task_id].web_addresses is None:
@@ -491,19 +475,16 @@ class PersistentTaskProgressManager:
         )
 
     def start_subtask(self, subtask_id: str) -> None:
-        """Mark a subtask as started/running."""
         if subtask_id in self._subtasks:
             self._subtasks[subtask_id]["status"] = TaskStatus.RUNNING.value
             self._mark_dirty()
 
     def complete_subtask(self, subtask_id: str) -> None:
-        """Mark a subtask as completed."""
         if subtask_id in self._subtasks:
             self._subtasks[subtask_id]["status"] = TaskStatus.COMPLETED.value
             self._mark_dirty()
 
     def fail_subtask(self, subtask_id: str, error: str) -> None:
-        """Mark a subtask as failed."""
         if subtask_id in self._subtasks:
             self._subtasks[subtask_id]["status"] = TaskStatus.FAILED.value
             self._subtasks[subtask_id]["error"] = error

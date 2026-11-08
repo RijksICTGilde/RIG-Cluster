@@ -35,7 +35,7 @@ from opi.core.authz.engine import (
     decide,
     record_decision,
 )
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_leden import hash_van, is_verlopen, lid_met_naam
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles
 from opi.services.user_service import get_user_service
@@ -121,7 +121,7 @@ async def recognise_principal(presented: str, project: ProjectSummary) -> Princi
     """
     lid = _token_eigenaar(project, presented)
     if lid is not None:
-        if lid.type is LidSoort.SERVICE_ACCOUNT:
+        if lid.type is MemberKind.SERVICE_ACCOUNT:
             naam = lid.name or ""
             return Principal(
                 kind=PrincipalKind.SERVICE_ACCOUNT,

@@ -14,7 +14,7 @@ import copy
 import logging
 from typing import Any
 
-from opi.core.leden import LidSoort, ledenlijst_wijzigt
+from opi.core.members import MemberKind, member_list_changed
 from opi.services.api_token_service import TokenAanvraagGeweigerd, eis_een_admin, schoon_rollen
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class LedenlijstGeweigerd(ValueError):
 
 
 def _is_service_account(lid: dict[str, Any]) -> bool:
-    return lid.get("type") == LidSoort.SERVICE_ACCOUNT.value
+    return lid.get("type") == MemberKind.SERVICE_ACCOUNT.value
 
 
 def leden_voor_formulier(data: dict[str, Any]) -> dict[str, Any]:
@@ -111,7 +111,7 @@ def bewaak_ledenlijst(merged_data: dict[str, Any], stored_data: dict[str, Any], 
     """
     ingediend = merged_data.get("users")
     if not bezit_users:
-        if ledenlijst_wijzigt(stored_data, merged_data):
+        if member_list_changed(stored_data, merged_data):
             raise LedenlijstGeweigerd("Deze stap bewerkt de projectleden niet.")
         return
 

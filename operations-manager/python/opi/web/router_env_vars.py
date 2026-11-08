@@ -111,7 +111,7 @@ async def _render_window(
     response_class=HTMLResponse,
 )
 @requires_sso
-@requires_step_up(actie=StepUpAction.ENV_VARS_MANAGE)
+@requires_step_up(action=StepUpAction.ENV_VARS_MANAGE)
 async def show_env_vars_window(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> HTMLResponse:
@@ -154,7 +154,7 @@ async def show_env_vars_window(
     response_class=HTMLResponse,
 )
 @requires_sso
-@requires_step_up(actie=StepUpAction.ENV_VARS_MANAGE, velden=("vars",))
+@requires_step_up(action=StepUpAction.ENV_VARS_MANAGE, fields=("vars",))
 async def save_env_vars(
     request: Request, project_name: str, component_name: str, deployment_name: str | None = None
 ) -> Response:

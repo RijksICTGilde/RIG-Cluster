@@ -1,8 +1,8 @@
-"""De actiecatalogus: de vaste lijst dingen die een aanroeper kan doen.
+"""The action catalogue: the fixed list of things a caller can do.
 
-Fase 1 uit ``features/futures/rechten-plan-van-aanpak.md``, ingevoerd voor het oppervlak
-dat een token kan bereiken. Een scope noemt handelingen en geen paden: een nieuwe route
-moet een handeling kiezen, dus de lijst veroudert niet zodra er een route bij komt.
+A scope names actions and not paths: a new route has to pick an action, so the list does
+not age the moment a route is added. The design is in
+``features/futures/rechten-plan-van-aanpak.md``.
 """
 
 from __future__ import annotations
@@ -13,11 +13,11 @@ from typing import Any, TypeVar
 
 
 class Action(StrEnum):
-    """Wat een aanroeper op een project kan doen, als gesloten lijst.
+    """What a caller can do on a project, as a closed list.
 
-    De waarde staat nergens opgeslagen: een route wijst een handeling aan en het
-    regelregister (:mod:`opi.core.authz.rules`) zegt welke rollen die opent. Hernoemen
-    raakt dus geen uitgegeven token, maar wel elke route die de naam noemt.
+    The value is stored nowhere: a route points at an action and the rule register
+    (:mod:`opi.core.authz.rules`) says which roles open it. Renaming therefore touches no
+    issued token, but it does touch every route that names it.
     """
 
     PROJECT_READ = "project.read"
@@ -74,12 +74,12 @@ class Action(StrEnum):
 
     PROJECT_KEY_READ = "project-key.read"
 
-    TOKEN_READ = "token.read"  # noqa: S105 -- handelingsnaam, geen secret
-    TOKEN_MANAGE = "token.manage"  # noqa: S105 -- handelingsnaam, geen secret
+    TOKEN_READ = "token.read"  # noqa: S105  # the name of an action, not a secret
+    TOKEN_MANAGE = "token.manage"  # noqa: S105  # the name of an action, not a secret
     MEMBER_MANAGE = "member.manage"
 
-    # Het projectBESTAND bewerken via een formulier: wat ``require_project_edit_access``
-    # in het portaal afsloot, voor een modal of wizardstap die meer dan een sectie raakt.
+    # Editing the project FILE through a form: what ``require_project_edit_access`` closed
+    # off in the portal, for a modal or wizard step that touches more than one section.
     PROJECT_EDIT = "project.edit"
 
     ENV_VARS_MANAGE = "env-vars.manage"
@@ -89,17 +89,17 @@ class Action(StrEnum):
     ATTACHMENT_MANAGE = "attachment.manage"
     AUDIT_READ = "audit.read"
 
-    # Wat elke ingelogde gebruiker kan, los van een project: de portaalpagina's, de
-    # aanmaakwizard, de eigen tweede factor en de step-up-dialoog.
+    # What every signed-in user can do, apart from a project: the portal pages, the create
+    # wizard, their own second factor and the step-up dialog.
     PORTAL_READ = "portal.read"
     WIZARD_USE = "wizard.use"
     ACCOUNT_OTP = "account.otp"
     STEP_UP_VERIFY = "step-up.verify"
-    TOKEN_STEP_UP = "token.step-up"  # noqa: S105  # naam van de handeling, geen secret
+    TOKEN_STEP_UP = "token.step-up"  # noqa: S105  # the name of an action, not a secret
     TOOLS_USE = "tools.use"
 
-    # Platformbeheer. Deze routes blijven achter ``is_platform_admin``; de action bestaat
-    # zodat de route er een draagt en de audit hem kan noemen.
+    # Platform administration. These routes stay behind ``is_platform_admin``; the action
+    # exists so the route carries one and the audit can name it.
     PLATFORM_CLEANUP = "platform.cleanup"
     PLATFORM_RECONCILE = "platform.reconcile"
     PLATFORM_USERS = "platform.users"
@@ -112,75 +112,75 @@ class Action(StrEnum):
     PLATFORM_PROJECT_KEY = "platform.project-key"
 
 
-#: Markering op een route die zegt welke handeling hij vraagt. Een attribuut en geen
-#: register, zodat een test (en de opstartcontrole) het uit de routetabel leest in plaats
-#: van uit een lijst die naast de code staat; dezelfde vorm als ``REQUIRES_PROJECT_NAME``.
+#: Marking on a route that says which action it asks for. An attribute and not a register,
+#: so a test (and the startup check) reads it out of the route table instead of out of a list
+#: that sits next to the code; the same shape as ``REQUIRES_PROJECT_NAME``.
 ACTION_ATTR = "zad_action"
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-#: Markering met de velden die de audit van DEZE route in de rij mag zetten. Alleen door
-#: ``audit_fields=`` hieronder: ``velden=`` van ``@requires_step_up`` staat er los van,
-#: want dat is wat de dialoog herhaalt en mag ook een vrij tekstveld noemen.
+#: Marking with the fields the audit of THIS route may put in the row. Only through
+#: ``audit_fields=`` below: ``fields=`` of ``@requires_step_up`` is independent of it,
+#: because that is what the dialog repeats and may also name a free text field.
 AUDIT_FIELDS_ATTR = "zad_audit_fields"
 
 
 def action(which: Action, *, audit_fields: tuple[str, ...] = ()) -> Callable[[F], F]:
-    """Zet de handeling die deze route vraagt op de route zelf.
+    """Put the action this route asks for on the route itself.
 
-    Hoort BOVEN de authenticatiedecorator te staan, zodat de markering op het object komt
-    dat FastAPI als endpoint registreert. De functie zelf wordt niet gewikkeld.
+    Belongs ABOVE the authentication decorator, so the marking lands on the object FastAPI
+    registers as the endpoint. The function itself is not wrapped.
 
-    ``audit_fields`` noemt de velden die in de auditrij komen, voor een route waarvan de
-    waarde niet in het projectbestand landt (welke snapshot, welk image) en die geen
-    step-up heeft om ze met ``velden=`` te noemen. Nooit een veld dat een persoon
-    aanwijst: wat hier in komt blijft een jaar staan (``features/audit.md``).
+    ``audit_fields`` names the fields that end up in the audit row, for a route whose value
+    does not land in the project file (which snapshot, which image) and that has no step-up
+    to name them with ``fields=``. Never a field that points at a person: what goes in here
+    stays for a year (``features/audit.md``).
     """
 
-    def markeer(func: F) -> F:
+    def mark(func: F) -> F:
         setattr(func, ACTION_ATTR, which)
         if audit_fields:
             setattr(func, AUDIT_FIELDS_ATTR, audit_fields)
         return func
 
-    return markeer
+    return mark
 
 
 def action_of(endpoint: Any) -> Action | None:
-    """De handeling van een route-endpoint, of None als hij er geen draagt."""
+    """The action of a route endpoint, or None when it carries none."""
     return getattr(endpoint, ACTION_ATTR, None)
 
 
 def audit_fields_of(endpoint: Any) -> tuple[str, ...]:
-    """De velden die deze route in de auditrij noemt, of een leeg paar haken."""
+    """The fields this route names in the audit row, or an empty tuple."""
     return tuple(getattr(endpoint, AUDIT_FIELDS_ATTR, ()))
 
 
-#: Markering op een route die zijn deployment niet in het PAD heeft, met de functie die
-#: hem uit de argumenten van de route haalt.
+#: Marking on a route that does not have its deployment in the PATH, with the function that
+#: pulls it out of the route's arguments.
 DEPLOYMENT_ATTR = "zad_deployment_from"
 
 
 def deployment_from(resolve: Callable[..., str | None]) -> Callable[[F], F]:
-    """Zeg waar de deployment van deze route staat als hij niet in het pad zit.
+    """Say where the deployment of this route sits when it is not in the path.
 
-    Zonder zo'n verklaring weegt de aanroep tegen de HOOGSTE markering van het project
-    (:func:`opi.services.project_roles.build_resource`), en dan kan een rol die alleen
-    niet-productie mag op deze route niets. *resolve* krijgt de argumenten van de route en
-    geeft de naam terug. Hoort op dezelfde plek als ``@action``: boven de
-    authenticatiedecorator.
+    Without such a declaration the call weighs against the HIGHEST marking of the project
+    (:func:`opi.services.project_roles.build_resource`), and then a role that may only touch
+    non-production can do nothing on this route. *resolve* gets the arguments of the route
+    and returns the name. Belongs in the same place as ``@action``: above the authentication
+    decorator.
     """
 
-    def markeer(func: F) -> F:
+    def mark(func: F) -> F:
         setattr(func, DEPLOYMENT_ATTR, resolve)
         return func
 
-    return markeer
+    return mark
 
 
 def deployment_of(endpoint: Any, route_kwargs: dict[str, Any]) -> str | None:
-    """De deployment die deze route uit zijn eigen argumenten aanwijst, of None."""
+    """The deployment this route points at out of its own arguments, or None."""
     resolve = getattr(endpoint, DEPLOYMENT_ATTR, None)
     return resolve(**route_kwargs) if resolve is not None else None
 
@@ -237,28 +237,28 @@ def weighed_action_of(endpoint: Any, route_kwargs: dict[str, Any]) -> Action | N
     return resolve(**route_kwargs) if resolve is not None else None
 
 
-#: Markering op een route die een doelwit in de QUERY draagt, met de namen die daar
-#: gelezen mogen worden.
+#: Marking on a route that carries a target in the QUERY, with the names that may be read
+#: there.
 QUERY_TARGETS_ATTR = "zad_query_targets"
 
 
 def targets_in_query(*names: str) -> Callable[[F], F]:
-    """Zeg welke doelwitten van deze route in de query staan en niet in het pad.
+    """Say which targets of this route sit in the query and not in the path.
 
-    De tegenhanger van :func:`deployment_from` voor het portaal, waar de poort het
-    verzoek heeft en niet de argumenten van de route. Zonder deze verklaring leest
-    ``enforce_route_action`` alleen het pad: een query die de poort een ANDERE deployment
-    aanwijst dan de handler gebruikt, zou de beslissing kunnen verruimen. Hoort op
-    dezelfde plek als ``@action``.
+    The counterpart of :func:`deployment_from` for the portal, where the gate holds the
+    request and not the arguments of the route. Without this declaration
+    ``enforce_route_action`` reads the path only: a query pointing the gate at a DIFFERENT
+    deployment than the handler uses could widen the decision. Belongs in the same place as
+    ``@action``.
     """
 
-    def markeer(func: F) -> F:
+    def mark(func: F) -> F:
         setattr(func, QUERY_TARGETS_ATTR, frozenset(names))
         return func
 
-    return markeer
+    return mark
 
 
 def query_targets_of(endpoint: Any) -> frozenset[str]:
-    """De doelwitnamen die deze route uit de query laat lezen, of een lege verzameling."""
+    """The target names this route lets the query be read for, or an empty set."""
     return frozenset(getattr(endpoint, QUERY_TARGETS_ATTR, frozenset()))

@@ -158,8 +158,8 @@ async def handle_backup(
             progress.fail_subtask(db_subtask, str(e))
             logger.exception("Database backup failed for %s/%s", project_name, deployment_name)
 
-    # Objectopslag: minio-storage of seaweedfs-storage. Beide dragen het backup_label
-    # "minio", hebben hetzelfde secret en gaan via dezelfde bucket-back-up.
+    # Object storage: minio-storage or seaweedfs-storage. Both carry the backup_label
+    # "minio", have the same secret and go through the same bucket backup.
     minio_service_types = OBJECT_STORAGE_SERVICE_TYPES
     if "minio" in resource_types and project_file_handler.deployment_uses_service(
         project_data, deployment_name, minio_service_types
@@ -240,18 +240,18 @@ async def handle_restore(
     project_name = payload["project_name"]
     backup_run_id = payload["backup_run_id"]
     target_deployment = payload["target_deployment"]
-    # De onderdelen uit de payload zijn die van deze run, al opgehaald door de wizard.
+    # The parts out of the payload are the ones of this run, already fetched by the wizard.
     backup_items = payload.get("backup_items", [])
     create_new_deployment = payload.get("create_new_deployment", False)
     source_deployment = payload.get("source_deployment", "")
     deployment_config = payload.get("deployment_config")
-    # De deployment waarvan de nieuwe zijn config overneemt, leeg voor een lege deployment.
+    # The deployment the new one takes its config from, empty for an empty deployment.
     config_source = payload.get("config_source") or None
 
     try:
         if create_new_deployment:
-            # Een lege run of bron komt door het schema (beide zijn gewone strings) en laat
-            # daarna elke verwerking op clone-from stuklopen, dus hij wordt hier geweigerd.
+            # An empty run or source passes the schema (both are plain strings) and then
+            # breaks every bit of processing on clone-from, so it is refused here.
             if not backup_run_id or not source_deployment:
                 msg = (
                     f"Backup-run '{backup_run_id}' is niet gevonden bij project '{project_name}', "
@@ -350,9 +350,8 @@ async def handle_restore(
 
                 progress.complete_project()
             else:
-                # Het antwoord moet zeggen wat er gebeurde: hieronder stond
-                # onvoorwaardelijk {"success": True}, dus een half mislukt herstel meldde
-                # zich als geslaagd terwijl zijn eigen stap op "failed" stond.
+                # The answer has to say what happened: a half-failed restore is not a
+                # success, however green the steps before it were.
                 progress.fail_task(restore_task, "Een of meer herstelbewerkingen zijn mislukt")
                 progress.fail_project("Herstel gedeeltelijk mislukt")
                 return {"success": False, "error": "Herstel gedeeltelijk mislukt"}

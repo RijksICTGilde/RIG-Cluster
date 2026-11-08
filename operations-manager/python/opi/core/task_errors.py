@@ -1,19 +1,15 @@
-"""Wat een taak kan zeggen over een mislukking die niet aan het platform ligt.
+"""What a task can say about a failure that is not the platform's fault.
 
-Een handler kan op twee manieren falen: hij geeft een faal-dict terug (blijvend, geen
-nieuwe poging) of hij gooit (de worker probeert het opnieuw). Dat onderscheid is precies
-goed voor een storing die overwaait, en precies verkeerd voor een verzoek dat niet kan:
-"dit component bestaat niet" wordt bij een tweede poging niet waar.
+A handler can fail in two ways: it returns a failure dict (permanent, no new attempt) or it
+raises (the worker tries again). That distinction is exactly right for an outage that blows
+over, and exactly wrong for a request that cannot work: "this component does not exist" does
+not become true on a second attempt.
 
-``TaskInputError`` is de gooiende vorm van "de aanroeper vroeg iets wat niet kan". De
-worker maakt er een blijvende mislukking van MET het ``error_type`` dat de werper meegaf,
-zodat een client hem kan toeschrijven in plaats van hem als onverklaarbaar te zien. Het
-vertalen van dat type naar een categorie gebeurt niet hier maar op de plek waar een
-taakrecord een antwoord wordt (``opi/api/task_models.py``), zodat er één vertaling is.
-
-Gemeld door de zad-cli als punt 26b: ``update-image`` op een component dat niet bestaat
-kwam terug zonder categorie en zonder type, en dus als exit 3 ("niet toe te schrijven")
-terwijl het gewoon een typefout in de aanroep was.
+``TaskInputError`` is the raising form of "the caller asked for something that cannot work".
+The worker turns it into a permanent failure WITH the ``error_type`` the raiser handed over,
+so a client can attribute it instead of seeing it as unexplainable. Translating that type
+into a category does not happen here but where a task record becomes an answer
+(``opi/api/task_models.py``), so that there is one translation.
 """
 
 from __future__ import annotations
@@ -27,18 +23,18 @@ from opi.connectors.mail import MailRelayUnavailableError
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
-#: Wat een fout is als de aanroeper niets fout deed en wij het niet nader weten.
+#: What an error is when the caller did nothing wrong and we know no more than that.
 INTERNAL_ERROR_TYPE = "internal_error"
 
-#: Wat een 404 uit een manager betekent voor de aanroeper van een taak.
+#: What a 404 out of a manager means for the caller of a task.
 NOT_FOUND_ERROR_TYPE = "not_found"
 
-#: Wat elke andere 4xx betekent: het verzoek zelf deugt niet.
+#: What every other 4xx means: the request itself is no good.
 INVALID_REQUEST_ERROR_TYPE = "invalid_request"
 
-#: De ``error_type``-waarden die zeggen: de aanroeper vroeg iets wat niet kan. Een taak die
-#: hierop faalt is geen storing, dus hij wordt op WARNING gelogd en niet op ERROR. Dit is de
-#: enige lijst; de types zelf komen uit de managers, er wordt er hier geen bedacht.
+#: The ``error_type`` values that say: the caller asked for something that cannot work. A task
+#: failing on one of these is not an outage, so it is logged at WARNING and not at ERROR. This
+#: is the only list; the types themselves come from the managers, none is invented here.
 CLIENT_ERROR_TYPES = frozenset(
     {
         "validation_error",
@@ -50,11 +46,11 @@ CLIENT_ERROR_TYPES = frozenset(
 
 
 class TaskInputError(Exception):
-    """De aanroeper vroeg iets wat niet kan; opnieuw proberen verandert daar niets aan.
+    """The caller asked for something that cannot work; trying again changes nothing.
 
-    ``error_type`` is de specifieke reden, in dezelfde woorden die de managers al
-    gebruiken (``deployment_not_found``, ``component_not_found``, ...), zodat er geen
-    tweede woordenlijst ontstaat.
+    ``error_type`` is the specific reason, in the same words the managers already use
+    (``deployment_not_found``, ``component_not_found``, ...), so that no second vocabulary
+    comes into being.
     """
 
     def __init__(self, message: str, error_type: str = INVALID_REQUEST_ERROR_TYPE) -> None:
@@ -62,9 +58,9 @@ class TaskInputError(Exception):
         self.error_type = error_type
 
 
-#: Uitzonderingen die zeggen: het PLATFORM struikelde, niet het project. Een onbereikbare
-#: mailrelay, een git-server die niet antwoordt en een git-commando dat afloopt horen hier
-#: alle drie: er is niets aan het project te repareren, en de melding zegt dat ook al.
+#: Exceptions that say: the PLATFORM stumbled, not the project. An unreachable mail relay, a
+#: git server that does not answer and a git command that times out all three belong here:
+#: there is nothing in the project to repair, and the message says so already.
 PLATFORM_FAILURES: tuple[type[BaseException], ...] = (
     MailRelayUnavailableError,
     GitRemoteUnavailableError,
@@ -73,14 +69,14 @@ PLATFORM_FAILURES: tuple[type[BaseException], ...] = (
 
 
 def platform_failure_category(exception: BaseException | None) -> dict[str, str]:
-    """``error_category: InternalError`` als deze fout van het platform kwam.
+    """``error_category: InternalError`` when this error came from the platform.
 
-    ``processing_failed`` valt bij een client op "niet toe te schrijven", en dat is eerlijk
-    zolang een component dat niet gezond wordt ook aan het image van de gebruiker kan
-    liggen. Een storing uit :data:`PLATFORM_FAILURES` is dat niet.
+    ``processing_failed`` lands at a client as "not attributable", and that is honest as long
+    as a component that does not become healthy can also be the user's image. An outage out of
+    :data:`PLATFORM_FAILURES` is not.
 
-    ``_with_error_category`` laat een categorie die de handler zelf zet staan, dus dit is
-    het enige dat de handler hoeft te doen.
+    ``_with_error_category`` leaves a category the handler sets itself alone, so this is all
+    the handler has to do.
     """
     if isinstance(exception, PLATFORM_FAILURES):
         return {"error_category": ErrorCategory.InternalError.value}
@@ -88,5 +84,5 @@ def platform_failure_category(exception: BaseException | None) -> dict[str, str]
 
 
 def platform_failure_fields(project_manager: ProjectManager) -> dict[str, str]:
-    """Dezelfde categorie, voor een handler die de uitzondering uit de manager leest."""
+    """The same category, for a handler that reads the exception out of the manager."""
     return platform_failure_category(project_manager.get_processing_exception())

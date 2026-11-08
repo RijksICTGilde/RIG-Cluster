@@ -62,7 +62,7 @@ houdt dat vast.
   het projecttoken en de leesroutes maskeren ze met `***` (zie
   [component-values-api.md](component-values-api.md)). Of die schrijfweg ook een step-up
   moet dragen is een open punt.
-- De voorwaarde is een declaratie op de handeling (het `actie`-argument), zodat
+- De voorwaarde is een declaratie op de handeling (het `action`-argument), zodat
   "alleen bepaalde rollen" later een wijziging van die declaratie is en geen ingreep in
   generieke code. Sinds RC-392 is dat de regel `env-vars.manage` in
   `opi/core/authz/rules.py`: `developer` plus een verse step-up voor een component dat

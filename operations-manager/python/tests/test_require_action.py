@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.authz import TE_SMALLE_ROL, require_action
 
@@ -37,8 +37,8 @@ def _project() -> ProjectSummary:
         filename=f"{PROJECT_NAME}.yaml",
         data={"name": PROJECT_NAME, "deployments": [{"name": "live", "environment": "acceptatie"}]},
         users=[
-            ProjectUser(email=OPS, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=KIJKER, roles=["viewer"], type=LidSoort.PERSOON),
+            ProjectUser(email=OPS, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=KIJKER, roles=["viewer"], type=MemberKind.PERSON),
         ],
     )
 

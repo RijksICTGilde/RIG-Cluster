@@ -1,4 +1,4 @@
-"""Monitort of de platform-mailrelay ready is en waarschuwt als hij uitvalt."""
+"""Watches whether the platform mail relay is ready, and warns when it goes down."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ class MailRelayWatcher:
     def __init__(self) -> None:
         self._running = False
         self._task: asyncio.Task | None = None
-        self._niet_ready_sinds: float | None = None
-        #: Één melding per storing, niet per tik: anders is het kanaal onbruikbaar.
-        self._gemeld = False
+        self._not_ready_since: float | None = None
+        #: One message per outage, not per tick: otherwise the channel is unusable.
+        self._reported = False
 
     async def start(self) -> None:
         self._running = True
@@ -51,53 +51,54 @@ class MailRelayWatcher:
             except asyncio.CancelledError:
                 break
             try:
-                await self.tik()
+                await self.tick()
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("Error in mail relay readiness check")
 
-    async def tik(self) -> None:
-        """Een meting, en de melding die eruit volgt."""
-        ready = await self._meet()
+    async def tick(self) -> None:
+        """One measurement, and the message that follows from it."""
+        ready = await self._measure()
         if ready is None:
             return
 
         if ready:
-            if self._gemeld:
-                await self._stuur(
+            if self._reported:
+                await self._send(
                     "Mailrelay is weer bereikbaar",
                     "De platform-mailrelay antwoordt weer op /healthz/ready. Uitrollen met send-email werken weer.",
                     priority="default",
                 )
-            self._niet_ready_sinds = None
-            self._gemeld = False
+            self._not_ready_since = None
+            self._reported = False
             return
 
-        # De module-eigen naam, zodat een toets de klok kan zetten zonder de event loop te raken.
-        nu = monotonic()
-        if self._niet_ready_sinds is None:
-            self._niet_ready_sinds = nu
+        # The module's own name for the clock, so a test can set it without touching the
+        # event loop.
+        now = monotonic()
+        if self._not_ready_since is None:
+            self._not_ready_since = now
             return
-        duur = nu - self._niet_ready_sinds
-        if duur < settings.MAIL_RELAY_DOWN_ALERT_SECONDS or self._gemeld:
+        duration = now - self._not_ready_since
+        if duration < settings.MAIL_RELAY_DOWN_ALERT_SECONDS or self._reported:
             return
-        self._gemeld = True
-        await self._stuur(
+        self._reported = True
+        await self._send(
             "Mailrelay is niet bereikbaar",
-            f"De platform-mailrelay is al {duur / 60:.0f} minuten niet ready op "
+            f"De platform-mailrelay is al {duration / 60:.0f} minuten niet ready op "
             f"{settings.MAIL_RELAY_API_URL}. Elke uitrol van een project met send-email faalt zolang dit duurt. "
             "Kijk op CrashLoopBackOff en op security.ip-blocked in de log van de relay "
             "(features/send-email.md, Storingen).",
             priority="high",
         )
 
-    async def _meet(self) -> bool | None:
-        """Of de relay ready is, of ``None`` als er niets te meten was.
+    async def _measure(self) -> bool | None:
+        """Whether the relay is ready, or ``None`` when there was nothing to measure.
 
-        ``None`` en niet ``False``: een cluster zonder relay en een wachtwoord dat niet te
-        ontsleutelen is zijn geen storing van de relay, en een melding daarover zou naar de
-        verkeerde hoek wijzen.
+        ``None`` and not ``False``: a cluster without a relay, and a password that cannot be
+        decrypted, are not an outage of the relay, and a message about it would point at the
+        wrong corner.
         """
         try:
             connector = await create_mail_connector()
@@ -108,19 +109,19 @@ class MailRelayWatcher:
             return None
         return await connector.is_ready()
 
-    async def _stuur(self, titel: str, tekst: str, priority: str) -> None:
+    async def _send(self, title: str, text: str, priority: str) -> None:
         if not settings.LOGWATCHER_NTFY_TOPIC:
-            logger.warning("Mailrelay-melding niet verstuurd: LOGWATCHER_NTFY_TOPIC ontbreekt (%s)", titel)
+            logger.warning("Mailrelay-melding niet verstuurd: LOGWATCHER_NTFY_TOPIC ontbreekt (%s)", title)
             return
         cfg = LogWatchConfig(
             grafana_url=settings.GRAFANA_URL,
             ntfy_topic=settings.LOGWATCHER_NTFY_TOPIC,
             ntfy_server=settings.LOGWATCHER_NTFY_SERVER,
         )
-        # send_ntfy is synchroon (httpx), net als in de log_watcher-scheduler.
-        await asyncio.to_thread(self._post, cfg, titel, tekst, priority)
+        # send_ntfy is synchronous (httpx), the same as in the log_watcher scheduler.
+        await asyncio.to_thread(self._post, cfg, title, text, priority)
 
     @staticmethod
-    def _post(cfg: LogWatchConfig, titel: str, tekst: str, priority: str) -> None:
+    def _post(cfg: LogWatchConfig, title: str, text: str, priority: str) -> None:
         with httpx.Client() as client:
-            send_ntfy(client, cfg, titel, tekst, priority, "mailbox")
+            send_ntfy(client, cfg, title, text, priority, "mailbox")

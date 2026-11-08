@@ -43,7 +43,7 @@ from opi.api.image_router import image_router
 from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
 from opi.core.authz.engine import Cause
 from opi.core.config import settings
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
 from opi.middleware.body_limit import (
@@ -755,7 +755,7 @@ def _project_met_rol(*rollen: str) -> SimpleNamespace:
         data={},
         users=[
             SimpleNamespace(
-                type=LidSoort.SERVICE_ACCOUNT,
+                type=MemberKind.SERVICE_ACCOUNT,
                 name="bouwstraat",
                 principaal="bouwstraat",
                 email=None,

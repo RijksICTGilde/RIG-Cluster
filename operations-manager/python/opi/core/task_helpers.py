@@ -13,29 +13,29 @@ logger = logging.getLogger(__name__)
 
 
 def task_actor(request: Request) -> str | None:
-    """Wie deze aanroep doet, voor de taak en de git-trailer die eruit volgt.
+    """Who makes this call, for the task and for the git trailer that follows from it.
 
-    Het e-mailadres uit de sessie, anders de actor die de ingang zette: een benoemd
-    service account, een persoonlijk token of de oude projectsleutel. Die waarde komt van
-    :mod:`opi.core.actor`, dus de taakweg noemt dezelfde aanroeper als de log en als een
-    commit die niet via een taak loopt.
+    The email address out of the session, otherwise the actor the entrance set: a named
+    service account, a personal token or the old project key. That value comes from
+    :mod:`opi.core.actor`, so the task route names the same caller as the log and as a
+    commit that does not run through a task.
 
-    Stond er niets, dan is dit de laatste terugval ``"API"``: een sleutel is een geheim en
-    hoort niet in een trailer, en de aanroeper was er wel. Zonder die terugval zou een
-    oudere weg zonder actor stil als een handeling zonder aanroeper geboekt worden.
+    Was there nothing, then this is the last fallback ``"API"``: a key is a secret and does
+    not belong in a trailer, and there WAS a caller. Without that fallback an older route
+    without an actor would quietly be booked as an action without a caller.
     """
     user = get_current_user(request)
     actor = (user or {}).get("email") or None
     if actor:
         return actor
-    huidige = get_actor()
-    if huidige is not ACTOR_UNKNOWN:
-        return str(huidige)
+    current = get_actor()
+    if current is not ACTOR_UNKNOWN:
+        return str(current)
     return "API" if request.headers.get("X-API-Key") else None
 
 
 def get_task_service(request: Request):
-    """Retrieve the task service from application state."""
+    """The task service out of the application state."""
     task_service = getattr(request.app.state, "task_service", None)
     if task_service is None:
         raise HTTPException(status_code=503, detail="Task service not available")
@@ -52,15 +52,11 @@ async def create_async_task(
 ) -> dict:
     """Create an async task, routing through federation when available.
 
-    In standalone mode (no federation_service), creates the task locally.
-    In master mode, resolves the target cluster from the project YAML and
-    forwards to the appropriate slave OPI instance.
+    In standalone mode (no federation_service) the task is created locally. In master mode
+    the target cluster is resolved from the project YAML and the call is forwarded to the
+    slave OPI instance of that cluster.
 
-    Returns:
-        Task dict with task_id and status.
-
-    Raises:
-        HTTPException 503: When the application is draining (graceful shutdown).
+    Raises ``HTTPException`` 503 while the application is draining.
     """
     from opi.core.shutdown import is_draining
 
@@ -106,20 +102,10 @@ async def wait_for_task_completion(
     timeout_seconds: int = 1800,
     poll_interval: float = 0.5,
 ) -> dict:
-    """Poll task until completion. Used by V1 endpoints for blocking behavior.
+    """Poll a task until it completes; this is what makes a V1 endpoint blocking.
 
-    Args:
-        request: FastAPI request for accessing task service.
-        task_id: The task ID to wait for.
-        timeout_seconds: Maximum time to wait (default 30 minutes).
-        poll_interval: Time between polls in seconds.
-
-    Returns:
-        Completed task dict.
-
-    Raises:
-        TimeoutError: If the task does not complete within the timeout.
-        HTTPException: If the task service is unavailable.
+    Raises ``TimeoutError`` when the task does not complete within ``timeout_seconds``, and
+    ``HTTPException`` when the task service is unavailable.
     """
     task_service = get_task_service(request)
     terminal_statuses = {"completed", "failed", "cancelled"}
@@ -128,7 +114,6 @@ async def wait_for_task_completion(
     while elapsed < timeout_seconds:
         task = await task_service.get_task(task_id)
         if task is None:
-            # Try federation proxy
             federation_service = getattr(request.app.state, "federation_service", None)
             if federation_service:
                 task = await federation_service.get_task_status(task_id)

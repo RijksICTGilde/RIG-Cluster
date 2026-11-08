@@ -175,9 +175,9 @@ async def find_superseding_task() -> dict | None:
         return None
 
     for candidate in candidates:
-        # Uit de kolom, niet opnieuw afgeleid: ``scope_of()`` draait nog maar op een moment
-        # in het leven van een taak, bij het aanmaken. NULL is projectbreed, en dat is ook
-        # precies wat een taak van voor de migratie hoort te krijgen.
+        # Out of the column, not derived again: ``scope_of()`` only ever runs at one moment in
+        # the life of a task, when it is created. NULL is project-wide, which is exactly what a
+        # task from before the migration should get.
         stored = candidate.get("affects_deployments")
         candidate_scope = None if stored is None else frozenset(stored)
         if covers(candidate_scope, current.scope):
@@ -188,8 +188,7 @@ async def find_superseding_task() -> dict | None:
 async def raise_if_superseded(what: str) -> None:
     """Abandon the current task when a newer, wider-or-equal task is queued.
 
-    Args:
-        what: what is being waited on, for the log and the exception message.
+    ``what`` names what is being waited on, for the log and the exception message.
     """
     newer = await find_superseding_task()
     if newer is None:

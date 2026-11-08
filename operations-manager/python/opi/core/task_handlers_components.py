@@ -31,9 +31,6 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
 
     try:
-        # ------------------------------------------------------------------
-        # Step 1: Validation
-        # ------------------------------------------------------------------
         validate_task = progress.add_task(steps.NAMES_CHECK)
 
         if not validate_project_name(project_name):
@@ -66,9 +63,6 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
 
         progress.complete_task(validate_task)
 
-        # ------------------------------------------------------------------
-        # Step 2: Add component to project YAML
-        # ------------------------------------------------------------------
         add_task = progress.add_task(steps.COMPONENT_ADD, subject=component_name)
 
         project_file_relative_path = f"projects/{project_name}.yaml"
@@ -105,9 +99,6 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
 
         progress.complete_task(add_task)
 
-        # ------------------------------------------------------------------
-        # Step 3: Process project (unless the caller deferred the rollout)
-        # ------------------------------------------------------------------
         urls: dict[str, dict[str, Any]] = {}
 
         if not rollout_requested(payload):
@@ -147,9 +138,6 @@ async def handle_add_component(payload: dict, progress: Any) -> dict:
                 **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
             }
 
-        # ------------------------------------------------------------------
-        # Build response
-        # ------------------------------------------------------------------
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -312,9 +300,6 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
     project_manager: ProjectManager | None = None
 
     try:
-        # ------------------------------------------------------------------
-        # Step 1: Validation
-        # ------------------------------------------------------------------
         validate_task = progress.add_task(steps.NAMES_CHECK)
 
         if not validate_project_name(project_name):
@@ -347,9 +332,6 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
 
         progress.complete_task(validate_task)
 
-        # ------------------------------------------------------------------
-        # Step 2: Add component to deployment
-        # ------------------------------------------------------------------
         add_task = progress.add_task(
             steps.COMPONENT_ADD_TO_DEPLOYMENT, subject=f"{component_name} aan {deployment_name}"
         )
@@ -377,9 +359,6 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
 
         progress.complete_task(add_task)
 
-        # ------------------------------------------------------------------
-        # Step 3: Process the affected deployment (unless the rollout was deferred)
-        # ------------------------------------------------------------------
         urls: dict[str, dict[str, Any]] = {}
 
         if not rollout_requested(payload):
@@ -416,9 +395,6 @@ async def handle_add_component_to_deployment(payload: dict, progress: Any) -> di
                 **({"component_failures": cf} if (cf := project_manager.get_component_failures()) else {}),
             }
 
-        # ------------------------------------------------------------------
-        # Build response
-        # ------------------------------------------------------------------
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
             "message": (
@@ -468,9 +444,6 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
     project_manager: ProjectManager | None = None
 
     try:
-        # ------------------------------------------------------------------
-        # Step 1: Validation
-        # ------------------------------------------------------------------
         validate_task = progress.add_task(steps.PROJECT_NAME_CHECK)
 
         if not validate_project_name(project_name):
@@ -489,9 +462,6 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
 
         progress.complete_task(validate_task)
 
-        # ------------------------------------------------------------------
-        # Step 2: Add service
-        # ------------------------------------------------------------------
         add_task = progress.add_task(steps.SERVICE_ADD, subject=service_name)
 
         project_file_relative_path = f"projects/{project_name}.yaml"
@@ -515,9 +485,6 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
 
         progress.complete_task(add_task)
 
-        # ------------------------------------------------------------------
-        # Step 3: Process project (only if new services were added)
-        # ------------------------------------------------------------------
         # Nothing added AND nothing bound means nothing to reconcile; a newly bound
         # component needs its manifests just as much as a newly selected service does.
         # A deferred rollout says "skipped" for a different reason, and the reason
@@ -540,9 +507,6 @@ async def handle_add_service(payload: dict, progress: Any) -> dict:
                 processing_error = project_manager.get_processing_error() or "Project processing failed"
                 progress.fail_project(processing_error)
 
-        # ------------------------------------------------------------------
-        # Build response
-        # ------------------------------------------------------------------
         succeeded = processing["status"] != "failed"
         response: dict[str, Any] = {
             "status": "success" if succeeded else "failed",
@@ -684,16 +648,16 @@ async def handle_configure_service(payload: dict, progress: Any) -> dict:
             "service": service_name,
             "target": target,
             **counts,
-            # Wat het platform invulde omdat de aanroeper het leeg liet. Dit is de enige
-            # plek waar hij een uitnodigingssleutel te zien krijgt die hij niet zelf koos,
-            # en zonder die sleutel is de uitnodiging niet te versturen.
+            # What the platform filled in because the caller left it empty. This is the only
+            # place where it gets to see an invitation key it did not choose itself, and
+            # without that key the invitation cannot be sent.
             "generated": result.get("generated", {}),
-            # Wat er nog op een beheerder wacht. Zonder dit merkt een client pas dat zijn
-            # domein niet is goedgekeurd doordat er geen ingress op dat adres verschijnt.
+            # What is still waiting on an administrator. Without this, a client only notices
+            # its domain was not approved because no ingress appears on that address.
             "approvals": result.get("approvals", []),
-            # Wat op niemand wacht en toch niet werkt: een veld dat door een instelling
-            # elders nodig is geworden en leeg is gebleven. Zonder dit komt een client daar
-            # pas achter als iemand de uitnodiging probeert te gebruiken.
+            # What waits on nobody and still does not work: a field that became required by
+            # a setting elsewhere and stayed empty. Without this a client only finds out when
+            # somebody tries to use the invitation.
             "warnings": result.get("warnings") or None,
             "processing": {
                 **processing,
@@ -943,10 +907,9 @@ async def handle_manage_database_schemas(payload: dict, progress: Any) -> dict:
 async def handle_delete_component(payload: dict, progress: Any) -> dict:
     """Handle async component deletion task.
 
-    Two steps that always belonged together: remove the component from the project file,
-    then reprocess the project so the deletion actually lands in the cluster. The web
-    endpoint used to do the first inline and queue the second, so the dialog reported
-    success while the real work had not started.
+    Two steps that belong together: remove the component from the project file, then
+    reprocess the project so the deletion lands in the cluster. Splitting them over a
+    request and a task makes the dialog report success before the real work has started.
 
     Expected payload keys:
         project_name: Name of the project
@@ -983,8 +946,8 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
 
     # delete_component already refreshed the read cache via save_and_commit_project;
     # reprocess from Git to apply the deletion.
-    # reset_running_sync met opzet AAN: een verwijdering moet landen, en een sync op de oude
-    # staat hoort dat niet te vertragen.
+    # reset_running_sync deliberately ON: a deletion has to land, and a sync on the old state
+    # should not delay that.
     refresh_result = await handle_refresh_project(
         {"project_name": project_name, "force_clone": True, "reset_running_sync": True}, progress
     )
@@ -1005,13 +968,11 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
         # and dependency declarations were changed instead of only that the component is gone.
         "uncoupled_from": result.get("uncoupled_from", []),
         "processing": refresh_result.get("processing") if isinstance(refresh_result, dict) else None,
-        # De reden komt van de herverwerking die faalde, niet van hier: dit is dezelfde
-        # mislukking, doorgegeven. Zonder dit stond er wel status "failed" en geen reden,
-        # en dan kan een client hem niet toeschrijven.
+        # The reason comes from the reprocessing that failed, not from here: this is the same
+        # failure, passed on, and without it a client cannot attribute the failure.
         **({"error_type": refresh_result.get("error_type", "processing_failed")} if failed else {}),
-        # En de categorie mee, anders leidt _with_error_category hem opnieuw af uit
-        # "processing_failed" en komt een onbereikbare mailrelay hier alsnog als "niet toe
-        # te schrijven" aan.
+        # And the category along with it, or _with_error_category derives it from
+        # "processing_failed" and an unreachable mail relay arrives as "not attributable".
         **(
             {"error_category": refresh_result["error_category"]}
             if failed and refresh_result.get("error_category")

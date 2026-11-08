@@ -24,8 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 class LogwatcherScheduler:
-    """Periodically triages OPI production logs and notifies via ntfy."""
-
     def __init__(self) -> None:
         self._running = False
         self._task: asyncio.Task | None = None

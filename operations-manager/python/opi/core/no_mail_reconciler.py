@@ -3,18 +3,13 @@
 ``router.rijksapp.nl`` and its two siblings are plain A/AAAA names in front of the
 cluster. Nothing ever sends mail from them and nothing should ever accept mail for
 them, but without records saying so a receiver has nothing to check, and the mail
-tests from Pas toe of leg uit fail on exactly that.
+tests from "Pas toe of leg uit" fail on exactly that.
 
 SPF does not inherit: a receiver testing ``router.rijksapp.nl`` reads the TXT record
 of that name, not the one on the apex. So the policy has to stand on each name:
 ``v=spf1 -all``, the null MX of RFC 7505, and a DMARC record on ``_dmarc.<name>``.
 
-A separate reconciler from the CAA one, on purpose: it uses the same connector and
-the same two gates, but the records, the comparison and the "does this name receive
-mail" question have nothing to do with certificate issuance. Merging them would make
-one function carry two unrelated policies.
-
-Add-only, like CAA. A record we did not expect is logged and left alone -- and here
+Add-only, like CAA. A record we did not expect is logged and left alone, and here
 that matters twice over, because a second SPF or a second DMARC record on one name
 makes the policy invalid rather than stricter.
 """

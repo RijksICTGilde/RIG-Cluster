@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel, model_validator
 
 from opi.core.authz.engine import role_label
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project import Project
 from opi.services.schema_migration import ROLE_MIGRATION, migrate_to_latest
 from opi.services.user_service import get_user_service
@@ -38,7 +38,7 @@ class ProjectUser(BaseModel):
 
     email: str | None = None
     roles: list[str]
-    type: LidSoort = LidSoort.PERSOON
+    type: MemberKind = MemberKind.PERSON
     name: str | None = None
     tokens: list[ProjectToken] = []
 
@@ -67,7 +67,7 @@ class ProjectUser(BaseModel):
         Zonder deze eis wordt een regel met alleen een ``role`` een lid met een leeg
         principaal, en dan matcht elke vergelijking met een leeg e-mailadres hem.
         """
-        if self.type is LidSoort.SERVICE_ACCOUNT:
+        if self.type is MemberKind.SERVICE_ACCOUNT:
             if not self.name:
                 raise ValueError("Een service account heeft een name nodig")
         elif not self.email:
@@ -82,7 +82,7 @@ class ProjectUser(BaseModel):
     @property
     def principaal(self) -> str:
         """Waaronder dit lid in het logboek en in de git-trailer staat."""
-        return (self.name or "") if self.type is LidSoort.SERVICE_ACCOUNT else (self.email or "")
+        return (self.name or "") if self.type is MemberKind.SERVICE_ACCOUNT else (self.email or "")
 
 
 logger = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ class ProjectService:
         # redirected to /permission-denied until the allowlist is rebuilt.
         # Alleen de MENSEN: een service account heeft geen postvak en hoort niet op de
         # inloglijst te staan. Zie opi/services/project_leden.py.
-        menselijk = [lid for lid in leden if lid.type is not LidSoort.SERVICE_ACCOUNT]
+        menselijk = [lid for lid in leden if lid.type is not MemberKind.SERVICE_ACCOUNT]
         if menselijk:
             get_user_service().add_allowed_emails([lid.email for lid in menselijk if lid.email])
 

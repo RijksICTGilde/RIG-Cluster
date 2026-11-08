@@ -14,20 +14,20 @@ from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
-#: De S3-API van MinIO; staat zowel in minio_port als in de egressregel hieronder.
+#: The S3 API of MinIO; sits in minio_port as well as in the egress rule below.
 MINIO_PORT = 9000
 
-#: De S3-API van SeaweedFS; staat zowel in seaweedfs_port als in de egressregel hieronder.
+#: The S3 API of SeaweedFS; sits in seaweedfs_port as well as in the egress rule below.
 SEAWEEDFS_S3_PORT = 8333
 
-# Pod- en service-CIDRs van de ODCN-cluster, voor de except van de internetregel.
-# 2026-10-21 afgeleid omdat network.config/cluster niet leesbaar is.
+# Pod and service CIDRs of the ODCN cluster, for the except of the internet rule.
+# Derived on 2026-10-21 because network.config/cluster is not readable.
 ODCN_CLUSTER_CIDRS = {
     "ipv4": ["10.128.0.0/14", "172.30.0.0/16"],
     "ipv6": ["2a04:9a00:1007:4000::/64"],
 }
 
-# Gedeelde services in de operations-namespace: elk op zijn eigen poort.
+# Shared services in the operations namespace: each on its own port.
 OPS_EGRESS = [
     {"endpoint": "database_server", "pod_labels": {"cnpg.io/cluster": "rig-db"}, "ports": [5432]},
     {"endpoint": "redis_server", "pod_labels": {"app": "rig-redis"}, "ports": [6379]},
@@ -35,10 +35,10 @@ OPS_EGRESS = [
     {"endpoint": "operations_manager", "pod_labels": {"app": "operations-manager"}, "ports": [8000]},
 ]
 
-# De egressregel naar SeaweedFS staat niet in OPS_EGRESS maar volgt uit de clustersleutel
-# seaweedfs_host: get_ops_egress() zet hem erbij voor een cluster dat de dienst levert.
-# Zo is "dit cluster levert seaweedfs" op één plek geregeld, en ontstaat er geen kopie van
-# de hele lijst per cluster.
+# The egress rule to SeaweedFS is not in OPS_EGRESS but follows from the cluster key
+# seaweedfs_host: get_ops_egress() adds it for a cluster that offers the service. That keeps
+# "this cluster offers seaweedfs" in one place, and creates no copy of the whole list per
+# cluster.
 SEAWEEDFS_OPS_EGRESS = {
     "endpoint": "seaweedfs_host",
     "pod_labels": {"app": "seaweedfs"},
@@ -63,8 +63,8 @@ CLUSTER_CONFIG = {
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
         "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
-        # De namespaces van de diensten die WIJ draaien; zie service_namespaces bij
-        # odcn-production voor waarom dit een lijst is en geen afleiding.
+        # The namespaces of the services WE run; see service_namespaces at odcn-production
+        # for why this is a list and not a derivation.
         "service_namespaces": ["rig-system", "rig-backup-destination", "rig-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
@@ -73,7 +73,7 @@ CLUSTER_CONFIG = {
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
         "ops_egress": OPS_EGRESS,
-        # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
+        # Pod and service CIDR for the except of the internet rule; single-stack IPv4 only.
         "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
@@ -91,25 +91,25 @@ CLUSTER_CONFIG = {
         },
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
-            "demo_users": True,  # Blauwdruk-demogebruikers met een wachtwoord uit de repo mogen hier
+            "demo_users": True,  # Blueprint demo users with a password out of the repo are allowed here
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
-        # Pod Security Admission op namespaceniveau; zie features/pod-security-labels.md.
-        # Hier NIET afdwingen: ca_certificate.enabled mount de CA van de node met een
-        # hostPath, en dat verbiedt baseline. Waarschuwen geeft wel de lijst.
+        # Pod Security Admission per namespace; see features/pod-security-labels.md.
+        # NOT enforced here: ca_certificate.enabled mounts the node's CA with a hostPath,
+        # and baseline forbids that. Warning does give the list.
         "pod_security": {"enforce": "privileged", "warn": "baseline", "audit": "baseline"},
         "min_cpu_m": 25,
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
         "oom_pod_watch": False,
-        # Geen supports_custom_domain_certificates hier: dit cluster draait een eigen CA
-        # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
-        # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
-        # cluster waarvan we het niet weten.
+        # No supports_custom_domain_certificates here: this cluster runs a CA of its own
+        # (cluster_issuer kind-ca-issuer) and whether that one signs an own domain too has not
+        # been measured. Absent means silence, and that is the honest answer for a cluster we
+        # do not know it for.
         "ca_certificate": {
             "enabled": True,
             "node_path": "/etc/ssl/certs/kind-local-ca.crt",
@@ -128,12 +128,12 @@ CLUSTER_CONFIG = {
                 {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
-            # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat
-            # is een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden.
+            # The zones ZAD serves itself. A fact of its own next to supported_domains: that
+            # is an OFFER list, and a zone can be ours without being offered.
             "managed_zones": ["kind", "local"],
         },
-        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
-        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
+        # The nodes can reach the registry themselves: a dockerconfigjson secret in the
+        # namespace, image unchanged. No "rules", because there is no proxy table.
         "image_registries": {"backend": "direct-secret"},
     },
     "sandboxed-local": {
@@ -145,17 +145,17 @@ CLUSTER_CONFIG = {
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": MINIO_PORT,
-        # De schakelaar van seaweedfs-storage (RC-331): alleen een cluster met deze twee
-        # sleutels biedt de dienst aan, accepteert een project dat hem noemt, en krijgt de
-        # egressregel naar 8333 in zijn tenant-baseline.
+        # The switch of seaweedfs-storage (RC-331): only a cluster with these two keys offers
+        # the service, accepts a project that names it, and gets the egress rule to 8333 in
+        # its tenant baseline.
         "seaweedfs_host": "seaweedfs.rig-system.svc.cluster.local",
         "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
         "mail_relay_host": "rig-mail-relay.rig-ron.svc.cluster.local",
-        # De namespaces van de diensten die WIJ draaien; zie service_namespaces bij
-        # odcn-production voor waarom dit een lijst is en geen afleiding.
+        # The namespaces of the services WE run; see service_namespaces at odcn-production
+        # for why this is a list and not a derivation.
         "service_namespaces": ["rig-system", "rig-backup-destination", "rig-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
@@ -164,7 +164,7 @@ CLUSTER_CONFIG = {
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
         "ops_egress": OPS_EGRESS,
-        # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
+        # Pod and service CIDR for the except of the internet rule; single-stack IPv4 only.
         "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
@@ -187,7 +187,7 @@ CLUSTER_CONFIG = {
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
-        # Pod Security Admission op namespaceniveau; zie features/pod-security-labels.md.
+        # Pod Security Admission per namespace; see features/pod-security-labels.md.
         "pod_security": {"enforce": "baseline", "warn": "restricted", "audit": "restricted"},
         "min_cpu_m": 25,
         "max_cpu_request_m": 250,
@@ -198,21 +198,20 @@ CLUSTER_CONFIG = {
         # certificate and runs a fake cert-manager CRD with no controller, so nothing is
         # ever issued here. See supports_custom_domain_certificates().
         "supports_custom_domain_certificates": False,
-        # Er is geen VLAM en geen RON in de sandbox: dit is een PLAATSHOUDER, alleen
-        # zodat de bedrading van de dienst (kaart, env-var, netwerkregel) hier
-        # end-to-end te doorlopen is. Het adres wijst naar een project dat hier niet
-        # bestaat, dus een pod die het probeert krijgt geen antwoord. Zie
-        # features/vlam-service.md.
+        # There is no VLAM and no RON in the sandbox: this is a PLACEHOLDER, only so the
+        # wiring of the service (card, env var, network rule) can be walked end to end here.
+        # The address points at a project that does not exist here, so a pod that tries it
+        # gets no answer. See features/vlam-service.md.
         "vlam": {
             "project": "vlam-wt8",
             "deployment": "productie",
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
             "port": 8081,
-            # Het doorlus-pad is hier net zo goed een PLAATSHOUDER als de rest van dit blok:
-            # de stub luistert alleen op 8081 en spreekt geen TLS, en het adres hieronder is
-            # niet vastgezet op de Service die de stub aanmaakt. Het staat er zodat het blok
-            # dezelfde vorm heeft als dat van productie.
+            # The passthrough path is just as much a PLACEHOLDER as the rest of this block:
+            # the stub listens on 8081 only and speaks no TLS, and the address below is not
+            # pinned to the Service the stub creates. It is here so the block has the same
+            # shape as the one of production.
             "passthrough_port": 8443,
             "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "10.96.144.8",
@@ -232,8 +231,8 @@ CLUSTER_CONFIG = {
             ],
             "managed_zones": ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"],
         },
-        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
-        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
+        # The nodes can reach the registry themselves: a dockerconfigjson secret in the
+        # namespace, image unchanged. No "rules", because there is no proxy table.
         "image_registries": {"backend": "direct-secret"},
     },
     "odcn-production": {
@@ -249,20 +248,17 @@ CLUSTER_CONFIG = {
         "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
-        # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
-        # heet hij rig-prd-ron; op local en sandbox rig-ron. Zelfde vorm als
-        # backup_namespace hierboven.
+        # ODCN requires a namespace on that cluster to start with the cluster prefix, so
+        # there it is called rig-prd-ron; on local and sandbox rig-ron. The same shape as
+        # backup_namespace above.
         "mail_relay_namespace": "rig-prd-ron",
         "mail_relay_host": "rig-mail-relay.rig-prd-ron.svc.cluster.local",
-        # De namespaces van de diensten die WIJ draaien, voor het resourceblok op
-        # /admin/diensten. Een EXPLICIETE lijst en geen afleiding uit de sleutels
-        # hierboven: dit is een keuze over wat er op die pagina hoort, en die hoort
-        # zichtbaar te zijn op de plek waar hij gemaakt wordt.
-        #
-        # rig-prd-ron staat erbij omdat de mail relay een platformdienst is en geen
-        # project, ook al draagt de namespace de projectprefix. Wie hier een namespace
-        # vergeet ziet dat aan een blok dat te weinig toont; daarom staat het aantal
-        # namespaces op de pagina zelf.
+        # The namespaces of the services WE run, for the resource block on "/admin/diensten".
+        # An EXPLICIT list and not a derivation from the keys above: it says what belongs on
+        # that page. rig-prd-ron is in it because the mail relay is a platform service and
+        # not a project, even though the namespace carries the project prefix. A namespace
+        # forgotten here shows up as a block with too little in it, so the page states the
+        # number of namespaces itself.
         "service_namespaces": ["rig-prd-operations", "rig-prd-backup", "rig-prd-ron"],
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
@@ -301,45 +297,45 @@ CLUSTER_CONFIG = {
         # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
         # challenge for a domain of the user's own can complete here.
         "supports_custom_domain_certificates": True,
-        # VLAM (de taalmodel-API van SSC-ICT) is alleen hier bereikbaar: de RON-koppeling
-        # bestaat op dit cluster en nergens anders. De sleutels beschrijven WAAR de
-        # interne proxy van het vlam-project draait; de dienst leidt daar zowel het
-        # adres als de netwerkregel uit af, zodat die twee niet uiteen kunnen lopen.
-        # ``namespace`` is de onvoorvoegde naam uit het projectbestand; het cluster zet
-        # er ``rig-prd-`` voor (get_prefixed_namespace).
+        # VLAM (the language-model API of SSC-ICT) is reachable here only: the RON link
+        # exists on this cluster and nowhere else. The keys describe WHERE the internal proxy
+        # of the vlam project runs; the service derives both the address and the network rule
+        # from them, so those two cannot drift apart. ``namespace`` is the unprefixed name out
+        # of the project file; the cluster puts ``rig-prd-`` in front of it
+        # (get_prefixed_namespace).
         "vlam": {
             "project": "vlam-wt8",
             "deployment": "productie",
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
-            # Poort 8082 en niet 8081. Beide termineren, maar 8081 gaat naar
-            # `vlam-api.rijksweb.nl` en dat adres is bij SSC-ICT uitgezet: op 2026-09-21
-            # gemeten geeft het geen antwoord meer (verbinding wordt na de TCP-handshake
-            # meteen gesloten), terwijl `vlam-api.overheid-i.nl` 200 geeft. 8082 gaat naar
-            # het nieuwe adres. 8081 blijft in de proxy bestaan zolang er afnemers op
-            # kunnen staan, maar een nieuwe afnemer moet er niet meer op uitkomen.
+            # Port 8082 and not 8081. Both terminate, but 8081 goes to
+            # `vlam-api.rijksweb.nl` and SSC-ICT has switched that address off: measured on
+            # 2026-09-21 it gives no answer any more (the connection is closed right after the
+            # TCP handshake), while `vlam-api.overheid-i.nl` gives 200. 8082 goes to the new
+            # address. 8081 stays in the proxy as long as there can be consumers on it, but a
+            # new consumer should no longer end up there.
             "port": 8082,
-            # HET DOORLUS-PAD (RC-167). Poort 8443 van dezelfde proxy lust de TLS-sessie
-            # door zonder te termineren: de afnemer praat dan zelf met VLAM en verifieert
-            # zelf. Drie waarden maken dat bruikbaar, en ze horen bij elkaar:
+            # THE PASSTHROUGH PATH (RC-167). Port 8443 of the same proxy passes the TLS
+            # session through without terminating it: the consumer then talks to VLAM itself
+            # and verifies it itself. Three values make that usable, and they belong together:
             #
-            #   passthrough_port  waar de doorlus luistert;
-            #   api_host          de naam die in de URL staat, want TLS vergelijkt de
-            #                     hostnaam uit de URL met het certificaat. Dit is sinds
-            #                     2026-09-21 het overheid-i-adres; de SNI-ACL van de
-            #                     doorlus liet beide namen al door;
-            #   cluster_ip        waar die naam heen moet wijzen. hostAliases neemt een
-            #                     ADRES, geen servicenaam, en de Service-template van ZAD
-            #                     zet geen clusterIP, dus dit is het dynamisch toegewezen
-            #                     adres van `productie-vlam-proxy-intern`. Bewust NIET
-            #                     vastgezet: een ClusterIP is onveranderlijk zolang de
-            #                     Service bestaat, en verschuift hij toch, dan faalt het
-            #                     veilig op een certificaatfout in plaats van verkeerd te
-            #                     bezorgen. Dit is de ene plek om hem te wijzigen.
+            #   passthrough_port  where the passthrough listens;
+            #   api_host          the name that is in the URL, because TLS compares the host
+            #                     name out of the URL with the certificate. Since 2026-09-21
+            #                     this is the overheid-i address; the SNI ACL of the
+            #                     passthrough already let both names through;
+            #   cluster_ip        where that name has to point. hostAliases takes an ADDRESS,
+            #                     not a service name, and ZAD's Service template sets no
+            #                     clusterIP, so this is the dynamically assigned address of
+            #                     `productie-vlam-proxy-intern`. Deliberately NOT pinned: a
+            #                     ClusterIP is immutable as long as the Service exists, and if
+            #                     it does shift, this fails safely on a certificate error
+            #                     instead of delivering to the wrong place. This is the one
+            #                     place to change it.
             #
-            # Een eigen CA-bundel hoort hier sinds RC-414 niet meer bij: het certificaat
-            # van `vlam-api.overheid-i.nl` komt van DigiCert en zit in elke standaardbundel,
-            # dus de afnemer verifieert het met de certificatenlijst van zijn eigen image.
+            # No own CA bundle here: the certificate of `vlam-api.overheid-i.nl` comes from
+            # DigiCert and sits in every standard bundle, so the consumer verifies it with
+            # the certificate list of its own image.
             "passthrough_port": 8443,
             "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.254.144",
@@ -371,22 +367,22 @@ CLUSTER_CONFIG = {
                     "external_dns_target": "router.rijksapp.dev",
                 },
             ],
-            # De vierde is de ingress_postfix-zone hierboven: van ons, maar niet
-            # aangeboden. Noem de zone zelf en nooit zijn ouder rijksapps.nl: die is van
-            # ODC-Noord en in gebruik als eigen basisdomein van projecten.
+            # The fourth is the ingress_postfix zone above: ours, but not offered. Name the
+            # zone itself and never its parent rijksapps.nl: that one is ODC-Noord's and in
+            # use as projects' own base domain.
             "managed_zones": ["rijks.app", "rijksapp.nl", "rijksapp.dev", "rig.prd1.gn2.quattro.rijksapps.nl"],
         },
-        # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
-        # RCR en de image wordt herschreven. De regels hieronder zijn de gedeelde
-        # proxy-caches van het platform; projectregels komen ervoor te staan.
+        # Behind a Quay operator: a private registry becomes a proxy organisation in RCR and
+        # the image is rewritten. The rules below are the shared proxy caches of the platform;
+        # project rules come in front of them.
         "image_registries": {
             "backend": "quay-proxy-organization",
             "registry_host": "rcr.rijksapps.nl",
             "customer_name": "rig",
-            # De Capsule-tenants waarin de operator het pull-secret neerzet. Verplicht veld
-            # op de CR; onze namespaces heten rig-prd-*, dus de tenant is prd.
+            # The Capsule tenants the operator puts the pull secret in. A required field on
+            # the CR; our namespaces are called rig-prd-*, so the tenant is prd.
             "tenants": ["prd"],
-            # Gemeten op het cluster, niet uit de operator-documentatie; zie
+            # Measured on the cluster, not out of the operator documentation; see
             # features/image-registries.md, "De provisioning-backend".
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
@@ -420,12 +416,12 @@ CLUSTER_CONFIG = {
             ],
         },
     },
-    # Dezelfde OpenShift-cluster als odcn-production, in de Capsule-tenant rig-staging:
-    # de pentest-omgeving, zie features/zad-staging.md. Wat de cluster zelf bepaalt
-    # (router, storage, Quay) is gelijk aan productie; mail en VLAM komen van de sandbox,
-    # want de RON-koppeling bestaat alleen voor productie.
+    # The same OpenShift cluster as odcn-production, in the Capsule tenant rig-staging: the
+    # pentest environment, see features/zad-staging.md. What the cluster itself decides
+    # (router, storage, Quay) is equal to production; mail and VLAM come from the sandbox,
+    # because the RON link exists for production only.
     "odcn-staging": {
-        # Dezelfde router-shard als productie, dus ook dezelfde technische zone.
+        # The same router shard as production, so the same technical zone as well.
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
         "namespace_prefix": "rig-staging-",
         "namespace": "rig-staging-operations",
@@ -438,7 +434,7 @@ CLUSTER_CONFIG = {
         "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-staging-operations.svc.cluster.local",
         "backup_namespace": "rig-staging-backup",
-        # Een relay met de mailsink van de sandbox: er gaat geen mail naar buiten.
+        # A relay with the mail sink of the sandbox: no mail goes out.
         "mail_relay_namespace": "rig-staging-ron",
         "mail_relay_host": "rig-mail-relay.rig-staging-ron.svc.cluster.local",
         "service_namespaces": ["rig-staging-operations", "rig-staging-backup", "rig-staging-ron"],
@@ -447,7 +443,7 @@ CLUSTER_CONFIG = {
         # Same cluster as production, so the same operator namespace.
         "database_operator_namespace": "quattro-cloudnative-db-operator",
         "ops_egress": OPS_EGRESS,
-        # Staging draait op dezelfde cluster als productie, dus dezelfde CIDRs.
+        # Staging runs on the same cluster as production, so the same CIDRs.
         "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
@@ -477,9 +473,9 @@ CLUSTER_CONFIG = {
         "supports_vpa": True,
         "oom_pod_watch": True,
         "supports_custom_domain_certificates": True,
-        # Een PLAATSHOUDER, net als in de sandbox: er is geen VLAM op staging. Alleen de
-        # bedrading van de dienst is zo end-to-end te doorlopen; het adres wijst naar een
-        # project dat hier niet bestaat.
+        # A PLACEHOLDER, as in the sandbox: there is no VLAM on staging. Only the wiring of
+        # the service can be walked end to end this way; the address points at a project that
+        # does not exist here.
         "vlam": {
             "project": "vlam-wt8",
             "deployment": "productie",
@@ -513,7 +509,7 @@ CLUSTER_CONFIG = {
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
             "quota_limit_gib": 3,
-            # De gedeelde proxy-caches van de klant rig, dezelfde als in productie.
+            # The shared proxy caches of the customer rig, the same as in production.
             "rules": [
                 {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
                 {
@@ -545,18 +541,7 @@ CLUSTER_CONFIG = {
 
 
 def get_cluster_config(cluster_name: str) -> dict:
-    """
-    Get configuration for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Dictionary containing cluster configuration
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     if cluster_name not in CLUSTER_CONFIG:
         raise ValueError(f"Cluster '{cluster_name}' not found in configuration")
 
@@ -579,119 +564,59 @@ def get_selectable_clusters() -> list[str]:
 
 
 def get_ingress_postfix(cluster_name: str) -> str:
-    """
-    Get the ingress postfix for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Ingress postfix string
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["ingress_postfix"]
 
 
 def get_namespace_prefix(cluster_name: str) -> str:
-    """
-    Get the namespace prefix for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Namespace prefix string
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["namespace_prefix"]
 
 
 def get_service_namespaces(cluster_name: str) -> list[str]:
-    """De namespaces waarin het platform zijn EIGEN diensten draait.
+    """The namespaces the platform runs its OWN services in.
 
-    Gebruikt door het resourceblok op /admin/diensten. Een cluster zonder deze sleutel
-    levert een lege lijst op en het blok zegt dan dat er niets ingesteld is; dat is beter
-    dan terugvallen op "alles", want dan zou de pagina stilzwijgend gebruikersprojecten
-    tonen.
+    Used by the resource block on "/admin/diensten". A cluster without this key gives an empty
+    list and the block then says nothing is configured; that is better than falling back on
+    "everything", because the page would then quietly show user projects.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        De ingestelde servicenamespaces, of een lege lijst.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return list(cluster_config.get("service_namespaces", []))
 
 
 def get_external_clone_allowed_private_networks(cluster_name: str) -> list[str]:
-    """De private bereiken waarnaar een externe kloon van dit cluster wel mag verbinden.
+    """The private ranges an external clone of this cluster may connect to after all.
 
-    Standaard geen: een kloonbron hoort op een publiek adres te staan. Een cluster dat een
-    bereik nodig heeft, zet het hier met de reden erbij. Een project kan dit niet zetten.
+    None by default: a clone source belongs on a public address. A cluster that needs a range
+    puts it here with the reason next to it. A project cannot set this.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        De toegestane CIDR's, of een lege lijst.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return list(cluster_config.get("external_clone_allowed_private_networks", []))
 
 
 def get_argo_namespace(cluster_name: str) -> str:
-    """
-    Get the ArgoCD namespace for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        ArgoCD namespace string
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["argo_namespace"]
 
 
 def get_prefixed_namespace(cluster_name: str, namespace: str) -> str:
-    """
-    Get a namespace with the appropriate prefix for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-        namespace: The base namespace name
-
-    Returns:
-        Namespace with cluster-specific prefix
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     prefix = get_namespace_prefix(cluster_name)
     return f"{prefix}{namespace}"
 
 
-# Vaste voorvoegsels van namespaces die niet van ons zijn, maar waar een project evenmin
-# in mag landen.
+# Fixed prefixes of namespaces that are not ours, but that a project may not land in
+# either.
 RESERVED_NAMESPACE_PREFIXES = ("kube-", "openshift-", "cnpg-")
 
-# De sleutels in CLUSTER_CONFIG die een platformnamespace aanwijzen.
+# The keys in CLUSTER_CONFIG that point at a platform namespace.
 _PLATFORM_NAMESPACE_KEYS = (
     "namespace",
     "argo_namespace",
@@ -702,10 +627,10 @@ _PLATFORM_NAMESPACE_KEYS = (
 
 
 def get_platform_namespaces() -> frozenset[str]:
-    """De namespaces waarin het platform zelf draait, over ALLE clusters.
+    """The namespaces the platform itself runs in, over ALL clusters.
 
-    Afgeleid uit CLUSTER_CONFIG, niet uit een tweede lijst: een platformnamespace die
-    daar bijkomt is zo meteen gereserveerd in plaats van pas na een bewerking hier.
+    Derived from CLUSTER_CONFIG and not from a second list: a platform namespace added there
+    is reserved at once instead of only after an edit here.
     """
     namespaces: set[str] = set()
     for cluster_config in CLUSTER_CONFIG.values():
@@ -718,15 +643,15 @@ def get_platform_namespaces() -> frozenset[str]:
 
 
 def is_platform_namespace(namespace: str) -> bool:
-    """True als deze namespace van het platform is en dus nooit van een project."""
+    """True when this namespace is the platform's and therefore never a project's."""
     return namespace in get_platform_namespaces() or namespace.startswith(RESERVED_NAMESPACE_PREFIXES)
 
 
 def is_reserved_project_name(name: str) -> bool:
-    """True als de namespace van dit project op enig cluster een platformnamespace is.
+    """True when the namespace of this project is a platform namespace on any cluster.
 
-    De namespace is de clusterprefix plus de projectnaam, dus een naam als ``operations``
-    of ``system`` komt uit op de namespace van het platform zelf.
+    The namespace is the cluster prefix plus the project name, so a name like ``operations``
+    or ``system`` ends up on the namespace of the platform itself.
     """
     if not name:
         return False
@@ -734,191 +659,83 @@ def is_reserved_project_name(name: str) -> bool:
 
 
 def get_storage_config(cluster_name: str) -> dict:
-    """
-    Get the storage configuration for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Dictionary containing storage configuration
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("storage", {"storage_class_name": "standard", "access_modes": ["ReadWriteOnce"]})
 
 
 def get_storage_class_name(cluster_name: str) -> str:
-    """
-    Get the default storage class name for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Storage class name string
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     storage_config = get_storage_config(cluster_name)
     return storage_config["storage_class_name"]
 
 
 def get_storage_access_modes(cluster_name: str) -> list[str]:
-    """
-    Get the default access modes for storage in a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        List of access mode strings
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     storage_config = get_storage_config(cluster_name)
     return storage_config["access_modes"]
 
 
 def get_volume_snapshot_class(cluster_name: str) -> str | None:
-    """
-    Get the VolumeSnapshotClass name for a specific cluster.
+    """Used when creating VolumeSnapshots for PVC backups. None when the cluster configures
+    none.
 
-    This is used when creating VolumeSnapshots for PVC backups.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        VolumeSnapshotClass name string, or None if not configured
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     storage_config = get_storage_config(cluster_name)
     return storage_config.get("volume_snapshot_class")
 
 
 def get_ingress_config(cluster_name: str) -> dict:
-    """
-    Get the ingress configuration for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Dictionary containing ingress configuration
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("ingress", {"enable_tls": False, "ip_whitelist": "0.0.0.0/0,::/0"})
 
 
 def get_ingress_tls_enabled(cluster_name: str) -> bool:
-    """
-    Check if TLS is enabled for ingresses in a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        True if TLS is enabled, False otherwise
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     ingress_config = get_ingress_config(cluster_name)
     return ingress_config["enable_tls"]
 
 
 def get_ingress_ip_whitelist(cluster_name: str) -> str:
-    """
-    Get the IP whitelist for ingresses in a specific cluster.
+    """The IP whitelist for ingresses on this cluster, in CIDR notation.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        IP whitelist string (CIDR format)
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     ingress_config = get_ingress_config(cluster_name)
     return ingress_config["ip_whitelist"]
 
 
 def get_ingress_cluster_issuer(cluster_name: str) -> str | None:
-    """
-    Get the cert-manager ClusterIssuer name for TLS certificates.
+    """The cert-manager ClusterIssuer for TLS certificates, None when the cluster configures
+    none.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        ClusterIssuer name string, or None if not configured
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     ingress_config = get_ingress_config(cluster_name)
     return ingress_config.get("cluster_issuer")
 
 
 def get_keycloak_discovery_url(cluster_name: str) -> str:
-    """
-    Get the Keycloak discovery URL for pods in a specific cluster.
+    """The discovery URL pods use to reach Keycloak internally.
 
-    This is the URL that pods will use to connect to Keycloak internally.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Keycloak discovery URL string for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["keycloak_discovery_url"]
 
 
 def get_keycloak_config(cluster_name: str) -> dict:
-    """
-    Get the Keycloak configuration for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Dictionary containing Keycloak configuration
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("keycloak", {"support_http": False})
 
 
 def get_keycloak_support_http(cluster_name: str) -> bool:
-    """
-    Check if HTTP redirect URIs should be generated for Keycloak clients.
+    """True when Keycloak clients get both HTTP and HTTPS redirect URIs, False for HTTPS only.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        True if both HTTP and HTTPS redirect URIs should be generated, False for HTTPS only
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     keycloak_config = get_keycloak_config(cluster_name)
     return keycloak_config.get("support_http", False)
@@ -935,88 +752,53 @@ def get_keycloak_demo_users(cluster_name: str) -> bool:
 
 
 def get_database_server(cluster_name: str) -> str:
-    """
-    Get the database server hostname for pods in a specific cluster.
+    """The hostname pods use to reach the PostgreSQL database internally.
 
-    This is the hostname that pods will use to connect to the PostgreSQL database internally.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Database server hostname string for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["database_server"]
 
 
 def get_minio_host(cluster_name: str) -> str:
-    """
-    Get the minio server hostname for pods in a specific cluster.
+    """The minio hostname pods use internally.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        minio server hostname string for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["minio_host"]
 
 
 def get_minio_port(cluster_name: str) -> int:
-    """
-    Get the minio server port for pods in a specific cluster.
+    """The minio port pods use internally.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        minio server port integer for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["minio_port"]
 
 
 def get_seaweedfs_host(cluster_name: str) -> str | None:
-    """Het SeaweedFS-adres van dit cluster, of None als het die dienst niet levert.
+    """The SeaweedFS address of this cluster, or None when it does not offer that service.
 
-    Zoals bij ``get_vlam_config`` is dit de hele beschikbaarheidsvraag, zodat de dienst
-    zelf geen clusternaam noemt. Het bepaalt ook of de tenant-baseline een egressregel naar
-    de S3-poort krijgt, zie :func:`get_ops_egress`.
+    As with ``get_vlam_config`` this is the whole availability question, so the service
+    itself names no cluster. It also decides whether the tenant baseline gets an egress rule
+    to the S3 port, see :func:`get_ops_egress`.
     """
     return get_cluster_config(cluster_name).get("seaweedfs_host")
 
 
 def get_seaweedfs_port(cluster_name: str) -> int:
-    """De S3-poort van SeaweedFS op dit cluster."""
+    """The S3 port of SeaweedFS on this cluster."""
     return get_cluster_config(cluster_name)["seaweedfs_port"]
 
 
 def get_minio_server(cluster_name: str) -> str:
-    """
-    Get the minio server address (host:port) for pods in a specific cluster.
+    """The minio address (host:port) pods use internally.
 
-    This is the hostname:port that pods will use to connect to the minio internally.
-    For separate host and port values, use get_minio_host() and get_minio_port().
+    For the two parts apart: get_minio_host() and get_minio_port().
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        minio server address string (host:port) for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     return f"{get_minio_host(cluster_name)}:{get_minio_port(cluster_name)}"
 
@@ -1027,18 +809,8 @@ def get_namespace(cluster_name: str) -> str:
 
 
 def get_backup_namespace(cluster_name: str) -> str:
-    """
-    Get the namespace that hosts the backup destination for a cluster.
-
-    This is where the cluster's backup MinIO (or comparable) lives, so
-    workloads can reach it for restores/snapshots. NetworkPolicies use this
-    as an allowed peer namespace.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Backup destination namespace name
+    """Where the cluster's backup MinIO (or comparable) lives, so workloads can reach it for
+    restores and snapshots. NetworkPolicies use this as an allowed peer namespace.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["backup_namespace"]
@@ -1047,31 +819,25 @@ def get_backup_namespace(cluster_name: str) -> str:
 def get_database_operator_namespace(cluster_name: str) -> str:
     """Namespace of the CloudNativePG operator for a cluster.
 
-    A dedicated (project-scoped) PostgreSQL cluster lives in the project's
-    infrastructure namespace, but the CNPG operator that manages it runs in its own
-    namespace and must reach the cluster's pods to extract their instance status.
-    Without an ingress allowance for this namespace the operator reports
-    "Instance Status Extraction Error", the Cluster never becomes Ready and its ArgoCD
-    health stays Unknown. The infra-namespace NetworkPolicy uses this as an allowed peer.
+    A dedicated (project-scoped) PostgreSQL cluster lives in the project's infrastructure
+    namespace, but the CNPG operator that manages it runs in its own namespace and must reach
+    the cluster's pods to extract their instance status. Without an ingress allowance for this
+    namespace the operator reports "Instance Status Extraction Error", the Cluster never
+    becomes Ready and its ArgoCD health stays Unknown. The infra-namespace NetworkPolicy uses
+    this as an allowed peer.
 
-    Defaults to ``cnpg-system`` (the CloudNativePG default install namespace) for
-    clusters that predate this setting.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        CloudNativePG operator namespace name
+    Defaults to ``cnpg-system`` (the CloudNativePG default install namespace) for clusters that
+    predate this setting.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("database_operator_namespace", "cnpg-system")
 
 
 def get_ops_egress(cluster_name: str) -> list[dict[str, Any]]:
-    """Gedeelde services in de operations-namespace per poort voor de tenant-baseline.
+    """Shared services in the operations namespace per port, for the tenant baseline.
 
-    Een cluster dat seaweedfs-storage levert krijgt de S3-poort van die dienst erbij; dat
-    volgt uit ``seaweedfs_host`` en staat niet per cluster in de lijst.
+    A cluster that offers seaweedfs-storage gets the S3 port of that service added; that
+    follows from ``seaweedfs_host`` and is not in the list per cluster.
     """
     config = get_cluster_config(cluster_name)
     egress: list[dict[str, Any]] = list(config["ops_egress"])
@@ -1081,7 +847,7 @@ def get_ops_egress(cluster_name: str) -> list[dict[str, Any]]:
 
 
 def get_cluster_cidrs(cluster_name: str) -> dict[str, list[str]] | None:
-    """Pod- en service-CIDRs voor de except van de internetregel, of None."""
+    """Pod and service CIDRs for the except of the internet rule, or None."""
     cidrs = get_cluster_config(cluster_name).get("cluster_cidrs")
     if not cidrs:
         logger.warning(
@@ -1093,101 +859,62 @@ def get_cluster_cidrs(cluster_name: str) -> dict[str, list[str]] | None:
 
 
 def get_ingress_controller_selector(cluster_name: str) -> dict:
-    """
-    Return de selector voor de ingress-controller pods van een cluster.
+    """The selector for the ingress controller pods of a cluster.
 
-    Format::
+    Shaped ``{"namespace": "<ns>", "pod_labels": {<key>: <val>, ...}}``.
 
-        {"namespace": "<ns>", "pod_labels": {<key>: <val>, ...}}
-
-    pod_labels is leeg voor nginx-clusters; voor odcn (OpenShift Router) bevat
-    het de ``ingresscontroller.operator.openshift.io/deployment-ingresscontroller``
-    label zodat NetworkPolicy alleen de juiste customer-router toelaat.
-    Zie docs/knowledge/odcn-ingress-controller.md.
+    pod_labels is empty for nginx clusters; for odcn (OpenShift Router) it holds the
+    ``ingresscontroller.operator.openshift.io/deployment-ingresscontroller`` label, so the
+    NetworkPolicy admits the right customer router only. See
+    docs/knowledge/odcn-ingress-controller.md.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["ingress_controller_selector"]
 
 
 def get_redis_server(cluster_name: str) -> str:
-    """
-    Get the Redis server hostname for pods in a specific cluster.
+    """The hostname pods use to reach Redis internally.
 
-    This is the hostname that pods will use to connect to Redis internally.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Redis server hostname string for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["redis_server"]
 
 
 def get_mail_relay_namespace(cluster_name: str) -> str:
-    """
-    Get the namespace the SMTP relay runs in.
+    """The namespace the SMTP relay runs in.
 
     Its own namespace and not the operations namespace: the Calico annotation
-    ``egress.projectcalico.org/egressGatewayPolicy`` takes exactly ONE value, so a
-    namespace can have RON egress or internet egress, never both. The operations
-    namespace needs internet (ArgoCD, the registry, Keycloak), so the relay lives
-    apart. See ``plans/mailrelay.md``.
+    ``egress.projectcalico.org/egressGatewayPolicy`` takes exactly ONE value, so a namespace can
+    have RON egress or internet egress, never both. The operations namespace needs internet
+    (ArgoCD, the registry, Keycloak), so the relay lives apart. See ``plans/mailrelay.md``.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Namespace name the relay and its Service live in
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_relay_namespace"]
 
 
 def get_mail_relay_host(cluster_name: str) -> str:
-    """
-    Get the in-cluster hostname of the SMTP relay.
+    """The in-cluster hostname of the SMTP relay.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Relay hostname for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_relay_host"]
 
 
 def get_mail_relay_port(cluster_name: str) -> int:
-    """
-    Get the submission port of the SMTP relay.
+    """The submission port of the SMTP relay.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Submission port (587) for internal pod use
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_relay_port"]
 
 
 def get_mail_from_address(cluster_name: str) -> str:
-    """
-    The BASE sender address of this cluster: the bare one, without a plus part.
+    """The BASE sender address of this cluster: the bare one, without a plus part.
 
     Not what a project sends from -- that is ``<local>+<project>@<domain>``, composed by
     ``generate_mail_sender_address`` and handed to the relay by ``MailManager``. What lives
@@ -1198,13 +925,9 @@ def get_mail_from_address(cluster_name: str) -> str:
     out under exactly this address, without a display name. So is the mail from ZAD's own
     platform account, which is not a project and has no plus part to fill.
 
-    And so is KEYCLOAK's login mail. It used to have a local part of its own, which was one
-    derivation too many for one platform: this is the address we want everywhere, and login
-    mail now leaves under exactly it, telling itself apart from the portal's post by its
-    display name (``MAIL_KEYCLOAK_FROM_NAME``) alone. What that gives up, knowingly: a
-    bounce can no longer be traced back to login mail rather than portal mail. Today that is
-    theoretical -- there is no bounce mailbox -- and it is the price of ONE recognisable
-    sender address.
+    And so is KEYCLOAK's login mail: it leaves under exactly this address and tells itself
+    apart from the portal's post by its display name (``MAIL_KEYCLOAK_FROM_NAME``) alone. A
+    bounce therefore cannot be traced back to login mail rather than portal mail.
 
     OPI and the relay must agree on this value -- if they drift, a developer is shown one
     address while another one leaves the building. For login mail the same value is written
@@ -1220,32 +943,15 @@ def get_mail_from_address(cluster_name: str) -> str:
     they publish ``p=reject`` and we sign nothing with DKIM, leaving SPF alignment between
     envelope and ``From:`` as the single thing that can pass. See docs/operations/ron-koppeling.md.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        The bare sender address (e.g. ``noreply-rijksapp@rijksoverheid.nl``)
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["mail_from_address"]
 
 
 def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
-    """
-    Get infrastructure namespace with cluster-specific prefix.
-
-    This combines the base infrastructure namespace name with the cluster's
-    namespace prefix to create the final namespace name.
-
-    Args:
-        cluster_name: Name of the cluster (e.g., "local", "odcn-production")
-        project_name: Name of the project
-
-    Returns:
-        Infrastructure namespace with cluster prefix
+    """The base infrastructure namespace name of a project with the cluster's namespace prefix
+    in front of it.
 
     Examples:
         get_infrastructure_namespace("local", "myproject")
@@ -1261,18 +967,8 @@ def get_infrastructure_namespace(cluster_name: str, project_name: str) -> str:
 
 
 def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) -> str:
-    """
-    Get full database service endpoint with namespace for namespace-specific database.
-
-    Returns the complete service endpoint including the infrastructure namespace
-    to ensure proper DNS resolution across namespaces.
-
-    Args:
-        cluster_name: Name of the cluster
-        project_name: Name of the project
-
-    Returns:
-        Full database service endpoint
+    """The database service endpoint with the infrastructure namespace in it, so DNS resolves
+    across namespaces.
 
     Examples:
         get_database_cluster_service_endpoint("local", "myproject")
@@ -1289,69 +985,30 @@ def get_database_cluster_service_endpoint(cluster_name: str, project_name: str) 
 
 
 def get_min_memory_limit_mi(cluster_name: str) -> int:
-    """
-    Get the minimum memory limit in Mi for a specific cluster.
-
-    This prevents setting memory limits below what the container runtime accepts.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Minimum memory limit in Mi
-    """
+    """The floor below which the container runtime does not accept a memory limit."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("min_memory_limit_mi", 25)
 
 
 def get_max_memory_limit_mi(cluster_name: str) -> int:
-    """
-    Get the maximum memory limit in Mi for a specific cluster.
-
-    This is the upper bound for auto-tuning and wizard dropdowns.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Maximum memory limit in Mi
-    """
+    """The upper bound for auto-tuning and for the wizard dropdowns."""
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("max_memory_limit_mi", 4096)
 
 
 def get_max_memory_request_mi(cluster_name: str) -> int:
-    """
-    Get the maximum memory request in Mi for a specific cluster.
-
-    Memory requests are capped lower than limits. Below this cap, requests
-    and limits scale together. Above it, only limits can increase further.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Maximum memory request in Mi
+    """Memory requests are capped lower than limits: below this cap requests and limits scale
+    together, above it only limits can increase further.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("max_memory_request_mi", 1024)
 
 
 def uses_capsule(cluster_name: str) -> bool:
-    """
-    Check if the cluster uses Capsule multi-tenancy.
+    """With Capsule, namespace creation has to wait for Capsule to assign the tenant label
+    before modifications can be made.
 
-    When Capsule is enabled, namespace creation requires waiting for
-    Capsule to assign the tenant label before modifications can be made.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        True if the cluster uses Capsule, False otherwise
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("uses_capsule", False)
@@ -1373,18 +1030,9 @@ def namespace_labels(cluster_name: str) -> dict[str, str]:
 
 
 def supports_vpa(cluster_name: str) -> bool:
-    """
-    Check if the cluster provides a Vertical Pod Autoscaler recommender.
-
-    When True, the platform runs a VPA recommender that publishes resource
-    recommendations to VerticalPodAutoscaler objects. Auto-tuning then sources
-    its recommendations from VPA (memory + CPU) instead of Prometheus.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        True if the cluster can create VPA objects and run a recommender
+    """When True the platform runs a VPA recommender that publishes recommendations to
+    VerticalPodAutoscaler objects, and auto-tuning sources memory and CPU from VPA instead of
+    from Prometheus.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("supports_vpa", False)
@@ -1394,14 +1042,8 @@ def watches_pods_for_oom(cluster_name: str) -> bool:
     """Whether this cluster runs the cluster-wide pod watch that catches runtime OOM kills.
 
     Off everywhere until the watch has proven itself on one cluster: it opens a long-lived
-    stream over every application pod and remediates on what it sees, so it is switched on
-    per cluster rather than by being merged.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        True when the pod watch (and the metric sweep behind it) may run here
+    stream over every application pod and remediates on what it sees, so it is switched on per
+    cluster rather than by being merged.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("oom_pod_watch", False)
@@ -1417,8 +1059,7 @@ def supports_custom_domain_certificates(cluster_name: str) -> bool:
     reachable from the internet, and ``task sandbox:setup`` even installs a FAKE
     cert-manager CRD (``bootstrap/crd/cert-manager/fake-cert-manager.yaml``) with no
     controller behind it, so the Issuer applies, reports Ready, and nothing is ever
-    issued. Everything stays green and the site serves the wrong certificate -- which is
-    exactly how this was discovered (zad-cli, bevinding 22).
+    issued. Everything stays green and the site serves the wrong certificate.
 
     So this is a capability of the cluster and not a property of the domain, and it says
     only what the platform will do, never whether the DNS or the ownership is in order.
@@ -1431,90 +1072,45 @@ def supports_custom_domain_certificates(cluster_name: str) -> bool:
 
 
 def get_min_cpu_m(cluster_name: str) -> int:
-    """
-    Get the minimum CPU value in millicores for a specific cluster.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Minimum CPU in millicores
-    """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("min_cpu_m", 25)
 
 
 def get_max_cpu_request_m(cluster_name: str) -> int:
-    """
-    Get the maximum CPU request in millicores for auto-tuning.
-
-    Auto-tuning never sets a CPU request above this ceiling; a pod that
-    genuinely needs more requires manual intervention.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Maximum CPU request in millicores
+    """Auto-tuning never sets a CPU request above this ceiling; a pod that genuinely needs more
+    requires manual intervention.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("max_cpu_request_m", 250)
 
 
 def get_max_cpu_limit_m(cluster_name: str) -> int:
-    """
-    Get the maximum CPU limit in millicores for auto-tuning.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Maximum CPU limit in millicores
-    """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("max_cpu_limit_m", 4000)
 
 
 def get_letsencrypt_contact_email(cluster_name: str) -> str | None:
-    """
-    Get the default Let's Encrypt contact email for a specific cluster.
+    """Used for the ACME account registration and for certificate expiry notifications. A
+    project can override it with its own contact-email in the project config.
 
-    This email is used for ACME account registration and certificate expiry notifications.
-    Projects can override this with their own contact-email in the project config.
-
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Contact email string, or None if not configured
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     letsencrypt_config = cluster_config.get("letsencrypt", {})
     return letsencrypt_config.get("contact_email")
 
 
-#: Gevonden hashes, op certificaatpad. Het certificaat verandert niet tijdens de looptijd
-#: van het proces, en zonder cache startte ``_compute_ca_hash`` openssl per component, op
-#: de event loop. Alleen een gevonden hash gaat erin: een mislukking cachen zou een
-#: certificaat dat later verschijnt voorgoed onleesbaar maken.
+#: Hashes that were found, keyed by certificate path. The certificate does not change during
+#: the lifetime of the process, and without a cache ``_compute_ca_hash`` started openssl per
+#: component, on the event loop. Only a hash that was found goes in: caching a failure would
+#: make a certificate that appears later unreadable forever.
 _ca_hash_cache: dict[str, str] = {}
 
 
 def _compute_ca_hash(cert_path: str) -> str | None:
-    """
-    Compute the OpenSSL hash of a CA certificate.
+    """The 8-character OpenSSL hash of a CA certificate, or None when it cannot be computed.
 
-    This hash is used by OpenSSL for directory-based CA lookup.
-    The hash is computed using: openssl x509 -hash -noout -in <cert>
-
-    Args:
-        cert_path: Path to the CA certificate file
-
-    Returns:
-        The 8-character hash string, or None if computation fails
+    OpenSSL uses this hash for directory-based CA lookup.
     """
     if cert_path in _ca_hash_cache:
         return _ca_hash_cache[cert_path]
@@ -1523,8 +1119,8 @@ def _compute_ca_hash(cert_path: str) -> str | None:
         return None
 
     try:
-        result = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
-            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+        result = subprocess.run(  # noqa: S603  # no shell; the variable parts are separate argv elements
+            ["openssl", "x509", "-hash", "-noout", "-in", cert_path],  # noqa: S607  # a tool out of the image PATH, not a fixed path
             capture_output=True,
             text=True,
             check=True,
@@ -1540,27 +1136,14 @@ def _compute_ca_hash(cert_path: str) -> str | None:
 
 
 def get_ca_certificate_config(cluster_name: str) -> dict | None:
-    """
-    Get the CA certificate configuration for a specific cluster.
+    """The CA certificate configuration, enriched with the OpenSSL hash for directory-based
+    lookup. None when the cluster has no CA certificate configured.
 
-    This function returns the CA certificate configuration enriched with
-    the computed OpenSSL hash for directory-based CA lookup.
+    The keys: ``enabled``, ``node_path`` (the path on the Kubernetes node), ``container_path``
+    (where it is mounted in containers), ``hash`` (computed at runtime) and ``env_vars`` (what
+    to set for the SSL libraries).
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        Dictionary containing CA certificate configuration with keys:
-        - enabled: Whether CA certificate injection is enabled
-        - node_path: Path to the CA cert on the Kubernetes node
-        - container_path: Path where the CA cert is mounted in containers
-        - hash: OpenSSL hash for directory-based lookup (computed at runtime)
-        - env_vars: Environment variables to set for SSL libraries
-
-        Returns None if CA certificate is not configured for this cluster.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     ca_config = cluster_config.get("ca_certificate")
@@ -1581,36 +1164,20 @@ def get_ca_certificate_config(cluster_name: str) -> dict | None:
 
 
 def get_cluster_domains_config(cluster_name: str) -> dict | None:
-    """
-    Get the domain configuration for a specific cluster.
+    """The ``domains`` block, with one ``supported_domains`` entry per domain the cluster
+    offers. None when the cluster offers no domains of its own.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        The ``domains`` block, with one ``supported_domains`` entry per domain the
-        cluster offers. None if the cluster offers no domains of its own.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("domains")
 
 
 def get_supported_domain_names(cluster_name: str) -> list[str]:
-    """
-    Get the names of the domains a cluster offers.
+    """The ``domain`` of every entry in ``supported_domains``, empty when the cluster offers no
+    domains of its own.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        The ``domain`` of every entry in ``supported_domains``, empty if the cluster
-        offers no domains of its own.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
@@ -1620,35 +1187,15 @@ def get_supported_domain_names(cluster_name: str) -> list[str]:
 
 
 def is_domain_supported(cluster_name: str, base_domain: str) -> bool:
-    """
-    Check if a cluster offers a specific base domain.
-
-    Args:
-        cluster_name: Name of the cluster
-        base_domain: The base domain to check (e.g., "rijks.app")
-
-    Returns:
-        True if the cluster offers this domain, False otherwise.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
-    """
+    """Raises ``ValueError`` when the cluster is not in the configuration."""
     supported_domains = get_supported_domain_names(cluster_name)
     return base_domain in supported_domains
 
 
 def get_managed_zones(cluster_name: str) -> list[str]:
-    """
-    Get the DNS zones a cluster serves itself.
+    """The ``managed_zones`` of the cluster, empty when it declares none.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        The ``managed_zones`` of the cluster, empty if it declares none.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
@@ -1657,11 +1204,7 @@ def get_managed_zones(cluster_name: str) -> list[str]:
 
 
 def _longest_matching_zone(hostname: str, zones: list[str]) -> str | None:
-    """Return the most specific zone the hostname falls under, or None.
-
-    One walk for both callers: two of them side by side is how one grows a suffix rule the
-    other lacks.
-    """
+    """Return the most specific zone the hostname falls under, or None."""
     for zone in sorted(zones, key=len, reverse=True):
         if hostname == zone or hostname.endswith("." + zone):
             return zone
@@ -1669,42 +1212,21 @@ def _longest_matching_zone(hostname: str, zones: list[str]) -> str | None:
 
 
 def is_platform_domain(cluster_name: str, domain: str) -> bool:
-    """
-    Check if a domain falls within a zone this cluster serves.
+    """Whether a domain falls within a zone this cluster serves.
 
-    This is the management question, not the offer question ``is_domain_supported``
-    answers: ``team.rijks.app`` is not offered and is still ours.
+    This is the management question, not the offer question ``is_domain_supported`` answers:
+    ``team.rijks.app`` is not offered and is still ours.
 
-    Args:
-        cluster_name: Name of the cluster
-        domain: The base domain to check (e.g., "team.rijks.app")
-
-    Returns:
-        True if the domain is one of our zones or sits under one.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     return _longest_matching_zone(domain, get_managed_zones(cluster_name)) is not None
 
 
 def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
-    """
-    Get the issuer for a specific domain on a cluster.
+    """The per-domain issuer out of the cluster's ``supported_domains``, falling back to the
+    cluster's default ``cluster_issuer``. None when no issuer is needed.
 
-    Looks up the domain in the cluster's supported_domains list.
-    Returns the per-domain issuer if configured, otherwise falls back
-    to the cluster's default cluster_issuer.
-
-    Args:
-        cluster_name: Name of the cluster
-        domain: The domain to check (e.g., "rijksapp.nl")
-
-    Returns:
-        Issuer string (e.g., "letsencrypt") or None if no issuer is needed.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is not None:
@@ -1715,20 +1237,11 @@ def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
 
 
 def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> str | None:
-    """
-    Get the external-dns target for a hostname, based on the cluster's configured base domains.
+    """The ``external_dns_target`` of the most specific of the cluster's ``supported_domains``
+    that the hostname falls under.
 
-    Walks the cluster's supported_domains and returns the configured external_dns_target
-    of the most specific domain that the hostname falls under. Returns None when no
-    configured domain matches (e.g. for hostnames in the cluster's default postfix zone,
-    which gets its DNS via the OpenShift router and does not need an explicit target).
-
-    Args:
-        cluster_name: Name of the cluster
-        hostname: The hostname to resolve (e.g., "myproject.rijksapp.nl")
-
-    Returns:
-        Target hostname for the external-dns annotation, or None if none configured.
+    None when no configured domain matches, as for a hostname in the cluster's default postfix
+    zone: that gets its DNS through the OpenShift router and needs no explicit target.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
@@ -1744,21 +1257,10 @@ def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> st
 
 
 def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
-    """
-    Check if a specific domain has restricted subdomains on a cluster.
-
-    When restricted, only subdomains explicitly listed in the project's
+    """When a domain restricts subdomains, only the subdomains the project lists in its
     allowed-subdomains section may be used.
 
-    Args:
-        cluster_name: Name of the cluster
-        domain: The domain to check (e.g., "rijks.app")
-
-    Returns:
-        True if the domain restricts subdomains, False otherwise.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
@@ -1770,17 +1272,9 @@ def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
 
 
 def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
-    """
-    Get domains that have subdomain restrictions enabled on a cluster.
+    """The domains on this cluster with ``restricted_subdomains`` on.
 
-    Args:
-        cluster_name: Name of the cluster
-
-    Returns:
-        List of domain strings with restricted_subdomains=True.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
@@ -1793,18 +1287,9 @@ def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
 
 
 def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
-    """
-    Check if a specific domain supports dot-separated hostnames on a cluster.
+    """Whether a domain accepts dot-separated hostnames.
 
-    Args:
-        cluster_name: Name of the cluster
-        domain: The domain to check (e.g., "rijks.app")
-
-    Returns:
-        True if the domain supports dot-separated hostnames, False otherwise.
-
-    Raises:
-        ValueError: If cluster is not found in configuration
+    Raises ``ValueError`` when the cluster is not in the configuration.
     """
     domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
@@ -1816,15 +1301,15 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
 
 
 def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
-    """De platformfeiten die de dienst ``image-registries`` op dit cluster nodig heeft.
+    """The platform facts the service ``image-registries`` needs on this cluster.
 
-    Een cluster zonder de sleutel krijgt ``direct-secret`` zonder tabel.
+    A cluster without the key gets ``direct-secret`` without a table.
     """
     try:
         config = get_cluster_config(cluster_name).get("image_registries")
     except ValueError:
-        # De clustercontrole zit in validate_service_availability en in het schema; hier
-        # opblazen zou een ontbrekend clusterveld als een registryfout laten aankomen.
+        # The cluster check sits in validate_service_availability and in the schema; blowing
+        # up here would make a missing cluster field arrive as a registry error.
         return {"backend": "direct-secret"}
     if not isinstance(config, dict):
         return {"backend": "direct-secret"}
@@ -1843,9 +1328,8 @@ def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
     proxy, plus its ``port``. The address a consumer gets and the NetworkPolicy peer it is
     allowed to reach are BOTH derived from these, so they cannot drift apart.
 
-    Since RC-167 the same entry also carries the doorlus half -- ``passthrough_port``,
-    ``api_host`` and ``cluster_ip``. Those three are one unit: an address without the name
-    it must be reached under is not a usable path but two thirds of one.
-    ``vlam_endpoint()`` derives them together for that reason.
+    The same entry carries the passthrough half: ``passthrough_port``, ``api_host`` and
+    ``cluster_ip``. Those three are one unit, because an address without the name it must be
+    reached under is not a usable path; ``vlam_endpoint()`` derives them together.
     """
     return get_cluster_config(cluster_name).get("vlam")

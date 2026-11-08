@@ -23,7 +23,7 @@ import pytest
 from fastapi import HTTPException
 from opi.core.audit_trail import begin_trail, record_task, trail
 from opi.core.authz.actions import Action
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.forms.wizard import session
 from opi.middleware.audit import _hoort_in_de_audit
 from opi.services.project_service import ProjectSummary, ProjectUser
@@ -52,8 +52,8 @@ def _project() -> ProjectSummary:
         filename=f"{PROJECT}.yaml",
         data=copy.deepcopy(STORED),
         users=[
-            ProjectUser(email=OPS, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=VIEWER, roles=["viewer"], type=LidSoort.PERSOON),
+            ProjectUser(email=OPS, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=VIEWER, roles=["viewer"], type=MemberKind.PERSON),
         ],
     )
 

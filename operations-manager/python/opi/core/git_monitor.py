@@ -1,9 +1,4 @@
-"""
-Git file monitoring service for FastAPI integration.
-
-This module handles starting and stopping the Git file monitoring service
-as part of the FastAPI application lifecycle.
-"""
+"""Start and stop the git file monitor with the FastAPI application lifecycle."""
 
 import asyncio
 import logging
@@ -27,21 +22,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Store active monitoring tasks
 _monitoring_tasks: dict[str, asyncio.Task] = {}
 
 
 async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
-    """
-    Check and create namespaces for all deployments in the project.
+    """Create the namespace of every deployment of this project that is missing.
 
-    This is adapted from the project_manager.py create_project_namespace method.
-
-    Args:
-        project_data: The parsed project data
-
-    Returns:
-        True if all namespaces were checked/created successfully, False otherwise
+    Returns False when one of them could not be checked or created.
     """
     kubectl = create_kubectl_connector()
 
@@ -52,12 +39,10 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
     project_name = project_data.get("name")
     logger.info(f"Checking namespaces for project: {project_name}")
 
-    # Get the configured cluster manager
     configured_cluster = settings.CLUSTER_MANAGER
     logger.debug(f"Configured cluster manager: {configured_cluster}")
 
     try:
-        # Check namespace for each deployment
         deployments = project_data.get("deployments", [])
         if not deployments:
             logger.warning("No deployments defined in project data")
@@ -70,29 +55,24 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
             target_cluster = deployment.get("cluster")
             base_namespace = deployment.get("namespace")
 
-            # Check if deployment targets the configured cluster
             if target_cluster != configured_cluster:
                 logger.info(
                     f"Project '{project_name}' deployment '{deployment_name}' targets cluster '{target_cluster}' but CLUSTER_MANAGER is '{configured_cluster}' - skipping namespace creation"
                 )
                 continue
 
-            # Get the prefixed namespace
             namespace = get_prefixed_namespace(target_cluster, base_namespace)
 
             logger.info(f"Checking namespace: {namespace} for deployment: {deployment_name}")
 
-            # Check if namespace already exists
             namespace_exists = await kubectl.namespace_exists(namespace)
             if namespace_exists:
                 logger.info(f"Namespace {namespace} already exists")
             else:
                 logger.info(f"Namespace {namespace} does not exist, creating it...")
 
-                # Create the namespace using the manifest template
                 manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
 
-                # Template variables
                 variables = {
                     "namespace": namespace,
                     "manager": get_argo_namespace(configured_cluster),
@@ -128,17 +108,11 @@ async def check_and_create_namespaces(project_data: dict[str, Any]) -> bool:
 
 
 async def file_change_handler(file_path: str, content: dict) -> None:
-    """
-    Handle changes to the monitored YAML file.
-
-    Args:
-        file_path: Path of the file that changed
-        content: Parsed YAML content
-    """
+    """Handle a change to the monitored YAML file."""
     logger.info(f"Detected changes in {file_path}")
 
     # Security gate: validate before any processing, and before any migration.
-    # Fails closed - a violation aborts handling so a hostile project committed
+    # Fails closed: a violation aborts handling so a hostile project committed
     # directly to git never reaches the connectors, and never gets written back
     # under our own identity because it happened to migrate clean.
     #
@@ -149,11 +123,9 @@ async def file_change_handler(file_path: str, content: dict) -> None:
     try:
         validate_declared_project_schema(content)
     except ProjectSchemaError as e:
-        # This used to be a warning, on the grounds that a rejection is expected
-        # input handling. It is not, any more: every version a file may declare has
-        # a schema, so a rejection means a genuinely broken or hostile file - and
-        # the old silence meant 22 production files were being skipped here with
-        # nobody able to see it. Skip the file, keep polling, but say so loudly.
+        # An ERROR and not a warning: every version a file may declare has a schema, so a
+        # rejection means a genuinely broken or hostile file. Skip the file, keep polling,
+        # but say so loudly.
         logger.error(f"Projectbestand {file_path} afgekeurd door schemavalidatie en NIET verwerkt: {e}")
         return
 
@@ -163,12 +135,8 @@ async def file_change_handler(file_path: str, content: dict) -> None:
         deployments_count = len(content["deployments"])
         logger.info(f"Project '{project_name}' has {deployments_count} deployment(s)")
 
-        # First validate cluster configuration. This used to call
-        # ProjectManager.has_deployments_for_current_cluster(content), which takes no
-        # arguments and is a coroutine function: every project file with deployments
-        # raised TypeError right here, so nothing below ever ran. The check is answered
-        # from the content we already hold - a bare ProjectManager has no contents to
-        # answer it with anyway.
+        # The cluster check is answered from the content we already hold: a bare
+        # ProjectManager has no contents to answer it with.
         if not [d for d in content["deployments"] if d.get("cluster") == settings.CLUSTER_MANAGER]:
             logger.info(
                 f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
@@ -198,13 +166,6 @@ async def file_change_handler(file_path: str, content: dict) -> None:
 
 
 async def start_git_monitoring(app: FastAPI) -> None:
-    """
-    Start Git file monitoring as part of FastAPI startup.
-
-    Args:
-        app: FastAPI application instance
-    """
-
     if not settings.ENABLE_GIT_MONITOR:
         logger.info("Git monitoring is disabled in settings")
         return

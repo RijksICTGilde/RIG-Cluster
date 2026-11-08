@@ -30,7 +30,7 @@ def _request(path: str, *, htmx: bool = False, email: str = "eigenaar@example.or
 
 
 def _decorated(condition: Any) -> Any:
-    @requires_step_up(condition, actie=ACTIE)
+    @requires_step_up(condition, action=ACTIE)
     async def route(request: Any, project_name: str = "demo") -> str:
         return "uitgevoerd"
 
@@ -89,7 +89,7 @@ async def test_api_pad_zonder_geldige_otp_geeft_het_probleem_en_voert_niets_uit(
 async def test_api_pad_kiest_naam_als_doelwit_boven_het_project() -> None:
     """``naam`` is het lid van de ledenroutes (RC-387): het doelwit, niet het project."""
 
-    @requires_step_up(lambda request, **kwargs: True, actie=ACTIE)
+    @requires_step_up(lambda request, **kwargs: True, action=ACTIE)
     async def route(request: Any, project_name: str, naam: str) -> str:
         return "uitgevoerd"
 
@@ -159,7 +159,7 @@ async def test_portaal_met_verse_step_up_voert_de_handeling_uit() -> None:
 async def test_portaal_geeft_de_deployment_naam_mee_aan_de_dialoog_niet_het_project() -> None:
     """``doelwit`` kiest de deployment- of componentnaam boven de projectnaam."""
 
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.DEPLOYMENT_DELETE)
+    @requires_step_up(lambda request, **kwargs: True, action=StepUpAction.DEPLOYMENT_DELETE)
     async def route(request: Any, project_name: str, deployment_name: str) -> str:
         return "uitgevoerd"
 

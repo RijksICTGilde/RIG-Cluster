@@ -1,9 +1,4 @@
-"""
-Authentication decorators for marking routes with SSO requirements.
-
-These decorators provide a clean way to annotate routes with their
-authentication requirements instead of using URL-based checks.
-"""
+"""Decorators a route uses to declare what it needs: SSO, platform admin, a step-up."""
 
 import inspect
 import logging
@@ -28,48 +23,26 @@ ELEVATION_NEEDED = "Activeer eerst verhoogde rechten via het menu rechtsboven."
 
 
 def requires_sso(func: Callable) -> Callable:
-    """
-    Decorator to mark a route as requiring SSO authentication.
-
-    This decorator adds metadata to the function indicating that
-    the route requires user authentication via Keycloak SSO.
-
-    Args:
-        func: The route handler function
-
-    Returns:
-        The decorated function with SSO requirement metadata
-    """
+    """Mark a route as requiring Keycloak SSO, as metadata on the function."""
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         return await func(*args, **kwargs)
 
-    # Add metadata to indicate SSO is required
     wrapper._requires_sso = True
     logger.debug(f"Marked function {func.__name__} as requiring SSO")
     return wrapper
 
 
 def get_current_user(request) -> dict[str, Any] | None:
-    """
-    Utility function to get the current authenticated user from request.
+    """The authenticated user on this request, or None.
 
-    This is a helper function that route handlers can use to access
-    the current user information.
-
-    Drie wegen vullen ``request.state.user``: de autorisatiemiddleware uit een sessie,
-    de bearer-decorators uit een geverifieerd SSO-token, en ``handhaaf`` uit een
-    persoonlijk API-token (RC-322). Een gevulde waarde zegt dus WIE de aanroeper is en
-    NIET dat hij een browserflow doorliep: hang er geen controle aan die een sessie of
-    een tweede factor veronderstelt. Een step-up hoort op ``@requires_step_up``, dat het
-    venster van deze persoon leest.
-
-    Args:
-        request: The FastAPI/Starlette request object
-
-    Returns:
-        User information dictionary if authenticated, None otherwise
+    Three routes fill ``request.state.user``: the authorization middleware out of a
+    session, the bearer decorators out of a verified SSO token, and ``handhaaf`` out of a
+    personal API token (RC-322). A filled value therefore says WHO the caller is and NOT
+    that they went through a browser flow: hang no check on it that assumes a session or a
+    second factor. A step-up belongs on ``@requires_step_up``, which reads the window of
+    this person.
     """
     user = getattr(request.state, "user", None)
     if user:
@@ -102,166 +75,163 @@ def require_platform_admin(request) -> dict[str, Any]:
 def _elevation_required(request) -> HTTPException:
     """Send a platform admin without a fresh step-up to the popup that activates it."""
     if request.headers.get("HX-Request"):
-        terug = urlsplit(request.headers.get("HX-Current-URL", "")).path or "/"
-        return HTTPException(status_code=403, detail=ELEVATION_NEEDED, headers={"HX-Redirect": elevate_url(terug)})
+        back = urlsplit(request.headers.get("HX-Current-URL", "")).path or "/"
+        return HTTPException(status_code=403, detail=ELEVATION_NEEDED, headers={"HX-Redirect": elevate_url(back)})
     if request.method == "GET":
-        terug = request.url.path + (f"?{request.url.query}" if request.url.query else "")
-        return HTTPException(status_code=303, detail=ELEVATION_NEEDED, headers={"Location": elevate_url(terug)})
+        back = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        return HTTPException(status_code=303, detail=ELEVATION_NEEDED, headers={"Location": elevate_url(back)})
     return HTTPException(status_code=403, detail=ELEVATION_NEEDED)
 
 
-def elevate_url(terug: str) -> str:
-    """The dashboard with the popup open, which returns to ``terug`` after a valid code.
+def elevate_url(back: str) -> str:
+    """The dashboard with the popup open, which returns to ``back`` after a valid code.
 
     The dashboard because an admin page cannot show itself without the rights it asks for.
     """
-    return f"/dashboard?{urlencode({'verhoog': terug})}"
+    return f"/dashboard?{urlencode({'verhoog': back})}"
 
 
-#: Markering op een route die zich voor een step-up heeft aangemeld, met de
-#: :class:`~opi.core.step_up.StepUpAction` als waarde. ``tests/test_step_up_routes.py``
-#: leest hem, en ``custom_openapi`` documenteert de 403 eruit: zonder
-#: markering zou een route die de decorator kwijtraakt stilzwijgend weer open staan.
+#: Marking on a route that signed up for a step-up, with the
+#: :class:`~opi.core.step_up.StepUpAction` as its value. ``tests/test_step_up_routes.py``
+#: reads it, and ``custom_openapi`` documents the 403 out of it: without a marking a route
+#: that loses the decorator would quietly stand open again.
 REQUIRES_STEP_UP = "zad_requires_step_up"
 
 
 def requires_step_up(
-    condition: Callable[..., Any] | None = None, *, actie: StepUpAction, velden: tuple[str, ...] = ()
+    condition: Callable[..., Any] | None = None, *, action: StepUpAction, fields: tuple[str, ...] = ()
 ) -> Callable:
-    """Laat een handeling zelf verklaren dat ze een verse step-up vraagt (RC-332).
+    """Let an action declare for itself that it asks for a fresh step-up (RC-332).
 
-    Zonder ``condition`` komt het antwoord uit het rechtensysteem: de route draagt een
-    action, en de grant die hem opent zegt of er een verse tweede factor bij hoort
-    (``Cause.STEP_UP_REQUIRED``). Dat is sinds RC-392 de bron; een eigen ``condition``
-    blijft voor wat een scope niet kan zien, zoals een WIJZIGING die een markering
-    verlaagt. ``actie`` draagt de teksten voor de dialoog, de log en de client.
+    Without ``condition`` the answer comes out of the authorization system: the route
+    carries an action, and the grant that opens it says whether a fresh second factor
+    belongs with it (``Cause.STEP_UP_REQUIRED``). A ``condition`` of its own is for what a
+    scope cannot see, such as a CHANGE that lowers a marking. ``action`` carries the texts
+    for the dialog, the log and the client.
 
-    Twee wegen, omdat er twee soorten aanroepers zijn: het portaal heeft een sessie en
-    krijgt een dialoog, de API leest het venster dat de aanroeper met
-    ``POST /api/v2/step-up`` opende.
+    Two routes, because there are two kinds of caller: the portal has a session and gets a
+    dialog, the API reads the window the caller opened with ``POST /api/v2/step-up``.
 
-    ``velden`` noemt de formuliervelden die de herhaling in het portaal moet meesturen:
-    de dialoog neemt de plaats in van het formulier, dus zonder die velden zou een
-    handeling met een body (een rol, een tokennaam, een aantal dagen) ze kwijt zijn. Per
-    route opgesomd en niet het hele formulier, zodat er nooit een veld in de pagina
-    terugkomt dat de route niet noemde.
+    ``fields`` names the form fields the repeat in the portal has to send along: the dialog
+    takes the place of the form, so without those fields an action with a body (a role, a
+    token name, a number of days) would lose them. Listed per route and not the whole form,
+    so a field the route did not name can never come back in the page.
     """
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Het verzoek komt als keyword van FastAPI en positioneel van een test die de
-            # route rechtstreeks aanroept.
+            # The request comes as a keyword from FastAPI and positionally from a test that
+            # calls the route directly.
             request: Request = kwargs.get("request") or args[0]
-            argumenten = {sleutel: waarde for sleutel, waarde in kwargs.items() if sleutel != "request"}
+            arguments = {key: value for key, value in kwargs.items() if key != "request"}
 
             if condition is None:
-                nodig = _register_vraagt_step_up(request)
+                needed = _register_requires_step_up(request)
             else:
-                nodig = condition(request, **argumenten)
-                if inspect.isawaitable(nodig):
-                    nodig = await nodig
-            if not nodig:
+                needed = condition(request, **arguments)
+                if inspect.isawaitable(needed):
+                    needed = await needed
+            if not needed:
                 return await func(*args, **kwargs)
 
-            project_name = str(argumenten.get("project_name", ""))
-            doelwit = str(
-                argumenten.get("deployment_name")
-                or argumenten.get("component_name")
-                or argumenten.get("mark_id")
-                or argumenten.get("naam")
-                or argumenten.get("user_id")
+            project_name = str(arguments.get("project_name", ""))
+            target = str(
+                arguments.get("deployment_name")
+                or arguments.get("component_name")
+                or arguments.get("mark_id")
+                or arguments.get("naam")
+                or arguments.get("user_id")
                 or project_name
             )
 
             if request.url.path.startswith("/api/"):
                 from opi.api.otp_step_up import step_up_problem_response, verify_api_step_up
 
-                probleem = await verify_api_step_up(request, project_name=project_name, actie=actie, doelwit=doelwit)
-                if probleem is not None:
-                    return step_up_problem_response(probleem)
+                problem = await verify_api_step_up(request, project_name=project_name, actie=action, doelwit=target)
+                if problem is not None:
+                    return step_up_problem_response(problem)
                 return await func(*args, **kwargs)
 
             email = str((get_current_user(request) or {}).get("email", ""))
             if not has_fresh_step_up(request):
-                tekst = log_step_up_refusal(actie.phrase, project_name=project_name, actor=email, doelwit=doelwit)
+                text = log_step_up_refusal(action.phrase, project_name=project_name, actor=email, target=target)
                 return await _step_up_refusal(
                     request,
-                    actie.phrase,
-                    tekst,
-                    velden=await velden_uit_formulier(request, velden),
-                    methode=request.method,
+                    action.phrase,
+                    text,
+                    fields=await fields_from_form(request, fields),
+                    method=request.method,
                 )
 
             logger.info(
                 "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
-                actie.phrase,
-                doelwit,
+                action.phrase,
+                target,
                 project_name,
                 email,
             )
             return await func(*args, **kwargs)
 
-        setattr(wrapper, REQUIRES_STEP_UP, actie)
+        setattr(wrapper, REQUIRES_STEP_UP, action)
         return wrapper
 
     return decorator
 
 
-async def velden_uit_formulier(request: Request, namen: tuple[str, ...]) -> dict[str, str]:
-    """De genoemde velden uit het formulier van dit verzoek.
+async def fields_from_form(request: Request, names: tuple[str, ...]) -> dict[str, str]:
+    """The named fields out of the form of this request.
 
-    Twee lezers: de herhaling van de step-up hieronder, en de audit, die de velden leest
-    die de route met ``audit_fields=`` noemt (``opi/core/audit_trail.py``). Die twee
-    lijsten staan los van elkaar: ``velden`` is er om de dialoog het formulier te laten
-    herhalen en noemt daarom ook een vrij tekstveld, en dat hoort niet in een rij die een
-    jaar blijft staan.
+    Two readers: the step-up repeat below, and the audit, which reads the fields the route
+    names with ``audit_fields=`` (``opi/core/audit_trail.py``). Those two lists are
+    independent: ``fields`` is there to let the dialog repeat the form and therefore also
+    names a free text field, and that does not belong in a row that stays for a year.
 
-    Een veld dat meer dan een keer is ingevuld (een meerkeuze, zoals de rollen van een
-    lid) gaat als kommalijst mee: de dialoog herhaalt het als een verborgen veld, en de
-    route die het leest splitst er weer op.
+    A field that was filled more than once (a multiple choice, such as the roles of a
+    member) travels as a comma list: the dialog repeats it as a hidden field, and the route
+    that reads it splits on it again.
     """
-    if not namen:
+    if not names:
         return {}
-    formulier = await request.form()
-    getlist = getattr(formulier, "getlist", None)
-    gevonden: dict[str, str] = {}
-    for naam in namen:
-        waarden = getlist(naam) if getlist is not None else ([formulier[naam]] if naam in formulier else [])
-        if waarden:
-            gevonden[naam] = ",".join(str(waarde) for waarde in waarden)
-    return gevonden
+    form = await request.form()
+    getlist = getattr(form, "getlist", None)
+    found: dict[str, str] = {}
+    for name in names:
+        values = getlist(name) if getlist is not None else ([form[name]] if name in form else [])
+        if values:
+            found[name] = ",".join(str(value) for value in values)
+    return found
 
 
 async def _step_up_refusal(
-    request: Request, handeling: str, tekst: str, *, velden: dict[str, str] | None = None, methode: str = "POST"
+    request: Request, action_phrase: str, text: str, *, fields: dict[str, str] | None = None, method: str = "POST"
 ) -> Any:
-    """De dialoog voor een htmx-verzoek, dezelfde tekst als 403 voor al het andere.
+    """The dialog for an htmx request, the same text as a 403 for everything else.
 
-    De dialoog komt uit de weblaag; die importeren op modulehoogte zou een kring maken,
-    want de weblaag leunt zelf op dit bestand. ``methode`` is die van dit verzoek, zodat
-    de herhaling na een geslaagde code dezelfde methode gebruikt.
+    The dialog comes out of the web layer; importing that at module level would make a
+    cycle, because the web layer leans on this file itself. ``method`` is the one of this
+    request, so the repeat after a valid code uses the same method.
     """
     from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
     if request.headers.get("HX-Request"):
         html = await render_step_up_dialog(
-            request, vervolg=request.url.path, handeling=handeling, vervolg_velden=velden, methode=methode
+            request, vervolg=request.url.path, handeling=action_phrase, vervolg_velden=fields, methode=method
         )
         return step_up_dialog_response(html)
-    raise HTTPException(status_code=403, detail=tekst)
+    raise HTTPException(status_code=403, detail=text)
 
 
-def _register_vraagt_step_up(request: Request) -> bool:
-    """Of de beslissing van DIT verzoek een verse tweede factor vraagt.
+def _register_requires_step_up(request: Request) -> bool:
+    """Whether the decision of THIS request asks for a fresh second factor.
 
-    De poort heeft ``decide()`` al aangeroepen en de uitkomst op het verzoek gezet
-    (``record_decision``): ``enforce_route_action`` in het portaal, ``handhaaf`` op de
-    API. Nog een keer beslissen zou een tweede lezing van het projectbestand zijn, en
-    dus een tweede antwoord op dezelfde vraag.
+    The gate has already called ``decide()`` and put the outcome on the request
+    (``record_decision``): ``enforce_route_action`` in the portal, ``handhaaf`` on the API.
+    Deciding again would be a second read of the project file, and therefore a second
+    answer to the same question.
 
-    Ontbreekt de beslissing, dan is de poort niet gedraaid en is om een tweede factor
-    vragen de veilige uitkomst.
+    When the decision is missing, the gate did not run, and asking for a second factor is
+    the safe outcome.
     """
-    beslissing = getattr(request.state, "authz_decision", None)
-    return beslissing.requires_step_up if beslissing is not None else True
+    decision = getattr(request.state, "authz_decision", None)
+    return decision.requires_step_up if decision is not None else True

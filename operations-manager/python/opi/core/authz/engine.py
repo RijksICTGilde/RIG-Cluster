@@ -1,17 +1,17 @@
-"""De woordenlijst van het rechtensysteem en de beslisfunctie.
+"""The vocabulary of the authorization system, and the decision function.
 
-Hier staan de rollen, de scopes en de vorm van een regel; het register zelf staat in
-:mod:`opi.core.authz.rules` en de matrix die eruit volgt in
-:mod:`opi.core.authz.matrix`. Eén functie beslist, voor API en portaal:
+The roles, the scopes and the shape of a rule live here; the register itself is in
+:mod:`opi.core.authz.rules` and the matrix that follows from it in
+:mod:`opi.core.authz.matrix`. One function decides, for the API and the portal:
 :func:`decide`.
 
-De principal hoort hier en niet in de API-laag, want het portaal bouwt er ook een en
-``opi.core`` mag niet op ``opi.api`` leunen.
+The principal belongs here and not in the API layer, because the portal builds one too and
+``opi.core`` may not lean on ``opi.api``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable  # noqa: TC003 -- dataclass-velden op runtime
+from collections.abc import Callable, Iterable  # noqa: TC003  # dataclass fields, so needed at runtime
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class Role(StrEnum):
-    """Een rol op EEN project. De waarde staat in het projectbestand (B13)."""
+    """A role on ONE project. The value is what the project file holds (B13)."""
 
     VIEWER = "viewer"
     DEVELOPER = "developer"
@@ -33,8 +33,8 @@ class Role(StrEnum):
     OPS_CI = "ops-ci"
 
 
-#: Wat een mens op het scherm ziet. Hernoemen is een wijziging hier en geen migratie
-#: van projectbestanden (B13).
+#: What a person sees on the screen. Renaming one is a change here and not a migration of
+#: project files (B13).
 ROLE_LABELS: dict[Role, str] = {
     Role.VIEWER: "Viewer",
     Role.DEVELOPER: "Ontwikkelaar",
@@ -44,7 +44,7 @@ ROLE_LABELS: dict[Role, str] = {
     Role.OPS_CI: "Ops CI",
 }
 
-#: Een zin per rol, voor de Team-kaart en de matrixpagina.
+#: One sentence per role, for the Team card and the matrix page.
 ROLE_DESCRIPTIONS: dict[Role, str] = {
     Role.VIEWER: "Leest het project mee, behalve de waarden van omgevingsvariabelen en secrets.",
     Role.DEVELOPER: "Bouwt aan alles wat niet op productie staat: deployments, componenten, services en env-vars.",
@@ -56,14 +56,14 @@ ROLE_DESCRIPTIONS: dict[Role, str] = {
 
 
 def role_label(role: Role | str) -> str:
-    """Het label van een rol. Een opgeslagen sleutel zonder label toont zichzelf."""
+    """The label of a role. A stored key without a label shows itself."""
     try:
         return ROLE_LABELS[Role(role)]
     except ValueError:
         return str(role)
 
 
-#: Welke rol welke andere omvat, op dezelfde plek. Transitief uitgerekend door
+#: Which role covers which other one, all in one place. Worked out transitively by
 #: :func:`effective_roles`.
 INCLUDES: dict[Role, frozenset[Role]] = {
     Role.DEVELOPER: frozenset({Role.VIEWER}),
@@ -74,20 +74,20 @@ INCLUDES: dict[Role, frozenset[Role]] = {
 
 
 def effective_roles(roles: Iterable[Role]) -> frozenset[Role]:
-    """De transitieve sluiting van *roles* over :data:`INCLUDES`."""
-    gevonden: set[Role] = set()
-    te_doen = list(roles)
-    while te_doen:
-        rol = te_doen.pop()
-        if rol in gevonden:
+    """The transitive closure of *roles* over :data:`INCLUDES`."""
+    found: set[Role] = set()
+    todo = list(roles)
+    while todo:
+        role = todo.pop()
+        if role in found:
             continue
-        gevonden.add(rol)
-        te_doen.extend(INCLUDES.get(rol, frozenset()))
-    return frozenset(gevonden)
+        found.add(role)
+        todo.extend(INCLUDES.get(role, frozenset()))
+    return frozenset(found)
 
 
 class PrincipalKind(StrEnum):
-    """Welk bewijsmiddel de aanroeper gebruikte."""
+    """Which credential the caller used."""
 
     PROJECT_KEY = "project-key"
     HUMAN = "human"
@@ -96,7 +96,7 @@ class PrincipalKind(StrEnum):
 
 @dataclass(frozen=True)
 class Principal:
-    """Een herkende aanroeper, los van hoe hij zich legitimeerde."""
+    """A recognised caller, apart from how they legitimised themselves."""
 
     kind: PrincipalKind
     name: str
@@ -111,7 +111,7 @@ class Principal:
 
 @dataclass(frozen=True)
 class Resource:
-    """Waarop de aanroep werkt, voor zover een scope of de audit het weet."""
+    """What the call works on, as far as a scope or the audit knows it."""
 
     project: str
     path: str
@@ -122,18 +122,18 @@ class Resource:
     project_has_production: bool = False
 
 
-#: De markering die "productie" heet. Dezelfde waarde als
-#: :attr:`opi.core.project_environment.Omgeving.PRODUCTIE`, hier als tekst omdat een
-#: scope alleen de markering van de resource leest.
+#: The marking called "productie". The same value as
+#: :attr:`opi.core.project_environment.Omgeving.PRODUCTIE`, as text here because a scope
+#: reads only the marking of the resource.
 PRODUCTION_MARKING = "productie"
 
 
 @dataclass(frozen=True)
 class Scope:
-    """Een voorwaarde op de resource, en de rij die hij in de matrix krijgt.
+    """A condition on the resource, and the row it gets in the matrix.
 
-    ``parts`` bepaalt of een grant een rij dekt: een grant dekt een rij als zijn parts een
-    deelverzameling zijn van die van de rij. ``ANY`` heeft er geen en dekt dus alles.
+    ``parts`` decides whether a grant covers a row: a grant covers a row when its parts are
+    a subset of the row's. ``ANY`` has none and therefore covers everything.
     """
 
     name: str
@@ -161,8 +161,8 @@ COMPONENT_NOT_IN_PRODUCTION = _scope(
     "component-not-in-production", "niet in productie", lambda r: not r.component_in_production
 )
 
-#: Elke scope die een regel mag noemen. Een grant met een scope die hier niet in staat
-#: laat :func:`rule` falen, zodat de matrix geen rij kan missen.
+#: Every scope a rule may name. A grant with a scope that is not in here makes :func:`rule`
+#: fail, so the matrix cannot miss a row.
 SCOPES: tuple[Scope, ...] = (
     ANY,
     NON_PRODUCTION,
@@ -175,7 +175,7 @@ SCOPES: tuple[Scope, ...] = (
 
 
 class Requirement(StrEnum):
-    """Een extra voorwaarde op een grant, boven de rol en de scope."""
+    """An extra condition on a grant, on top of the role and the scope."""
 
     HUMAN_ONLY = "human-only"
     STEP_UP = "step-up"
@@ -187,14 +187,14 @@ HUMAN_ONLY = frozenset({Requirement.HUMAN_ONLY})
 
 @dataclass(frozen=True)
 class Grant:
-    """Wie deze action mag, waar, en onder welke voorwaarde."""
+    """Who may do this action, where, and under which condition."""
 
     role: Role
     scope: Scope = ANY
     requires: frozenset[Requirement] = frozenset()
 
     def __str__(self) -> str:
-        """De vorm waarin de audit een grant vastlegt: ``ops@production``."""
+        """The shape the audit records a grant in: ``ops@production``."""
         return f"{self.role.value}@{self.scope.name}"
 
     @property
@@ -207,24 +207,24 @@ class Grant:
 
 
 class Audience(StrEnum):
-    """Wie over deze action beslist.
+    """Who decides about this action.
 
-    De rolmatrix gaat over :attr:`PROJECT`; de andere twee bestaan omdat niet elke route
-    op een project werkt. Een route zonder action zou stil onbewaakt zijn, dus ook de
-    portaalpagina's en het platformbeheer dragen er een.
+    The role matrix is about :attr:`PROJECT`; the other two exist because not every route
+    works on a project. A route without an action would be quietly unguarded, so the portal
+    pages and the platform administration carry one as well.
     """
 
-    #: De grants beslissen, met de rollen van het lid op dit project.
+    #: The grants decide, with the roles of the member on this project.
     PROJECT = "project"
-    #: Elke ingelogde gebruiker; er is geen project om een rol op te hebben.
+    #: Every signed-in user; there is no project to hold a role on.
     SIGNED_IN = "signed-in"
-    #: Alleen een platformbeheerder (``require_platform_admin``). Geen projectrol opent dit.
+    #: A platform administrator only (``require_platform_admin``). No project role opens this.
     PLATFORM_ADMIN = "platform-admin"
 
 
 @dataclass(frozen=True)
 class Rule:
-    """Eén action met alles wat haar opent. Dit is ook de rij in de matrix."""
+    """One action with everything that opens it. This is also the row in the matrix."""
 
     action: Action
     label: str
@@ -234,16 +234,16 @@ class Rule:
     audience: Audience = Audience.PROJECT
 
     def row_scopes(self) -> tuple[Scope, ...]:
-        """De scopes waarop deze regel een rij krijgt, in de volgorde van SCOPES."""
-        genoemd = {grant.scope for grant in self.grants} or {ANY}
-        return tuple(scope for scope in SCOPES if scope in genoemd)
+        """The scopes this rule gets a row on, in the order of SCOPES."""
+        named = {grant.scope for grant in self.grants} or {ANY}
+        return tuple(scope for scope in SCOPES if scope in named)
 
 
 _RULES: dict[Action, Rule] = {}
 
 
 class RuleError(Exception):
-    """Een regel die zo niet kan bestaan. Faalt bij het laden van het register."""
+    """A rule that cannot exist as written. Fails while the register is loaded."""
 
 
 def rule(
@@ -255,53 +255,52 @@ def rule(
     read: bool = False,
     audience: Audience = Audience.PROJECT,
 ) -> Rule:
-    """Registreer wat *action* opent.
+    """Register what *action* opens.
 
-    Lege grants mag: dan opent de action voor niemand, en de matrix toont die rij leeg.
+    Empty grants are allowed: the action then opens for nobody, and the matrix shows that row
+    empty.
 
-    Raises:
-        RuleError: Bij een tweede regel voor dezelfde action, een leeg label of een lege
-            sectie, of een grant met een scope buiten :data:`SCOPES`.
+    Raises ``RuleError`` on a second rule for the same action, an empty label or section, or
+    a grant with a scope outside :data:`SCOPES`.
     """
-    # De vorm eerst, dan de dubbeling: een regel met een leeg label of een eigen scope
-    # moet dat te horen krijgen, ook als iemand hem per ongeluk twee keer declareert.
+    # The shape first, then the duplicate: a rule with an empty label or a scope of its own
+    # has to be told so, also when somebody declares it twice by accident.
     if not label.strip():
         raise RuleError(f"'{action.value}' heeft geen label, en kan dus geen rij in de matrix krijgen")
     if not section.strip():
         raise RuleError(f"'{action.value}' heeft geen sectie")
-    vastgelegd = tuple(grants)
-    for grant in vastgelegd:
+    recorded = tuple(grants)
+    for grant in recorded:
         if grant.scope not in SCOPES:
             raise RuleError(f"'{action.value}' noemt scope '{grant.scope.name}', die niet in SCOPES staat")
-    if audience is not Audience.PROJECT and vastgelegd:
+    if audience is not Audience.PROJECT and recorded:
         raise RuleError(f"'{action.value}' is geen projectrecht, dus een projectrol kan hem niet openen")
     if action in _RULES:
         raise RuleError(f"'{action.value}' heeft al een regel")
-    gemaakt = Rule(action=action, label=label, section=section, grants=vastgelegd, read=read, audience=audience)
-    _RULES[action] = gemaakt
-    return gemaakt
+    made = Rule(action=action, label=label, section=section, grants=recorded, read=read, audience=audience)
+    _RULES[action] = made
+    return made
 
 
 def rule_for(action: Action) -> Rule:
-    """De regel van *action*.
+    """The rule of *action*.
 
-    Raises:
-        RuleError: Als de action geen regel heeft. Dat is een fout in het register, niet
-            een weigering van deze aanroep.
+    Raises ``RuleError`` when the action has no rule. That is an error in the register, not
+    a refusal of this call.
     """
-    gevonden = _RULES.get(action)
-    if gevonden is None:
+    found = _RULES.get(action)
+    if found is None:
         raise RuleError(f"'{action.value}' heeft geen regel in opi/core/authz/rules.py")
-    return gevonden
+    return found
 
 
 def all_rules() -> tuple[Rule, ...]:
-    """Het hele register, in de volgorde waarin het is gedeclareerd."""
+    """The whole register, in the order it was declared in."""
     return tuple(_RULES.values())
 
 
 class Cause(StrEnum):
-    """Waarom een aanroep werd geweigerd."""
+    """Why a call was refused."""
 
     INSUFFICIENT_ROLE = "insufficient-role"
     PRINCIPAL_KIND_NOT_ALLOWED = "principal-kind-not-allowed"
@@ -310,14 +309,14 @@ class Cause(StrEnum):
 
 @dataclass(frozen=True)
 class Decision:
-    """De uitkomst, met de grant die hem droeg of de reden van de weigering."""
+    """The outcome, with the grant that carried it or the reason for the refusal."""
 
     allowed: bool
     cause: Cause | None = None
     grant: Grant | None = None
-    #: Of er een grant was die alleen nog een verse step-up miste. Het handhavingspunt
-    #: laat zo'n weigering door, want de step-up heeft een eigen antwoord met de dialoog
-    #: of het problem-detail; een weigering op de rol heeft dat niet.
+    #: Whether there was a grant that only lacked a fresh step-up. The enforcement point
+    #: lets such a refusal through, because the step-up has an answer of its own with the
+    #: dialog or the problem detail; a refusal on the role does not.
     step_up_would_help: bool = False
 
     @property
@@ -326,11 +325,11 @@ class Decision:
 
     @property
     def requires_step_up(self) -> bool:
-        """Of een verse tweede factor bij DEZE aanroep hoort, toegestaan of niet.
+        """Whether a fresh second factor belongs with THIS call, allowed or not.
 
-        Een toegestane aanroep draagt de grant die hem opende, en die zegt het; een
-        weigering zegt het met de reden. ``@requires_step_up`` leest dit, zodat de
-        matrixpagina en wat er wordt afgedwongen dezelfde bron hebben.
+        An allowed call carries the grant that opened it, and that one says so; a refusal
+        says so with the reason. ``@requires_step_up`` reads this, so the matrix page and
+        what is actually enforced have the same source.
         """
         if self.grant is not None:
             return self.grant.needs_step_up
@@ -338,35 +337,34 @@ class Decision:
 
 
 def decide(principal: Principal, action: Action, resource: Resource, *, step_up_fresh: bool) -> Decision:
-    """Mag deze aanroeper deze action op deze resource.
+    """Whether this caller may do this action on this resource.
 
-    Raises:
-        RuleError: Als de action geen regel heeft.
+    Raises ``RuleError`` when the action has no rule.
     """
-    kandidaten = [
+    candidates = [
         grant
         for grant in rule_for(action).grants
         if grant.role in effective_roles(principal.roles) and grant.scope.predicate(resource)
     ]
-    if not kandidaten:
+    if not candidates:
         return Decision(allowed=False, cause=Cause.INSUFFICIENT_ROLE)
 
-    for grant in kandidaten:
+    for grant in candidates:
         if grant.needs_human and not principal.is_human:
             continue
         if grant.needs_step_up and not step_up_fresh:
             continue
         return Decision(allowed=True, grant=grant)
 
-    step_up_helpt = any(grant.needs_step_up for grant in kandidaten)
+    step_up_helps = any(grant.needs_step_up for grant in candidates)
     if not principal.is_human:
-        return Decision(allowed=False, cause=Cause.PRINCIPAL_KIND_NOT_ALLOWED, step_up_would_help=step_up_helpt)
+        return Decision(allowed=False, cause=Cause.PRINCIPAL_KIND_NOT_ALLOWED, step_up_would_help=step_up_helps)
     return Decision(allowed=False, cause=Cause.STEP_UP_REQUIRED, step_up_would_help=True)
 
 
 @dataclass(frozen=True)
 class RecordedDecision:
-    """Een beslissing zoals de audit hem vastlegt. Een verzoek kan er meer dan een nemen."""
+    """A decision as the audit records it. A request can take more than one."""
 
     action: Action
     resource: Resource
@@ -377,25 +375,24 @@ class RecordedDecision:
 def record_decision(
     request: Any, *, action: Action, resource: Resource, decision: Decision, step_up_fresh: bool
 ) -> None:
-    """Zet de vier attributen uit ontwerp 8.3 op het verzoek, en voeg de beslissing toe aan de lijst.
+    """Put the four attributes of design 8.3 on the request, and add the decision to the list.
 
-    Ook bij een weigering: de audit legt juist die vast. Hier en niet in de web- of
-    API-laag, zodat er maar een plek is die ze schrijft.
+    On a refusal as well: that is precisely what the audit records. Here and not in the web
+    or API layer, so there is only one place that writes them.
 
-    De vier losse attributen dragen de LAATSTE beslissing, want ``@requires_step_up``
-    leest ze voor DEZE aanroep. De lijst draagt ze allemaal: een upsert met ``cloneFrom``
-    weegt eerst het doel en daarna de bron, en de audit wil beide rijen.
+    The four separate attributes carry the LAST decision, because ``@requires_step_up`` reads
+    them for THIS call. The list carries all of them: an upsert with ``cloneFrom`` weighs the
+    target first and the source after, and the audit wants both rows.
 
-    Een beslissing die in dit verzoek al in de lijst staat, komt er niet nog een keer in:
-    de audit legt een handeling een keer vast. Dat laat de twee rijen van ``cloneFrom``
-    staan, want doel en bron zijn verschillende resources. Dit vangnet staat naast
-    ``tests/test_een_beslissing_per_handeling.py``, dat niet in helpers kan kijken, en
-    een helper is precies waar het misging (RC-406).
+    A decision already in the list for this request does not go in a second time: the audit
+    records an action once. That leaves the two rows of ``cloneFrom`` standing, because
+    target and source are different resources. A helper that decides twice is caught here
+    and not by ``tests/test_een_beslissing_per_handeling.py``, which cannot look inside one.
     """
     request.state.authz_action = action
     request.state.authz_resource = resource
     request.state.authz_decision = decision
     request.state.authz_step_up = step_up_fresh
-    eerdere: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
-    genomen = RecordedDecision(action, resource, decision, step_up_fresh)
-    request.state.authz_decisions = eerdere if genomen in eerdere else [*eerdere, genomen]
+    earlier: list[RecordedDecision] = getattr(request.state, "authz_decisions", [])
+    this_decision = RecordedDecision(action, resource, decision, step_up_fresh)
+    request.state.authz_decisions = earlier if this_decision in earlier else [*earlier, this_decision]

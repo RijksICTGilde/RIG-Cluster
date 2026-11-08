@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_LABELS, Role
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
@@ -40,8 +40,8 @@ def _project() -> ProjectSummary:
         filename=f"{PROJECT}.yaml",
         data={"name": PROJECT, "deployments": [{"name": "live", "environment": "productie"}]},
         users=[
-            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=LidSoort.PERSOON),
-            ProjectUser(email=DEV, roles=["developer"], type=LidSoort.PERSOON),
+            ProjectUser(email=BEHEERDER, roles=["admin", "ops"], type=MemberKind.PERSON),
+            ProjectUser(email=DEV, roles=["developer"], type=MemberKind.PERSON),
         ],
     )
 
@@ -194,7 +194,7 @@ def test_een_ander_label_verandert_het_scherm_en_niet_het_bestand() -> None:
     origineel = ROLE_LABELS[Role.DEVELOPER]
     try:
         ROLE_LABELS[Role.DEVELOPER] = "Bouwer"
-        lid = ProjectUser(email=DEV, roles=["developer"], type=LidSoort.PERSOON)
+        lid = ProjectUser(email=DEV, roles=["developer"], type=MemberKind.PERSON)
         assert lid.rol_labels == ["Bouwer"], "de Team-kaart toont het label"
         assert lid.roles == ["developer"], "het projectbestand houdt de sleutel"
 

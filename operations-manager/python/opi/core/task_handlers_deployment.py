@@ -1,12 +1,7 @@
 """Task handlers for image updates and deployment deletion.
 
-These handlers are invoked by TaskWorker and contain the long-running logic
-extracted from API endpoints. They receive a payload dict and a progress
-manager, and return a result dict.
-
-The result dict matches the JSON structure returned by the corresponding
-V1 sync endpoint, so clients get the same information whether they use
-the sync path or poll an async task.
+The result dict matches the JSON the corresponding V1 sync endpoint returns, so clients get
+the same information whether they use the sync path or poll an async task.
 """
 
 import logging
@@ -20,18 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_update_image(payload: dict, progress: Any) -> dict:
-    """Handle async image update task.
+    """Update the container image of one component in a deployment and regenerate manifests.
 
-    Extracted from router.update_deployment_image(). Updates the container
-    image for a specific component in a deployment and regenerates manifests.
-
-    Expected payload keys:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-        component_name: Name of the component to update
-        image: New container image URL
-        service_actions: Optional dict of service-specific actions
-        registry: Optional registry name for imagePullSecret
+    The payload holds ``project_name``, ``deployment_name``, ``component_name`` and
+    ``image``, and optionally ``service_actions`` and the ``registry`` for the
+    imagePullSecret.
     """
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
@@ -44,7 +32,6 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
         f"Task: updating image for component '{component_name}' in {project_name}/{deployment_name} to '{image}'"
     )
 
-    # Task 1: Initialize project
     init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
 
     from opi.manager.project_manager import ProjectManager
@@ -55,7 +42,6 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
     project_manager.set_progress_manager(progress)
     progress.complete_task(init_task)
 
-    # Task 2: Update component image
     rollout = rollout_requested(payload)
     update_task = progress.add_task(steps.IMAGE_UPDATE, subject=f"{component_name} naar {image}")
     try:
@@ -95,21 +81,15 @@ async def handle_update_image(payload: dict, progress: Any) -> dict:
 
 
 async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
-    """Handle async deployment deletion task.
+    """Delete a deployment and all the resources that belong to it.
 
-    Extracted from router.delete_project_deployment(). Deletes a deployment
-    and all its associated resources.
-
-    Expected payload keys:
-        project_name: Name of the project
-        deployment_name: Name of the deployment to delete
+    The payload holds ``project_name`` and ``deployment_name``.
     """
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
 
     logger.info(f"Task: deleting deployment {project_name}/{deployment_name}")
 
-    # Task 1: Initialize project manager
     init_task = progress.add_task(steps.PROJECT_DATA_FETCH)
 
     from opi.manager.project_manager import create_project_manager
@@ -125,21 +105,19 @@ async def handle_delete_deployment(payload: dict, progress: Any) -> dict:
 
         success = deletion_results.get("success", False) if isinstance(deletion_results, dict) else False
         if not success:
-            # Fail the TASK (not just the sub-task) when the delete left errors behind.
-            # Previously this returned a "partial" result and the top-level task reported
-            # success, so partially-failed deletes were treated as done and stale
-            # deployments accumulated (orphaned previews). delete_deployment is idempotent,
-            # so the caller / nightly cleaner safely retries until it converges.
+            # Fail the TASK (not just the sub-task) when the delete left errors behind: a
+            # partially-failed delete that reports success leaves stale deployments behind.
+            # delete_deployment is idempotent, so the caller and the nightly cleaner safely
+            # retry until it converges.
             errors = deletion_results.get("errors", []) if isinstance(deletion_results, dict) else []
             error_detail = "; ".join(str(e) for e in errors) or "unknown error"
             raise RuntimeError(
                 f"Deployment '{deployment_name}' in project '{project_name}' not fully deleted: {error_detail}"
             )
 
-        # A deleted deployment leaves no OOM tune state behind. This is tidiness, not a
-        # leak: the two module dicts hold 256 bytes per orphan, and a deployment that
-        # comes back runs past handle_create_project or handle_upsert_deployment, which
-        # both reset anyway. Hence a plain reset call rather than a cleanup mechanism.
+        # A deleted deployment leaves no OOM tune state behind. Tidiness, not a leak: a
+        # deployment that comes back runs past handle_create_project or
+        # handle_upsert_deployment, which both reset anyway.
         reset_oom_tune_attempts(project_name, deployment_name)
 
         # Both outcomes are success, and the answer says which one it was: in a script

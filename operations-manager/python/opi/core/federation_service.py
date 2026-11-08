@@ -1,4 +1,4 @@
-"""Federation service -- thin routing proxy for multi-cluster task delegation.
+"""Federation service: a thin routing proxy for multi-cluster task delegation.
 
 When the master OPI receives a task targeting a remote cluster, the service
 forwards the creation request to the correct slave OPI instance and stores
@@ -23,17 +23,11 @@ class FederationError(Exception):
 
 
 class FederationService:
-    """Routes async tasks to the correct OPI instance (local or remote)."""
-
     def __init__(self, registry: FederationRegistry, task_service: object) -> None:
         self._registry = registry
         self._task_service = task_service
         # In-memory route table: {task_id -> peer_url}
         self._route_table: dict[str, str] = {}
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     async def create_task(
         self,
@@ -107,13 +101,11 @@ class FederationService:
         return result
 
     async def get_task_status(self, task_id: str) -> dict | None:
-        """Get task status -- local DB first, then proxy via route table."""
-        # Check local first
+        """Get task status: the local DB first, then a proxy via the route table."""
         local = await self._task_service.get_task(task_id)
         if local is not None:
             return local
 
-        # Try route table
         peer_url = self._route_table.get(task_id)
         if peer_url is None:
             return None
@@ -136,7 +128,7 @@ class FederationService:
             return None
 
     async def cancel_task(self, task_id: str) -> dict | None:
-        """Cancel a task -- local first, then proxy via route table."""
+        """Cancel a task: locally first, then a proxy via the route table."""
         local = await self._task_service.get_task(task_id)
         if local is not None:
             if local.get("status") == "pending":
@@ -216,12 +208,7 @@ class FederationService:
 
         return settings.CLUSTER_MANAGER
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _find_peer_by_url(self, url: str) -> PeerConfig | None:
-        """Find a peer config whose URL matches the given url."""
         for peer in self._registry.get_all_peers():
             if peer.url == url:
                 return peer

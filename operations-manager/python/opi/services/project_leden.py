@@ -14,7 +14,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 
 if TYPE_CHECKING:
     from opi.services.project_service import ProjectSummary, ProjectUser
@@ -60,7 +60,7 @@ def human_members(project: ProjectSummary) -> list[ProjectUser]:
     postvak en geen tweede factor, dus zou daar een gebruiker opleveren die niemand kan
     gebruiken en wel toegang geeft.
     """
-    return [lid for lid in project.users or [] if lid.type is not LidSoort.SERVICE_ACCOUNT]
+    return [lid for lid in project.users or [] if lid.type is not MemberKind.SERVICE_ACCOUNT]
 
 
 def human_emails(project: ProjectSummary) -> list[str]:
@@ -70,7 +70,7 @@ def human_emails(project: ProjectSummary) -> list[str]:
 
 def service_accounts(project: ProjectSummary) -> list[ProjectUser]:
     """De service accounts in dit project."""
-    return [lid for lid in project.users or [] if lid.type is LidSoort.SERVICE_ACCOUNT]
+    return [lid for lid in project.users or [] if lid.type is MemberKind.SERVICE_ACCOUNT]
 
 
 def lid_met_naam(project: ProjectSummary, naam: str) -> ProjectUser | None:
@@ -89,5 +89,5 @@ def menselijke_leden_uit_data(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         lid
         for lid in leden
-        if isinstance(lid, dict) and lid.get("type", LidSoort.PERSOON.value) != LidSoort.SERVICE_ACCOUNT.value
+        if isinstance(lid, dict) and lid.get("type", MemberKind.PERSON.value) != MemberKind.SERVICE_ACCOUNT.value
     ]

@@ -30,7 +30,7 @@ from opi.api.logs_router import logs_router
 from opi.connectors import prometheus
 from opi.core import errors
 from opi.core.config import settings
-from opi.core.errors import kenmerk_nu
+from opi.core.errors import current_reference
 from opi.core.flow_id import set_flow_id
 from opi.middleware import authorization
 from opi.server import create_app
@@ -221,7 +221,7 @@ class TestDeLijstregelDeur:
 
 
 class TestHetKenmerkZonderRequest:
-    """``kenmerk_nu()``: voor een hulpfunctie die geen ``request`` in handen heeft.
+    """``current_reference()``: voor een hulpfunctie die geen ``request`` in handen heeft.
 
     De ArgoCD-kaart wordt gevuld door ``_fetch_argocd_deployment_status``, die alleen de
     connector en de deployment krijgt. Zonder deze weg naar het kenmerk zou de melding op
@@ -231,7 +231,7 @@ class TestHetKenmerkZonderRequest:
     def test_binnen_een_verzoek_is_het_het_kenmerk_van_dat_verzoek(self) -> None:
         gezet = set_flow_id("req")
 
-        assert kenmerk_nu() == gezet
+        assert current_reference() == gezet
         assert KENMERK.fullmatch(gezet), gezet
 
     def test_buiten_een_verzoek_is_er_geen_kenmerk_en_geen_staart(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -240,5 +240,5 @@ class TestHetKenmerkZonderRequest:
 
         monkeypatch.setattr(errors, "get_flow_id", lambda: "-")
 
-        assert errors.kenmerk_nu() == ""
-        assert errors.met_kenmerk("Er ging iets mis.", errors.kenmerk_nu()) == "Er ging iets mis."
+        assert errors.current_reference() == ""
+        assert errors.with_reference("Er ging iets mis.", errors.current_reference()) == "Er ging iets mis."

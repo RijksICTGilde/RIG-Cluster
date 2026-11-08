@@ -30,7 +30,7 @@ from opi.core.auth_decorators import get_current_user, requires_sso, requires_st
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.config import settings
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.core.step_up import StepUpAction
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
@@ -110,7 +110,7 @@ def _terug(request: Request, project_name: str) -> Response:
 async def _velden(request: Request) -> dict[str, str]:
     """Het formulier als vlakke dict; een meerkeuze wordt een kommalijst.
 
-    Dezelfde vorm als de step-up-herhaling teruggeeft (``velden_uit_formulier`` in auth_decorators),
+    Dezelfde vorm als de step-up-herhaling teruggeeft (``fields_from_form`` in auth_decorators),
     zodat een route niet hoeft te weten of hij het formulier of de herhaling leest.
     """
     formulier = await request.form()
@@ -124,7 +124,7 @@ async def _velden(request: Request) -> dict[str, str]:
 def _rollen_uit(velden: dict[str, str]) -> list[str]:
     """De gekozen rollen uit het formulier.
 
-    De meerkeuze stuurt ``roles`` meerdere keren; ``velden_uit_formulier`` heeft die dan al tot een
+    De meerkeuze stuurt ``roles`` meerdere keren; ``fields_from_form`` heeft die dan al tot een
     kommalijst samengevoegd, en de step-up-herhaling stuurt diezelfde vorm terug.
     """
     return [deel.strip() for deel in velden.get("roles", "").split(",") if deel.strip()]
@@ -140,7 +140,7 @@ def _dagen(velden: dict[str, str]) -> int:
 @token_web_router.post("/{project_name}/leden/toevoegen")
 @action(Action.MEMBER_MANAGE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.SERVICE_ACCOUNT_ADD, velden=("naam", "roles"))
+@requires_step_up(action=StepUpAction.SERVICE_ACCOUNT_ADD, fields=("naam", "roles"))
 async def voeg_service_account_toe_web(request: Request, project_name: str) -> Response:
     """Zet een service account in de leden van dit project."""
     velden = await _velden(request)
@@ -159,7 +159,7 @@ async def voeg_service_account_toe_web(request: Request, project_name: str) -> R
 @token_web_router.post("/{project_name}/leden/{naam}/verwijderen")
 @action(Action.MEMBER_MANAGE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.SERVICE_ACCOUNT_REMOVE)
+@requires_step_up(action=StepUpAction.SERVICE_ACCOUNT_REMOVE)
 async def verwijder_service_account_web(request: Request, project_name: str, naam: str) -> Response:
     """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
     try:
@@ -172,7 +172,7 @@ async def verwijder_service_account_web(request: Request, project_name: str, naa
 @token_web_router.post("/{project_name}/leden/{naam}/rol")
 @action(Action.MEMBER_MANAGE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.ROLE_CHANGE, velden=("roles",))
+@requires_step_up(action=StepUpAction.ROLE_CHANGE, fields=("roles",))
 async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> Response:
     """Geef een lid andere rollen. Zijn bestaande tokens volgen die rollen meteen."""
     velden = await _velden(request)
@@ -186,7 +186,7 @@ async def wijzig_rol_web(request: Request, project_name: str, naam: str) -> Resp
 @token_web_router.post("/{project_name}/leden/{naam}/tokens")
 @action(Action.TOKEN_MANAGE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.TOKEN_ISSUE, velden=("tokennaam", "dagen"))
+@requires_step_up(action=StepUpAction.TOKEN_ISSUE, fields=("tokennaam", "dagen"))
 async def maak_token_web(request: Request, project_name: str, naam: str) -> Response:
     """Geef een token uit aan dit lid. De waarde is daarna een keer te zien."""
     velden = await _velden(request)
@@ -209,7 +209,7 @@ async def maak_token_web(request: Request, project_name: str, naam: str) -> Resp
 @token_web_router.post("/{project_name}/leden/{naam}/tokens/{tokennaam}/roteren")
 @action(Action.TOKEN_MANAGE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.TOKEN_ROTATE, velden=("dagen",))
+@requires_step_up(action=StepUpAction.TOKEN_ROTATE, fields=("dagen",))
 async def roteer_token_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
     """Trek dit token in en geef er een nieuw uit onder dezelfde naam."""
     velden = await _velden(request)
@@ -232,7 +232,7 @@ async def roteer_token_web(request: Request, project_name: str, naam: str, token
 @token_web_router.post("/{project_name}/leden/{naam}/tokens/{tokennaam}/intrekken")
 @action(Action.TOKEN_MANAGE)
 @requires_sso
-@requires_step_up(actie=StepUpAction.TOKEN_REVOKE)
+@requires_step_up(action=StepUpAction.TOKEN_REVOKE)
 async def trek_token_in_web(request: Request, project_name: str, naam: str, tokennaam: str) -> Response:
     """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
     try:
@@ -250,7 +250,7 @@ def tokencontext(request: Request, project_name: str, user_email: str, is_beheer
     """
     leden = leden_overzicht(project_name)
     for lid in leden:
-        lid["is_service_account"] = lid["soort"] == LidSoort.SERVICE_ACCOUNT.value
+        lid["is_service_account"] = lid["soort"] == MemberKind.SERVICE_ACCOUNT.value
         lid["is_current_user"] = lid["naam"].lower() == user_email
         # Een beheerder beheert de tokens van elk lid; een mens die van zichzelf. Uitgeven
         # voor een ander mens kan niemand: dat zou een bewijsmiddel zijn dat iemand draagt

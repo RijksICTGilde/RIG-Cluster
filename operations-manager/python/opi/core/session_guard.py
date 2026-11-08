@@ -1,7 +1,7 @@
-"""Of een portaalsessie nog mag gelden: de absolute levensduur en het intrekken.
+"""Whether a portal session may still count: the absolute lifetime and revocation.
 
-De HTTP-middleware en de handshake van de logs-WebSocket lopen hier beide langs, zodat
-de twee ingangen dezelfde grens aanhouden.
+Both the HTTP middleware and the handshake of the logs WebSocket pass through here, so the
+two entrances hold the same boundary.
 """
 
 from __future__ import annotations
@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 def valid_session_user(session: MutableMapping[str, Any] | None) -> dict[str, Any] | None:
-    """De gebruiker uit de sessie, of None als de sessie niet meer mag gelden.
+    """The user from the session, or None when the session may no longer count.
 
-    Een sessie van voor deze controle draagt geen ``login_at`` en vervalt daarmee: na de
-    uitrol logt iedereen een keer opnieuw in.
+    A session from before this check carries no ``login_at`` and therefore expires: after
+    the rollout everyone logs in once more.
     """
     if not session:
         return None
@@ -50,10 +50,10 @@ def valid_session_user(session: MutableMapping[str, Any] | None) -> dict[str, An
 
 
 def drop_refused_session(session: MutableMapping[str, Any]) -> None:
-    """Gooi een geweigerde sessie ook in de browser weg.
+    """Throw a refused session away in the browser as well.
 
-    Alleen als er een gebruiker in stond: tijdens het inloggen draagt de sessie de
-    OAuth-state van authlib, en die moet de omleiding naar ``/auth/callback`` overleven.
+    Only when it held a user: while logging in, the session carries authlib's OAuth state,
+    and that has to survive the redirect to ``/auth/callback``.
     """
     if session.get("user"):
         session.clear()

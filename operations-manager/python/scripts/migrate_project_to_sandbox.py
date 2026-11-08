@@ -49,7 +49,7 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.core.cluster_config import get_domain_supports_dots  # noqa: E402
-from opi.core.leden import LidSoort  # noqa: E402
+from opi.core.members import MemberKind  # noqa: E402
 from opi.services.catalog.sleep_mode import token as wake_token  # noqa: E402
 from opi.services.project_leden import nieuw_token  # noqa: E402
 from opi.services.schema_migration import (  # noqa: E402
@@ -334,12 +334,12 @@ def migrate_project(
     accounts = [
         lid
         for lid in project.get("users") or []
-        if isinstance(lid, dict) and lid.get("type") == LidSoort.SERVICE_ACCOUNT.value
+        if isinstance(lid, dict) and lid.get("type") == MemberKind.SERVICE_ACCOUNT.value
     ]
     if had_projectsleutel and not any(lid.get("name") == PROJECT_API_ACCOUNT for lid in accounts):
         accounts.append(
             {
-                "type": LidSoort.SERVICE_ACCOUNT.value,
+                "type": MemberKind.SERVICE_ACCOUNT.value,
                 "name": PROJECT_API_ACCOUNT,
                 "roles": list(PROJECT_API_ROLLEN),
                 "tokens": [{"name": "projectsleutel", "expires": PROJECT_API_VERVALT, "hash": ""}],

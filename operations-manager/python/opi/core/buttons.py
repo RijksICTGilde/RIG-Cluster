@@ -1,36 +1,29 @@
-"""De knoppenregel: welke varianten en welke maten een ``<c-button>`` mag dragen.
+"""The button rule: which variants and which sizes a ``<c-button>`` may carry.
 
-Eén plek, want deze twee vocabulaires stonden nergens: het component kent ze wel, maar
-het STRUIKELT niet over een woord dat het niet kent. ``type="submit"`` (dat is geen
-variant maar het HTML-type, dat in LOTC ``html-type`` heet) leverde een knop op zonder
-enkele stijlklasse, en ``size="lg"`` levert een knop op zonder maatklasse. Allebei
-zonder foutmelding, allebei zichtbaar als een knop die net anders is dan zijn buren.
+The component itself does not TRIP over a word it does not know: a variant outside its
+table renders without a style class and an unknown size without a size class, both without
+a message. So the vocabularies are written down here.
 
-De lijst met varianten is geen voorkeur maar een meting, uit twee bronnen die het eens
-zijn: ``lotc_nldd/renderers.py`` (``_BUTTON_VARIANT_MAP``, het thema waarin het portaal
-draait) en ``lord_of_the_components/templates/components/button.html.j2`` (de kale
-bouwlijn). Het NLDD-thema geeft een woord dat niet in zijn tabel staat ONGEWIJZIGD door
-als ``variant``; de kale bouwlijn hangt er geen klasse aan. In allebei de gevallen komt
-er geen melding en ziet de knop er alleen maar anders uit.
+The variants are the two sources that agree: ``lotc_nldd/renderers.py``
+(``_BUTTON_VARIANT_MAP``, the theme the portal runs in) and
+``lord_of_the_components/templates/components/button.html.j2`` (the bare build line).
 
-De maten zijn wél een keuze, en die staat in ``features/knopmaten.md``:
+The sizes are a choice, written down in ``features/knopmaten.md``:
 
-* ``sm`` -- knoppen in een herhaalde, dichte context: een rij in een tabel, een kaart
-  in een lijst, de acties bij één item.
-* de standaard (``md``) -- alles daarbuiten: de hoofdactie van een pagina, de knoppen
-  onder een formulier, de knoppen in een dialoog. Die schrijf je NIET op: ``md`` is de
-  standaard van het component, en een maat die je twee kanten op kunt schrijven wordt
-  vanzelf op twee manieren geschreven.
+* ``sm``: buttons in a repeated, dense context: a row in a table, a card in a list, the
+  actions next to a single item.
+* the default (``md``): everything else, the main action of a page, the buttons under a form,
+  the buttons in a dialog. Those you do NOT write down: ``md`` is the component's default, and
+  a size that can be written two ways ends up being written two ways.
 
-``xs`` staat er niet in. Die maat stond op zes knoppen die in niets van hun buren
-verschilden behalve dat ze kleiner waren.
+``xs`` is not in it.
 
-Bewaakt door ``tests/test_lotc_knopmaten.py``, dat de sjablonen zelf leest.
+Guarded by ``tests/test_lotc_knopmaten.py``, which reads the templates itself.
 """
 
 from __future__ import annotations
 
-#: Elke ``type``-waarde waar het component een klasse aan hangt.
+#: Every ``type`` value the component hangs a class on.
 BUTTON_VARIANTS = frozenset(
     {
         "primary",
@@ -43,20 +36,20 @@ BUTTON_VARIANTS = frozenset(
     }
 )
 
-#: De maat voor een knop in een dichte, herhaalde context.
+#: The size for a button in a dense, repeated context.
 DENSE_BUTTON_SIZE = "sm"
 
-#: Elke ``size``-waarde die een sjabloon mag opschrijven. Alles daarbuiten is ofwel de
-#: standaard (en dan schrijf je hem niet op) ofwel een maat die het component niet kent.
+#: Every ``size`` value a template may write down. Anything else is either the default (and
+#: then you do not write it down) or a size the component does not know.
 BUTTON_SIZES = frozenset({DENSE_BUTTON_SIZE})
 
 
 def check_button_variant(kind: str, owner: str) -> None:
-    """Struikel over een knopvariant die het component niet kent.
+    """Trip over a button variant the component does not know.
 
-    Voor de plekken waar de variant uit PYTHON komt en pas in het sjabloon een
-    ``type``-attribuut wordt: daar kan de sjabloonbewaker niets lezen, dus valt zo'n
-    waarde anders pas op als de knop kaal in beeld staat.
+    For the places where the variant comes out of PYTHON and only becomes a ``type``
+    attribute in the template: the template guard can read nothing there, so such a value
+    would otherwise only show up as a bare button on the screen.
     """
     if kind not in BUTTON_VARIANTS:
         raise ValueError(

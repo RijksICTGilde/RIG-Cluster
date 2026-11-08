@@ -129,7 +129,7 @@ def _serialiseerbaar(leden: list[dict]) -> list[dict]:
 @token_router.post("/projects/{project_name}/leden", status_code=201, summary="Voeg een service account toe")
 @action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.SERVICE_ACCOUNT_ADD)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.SERVICE_ACCOUNT_ADD)
 async def voeg_lid_toe(
     request: Request, project_name: ProjectNamePath, aanvraag: ServiceAccountAanvraag = Body(...)
 ) -> JSONResponse:
@@ -149,7 +149,7 @@ async def voeg_lid_toe(
 @token_router.delete("/projects/{project_name}/leden/{naam}", summary="Verwijder een service account")
 @action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.SERVICE_ACCOUNT_REMOVE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.SERVICE_ACCOUNT_REMOVE)
 async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: str) -> JSONResponse:
     """Haal een service account uit de leden. Zijn tokens gaan dezelfde commit mee uit."""
     email = _eis_lidmaatschap(project_name, _email(request))
@@ -163,7 +163,7 @@ async def verwijder_lid(request: Request, project_name: ProjectNamePath, naam: s
 @token_router.put("/projects/{project_name}/leden/{naam}/rol", summary="Wijzig de rollen van een lid")
 @action(Action.MEMBER_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.ROLE_CHANGE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.ROLE_CHANGE)
 async def zet_rol(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: RolAanvraag = Body(...)
 ) -> JSONResponse:
@@ -179,7 +179,7 @@ async def zet_rol(
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens", status_code=201, summary="Geef een token uit")
 @action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.TOKEN_ISSUE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.TOKEN_ISSUE)
 async def maak_token(
     request: Request, project_name: ProjectNamePath, naam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -202,7 +202,7 @@ async def maak_token(
 @token_router.post("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}/:roteer", summary="Roteer een token")
 @action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.TOKEN_ROTATE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.TOKEN_ROTATE)
 async def roteer(
     request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str, aanvraag: TokenAanvraag = Body(...)
 ) -> JSONResponse:
@@ -220,7 +220,7 @@ async def roteer(
 @token_router.delete("/projects/{project_name}/leden/{naam}/tokens/{tokennaam}", summary="Trek een token in")
 @action(Action.TOKEN_MANAGE)
 @validate_user_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.TOKEN_REVOKE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.TOKEN_REVOKE)
 async def trek_in(request: Request, project_name: ProjectNamePath, naam: str, tokennaam: str) -> JSONResponse:
     """Trek een token in. Dat is een commit, dus het staat in de historie van het project."""
     email = _eis_lidmaatschap(project_name, _email(request))

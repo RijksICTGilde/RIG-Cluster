@@ -187,7 +187,7 @@ async def create_user_form(request: Request) -> Response:
 @user_admin_router.post("/create", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_CREATE, velden=_FORMULIERVELDEN)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_CREATE, fields=_FORMULIERVELDEN)
 async def create_user_submit(request: Request) -> Response:
     """Process the create user form."""
     user = require_platform_admin(request)
@@ -261,7 +261,7 @@ async def edit_user_form(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/edit", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_EDIT, velden=_FORMULIERVELDEN)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_EDIT, fields=_FORMULIERVELDEN)
 async def edit_user_submit(request: Request, user_id: str) -> Response:
     """Process the edit user form."""
     user = require_platform_admin(request)
@@ -327,7 +327,7 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/revoke-sessions", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_SESSIONS_REVOKE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_SESSIONS_REVOKE)
 async def revoke_user_sessions(request: Request, user_id: str) -> Response:
     """Beëindig elke lopende portaalsessie van deze gebruiker."""
     admin = require_platform_admin(request)
@@ -352,7 +352,7 @@ async def revoke_user_sessions(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/delete", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_DELETE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_DELETE)
 async def delete_user(request: Request, user_id: str) -> Response:
     """Delete a user."""
     require_platform_admin(request)
@@ -376,7 +376,7 @@ async def delete_user(request: Request, user_id: str) -> Response:
 @user_admin_router.post("/{user_id}/otp-reset", response_model=None)
 @action(Action.PLATFORM_USERS)
 @requires_sso
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.USER_OTP_RESET)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.USER_OTP_RESET)
 async def reset_user_otp(request: Request, user_id: str) -> Response:
     """Maak de tweede factor van een ANDERE gebruiker leeg.
 

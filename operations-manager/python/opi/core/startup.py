@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 # Name of this application's container in its own pod (bootstrap/rig-system deployment).
 CONTAINER_NAME = "operations-manager"
 
-#: Grens op de opstartronde van de sleutellezer: na deze tijd stopt de ronde en logt ze
-#: wat ze tot dan toe deed, zodat een traag of onbereikbaar cluster niet eindeloos doorloopt.
+#: Bound on the startup round of the key reader: after this time the round stops and logs
+#: what it did so far, so a slow or unreachable cluster does not run on forever.
 CMP_KEY_READER_ROUND_TIMEOUT_SECONDS = 600
 
 
@@ -102,17 +102,10 @@ def _run_alembic_migrations() -> None:
     after=after_log(logger, logging.INFO),
 )
 async def wait_for_keycloak_availability() -> bool:
-    """
-    Wait for Keycloak to become available with exponential backoff retry.
+    """Retries up to ten times with exponential backoff, for a Keycloak that is not ready yet
+    during application startup.
 
-    This function will retry up to 10 times with exponential backoff to handle
-    situations where Keycloak is not yet ready during application startup.
-
-    Returns:
-        True if Keycloak is available
-
-    Raises:
-        Exception: If Keycloak is not available after all retry attempts
+    Raises when Keycloak is still not available after the last attempt.
     """
     logger.info("Checking Keycloak availability...")
 
@@ -168,19 +161,8 @@ def should_retry_keycloak_error(exception):
     after=after_log(logger, logging.INFO),
 )
 async def keycloak_operation_with_retry(operation_func, *args, **kwargs):
-    """
-    Execute a Keycloak operation with retry logic.
-
-    This wrapper handles transient errors that might occur during Keycloak operations
-    even after the service is available (e.g., temporary database locks, etc.).
-
-    Args:
-        operation_func: The async function to execute
-        *args: Arguments to pass to the function
-        **kwargs: Keyword arguments to pass to the function
-
-    Returns:
-        Result of the operation function
+    """Wraps a Keycloak operation against the transient errors that occur even after the
+    service is available, such as a temporary database lock.
     """
     logger.debug(f"Executing Keycloak operation: {operation_func.__name__}")
 
@@ -221,25 +203,15 @@ Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
             logger.info(line)
 
 
-# ProjectRefreshState and ensure_projects_fresh() were removed.
-#
-# They made every web page render potentially trigger a git fetch, on a 30-second
-# TTL, so data freshness depended on how recently someone had opened a page --
-# API-only consumers got no freshness at all, and the TTL guaranteed nothing in
-# particular. Reads come from the ProjectStore, and the store's cache is
-# write-through for everything ZAD writes, so no polling is needed to stay correct
-# for ZAD's own changes.
-#
-# What genuinely needs detecting is an edit made outside ZAD (by hand, or from
-# another cluster). store.reconcile() is called explicitly by the refresh action,
-# and a slow fallback poll (start_reconcile_poll in project_store, every
-# PROJECT_STORE_RECONCILE_INTERVAL_SECONDS) bounds how long such an edit --
-# notably an out-of-band revocation of a member or invite key -- can go unseen.
-# Both start with an ls-remote check so an idle tick costs nothing.
+# Nothing here keeps the project data fresh: reads come from the ProjectStore, whose cache is
+# write-through for everything ZAD writes. An edit made outside ZAD (by hand, or from another
+# cluster) is picked up by store.reconcile(), called by the refresh action and by the fallback
+# poll start_reconcile_poll in project_store. Both start with an ls-remote check, so an idle
+# tick costs nothing.
 
 
 def _cluster_deployment_namespaces() -> dict[str, str]:
-    """De deployment-namespaces van dit cluster, met de projectnaam per namespace."""
+    """The deployment namespaces of this cluster, with the project name per namespace."""
     namespaces: dict[str, str] = {}
     for project in get_project_store().get_all():
         data = project.data or {}
@@ -250,10 +222,10 @@ def _cluster_deployment_namespaces() -> dict[str, str]:
             if not namespace:
                 continue
             prefixed = get_prefixed_namespace(settings.CLUSTER_MANAGER, namespace)
-            # De gedeclareerde namespace is tenant-invoer en staat hier niet onder
-            # enforce_namespace_pin: die draait pas bij het verwerken. Een project dat
-            # 'operations' declareert komt anders uit op de platformnamespace, waar
-            # 'sops-age-key' de platformsleutel is.
+            # The declared namespace is tenant input and is not under enforce_namespace_pin
+            # here: that one only runs during processing. A project declaring 'operations'
+            # would otherwise land on the platform namespace, where 'sops-age-key' is the
+            # platform key.
             if is_platform_namespace(prefixed):
                 logger.warning(
                     f"Project {project.name} declares platform namespace {prefixed}; "
@@ -265,61 +237,58 @@ def _cluster_deployment_namespaces() -> dict[str, str]:
 
 
 async def _ensure_cmp_key_reader_in_namespace(
-    namespace: str, project_name: str, kubectl: KubectlConnector, sops_handler: SopsHandler, telling: dict[str, int]
+    namespace: str, project_name: str, kubectl: KubectlConnector, sops_handler: SopsHandler, counts: dict[str, int]
 ) -> None:
-    """Zet de sleutellezer in een namespace en werkt de telling bij."""
+    """Put the key reader in one namespace and update the counts."""
     role_present = await kubectl.resource_exists("role", CMP_SOPS_ROLE_NAME, namespace)
     if role_present is None:
-        telling["gefaald"] += 1
+        counts["gefaald"] += 1
         logger.error(f"Could not read the CMP key reader role in namespace {namespace} (project {project_name})")
         return
     if role_present:
-        telling["aanwezig"] += 1
+        counts["aanwezig"] += 1
         logger.debug(f"CMP key reader role already present in namespace {namespace}")
         return
 
     secret_present = await kubectl.secret_exists(SOPS_SECRET_NAME, namespace)
     if secret_present is None:
-        telling["gefaald"] += 1
+        counts["gefaald"] += 1
         logger.error(f"Could not read secret {SOPS_SECRET_NAME} in namespace {namespace} (project {project_name})")
         return
     if not secret_present:
         if not await kubectl.namespace_exists(namespace):
-            telling["gefaald"] += 1
+            counts["gefaald"] += 1
             logger.error(f"Namespace {namespace} of project {project_name} does not exist on this cluster")
             return
-        telling["overgeslagen"] += 1
+        counts["overgeslagen"] += 1
         logger.info(f"No {SOPS_SECRET_NAME} in namespace {namespace} yet, so no CMP key reader role either")
         return
 
     try:
         await sops_handler.ensure_cmp_key_reader(namespace)
     except (KubectlExecutionError, KubectlConnectionError) as e:
-        telling["gefaald"] += 1
+        counts["gefaald"] += 1
         logger.error(f"Failed to apply the CMP key reader role in namespace {namespace}: {e}")
         return
-    telling["gezet"] += 1
+    counts["gezet"] += 1
     logger.info(f"Applied the missing CMP key reader role in namespace {namespace} (project {project_name})")
 
 
 async def ensure_cmp_key_readers() -> dict[str, int]:
-    """
-    Geef elke projectnamespace van dit cluster met een sleutel-secret de CMP-sleutellezer.
+    """Give every project namespace of this cluster with a key secret the CMP key reader.
 
-    Projecten van voor RC-303 hebben het secret maar niet de Role, en zonder die Role
-    rendert ArgoCD ze niet meer. Deze ronde herstelt dat zonder dat een project opnieuw
-    verwerkt hoeft te worden.
+    Projects from before RC-303 have the secret but not the Role, and without that Role
+    ArgoCD no longer renders them. This round repairs that without a project having to be
+    processed again.
 
-    Naast de projectronde van `_setup_projects`, die de Role per project al meeneemt: die
-    slaat een project over zodra een eerdere stap erin faalt, en geeft geen telling waarop
-    de release kan controleren dat geen enkele namespace is overgebleven.
+    Next to the project round of `_setup_projects`, which takes the Role along per project
+    but skips a project as soon as an earlier step in it fails.
 
-    Returns:
-        De telling: gezet, aanwezig, overgeslagen en gefaald
+    Returns the counts, keyed ``gezet``, ``aanwezig``, ``overgeslagen`` and ``gefaald``.
     """
     kubectl = create_kubectl_connector()
     sops_handler = SopsHandler(kubectl)
-    telling = {"gezet": 0, "aanwezig": 0, "overgeslagen": 0, "gefaald": 0}
+    counts = {"gezet": 0, "aanwezig": 0, "overgeslagen": 0, "gefaald": 0}
 
     namespaces = _cluster_deployment_namespaces()
     logger.info(f"Checking the CMP key reader role in {len(namespaces)} project namespaces")
@@ -327,14 +296,14 @@ async def ensure_cmp_key_readers() -> dict[str, int]:
     try:
         async with asyncio.timeout(CMP_KEY_READER_ROUND_TIMEOUT_SECONDS):
             for namespace in sorted(namespaces):
-                # Een kubectl die wegvalt mag de ronde niet zonder samenvatting laten
-                # eindigen: de release controleert juist op die ene regel.
+                # A kubectl that drops away may not end the round without a summary: the
+                # release checks for exactly that one line.
                 try:
                     await _ensure_cmp_key_reader_in_namespace(
-                        namespace, namespaces[namespace], kubectl, sops_handler, telling
+                        namespace, namespaces[namespace], kubectl, sops_handler, counts
                     )
                 except (KubectlExecutionError, KubectlConnectionError) as e:
-                    telling["gefaald"] += 1
+                    counts["gefaald"] += 1
                     logger.error(f"CMP key reader check failed in namespace {namespace}: {e}")
     except TimeoutError:
         logger.error(
@@ -343,24 +312,17 @@ async def ensure_cmp_key_readers() -> dict[str, int]:
         )
 
     logger.info(
-        f"CMP key reader round: {telling['gezet']} applied, {telling['aanwezig']} already present, "
-        f"{telling['overgeslagen']} without a key secret, {telling['gefaald']} failed"
+        f"CMP key reader round: {counts['gezet']} applied, {counts['aanwezig']} already present, "
+        f"{counts['overgeslagen']} without a key secret, {counts['gefaald']} failed"
     )
-    return telling
+    return counts
 
 
 async def register_oauth_client_after_keycloak_setup(app) -> None:
-    """
-    Register the OAuth client after Keycloak setup is complete.
+    """Call this once the Keycloak credentials are available, so the OAuth client is
+    registered for authentication.
 
-    This function should be called after Keycloak credentials are available
-    to properly register the OAuth client for authentication.
-
-    Args:
-        app: The FastAPI application instance
-
-    Raises:
-        RuntimeError: If OAuth client registration fails
+    Raises ``RuntimeError`` when registering the OAuth client fails.
     """
     from opi.core.config import settings
 
@@ -386,26 +348,20 @@ async def register_oauth_client_after_keycloak_setup(app) -> None:
         server_metadata_url=settings.OIDC_DISCOVERY_URL,
         client_kwargs={
             "scope": "openid profile email",
-            # PKCE met S256, vereist door de OPI-client in Keycloak.
+            # PKCE with S256, required by the OPI client in Keycloak.
             "code_challenge_method": "S256",
         },
     )
 
 
 async def keycloak_client_exists_and_works() -> bool:
-    """
-    Ensure operations manager has valid Keycloak credentials.
-
-    This function now delegates to the enhanced credential management logic
-    that can create/retrieve credentials if they're missing or invalid.
-
-    Returns:
-        True if valid credentials are available, False otherwise
+    """Delegates to the credential management that creates or retrieves the credentials when
+    they are missing or invalid.
     """
     return await ensure_keycloak_credentials()
 
 
-_MAILACCOUNT_STARTFOUTEN = (
+_MAILACCOUNT_START_ERRORS = (
     MailRelayError,
     KubectlExecutionError,
     KubectlConnectionError,
@@ -413,22 +369,22 @@ _MAILACCOUNT_STARTFOUTEN = (
     aiohttp.ClientError,
     OSError,
 )
-"""Wat een mailaccount bij het opstarten mag laten mislukken zonder de boot mee te nemen.
+"""What a mail account may fail on at startup without taking the boot down with it.
 
-Beide mailaccounts vangen deze lijst, en ze staat hier EEN keer omdat de twee functies
-dezelfde reden hebben: ``server.py`` await ``run_startup_tasks`` zonder guard, dus een
-ontsnapte fout neemt fase 4 en 5 mee. De vormen staan uitgelegd in
-``ensure_platform_mail_account`` hieronder.
+Both mail accounts catch this list, and it lives here ONCE because the two functions have
+the same reason: ``server.py`` awaits ``run_startup_tasks`` without a guard, so an escaping
+error takes phases 4 and 5 with it. The shapes are explained in
+``ensure_platform_mail_account`` below.
 """
 
 
 async def ensure_platform_mail_account() -> bool | None:
     """Make sure ZAD's own account exists on the mail relay.
 
-    Drie uitkomsten, en het verschil tussen de laatste twee is wat de herhaallus nodig
-    heeft: ``True`` als het account staat, ``False`` als dit nog kan lukken (de relay is er
-    nog niet, het Secret was even onleesbaar), en ``None`` als er niets in te richten valt.
-    Dezelfde drie als ``MailManager.ensure_platform_account`` eronder.
+    Three outcomes, and the difference between the last two is what the retry loop needs:
+    ``True`` when the account is there, ``False`` when this can still succeed (the relay is
+    not up yet, the Secret was briefly unreadable), and ``None`` when there is nothing to set
+    up. The same three as ``MailManager.ensure_platform_account`` below it.
 
     Here and not in a project run, because ZAD is not a project: it has no project file to
     hang an account on and no processing cycle that would create one. Setting up the relay
@@ -442,8 +398,8 @@ async def ensure_platform_mail_account() -> bool | None:
     "Non-critical" only holds if every way this can fail is caught HERE: ``server.py`` awaits
     ``run_startup_tasks`` without a guard, so an exception escaping this function takes the
     boot down and phases 4 and 5 (Keycloak, OAuth) never run. A relay that is configured but
-    unreachable arrives as ``MailRelayUnavailableError`` since RC-261 (the connector turns
-    aiohttp's own transport error into one), but the raw transport errors stay in the list:
+    unreachable arrives as ``MailRelayUnavailableError`` (the connector turns aiohttp's own
+    transport error into one), but the raw transport errors stay in the list:
     they still reach here from the kubectl call and the decryption around it, which is what
     ``check_minio_availability`` right below catches too. Same for the kubectl failure from
     writing the account's Secret (a cluster where that is refused must still boot).
@@ -459,7 +415,7 @@ async def ensure_platform_mail_account() -> bool | None:
 
     try:
         account = await MailManager.ensure_platform_account()
-    except _MAILACCOUNT_STARTFOUTEN as error:
+    except _MAILACCOUNT_START_ERRORS as error:
         logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
@@ -471,8 +427,8 @@ async def ensure_platform_mail_account() -> bool | None:
 async def ensure_keycloak_mail_account() -> bool | None:
     """Make sure KEYCLOAK's account exists on the mail relay.
 
-    Dezelfde drie uitkomsten als ``ensure_platform_mail_account``: ``None`` betekent dat er
-    op dit cluster niets in te richten valt, en dat is geen mislukking om op te herhalen.
+    The same three outcomes as ``ensure_platform_mail_account``: ``None`` means there is
+    nothing to set up on this cluster, and that is not a failure to retry.
 
     Next to ``ensure_platform_mail_account`` and not inside it: the two accounts differ in
     where the password comes from (OPI generates the one, the bootstrap makes the other),
@@ -492,7 +448,7 @@ async def ensure_keycloak_mail_account() -> bool | None:
 
     try:
         account = await MailManager.ensure_keycloak_account()
-    except _MAILACCOUNT_STARTFOUTEN as error:
+    except _MAILACCOUNT_START_ERRORS as error:
         logger.error(f"Keycloak-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
@@ -502,15 +458,7 @@ async def ensure_keycloak_mail_account() -> bool | None:
 
 
 async def check_minio_availability() -> bool:
-    """
-    Check MinIO CLI availability and basic functionality.
-
-    This function verifies that the mc CLI tool is installed and available
-    for use by the MinIO connector.
-
-    Returns:
-        True if MinIO CLI is available and functional, False otherwise
-    """
+    """Whether the ``mc`` CLI the MinIO connector needs is installed and functional."""
     logger.info("Checking MinIO CLI availability...")
 
     try:
@@ -599,9 +547,9 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
         except Exception as e:
             logger.warning(f"Could not load platform users from database: {e}")
 
-        # Welke sessies zijn ingetrokken, in het geheugen: de controle per verzoek leest
-        # daar (opi/core/session_guard.py). Loopt dit mis, dan is die controle stil uit,
-        # dus de fout hoort het opstarten te stoppen.
+        # Which sessions are revoked, in memory: the per-request check reads there
+        # (opi/core/session_guard.py). If this goes wrong, that check is quietly off, so the
+        # error should stop the startup.
         await load_revocations()
 
         if settings.ADMIN_EMAILS:
@@ -609,21 +557,16 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
             if env_admin_emails:
                 get_user_service().add_platform_admins(env_admin_emails)
 
-        # Loading every project into the cache is the store's job, and only the store's.
-        # This used to be a second, parallel loader here (walk the working copy, build a
-        # ProjectManager per file, call project_service.register) alongside
-        # refresh_projects_from_git doing the same thing a third way. Three loaders meant
-        # three chances for the cache to disagree with git.
+        # Loading every project into the cache is the store's job, and only the store's: a
+        # second loader here is a second chance for the cache to disagree with git.
         store = get_project_store()
         await store.bootstrap()
 
         # Provisioning is a separate concern from loading: it needs the project list, not
-        # the file walk, so it now runs off the cache the store just populated.
+        # the file walk, so it runs off the cache the store just populated.
         if not skip_checks:
-            # Read the cluster's namespaces once instead of per project-deployment. This
-            # loop used to take 70 of the 83 seconds it took to boot, nearly all of it
-            # spent forking kubectl: 127 `get namespace` plus 127 `label namespace` for
-            # 44 distinct namespaces that were already correct.
+            # Read the cluster's namespaces once instead of per project-deployment: a
+            # kubectl fork per deployment dominated the boot time.
             known_namespace_labels: dict[str, dict[str, str]] | None = None
             try:
                 known_namespace_labels = await create_kubectl_connector().get_namespace_labels_map()
@@ -700,23 +643,23 @@ async def _setup_oauth(readiness: ReadinessState, app: FastAPI) -> bool:
 
 STARTUP_RETRY_INTERVAL = 60
 
-#: Hoe de mailaccounts in de herhaallijst heten. Ze staan niet in ``ReadinessState``: dat
-#: bepaalt of het portaal zijn onderhoudspagina toont, en zonder platformmail hoort het
-#: portaal gewoon te werken.
+#: What the mail accounts are called in the retry list. They are not in ``ReadinessState``:
+#: that decides whether the portal shows its maintenance page, and without platform mail the
+#: portal should simply work.
 MAIL_ACCOUNTS_NAME = "Platform mail accounts"
 
 
 async def _setup_mail_accounts(skip_checks: bool) -> bool:
-    """De twee platform-mailaccounts inrichten. Antwoordt of ze afgehandeld zijn.
+    """Set up the two platform mail accounts. Answers whether they are dealt with.
 
-    ``False`` betekent "nog niet klaar, en een volgende poging kan het wel worden": bij een
-    verse uitrol is de relay er meestal nog niet als OPI opstart, en dan ontstonden
-    ``zad-platform`` en ``zad-keycloak`` pas bij de volgende herstart van OPI - zonder die
-    accounts gaat er geen platformmail en geen inlogmail uit.
+    ``False`` means "not done yet, and a next attempt can still get there": on a fresh
+    rollout the relay is usually not up when OPI starts, and ``zad-platform`` and
+    ``zad-keycloak`` then only came into being on the next restart of OPI, and without those
+    accounts no platform mail and no login mail goes out.
 
-    Een cluster zonder relay of zonder Keycloak-geheim is afgehandeld (``True``): daar valt
-    niets in te richten, en een lus die daarop blijft tikken schrijft elke minuut een regel
-    zonder ooit te eindigen.
+    A cluster without a relay or without a Keycloak secret is dealt with (``True``): there is
+    nothing to set up there, and a loop that keeps ticking on it writes a line every minute
+    without ever ending.
     """
     if skip_checks:
         return True
@@ -787,39 +730,36 @@ async def _resolve_running_image() -> None:
 
 
 async def warm_connector_singletons() -> None:
-    """Bouw de CLI-connector-singletons alvast, in een thread.
+    """Build the CLI connector singletons up front, in a thread.
 
-    Alle vier doen in hun constructor een eenmalige ``subprocess.run(..., timeout=10)``
-    om te kijken of hun binary er is. Die constructie viel anders midden in de eerste
-    taak die de connector nodig had, synchroon op de event loop.
+    All four do a one-off ``subprocess.run(..., timeout=10)`` in their constructor to see
+    whether their binary is there. That construction otherwise fell in the middle of the
+    first task that needed the connector, synchronously on the event loop.
     """
     from opi.connectors.kopia import create_kopia_connector
     from opi.connectors.kubectl import create_kubectl_connector
     from opi.connectors.minio_mc import create_minio_connector
     from opi.connectors.skopeo import SkopeoConnector
 
-    def _bouw() -> None:
-        for maak in (create_kubectl_connector, create_minio_connector, create_kopia_connector, SkopeoConnector):
+    def _build() -> None:
+        for make in (create_kubectl_connector, create_minio_connector, create_kopia_connector, SkopeoConnector):
             try:
-                maak()
+                make()
             except Exception as e:
-                # Een ontbrekend binary is geen reden om de opstart te staken: de
-                # connectors zetten zelf hun beschikbaarheidsvlag en vallen terug.
-                logger.warning(f"Kon {maak.__name__} niet vooraf bouwen: {e}")
+                # A missing binary is no reason to abandon the startup: the connectors set
+                # their own availability flag and fall back.
+                logger.warning(f"Kon {make.__name__} niet vooraf bouwen: {e}")
 
-    await asyncio.to_thread(_bouw)
+    await asyncio.to_thread(_build)
 
 
 async def run_startup_tasks(app: FastAPI) -> bool:
-    """
-    Run all startup tasks for the application.
+    """Run all startup tasks for the application.
 
-    Services that fail will be retried in a background loop every 60 seconds.
-    The application starts immediately and serves a status page until all
-    critical services are available.
+    Services that fail are retried in a background loop every 60 seconds. The application
+    starts immediately and serves a status page until all critical services are available.
 
-    Returns:
-        True if all startup tasks completed successfully on first attempt
+    Returns True only when every startup task succeeded on the FIRST attempt.
     """
     from opi.core.readiness import get_readiness_state
 
@@ -837,13 +777,13 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # without an obvious cause; this stops the boot instead.
     check_schema_versions(SCHEMA_VERSIONS)
 
-    # Zonder sleutel commit OPI zoals altijd, met alleen een WARNING. Een sleutel die gpg
-    # niet kan importeren is een configuratiefout en stopt de opstart.
+    # Without a key OPI commits as it always did, with only a WARNING. A key gpg cannot
+    # import is a configuration error and stops the startup.
     load_git_signing_identity()
 
-    # Een bewaakte route zonder action zou stilzwijgend alles openen wat de aanroeper al
-    # mocht, en een rol zonder enkele grant opent niets zonder dat iemand dat merkt. Dat
-    # stopt de start hier, niet een 403 die ontbreekt.
+    # A guarded route without an action would quietly open everything the caller was already
+    # allowed, and a role without a single grant opens nothing without anyone noticing. That
+    # stops the startup here, not a 403 that fails to appear.
     controleer_handelingen(app.routes)
     check_register()
 
@@ -861,11 +801,11 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     if readiness.database.ready:
         await _setup_projects(readiness, app, skip_checks)
 
-    # Phase 2b: de platformdatabases alleen voor hun eigen rol
+    # Phase 2b: the platform databases for their own role only
     await restrict_platform_databases()
 
-    # Phase 2c: de CMP-sleutellezer in bestaande namespaces, op de achtergrond zodat de
-    # readiness er niet op wacht.
+    # Phase 2c: the CMP key reader in existing namespaces, in the background so the
+    # readiness does not wait on it.
     if readiness.projects.ready and not skip_checks:
         app.state.cmp_key_reader_task = asyncio.create_task(ensure_cmp_key_readers())
 

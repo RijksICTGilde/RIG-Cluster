@@ -1,5 +1,8 @@
-"""
-Simple task tracking for FastAPI BackgroundTasks.
+"""In-memory progress of a project run, for the progress page.
+
+The database-backed counterpart is ``PersistentTaskProgressManager`` in
+``opi/core/persistent_task_progress.py``; this one lives only in the process that runs
+the work.
 """
 
 import asyncio
@@ -11,16 +14,10 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
-# Functions imported locally in functions to avoid potential circular imports
-
-# ProjectManager imported locally to avoid circular import
-
 logger = logging.getLogger(__name__)
 
 
 class TaskStatus(StrEnum):
-    """Task status enumeration."""
-
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -29,8 +26,6 @@ class TaskStatus(StrEnum):
 
 @dataclass
 class Task:
-    """Simple task with status."""
-
     id: str
     name: str
     status: TaskStatus = TaskStatus.RUNNING
@@ -52,20 +47,15 @@ def format_step_line(name: str, subject: str | None) -> str:
     return f"{name} - {subject}" if subject else name
 
 
-# Een stapnaam is een LABEL, geen alinea: de voortgangspagina zet hem in de TITEL van een
-# lijstitem (progress_task_list in widgets/_macros.html.j2). Zonder grens kan een aanroeper
-# er een rauwe kubelet-dump in leggen, en dat gebeurde ook: 762 tekens per component, maal
-# twee componenten, maal vijftien deployments.
-#
-# De grens staat bewust ruim. Hij is geen opmaakmiddel maar een vangnet: elke eerlijke zin
-# blijft eronder (de langste bestaande melding, de uitleg bij het uitrollen van een nieuw
-# project, is 355 tekens) en elke machinedump gaat eroverheen. Wie hem raakt hoort dat te
-# merken, dus het volledige bericht gaat naar de log en niet stilletjes verloren.
+# A step name is a LABEL, not a paragraph: the progress page puts it in the TITLE of a list
+# item (progress_task_list in widgets/_macros.html.j2). The bound is a safety net against a
+# caller that puts a machine dump in it, not a formatting device: every honest sentence stays
+# well under it. Whoever hits it should notice, so the full message goes to the log.
 MAX_STEP_NAME = 400
 
 
 def clamp_step_text(text: str) -> str:
-    """Kort een stapnaam in tot iets dat als regeltitel leesbaar blijft."""
+    """Shorten a step name to something that stays readable as a line title."""
     collapsed = " ".join(text.split())
     if len(collapsed) <= MAX_STEP_NAME:
         return collapsed
@@ -80,8 +70,6 @@ def clamp_step_text(text: str) -> str:
 
 @dataclass
 class ProjectInfo:
-    """Project information for the progress page."""
-
     id: str
     project_name: str
     status: TaskStatus
@@ -95,19 +83,13 @@ class ProjectInfo:
     error: str | None = None
 
 
-# Simple in-memory storage for projects only
 _projects: dict[str, ProjectInfo] = {}
-# Store TaskProgressManager instances per project
 _project_managers: dict[str, TaskProgressManager] = {}
-# Track active monitoring tasks to prevent duplicate monitoring loops per project
 _active_monitoring_tasks: dict[str, asyncio.Task[None]] = {}
-# Track active application monitoring tasks
 _active_app_monitoring_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 class TaskProgressManager:
-    """Task progress manager with clean API - one per project."""
-
     def __init__(self, project_id: str, project_name: str):
         self.project_id = project_id
         self.project_name = project_name
@@ -115,7 +97,6 @@ class TaskProgressManager:
         # The open phase, if any: steps added while it is open become its children.
         self._phase_id: str | None = None
 
-        # Create project info
         _projects[project_id] = ProjectInfo(
             id=project_id,
             project_name=project_name,
@@ -123,16 +104,15 @@ class TaskProgressManager:
             created_at=datetime.now(tz=UTC),
         )
 
-        # Store this manager instance
         _project_managers[project_id] = self
         logger.info(f"Created TaskProgressManager for project {project_name} ({project_id})")
 
     def add_task(self, name: str, subject: str | None = None) -> str:
         """Add a task and start it immediately. Returns task ID.
 
-        ``subject`` says what the step runs for -- a deployment, component or service
-        name -- for steps that run more than once per project. It is kept next to the
-        name instead of inside it, so the page can show and group them separately.
+        ``subject`` says what the step runs for (a deployment, component or service name)
+        for steps that run more than once per project. It is kept next to the name instead
+        of inside it, so the page can show and group them separately.
         """
         task_id = str(uuid.uuid4())
         name = clamp_step_text(name)
@@ -187,28 +167,26 @@ class TaskProgressManager:
     def update_task(self, task_id: str, message: str, subject: str | None = None) -> None:
         """Update a task's name, and its subject when one is given.
 
-        Zonder ``subject`` blijft het bestaande onderwerp staan: het onderwerp is niet van
-        deze methode, zoals test_task_step_subject vastlegt. Meegeven overschrijft het, en
-        dat is wat een stap doet die per poll een nieuwe reden te melden heeft.
+        Without ``subject`` the existing subject stays: the subject is not this method's to
+        own, as test_task_step_subject records. Passing one overwrites it, which is what a
+        step does that has a new reason to report on every poll.
         """
         if task_id in self.tasks:
             message = clamp_step_text(message)
             self.tasks[task_id].name = message
             if subject is not None:
                 self.tasks[task_id].subject = clamp_step_text(subject)
-            gecombineerd = format_step_line(message, self.tasks[task_id].subject)
-            logger.info(f"Project {self.project_id}: Updated task: {gecombineerd} ({task_id})")
-            self.update_current_step(gecombineerd)
+            combined = format_step_line(message, self.tasks[task_id].subject)
+            logger.info(f"Project {self.project_id}: Updated task: {combined} ({task_id})")
+            self.update_current_step(combined)
 
     def complete_task(self, task_id: str) -> None:
-        """Mark a task as completed."""
         if task_id in self.tasks:
             self.tasks[task_id].status = TaskStatus.COMPLETED
             self.tasks[task_id].completed_at = datetime.now(tz=UTC)
             logger.info(f"Project {self.project_id}: Completed task: {self.tasks[task_id].name} ({task_id})")
 
     def fail_task(self, task_id: str, error: str) -> None:
-        """Mark a task as failed."""
         if task_id in self.tasks:
             self.tasks[task_id].status = TaskStatus.FAILED
             self.tasks[task_id].error = error
@@ -216,19 +194,16 @@ class TaskProgressManager:
             logger.error(f"Project {self.project_id}: Failed task: {self.tasks[task_id].name} ({task_id}): {error}")
 
     def update_current_step(self, step: str) -> None:
-        """Update the current step for the project."""
         if self.project_id in _projects:
             _projects[self.project_id].current_step = step
 
     def complete_project(self) -> None:
-        """Mark the entire project as completed."""
         self._close_phase(TaskStatus.COMPLETED)
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.COMPLETED
             _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def fail_project(self, error: str) -> None:
-        """Mark the entire project as failed."""
         self._close_phase(TaskStatus.FAILED)
         if self.project_id in _projects:
             _projects[self.project_id].status = TaskStatus.FAILED
@@ -236,20 +211,16 @@ class TaskProgressManager:
             _projects[self.project_id].completed_at = datetime.now(tz=UTC)
 
     def set_namespace(self, namespace: str) -> None:
-        """Set namespace for monitoring and start monitoring."""
         if self.project_id in _projects:
             _projects[self.project_id].namespace = namespace
             logger.info(f"Set namespace {namespace} for project {self.project_id}")
-            # Automatically start monitoring when namespace is set
             self.start_monitoring()
 
     def add_logs(self, logs: list[str]) -> None:
-        """Add logs for the project."""
         if self.project_id in _projects:
             _projects[self.project_id].logs = logs
 
     def add_events(self, events: list[dict[str, str]]) -> None:
-        """Add events for the project."""
         if self.project_id in _projects:
             _projects[self.project_id].events = events
 
@@ -261,33 +232,26 @@ class TaskProgressManager:
             logger.warning(f"Cannot start monitoring for project {self.project_id}: namespace not set")
 
     def start_subtask(self, subtask_id: str) -> None:
-        """Mark subtask as started."""
         start_subtask(self.project_id, subtask_id)
 
     def complete_subtask(self, subtask_id: str) -> None:
-        """Mark subtask as completed."""
         complete_subtask(self.project_id, subtask_id)
 
     def fail_subtask(self, subtask_id: str, error: str) -> None:
-        """Mark subtask as failed."""
         fail_subtask(self.project_id, subtask_id, error)
 
     def update_component_deployment(self, component_name: str, deployment_name: str) -> None:
-        """Update the deployment name for a component."""
         update_component_deployment(self.project_id, component_name, deployment_name)
 
     def update_component_web_address(self, component_name: str, web_address: str) -> None:
-        """Update the web address for a component."""
         if self.project_id in _projects:
             if _projects[self.project_id].web_addresses is None:
                 _projects[self.project_id].web_addresses = {}
             _projects[self.project_id].web_addresses[component_name] = web_address
             logger.info(f"Project {self.project_id}: Updated web address for {component_name}: {web_address}")
-        # Also call the legacy function for compatibility
         update_component_web_address(self.project_id, component_name, web_address)
 
     def update_component_readiness(self, component_name: str, deployment_ready: str) -> None:
-        """Update the deployment readiness status for a component."""
         update_component_readiness(self.project_id, component_name, deployment_ready)
 
 
@@ -314,8 +278,9 @@ def _start_app_monitoring_if_not_active(task_id: str, project_name: str, applica
 
 
 def _cleanup_completed_projects() -> None:
-    """Remove projects that have been COMPLETED or FAILED for more than 30 minutes,
-    and RUNNING projects stuck for more than 2 hours (likely orphaned)."""
+    """Remove projects COMPLETED or FAILED for over 30 minutes, and RUNNING ones stuck for
+    over 2 hours, which are most likely orphaned.
+    """
     cutoff = datetime.now(tz=UTC) - timedelta(minutes=30)
     stuck_cutoff = datetime.now(tz=UTC) - timedelta(hours=2)
     to_remove = []
@@ -332,7 +297,6 @@ def _cleanup_completed_projects() -> None:
     for project_id in to_remove:
         del _projects[project_id]
         _project_managers.pop(project_id, None)
-        # Cancel any still-running monitoring tasks before removing references
         monitoring_task = _active_monitoring_tasks.pop(project_id, None)
         if monitoring_task and not monitoring_task.done():
             monitoring_task.cancel()
@@ -375,10 +339,9 @@ def stop_periodic_cleanup() -> None:
 
 
 def create_task(project_name: str) -> str:
-    """Create a new project and return its ID."""
+    """Create a new project and return its id."""
     _cleanup_completed_projects()
     project_id = str(uuid.uuid4())
-    # Create project info in the new system
     _projects[project_id] = ProjectInfo(
         id=project_id, project_name=project_name, status=TaskStatus.RUNNING, created_at=datetime.now(tz=UTC)
     )
@@ -387,12 +350,10 @@ def create_task(project_name: str) -> str:
 
 
 def get_task(task_id: str) -> ProjectInfo | None:
-    """Get project information by ID."""
     return _projects.get(task_id)
 
 
 def update_progress(task_id: str, progress: int, step: str) -> None:
-    """Update task progress."""
     if task_id in _projects:
         _projects[task_id].current_step = step
         logger.debug(f"Task {task_id}: {progress}% - {step}")
@@ -444,11 +405,7 @@ def update_component_readiness(task_id: str, component_name: str, deployment_rea
 
 
 async def start_task_monitoring(task_id: str) -> None:
-    """
-    Start background monitoring for a task to collect logs, events, and deployment status.
-
-    This should be called after the namespace is created and deployments are starting.
-    """
+    """Called once the namespace exists and the deployments are starting."""
     if task_id not in _projects:
         logger.warning(f"Cannot start monitoring for task {task_id}: project not found")
         return
@@ -460,7 +417,6 @@ async def start_task_monitoring(task_id: str) -> None:
 
     logger.info(f"Starting monitoring for task {task_id} in namespace {project.namespace}")
 
-    # Start monitoring in the background using new system (deduplicated)
     _start_monitoring_if_not_active(task_id)
 
 
@@ -469,11 +425,7 @@ _UNRECOVERABLE_EVENT_REASONS = {"ErrImagePull", "ImagePullBackOff", "InvalidImag
 
 
 def _detect_unrecoverable_error(events: list[dict[str, str]]) -> str | None:
-    """Check namespace events for unrecoverable deployment errors.
-
-    Returns a human-readable error message if an unrecoverable error is
-    found, or None if everything looks recoverable.
-    """
+    """A readable message for an unrecoverable error in the namespace events, else None."""
     for event in events:
         if event.get("type") != "Warning":
             continue
@@ -486,10 +438,8 @@ def _detect_unrecoverable_error(events: list[dict[str, str]]) -> str | None:
 
 
 async def _monitor_project_progress(project_id: str) -> None:
-    """
-    Background monitoring for a project to collect logs, events, and deployment status.
+    """Collects logs, events and deployment status while the project is in progress.
 
-    This runs while the project is in progress and updates the project data with real-time info.
     Only one instance runs per project (enforced by _start_monitoring_if_not_active).
     """
     from opi.connectors.kubectl import KubectlConnector
@@ -519,13 +469,11 @@ async def _monitor_project_progress(project_id: str) -> None:
                 continue
 
             try:
-                # Collect namespace events
                 events = await kubectl.get_namespace_events(project.namespace, limit=20)
                 if events:
                     logger.debug(f"Project {project_id}: Retrieved {len(events)} events")
                     project.events = events
 
-                    # Check for unrecoverable errors in events
                     unrecoverable = _detect_unrecoverable_error(events)
                     if unrecoverable:
                         logger.warning(f"Project {project_id}: Unrecoverable error detected: {unrecoverable}")
@@ -533,7 +481,6 @@ async def _monitor_project_progress(project_id: str) -> None:
                         update_progress(project_id, -1, f"Deployment mislukt: {unrecoverable}")
                         break
 
-                # Collect pod logs from recent deployments
                 deployment_logs = []
                 deployment_statuses = await kubectl.get_deployment_status(project.namespace)
 
@@ -553,13 +500,11 @@ async def _monitor_project_progress(project_id: str) -> None:
             except Exception as e:
                 logger.warning(f"Error collecting monitoring data for project {project_id}: {e}")
 
-            # Wait before next monitoring cycle
             await asyncio.sleep(monitoring_interval)
 
     except Exception as e:
         logger.error(f"Error in monitoring project {project_id}: {e}")
     finally:
-        # Clean up tracking entry so a new monitoring task can be started if needed
         _active_monitoring_tasks.pop(project_id, None)
         logger.debug(f"Removed monitoring tracking entry for project {project_id}")
 
@@ -569,18 +514,10 @@ async def _monitor_project_progress(project_id: str) -> None:
 async def _monitor_project_applications_continuously(
     task_id: str, project_name: str, application_names: list[str]
 ) -> None:
-    """
-    Continuously monitor project-specific ArgoCD applications after initial sync.
+    """Keeps reporting on the project's ArgoCD applications after the initial sync.
 
-    This provides ongoing feedback on deployment progress, including detailed ArgoCD status
-    information and pod readiness status until the deployment is fully completed.
-
-    Only one instance runs per project (enforced by _start_app_monitoring_if_not_active).
-
-    Args:
-        task_id: The task ID for tracking
-        project_name: The name of the project being deployed
-        application_names: List of ArgoCD application names to monitor
+    Detailed ArgoCD status and pod readiness, until the deployment is fully done. Only one
+    instance runs per project (enforced by _start_app_monitoring_if_not_active).
     """
     from opi.connectors import create_argo_connector
     from opi.connectors.kubectl import KubectlConnector
@@ -594,7 +531,6 @@ async def _monitor_project_applications_continuously(
     max_monitoring_time = 300  # 5 minutes max
     start_time = time.time()
 
-    # Track deployment completion
     deployment_complete = False
     last_status_update = ""
 
@@ -610,7 +546,6 @@ async def _monitor_project_applications_continuously(
                     logger.info(f"Project {task_id} finished, stopping application monitoring")
                     break
 
-                # Collect detailed status for each application
                 app_statuses = []
                 all_healthy = True
                 all_synced = True
@@ -622,14 +557,12 @@ async def _monitor_project_applications_continuously(
                             sync_status = app_info.get("status", {}).get("sync", {}).get("status", "Unknown")
                             health_status = app_info.get("status", {}).get("health", {}).get("status", "Unknown")
 
-                            # Get detailed ArgoCD status information
                             sync_message = app_info.get("status", {}).get("sync", {}).get("message", "")
                             health_message = app_info.get("status", {}).get("health", {}).get("message", "")
                             operation_state = app_info.get("status", {}).get("operationState", {})
                             operation_phase = operation_state.get("phase", "")
                             operation_message = operation_state.get("message", "")
 
-                            # Get resource status
                             resources = app_info.get("status", {}).get("resources", [])
                             resource_summary = {
                                 "total": len(resources),
@@ -691,18 +624,15 @@ async def _monitor_project_applications_continuously(
                         all_healthy = False
                         all_synced = False
 
-                # Generate detailed status update
                 if app_statuses:
                     status_parts = []
 
                     for app_status in app_statuses:
                         app_short_name = app_status["name"].replace(f"{project_name}-", "")
 
-                        # Get status values
                         sync_status = app_status["sync"]
                         health_status = app_status["health"]
 
-                        # Add resource summary if available
                         resources = app_status["resources"]
                         if resources["total"] > 0:
                             resource_text = f"({resources['healthy']}/{resources['total']} gezond"
@@ -714,12 +644,10 @@ async def _monitor_project_applications_continuously(
                         else:
                             resource_text = ""
 
-                        # Include operation phase if available
                         operation_text = ""
                         if app_status["operation_phase"]:
                             operation_text = f" [{app_status['operation_phase']}]"
 
-                        # Include ArgoCD messages if meaningful
                         message_text = ""
                         if app_status["health_message"] and "successfully" not in app_status["health_message"].lower():
                             message_text = f" - {app_status['health_message']}"
@@ -731,16 +659,13 @@ async def _monitor_project_applications_continuously(
                         status_part = f"{app_short_name}: sync={sync_status} health={health_status}{resource_text}{operation_text}{message_text}"
                         status_parts.append(status_part)
 
-                    # Create progress update
                     current_status = " | ".join(status_parts)
 
-                    # Only update if status changed significantly
                     if current_status != last_status_update:
                         if all_synced and all_healthy:
                             update_progress(task_id, 85, f"Deployment voltooid: {current_status}")
                             deployment_complete = True
                         else:
-                            # Calculate progress based on sync and health status
                             total_checks = len(app_statuses) * 2  # sync + health for each app
                             completed_checks = sum(1 for app in app_statuses if app["sync"] == "Synced") + sum(
                                 1 for app in app_statuses if app["health"] == "Healthy"
@@ -751,7 +676,6 @@ async def _monitor_project_applications_continuously(
 
                         last_status_update = current_status
 
-                # Check if deployment is complete
                 if all_synced and all_healthy:
                     deployment_complete = True
                     logger.info(f"All applications for project {project_name} are fully deployed and healthy")
@@ -760,7 +684,6 @@ async def _monitor_project_applications_continuously(
             except Exception as e:
                 logger.warning(f"Error during continuous application monitoring for project {project_name}: {e}")
 
-            # Wait before next check
             await asyncio.sleep(monitoring_interval)
 
         if not deployment_complete:
@@ -773,7 +696,6 @@ async def _monitor_project_applications_continuously(
             )
 
     finally:
-        # Clean up tracking entry so a new app monitoring task can be started if needed
         _active_app_monitoring_tasks.pop(task_id, None)
         logger.debug(f"Removed app monitoring tracking entry for project {task_id}")
 

@@ -1162,7 +1162,7 @@ def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
 @marking_if_absent(marking_in_body)
 @weighed_action_from(image_only_upsert)
 @validate_api_token
-@requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
+@requires_step_up(deployment_environment_change, action=StepUpAction.MARKING_SET)
 async def upsert_deployment_v2(
     request: Request,
     project_name: str,
@@ -1542,7 +1542,7 @@ async def refresh_project_v2(
 )
 @action_marker(Action.PLATFORM_PROJECT_KEY)
 @validate_platform_admin_token
-@requires_step_up(vraagt_altijd_step_up, actie=StepUpAction.PROJECT_KEY_REPLACE)
+@requires_step_up(vraagt_altijd_step_up, action=StepUpAction.PROJECT_KEY_REPLACE)
 async def rotate_project_key_v2(
     request: Request,
     project_name: str,
@@ -1580,7 +1580,7 @@ async def rotate_project_key_v2(
 @action_marker(Action.DEPLOYMENT_DELETE)
 @marking_if_absent(default_marking)
 @validate_api_token
-@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
+@requires_step_up(action=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_deployment_v2(
     request: Request,
     project_name: str,
@@ -2073,7 +2073,7 @@ ConfirmInUseQuery = Annotated[
 )
 @action_marker(Action.COMPONENT_DELETE)
 @validate_api_token
-@requires_step_up(actie=StepUpAction.COMPONENT_DELETE)
+@requires_step_up(action=StepUpAction.COMPONENT_DELETE)
 async def delete_component_v2(
     request: Request,
     project_name: str,

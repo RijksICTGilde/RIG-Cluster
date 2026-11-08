@@ -16,7 +16,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
-from opi.core.errors import kenmerk_van, met_kenmerk
+from opi.core.errors import reference_for, with_reference
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
@@ -2272,7 +2272,7 @@ async def restore_deployment_resource(
             return JSONResponse(
                 content={
                     "status": "failed",
-                    "message": met_kenmerk(result["error"], kenmerk_van(request)),
+                    "message": with_reference(result["error"], reference_for(request)),
                     "resource_type": body.resource_type,
                     "reference_name": body.reference_name,
                     "old_generation": result.get("old_generation"),

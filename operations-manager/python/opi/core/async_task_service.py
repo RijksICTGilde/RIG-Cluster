@@ -27,9 +27,9 @@ from opi.utils.logging_redact import redact_structure, redact_text
 
 logger = logging.getLogger(__name__)
 
-#: Vangnet op de lengte van een opgeslagen foutbericht. Geen kolomeis (de kolom is TEXT),
-#: maar een grens tegen een exceptie die een dump meesleept. Ruim boven elke echte foutzin,
-#: zodat de melding die een gebruiker leest heel blijft.
+#: Safety net on the length of a stored error message. Not a column requirement (the column
+#: is TEXT), but a bound against an exception that drags a dump along. Well above every honest
+#: error sentence, so the message a user reads stays whole.
 MAX_ERROR_MESSAGE_CHARS = 8000
 
 
@@ -52,8 +52,8 @@ def _not_yet_reconciled(task=AsyncTask):
     reconciled_since &= ProjectReconciliation.reconciled_at >= task.completed_at
     project_wide_since = select(literal(1)).where(reconciled_since, ProjectReconciliation.deployment_name.is_(None))
     deployments = func.unnest(task.affects_deployments).table_valued("name").render_derived()
-    # correlate_except: de binnenste subquery ligt twee niveaus onder de taak, en zonder
-    # dit zet SQLAlchemy async_tasks opnieuw in zijn eigen FROM.
+    # correlate_except: the innermost subquery sits two levels below the task, and without
+    # this SQLAlchemy puts async_tasks in its own FROM again.
     deployment_since = (
         select(literal(1))
         .where(reconciled_since, ProjectReconciliation.deployment_name == deployments.c.name)
@@ -68,18 +68,18 @@ _ACTIVE_STATES = ("claimed", "running")
 _OPEN_STATES = ("pending", "claimed", "running")
 _TERMINAL_STATES = ("completed", "failed", "cancelled")
 
-# Taaktypes die niet meedoen aan de volgorde binnen een project, omdat ze wereldwijd
-# zijn afgeknepen (BACKUP_MAX_CONCURRENT) en dus lang kunnen blijven staan om een reden
-# die niets met dit project te maken heeft. Ze blokkeren wel zolang ze draaien.
+# Task types that do not take part in the ordering within a project, because they are
+# throttled globally (BACKUP_MAX_CONCURRENT) and can therefore stand around for a long time
+# for a reason that has nothing to do with this project. They do block while they run.
 _UNORDERED_TASK_TYPES = ("backup", "restore")
 
 
 def _scopes_overlap(a, b):
-    """Twee taken kunnen elkaar in de weg zitten.
+    """Whether two tasks can get in each other's way.
 
-    NULL is projectbreed en overlapt met alles, inclusief met een andere NULL. Twee
-    concrete scopes overlappen als ze een deploymentnaam delen; ``&&`` is de
-    array-overlapoperator van Postgres en gebruikt de GIN-index.
+    NULL is project-wide and overlaps with everything, another NULL included. Two concrete
+    scopes overlap when they share a deployment name; ``&&`` is the array overlap operator of
+    Postgres and uses the GIN index.
     """
     return or_(
         a.affects_deployments.is_(None),
@@ -195,11 +195,8 @@ class AsyncTaskService:
                     deployment_name,
                 )
 
-            # De scope wordt hier bepaald en opgeslagen, en nergens anders opnieuw afgeleid:
-            # scope_of() is de enige schrijver, de kolom de enige lezer. Twee afleidingen die
-            # het oneens waren over dezelfde twee taken zijn precies het defect dat dit
-            # oplost. sorted() omdat een frozenset geen vaste volgorde heeft en een stabiele
-            # kolomwaarde makkelijker te lezen en te vergelijken is.
+            # scope_of() is the only writer of the scope, the column the only reader: never
+            # derive it a second time. sorted() because a frozenset has no fixed order.
             scope = scope_of(task_type, deployment_name, payload)
 
             row = AsyncTask(
@@ -216,10 +213,11 @@ class AsyncTaskService:
             session.add(row)
             await session.flush()
             await session.refresh(row)  # server defaults (id, timestamps, status)
-            # Voor de auditrij van het verzoek dat deze taak startte; de hook leest hem na
-            # het antwoord, als deze functie al klaar is (opi/core/audit_trail.py).
+            # For the audit row of the request that started this task; the hook reads it
+            # after the answer, when this function is already done
+            # (opi/core/audit_trail.py).
             record_task(row.id)
-            # De worker in dit proces hoeft niet op zijn poll te wachten (RC-418).
+            # The worker in this process need not wait for its poll (RC-418).
             notify_new_task()
             logger.info(
                 "Created task %s type=%s for %s/%s on cluster %s",
@@ -238,24 +236,17 @@ class AsyncTaskService:
     ) -> dict | None:
         """Claim the next pending task for the given cluster.
 
-        Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` to safely claim a task without
-        conflicting with other workers. Tasks are skipped for three reasons: another
-        task of the same project with an OVERLAPPING deployment scope is already
-        in-flight (prevents concurrent git/ArgoCD operations on the same deployment),
-        an OLDER pending task of the same project overlaps with it (first in, first
-        run, per project), or a per-type concurrency limit is already reached.
+        Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` to safely claim a task without conflicting with
+        other workers. Tasks are skipped for three reasons: another task of the same project with
+        an OVERLAPPING deployment scope is already in-flight (prevents concurrent git/ArgoCD
+        operations on the same deployment), an OLDER pending task of the same project overlaps with
+        it (first in, first run, per project), or a per-type concurrency limit is already reached.
 
-        Args:
-            cluster: The cluster to claim a task for.
-            type_concurrency_limits: Optional mapping of task_type -> max concurrent
-                tasks.
-
-        Returns:
-            A dict representing the claimed task, or None if no task is available.
+        ``type_concurrency_limits`` maps a task type to its maximum number of concurrent tasks.
         """
         async with session_scope() as session:
-            # Clausule 1: een overlappende taak die draait. Blokkeert altijd, ongeacht
-            # tasktype en ongeacht wie ouder is.
+            # Clause 1: an overlapping task that is running. Always blocks, whatever the
+            # task type and whoever is older.
             running = aliased(AsyncTask)
             inflight = (
                 select(1)
@@ -269,14 +260,14 @@ class AsyncTaskService:
                 .exists()
             )
 
-            # Clausule 2: volgorde binnen het project. Zonder deze kan een stroom smalle
-            # taken in een druk PR-project willekeurig lang voor een projectbrede taak
-            # blijven springen, want claimen gaat op created_at ASC en slaat geblokkeerde
-            # taken over. De vergelijking gaat op (created_at, id): twee taken kunnen
-            # dezelfde tijdstempel dragen, en dan is er zonder tweede sleutel geen totale
-            # ordening en kunnen ze elkaar wederzijds blokkeren. Een deadlock kan niet:
-            # een taak wordt alleen door een OUDERE geblokkeerd, en de oudste wachtende
-            # taak van een project heeft per definitie niemand voor zich.
+            # Clause 2: ordering within the project. Without it, a stream of narrow tasks in
+            # a busy PR project can keep jumping ahead of a project-wide task for arbitrarily
+            # long, because claiming goes by created_at ASC and skips blocked tasks. The
+            # comparison goes by (created_at, id): two tasks can carry the same timestamp, and
+            # then without a second key there is no total ordering and they can block each
+            # other mutually. A deadlock cannot happen: a task is only blocked by an OLDER
+            # one, and the oldest waiting task of a project has nobody in front of it by
+            # definition.
             earlier = aliased(AsyncTask)
             queued_ahead = (
                 select(1)
@@ -415,22 +406,17 @@ class AsyncTaskService:
         If the attempt count is below max_attempts, the task is reset to pending so it
         can be retried. Otherwise it is marked as permanently failed.
 
-        ``result`` is the handler's own answer and is stored on permanent failure. Without
-        it a client that sees ``status: failed`` loses the ``error_type`` and the parts of
-        the work that did succeed; a retry does not store it, because the next attempt
-        writes its own.
+        ``result`` is the handler's own answer and is stored on permanent failure: it
+        carries the ``error_type`` and the parts of the work that did succeed. A retry does
+        not store it, because the next attempt writes its own.
         """
-        # De fouttekst komt uit een exceptie en gaat naar de database en naar de client,
-        # dus hij loopt langs hetzelfde filter als de logstroom.
+        # The error text comes out of an exception and goes to the database and to the
+        # client, so it passes the same filter as the log stream.
         error_message = redact_text(error_message)
 
-        # Er is geen kolombreedte om voor af te knippen: ``error_message`` is TEXT, in de
-        # baseline-migratie en in het ORM-model. Het commentaar dat hier stond ("varchar
-        # 255") beschreef een kolom die er niet is, en de 255 tekens knipten een zin
-        # middenin een woord af terwijl de subtaak diezelfde zin voluit droeg -- de
-        # zad-cli las daardoor "... lists the actions that put s" als de verklaring
-        # (punt 26). De grens hieronder is dus geen kolomeis maar een vangnet tegen een
-        # exceptie die een dump meesleept; hij ligt ver boven elke echte foutzin.
+        # ``error_message`` is TEXT, so there is no column width to truncate for. The bound
+        # is a safety net against an exception that drags a dump along, far above every
+        # honest error sentence.
         if len(error_message) > MAX_ERROR_MESSAGE_CHARS:
             error_message = error_message[: MAX_ERROR_MESSAGE_CHARS - 3] + "..."
 
@@ -461,15 +447,15 @@ class AsyncTaskService:
                     "completed_at": func.now(),
                 }
                 if result is not None:
-                    # result en error_message staan beiden in het antwoord op GET /tasks/{id}.
+                    # result and error_message are both in the answer to GET /tasks/{id}.
                     values["result"] = redact_structure(result)
                 # Prevent duplicate log entry: only first write logs.
-                overgang = await session.execute(
+                transition = await session.execute(
                     update(AsyncTask)
                     .where(AsyncTask.id == uuid.UUID(task_id), AsyncTask.status != "failed")
                     .values(**values)
                 )
-                if overgang.rowcount:
+                if transition.rowcount:
                     logger.info(
                         "Task %s permanently failed after %d attempt(s): %s",
                         task_id,
@@ -482,7 +468,8 @@ class AsyncTaskService:
 
     async def get_task(self, task_id: str) -> dict | None:
         """Retrieve a single task by ID, or None when there is none (also for an id that is no UUID)."""
-        # Het id komt uit een URL: een id die geen UUID is, is een taak die niet bestaat en geen 500.
+        # The id comes out of a URL: an id that is no UUID is a task that does not exist, not
+        # a 500.
         try:
             key = uuid.UUID(task_id)
         except ValueError:
@@ -511,10 +498,8 @@ class AsyncTaskService:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """List tasks with optional filtering.
-
-        Returns:
-            A dict with 'tasks' (list of task dicts) and 'total' (count).
+        """A dict with ``tasks`` (the task dicts) and ``total`` (how many match the filter, not how
+        many are in the page).
         """
         conds = []
         if project_name is not None:
@@ -544,11 +529,8 @@ class AsyncTaskService:
     async def recover_stale_tasks(self, stale_threshold_seconds: int = 300) -> int:
         """Recover tasks that have gone stale (no heartbeat within threshold).
 
-        Tasks with remaining retry attempts are re-queued as pending. Tasks that have
-        exhausted their retry attempts are marked as failed.
-
-        Returns:
-            The number of tasks that were recovered (re-queued).
+        Tasks with remaining retry attempts are re-queued as pending, tasks that have exhausted
+        their attempts are marked as failed. Returns how many were re-queued, not how many failed.
         """
         # make_interval positional args: (years, months, weeks, days, hours, mins, secs).
         cutoff = func.now() - func.make_interval(0, 0, 0, 0, 0, 0, float(stale_threshold_seconds))
@@ -625,17 +607,17 @@ class AsyncTaskService:
             return row.to_dict() if row else None
 
     async def find_blocking_task(self, task_id: str) -> dict | None:
-        """De taak waardoor deze pending taak nog niet geclaimd is, of None.
+        """The task this pending task has not been claimed because of, or None.
 
-        Dezelfde twee redenen als in claim_next_task, in dezelfde volgorde: een
-        overlappende taak die draait, anders een oudere overlappende taak die wacht.
-        Op leesmoment berekend en niet op de rij geschreven: de wachtrij verandert
-        continu, en een opgeslagen reden zou vrijwel altijd verouderd zijn.
+        The same two reasons as in claim_next_task, in the same order: an overlapping task
+        that is running, otherwise an older overlapping task that is waiting. Computed at
+        read time and not written on the row: the queue changes continuously, and a stored
+        reason would be out of date almost always.
 
-        Een taak die niet (meer) pending is wordt door niets geblokkeerd en levert None.
+        A task that is not (or no longer) pending is blocked by nothing and gives None.
         """
         me = aliased(AsyncTask)
-        basis = (
+        base = (
             select(AsyncTask)
             .join(me, me.id == uuid.UUID(task_id))
             .where(
@@ -645,9 +627,9 @@ class AsyncTaskService:
                 _scopes_overlap(AsyncTask, me),
             )
         )
-        draait = basis.where(AsyncTask.status.in_(_ACTIVE_STATES)).order_by(AsyncTask.created_at.asc()).limit(1)
-        eerder = (
-            basis.where(
+        running_now = base.where(AsyncTask.status.in_(_ACTIVE_STATES)).order_by(AsyncTask.created_at.asc()).limit(1)
+        earlier_waiting = (
+            base.where(
                 AsyncTask.status == "pending",
                 AsyncTask.task_type.notin_(_UNORDERED_TASK_TYPES),
                 tuple_(AsyncTask.created_at, AsyncTask.id) < tuple_(me.created_at, me.id),
@@ -657,17 +639,17 @@ class AsyncTaskService:
         )
 
         async with session_scope() as session:
-            row = (await session.execute(draait)).scalar_one_or_none()
+            row = (await session.execute(running_now)).scalar_one_or_none()
             if row is None:
-                row = (await session.execute(eerder)).scalar_one_or_none()
+                row = (await session.execute(earlier_waiting)).scalar_one_or_none()
             return row.to_dict() if row else None
 
     async def find_open_delete_deployments(self, project_name: str) -> dict[str, str]:
         """Deployments of this project whose delete task has not finished yet, by task id.
 
-        Een delete haalt de ArgoCD Application minuten voor de deployment zelf uit git, en
-        een verwerkingsronde in dat venster zet hem terug (RC-254). Daarom slaat
-        ``process_project`` deze deployments over.
+        A delete takes the ArgoCD Application out of git minutes before the deployment
+        itself, and a processing run inside that window puts it back (RC-254). That is why
+        ``process_project`` skips these deployments.
         """
         async with session_scope() as session:
             rows = (
@@ -720,12 +702,9 @@ class AsyncTaskService:
         deployment_name: str | None = None,
         only_scheduled: bool = False,
     ) -> dict | None:
-        """Get the most recently completed task matching the given criteria.
-
-        Args:
-            only_scheduled: When True, exclude tasks explicitly tagged
-                ``payload.trigger == "manual"``. Tasks with no trigger or any other
-                value are treated as scheduled (legacy-safe default).
+        """With ``only_scheduled``, tasks explicitly tagged ``payload.trigger == "manual"`` are
+        excluded. A task with no trigger or any other value counts as scheduled, which keeps an
+        older task without the tag safe.
         """
         conds = [
             AsyncTask.task_type == task_type,
@@ -776,9 +755,9 @@ class AsyncTaskService:
                 .all()
             )
 
-            # _OPEN_STATES en niet _ACTIVE_STATES: een uitrol die nog in de wachtrij staat is
-            # voor wie de pagina leest net zo goed onderweg, en "er is niets naar het cluster
-            # gegaan" is dan al misleidend.
+            # _OPEN_STATES and not _ACTIVE_STATES: a rollout still in the queue is just as
+            # much on its way to whoever reads the page, and "nothing went to the cluster" is
+            # already misleading then.
             open_scopes = (
                 (
                     await session.execute(
@@ -812,26 +791,24 @@ class AsyncTaskService:
         }
 
     async def cleanup_old_tasks(self, retention_hours: int = 168, header_retention_days: int = 90) -> int:
-        """Twee vensters over een taak in een eindtoestand: eerst de werkgegevens leeg,
-        daarna de rij weg.
+        """Two windows over a task in a terminal state: first the working data emptied, then
+        the row removed.
 
-        De kop (wie, wat, waar, wanneer, uitkomst) is vandaag de enige persistente
-        vastlegging van een projectwijziging en blijft ``header_retention_days`` staan. De
-        werkgegevens (``payload``, ``logs``, ``subtasks``, ``events``, ``result``,
-        ``error_message``, ``current_step``) kunnen groot zijn en invoer bevatten die niet
-        lang bewaard hoeft te worden, en gaan na ``retention_hours`` leeg. ``current_step``
-        hoort daarbij omdat de voortgangsschrijvers er vrije tekst in zetten.
-        ``details_purged_at`` houdt bij dat dat gebeurd is, zodat de lus dezelfde rijen
-        niet elk uur herschrijft.
+        The header (who, what, where, when, outcome) is today the only persistent record of a
+        project change and stays for ``header_retention_days``. The working data (``payload``,
+        ``logs``, ``subtasks``, ``events``, ``result``, ``error_message``, ``current_step``)
+        can be big and can hold input that need not be kept long, and is emptied after
+        ``retention_hours``. ``current_step`` belongs with that because the progress writers
+        put free text in it. ``details_purged_at`` records that this happened, so the loop
+        does not rewrite the same rows every hour.
 
         A deferred rollout that has not been rolled out yet is kept whole regardless of
         age: it is the only record that the project file runs ahead of the cluster, and
         drift that disappears after a week is exactly the silent drift this is meant to
-        surface. Ook de werkgegevens blijven, want wat zo'n taak uitgesteld maakt staat in
-        zijn ``payload``: leegmaken zou hem even goed laten verdwijnen als verwijderen.
+        surface. The working data stays as well, because what makes such a task deferred is
+        in its ``payload``: emptying it would make it disappear just as well as deleting it.
 
-        Returns:
-            The number of tasks deleted.
+        Returns the number of tasks deleted.
         """
         keep_deferred = ~(_deferred() & _not_yet_reconciled())
         async with session_scope() as session:

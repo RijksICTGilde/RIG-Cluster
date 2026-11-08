@@ -67,7 +67,7 @@ class TestDeMeldingBijEenStoring:
         _klok(monkeypatch, [0, 60, 120, 180, 240, 300, 360, 420])
 
         for _ in range(8):
-            await watcher.tik()
+            await watcher.tick()
 
         assert meldingen.call_count == 1, "een melding per storing, niet per tik"
         titel = meldingen.call_args.args[1]
@@ -82,7 +82,7 @@ class TestDeMeldingBijEenStoring:
         _klok(monkeypatch, [0, 60, 120])
 
         for _ in range(3):
-            await watcher.tik()
+            await watcher.tick()
 
         meldingen.assert_not_called()
 
@@ -92,7 +92,7 @@ class TestDeMeldingBijEenStoring:
         _klok(monkeypatch, [0, 400])
 
         for _ in range(5):
-            await watcher.tik()
+            await watcher.tick()
 
         titels = [aanroep.args[1] for aanroep in meldingen.call_args_list]
         assert titels == ["Mailrelay is niet bereikbaar", "Mailrelay is weer bereikbaar"]
@@ -104,7 +104,7 @@ class TestDeMeldingBijEenStoring:
         _klok(monkeypatch, [0, 400, 1000, 1400])
 
         for _ in range(5):
-            await watcher.tik()
+            await watcher.tick()
 
         titels = [aanroep.args[1] for aanroep in meldingen.call_args_list]
         assert titels == [
@@ -127,7 +127,7 @@ class TestWatErNietGemetenIsWordtNietGemeld:
 
         watcher = MailRelayWatcher()
         for _ in range(10):
-            await watcher.tik()
+            await watcher.tick()
 
         meldingen.assert_not_called()
 
@@ -145,7 +145,7 @@ class TestWatErNietGemetenIsWordtNietGemeld:
 
         watcher = MailRelayWatcher()
         for _ in range(10):
-            await watcher.tik()
+            await watcher.tick()
 
         meldingen.assert_not_called()
 
@@ -156,8 +156,8 @@ class TestWatErNietGemetenIsWordtNietGemeld:
         watcher, meldingen = _watcher(monkeypatch, ready=False)
         _klok(monkeypatch, [0, 400])
 
-        await watcher.tik()
-        await watcher.tik()
+        await watcher.tick()
+        await watcher.tick()
 
         meldingen.assert_not_called()
 

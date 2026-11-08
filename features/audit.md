@@ -108,14 +108,14 @@ route zijn velden zelf met `@action(..., audit_fields=(...))`, en alleen die, no
 hele body. Vier routes doen dat; `tests/test_audit_hook.py` legt de lijst vast, zodat een
 nieuwe route er bewust bij komt.
 
-`velden=` van `@requires_step_up` staat daar LOS van: dat is wat de step-up-dialoog moet
+`fields=` van `@requires_step_up` staat daar LOS van: dat is wat de step-up-dialoog moet
 herhalen, en daar hoort ook een vrij tekstveld bij (de env-vars van een component, een
 rol, een lidnaam). Die twee lijsten stonden gekoppeld; daardoor liftte de env-var-route
 mee en zou de hele platte env-var-tekst, met wachtwoorden en adressen, een jaar in
 `data.fields` blijven staan.
 
 De poort leest die velden pas NADAT ze de aanroeper heeft toegelaten, en kapt elke
-waarde af op 256 tekens (`MAX_VELDWAARDE`). Twee redenen, beide gemeten op
+waarde af op 256 tekens (`MAX_FIELD_VALUE`). Twee redenen, beide gemeten op
 `POST /projects/{project}/jobs`, dat zijn velden uit het formulier haalt: een geweigerde
 (ook anonieme) aanroep haalde anders de hele urlencoded body door het geheugen voordat de
 403 viel, en `data` is JSONB zonder kolombreedte, dus zo'n body belandde ongeknipt in een

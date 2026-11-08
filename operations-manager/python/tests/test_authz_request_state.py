@@ -16,7 +16,7 @@ from opi.api.endpoint_util import handhaaf
 from opi.api.principal import AccessDenied
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import Cause, Decision, Resource, record_decision
-from opi.core.leden import LidSoort
+from opi.core.members import MemberKind
 from opi.services.project_leden import hash_van, vervaldatum
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.web.authz import authorize
@@ -35,10 +35,10 @@ def _project() -> ProjectSummary:
             ProjectUser(
                 email=BEHEERDER,
                 role="admin",
-                type=LidSoort.PERSOON,
+                type=MemberKind.PERSON,
                 tokens=[ProjectToken(name="t", hash=hash_van(TOKEN), expires=vervaldatum(30))],
             ),
-            ProjectUser(email=KIJKER, role="member", type=LidSoort.PERSOON),
+            ProjectUser(email=KIJKER, role="member", type=MemberKind.PERSON),
         ],
     )
 

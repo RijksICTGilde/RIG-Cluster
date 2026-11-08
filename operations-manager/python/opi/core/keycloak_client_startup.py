@@ -1,10 +1,4 @@
-"""
-Keycloak client credential startup logic for the operations manager.
-
-This module handles ensuring the operations manager has valid OIDC credentials
-during startup by checking existing credentials and creating/retrieving them
-from Keycloak if needed.
-"""
+"""Make sure OPI holds valid OIDC credentials at startup."""
 
 import logging
 
@@ -17,14 +11,10 @@ logger = logging.getLogger(__name__)
 
 
 async def validate_oidc_credentials() -> bool:
-    """
-    Check that OPI's client secret is the one Keycloak holds.
+    """Check that OPI's client secret is the one Keycloak holds.
 
-    Compares through the admin API instead of requesting a token: since RC-325 a new client
-    has no service account, so a client_credentials grant is refused whatever the secret.
-
-    Returns:
-        True if the client exists with this secret, False otherwise
+    Compares through the admin API instead of requesting a token: a new client has no
+    service account, so a client_credentials grant is refused whatever the secret.
     """
     if not (settings.OIDC_CLIENT_ID and settings.OIDC_CLIENT_SECRET and settings.OIDC_DISCOVERY_URL):
         logger.debug("OIDC credentials not fully configured")
@@ -48,17 +38,11 @@ async def validate_oidc_credentials() -> bool:
 
 
 async def ensure_keycloak_credentials() -> bool:
-    """
-    Ensure that the operations manager has valid Keycloak credentials.
+    """Validate the credentials in the environment, and create them in Keycloak when they
+    are missing or wrong.
 
-    This function implements the complete credential management flow:
-    1. Check if OIDC environment variables are set and validate them
-    2. If missing or invalid, retrieve/create credentials from Keycloak
-    3. Update the Kubernetes secret if credentials were changed
-    4. Update current process environment variables
-
-    Returns:
-        True if valid credentials are available, False if setup failed
+    A change is written back to the Kubernetes secret and to the environment of this
+    process. Returns False when the setup did not succeed.
     """
     logger.info("Ensuring Keycloak credentials for operations manager")
 
@@ -75,7 +59,6 @@ async def ensure_keycloak_credentials() -> bool:
 
         keycloak_setup = KeycloakSetup()
 
-        # Initialize connectors (same as in KeycloakSetup)
         keycloak_setup.keycloak = await create_keycloak_connector()
         keycloak_setup.kubectl = KubectlConnector()
 

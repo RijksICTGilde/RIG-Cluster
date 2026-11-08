@@ -39,42 +39,41 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De wekker van de worker in dit proces, of None als er geen worker draait (de API-only
-#: rol, en elke test). Hij hoort bij de worker en niet bij de module, omdat een
-#: asyncio.Event zich aan de event loop van zijn eerste wachter bindt.
+#: The alarm of the worker in this process, or None when no worker runs (the API-only role,
+#: and every test). It belongs to the worker and not to the module, because an asyncio.Event
+#: binds itself to the event loop of its first waiter.
 _waker: asyncio.Event | None = None
 
 
 def notify_new_task() -> None:
-    """Wek de taakworker: er staat een nieuwe taak in de wachtrij."""
+    """Wake the task worker: there is a new task in the queue."""
     if _waker is not None:
         _waker.set()
 
 
 def failure_result(message: str, error_type: str) -> dict[str, str]:
-    """Het kleinste resultaat dat een gefaalde taak leesbaar maakt.
+    """The smallest result that makes a failed task readable.
 
-    Een handler die gooit liet niets achter: ``result`` bleef leeg, dus een client had
-    alleen een fouttekst en kon niet zien of het aan zijn verzoek lag. Dit is wat er nu
-    minimaal staat; de categorie komt er in ``task_response_from_dict`` bij, zodat die
-    vertaling op één plek blijft.
+    A handler that raises leaves no result of its own, and then a client has only an error
+    text and cannot see whether its own request was at fault. The category is added in
+    ``task_response_from_dict``, so that translation stays in one place.
     """
     return {"status": "failed", "error": message, "error_type": error_type}
 
 
 def _client_error_message(error: TaskInputError | HTTPException) -> str:
-    """De tekst van een afgewezen verzoek, zonder de klassenaam ervoor."""
+    """The text of a refused request, without the class name in front of it."""
     if isinstance(error, HTTPException):
         return str(error.detail)
     return str(error)
 
 
 def _client_error_type(error: TaskInputError | HTTPException) -> str:
-    """Het ``error_type`` van een afgewezen verzoek.
+    """The ``error_type`` of a refused request.
 
-    Een ``TaskInputError`` draagt zijn eigen reden. Een ``HTTPException`` uit een manager
-    heeft alleen een statuscode, en die zegt genoeg: 404 is iets dat niet bestaat, elke
-    andere 4xx is een verzoek dat niet deugt.
+    A ``TaskInputError`` carries its own reason. An ``HTTPException`` out of a manager has
+    only a status code, and that says enough: 404 is something that does not exist, every
+    other 4xx is a request that is no good.
     """
     if isinstance(error, TaskInputError):
         return error.error_type
@@ -82,31 +81,19 @@ def _client_error_type(error: TaskInputError | HTTPException) -> str:
 
 
 def reported_failure(result: object, progress: object = None) -> str | None:
-    """Wat de handler over zijn eigen afloop zegt: de foutmelding, of ``None``.
+    """What the handler says about its own outcome: the error message, or ``None``.
 
-    De taakstatus is het veld waar een aanroeper als EERSTE op kijkt, dus die moet zeggen
-    wat er gebeurde. Dat deed hij niet: gemeten in de generale repetitie
-    (``docs/generale-repetitie-2026-08-12.md``, bevinding 5) meldde een afgewezen
-    dienstselectie ``status: completed`` terwijl zijn eigen ``result`` ``failed`` droeg,
-    er een ``error_message`` stond en de subtaak "Component toevoegen" was gefaald. Wie op
-    ``status`` polt - de voor de hand liggende manier, en wat de zad-cli doet - zag een
-    afgewezen wijziging aan voor een geslaagde.
+    The task status is the field a caller looks at FIRST, so every shape in which a handler
+    reports failure has to reach it. There are THREE:
 
-    Er zijn DRIE manieren waarop een handler faalt, en alleen de eerste werd gelezen:
+    1. ``{"success": False, "error": ...}``, the shape of the backup and restore handlers;
+    2. ``{"status": "failed", "error": ...}``, the shape of the component and service
+       handlers;
+    3. it calls ``progress.fail_project(...)`` and returns something that looks like success
+       next to it. That marks the task as failed in the database, but fire-and-forget, so
+       without reading it here the worker writes ``completed`` over it.
 
-    1. ``{"success": False, "error": ...}`` - de vorm van de backup- en herstelhandlers;
-    2. ``{"status": "failed", "error": ...}`` - de vorm van de component- en
-       dienstenhandlers, en precies de vorm uit de meting;
-    3. hij roept ``progress.fail_project(...)`` aan en geeft daarnaast iets terug dat op
-       succes lijkt. Dat markeerde de taak in de database wel als mislukt, maar
-       fire-and-forget, waarna de worker er ``completed`` overheen schreef.
-
-    Args:
-        result: wat de handler teruggaf.
-        progress: de voortgangsmanager van deze taak, voor geval 3.
-
-    Returns:
-        De foutmelding als de handler faalde, anders ``None``.
+    ``progress`` is the progress manager of this task, for case 3.
     """
     if isinstance(result, dict):
         if result.get("success") is False:
@@ -138,8 +125,8 @@ class TaskWorker:
         self._running = False
         self._semaphore = asyncio.Semaphore(settings.TASK_WORKER_CONCURRENCY)
         self._active_tasks: set[asyncio.Task] = set()
-        # De wekker waar notify_new_task aan trekt. Er is een worker per proces, dus de
-        # laatst gemaakte is de wekker die telt.
+        # The alarm notify_new_task pulls. There is one worker per process, so the last one
+        # made is the alarm that counts.
         self._waker = asyncio.Event()
         _waker = self._waker
 
@@ -202,8 +189,8 @@ class TaskWorker:
                 # Wait for a concurrency slot before claiming
                 await self._semaphore.acquire()
 
-                # Wissen VOOR de claim: een taak die tussen de claim en het wachten bij komt
-                # zou anders de wekker missen en pas na het pollen aan de beurt zijn.
+                # Cleared BEFORE the claim: a task arriving between the claim and the wait
+                # would otherwise miss the alarm and only get its turn after the next poll.
                 self._waker.clear()
                 task = await self._task_service.claim_next_task(
                     self._cluster,
@@ -232,11 +219,11 @@ class TaskWorker:
             await asyncio.gather(*self._active_tasks, return_exceptions=True)
 
     async def _wait_for_work(self) -> None:
-        """Wacht tot er een taak bij komt, en hoogstens tot de volgende poll.
+        """Wait until a task arrives, and at most until the next poll.
 
-        De poll blijft het vangnet: een taak die een ANDER proces aanmaakt zet deze wekker
-        niet. Zonder de wekker kostte elke taak uit dit proces gemiddeld een halve
-        pollronde voordat er iets gebeurde.
+        The poll stays the safety net: a task created by ANOTHER process does not set this
+        alarm. Without the alarm, every task out of this process cost half a poll round on
+        average before anything happened.
         """
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(settings.TASK_WORKER_POLL_INTERVAL):
@@ -332,11 +319,11 @@ class TaskWorker:
                 # Close progress manager (final flush)
                 await progress.close()
 
-                # Check if the handler reported failure — via its return value, or by
+                # Check if the handler reported failure, via its return value or by
                 # marking the project failed while still returning a success-shaped dict.
                 error_msg = reported_failure(result, progress)
                 if error_msg is not None:
-                    # Handler already decided this is a permanent failure — no retries.
+                    # Handler already decided this is a permanent failure: no retries.
                     # The result is kept: it carries error_type and the parts that DID
                     # succeed, and a client that only reads `status` now sees the failure.
                     await self._task_service.fail_task(
@@ -383,16 +370,14 @@ class TaskWorker:
                 logger.info("Task %s superseded after %.1fs: %s", task_id, time.monotonic() - started, superseded)
 
             except (TaskInputError, HTTPException) as bad_request:
-                # De aanroeper vroeg iets wat niet kan. Dat is een BLIJVENDE mislukking:
-                # opnieuw proberen maakt een component dat niet bestaat niet alsnog waar,
-                # en het kost de wachtende alleen tijd. Een handler die dit gooit komt
-                # daarmee op hetzelfde uit als een handler die een faal-dict teruggeeft.
+                # The caller asked for something that cannot work. That is a PERMANENT
+                # failure: trying again does not make a component that does not exist true,
+                # and it only costs the waiting party time. A handler that raises this
+                # therefore ends up the same as a handler that returns a failure dict.
                 #
-                # HTTPException staat erbij omdat de managers die taal al spreken: enkele
-                # geven een 404 op een deployment die er niet is, en die belandde tot nu
-                # toe in de algemene tak hieronder en dus als "onbekend" bij de client.
-                # Alleen de 4xx-en: een 5xx is van ons en hoort te blijven bestaan zoals
-                # hij is, inclusief nieuwe pogingen.
+                # HTTPException is in there because the managers already speak that language:
+                # a few give a 404 on a deployment that is not there. Only the 4xx ones: a 5xx
+                # is ours and belongs in the general branch below, new attempts included.
                 if isinstance(bad_request, HTTPException) and bad_request.status_code >= 500:
                     await progress.close()
                     progress.mark_legacy_failed(f"{type(bad_request).__name__}: {bad_request}")
@@ -436,12 +421,11 @@ class TaskWorker:
                 error_message=error_message,
                 attempt_count=task.get("attempt_count", 0),
                 max_attempts=task.get("max_attempts", settings.TASK_WORKER_MAX_ATTEMPTS),
-                # Ook een gooiende handler laat nu iets achter om te lezen. Zonder dit is
-                # ``result`` leeg en heeft een client alleen een fouttekst: geen type, geen
-                # categorie, dus niet te onderscheiden van een taaktype dat er niets over
-                # zegt. Het type is ``internal_error``, want dit is de tak waar we het niet
-                # weten, en dat komt bij de client aan als "niet toe te schrijven" -- tenzij
-                # de uitzondering zelf een platformstoring is, en dan zegt de categorie dat.
+                # A raising handler leaves a readable result as well: without one a client
+                # has only an error text, no type and no category. The type is
+                # ``internal_error``, because this is the branch where we do not know, and
+                # that arrives at the client as "not attributable" unless the exception
+                # itself is a platform outage, and then the category says so.
                 result={**failure_result(error_message, INTERNAL_ERROR_TYPE), **platform_failure_category(e)},
             )
 
@@ -492,9 +476,9 @@ class TaskWorker:
                 purged = await get_session_store().purge_expired()
                 if purged > 0:
                     logger.info("Cleaned up %d expired sessions", purged)
-                herlogins = await OtpHerloginService().purge_expired()
-                if herlogins > 0:
-                    logger.info("Cleaned up %d expired OTP re-logins", herlogins)
+                re_logins = await OtpHerloginService().purge_expired()
+                if re_logins > 0:
+                    logger.info("Cleaned up %d expired OTP re-logins", re_logins)
             except asyncio.CancelledError:
                 break
             except Exception:

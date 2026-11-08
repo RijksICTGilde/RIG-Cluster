@@ -281,10 +281,10 @@ class TestEenOnbekendeStatus:
     """Een uitzondering in de foutafhandeling is het ene ding dat nooit mag gebeuren."""
 
     def test_een_status_buiten_de_standaard_valt_niet_om(self) -> None:
-        from opi.core.errors import statusomschrijving
+        from opi.core.errors import status_phrase
 
-        assert statusomschrijving(500) == "Internal Server Error"
-        assert statusomschrijving(599) == "599"
+        assert status_phrase(500) == "Internal Server Error"
+        assert status_phrase(599) == "599"
 
 
 class TestDeLogKrijgtHetRegelnummer:

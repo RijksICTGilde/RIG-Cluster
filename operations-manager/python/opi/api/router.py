@@ -871,7 +871,7 @@ api_router: APIRouter = APIRouter(
 @marking_if_absent(marking_in_body)
 @weighed_action_from(image_only_upsert)
 @validate_api_token
-@requires_step_up(deployment_environment_change, actie=StepUpAction.MARKING_SET)
+@requires_step_up(deployment_environment_change, action=StepUpAction.MARKING_SET)
 async def upsert_deployment(
     request: Request,
     project_name: str,
@@ -2160,7 +2160,7 @@ async def refresh_deployment(
 @api_router.delete("/projects/{project_name}")
 @action(Action.PROJECT_DELETE)
 @validate_api_token
-@requires_step_up(actie=StepUpAction.PROJECT_DELETE)
+@requires_step_up(action=StepUpAction.PROJECT_DELETE)
 async def delete_project(
     request: Request, project_name: ProjectNamePath, delete_data: ProjectDeleteRequest = Body(...)
 ) -> JSONResponse:
@@ -2257,7 +2257,7 @@ async def delete_project(
 @action(Action.DEPLOYMENT_DELETE)
 @marking_if_absent(default_marking)
 @validate_api_token
-@requires_step_up(actie=StepUpAction.DEPLOYMENT_DELETE)
+@requires_step_up(action=StepUpAction.DEPLOYMENT_DELETE)
 async def delete_project_deployment(
     request: Request,
     project_name: ProjectNamePath,

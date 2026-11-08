@@ -269,7 +269,7 @@ async def test_wizard_edit_zonder_step_up_geeft_403_en_slaat_niets_op(
 
 @pytest.mark.asyncio
 async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptureFixture) -> None:
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.DEPLOYMENT_DELETE)
+    @requires_step_up(lambda request, **kwargs: True, action=StepUpAction.DEPLOYMENT_DELETE)
     async def route(request: Any, project_name: str, deployment_name: str) -> str:
         return "uitgevoerd"
 
@@ -288,7 +288,7 @@ async def test_decorator_meldt_de_weigering_als_warning(caplog: pytest.LogCaptur
 
 @pytest.mark.asyncio
 async def test_decorator_meldt_een_gebruikte_step_up_als_info(caplog: pytest.LogCaptureFixture) -> None:
-    @requires_step_up(lambda request, **kwargs: True, actie=StepUpAction.PROJECT_DELETE)
+    @requires_step_up(lambda request, **kwargs: True, action=StepUpAction.PROJECT_DELETE)
     async def route(request: Any, project_name: str) -> str:
         return "uitgevoerd"
 

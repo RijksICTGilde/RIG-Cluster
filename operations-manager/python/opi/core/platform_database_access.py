@@ -1,14 +1,14 @@
-"""De databases van het platform zelf zijn alleen te openen door hun eigen rol.
+"""The platform's own databases can only be opened by their own role.
 
-Keycloak, Forgejo en de mailrelay staan op dezelfde gedeelde PostgreSQL als elk project, en
-PostgreSQL geeft een nieuwe database CONNECT en TEMPORARY aan ``PUBLIC``. Elke projectrol
-kan daarmee met die databases verbinden.
+Keycloak, Forgejo and the mail relay sit on the same shared PostgreSQL as every project, and
+PostgreSQL grants a new database CONNECT and TEMPORARY to ``PUBLIC``. Every project role can
+therefore connect to those databases.
 
-Waarom hier en niet declaratief: de ``Database``-resource van CNPG beschrijft naam,
-eigenaar, encoding, locale, allowConnections, connectionLimit, schemas en extensies, en
-geen rechten per rol. Er is dus geen CNPG-weg voor een REVOKE op een bestaande database.
-Dit draait daarom bij de start van OPI, met dezelfde connectorhelper die een
-projectdatabase afsluit, en volgt dus ook ``DATABASE_RESTRICT_PUBLIC_CONNECT``.
+Why here and not declaratively: CNPG's ``Database`` resource describes name, owner, encoding,
+locale, allowConnections, connectionLimit, schemas and extensions, and no privileges per role.
+There is no CNPG route for a REVOKE on an existing database. This therefore runs at OPI's
+start, with the same connector helper that closes off a project database, and so it follows
+``DATABASE_RESTRICT_PUBLIC_CONNECT`` as well.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-#: Platformdatabase -> de rollen die expliciet CONNECT krijgen. Spiegelt
+#: Platform database -> the roles that get CONNECT explicitly. Mirrors
 #: ``infrastructure/bootstrap/infrastructure/postgresql/database/base/databases.yaml``.
-#: De database van OPI zelf komt uit ``settings.DATABASE_NAME`` en staat hier niet bij,
-#: want haar rol is een instelling; zie ``restrict_platform_databases``.
+#: OPI's own database comes from ``settings.DATABASE_NAME`` and is not listed here, because its
+#: role is a setting; see ``restrict_platform_databases``.
 PLATFORM_DATABASE_ROLES: dict[str, tuple[str, ...]] = {
     "keycloak": ("keycloak",),
     "forgejo": ("forgejo",),
@@ -38,20 +38,20 @@ PLATFORM_BACKUP_ROLE = "platform_backup"
 
 
 async def restrict_platform_databases() -> None:
-    """Sluit elke platformdatabase af voor ``PUBLIC``.
+    """Close off every platform database for ``PUBLIC``.
 
-    Niet-fataal: rechten op een platformdatabase mogen de boot niet blokkeren, dus een
-    onbereikbare of weigerende server wordt gelogd en niet geworpen. De try staat binnen de
-    lus, zodat een fout op de ene database de andere niet overslaat.
+    Not fatal: privileges on a platform database may not block the boot, so an unreachable or
+    refusing server is logged and not raised. The try sits inside the loop, so an error on one
+    database does not skip the others.
     """
     connector = create_postgres_connector(
         get_database_server(settings.CLUSTER_MANAGER),
         settings.DATABASE_ADMIN_NAME,
         settings.DATABASE_ADMIN_PASSWORD,
     )
-    # De app-rol van OPI zelf hoort er expliciet bij: zodra DATABASE_RESTRICT_PUBLIC_CONNECT
-    # op "on" staat neemt deze functie CONNECT van PUBLIC af, en zonder deze regel sluit
-    # OPI zichzelf buiten zijn eigen database (RC-410).
+    # OPI's own app role belongs in here explicitly: once DATABASE_RESTRICT_PUBLIC_CONNECT is
+    # "on" this function takes CONNECT away from PUBLIC, and without this line OPI locks itself
+    # out of its own database (RC-410).
     databases = {**PLATFORM_DATABASE_ROLES, settings.DATABASE_NAME: (settings.DATABASE_APP_USER,)}
     try:
         for database, roles in databases.items():

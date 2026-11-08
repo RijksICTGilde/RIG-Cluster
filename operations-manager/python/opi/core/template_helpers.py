@@ -1,14 +1,12 @@
-"""De helpers die de templateomgeving aan zijn sjablonen aanbiedt.
+"""The helpers the template environment offers its templates.
 
-Filters (Nederlandse datums, een RRULE in woorden, de naam en de definitie achter een
-services-regel), de paden waar sjablonen en statische bestanden staan, en de
-inhoudsgehashte URL voor een eigen statisch bestand.
+Filters (Dutch dates, an RRULE in words, the name and the definition behind a services
+entry), the paths where templates and static files live, and the content-hashed URL for an
+own static file.
 
-Dit bestand heette ``templates.py`` en zette daarnaast de roos-omgeving op. Die is met de
-roos-bouwlijn verdwenen; wat overbleef is dit, en het wordt gebruikt door
-``opi/core/templates_lotc.py``. Apart van die module omdat het geen omgeving is maar
-gewone functies: de omgeving leunt via de dienstenregistry op de rest van de applicatie,
-en deze helpers hoeven dat niet mee te slepen.
+Used by ``opi/core/templates_lotc.py``, and apart from that module because these are plain
+functions: the environment leans on the rest of the application through the service
+registry, and these helpers need not drag that along.
 """
 
 import hashlib
@@ -21,7 +19,6 @@ from opi.core.rrule_utils import format_rrule
 if TYPE_CHECKING:
     from opi.services.services import ServiceDefinition
 
-# Dutch month names
 DUTCH_MONTHS = [
     "januari",
     "februari",
@@ -37,8 +34,8 @@ DUTCH_MONTHS = [
     "december",
 ]
 
-# De gangbare Nederlandse afkortingen. Niet af te leiden met [:3]: maart is "mrt" en niet
-# "maa". Zie het short_month-argument hieronder.
+# The common Dutch abbreviations. Not derivable with [:3]: maart is "mrt" and not "maa".
+# See the short_month argument below.
 DUTCH_MONTHS_SHORT = [
     "jan",
     "feb",
@@ -58,42 +55,28 @@ DUTCH_MONTHS_SHORT = [
 def format_dutch_date(
     value: str | datetime | None, include_time: bool = True, short_month: bool = False, only_time: bool = False
 ) -> str:
-    """
-    Format a date/timestamp in Dutch format.
+    """A date or timestamp in Dutch form, such as "14 januari 2026 17:14".
 
-    Args:
-        value: ISO timestamp string or datetime object
-        include_time: Whether to include time in output
-        short_month: Abbreviate the month to three letters ("17 sep 2026 23:18")
-        only_time: Only the time of day ("23:18"), for something that expires today
+    ``short_month`` gives "17 sep 2026 23:18" and ``only_time`` gives "23:18", for something
+    that expires today.
 
-    Returns:
-        Dutch formatted date string (e.g., "14 januari 2026 17:14")
-
-    ``short_month`` bestaat voor een DICHTE, herhaalde context: de takentabel heeft zes
-    kolommen waarvan er twee een tijdstip tonen, en "18 september 2026 01:40" is daar 174
-    pixels breed tegen 126 afgekort - gemeten in de browser, zie
-    tests/e2e/test_lotc_takentabel_datumkolom.py. Het is met opzet een optie op DIT filter
-    en geen tweede formatteerfunctie: de omrekening naar Europe/Amsterdam en de Nederlandse
-    maandnamen blijven op een plek, precies zoals ``include_time`` dat al doet. Wie een
-    datum in gewone tekst toont, laat hem uitgeschreven.
+    ``short_month`` is for a DENSE, repeated context, such as the two time columns of the
+    task table (tests/e2e/test_lotc_takentabel_datumkolom.py). A date in running text stays
+    written out.
     """
     if not value:
         return "-"
 
     try:
         if isinstance(value, str):
-            # Parse ISO format timestamp (e.g., "2026-01-14T17:14:34.335860214Z")
-            # Handle various ISO formats
+            # An ISO timestamp such as "2026-01-14T17:14:34.335860214Z", in any of its forms.
             value = value.replace("Z", "+00:00")
             if "." in value:
-                # Truncate nanoseconds to microseconds (max 6 digits after decimal)
+                # fromisoformat takes six decimals at most, and kubectl hands out nine.
                 parts = value.split(".")
                 if len(parts[1]) > 6:
-                    # Keep timezone info if present
                     tz_part = ""
                     decimal_part = parts[1]
-                    # Check for timezone offset (+ or -) in the decimal part
                     for tz_char in ("+", "-"):
                         if tz_char in decimal_part:
                             idx = decimal_part.index(tz_char)
@@ -107,7 +90,6 @@ def format_dutch_date(
         else:
             return str(value)
 
-        # Convert UTC to Amsterdam time for display
         from zoneinfo import ZoneInfo
 
         if dt.tzinfo is not None:
@@ -125,34 +107,30 @@ def format_dutch_date(
             return f"{day} {month} {year}"
 
     except ValueError, TypeError, AttributeError:
-        # Fallback: return truncated original
         return str(value)[:19] if value else "-"
 
 
 def shorten_image_digest(image: str | None) -> str:
-    """Een imageverwijzing met de digest afgekort tot twaalf tekens.
+    """An image reference with the digest shortened to twelve characters.
 
-    ``ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2c3d4...`` wordt
-    ``ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2``. Een verwijzing met een tag
-    en niet met een digest blijft heel: daar valt niets af te korten.
+    ``ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2c3d4...`` becomes
+    ``ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344a1b2``. A reference with a tag
+    instead of a digest stays whole: there is nothing to shorten there.
 
-    De volle 64 tekens passen niet op een regel en voegen niets toe: wie versies vergelijkt
-    heeft aan het begin genoeg, en wie de volle digest nodig heeft kijkt in het
-    projectbestand.
+    The full 64 characters do not fit on a line and add nothing: whoever compares versions
+    has enough with the start, and whoever needs the full digest looks in the project file.
 
-    Dit is met opzet een filter en geen ``[:19]`` in het sjabloon. De afkapping stond twee
-    keer in dezelfde kaart, dus de grens "twaalf tekens" stond op twee plekken; en een
-    ``[:N]`` in een sjabloon valt op de witte lijst van
-    tests/test_dates_go_through_one_filter.py, die afkappingen tegenhoudt omdat ze bijna
-    altijd een tijdstempel zijn dat via ``dutch_date`` hoort te gaan.
+    A filter and not a ``[:19]`` in the template: a ``[:N]`` there trips the allowlist of
+    tests/test_dates_go_through_one_filter.py, which stops truncations because they are
+    nearly always a timestamp that should go through ``dutch_date``.
     """
-    repository, scheiding, digest = (image or "").partition("@")
-    if not scheiding:
+    repository, separator, digest = (image or "").partition("@")
+    if not separator:
         return image or ""
-    algoritme, dubbele_punt, hex_deel = digest.partition(":")
-    if not dubbele_punt:
-        return repository + scheiding + digest[:12]
-    return f"{repository}@{algoritme}:{hex_deel[:12]}"
+    algorithm, colon, hex_part = digest.partition(":")
+    if not colon:
+        return repository + separator + digest[:12]
+    return f"{repository}@{algorithm}:{hex_part[:12]}"
 
 
 def format_rrule_schedule(rrule: str | None) -> str:
@@ -170,18 +148,10 @@ def format_rrule_schedule(rrule: str | None) -> str:
 
 
 def get_service_name(service: str | dict[str, Any]) -> str:
-    """
-    Extract service name from mixed service format.
+    """The service name out of either entry form.
 
-    Services can be either:
-    - A string: "publish-on-web"
-    - A dict with service name as key: {"keycloak": {"config": {...}}}
-
-    Args:
-        service: Service definition (string or dict)
-
-    Returns:
-        Service name as string
+    A services entry is either a string (``"publish-on-web"``) or a dict with the service
+    name as its key (``{"keycloak": {"config": {...}}}``).
     """
     from opi.services.services import service_entry_name
 
@@ -206,7 +176,6 @@ def get_service_definition_for_entry(service: str | dict[str, Any]) -> ServiceDe
     return ServiceAdapter.SERVICE_DEFINITIONS.get(service_type)
 
 
-# Get the opi package directory (operations-manager/python/opi)
 OPI_DIR = Path(__file__).parent.parent
 TEMPLATES_DIR = OPI_DIR / "templates_lotc"
 # Service-owned templates live next to their service under services/catalog/<svc>/ and
@@ -229,11 +198,11 @@ def static_url(path: str) -> str:
 
     ``static_url("js/wizard.js")`` -> ``/static/js/wizard.js?v=1a2b3c4d``. Because the URL
     changes whenever the contents change, a browser can never serve a stale copy of a
-    replaced file - it is a different URL. The ``?v=`` parameter is also what earns the
+    replaced file: it is a different URL. The ``?v=`` parameter is also what earns the
     long cache lifetime; see CacheControlledStaticFiles in opi/core/static_files.py.
 
-    De assets van het componentensysteem lopen hier NIET langs: die worden onder
-    /static/lotc/ geserveerd door het pakket zelf, dus we bepalen die URL's niet.
+    The assets of the component system do NOT pass through here: those are served under
+    /static/lotc/ by the package itself, so we do not decide those URLs.
 
     A file that does not exist gets an unversioned URL, which falls back to no-cache
     rather than being pinned for a year.
@@ -256,22 +225,22 @@ def static_url(path: str) -> str:
 
 
 def format_step_duration(seconds: float | None) -> str:
-    """De duur van een voortgangsstap als leesbare tekst, met de komma als scheidingsteken.
+    """The duration of a progress step as readable text, with the comma as separator.
 
-    Onder een minuut staat er een decimaal, omdat het verschil tussen 0,4 en 4 seconden
-    juist is wat een stap die te lang duurt verraadt. Daarboven zijn dat minuten.
+    Below a minute there is one decimal, because the difference between 0,4 and 4 seconds is
+    exactly what gives away a step that takes too long. Above it, minutes.
     """
     if seconds is None:
         return ""
     if seconds < 60:
         return f"{seconds:.1f}".replace(".", ",") + " s"
-    minuten, rest = divmod(int(seconds), 60)
-    return f"{minuten} min {rest} s"
+    minutes, rest = divmod(int(seconds), 60)
+    return f"{minutes} min {rest} s"
 
 
-# Het label en de kleur van het cluster in de kopbalk, zodat je ziet in welke omgeving je
-# werkt. Staging valt op; productie blijft rustig, want een balk die altijd alarm slaat
-# zie je na een dag niet meer.
+# The label and the colour of the cluster in the header bar, so you see which environment
+# you work in. Staging stands out; production stays calm, because a bar that always raises
+# an alarm is one you stop seeing after a day.
 CLUSTER_TAGS: dict[str, tuple[str, str]] = {
     "local": ("Local", "accent"),
     "sandboxed-local": ("Sandbox", "accent"),
@@ -281,7 +250,7 @@ CLUSTER_TAGS: dict[str, tuple[str, str]] = {
 
 
 def cluster_tag(cluster_manager: str) -> tuple[str, str]:
-    """Label en ``nldd-tag``-kleur voor een cluster. Een onbekend cluster toont zijn naam."""
+    """Label and ``nldd-tag`` colour for a cluster. An unknown cluster shows its name."""
     if cluster_manager.startswith("sandboxed-local"):
         return CLUSTER_TAGS["sandboxed-local"]
     return CLUSTER_TAGS.get(cluster_manager, (cluster_manager, "neutral"))

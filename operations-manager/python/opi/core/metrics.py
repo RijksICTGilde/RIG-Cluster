@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
-# Zodat een test de scan van kindprocessen op een nep-/proc kan laten lopen.
+# So a test can run the child-process scan against a fake /proc.
 _PROC = "/proc"
 
 # Peak memory tracking state (updated by background sampler every second)
@@ -45,7 +45,6 @@ _sample_task: asyncio.Task[None] | None = None
 logger = logging.getLogger(__name__)
 
 
-# --- Rollout phase timing ---
 # A rollout task takes tens of seconds while the ArgoCD sync inside it takes a few, so
 # the question is always "which phase". These are the phases a rollout is divided into;
 # the list is closed so a dashboard can enumerate them.
@@ -124,7 +123,6 @@ class OPICollector(Collector):
     """
 
     def collect(self):
-        # --- Project cache ---
         gauge = GaugeMetricFamily(
             "opi_projects_cached",
             "Number of projects in ProjectService in-memory cache",
@@ -138,7 +136,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect project cache metrics", exc_info=True)
         yield gauge
 
-        # --- Task manager state ---
         task_projects = GaugeMetricFamily(
             "opi_task_projects_tracked",
             "Number of projects tracked in task manager",
@@ -157,7 +154,6 @@ class OPICollector(Collector):
         yield task_projects
         yield task_managers
 
-        # --- WebSocket connections ---
         ws_global = GaugeMetricFamily(
             "opi_websocket_connections_global",
             "Number of active global WebSocket connections",
@@ -179,10 +175,9 @@ class OPICollector(Collector):
         yield ws_global
         yield ws_users
 
-        # --- Bewijsmiddelen per project (RC-322) ---
-        # Zonder deze telling is "de projectsleutel verdwijnt zodra niemand hem meer
-        # gebruikt" een wens. De labelwaarde ``projectsleutel`` is de oude weg; een token
-        # telt mee onder ``persoon`` of ``service-account`` en dus niet als oud.
+        # Credentials per project, to see whether the project key is still in use. The label
+        # value ``projectsleutel`` is that old route; a token counts under ``persoon`` or
+        # ``service-account``.
         credentials = CounterMetricFamily(
             "opi_api_credential_calls",
             "Geslaagde legitimaties per project en per soort bewijsmiddel",
@@ -191,17 +186,15 @@ class OPICollector(Collector):
         try:
             from opi.api.principal import gebruik_per_project
 
-            for (project, soort), aantal in gebruik_per_project().items():
-                credentials.add_metric([project, soort], aantal)
+            for (project, kind), count in gebruik_per_project().items():
+                credentials.add_metric([project, kind], count)
         except Exception:
             logger.debug("Failed to collect credential metrics", exc_info=True)
         yield credentials
 
-        # --- Mislukte auditschrijfacties ---
-        #
-        # record_action gooit niets naar de aanroeper, dus zonder deze teller zou een
-        # kapotte audit stil zijn. De naam volgt het huisvoorvoegsel opi_, niet het
-        # zad_ uit het ontwerp.
+        # record_action raises nothing at its caller, so without this counter a broken audit
+        # trail would be silent. The name follows the house prefix opi_, not the zad_ from the
+        # design.
         audit_failures = CounterMetricFamily(
             "opi_audit_write_failures",
             "Mislukte schrijfacties naar het audittrail sinds de start",
@@ -214,7 +207,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect audit write failures", exc_info=True)
         yield audit_failures
 
-        # --- Rate limiter ---
         rl_clients = GaugeMetricFamily(
             "opi_rate_limiter_tracked_clients",
             "Number of clients tracked by the rate limiter",
@@ -227,7 +219,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect rate limiter metrics", exc_info=True)
         yield rl_clients
 
-        # --- Database pools ---
         db_active = GaugeMetricFamily(
             "opi_database_pool_active_connections",
             "Number of active database pool connections",
@@ -253,7 +244,6 @@ class OPICollector(Collector):
         yield db_active
         yield db_size
 
-        # --- Background monitoring tasks ---
         bg_tasks = GaugeMetricFamily(
             "opi_background_tasks_active",
             "Number of active asyncio background monitoring tasks",
@@ -272,7 +262,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect background task metrics", exc_info=True)
         yield bg_tasks
 
-        # --- GC stats ---
         gc_objects = GaugeMetricFamily(
             "opi_gc_objects",
             "Number of objects tracked by Python garbage collector",
@@ -285,7 +274,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect GC metrics", exc_info=True)
         yield gc_objects
 
-        # --- Container cgroup memory (what Kubernetes sees) ---
         cgroup_mem = GaugeMetricFamily(
             "opi_container_memory_bytes",
             "Total container memory from cgroup including subprocesses",
@@ -305,7 +293,6 @@ class OPICollector(Collector):
                 break
         yield cgroup_mem
 
-        # --- Child process memory (subprocess RSS at scrape time) ---
         child_rss = GaugeMetricFamily(
             "opi_child_process_rss_bytes",
             "RSS memory of active child processes",
@@ -333,8 +320,8 @@ class OPICollector(Collector):
                         continue
                     rss_pages = int(fields_after_comm[21])
                     rss_bytes = rss_pages * _PAGE_SIZE
-                    # Alleen de procesnaam, nooit de commandoregel: die kan geheimen bevatten
-                    # en een labelwaarde komt in Prometheus en Grafana terecht (BIO2 8.15).
+                    # The process name only, never the command line: that can hold secrets,
+                    # and a label value ends up in Prometheus and Grafana (BIO2 8.15).
                     comm = stat[stat.find("(") + 1 : close_paren]
                     child_rss.add_metric([entry, comm], rss_bytes)
                     num_children += 1
@@ -346,7 +333,6 @@ class OPICollector(Collector):
         yield child_rss
         yield child_count
 
-        # --- Peak memory (sampled every second by background task) ---
         peak_mem = GaugeMetricFamily(
             "opi_peak_memory_bytes",
             "Peak container memory since last reset (sampled every second)",
@@ -361,36 +347,33 @@ class OPICollector(Collector):
         peak_ts.add_metric([], _peak_memory_timestamp)
         yield peak_ts
 
-        # --- Event-loop lag ---
-        #
-        # Een counter plus een momentopname, geen maximum-sinds-de-vorige-scrape: /metrics
-        # is open, dus een waarde die bij het lezen wegvalt zou door elke andere lezer voor
-        # Prometheus weggenomen worden. increase() over de counter geeft de piek terug.
-        lag_totaal = CounterMetricFamily(
+        # A counter plus a snapshot, not a maximum-since-the-previous-scrape: /metrics is
+        # open, so a value that disappears on reading would be consumed by any other reader
+        # before Prometheus got it. increase() over the counter gives the peak back.
+        lag_total = CounterMetricFamily(
             "opi_event_loop_lag_seconds_total",
             "Cumulative asyncio event loop lag in seconds",
         )
-        lag_nu = GaugeMetricFamily(
+        lag_now = GaugeMetricFamily(
             "opi_event_loop_lag_current_seconds",
             "Asyncio event loop lag at scrape time, for a stall still in progress",
         )
-        stilstanden = CounterMetricFamily(
+        stalls = CounterMetricFamily(
             "opi_event_loop_stalls_total",
             "Number of event loop stalls above EVENT_LOOP_LAG_WARNING_SECONDS",
         )
         try:
             from opi.core import loop_watchdog
 
-            lag_totaal.add_metric([], loop_watchdog.totale_lag())
-            lag_nu.add_metric([], loop_watchdog.huidige_lag())
-            stilstanden.add_metric([], loop_watchdog.aantal_stilstanden())
+            lag_total.add_metric([], loop_watchdog.total_lag())
+            lag_now.add_metric([], loop_watchdog.current_lag())
+            stalls.add_metric([], loop_watchdog.stall_count())
         except Exception:
             logger.debug("Failed to collect event loop lag", exc_info=True)
-        yield lag_totaal
-        yield lag_nu
-        yield stilstanden
+        yield lag_total
+        yield lag_now
+        yield stalls
 
-        # --- Per-connector subprocess memory deltas ---
         connector_delta = GaugeMetricFamily(
             "opi_connector_max_memory_delta_bytes",
             "Maximum memory delta observed during subprocess calls per connector",
@@ -409,8 +392,6 @@ class OPICollector(Collector):
             connector_calls.add_metric([name], count)
         yield connector_calls
 
-        # --- Application pods that cannot pull their image ---
-        #
         # The fleet total is emitted ALWAYS, zero included. It is what the alert reads,
         # and a metric that only appears once something is broken cannot be told apart
         # from a metric that is not being produced at all.
@@ -426,7 +407,7 @@ class OPICollector(Collector):
             # ``exported_namespace`` behind your back.
             labels=["project_namespace", "reason"],
         )
-        # When the count was last taken, in the shape of opi_peak_memory_timestamp above.
+        # When the count last ran, in the shape of opi_peak_memory_timestamp above.
         # The count alone cannot say whether it means "nothing is failing" or "nobody
         # looked": the snapshot starts empty, so a cluster where the cluster-wide pod read
         # is refused reports a clean zero forever. 0 here means no pass has ever succeeded.
@@ -457,8 +438,6 @@ class OPICollector(Collector):
         yield pull_by_reason
         yield pull_observed
 
-        # --- Scheduled backups that are not happening ---
-        #
         # One series per deployment with a schedule, refreshed by the backup scheduler on
         # every tick. The timestamp is 0 while no scheduled snapshot has ever been seen,
         # in the shape of opi_image_pull_observed_timestamp above: a gauge that is simply
@@ -606,7 +585,6 @@ def stop_peak_memory_tracking() -> None:
     _sample_task = None
 
 
-# --- Per-connector subprocess memory tracking ---
 # Records the max memory delta observed per connector during subprocess calls.
 # Key: connector name (e.g. "git", "kubectl", "sops"), Value: max delta in bytes.
 _connector_max_memory_delta: dict[str, int] = {}
