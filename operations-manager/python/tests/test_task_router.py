@@ -87,25 +87,20 @@ def mock_task_service() -> AsyncMock:
 def test_client_with_task_service(
     mock_settings: Any,
     mock_task_service: AsyncMock,
+    app_schoon: FastAPI,
 ) -> TestClient:
     """Create a TestClient with the task_service attached to app state."""
-    from opi.server import create_app
-
-    app: FastAPI = create_app()
-    app.state.task_service = mock_task_service
-    return TestClient(app)
+    app_schoon.state.task_service = mock_task_service
+    return TestClient(app_schoon)
 
 
 @pytest.fixture
-def test_client_without_task_service(mock_settings: Any) -> TestClient:
+def test_client_without_task_service(mock_settings: Any, app_schoon: FastAPI) -> TestClient:
     """Create a TestClient where task_service is NOT set on app state."""
-    from opi.server import create_app
-
-    app: FastAPI = create_app()
     # Ensure task_service is absent
-    if hasattr(app.state, "task_service"):
-        delattr(app.state, "task_service")
-    return TestClient(app)
+    if hasattr(app_schoon.state, "task_service"):
+        delattr(app_schoon.state, "task_service")
+    return TestClient(app_schoon)
 
 
 class TestGetTask:

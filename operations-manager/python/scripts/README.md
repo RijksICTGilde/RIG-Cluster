@@ -59,3 +59,10 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Tool | What it does |
 |---|---|
 | `transip_delete_dns.py` | Delete TransIP DNS records (the TransIP API key is IP-whitelisted; calls must originate from an allowed IP). |
+
+## De testsuite
+
+| Gereedschap | Wat het doet |
+|---|---|
+| `suite_inventory.py` | Inventariseer de unit-suite uit een junit-xml: per bestand het aantal toetsen, de duur, de soort en de module. Zie `docs/development/toetsen.md`. Draai via `task test-inventaris`. |
+| `tests_for_changes.py` | Print de toetsbestanden die bij de gewijzigde bestanden horen, op naam. Draai via `task test-changed BASE=<tak>`. |

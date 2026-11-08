@@ -3443,10 +3443,53 @@ tasks:
   # ========================================
 
   test:
-    desc: "Run unit tests (excludes integration tests)"
+    desc: "De snelle laag: de unit-suite zonder de brede laag (zie docs/development/toetsen.md)"
     dir: operations-manager/python
     cmds:
-      - uv run pytest tests/ --ignore=tests/integration/ -v
+      - uv run pytest tests/ -v
+    silent: false
+
+  test-wide:
+    desc: "De brede laag: echte database en slow files (zie docs/development/toetsen.md)"
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/ -m "wide and not requires_infra and not e2e" -v
+    silent: false
+
+  test-changed:
+    desc: "Toetsen die bij je wijzigingen horen (BASE= andere tak, default origin/main)"
+    dir: operations-manager/python
+    vars:
+      BASE: '{{.BASE | default "origin/main"}}'
+    cmds:
+      - |
+        BESTANDEN=$(uv run python scripts/tests_for_changes.py --base "{{.BASE}}")
+        if [ -z "$BESTANDEN" ]; then
+          echo "Geen toetsbestand gevonden voor de gewijzigde bestanden."
+          exit 0
+        fi
+        echo "$BESTANDEN" | sed 's/^/  /'
+        # Het eigen -m overschrijft dat uit addopts: anders deselecteert de brede laag
+        # stil de bestanden die deze selectie juist noemt.
+        uv run pytest $BESTANDEN -q --tb=short -m "not requires_infra and not e2e"
+    silent: false
+
+  test-inventaris:
+    desc: "Inventariseer de unit-suite: per bestand het aantal, de duur, de soort en de module"
+    dir: operations-manager/python
+    vars:
+      XML: '{{.XML | default "/tmp/zad-test-inventaris.xml"}}'
+      UIT: '{{.UIT | default "/tmp/zad-test-inventaris.md"}}'
+    cmds:
+      - |
+        if [ -f "{{.XML}}" ]; then
+          echo "Hergebruikt {{.XML}}"
+        else
+          PYTEST_VOORTGANG="${PYTEST_VOORTGANG:-/tmp/zad-test-inventaris-voortgang.txt}" \
+            uv run pytest tests/ -m "not requires_infra and not e2e" \
+            --junit-xml="{{.XML}}" --timeout=300 -p no:cacheprovider || true
+        fi
+      - uv run python scripts/suite_inventory.py "{{.XML}}" --output "{{.UIT}}"
     silent: false
 
   test-db-stop:
@@ -3664,10 +3707,10 @@ tasks:
     silent: false
 
   test-all:
-    desc: "Run all tests (unit + integration)"
+    desc: "De snelle en de brede laag achter elkaar (zonder de live groepen en de browsertoetsen)"
     dir: operations-manager/python
     cmds:
-      - uv run pytest tests/ -v
+      - uv run pytest tests/ -m "not requires_infra and not e2e" -v
     silent: false
 
   test-e2e:

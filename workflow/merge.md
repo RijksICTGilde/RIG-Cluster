@@ -28,13 +28,14 @@ uv run pyright
 
 All three clean. These take seconds and they are exactly what catches this class: a duplicate definition or an unused import does not survive a linter, however green the tests are.
 
-Plus the tests for what the PR touched, as in `review.md`:
+Plus, on the merge result, the tests: the ones for what the PR touched and the fast layer.
 
 ```
-uv run pytest tests/<file> -x -q --tb=short
+task test-changed
+task test
 ```
 
-The full suite is **not** required here. It takes close to half an hour and the cluster-dependent integration and e2e tests need a live sandbox. If the merge introduces risk the fast gates cannot see — a changed lifecycle path, a project-file write — run the relevant sandbox test as `review.md` describes.
+This is the one place the whole fast layer runs, and it is why it is kept to a few minutes (`docs/development/toetsen.md`). What is **not** required here: the broad layer (`task test-wide`) and the live groups are the plan owner's hand step before the merge, because the database half of the broad layer and every live group need Docker, which a dispatched session does not have; the cluster-dependent integration and e2e tests need a live sandbox. If the merge introduces risk the fast gates cannot see (a changed lifecycle path, a project-file write), run the relevant sandbox test as `review.md` describes.
 
 ## When the gate is red
 

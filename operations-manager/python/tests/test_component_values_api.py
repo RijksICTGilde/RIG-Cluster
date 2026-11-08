@@ -39,10 +39,16 @@ HEADERS = {"X-API-Key": "test-key"}
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client(eigen_app: FastAPI) -> TestClient:
+    return TestClient(eigen_app)
+
+
+@pytest.fixture(scope="module")
+def eigen_app() -> FastAPI:
+    """Alleen de v2-router, een keer per module: het opbouwen kost per toets een derde seconde."""
     app = FastAPI()
     app.include_router(v2_router)
-    return TestClient(app)
+    return app
 
 
 def _project_data() -> dict:

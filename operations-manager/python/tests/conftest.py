@@ -44,6 +44,8 @@ from tests.image_pins import REPO_ROOT, pinned_image
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
 
+    from fastapi import FastAPI
+
 
 def write_private_file(path: Path, content: str) -> Path:
     """Write a key or token file the way ``age-keygen -o`` leaves one: owner-readable only.
@@ -252,19 +254,37 @@ def api_key() -> str:
     return "test-api-key-12345"
 
 
+@pytest.fixture(scope="session")
+def app_eenmaal() -> FastAPI:
+    """Build create_app() once per session; reuse across tests to avoid rebuild cost."""
+    return create_app()
+
+
 @pytest.fixture
-def test_client(mock_settings: Any) -> TestClient:
+def app_schoon(app_eenmaal: FastAPI) -> Iterator[FastAPI]:
+    """De gedeelde app met app.state teruggezet na de toets.
+
+    Zonder dit lekt een mock die een toets op app.state zet naar elke volgende toets in
+    hetzelfde proces, en CI shardt, dus die verzameling is daar anders dan lokaal.
+    """
+    bewaard = dict(app_eenmaal.state._state)
+    yield app_eenmaal
+    app_eenmaal.state._state.clear()
+    app_eenmaal.state._state.update(bewaard)
+
+
+@pytest.fixture
+def test_client(mock_settings: Any, app_schoon: FastAPI) -> TestClient:
     """
     Synchronous test client for simple API tests.
 
     Note: For WebSocket tests, use async_client instead.
     """
-    app = create_app()
-    return TestClient(app)
+    return TestClient(app_schoon)
 
 
 @pytest.fixture
-async def async_client(mock_settings: Any) -> AsyncGenerator[AsyncClient]:
+async def async_client(mock_settings: Any, app_schoon: FastAPI) -> AsyncGenerator[AsyncClient]:
     """
     Async test client for WebSocket and async endpoint tests.
 
@@ -273,8 +293,7 @@ async def async_client(mock_settings: Any) -> AsyncGenerator[AsyncClient]:
             response = await async_client.get("/api/health")
             assert response.status_code == 200
     """
-    app = create_app()
-    transport = ASGITransport(app=app)
+    transport = ASGITransport(app=app_schoon)
     async with AsyncClient(transport=transport, base_url="http://test", timeout=30.0) as client:
         yield client
 
@@ -737,6 +756,112 @@ async def orm_db(_orm_db_url):
         await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     await dispose_engine()
+
+
+#: Fixtures that run against a real database (broad layer).
+BREDE_FIXTURES = frozenset({"orm_db", "migration_db", "_orm_db_url"})
+
+#: Test files that take >2 seconds each (real sops, age, kustomize, git, or scan the tree).
+#: Remake via: task test-inventaris; uv run python scripts/suite_inventory.py ... --above 2
+#: See docs/development/toetsen.md.
+BREDE_BESTANDEN = frozenset(
+    {
+        "test_actions_map.py",
+        "test_admin_diensten_toegang.py",
+        "test_api_endpoints.py",
+        "test_argo_repository_secrets.py",
+        "test_argocd_orphan_sweep.py",
+        "test_argocd_stuck_delete.py",
+        "test_argocd_trust_signing_key_tasks.py",
+        "test_asvs_zelfbeoordeling.py",
+        "test_attachment_delete_api.py",
+        "test_attachment_rollout_api.py",
+        "test_attachment_upload_api.py",
+        "test_backup_pod_credentials.py",
+        "test_backup_pod_templates.py",
+        "test_backup_scheduler.py",
+        "test_build_guard.py",
+        "test_check_key_file_precondition.py",
+        "test_client_error_page.py",
+        "test_clone_attempt_flag.py",
+        "test_clusterlijst_standaarddomein.py",
+        "test_cmp_zonder_exec.py",
+        "test_component_delete_api.py",
+        "test_component_values_manager.py",
+        "test_component_values_read_api.py",
+        "test_create_project_api.py",
+        "test_e2e_helpers.py",
+        "test_eigen_image_pins.py",
+        "test_empty_project_api_sweep.py",
+        "test_external_clone_source.py",
+        "test_gebruikerswens_resources.py",
+        "test_geen_geheim_in_een_logregel.py",
+        "test_geen_uitzondering_via_de_andere_deuren.py",
+        "test_get_all_usage_guard.py",
+        "test_git_http_credentials.py",
+        "test_git_push_rejection.py",
+        "test_git_repo.py",
+        "test_git_repo_authenticated_remote.py",
+        "test_goedkeuringsbesluit_alleen_via_goedkeuringsroute.py",
+        "test_invite_bestemming_meebewegend.py",
+        "test_invite_grenzen.py",
+        "test_key_rotation_project_round.py",
+        "test_keycloak_eigen_image.py",
+        "test_keycloak_master_admins_slaan_verificatie_over.py",
+        "test_keycloak_versiesprong.py",
+        "test_kind_registry.py",
+        "test_kubectl_connector.py",
+        "test_live_group_coverage.py",
+        "test_loop_watchdog.py",
+        "test_mock_settings_does_not_leak.py",
+        "test_niet_goedgekeurd_domein_adres.py",
+        "test_niets_schakelt_uit_op_image_pull.py",
+        "test_oom_watcher.py",
+        "test_opi_geen_pod_exec.py",
+        "test_opi_schone_tag_naar_productie.py",
+        "test_orm_database_opruiming.py",
+        "test_oud_local_cluster_weg.py",
+        "test_platformsleutel_als_bestand.py",
+        "test_probe_server.py",
+        "test_progress_step_texts.py",
+        "test_project_progress_page.py",
+        "test_project_schema_versions.py",
+        "test_projectsleutels_alleen_via_de_naad.py",
+        "test_publish_on_web_aanvraag_via_api.py",
+        "test_resource_history.py",
+        "test_resource_tuning_service.py",
+        "test_rotation_ci_wiring.py",
+        "test_sandbox_build_push.py",
+        "test_schema_migration.py",
+        "test_schrijvers_inventaris.py",
+        "test_schrijvers_tegen_het_schema.py",
+        "test_secret_file_keep_existing.py",
+        "test_secret_rotate.py",
+        "test_secret_scan.py",
+        "test_server_error_page.py",
+        "test_sops_filenames.py",
+        "test_sops_rotation_round.py",
+        "test_source_code_links.py",
+        "test_start_dicht.py",
+        "test_subdomein_check_endpoint.py",
+        "test_template_injection_sweep.py",
+        "test_test_images_follow_pins.py",
+        "test_typed_call_sites.py",
+        "test_v2_deployment_read.py",
+        "test_v2_flow.py",
+        "test_v2_responses.py",
+        "test_v2_router.py",
+        "test_voortgang_na_verwijderen.py",
+        "test_wizardtoken_eigenaar_en_project.py",
+        "test_zad_platform_whitelist_dekt_de_render.py",
+    }
+)
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Mark tests from the broad layer as wide (real database, slow files)."""
+    if BREDE_FIXTURES & set(getattr(item, "fixturenames", ())) or item.path.name in BREDE_BESTANDEN:
+        item.add_marker("wide")
 
 
 # --- Live voortgang van een lange run ------------------------------------------------

@@ -89,12 +89,10 @@ def client(
     mock_settings: Any,
     mock_task_service: AsyncMock,
     mock_auth_project_service: Any,
+    app_schoon: FastAPI,
 ) -> TestClient:
-    from opi.server import create_app
-
-    app: FastAPI = create_app()
-    app.state.task_service = mock_task_service
-    return TestClient(app)
+    app_schoon.state.task_service = mock_task_service
+    return TestClient(app_schoon)
 
 
 def _assert_accepted(response: Any, expected_task_type: str) -> None:

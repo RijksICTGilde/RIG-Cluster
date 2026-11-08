@@ -11,7 +11,12 @@
 - **Schrijf de gebruiker aan met "je", nooit met "u".** Dat geldt voor alles wat op het scherm komt: bevestigingen, meldingen, labels, hulpteksten en foutmeldingen. Het portaal is een gereedschap voor collega's, geen brief van de overheid aan een burger. Kom je "u" of "uw" tegen in bestaande tekst, zet het om.
 
 - Python imports must always be at the top of the file, never inline or local. Use `ruff check --select I --fix` to sort and organize imports, then `ruff format .` to format.
-- **Build fast, test locally.** Only run the tests for what you changed (`uv run pytest tests/<file> -x -q --tb=short`), never the full suite. The unit suite is ~10.300 tests and the browser suite ~600; running either in full costs minutes per attempt and is not your job - the full run happens once before the merge to main. Pick the files that cover your change; if you cannot name them, that is the signal your change lacks a test, not that you should run everything.
+- **Build fast, test locally.** Run the tests for what you changed, never the whole suite. `task test-changed` picks them for you (on the names in the changed files); naming them yourself with `uv run pytest tests/<file> -x -q --tb=short` is just as good. The layers and when each one runs are in `docs/development/toetsen.md`:
+  - **you** run `task test-changed`, and `task test` (the fast layer, a few minutes) when your change is broad;
+  - **the broad layer** (`task test-wide`, a real database and real binaries) and **the live groups** run once per task, in the phase before the merge, not in every round;
+  - the browser suite and the sandbox suite run where a task touches the portal.
+
+  If you cannot name the tests that cover your change, that is the signal your change lacks a test, not that you should run everything.
 - **Look at the screen for anything visual.** A green browser test does not prove a table renders as a table. Take a screenshot of what you built and judge it. This has been the cause of six reworks.
 - **Never sleep for a fixed period when you can wait for the condition.** A task whose tests take three minutes has taken two hours, and the difference was waiting, not working. `sleep 300` costs five minutes even when the thing was ready in ten seconds, and it costs another five when it was not. Wait on the thing itself:
   - `until <check>; do sleep 5; done` returns the moment the condition holds. Poll a *local* command every 5-15s - it costs nothing. A remote API with rate limits: 30s.

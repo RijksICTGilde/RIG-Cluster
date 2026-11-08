@@ -22,7 +22,7 @@ The goal: a reviewer should be able to see that every behaviour the PR changes i
 
 - **Lifecycle-affecting changes.** If the change alters how a project is provisioned, deployed, or torn down, prefer a live-sandbox test (`-m "e2e and sandbox"`) that drives it through the real UI/API and verifies the outcome against Forgejo and/or the cluster.
 
-- **Run what you touched.** Only run tests for changed files (`uv run pytest tests/<file> -x -q --tb=short`); never the full suite blindly. Coverage floor is 90%.
+- **Run what you touched.** Only run tests for changed files - `task test-changed`, or `uv run pytest tests/<file> -x -q --tb=short` for the files you name yourself; never the whole suite blindly. The fast layer (`task test`, a few minutes) is worth it when the PR is broad. The broad layer (`task test-wide`) and the live groups belong to the phase before the merge, not to every review round; `docs/development/toetsen.md` has the layers. Coverage floor is 90%.
 
 ## When something is missing
 
@@ -33,7 +33,7 @@ If a PR changes an endpoint, a project-file write, or a UI/wizard flow without a
 **Approve means the branch is mergeable.** That is a hard gate, not a judgement call:
 
 - `uv run ruff check .` clean, `uv run ruff format --check .` clean, `uv run pyright` clean.
-- The tests for what the PR touched pass (`uv run pytest tests/<file> -x -q --tb=short`). You do not need the full suite green - the cluster-dependent integration/e2e tests need a live sandbox and are out of scope for a plain review - but everything you *can* run for the changed code must pass.
+- The tests for what the PR touched pass (`task test-changed`, or `uv run pytest tests/<file> -x -q --tb=short`). You do not need the broad layer, the live groups or the e2e suite green - those need Docker or a live sandbox and belong to the phase before the merge - but everything you *can* run for the changed code must pass.
 
 A single lint error, type error, or failing touched-test is **red → rework**, never approve. Do not wave red checks through as "non-blocking" or "minor": if it isn't green, it isn't mergeable.
 

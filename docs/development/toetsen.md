@@ -9,15 +9,90 @@ Daarom vijf lagen. Kies de laagste laag die het gedrag echt meet.
 
 | Laag | Wat hij meet | Waar hij staat | Hoe je hem draait |
 |---|---|---|---|
-| unit | onze eigen logica: een beslissing, een naam, een vorm | `tests/test_*.py` | `uv run pytest tests/test_x.py` |
+| unit | onze eigen logica: een beslissing, een naam, een vorm | `tests/test_*.py` | `uv run pytest tests/test_x.py`, voor een bestand uit de brede laag met `-m wide` erbij |
 | live per afhankelijkheid | het contract met de ECHTE afhankelijkheid in de versie die productie draait | `tests/integration/test_*_live.py` | `task test-keycloak`, `task test-postgres`, `task test-minio`, `task test-forgejo`, `task test-kubernetes`, `task test-argocd` |
 | scenario | de ORDE van meerdere acties, met een invariant na elke stap | `tests/integration/test_*_scenarios.py` | dezelfde task als de groep |
 | het opstarten | de hele opstartvolgorde over ALLE afhankelijkheden tegelijk, in drie rondes | `tests/integration/test_startup_live.py` | `task test-startup` |
 | e2e | het portaal in een browser, en de sandbox | `tests/e2e/` | `uv run pytest tests/e2e -m "e2e and not sandbox"`, `task test-e2e-sandbox` |
 
-De standaardrun (`uv run pytest`) draait de unit-laag en de statische toetsen. De live
-groepen slaat hij over: **een groene standaardrun zegt niets over de live groepen.** In CI
-draait elke groep in zijn eigen job, en daar is "overgeslagen" een FOUT en geen skip.
+De standaardrun (`uv run pytest`, `task test`) draait de snelle helft van de unit-laag en
+de statische toetsen; de brede helft en de live groepen slaat hij over (zie de volgende
+paragraaf). Van de live groepen geldt: **een groene standaardrun zegt niets over de live
+groepen.** In CI draait elke groep in zijn eigen job, en daar is "overgeslagen" een FOUT en
+geen skip.
+
+## Wanneer welke laag draait
+
+De unit-laag is te groot geworden om altijd in zijn geheel te draaien: ruim 19.000 toetsen
+in meer dan 1000 bestanden, en een volledige run kost een half uur. Daarom is hij in twee
+gesplitst, met de marker `wide`.
+
+| Laag | Wat erin zit | Hoe je hem draait | Wanneer |
+|---|---|---|---|
+| **snel** | eigen logica, statische toetsen, renderen, HTTP-client zonder echte afhankelijkheid: 15.800 toetsen, **3 minuten 23** (gemeten 7 november 2026) | `task test` | lokaal tijdens het werk, en in elke gate |
+| **breed** (`wide`) | toetsen met echte database, en bestanden >2 seconden: 2978 toetsen in 10 minuten 28, plus de databasehelft die een Postgres in Docker vraagt | `task test-wide` | in CI op elke PR, en eenmaal vóór de merge |
+| **live groepen** | het contract met de echte afhankelijkheid | `task test-live-groepen` | op hun padfilters in CI, en als handstap vóór de merge |
+| **e2e** | het portaal in een browser, en de sandbox | `task test-e2e`, `task test-e2e-sandbox` | vóór een release, en waar een taak het portaal raakt |
+
+`task test-all` draait de snelle en de brede laag achter elkaar. In CI draaien ze samen, in
+vier shards (`.github/workflows/ci.yml`): het padfilter en de coverage-drempels gelden over
+beide lagen, dus een toets die naar de brede laag verhuist verdwijnt niet uit de dekking.
+
+De marker zet je niet met de hand: `tests/conftest.py` markeert als `wide` elke toets die
+`orm_db`, `migration_db` of `_orm_db_url` vraagt, plus elk bestand in `BREDE_BESTANDEN`.
+Die lijst is een MEETWAARDE: het zijn de bestanden die meer dan twee seconden kosten (een
+echte `sops`, `age`, `kustomize` of `git`, een scan over de hele boom, of simpelweg veel
+werk). Opnieuw maken na een meting:
+
+```bash
+task test-inventaris
+uv run python scripts/suite_inventory.py /tmp/zad-test-inventaris.xml --above 2
+```
+
+Een bestand dat om een ANDERE reden dan zijn duur in de brede laag hoort, zet zelf
+`pytestmark = pytest.mark.wide` bovenaan, met de reden erbij.
+
+**Tijdens het werk draai je niet de hele laag.** `task test-changed` kiest de toetsbestanden
+die bij je gewijzigde bestanden horen, op naam: een gewijzigde `opi/x/y.py` levert de
+toetsen die `opi.x.y` noemen. Dat is niet volledig bedoeld, want CI draait daarna de hele
+laag. Hij draait wel ALLE toetsen in de bestanden die hij kiest, ook de brede: een selectie
+zonder de brede helft meldt groen zonder te draaien wat ze noemt. Zit er een bestand met
+een echte database bij, dan heb je daar dus een Postgres in Docker voor nodig.
+
+## Wat er niet in de suite hoort
+
+De suite groeit harder dan wat hij meet. Deze vier soorten gaan eruit zodra je ze
+tegenkomt, en komen er niet in:
+
+- **Een constante tegen zichzelf.** Een toets die van een declaratie attribuut voor
+  attribuut herhaalt wat er staat (`assert EDITABLE.yaml_path == "deployments[*]/..."`)
+  faalt alleen als iemand de declaratie met opzet wijzigt, en zegt niets over gedrag. Meet
+  wat de declaratie DOET: wat het formulier rendert, of wat er in het projectbestand komt.
+  Een waarde die een afspraak met iets buiten ons is (een DNS-record, een veldnaam uit een
+  schema van het cluster) is géén constante tegen zichzelf: die hoort vast te liggen.
+- **Alleen een mock-aanroep**, terwijl een live groep of een scenario dat gedrag nu echt
+  meet. De indeling van de mock-zwaarste bestanden staat in de audit van RC-434 (PR #417):
+  wat de ORDE van een taak met mocks naspeelt, wordt door een scenario vervangen; wat een
+  vaste tekst of een beslissing meet, blijft.
+- **Dubbel.** Hetzelfde gedrag in een ticketbestand naast het modulebestand. Voeg samen in
+  het bestand dat bij de module hoort.
+- **Een achtergebleven script.** Een bestand in `tests/` dat `print` in plaats van `assert`
+  doet, of dat een port-forward naar een omgeving van jaren terug nodig heeft. Het kan niet
+  falen, dus het meet niets.
+
+Een module die dekking verliest doordat er een toets weg is, is een teken dat die toets wél
+iets mat: kijk dan opnieuw. De drempels in `.github/workflows/ci.yml` (71, en 86 voor de
+beveiligingskritische modules) gaan niet omlaag.
+
+## De inventaris
+
+`task test-inventaris` draait de unit-suite eenmaal met een junit-xml en maakt daar het
+overzicht van: per bestand het aantal toetsen, de duur, de soort en de module die het
+raakt, plus de verdeling van tijd en aantal over de soorten en de traagste bestanden. De
+soort komt uit wat het bestand gebruikt (`scripts/suite_inventory.py`), niet uit zijn naam.
+
+Het overzicht hoort op de PR en niet in de repo: het veroudert bij elke wijziging. Draai de
+task als je wilt weten waar de tijd heen gaat, niet per taak.
 
 ## Drie regels
 
