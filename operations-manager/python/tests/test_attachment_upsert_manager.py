@@ -68,7 +68,7 @@ def _wire(project_data: dict):
 def encrypt_call():
     """AGE encryption stubbed: it shells out, and what matters here is that it is called."""
     with patch(
-        "opi.manager.project_manager.encrypt_file_to_age_block_sync",
+        "opi.manager.project.attachment_mutations.encrypt_file_to_age_block_sync",
         side_effect=lambda raw, key: f"-----BEGIN AGE ENCRYPTED FILE-----\n{len(raw)}:{key[:8]}\n",
     ) as encrypt:
         yield encrypt

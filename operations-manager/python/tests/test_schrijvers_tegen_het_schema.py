@@ -499,7 +499,7 @@ async def test_een_registry_met_inloggegevens_blijft_geldig() -> None:
     """Het versleutelde wachtwoord moet ook door de AGE-patroonregel komen."""
     manager, save = _bedraad(_basis_project())
 
-    with patch("opi.manager.project_manager.encrypt_age_content", new=AsyncMock(return_value=AGE_BLOCK)):
+    with patch("opi.manager.project.registry_mutations.encrypt_age_content", new=AsyncMock(return_value=AGE_BLOCK)):
         result = await manager.upsert_registry_by_credentials("ghcr", "ghcr.io/rijksictgilde", "robot", "geheim")
 
     assert result["success"]
@@ -511,7 +511,7 @@ async def test_een_bijlage_blijft_geldig() -> None:
     """Bijlagen schrijven op twee plekken: de catalogus onder de dienst en het gebruik op de component."""
     manager, save = _bedraad(_basis_project())
 
-    with patch("opi.manager.project_manager.encrypt_file_to_age_block_sync", return_value=AGE_BLOCK):
+    with patch("opi.manager.project.attachment_mutations.encrypt_file_to_age_block_sync", return_value=AGE_BLOCK):
         result = await manager.upsert_attachment(
             attachment_id="ca-bundle",
             filename="ca-bundle.crt",

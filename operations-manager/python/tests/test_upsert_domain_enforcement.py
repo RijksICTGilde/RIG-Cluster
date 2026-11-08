@@ -16,6 +16,7 @@ gets made (see tests/test_publish_on_web_aanvraag_via_api.py).
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.manager.project.deployment_mutations import DeploymentMutations
 
 
 def _make_manager():
@@ -56,7 +57,7 @@ class TestEnforceDomainConfig:
         pm = _make_manager()
         data = _project("deployment.project", "rijksapps.nl")
         with patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is not None
         assert "punten" in error.lower()  # "ondersteunt geen punten in de domeinnaam"
 
@@ -67,7 +68,7 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_dot_format_on_dots_capable_domain_is_allowed(self):
@@ -77,14 +78,14 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=True),
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"custom.example.com"}),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_unknown_deployment_name_is_noop(self):
         pm = _make_manager()
         data = _project("deployment.project", "rijksapps.nl")
         with patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False):
-            error = await pm._enforce_domain_config(data, "does-not-exist")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "does-not-exist")
         assert error is None
 
     async def test_unapproved_literal_base_domain_becomes_a_request(self):
@@ -108,7 +109,7 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
 
             # Het is geen fout, maar het gaat ook niet ongemerkt langs: de enforcer ziet
             # het domein wel degelijk, en zegt er "op aanvraag" over.
@@ -127,7 +128,7 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_enforces_against_the_named_deployment_index(self):
@@ -145,9 +146,9 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
             # staging (index 0) uses a dash format -> valid
-            assert await pm._enforce_domain_config(data, "staging") is None
+            assert await DeploymentMutations(pm)._enforce_domain_config(data, "staging") is None
             # productie (index 1) uses a dot format on a dash-only domain -> rejected
-            assert await pm._enforce_domain_config(data, "productie") is not None
+            assert await DeploymentMutations(pm)._enforce_domain_config(data, "productie") is not None
 
     async def test_cluster_default_with_subdomain_skips_approval(self):
         """A cluster-default deployment (no base-domain) must not be validated against
@@ -176,7 +177,7 @@ class TestEnforceDomainConfig:
                 return_value=(False, "restricted"),
             ),
         ):
-            error = await pm._enforce_domain_config(data, "pr797")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "pr797")
         assert error is None
 
     async def test_dotted_subdomain_on_dash_only_domain_is_rejected(self):
@@ -194,7 +195,7 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is not None
         assert "punten in het subdomein" in error.lower()
 
@@ -211,7 +212,7 @@ class TestEnforceDomainConfig:
                 new=AsyncMock(return_value=None),
             ),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_leftover_dotted_subdomain_is_ignored_without_the_placeholder(self):
@@ -229,7 +230,7 @@ class TestEnforceDomainConfig:
             patch("opi.forms.editables.enforcers.get_domain_supports_dots", return_value=False),
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapps.nl"}),
         ):
-            error = await pm._enforce_domain_config(data, "productie")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "productie")
         assert error is None
 
     async def test_explicit_restricted_domain_subdomain_still_requires_approval(self):
@@ -258,7 +259,7 @@ class TestEnforceDomainConfig:
             ),
             patch("opi.forms.editables.enforcers.get_subdomain_status", return_value=None),
         ):
-            error = await pm._enforce_domain_config(data, "pr797")
+            error = await DeploymentMutations(pm)._enforce_domain_config(data, "pr797")
 
             with pytest.raises(FieldWarning) as raised:
                 await DomainConfigEnforcer(deployment_index=0).enforce(data, {"project_name": "regel-k4c"})

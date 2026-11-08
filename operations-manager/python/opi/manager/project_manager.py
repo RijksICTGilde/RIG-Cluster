@@ -26,10 +26,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import asyncpg
-from fastapi import HTTPException
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
-from ruamel.yaml.scalarstring import LiteralScalarString
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
@@ -45,7 +43,6 @@ from opi.connectors.git_repo import (
 )
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.connectors.subdomain import (
-    ensure_domain_requests,
     get_supported_base_domains,
     is_deployment_domain_approved,
     validate_bare_domain_allowed,
@@ -87,10 +84,8 @@ from opi.core.metrics import (
     rollout_phase,
     umbrella_refresh_lost_total,
 )
-from opi.core.project_environment import Omgeving, environment_markings, log_production_downgrades
-from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
 from opi.core.task_errors import TaskInputError
-from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
     CMP_ENV_NAME,
     CMP_ENV_PLAINTEXT_FILENAME,
@@ -100,18 +95,9 @@ from opi.generation.manifests import (
     cmp_env_rejection,
 )
 from opi.handlers.project_file_handler import (
-    USAGE_CERTIFICATE,
-    ComponentInUseError,
     ProjectFileHandler,
-    attachment_usage_sites,
-    ensure_attachment_data_list,
-    extract_attachment_catalog,
-    extract_component_attachment_uses,
     extract_service_names_from_component,
-    find_attachment_data_list,
     image_is_confirmed_absent,
-    remove_attachment_references,
-    remove_component,
 )
 from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SopsHandler
 from opi.manager.argo_manager import (
@@ -123,19 +109,22 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
-from opi.manager.clone_validation import derive_deployment_from_source, resolve_clone_source_deployment
-from opi.manager.project_validation import validate_component_references, validate_project_structure
+from opi.manager.project.attachment_mutations import AttachmentMutations
+from opi.manager.project.component_mutations import ComponentMutations
+from opi.manager.project.database_schema_mutations import DatabaseSchemaMutations
+from opi.manager.project.deployment_mutations import DeploymentMutations
+from opi.manager.project.registry_mutations import RegistryMutations
+from opi.manager.project.service_config_mutations import ServiceConfigMutations
+from opi.manager.project_validation import validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
-from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
-from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
+from opi.services import ServiceAdapter, ServiceType, VariableDefinition
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     describe_sync_waiting,
     terminate_stuck_operation,
 )
 from opi.services.catalog.base import (
-    ConfigLayer,
     DeploymentManifestContext,
     ManifestContext,
     ManifestContribution,
@@ -152,9 +141,7 @@ from opi.services.catalog.image_registries.resolution import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
-    custom_domain_certificate_note,
     get_domain_setting,
-    set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
@@ -162,24 +149,20 @@ from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
 from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
-from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_is_marked
+from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
 from opi.services.project_reconciliation_service import record_reconciliation
-from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
+from opi.services.project_store import get_project_store
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
     deployment_manifest_services,
-    generate_missing_values,
     manifest_services,
     project_manifest_services,
     provisioning_services,
 )
-from opi.services.services import deployment_index, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
-    encrypt_age_content,
-    encrypt_file_to_age_block_sync,
     get_decoded_project_private_key,
     get_project_public_key,
 )
@@ -229,12 +212,9 @@ from opi.utils.naming import (
 )
 from opi.utils.project_utils import (
     RESERVED_PROJECT_NAME_MESSAGE,
-    ComponentValidationError,
-    build_component_config,
     namespace_level_deployment,
     normalize_container_image,
     project_level_deployment,
-    validate_root_component,
 )
 from opi.utils.render_sources import path_inside_clone, require_allowed_render_source
 from opi.utils.secrets import (
@@ -253,10 +233,7 @@ from opi.utils.sops import (
     encrypt_to_sops_files_or_fail,
     sops_filenames,
 )
-from opi.utils.yaml_util import (
-    compiled_jsonpath,
-    find_value_by_jsonpath,
-)
+from opi.utils.yaml_util import compiled_jsonpath
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -7819,128 +7796,6 @@ class ProjectManager:
         except Exception as e:
             raise Exception(f"Error querying JSONPath '{json_path}'") from e
 
-    async def get_api_key(self) -> str:
-        """
-        Get and decrypt the project's API key.
-
-        Returns:
-            Decrypted API key
-        """
-        project_name = await self.get_name()
-        encrypted_api_key = await self._get_by_json_path("$.config.api-key")
-        if not encrypted_api_key:
-            raise ValueError(f"No api key found in project config for {project_name}")
-        private_key = await get_decoded_project_private_key(await self.get_contents(record_base=False))
-        decrypted_api_key = await decrypt_age_content(str(encrypted_api_key), private_key)
-        logger.debug(f"Successfully decrypted API key for project: {project_name}")
-        return decrypted_api_key
-
-    async def _enforce_domain_config(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
-        """Run the shared domain enforcer against an upserted deployment.
-
-        Reuses the wizard's ``DomainConfigEnforcer`` so the API enforces the
-        same cross-field domain rules — notably that a dot-separated URL format
-        requires a domain that supports dots (a dash-only ODCN domain with a
-        dot format produces an unreachable multi-label hostname).
-
-        A ``FieldWarning`` is NOT a violation, here no more than in the wizard. The
-        enforcer raises one for exactly one thing: a domain or subdomain that is on
-        request. This used to be a hard rejection, on the grounds that an API caller
-        cannot tick the wizard's "Domein aanvragen" checkbox -- but the consequence was
-        that the one path that would have created the request (``ensure_approval_requests``,
-        a few lines further on in every caller) was never reached, so asking for a domain
-        through the API could only fail. It is now the request itself that carries the
-        answer, and the caller reads back where it stands under ``approvals``.
-
-        Returns an error message on violation, or None when the config is valid.
-        """
-        index = deployment_index(project_data, deployment_name)
-        if index is None:
-            return None
-        try:
-            await DomainConfigEnforcer(deployment_index=index).enforce(
-                project_data, {"project_name": await self.get_name()}
-            )
-        except FieldWarning as e:
-            logger.info("Domain on request for deployment '%s': %s", deployment_name, e)
-        except ValueError as e:  # FieldError is a ValueError subclass
-            return str(e)
-        return None
-
-    @staticmethod
-    def _approval_notices(project_data: dict[str, Any], deployment_name: str | None) -> list[dict[str, Any]]:
-        """What the owner of ``deployment_name`` must be told about ungranted approvals.
-
-        Empty when the write named no deployment: the values that need approving are
-        deployment-level, so there is nothing to report about a project- or
-        component-level write. The sentences come from the services themselves
-        (``collect_deployment_approval_notices``), so the API says the same thing the
-        portal says about the same state.
-        """
-        if not deployment_name:
-            return []
-        deployment = next(
-            (
-                d
-                for d in project_data.get("deployments", [])
-                if isinstance(d, dict) and d.get("name") == deployment_name
-            ),
-            None,
-        )
-        if deployment is None:
-            return []
-        return list(collect_deployment_approval_notices(project_data, deployment))
-
-    @staticmethod
-    def _certificate_warnings(project_data: dict[str, Any], deployment_name: str) -> list[str]:
-        """What this write means for the deployment's certificate, if anything.
-
-        A warning and not an approval: ``approvals`` reports what is waiting for an
-        administrator, and this waits for nobody. It is also the state that BEGINS where
-        the approval notice ends -- a domain of the user's own on a cluster that cannot
-        issue for it stops being reported the moment an approver grants it, and that is
-        exactly when the certificate never appears (zad-cli, bevinding 22).
-
-        The sentence comes from publish-on-web, so the API says what the wizard's field
-        warning says about the same value.
-        """
-        deployment = next(
-            (
-                d
-                for d in project_data.get("deployments", [])
-                if isinstance(d, dict) and d.get("name") == deployment_name
-            ),
-            None,
-        )
-        if deployment is None:
-            return []
-        note = custom_domain_certificate_note(
-            settings.CLUSTER_MANAGER, get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-        )
-        return [note] if note else []
-
-    @staticmethod
-    def _config_advice_warnings(project_data: dict[str, Any]) -> list[str]:
-        """What this project now expects but does not have, after this write.
-
-        Same channel and same reasoning as ``_certificate_warnings``: nobody is waiting
-        on an administrator, so this is not an approval, and the project file is valid,
-        so it is not an error. It is a field that has become necessary because of a
-        setting somewhere else, and the sentence comes from the service that owns the
-        field, so the API says what the wizard's field warning says.
-
-        The whole project is judged, not only the block that was just written. The two
-        halves of an advice sit in two services, and either write can be the one that
-        makes it true -- switching keycloak's ``restrict-access`` on is as much the
-        moment as saving a roleless invite is.
-
-        Prefixed with the path so a caller knows which entry of a list is meant; the
-        message alone would name the same thing for every invite.
-        """
-        from opi.services.services import collect_config_advice
-
-        return [f"{notice.field_path}: {notice.message}" for notice in collect_config_advice(project_data)]
-
     async def upsert_deployment(
         self,
         deployment_name: str,
@@ -7953,419 +7808,18 @@ class ProjectManager:
         environment: str | None = None,
         actor: str | None = None,
     ) -> dict[str, Any]:
-        """Create or update a deployment, retrying a concurrent-edit conflict.
-
-        Busy projects (regelrecht pushes many image updates in seconds) make two
-        writers touch the same deployment at once. The store refuses to lose either
-        edit and raises ConflictError -- correct, but a single-shot upsert then failed
-        the task and leaned on the caller's pipeline to push again. Because each
-        attempt re-reads the freshest state via get_contents() and re-applies the image
-        change on top, a bounded retry resolves the conflict here instead. Only the
-        concurrent-edit conflict is retried; every other outcome returns as before.
-        """
-        for attempt in range(_UPSERT_CONFLICT_RETRIES):
-            try:
-                return await self._upsert_deployment_once(
-                    deployment_name,
-                    components,
-                    clone_from=clone_from,
-                    force_clone=force_clone,
-                    domain_format=domain_format,
-                    subdomain=subdomain,
-                    base_domain=base_domain,
-                    environment=environment,
-                    actor=actor,
-                )
-            except (ConflictError, ConcurrencyError) as e:
-                if attempt == _UPSERT_CONFLICT_RETRIES - 1:
-                    logger.warning(
-                        "Upsert of '%s' still conflicts after %d attempts; giving up",
-                        deployment_name,
-                        _UPSERT_CONFLICT_RETRIES,
-                    )
-                    return {
-                        "success": False,
-                        "created": False,
-                        "error": f"Error upserting deployment '{deployment_name}': {e}",
-                        "error_type": "conflict",
-                    }
-                logger.info(
-                    "Upsert of '%s' hit a concurrent edit (attempt %d/%d); re-reading and retrying",
-                    deployment_name,
-                    attempt + 1,
-                    _UPSERT_CONFLICT_RETRIES,
-                )
-        # Unreachable: the loop either returns a result or the final-attempt error.
-        return {"success": False, "created": False, "error": "upsert retry loop exhausted", "error_type": "conflict"}
-
-    async def _upsert_deployment_once(
-        self,
-        deployment_name: str,
-        components: list,  # ComponentReference objects from router
-        clone_from: str | None = None,
-        force_clone: bool = False,
-        domain_format: str | None = None,
-        subdomain: str | None = None,
-        base_domain: str | None = None,
-        environment: str | None = None,
-        actor: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Create or update a deployment in the project YAML file.
-
-        If the deployment doesn't exist, it will be created. If it exists, the component
-        images will be updated. The clone_from parameter is only used when creating a new
-        deployment, or when updating with force_clone set to true.
-
-        Args:
-            deployment_name: Name of the deployment
-            components: List of ComponentReference objects with reference and image
-            clone_from: Optional deployment name to clone configuration from (only on create or if force_clone)
-            force_clone: If true, use clone_from even when updating an existing deployment
-
-        Returns:
-            Dict with success status, created flag, and error details if applicable:
-            {"success": bool, "created": bool, "error": str | None, "error_type": str | None}
-        """
-        try:
-            # Get current project data
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            # Validate that all component references exist in the project.
-            # Bewust dubbel: het v2-endpoint doet dezelfde controle synchroon om een fout van
-            # de aanroeper als 400 terug te geven, maar tussen aanname en uitvoering van de
-            # taak kan het projectbestand veranderen, dus hier blijft het vangnet staan.
-            validation_result = self._validate_component_references(project_data, components, "deployment")
-            if not validation_result["success"]:
-                return {
-                    "success": False,
-                    "created": False,
-                    "error": validation_result["error"],
-                    "error_type": "invalid_component_references",
-                }
-
-            # De markeringen van VOOR deze wijziging, om een verlaging van productie te
-            # kunnen melden zodra de nieuwe staat er is.
-            environment_before = environment_markings(project_data)
-
-            # Check if deployment already exists
-            existing_deployments = await self.get_deployments(cluster_filter=False)
-            existing_deployment = None
-            existing_deployment_index = None
-            for idx, deployment in enumerate(existing_deployments):
-                if deployment.get("name") == deployment_name:
-                    existing_deployment = deployment
-                    existing_deployment_index = idx
-                    break
-
-            if existing_deployment:
-                # UPDATE existing deployment - only update component images
-                logger.info(f"Updating existing deployment '{deployment_name}' in project '{project_name}'")
-
-                # Collect commit-message parts while mutating: after the update the
-                # old image is gone from project_data, so comparing afterwards
-                # always sees "no change" and the commit message degrades to the
-                # generic "configuration".
-                change_parts: list[str] = []
-
-                # Find the deployment in project_data["deployments"] to update
-                for deployment in project_data["deployments"]:
-                    if deployment.get("name") == deployment_name:
-                        # Update images for existing components, add new ones
-                        existing_components = {c["reference"]: c for c in deployment.get("components", [])}
-
-                        normalized_warnings: list[str] = []
-                        for component in components:
-                            # Normalize image to lowercase (OCI spec requirement)
-                            normalized_image, was_normalized = normalize_container_image(component.image)
-                            if was_normalized:
-                                normalized_warnings.append(
-                                    f"Image for component '{component.reference}' was normalized to lowercase: "
-                                    f"'{component.image}' -> '{normalized_image}'"
-                                )
-
-                            if component.reference in existing_components:
-                                # Update existing component's image
-                                old_image = existing_components[component.reference].get("image", "")
-                                existing_components[component.reference]["image"] = normalized_image
-                                if old_image != normalized_image:
-                                    change_parts.append(f"{component.reference} image to {normalized_image}")
-                                logger.info(
-                                    f"Updated image for component '{component.reference}' to '{normalized_image}'"
-                                )
-                            else:
-                                # Add new component
-                                deployment["components"].append(
-                                    {"reference": component.reference, "image": normalized_image}
-                                )
-                                change_parts.append(f"add component {component.reference}")
-                                logger.info(
-                                    f"Added new component '{component.reference}' with image '{normalized_image}'"
-                                )
-
-                        if environment is not None:
-                            # .value: de v1-route geeft een enumlid door, en de YAML-dumper
-                            # kent alleen gewone strings.
-                            deployment["environment"] = Omgeving(environment).value
-
-                        # Update domain settings if provided
-                        if domain_format is not None:
-                            set_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT, domain_format)
-                        if subdomain is not None:
-                            set_domain_setting(deployment, DomainSetting.SUBDOMAIN, subdomain)
-                        if base_domain is not None:
-                            set_domain_setting(deployment, DomainSetting.BASE_DOMAIN, base_domain)
-
-                        # Handle clone_from only if force_clone is true
-                        if clone_from and force_clone:
-                            resolve_clone_source_deployment(project_data, clone_from, deployment_name)
-                            deployment["clone-from"] = {
-                                "type": "deployment",
-                                "reference": clone_from,
-                                "mode": "once",
-                            }
-                            logger.info(f"Setting clone-from to deployment '{clone_from}' (force_clone=true)")
-
-                        break
-
-                # Validate domain config when this call changes domain settings.
-                # Gated so image-only updates never fail on a deployment whose
-                # domain config predates this check.
-                if domain_format is not None or base_domain is not None or subdomain is not None:
-                    domain_error = await self._enforce_domain_config(project_data, deployment_name)
-                    if domain_error:
-                        return {
-                            "success": False,
-                            "created": False,
-                            "error": domain_error,
-                            "error_type": "domain_validation",
-                        }
-                    normalized_warnings.extend(self._certificate_warnings(project_data, deployment_name))
-
-                # An upsert rolls new content onto this deployment exactly as an image
-                # update does, so the services clear what they recorded about the old
-                # content through the same hook (RC-37). Only the components this call
-                # actually names.
-                upsert_deployment_dict = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
-                state_notices: list[str] = []
-                if upsert_deployment_dict is not None:
-                    state_notices = await run_redeploy_hooks(
-                        project_name,
-                        project_data,
-                        upsert_deployment_dict,
-                        [component.reference for component in components],
-                    )
-
-                # Ensure unapproved domains/subdomains get request entries
-                ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
-
-                # Build descriptive commit message (component parts were collected
-                # during the update loop, before the old values were overwritten)
-                if domain_format is not None:
-                    change_parts.append(f"domain-format to {domain_format}")
-                if subdomain is not None:
-                    change_parts.append(f"subdomain to {subdomain}")
-                if base_domain is not None:
-                    change_parts.append(f"base-domain to {base_domain}")
-                if environment is not None:
-                    change_parts.append(f"environment to {environment}")
-                if clone_from and force_clone:
-                    change_parts.append(f"clone-from {clone_from}")
-
-                details = ", ".join(change_parts) if change_parts else "configuration"
-                commit_message = f"Update deployment '{deployment_name}' in project '{project_name}': {details}"
-
-                # Validate (schema + structural) then save and commit through the single path
-                await self.save_and_commit_project(project_data, commit_message)
-
-                # Na de opslag: weigert die de wijziging, dan is er niets verlaagd.
-                log_production_downgrades(
-                    environment_before,
-                    environment_markings(project_data),
-                    project_name=project_name,
-                    actor=actor or "de API",
-                )
-
-                logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
-                result: dict[str, Any] = {
-                    "success": True,
-                    "created": False,
-                    "error": None,
-                    "error_type": None,
-                    "approvals": self._approval_notices(project_data, deployment_name),
-                }
-                if normalized_warnings:
-                    result["warnings"] = normalized_warnings
-                if state_notices:
-                    result["state_cleared"] = state_notices
-                return result
-
-            else:
-                # CREATE new deployment
-                logger.info(f"Creating new deployment '{deployment_name}' in project '{project_name}'")
-
-                # Create new deployment object
-                new_deployment: dict[str, Any] = {"name": deployment_name, "components": []}
-                if environment is not None:
-                    new_deployment["environment"] = Omgeving(environment).value
-
-                # Apply domain settings if provided. Kept as a mapping because the clone
-                # path has to write them a second time: the copy from the source lands on
-                # the same service block these go into.
-                requested_domain_settings: dict[DomainSetting, str] = {}
-                if domain_format:
-                    requested_domain_settings[DomainSetting.DOMAIN_FORMAT] = domain_format
-                if subdomain:
-                    requested_domain_settings[DomainSetting.SUBDOMAIN] = subdomain
-                if base_domain:
-                    requested_domain_settings[DomainSetting.BASE_DOMAIN] = base_domain
-                for setting, setting_value in requested_domain_settings.items():
-                    set_domain_setting(new_deployment, setting, setting_value)
-
-                # Convert components from router objects to dict format
-                normalized_warnings_create: list[str] = []
-                for component in components:
-                    # Normalize image to lowercase (OCI spec requirement)
-                    normalized_image, was_normalized = normalize_container_image(component.image)
-                    if was_normalized:
-                        normalized_warnings_create.append(
-                            f"Image for component '{component.reference}' was normalized to lowercase: "
-                            f"'{component.image}' -> '{normalized_image}'"
-                        )
-                    new_deployment["components"].append({"reference": component.reference, "image": normalized_image})
-
-                # Handle clone-from logic for new deployments
-                if clone_from:
-                    # Exact name match, like the provisioning guard: a jsonpath filter built
-                    # from the reference also matched crafted values, which then got written.
-                    source_deployment = Project(project_data).find("deployments", name=clone_from)
-
-                    if source_deployment:
-                        logger.info(f"Cloning deployment configuration from '{clone_from}'")
-
-                        # One derivation for every path that builds a deployment out of an
-                        # existing one: the upsert here, and the restore to a new
-                        # deployment. The components stay out of it, because the images
-                        # come from this request.
-                        new_deployment.update(
-                            derive_deployment_from_source(source_deployment, deployment_name, requested_domain_settings)
-                        )
-
-                        # Set clone-from in dict format for proper status tracking
-                        new_deployment["clone-from"] = {
-                            "type": "deployment",
-                            "reference": clone_from,
-                            "mode": "once",
-                        }
-                    else:
-                        raise ValueError(f"Source deployment '{clone_from}' not found in project '{project_name}'")
-
-                # Assume missing parameters from project configuration
-                if not new_deployment.get("cluster"):
-                    # Use clusters from project root configuration
-                    project_clusters = project_data.get("clusters", [])
-                    if len(project_clusters) == 1:
-                        new_deployment["cluster"] = project_clusters[0]
-                    elif len(project_clusters) > 1:
-                        logger.error(
-                            f"Multiple clusters defined in project '{project_name}': {project_clusters}. Cluster must be specified explicitly for new deployment."
-                        )
-                        return {
-                            "success": False,
-                            "created": False,
-                            "error": "Multiple clusters defined, cluster must be specified explicitly",
-                            "error_type": "ambiguous_cluster",
-                        }
-
-                if not new_deployment.get("namespace"):
-                    # Use project name as namespace (common pattern)
-                    new_deployment["namespace"] = project_name
-
-                if not new_deployment.get("repository"):
-                    # Use repositories from project configuration
-                    repositories = project_data.get("repositories", [])
-                    if len(repositories) == 1:
-                        new_deployment["repository"] = repositories[0]["name"]
-                    elif len(repositories) > 1:
-                        repo_names = [repo["name"] for repo in repositories]
-                        error_msg = f"Multiple repositories defined in project '{project_name}': {repo_names}. Repository must be specified explicitly for new deployment."
-                        logger.error(error_msg)
-                        return {
-                            "success": False,
-                            "created": False,
-                            "error": error_msg,
-                            "error_type": "ambiguous_repository",
-                        }
-                    else:
-                        error_msg = "No repositories found in project configuration"
-                        logger.error(error_msg)
-                        return {"success": False, "created": False, "error": error_msg, "error_type": "no_repositories"}
-
-                # Add the new deployment to the project data. A project created through
-                # POST /api/v2/projects has no `deployments` key at all -- there is
-                # nothing to roll out yet -- so the first deployment added to it must
-                # create the list rather than assume one (RC-66).
-                project_data.setdefault("deployments", []).append(new_deployment)
-
-                # Validate domain config when this call sets domain settings.
-                if domain_format is not None or base_domain is not None or subdomain is not None:
-                    domain_error = await self._enforce_domain_config(project_data, deployment_name)
-                    if domain_error:
-                        return {
-                            "success": False,
-                            "created": False,
-                            "error": domain_error,
-                            "error_type": "domain_validation",
-                        }
-                    normalized_warnings_create.extend(self._certificate_warnings(project_data, deployment_name))
-
-                # Ensure unapproved domains/subdomains get request entries
-                ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
-
-                # Creating a deployment rolls content onto it just as an update does, so
-                # the services get the same moment (RC-37). There is no earlier state to
-                # clear here -- the clone drops it -- but the hook is also where a service
-                # sets what a rollout implies: sleep-mode starts the sleep clock at this
-                # commit instead of leaving the new deployment for the next sweep.
-                state_notices_create = await run_redeploy_hooks(
-                    project_name,
-                    project_data,
-                    new_deployment,
-                    [component.reference for component in components],
-                )
-
-                commit_message = f"Add deployment '{deployment_name}' to project '{project_name}'"
-                if clone_from:
-                    commit_message += f" (cloned from '{clone_from}')"
-
-                # Validate (schema + structural) then save and commit through the single path
-                await self.save_and_commit_project(project_data, commit_message)
-
-                logger.info(f"Successfully created deployment '{deployment_name}' in project '{project_name}'")
-                result_create: dict[str, Any] = {
-                    "success": True,
-                    "created": True,
-                    "error": None,
-                    "error_type": None,
-                    "approvals": self._approval_notices(project_data, deployment_name),
-                }
-                if normalized_warnings_create:
-                    result_create["warnings"] = normalized_warnings_create
-                if state_notices_create:
-                    result_create["state_cleared"] = state_notices_create
-                return result_create
-
-        except ConflictError, ConcurrencyError:
-            # Retried by upsert_deployment on a fresh read. Must propagate, not become a
-            # generic error dict, or the retry never sees it.
-            raise
-        except Exception as e:
-            error_msg = f"Error upserting deployment '{deployment_name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "created": False, "error": error_msg, "error_type": "internal_error"}
+        """Create or update a deployment, retrying a concurrent-edit conflict."""
+        return await DeploymentMutations(self).upsert_deployment(
+            deployment_name,
+            components,
+            clone_from=clone_from,
+            force_clone=force_clone,
+            domain_format=domain_format,
+            subdomain=subdomain,
+            base_domain=base_domain,
+            environment=environment,
+            actor=actor,
+        )
 
     async def add_component(
         self,
@@ -8385,230 +7839,28 @@ class ProjectManager:
         aliases: str | None = None,
         root: bool = False,
     ) -> dict[str, Any]:
-        """
-        Add a new component definition to the project and reference it in specified deployments.
-
-        Args:
-            name: Component name (must be K8s-compliant and unique within the project)
-            image: Container image URL
-            deployment_names: Deployments to add this component to (must already exist)
-            component_type: Component type (e.g. "single", "frontend", "backend")
-            description: Free text saying what the component does (None leaves it out)
-            port: Inbound port (None for background workers that don't serve HTTP)
-            path: Ingress path (only relevant if publish-on-web is in services)
-            rewrite: Path the ingress rewrites `path` to before the request reaches the
-                container (None keeps the path unchanged)
-            services: Component's services list (e.g. ["postgresql-database"])
-            cpu_limit: CPU limit (e.g. "500m")
-            memory_limit: Memory limit (e.g. "512Mi")
-            env_vars: User environment variables in KEY=value format (will be AGE-encrypted)
-            aliases: YAML string of alias definitions (e.g. "DATABASE_URL: $HOST:$PORT/$DB_NAME")
-            root: Whether this is the root component (nice-url mode)
-
-        Returns:
-            Result dict with success status, component config, and deployments updated
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            # Validate component name is unique
-            existing_components = project_data.get("components", [])
-            for comp in existing_components:
-                if comp.get("name") == name:
-                    return {
-                        "success": False,
-                        "error": f"Component '{name}' already exists in project '{project_name}'",
-                        "error_type": "duplicate_component",
-                    }
-
-            # Validate all deployment_names exist
-            existing_deployments = project_data.get("deployments", [])
-            existing_deployment_names = {d.get("name") for d in existing_deployments}
-            invalid_deployments = [d for d in deployment_names if d not in existing_deployment_names]
-            if invalid_deployments:
-                return {
-                    "success": False,
-                    "error": f"Deployments not found: {invalid_deployments}",
-                    "error_type": "invalid_deployments",
-                }
-
-            # Validate root component constraints per target deployment
-            for deployment in existing_deployments:
-                dep_name = deployment.get("name")
-                if dep_name not in deployment_names:
-                    continue
-
-                if root:
-                    dep_component_names = [
-                        c.get("reference") for c in deployment.get("components", []) if c.get("reference")
-                    ]
-                    try:
-                        validate_root_component(
-                            name,
-                            [*dep_component_names, name],
-                            get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT),
-                        )
-                    except ComponentValidationError as e:
-                        return {
-                            "success": False,
-                            "error": str(e),
-                            "error_type": "validation_error",
-                        }
-
-            # A service the project has not selected is added here when the service allows
-            # it (RC-84), and refused with a message naming it when it needs a project-level
-            # decision first. The write goes through save_and_commit_project below, like
-            # every other change to the project file.
-            if services:
-                try:
-                    ServiceAdapter.ensure_project_selection(project_data, *services)
-                except ServiceValidationError as e:
-                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
-
-            # Normalize the image, if there is one. The image lives on the deployment
-            # reference and nowhere else -- build_component_config below does not carry it --
-            # so defining a component without attaching it anywhere needs no image at all.
-            warnings: list[str] = []
-            normalized_image = ""
-            if image:
-                normalized_image, was_normalized = normalize_container_image(image)
-                if was_normalized:
-                    warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
-
-            # Build component config using shared function
-            public_key = get_project_public_key(project_data)
-            try:
-                component_config = await build_component_config(
-                    name=name,
-                    description=description,
-                    component_type=component_type,
-                    port=port,
-                    ports=ports,
-                    path=path,
-                    rewrite=rewrite,
-                    services=services or [],
-                    cpu_limit=cpu_limit,
-                    memory_limit=memory_limit,
-                    env_vars=env_vars,
-                    aliases=aliases,
-                    public_key=public_key,
-                )
-            except (ComponentValidationError, ValueError) as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "error_type": "validation_error",
-                }
-
-            # Add component to project
-            if "components" not in project_data:
-                project_data["components"] = []
-            project_data["components"].append(component_config)
-
-            # Add component reference to specified deployments
-            deployments_updated = []
-            for deployment in existing_deployments:
-                dep_name = deployment.get("name")
-                if dep_name in deployment_names:
-                    existing_refs = {c.get("reference") for c in deployment.get("components", [])}
-                    if name not in existing_refs:
-                        ref: dict[str, Any] = {"reference": name, "image": normalized_image}
-                        deployment.setdefault("components", []).append(ref)
-                        if root:
-                            set_domain_setting(deployment, DomainSetting.ROOT_COMPONENT, name)
-                        deployments_updated.append(dep_name)
-
-            # Validate (schema + structural) then save and commit through the single path
-            commit_message = f"Add component '{name}' to project '{project_name}'"
-            if deployments_updated:
-                commit_message += f" (deployments: {', '.join(deployments_updated)})"
-            await self.save_and_commit_project(project_data, commit_message)
-
-            logger.info(f"Successfully added component '{name}' to project '{project_name}'")
-            result: dict[str, Any] = {
-                "success": True,
-                "component": component_config,
-                "deployments_updated": deployments_updated,
-            }
-            if warnings:
-                result["warnings"] = warnings
-            return result
-
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            # User-input validation failure: expected, surfaced to the caller. Log once
-            # at WARNING (not exception/ERROR) so a bad component request does not page
-            # ops. The validator no longer self-logs, so this is the single log line.
-            logger.warning("Component '%s' rejected by project validation: %s", name, e)
-            return {"success": False, "error": str(e), "error_type": "validation_error"}
-        except Exception as e:
-            error_msg = f"Error adding component '{name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Add a component definition and reference it in the named deployments."""
+        return await ComponentMutations(self).add_component(
+            name,
+            image,
+            deployment_names,
+            component_type,
+            description,
+            port,
+            ports,
+            path,
+            rewrite,
+            services,
+            cpu_limit,
+            memory_limit,
+            env_vars,
+            aliases,
+            root,
+        )
 
     async def delete_component(self, component_name: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
-        """Remove a component definition from the project.
-
-        Mirrors add_component's read-mutate-save-commit lifecycle so the deletion goes through
-        the single ProjectManager path (fresh contents from Git, save, commit+push). It never
-        builds the commit from the in-memory cache, which could lag behind Git and silently
-        overwrite components added since the cache was last refreshed.
-
-        By default it refuses a component that is still referenced -- with ``used_by`` naming
-        every place -- so the caller can show what the deletion would break instead of only
-        hearing "no". ``confirm_in_use`` is the caller saying "I have seen that list and I
-        want it gone anyway": every deployment entry and every ``uses-components`` mention is
-        dropped together with the definition, in a single save, because a reference left
-        pointing at a component that no longer exists makes the project file invalid. Same
-        shape, same flag name and the same reasoning as ``remove_attachment`` (RC-52).
-
-        One case is refused even with the confirmation: a component a deployment's web address
-        is built around (``root-component`` or ``expose-component-on-bare-domain``). There is
-        no reference to remove there without also deciding how that site should be served
-        instead, and that is not a decision this call gets to make.
-
-        The rule itself lives in ``remove_component``; the components modal removes a
-        component through the same function, so there is one implementation of it.
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            components = project_data.get("components", []) or []
-            if not any(isinstance(c, dict) and c.get("name") == component_name for c in components):
-                return {
-                    "success": False,
-                    "error": f"Component '{component_name}' niet gevonden",
-                    "error_type": "not_found",
-                }
-
-            try:
-                uncoupled = remove_component(project_data, component_name, confirm_in_use=confirm_in_use)
-            except ComponentInUseError as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "error_type": "in_use",
-                    "used_by": [site.as_dict() for site in e.sites],
-                }
-
-            where = f" and removed from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
-            await self.save_and_commit_project(
-                project_data, f"Remove component '{component_name}' from project '{project_name}'{where}"
-            )
-
-            logger.info(f"Successfully removed component '{component_name}' from project '{project_name}'{where}")
-            return {"success": True, "uncoupled_from": [site.as_dict() for site in uncoupled]}
-
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            # The save is the check that a cleanup left no reference behind: a dangling
-            # reference is exactly what validate_component_references rejects here.
-            logger.warning("Component '%s' removal rejected by project validation: %s", component_name, e)
-            return {"success": False, "error": str(e), "error_type": "validation_error"}
-        except Exception as e:
-            error_msg = f"Error removing component '{component_name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Remove a component definition from the project."""
+        return await ComponentMutations(self).delete_component(component_name, confirm_in_use=confirm_in_use)
 
     async def update_component(
         self,
@@ -8625,221 +7877,25 @@ class ProjectManager:
         cpu_limit: str | None = None,
         memory_limit: str | None = None,
     ) -> dict[str, Any]:
-        """Update fields of an existing component (partial update).
-
-        Only the provided (non-None) fields are changed; the rest are left as-is. Mirrors
-        delete_component's read-mutate-save-commit lifecycle so the change goes through the
-        single ProjectManager path (fresh contents from Git, schema + structural validation
-        in save_and_commit_project, commit+push). No cache in the mutate-commit path.
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            components = project_data.get("components", []) or []
-            component = next((c for c in components if isinstance(c, dict) and c.get("name") == name), None)
-            if component is None:
-                return {
-                    "success": False,
-                    "error": f"Component '{name}' niet gevonden",
-                    "error_type": "not_found",
-                }
-
-            warnings: list[str] = []
-
-            # Empty string removes the field; None leaves the current value unchanged.
-            if description is not None:
-                if description:
-                    component["description"] = description
-                else:
-                    component.pop("description", None)
-
-            if image is not None:
-                normalized_image, was_normalized = normalize_container_image(image)
-                if was_normalized:
-                    warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
-                component["image"] = normalized_image
-
-            # ports (array) replaces the inbound list wholesale, including [] to clear it
-            # (no default fallback). port (singular) only sets the primary/first port and
-            # keeps any extra ports. They are mutually exclusive (enforced by the request model).
-            if ports is not None:
-                port_block = component.setdefault("ports", {})
-                port_block["inbound"] = ports
-                port_block.setdefault("outbound", [80, 443])
-            elif port is not None:
-                port_block = component.setdefault("ports", {})
-                inbound = list(port_block.get("inbound") or [])
-                if inbound:
-                    inbound[0] = port
-                else:
-                    inbound = [port]
-                port_block["inbound"] = inbound
-                port_block.setdefault("outbound", [80, 443])
-
-            # match and rewrite are two halves of one path entry, so each is written into
-            # the entry that is already there instead of replacing it: updating only the
-            # rewrite must leave the match alone, and the other way round.
-            if path is not None or rewrite:
-                existing = component.get("path")
-                if isinstance(existing, list) and existing and isinstance(existing[0], dict):
-                    entry = dict(existing[0])
-                elif isinstance(existing, str):
-                    entry = {"match": existing}
-                else:
-                    entry = {}
-                if path is not None:
-                    entry["match"] = path
-                if rewrite:
-                    entry["rewrite"] = rewrite
-                entry.setdefault("match", "/")
-                component["path"] = [entry]
-
-            if services is not None:
-                # As in add_component: a service that may enrol itself is added at project
-                # level here (RC-84), one that may not is refused by name.
-                try:
-                    ServiceAdapter.ensure_project_selection(project_data, *services)
-                except ServiceValidationError as e:
-                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
-                component["services"] = ServiceAdapter.merge_component_service_entries(
-                    component.get("services") or [], services
-                )
-            elif remove_services:
-                # Component-local only: the entry leaves with its config; the project-level
-                # selection stays (another component may still use the service).
-                try:
-                    ServiceAdapter.parse_services_from_strings(remove_services)
-                except ServiceValidationError as e:
-                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
-                removed = set(remove_services)
-                component["services"] = [
-                    entry for entry in component.get("services") or [] if service_entry_name(entry) not in removed
-                ]
-                if add_services:
-                    try:
-                        ServiceAdapter.ensure_project_selection(project_data, *add_services)
-                    except ServiceValidationError as e:
-                        return {"success": False, "error": str(e), "error_type": "invalid_services"}
-                    existing_names = set(
-                        ServiceAdapter.extract_service_names_from_project_services(component["services"])
-                    )
-                    component["services"].extend(
-                        ServiceAdapter.build_component_service_entries(
-                            [svc for svc in add_services if svc not in existing_names]
-                        )
-                    )
-            elif add_services:
-                try:
-                    ServiceAdapter.ensure_project_selection(project_data, *add_services)
-                except ServiceValidationError as e:
-                    return {"success": False, "error": str(e), "error_type": "invalid_services"}
-                existing_entries = component.get("services") or []
-                existing_names = set(ServiceAdapter.extract_service_names_from_project_services(existing_entries))
-                component["services"] = existing_entries + ServiceAdapter.build_component_service_entries(
-                    [svc for svc in add_services if svc not in existing_names]
-                )
-
-            if cpu_limit is not None or memory_limit is not None:
-                # Through the shared user-intent path: a limit set here has to beat any
-                # override the tuner wrote for this component, and be remembered as the
-                # user's own value (RC-141). The API knows limits only, never requests.
-                self._project_file_handler.apply_user_resource_intent(
-                    project_data,
-                    name,
-                    {"limits_cpu": cpu_limit, "limits_memory": memory_limit},
-                    origin="api",
-                )
-
-            await self.save_and_commit_project(project_data, f"Update component '{name}' in project '{project_name}'")
-
-            logger.info(f"Successfully updated component '{name}' in project '{project_name}'")
-            result: dict[str, Any] = {"success": True, "component": component}
-            if warnings:
-                result["warnings"] = warnings
-            return result
-
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            logger.warning("Component '%s' update rejected by project validation: %s", name, e)
-            return {"success": False, "error": str(e), "error_type": "validation_error"}
-        except Exception as e:
-            error_msg = f"Error updating component '{name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Update fields of an existing component (partial update)."""
+        return await ComponentMutations(self).update_component(
+            name,
+            description,
+            image,
+            port,
+            ports,
+            path,
+            rewrite,
+            services,
+            add_services,
+            remove_services,
+            cpu_limit,
+            memory_limit,
+        )
 
     async def remove_attachment(self, attachment_id: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
-        """Remove an attachment from the project's catalog.
-
-        Idempotent (already-absent is a no-op success) and, by default, refuses removal
-        while the attachment is still referenced -- with ``used_by`` naming every place
-        that references it, so the caller can show what it would be breaking instead of
-        only hearing "no".
-
-        ``confirm_in_use`` is the caller saying "I know it is in use and I want it gone
-        anyway". It then becomes one cleanup: every component and deployment-component
-        coupling is dropped along with the catalog entry, in a single save, because a
-        reference left pointing at a deleted id makes the project file invalid. The flag is
-        named for the *acknowledgement* rather than for the effect (a ``force`` says only
-        that something was overridden, not what was known) -- the same reasoning behind
-        ``rollout=false``.
-
-        One case is refused even with the confirmation: an attachment serving as a
-        publish-on-web certificate (``tls: provided``). There is no reference to remove
-        there without also deciding how the site should be served instead, and quietly
-        moving a site off its own certificate is not a decision this call gets to make.
-
-        Uses the single ProjectManager path: fresh contents from Git, save, commit and
-        push, with no cache in the mutate-commit path.
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            data = find_attachment_data_list(project_data.get("services"))
-            if data is None or not any(isinstance(e, dict) and e.get("id") == attachment_id for e in data):
-                return {"success": True, "changed": False}
-
-            sites = attachment_usage_sites(project_data).get(attachment_id, [])
-            certificates = [site for site in sites if site.kind == USAGE_CERTIFICATE]
-            if sites and (not confirm_in_use or certificates):
-                if certificates:
-                    reason = (
-                        f"Bijlage '{attachment_id}' wordt als certificaat gebruikt door: "
-                        f"{', '.join(site.label for site in certificates)}. Wijzig eerst de TLS-modus daar; "
-                        "een certificaat kan niet zomaar worden losgekoppeld."
-                    )
-                else:
-                    reason = (
-                        f"Bijlage '{attachment_id}' is in gebruik door: "
-                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
-                    )
-                return {
-                    "success": False,
-                    "error": reason,
-                    "error_type": "in_use",
-                    "used_by": [site.as_dict() for site in sites],
-                }
-
-            uncoupled = remove_attachment_references(project_data, attachment_id) if sites else []
-            data[:] = [e for e in data if not (isinstance(e, dict) and e.get("id") == attachment_id)]
-
-            where = f" and uncoupled from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
-            await self.save_and_commit_project(
-                project_data, f"Remove attachment '{attachment_id}' from project '{project_name}'{where}"
-            )
-
-            logger.info(f"Removed attachment '{attachment_id}' from project '{project_name}'{where}")
-            return {"success": True, "changed": True, "uncoupled_from": [site.as_dict() for site in uncoupled]}
-
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            # The save is the check that a cleanup left no reference behind: a dangling
-            # reference is exactly what validate_attachment_references rejects here.
-            logger.warning("Attachment '%s' removal rejected by project validation: %s", attachment_id, e)
-            return {"success": False, "error": str(e), "error_type": "validation_error"}
-        except Exception as e:
-            error_msg = f"Error removing attachment '{attachment_id}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Remove an attachment from the project's catalog."""
+        return await AttachmentMutations(self).remove_attachment(attachment_id, confirm_in_use=confirm_in_use)
 
     async def upsert_attachment(
         self,
@@ -8852,223 +7908,20 @@ class ProjectManager:
         component_name: str | None = None,
         binding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Put one attachment in the project's catalog, optionally bound to a component.
+        """Put one attachment in the project's catalog, optionally bound to a component."""
+        return await AttachmentMutations(self).upsert_attachment(
+            attachment_id,
+            filename,
+            content,
+            on_existing=on_existing,
+            on_absent=on_absent,
+            component_name=component_name,
+            binding=binding,
+        )
 
-        The write side of the attachments service's DEFINE role: the file is encrypted
-        with the project's AGE public key and stored in the catalog under
-        ``attachment_id``. With ``component_name`` and ``binding`` the same call also
-        records the component's *use* of it (which attachment) and its *binding* (as a
-        file at a path, or as an env-var), so "upload and couple" is one request rather
-        than two that can half-fail.
-
-        ``on_existing`` / ``on_absent`` carry the verb's promise (see
-        ``services/catalog/actions.py``): ``reject`` refuses, ``replace`` overwrites
-        without asking, ``create`` adds. Replacing is deliberately silent -- the caller
-        asked for an upsert -- and that is exactly why only the upsert verb passes
-        ``replace`` with an absent-id ``create``.
-
-        Without ``content`` the caller referenced an attachment that is already in the
-        catalog: nothing is encrypted and the catalog entry is left untouched, only the
-        component's use of it is written. The verb's promise then applies to *that
-        coupling*, because that is what the request creates or changes -- the catalog
-        entry has to exist either way, or the reference points at nothing.
-
-        Uses the single ProjectManager path: fresh contents from Git, mutate, save and
-        commit, so the catalog model and the coupling checks run before anything lands.
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            catalog = extract_attachment_catalog(project_data)
-            exists = attachment_id in catalog
-            if content is None:
-                # Reference only: the entry has to be there, and the verb's promise is
-                # about the coupling this request writes, not about the catalog.
-                if not exists:
-                    return {
-                        "success": False,
-                        "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
-                        "error_type": "not_found",
-                    }
-            elif exists and on_existing == "reject":
-                return {
-                    "success": False,
-                    "error": f"Bijlage '{attachment_id}' bestaat al in project '{project_name}'",
-                    "error_type": "conflict",
-                }
-            elif not exists and on_absent == "reject":
-                return {
-                    "success": False,
-                    "error": f"Bijlage '{attachment_id}' bestaat niet in project '{project_name}'",
-                    "error_type": "not_found",
-                }
-
-            public_key = (project_data.get("config") or {}).get("age-public-key")
-            if content is not None and not public_key:
-                # Fail closed rather than store the bytes unencrypted: the catalog is
-                # committed to the projects repository, and attachments are certificates.
-                return {
-                    "success": False,
-                    "error": f"Project '{project_name}' heeft geen AGE-publieke sleutel",
-                    "error_type": "no_encryption_key",
-                }
-
-            if component_name and not any(
-                isinstance(c, dict) and c.get("name") == component_name
-                for c in project_data.get("components", []) or []
-            ):
-                return {
-                    "success": False,
-                    "error": f"Component '{component_name}' bestaat niet in project '{project_name}'",
-                    "error_type": "not_found",
-                }
-
-            # The service must be selected on the project (and on the component, when one
-            # is named) or the reference has nothing to resolve against.
-            ServiceAdapter.add_services_to_project(
-                project_data, [ServiceType.ATTACHMENTS.value], [component_name] if component_name else None
-            )
-
-            if content is not None:
-                data_list = ensure_attachment_data_list(project_data.setdefault("services", []))
-                entry = {
-                    "id": attachment_id,
-                    "filename": filename,
-                    "content": LiteralScalarString(encrypt_file_to_age_block_sync(content, public_key)),
-                }
-                for index, existing in enumerate(data_list):
-                    if isinstance(existing, dict) and existing.get("id") == attachment_id:
-                        data_list[index] = entry
-                        break
-                else:
-                    data_list.append(entry)
-
-            coupled = False
-            if component_name and binding:
-                component = next(
-                    c for c in project_data["components"] if isinstance(c, dict) and c.get("name") == component_name
-                )
-                uses = [
-                    use for use in extract_component_attachment_uses(component) if use.get("reference") != attachment_id
-                ]
-                coupled = len(uses) != len(extract_component_attachment_uses(component))
-                if content is None:
-                    # Nothing is written yet, so refusing here leaves the project as it was.
-                    if coupled and on_existing == "reject":
-                        return {
-                            "success": False,
-                            "error": (
-                                f"Component '{component_name}' gebruikt bijlage '{attachment_id}' al in "
-                                f"project '{project_name}'"
-                            ),
-                            "error_type": "conflict",
-                        }
-                    if not coupled and on_absent == "reject":
-                        return {
-                            "success": False,
-                            "error": (
-                                f"Component '{component_name}' gebruikt bijlage '{attachment_id}' niet in "
-                                f"project '{project_name}'"
-                            ),
-                            "error_type": "not_found",
-                        }
-                uses.append({"reference": attachment_id, **binding})
-                ServiceAdapter.set_service_config(
-                    project_data,
-                    ServiceType.ATTACHMENTS.value,
-                    ConfigLayer.COMPONENT,
-                    uses,
-                    component_name=component_name,
-                )
-
-            where = f" and coupled to component '{component_name}'" if component_name and binding else ""
-            what = "Couple attachment" if content is None else "Upsert attachment"
-            try:
-                await self.save_and_commit_project(
-                    project_data, f"{what} '{attachment_id}' in project '{project_name}'{where}"
-                )
-            except (ProjectSchemaError, ProjectIntegrityError) as e:
-                return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-            logger.info(f"{what} '{attachment_id}' in project '{project_name}'{where}")
-            return {
-                "success": True,
-                "attachment": attachment_id,
-                "replaced": coupled if content is None else exists,
-                "component": component_name,
-            }
-
-        except Exception as e:
-            error_msg = f"Error upserting attachment '{attachment_id}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
-
-    @staticmethod
-    def _add_service_commit_message(project_name: str, service_name: str, result: dict[str, Any]) -> str:
-        """Name in the commit what actually changed, selection and binding apart."""
-        parts: list[str] = []
-        if result["services_added"]:
-            parts.append(f"add service(s) {', '.join(result['services_added'])}")
-        if result["components_updated"]:
-            parts.append(f"bind '{service_name}' to component(s) {', '.join(result['components_updated'])}")
-        return f"{'; '.join(parts).capitalize()} in project '{project_name}'"
-
-    async def add_service(
-        self,
-        service_name: str,
-        component_names: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Add a service to the project's services list.
-
-        The service (and any auto-resolved dependencies) is added at the
-        project level.  Optionally, the listed components' ``services``
-        lists are updated as well.
-
-        Args:
-            service_name: Service to add (e.g. ``"postgresql-database"``).
-            component_names: Optional component names whose ``services``
-                lists should also be updated.
-
-        Returns:
-            Result dict with ``success``, ``services_added``,
-            ``services_skipped``, ``components_updated``, and ``warnings``.
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            try:
-                result = ServiceAdapter.add_services_to_project(project_data, [service_name], component_names)
-            except ServiceValidationError as e:
-                error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
-                return {"success": False, "error": str(e), "error_type": error_type}
-
-            # Persist whenever the project data changed. Binding an already-selected
-            # service to a component IS a change: gating on services_added alone threw
-            # that mutation away while the response still reported the component as
-            # updated, which is the ordinary second call (configure, then bind).
-            if result["services_added"] or result["components_updated"]:
-                # De dienst aanzetten IS de aanvraag, op deze weg net zo goed als in
-                # configure_service en in het portaal -- deze route sloeg hem over, dus
-                # een via de API aangezette goedkeuringsplichtige dienst vroeg nooit iets.
-                ensure_approval_requests(project_data)
-                commit_message = self._add_service_commit_message(project_name, service_name, result)
-                await self.save_and_commit_project(project_data, commit_message)
-
-            logger.info(
-                f"Add service '{service_name}' to project '{project_name}': "
-                f"added={result['services_added']}, skipped={result['services_skipped']}, "
-                f"components={result['components_updated']}"
-            )
-
-            return {"success": True, **result}
-
-        except Exception as e:
-            error_msg = f"Error adding service '{service_name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+    async def add_service(self, service_name: str, component_names: list[str] | None = None) -> dict[str, Any]:
+        """Select a service on the project, and optionally bind it to components."""
+        return await ServiceConfigMutations(self).add_service(service_name, component_names)
 
     async def configure_service(
         self,
@@ -9079,71 +7932,10 @@ class ProjectManager:
         component_name: str | None = None,
         deployment_name: str | None = None,
     ) -> dict[str, Any]:
-        """Upsert one service's config block at a target layer, then persist.
-
-        The write itself is the pure ``ServiceAdapter.set_service_config``; this
-        method resolves the target, ensures the service is selected, and commits
-        through ``save_and_commit_project`` -- the single validated write path. A
-        config the service's model rejects surfaces as ``validation_error`` carrying
-        the chokepoint's message (which lists the accepted fields), so the same
-        guard the wizard hits also guards the API. ``target`` is a ``ConfigLayer``
-        value (``project`` / ``component`` / ``deployment`` / ``deployment-component``).
-        """
-        from opi.services.catalog.base import ConfigLayer
-
-        try:
-            layer = ConfigLayer(target)
-        except ValueError:
-            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
-
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            try:
-                ServiceAdapter.set_service_config(
-                    project_data,
-                    service_name,
-                    layer,
-                    config,
-                    component_name=component_name,
-                    deployment_name=deployment_name,
-                )
-            except ServiceValidationError as e:
-                return {"success": False, "error": str(e), "error_type": "invalid_target"}
-
-            # Wat de schrijver leeg liet en de dienst zelf invult -- vandaag een
-            # uitnodigingssleutel. De portal deed dit al via post_merge; deze weg deed het
-            # niet, dus een via de API aangemaakte uitnodiging hield de lege string en had
-            # een link waar niemand iets mee kon.
-            generated = generate_missing_values(project_data)
-
-            # Domeinen en subdomeinen zijn op aanvraag, en deze weg kon er een claimen
-            # zonder de aanvraag te doen: de config werd geschreven, er kwam geen ingress
-            # op het gevraagde adres en niets vertelde de client waarom. Dit is dezelfde
-            # aanvraag die de portal maakt, in hetzelfde blok, voor dezelfde beheerder.
-            ensure_approval_requests(project_data)
-
-            commit_message = f"Configure service '{service_name}' at {target} target in project '{project_name}'"
-            try:
-                await self.save_and_commit_project(project_data, commit_message)
-            except (ProjectSchemaError, ProjectIntegrityError) as e:
-                return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-            logger.info(f"Configured service '{service_name}' at {target} target in project '{project_name}'")
-            return {
-                "success": True,
-                "service": service_name,
-                "target": target,
-                "generated": generated,
-                "approvals": self._approval_notices(project_data, deployment_name),
-                "warnings": self._config_advice_warnings(project_data),
-            }
-
-        except Exception as e:
-            error_msg = f"Error configuring service '{service_name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Upsert one service's config block at a target layer, then persist."""
+        return await ServiceConfigMutations(self).configure_service(
+            service_name, target, config, component_name=component_name, deployment_name=deployment_name
+        )
 
     async def clear_service_config(
         self,
@@ -9153,46 +7945,10 @@ class ProjectManager:
         component_name: str | None = None,
         deployment_name: str | None = None,
     ) -> dict[str, Any]:
-        """Remove one service's config at a target layer (demote to bare string).
-
-        Idempotent: removing config that is not there is a success no-op and, per
-        the logging rule, writes nothing to the log. Only a real change commits and
-        logs one INFO line.
-        """
-        from opi.services.catalog.base import ConfigLayer
-
-        try:
-            layer = ConfigLayer(target)
-        except ValueError:
-            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
-
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            try:
-                removed = ServiceAdapter.remove_service_config(
-                    project_data, service_name, layer, component_name=component_name, deployment_name=deployment_name
-                )
-            except ServiceValidationError as e:
-                return {"success": False, "error": str(e), "error_type": "invalid_target"}
-
-            if not removed:
-                return {"success": True, "service": service_name, "target": target, "removed": False}
-
-            commit_message = f"Clear service '{service_name}' config at {target} target in project '{project_name}'"
-            try:
-                await self.save_and_commit_project(project_data, commit_message)
-            except (ProjectSchemaError, ProjectIntegrityError) as e:
-                return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-            logger.info(f"Cleared service '{service_name}' config at {target} target in project '{project_name}'")
-            return {"success": True, "service": service_name, "target": target, "removed": True}
-
-        except Exception as e:
-            error_msg = f"Error clearing service '{service_name}' config: {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Remove one service's config at a target layer (demote to bare string)."""
+        return await ServiceConfigMutations(self).clear_service_config(
+            service_name, target, component_name=component_name, deployment_name=deployment_name
+        )
 
     async def patch_service_config_list(
         self,
@@ -9205,66 +7961,16 @@ class ProjectManager:
         component_name: str | None = None,
         deployment_name: str | None = None,
     ) -> dict[str, Any]:
-        """Add/update/remove items in one list of a service's config, then persist.
-
-        The merge itself is the pure ``ServiceAdapter.patch_service_config_list``: only
-        the named items change, on the freshly read project file, so a caller that
-        adjusts one storage mount, attachment coupling, invite, access rule or sleep-mode
-        pattern never rewrites the rest (and cannot silently drop them). ``list_field``
-        names the list inside an object-shaped config and is ``None`` when the config
-        itself is the list. Commits through ``save_and_commit_project`` like every write.
-        Even a full no-op commits nothing extra -- an unchanged file is an unchanged
-        push, and the counts in the result tell which run it was.
-        """
-        from opi.services.catalog.base import ConfigLayer
-
-        try:
-            layer = ConfigLayer(target)
-        except ValueError:
-            return {"success": False, "error": f"Unknown target '{target}'", "error_type": "invalid_target"}
-
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            try:
-                counts = ServiceAdapter.patch_service_config_list(
-                    project_data,
-                    service_name,
-                    layer,
-                    add=add,
-                    remove=remove,
-                    list_field=list_field,
-                    component_name=component_name,
-                    deployment_name=deployment_name,
-                )
-            except ServiceValidationError as e:
-                return {"success": False, "error": str(e), "error_type": "invalid_target"}
-
-            # Een toegevoegde entry kan net zo goed een lege uitnodigingssleutel dragen
-            # als een hele config dat kan; zie configure_service.
-            generated = generate_missing_values(project_data)
-
-            commit_message = f"Patch service '{service_name}' config at {target} target in project '{project_name}'"
-            try:
-                await self.save_and_commit_project(project_data, commit_message)
-            except (ProjectSchemaError, ProjectIntegrityError) as e:
-                return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-            logger.info(f"Patched service '{service_name}' config at {target} target in project '{project_name}'")
-            return {
-                "success": True,
-                "service": service_name,
-                "target": target,
-                "generated": generated,
-                "warnings": self._config_advice_warnings(project_data),
-                **counts,
-            }
-
-        except Exception as e:
-            error_msg = f"Error patching service '{service_name}' config: {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Add/update/remove items in one list of a service's config, then persist."""
+        return await ServiceConfigMutations(self).patch_service_config_list(
+            service_name,
+            target,
+            add=add,
+            remove=remove,
+            list_field=list_field,
+            component_name=component_name,
+            deployment_name=deployment_name,
+        )
 
     async def manage_database_schemas(
         self,
@@ -9274,107 +7980,10 @@ class ProjectManager:
         description: str = "",
         forget: bool = False,
     ) -> dict[str, Any]:
-        """Add or remove one extra database schema without resending the rest of the config (RC-59).
-
-        The schema list is the one part of a service config where "write the whole block
-        back with one entry less" is dangerous. RC-17 decided that a schema leaving the
-        list does **not** mean its data may go: removing it marks it, so the schema and its
-        contents stay and only the variable stops being offered. But marking is a field a
-        user ticks, not a consequence of dropping a line -- so a client that rewrites the
-        config with one schema fewer silently loses that protection, and a client that
-        knows only the request schema has no way to know it was there.
-
-        This method is that protection, moved to where it cannot be skipped:
-
-        * ``add`` puts a new schema in the list. A postfix that is already there and active
-          is a conflict; one that is there but marked comes back (its data was never
-          removed, so restoring it is the whole point of marking rather than dropping).
-        * ``remove`` marks. The schema and its data stay in PostgreSQL, and the entry stays
-          in the project file recording that it exists.
-        * ``remove`` with ``forget`` takes the entry out of the file. The data still stays
-          in PostgreSQL -- nothing here ever drops a schema -- but the project no longer
-          records that the schema exists, so it cannot be brought back through the API.
-
-        Uniqueness, the 63-character limit on the full name and collisions with the
-        variables the database service already exposes are NOT re-checked here: they are
-        enforced at save time, by the same chokepoint the wizard hits, and surface as
-        ``validation_error``.
-        """
-        service_name = ServiceType.POSTGRESQL_DATABASE.value
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            view = Project(project_data)
-            if not view.uses_service(service_name):
-                return {
-                    "success": False,
-                    "error": f"Project '{project_name}' gebruikt de dienst '{service_name}' niet",
-                    "error_type": "not_found",
-                }
-
-            raw_config = view.service_config(service_name)
-            config: dict[str, Any] = copy.deepcopy(raw_config) if isinstance(raw_config, dict) else {}
-            entries: list[dict[str, Any]] = list(config.get("schemas") or [])
-            index = next((i for i, entry in enumerate(entries) if entry.get("postfix") == postfix), None)
-
-            if operation == "add":
-                if index is None:
-                    entries.append({"postfix": postfix, "description": description})
-                    outcome = {"created": True, "restored": False}
-                elif not schema_is_marked(entries[index]):
-                    return {
-                        "success": False,
-                        "error": f"Schema '{postfix}' bestaat al in dit project",
-                        "error_type": "conflict",
-                    }
-                else:
-                    entry = dict(entries[index])
-                    entry.pop("marked-for-deletion", None)
-                    entry.pop("marked_for_deletion", None)
-                    if description:
-                        entry["description"] = description
-                    entries[index] = entry
-                    outcome = {"created": False, "restored": True}
-            elif operation == "remove":
-                if index is None:
-                    return {
-                        "success": False,
-                        "error": f"Schema '{postfix}' bestaat niet in dit project",
-                        "error_type": "not_found",
-                    }
-                if forget:
-                    entries.pop(index)
-                    outcome = {"marked": False, "forgotten": True}
-                elif schema_is_marked(entries[index]):
-                    # Already on its way out: nothing to write, and saying so is better
-                    # than a commit that changes nothing.
-                    return {"success": True, "changed": False, "marked": True, "forgotten": False}
-                else:
-                    entries[index] = {**entries[index], "marked-for-deletion": True}
-                    outcome = {"marked": True, "forgotten": False}
-            else:
-                return {"success": False, "error": f"Unknown operation '{operation}'", "error_type": "invalid_request"}
-
-            config["schemas"] = entries
-            try:
-                ServiceAdapter.set_service_config(project_data, service_name, ConfigLayer.PROJECT, config)
-            except ServiceValidationError as e:
-                return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-            commit_message = f"{operation.capitalize()} database schema '{postfix}' in project '{project_name}'"
-            try:
-                await self.save_and_commit_project(project_data, commit_message)
-            except (ProjectSchemaError, ProjectIntegrityError) as e:
-                return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-            logger.info("Schema '%s' %s in project '%s'", postfix, operation, project_name)
-            return {"success": True, "changed": True, **outcome}
-
-        except Exception as e:
-            error_msg = f"Error managing database schema '{postfix}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
+        """Add or remove one extra database schema without resending the rest of the config (RC-59)."""
+        return await DatabaseSchemaMutations(self).manage_database_schemas(
+            operation, postfix, description=description, forget=forget
+        )
 
     async def set_component_values(
         self,
@@ -9387,85 +7996,16 @@ class ProjectManager:
         values: dict[str, str] | None = None,
         keys: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Add, patch, delete or clear the values a service owns on one component (RC-55).
-
-        The sibling of ``configure_service`` for the two services that own a plain
-        component property instead of a block in a ``services:`` list. The whole
-        decrypt -> mutate -> re-encrypt round trip happens inside the change function so
-        it runs against the freshest committed file, and re-runs against whatever landed
-        if someone else pushed first -- a block ciphertext computed before the read would
-        otherwise drop the other writer's entries.
-
-        Returns ``changed=False`` when the resulting values equal what is already stored.
-        AGE is not deterministic, so re-encrypting an unchanged set would produce a
-        different ciphertext and therefore a commit per call; comparing after decryption
-        is the only comparison that means anything here.
-        """
-        from opi.services.catalog.base import ConfigLayer
-        from opi.services.component_values import (
-            ValuesOperation,
-            apply_operation,
-            encode,
-            locate,
-            validate_value_for_storage,
+        """Add, patch, delete or clear the values a service owns on one component (RC-55)."""
+        return await ServiceConfigMutations(self).set_component_values(
+            service_name,
+            layer,
+            operation,
+            component_name=component_name,
+            deployment_name=deployment_name,
+            values=values,
+            keys=keys,
         )
-        from opi.services.registry import get_service
-        from opi.services.services_enums import ServiceType
-
-        service = get_service(ServiceType(service_name))
-        owned_property = service.owned_property
-        if not service.owned_values_map or owned_property is None:  # pragma: no cover - guarded by the API
-            return {
-                "success": False,
-                "error": f"Service '{service_name}' owns no values",
-                "error_type": "invalid_target",
-            }
-        config_layer = ConfigLayer(layer)
-        values_operation = ValuesOperation(operation)
-        try:
-            for key, value in (values or {}).items():
-                # The API refuses these too, with a 422. Repeated here because this is the
-                # write path: a value the storage form normalises would differ from what is
-                # stored on every read, so the no-op check below could never be true again.
-                validate_value_for_storage(key, value)
-                # And the service's own rule on its values: an alias must point at a
-                # platform variable that exists (RC-66, bevinding 5).
-                service.validate_owned_value(key, value)
-        except ComponentValuesError as e:
-            return {"success": False, "error": str(e), "error_type": "invalid_values"}
-
-        def mutator(project_data: dict[str, Any]) -> dict[str, Any] | None:
-            node = locate(project_data, config_layer, component_name, deployment_name)
-            if node is None:
-                raise ComponentValuesError(
-                    f"Component '{component_name}' bestaat niet"
-                    + (f" in deployment '{deployment_name}'" if deployment_name else "")
-                    + "."
-                )
-            current = decode_component_values(node.get(owned_property), project_data)
-            updated = apply_operation(current, values_operation, values=values, keys=keys)
-            if updated == current:
-                return None
-            encoded = encode(updated, project_data)
-            if encoded is None:
-                node.pop(owned_property, None)
-            else:
-                node[owned_property] = encoded
-            return project_data
-
-        where = f"component '{component_name}'" + (f" in deployment '{deployment_name}'" if deployment_name else "")
-        commit_message = f"{operation.capitalize()} {service_name} values on {where}"
-        try:
-            committed = await self.mutate_and_commit_project(mutator, commit_message)
-        except ComponentValuesError as e:
-            return {"success": False, "error": str(e), "error_type": "invalid_values"}
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            return {"success": False, "error": str(e), "error_type": "validation_error"}
-
-        if committed:
-            # The names are not secret and are what makes this line useful; the values are.
-            logger.info("Applied %s of %s values on %s", operation, service_name, where)
-        return {"success": True, "service": service_name, "target": layer, "changed": committed}
 
     async def add_component_to_deployment(
         self,
@@ -9473,193 +8013,18 @@ class ProjectManager:
         component_name: str,
         image: str,
     ) -> dict[str, Any]:
-        """
-        Add an existing component to a deployment that doesn't yet include it.
+        """Add an existing component to a deployment that does not yet include it."""
+        return await ComponentMutations(self).add_component_to_deployment(deployment_name, component_name, image)
 
-        Args:
-            deployment_name: Name of the target deployment
-            component_name: Name of an existing component in the project
-            image: Container image URL for this deployment
-
-        Returns:
-            Result dict with success status and component reference added
-        """
-        try:
-            project_data = await self.get_contents()
-            project_name = await self.get_name()
-
-            # Validate deployment exists
-            existing_deployments = project_data.get("deployments", [])
-            target_deployment = None
-            for deployment in existing_deployments:
-                if deployment.get("name") == deployment_name:
-                    target_deployment = deployment
-                    break
-
-            if target_deployment is None:
-                return {
-                    "success": False,
-                    "error": f"Deployment '{deployment_name}' not found in project '{project_name}'",
-                    "error_type": "deployment_not_found",
-                }
-
-            # Validate component exists in project
-            existing_components = project_data.get("components", [])
-            component_def = None
-            for comp in existing_components:
-                if comp.get("name") == component_name:
-                    component_def = comp
-                    break
-
-            if component_def is None:
-                return {
-                    "success": False,
-                    "error": f"Component '{component_name}' not found in project '{project_name}'",
-                    "error_type": "component_not_found",
-                }
-
-            # Validate component is not already in this deployment
-            existing_refs = {c.get("reference") for c in target_deployment.get("components", [])}
-            if component_name in existing_refs:
-                return {
-                    "success": False,
-                    "error": f"Component '{component_name}' is already in deployment '{deployment_name}'",
-                    "error_type": "duplicate_component_in_deployment",
-                }
-
-            # Normalize image
-            normalized_image, was_normalized = normalize_container_image(image)
-            warnings: list[str] = []
-            if was_normalized:
-                warnings.append(f"Image was normalized to lowercase: '{image}' -> '{normalized_image}'")
-
-            # Add component reference to the deployment
-            component_ref: dict[str, Any] = {"reference": component_name, "image": normalized_image}
-            target_deployment.setdefault("components", []).append(component_ref)
-
-            # Validate (schema + structural) then save and commit through the single path
-            commit_message = (
-                f"Add component '{component_name}' to deployment '{deployment_name}' in project '{project_name}'"
-            )
-            await self.save_and_commit_project(project_data, commit_message)
-
-            logger.info(
-                f"Successfully added component '{component_name}' to deployment '{deployment_name}' "
-                f"in project '{project_name}'"
-            )
-            result: dict[str, Any] = {
-                "success": True,
-                "component_reference": component_ref,
-            }
-            if warnings:
-                result["warnings"] = warnings
-            return result
-
-        except Exception as e:
-            error_msg = f"Error adding component '{component_name}' to deployment '{deployment_name}': {e}"
-            logger.exception(error_msg)
-            return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
-
-    def _upsert_registry_entry(self, project_data: dict[str, Any], entry: dict[str, Any]) -> bool:
-        """Schrijf een registry in de config van de dienst image-registries. True als nieuw."""
-        service_name = ServiceType.IMAGE_REGISTRIES.value
-        project = Project(project_data)
-        config = project.service_config(service_name)
-        registries = list(config.get("registries", [])) if isinstance(config, dict) else []
-
-        created = True
-        for index, existing in enumerate(registries):
-            if isinstance(existing, dict) and existing.get("name") == entry["name"]:
-                registries[index] = entry
-                created = False
-                break
-        else:
-            registries.append(entry)
-
-        project.set(
-            f"services/{service_name}/config",
-            {**(config if isinstance(config, dict) else {}), "registries": registries},
-        )
-        return created
-
-    async def upsert_registry_by_secret(
-        self,
-        name: str,
-        url: str,
-        secret_name: str,
-    ) -> dict[str, Any]:
-        """
-        Add or update a registry that references a pre-existing Kubernetes secret.
-
-        Args:
-            name: Unique registry identifier
-            url: Registry URL (without protocol, may include path)
-            secret_name: Name of an existing kubernetes.io/dockerconfigjson secret
-
-        Returns:
-            Result dict with success status and whether it was created or updated
-        """
-        project_data = await self.get_contents()
-        project_name = await self.get_name()
-
-        registry_entry = {"name": name, "upstream": url, "secretName": secret_name}
-        created = self._upsert_registry_entry(project_data, registry_entry)
-
-        action = "Add" if created else "Update"
-        await self.save_and_commit_project(
-            project_data, f"{action} registry '{name}' (secretName) in project '{project_name}'"
-        )
-
-        logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
-        return {"success": True, "created": created, "registry": registry_entry}
+    async def upsert_registry_by_secret(self, name: str, url: str, secret_name: str) -> dict[str, Any]:
+        """Add or update a registry that references a pre-existing Kubernetes secret."""
+        return await RegistryMutations(self).upsert_registry_by_secret(name, url, secret_name)
 
     async def upsert_registry_by_credentials(
-        self,
-        name: str,
-        url: str,
-        username: str | None,
-        password: str,
+        self, name: str, url: str, username: str | None, password: str
     ) -> dict[str, Any]:
-        """
-        Add or update a registry with username/password credentials.
-
-        The password is AGE-encrypted with the project's public key before storing.
-
-        Args:
-            name: Unique registry identifier
-            url: Registry URL (without protocol, may include path)
-            username: Registry username or token name; omitted from the entry when empty,
-                so the project file carries only what the caller supplied (RC-187)
-            password: Registry password or token (will be AGE-encrypted)
-
-        Returns:
-            Result dict with success status and whether it was created or updated
-        """
-        project_data = await self.get_contents()
-        project_name = await self.get_name()
-
-        public_key = get_project_public_key(project_data)
-        if not public_key:
-            return {
-                "success": False,
-                "error": "Project has no AGE public key configured",
-                "error_type": "missing_public_key",
-            }
-
-        encrypted_password = LiteralScalarString(await encrypt_age_content(password, public_key))
-
-        registry_entry: dict[str, Any] = {"name": name, "upstream": url, "password": encrypted_password}
-        if username:
-            registry_entry["username"] = username
-        created = self._upsert_registry_entry(project_data, registry_entry)
-
-        action = "Add" if created else "Update"
-        await self.save_and_commit_project(
-            project_data, f"{action} registry '{name}' (credentials) in project '{project_name}'"
-        )
-
-        logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
-        return {"success": True, "created": created, "registry": {"name": name, "upstream": url, "username": username}}
+        """Add or update a registry with username/password credentials."""
+        return await RegistryMutations(self).upsert_registry_by_credentials(name, url, username, password)
 
     async def update_image_and_regenerate(
         self,
@@ -9914,46 +8279,6 @@ class ProjectManager:
 
         logger.info(f"Image update completed successfully: {result}")
         return result
-
-    def _validate_component_references(
-        self, project_data: dict, components: list, context: str = "deployment"
-    ) -> dict[str, Any]:
-        """
-        Validate that all component references exist in the project.
-
-        Args:
-            project_data: The project data containing component definitions
-            components: List of ComponentReference objects or dicts with 'reference' key
-            context: Context for error messages (e.g. "deployment", "update")
-
-        Returns:
-            Dict with validation result: {"success": bool, "error": str | None, "invalid_references": list | None}
-        """
-        return validate_component_references(project_data, components, context)
-
-    async def find_value_by_jsonpath(self, json_path: str, default: Any = None) -> Any:
-        """
-        Retrieve a specific value from project configuration using JSONPath.
-
-        This method provides a reusable way to extract any value from the project YAML
-        using JSONPath expressions like 'config.api-key' or 'deployments[0].cluster'.
-
-        Args:
-            json_path: JSONPath expression to extract the value
-            default: Default value to return if path not found
-
-        Returns:
-            The extracted value or default if not found
-
-        Raises:
-            HTTPException: If project not found or parsing fails
-        """
-        try:
-            project_data = await self.get_contents()
-            return find_value_by_jsonpath(project_data, json_path, default)
-        except Exception as e:
-            logger.exception(f"Error extracting value from project at path '{json_path}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error extracting project value: {e!s}")
 
     # Manual external cloning methods (for direct API operations)
     async def clone_database_from_external_with_tunnel(

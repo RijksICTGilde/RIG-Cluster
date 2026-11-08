@@ -41,6 +41,7 @@ import pytest
 from opi.api.openapi_choices import CHOICES_SOURCE_KEY, annotate_config_choices
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
+from opi.manager.project.deployment_mutations import DeploymentMutations
 from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
 from opi.services.catalog.publish_on_web.config_model import PublishOnWebDeploymentConfig
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
@@ -170,7 +171,7 @@ class TestApiWeg:
 
             manager = ProjectManager()
             manager.get_name = AsyncMock(return_value="demo")
-            error = await manager._enforce_domain_config(_project(ONZIN), "productie")
+            error = await DeploymentMutations(manager)._enforce_domain_config(_project(ONZIN), "productie")
 
         assert error is not None
         assert ONZIN in error
@@ -192,7 +193,9 @@ class TestApiWeg:
 
             manager = ProjectManager()
             manager.get_name = AsyncMock(return_value="demo")
-            error = await manager._enforce_domain_config(_project("component-deployment-project"), "productie")
+            error = await DeploymentMutations(manager)._enforce_domain_config(
+                _project("component-deployment-project"), "productie"
+            )
 
         assert error is None
 

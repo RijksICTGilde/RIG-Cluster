@@ -33,6 +33,7 @@ import pytest
 from fastapi.testclient import TestClient
 from opi.api.v2.models import ApprovalNoticeResponse, ApprovalNoticeStatus
 from opi.connectors.subdomain import get_domains_config
+from opi.manager.project.deployment_mutations import DeploymentMutations
 from opi.services.approvals import collect_approval_items, collect_deployment_approval_notices
 from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.base import ConfigLayer
@@ -41,6 +42,21 @@ from opi.services.project_store import GitProjectStore
 from opi.services.registry import SERVICES
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+
+
+@pytest.fixture(autouse=True)
+def _accept_component_references():
+    """The project fixtures here name components the project itself does not define.
+
+    The stub used to sit on the manager instance; since RC-443 the validator lives on
+    DeploymentMutations, one object further, so an instance stub would silently stop
+    reaching it.
+    """
+    with patch.object(
+        DeploymentMutations, "_validate_component_references", return_value={"success": True, "error": None}
+    ):
+        yield
+
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -103,7 +119,6 @@ def _wire(pm, project_data: dict[str, Any]) -> AsyncMock:
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value="demo")
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
-    pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
     save = AsyncMock()
     pm.save_and_commit_project = save
     return save

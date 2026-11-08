@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opi.core.config import settings
+from opi.manager.project.deployment_mutations import DeploymentMutations, DeploymentUpsertRequest
 from opi.manager.project_manager import ProjectManager
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, STATE_SLEEPING, SleepState, read, write
 
@@ -134,7 +135,9 @@ class TestTheUpsertPath:
         pm = _manager(project, saved, stop_at_commit=False)
         pm.get_deployments = AsyncMock(return_value=copy.deepcopy(project["deployments"]))
 
-        result = await pm._upsert_deployment_once("preview-42", [_ComponentRef("web", "reg/app:fixed")])
+        result = await DeploymentMutations(pm)._upsert_deployment_once(
+            DeploymentUpsertRequest("preview-42", [_ComponentRef("web", "reg/app:fixed")])
+        )
 
         assert result["success"] is True
         assert _component(saved["data"])["disabled"] is False
@@ -155,7 +158,9 @@ class TestTheUpsertPath:
         pm = _manager(project, saved, stop_at_commit=False)
         pm.get_deployments = AsyncMock(return_value=[])
 
-        result = await pm._upsert_deployment_once("preview-99", [_ComponentRef("web", "reg/app:v1")])
+        result = await DeploymentMutations(pm)._upsert_deployment_once(
+            DeploymentUpsertRequest("preview-99", [_ComponentRef("web", "reg/app:v1")])
+        )
 
         assert result["success"] is True
         assert result["created"] is True

@@ -82,6 +82,42 @@ INVENTARIS: dict[str, Schrijver] = {
         "Deels: registries en bijlagen worden gedraaid; de andere methoden hebben elk hun eigen test "
         "in tests/test_component_*.py en tests/test_*_api.py, die het resultaat nog niet langs de poorten leggen.",
     ),
+    "opi/manager/project/attachment_mutations.py": Schrijver(
+        "de bijlagecatalogus onder de dienst attachments, en het gebruik ervan op de component",
+        "test_een_bijlage_blijft_geldig",
+        "Uit project_manager.py gehaald in RC-443.",
+    ),
+    "opi/manager/project/deployment_mutations.py": Schrijver(
+        "een hele deployment bij een aanmaak, en de images, domeininstellingen en OTAP-markering bij een update",
+        None,
+        "Uit project_manager.py gehaald in RC-443. De upsert-toetsen draaien de methode, maar "
+        "leggen het resultaat nog niet langs de poorten van een save.",
+    ),
+    "opi/manager/project/component_mutations.py": Schrijver(
+        "componentdefinities op de projectwortel, en hun verwijzingen in de deployments",
+        None,
+        "Uit project_manager.py gehaald in RC-443. tests/test_component_*.py en "
+        "tests/test_update_component.py draaien de methodes, maar leggen het resultaat nog niet "
+        "langs de poorten van een save.",
+    ),
+    "opi/manager/project/database_schema_mutations.py": Schrijver(
+        "schemas in de config van de dienst namespace-postgresql-database, inclusief de markering",
+        None,
+        "Uit project_manager.py gehaald in RC-443. tests/test_database_schemas_api.py draait de "
+        "methode, maar legt het resultaat nog niet langs de poorten van een save.",
+    ),
+    "opi/manager/project/registry_mutations.py": Schrijver(
+        "de registries in de config van de dienst image-registries",
+        "test_een_registry_op_een_bestaand_secret_blijft_geldig",
+        "Uit project_manager.py gehaald in RC-443; de schrijfweg is dezelfde save_and_commit_project, nu via de host.",
+    ),
+    "opi/manager/project/service_config_mutations.py": Schrijver(
+        "de config van elke dienst op alle vier de lagen, en de waarden die een dienst op een component bezit",
+        "test_een_registry_met_inloggegevens_blijft_geldig",
+        "Uit project_manager.py gehaald in RC-443. Deels: de registry-toets draait langs "
+        "configure_service; de andere methoden hebben elk hun eigen test die het resultaat nog "
+        "niet langs de poorten legt.",
+    ),
     "opi/manager/keycloak_manager.py": Schrijver(
         "services/keycloak/config/realms: host, realm, gebruikersnaam, versleuteld wachtwoord en totp_secret",
         None,

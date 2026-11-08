@@ -10,6 +10,23 @@ and reads another project's data.
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from opi.manager.project.deployment_mutations import DeploymentMutations
+
+
+@pytest.fixture(autouse=True)
+def _accept_component_references():
+    """The project fixtures here name components the project itself does not define.
+
+    The stub used to sit on the manager instance; since RC-443 the validator lives on
+    DeploymentMutations, one object further, so an instance stub would silently stop
+    reaching it.
+    """
+    with patch.object(
+        DeploymentMutations, "_validate_component_references", return_value={"success": True, "error": None}
+    ):
+        yield
+
 
 def _make_manager():
     with (
@@ -34,7 +51,6 @@ def _wire_update_mocks(pm, project_data: dict) -> AsyncMock:
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value="demo")
     pm.get_deployments = AsyncMock(return_value=project_data["deployments"])
-    pm._validate_component_references = MagicMock(return_value={"success": True, "error": None})
     save = AsyncMock()
     pm.save_and_commit_project = save
     return save
@@ -56,7 +72,7 @@ class TestForceCloneSourceGuard:
         project_data = _project()
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],
@@ -75,7 +91,7 @@ class TestForceCloneSourceGuard:
         project_data = _project()
         save = _wire_update_mocks(pm, project_data)
 
-        with patch("opi.manager.project_manager.ensure_domain_requests"):
+        with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
             result = await pm.upsert_deployment(
                 deployment_name="pr-372",
                 components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],

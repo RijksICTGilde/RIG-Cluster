@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from opi.core.project_schema import ProjectSchemaError
-from tests.test_upsert_commit_message import _make_manager, _wire_update_mocks
+from tests.test_upsert_commit_message import (
+    _accept_component_references,  # noqa: F401 - autouse fixture, imported for its effect here
+    _make_manager,
+    _wire_update_mocks,
+)
 
 if TYPE_CHECKING:
     import pytest
@@ -38,7 +42,7 @@ async def _verlaag(actor: str | None, *, save_weigert: bool = False) -> None:
     if save_weigert:
         save.side_effect = ProjectSchemaError("het schema weigert dit")
 
-    with patch("opi.manager.project_manager.ensure_domain_requests"):
+    with patch("opi.manager.project.deployment_mutations.ensure_domain_requests"):
         await pm.upsert_deployment(
             deployment_name="pr-1",
             components=[SimpleNamespace(reference="frontend", image="ghcr.io/org/app:v1")],

@@ -27,7 +27,7 @@ from unittest.mock import patch
 import pytest
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.processor import EditableFormProcessor
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project.notices import config_advice_warnings
 from opi.manager.project_validation import validate_declared_choices, validate_project_structure
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.invite.editables import INVITE_REALM_ROLE_ITEM_EDITABLE
@@ -198,14 +198,14 @@ class TestTheApiSaysItOnTheWrite:
     """Uitgang 2: ``warnings`` op de schrijfactie, zoals bij het certificaat."""
 
     def test_the_warning_rides_on_a_config_write(self) -> None:
-        warnings = ProjectManager._config_advice_warnings(_project(restrict=True, roles=None))
+        warnings = config_advice_warnings(_project(restrict=True, roles=None))
 
         assert len(warnings) == 1
         assert warnings[0].startswith(f"{ROLE_PATH}: ")
         assert "geen toegang" in warnings[0]
 
     def test_no_warning_without_the_condition(self) -> None:
-        assert ProjectManager._config_advice_warnings(_project(restrict=False, roles=None)) == []
+        assert config_advice_warnings(_project(restrict=False, roles=None)) == []
 
     def test_the_result_model_carries_the_field(self) -> None:
         """Zonder een veld op het resultaatmodel komt de lijst nooit bij de client aan."""
