@@ -4011,6 +4011,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         monkeypatch.setattr(startup, "reconcile_caa_records", AsyncMock(return_value=None))
         monkeypatch.setattr(startup, "reconcile_no_mail_records", AsyncMock(return_value=None))
         monkeypatch.setattr(startup, "_setup_mail_accounts", AsyncMock(return_value=False))
+        monkeypatch.setattr(startup, "restrict_platform_databases", AsyncMock(return_value=None))
 
         meegegeven: list[object] = []
 

@@ -16,6 +16,7 @@ os.environ.setdefault("LOTC_STRICT", "1")
 # de proef- en testroutes niet. De tests meten die routes, dus hier expliciet "local".
 os.environ.setdefault("ENVIRONMENT", "local")
 
+import subprocess
 import time
 from datetime import UTC, datetime
 from functools import partial
@@ -856,6 +857,34 @@ BREDE_BESTANDEN = frozenset(
         "test_zad_platform_whitelist_dekt_de_render.py",
     }
 )
+
+
+def _current_kube_context() -> str:
+    """The context kubectl would use with this process's KUBECONFIG, or "" if there is none."""
+    try:
+        result = subprocess.run(
+            ["kubectl", "config", "current-context"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """A test run may only reach a kind cluster.
+
+    KubectlConnector runs `kubectl auth whoami` when it is created and the e2e helpers use
+    whatever context is active, so with a shared kubeconfig pointing at production a unit test
+    talks to production (and hangs ten seconds per ProjectManager when it is unreachable). The
+    live tasks pass their own kind kubeconfig and keep it; any other active context is swapped
+    for an empty kubeconfig.
+    """
+    if not _current_kube_context().startswith("kind-"):
+        os.environ["KUBECONFIG"] = os.devnull
 
 
 def pytest_itemcollected(item: pytest.Item) -> None:
