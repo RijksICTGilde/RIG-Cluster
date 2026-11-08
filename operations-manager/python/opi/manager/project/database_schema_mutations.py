@@ -34,23 +34,13 @@ class DatabaseSchemaMutations:
     ) -> dict[str, Any]:
         """Add or remove one extra database schema without resending the rest of the config (RC-59).
 
-        The schema list is the one part of a service config where "write the whole block
-        back with one entry less" is dangerous. RC-17 decided that a schema leaving the
-        list does **not** mean its data may go: removing it marks it, so the schema and its
-        contents stay and only the variable stops being offered. But marking is a field a
-        user ticks, not a consequence of dropping a line -- so a client that rewrites the
-        config with one schema fewer silently loses that protection, and a client that
-        knows only the request schema has no way to know it was there.
-
-        This method is that protection, moved to where it cannot be skipped:
-
         * ``add`` puts a new schema in the list. A postfix that is already there and active
-          is a conflict; one that is there but marked comes back (its data was never
-          removed, so restoring it is the whole point of marking rather than dropping).
+          is a conflict; one that is there but marked comes back, with the data that
+          marking rather than dropping kept (RC-17).
         * ``remove`` marks. The schema and its data stay in PostgreSQL, and the entry stays
           in the project file recording that it exists.
         * ``remove`` with ``forget`` takes the entry out of the file. The data still stays
-          in PostgreSQL -- nothing here ever drops a schema -- but the project no longer
+          in PostgreSQL, nothing here ever drops a schema, but the project no longer
           records that the schema exists, so it cannot be brought back through the API.
 
         Uniqueness, the 63-character limit on the full name and collisions with the
@@ -105,8 +95,7 @@ class DatabaseSchemaMutations:
                     entries.pop(index)
                     outcome = {"marked": False, "forgotten": True}
                 elif schema_is_marked(entries[index]):
-                    # Already on its way out: nothing to write, and saying so is better
-                    # than a commit that changes nothing.
+                    # Already on its way out: nothing to write.
                     return {"success": True, "changed": False, "marked": True, "forgotten": False}
                 else:
                     entries[index] = {**entries[index], "marked-for-deletion": True}

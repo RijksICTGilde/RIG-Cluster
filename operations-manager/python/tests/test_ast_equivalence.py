@@ -1,8 +1,7 @@
 """Tests for scripts/ast_equivalence.py: the proof that a cleanup round only changed text.
 
-The script is only worth leaning on if it says no, so the tests come in pairs: rewriting a
-comment or a docstring has to come out equal, and a changed string literal, an extra statement
-or an unlisted rename has to come out different.
+The tests come in pairs: rewriting a comment or a docstring has to come out equal, and a
+changed string literal, an extra statement or an unlisted rename has to come out different.
 """
 
 from __future__ import annotations

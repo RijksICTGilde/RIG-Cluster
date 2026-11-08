@@ -5,9 +5,8 @@ timeout=10)`` and schedules an async retry task when that fails. The singleton i
 around every test, and several test files reset it again themselves, so every test that
 builds a connector (also through ``ProjectManager``) starts that process again: ten seconds
 each when the cluster is unreachable, and in an E2E run ten seconds in the middle of the
-uvicorn event loop. Measured with seed 404: the stall landed on whichever test was unlucky in
-the shuffle and took its neighbour down with it, which is what made that suite look order
-dependent.
+uvicorn event loop. Under a shuffled order the stall lands on whichever test drew it, which
+makes a suite look order dependent.
 
 Only ``tests/integration/`` (the live groups) and ``tests/e2e/`` (the sandbox suite) have a
 cluster. Everywhere else ``__init__`` is replaced for the duration of a test, and a start of

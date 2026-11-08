@@ -53,10 +53,9 @@ class InviteKeyPathFilter(logging.Filter):
         return True
 
 
-#: One instance, because this filter WRITES into the record and ``setup_logging`` is called
-#: twice (early_logging and config). ``addFilter`` skips a filter that is already there, so a
-#: fresh instance per call would rewrite the path twice and give the access log a different
-#: fingerprint from the one in the records of the routes.
+#: One instance: this filter WRITES into the record, ``setup_logging`` runs twice
+#: (early_logging and config), and ``addFilter`` skips a filter that is already there. A
+#: fresh instance per call rewrites the path twice.
 _INVITE_KEY_PATH_FILTER = InviteKeyPathFilter()
 
 

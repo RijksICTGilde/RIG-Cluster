@@ -154,8 +154,8 @@ def validate_and_parse_env_vars(env_vars_text: str | None) -> dict[str, str]:
     if not env_vars_text:
         return {}
 
-    # The mapping shape (legacy CommentedMap) used to pass unchecked while the two text
-    # shapes below do check the key. Same rule, same constant.
+    # The mapping shape (legacy CommentedMap) gets the same key check as the two text
+    # shapes below, from the same constant.
     if isinstance(env_vars_text, CommentedMap):
         for key in env_vars_text:
             _check_env_var_name(key, "")

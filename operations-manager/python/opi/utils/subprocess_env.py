@@ -1,8 +1,8 @@
 """The environment for child processes: `os.environ` without the platform secrets.
 
-Every git, kubectl, mc, kopia, pg_dump and sops OPI starts used to inherit the full
-environment, and with it the platform key and every admin password, visible in
-`/proc/<pid>/environ`. What a child process really needs, the caller passes in `extra`.
+A child process that inherits the full environment also gets the platform key and every
+admin password, readable in `/proc/<pid>/environ`. What git, kubectl, mc, kopia, pg_dump
+or sops really needs, the caller passes in `extra`.
 """
 
 from __future__ import annotations

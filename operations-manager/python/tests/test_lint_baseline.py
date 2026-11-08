@@ -4,9 +4,8 @@ The baseline exists so a rule from docs/development/coding-rules.md can be switc
 code that predates it stays green. That only works in one direction: an entry disappears when the
 file stops breaking the rule, and nothing is ever added by tooling.
 
-The measurement below is the half that makes a cleaned-up file leave the list. Without it a
-baseline entry outlives the violation it was written for, and the next reader cannot tell which
-entries still mean anything.
+The measurement below is the half that makes a cleaned-up file leave the list, so a baseline
+entry cannot outlive the violation it was written for.
 """
 
 from __future__ import annotations

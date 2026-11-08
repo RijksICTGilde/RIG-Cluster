@@ -25,8 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Matches store's MAX_MUTATION_ATTEMPTS: absorbs busy-pipeline bursts without masking
-# persistent conflicts.
+# Matches the store's MAX_MUTATION_ATTEMPTS.
 _UPSERT_CONFLICT_RETRIES = 5
 
 
@@ -39,12 +38,7 @@ class ComponentReference(Protocol):
 
 @dataclass(frozen=True)
 class DeploymentUpsertRequest:
-    """What one upsert call asks for.
-
-    Nine values that travel together through every step of an attempt. As parameters they
-    gave each step more arguments than it had of its own, and a step that needed one more
-    of them meant touching every call in the chain.
-    """
+    """What one upsert call asks for."""
 
     deployment_name: str
     components: list[ComponentReference]
@@ -79,8 +73,7 @@ def _apply_component_images(
     """Point the deployment's components at the requested images; returns the warnings.
 
     ``change_parts`` is appended to while mutating, not compared afterwards: by then the
-    old image is gone from the deployment, every comparison says "no change", and the
-    commit message degrades to the generic "configuration".
+    old image is gone from the deployment and every comparison says "no change".
     """
     existing_components = {c["reference"]: c for c in deployment.get("components", [])}
     warnings: list[str] = []
@@ -125,10 +118,8 @@ def _update_commit_message(request: DeploymentUpsertRequest, project_name: str, 
 class _DeploymentDraft:
     """A deployment under construction, before it joins the project file.
 
-    ``requested_domain_settings`` rides along because the clone path has to write the
-    settings a second time: the copy from the source lands on the same service block they
-    go into. Keeping the three together is also what keeps the clone helper at four
-    arguments instead of six.
+    The clone path writes ``requested_domain_settings`` a second time: the copy from the
+    source lands on the same service block they go into.
     """
 
     deployment: dict[str, Any]
@@ -166,16 +157,15 @@ def _clone_onto_new_deployment(
     request: DeploymentUpsertRequest, project_data: dict[str, Any], project_name: str, draft: _DeploymentDraft
 ) -> None:
     """Copy the source deployment's config onto the new one, and record the clone."""
-    # Exact name match, like the provisioning guard: a jsonpath filter built
-    # from the reference also matched crafted values, which then got written.
+    # Exact name match, not a jsonpath filter built from the reference: such a filter also
+    # matches crafted values.
     source_deployment = Project(project_data).find("deployments", name=request.clone_from)
     if not source_deployment:
         raise ValueError(f"Source deployment '{request.clone_from}' not found in project '{project_name}'")
 
     logger.info(f"Cloning deployment configuration from '{request.clone_from}'")
 
-    # Upsert and restore share one derivation. Images come from the request, so components
-    # stay out.
+    # Images come from the request, so components stay out of the derivation.
     draft.deployment.update(
         derive_deployment_from_source(source_deployment, request.deployment_name, draft.requested_domain_settings)
     )
@@ -250,13 +240,9 @@ class DeploymentMutations:
     ) -> dict[str, Any]:
         """Create or update a deployment, retrying a concurrent-edit conflict.
 
-        Busy projects (regelrecht pushes many image updates in seconds) make two
-        writers touch the same deployment at once. The store refuses to lose either
-        edit and raises ConflictError -- correct, but a single-shot upsert then failed
-        the task and leaned on the caller's pipeline to push again. Because each
-        attempt re-reads the freshest state via get_contents() and re-applies the image
-        change on top, a bounded retry resolves the conflict here instead. Only the
-        concurrent-edit conflict is retried; every other outcome returns as before.
+        Every attempt re-reads the project through ``get_contents()`` and re-applies the
+        change on top. Only a concurrent-edit conflict is retried; every other outcome
+        returns to the caller.
         """
         request = DeploymentUpsertRequest(
             deployment_name=deployment_name,
@@ -344,8 +330,8 @@ class DeploymentMutations:
     ) -> None:
         """Write the requested environment, domain and clone settings onto the deployment."""
         if request.environment is not None:
-            # .value: the v1 route passes an enum member, and the YAML dumper
-            # knows plain strings only.
+            # .value: the v1 route passes an enum member, and the YAML dumper knows plain
+            # strings only.
             deployment["environment"] = Omgeving(request.environment).value
 
         if request.domain_format is not None:
@@ -355,8 +341,6 @@ class DeploymentMutations:
         if request.base_domain is not None:
             set_domain_setting(deployment, DomainSetting.BASE_DOMAIN, request.base_domain)
 
-        # Not a property on the request: that would not narrow clone_from to str for the
-        # call below, and a cast to say what the condition already says is worse.
         if request.clone_from and request.force_clone:
             resolve_clone_source_deployment(project_data, request.clone_from, request.deployment_name)
             deployment["clone-from"] = {
@@ -395,13 +379,8 @@ class DeploymentMutations:
         environment_before: dict[str, Omgeving],
     ) -> dict[str, Any]:
         """Apply the request to the deployment that is already there, and commit."""
-        # UPDATE existing deployment - only update component images
         logger.info(f"Updating existing deployment '{request.deployment_name}' in project '{project_name}'")
 
-        # Collect commit-message parts while mutating: after the update the
-        # old image is gone from project_data, so comparing afterwards
-        # always sees "no change" and the commit message degrades to the
-        # generic "configuration".
         change_parts: list[str] = []
 
         normalized_warnings: list[str] = []
@@ -416,10 +395,8 @@ class DeploymentMutations:
             return domain_error
         normalized_warnings.extend(certificate_notes)
 
-        # An upsert rolls new content onto this deployment exactly as an image
-        # update does, so the services clear what they recorded about the old
-        # content through the same hook (RC-37). Only the components this call
-        # actually names.
+        # The services clear what they recorded about the old content through this hook
+        # (RC-37), for the components this call names.
         upsert_deployment_dict = next(
             (d for d in project_data.get("deployments", []) if d.get("name") == request.deployment_name), None
         )
@@ -432,12 +409,10 @@ class DeploymentMutations:
                 [component.reference for component in request.components],
             )
 
-        # Ensure unapproved domains/subdomains get request entries
         ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
         commit_message = _update_commit_message(request, project_name, change_parts)
 
-        # Validate (schema + structural) then save and commit through the single path
         await self._host.save_and_commit_project(project_data, commit_message)
 
         # After the save: if it refused the change, nothing was downgraded.
@@ -466,7 +441,6 @@ class DeploymentMutations:
         self, request: DeploymentUpsertRequest, project_data: dict[str, Any], project_name: str
     ) -> dict[str, Any]:
         """Build the deployment the request asks for, add it to the project, and commit."""
-        # CREATE new deployment
         logger.info(f"Creating new deployment '{request.deployment_name}' in project '{project_name}'")
 
         draft = _build_new_deployment(request)
@@ -479,10 +453,8 @@ class DeploymentMutations:
         if inference_error:
             return inference_error
 
-        # Add the new deployment to the project data. A project created through
-        # POST /api/v2/projects has no `deployments` key at all -- there is
-        # nothing to roll out yet -- so the first deployment added to it must
-        # create the list rather than assume one (RC-66).
+        # A project created through POST /api/v2/projects has no `deployments` key, so the
+        # first deployment added to it creates the list (RC-66).
         project_data.setdefault("deployments", []).append(new_deployment)
 
         domain_error, certificate_notes = await self._domain_validation(request, project_data)
@@ -490,14 +462,10 @@ class DeploymentMutations:
             return domain_error
         normalized_warnings_create.extend(certificate_notes)
 
-        # Ensure unapproved domains/subdomains get request entries
         ensure_domain_requests(project_data, settings.CLUSTER_MANAGER)
 
-        # Creating a deployment rolls content onto it just as an update does, so
-        # the services get the same moment (RC-37). There is no earlier state to
-        # clear here -- the clone drops it -- but the hook is also where a service
-        # sets what a rollout implies: sleep-mode starts the sleep clock at this
-        # commit instead of leaving the new deployment for the next sweep.
+        # Run on a create as well: there is no earlier state to clear, but a service also
+        # sets here what a rollout implies, such as sleep-mode starting its clock (RC-37).
         state_notices_create = await run_redeploy_hooks(
             project_name,
             project_data,
@@ -509,7 +477,6 @@ class DeploymentMutations:
         if request.clone_from:
             commit_message += f" (cloned from '{request.clone_from}')"
 
-        # Validate (schema + structural) then save and commit through the single path
         await self._host.save_and_commit_project(project_data, commit_message)
 
         logger.info(f"Successfully created deployment '{request.deployment_name}' in project '{project_name}'")
@@ -529,19 +496,14 @@ class DeploymentMutations:
     async def _enforce_domain_config(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
         """Run the shared domain enforcer against an upserted deployment.
 
-        Reuses the wizard's ``DomainConfigEnforcer`` so the API enforces the
-        same cross-field domain rules, notably that a dot-separated URL format
-        requires a domain that supports dots (a dash-only ODCN domain with a
-        dot format produces an unreachable multi-label hostname).
+        Reuses the wizard's ``DomainConfigEnforcer``, so the API enforces the same
+        cross-field domain rules, notably that a dot-separated URL format requires a
+        domain that supports dots (a dash-only ODCN domain with a dot format produces an
+        unreachable multi-label hostname).
 
-        A ``FieldWarning`` is NOT a violation, here no more than in the wizard. The
-        enforcer raises one for exactly one thing: a domain or subdomain that is on
-        request. This used to be a hard rejection, on the grounds that an API caller
-        cannot tick the wizard's "Domein aanvragen" checkbox -- but the consequence was
-        that the one path that would have created the request (``ensure_approval_requests``,
-        a few lines further on in every caller) was never reached, so asking for a domain
-        through the API could only fail. It is now the request itself that carries the
-        answer, and the caller reads back where it stands under ``approvals``.
+        A ``FieldWarning`` is not a violation: the enforcer raises it for a domain or
+        subdomain that is on request, which ``ensure_domain_requests`` then creates. The
+        caller reads back where it stands under ``approvals``.
 
         Returns an error message on violation, or None when the config is valid.
         """
@@ -561,15 +523,4 @@ class DeploymentMutations:
     def _validate_component_references(
         self, project_data: dict, components: list, context: str = "deployment"
     ) -> dict[str, Any]:
-        """
-        Validate that all component references exist in the project.
-
-        Args:
-            project_data: The project data containing component definitions
-            components: List of ComponentReference objects or dicts with 'reference' key
-            context: Context for error messages (e.g. "deployment", "update")
-
-        Returns:
-            Dict with validation result: {"success": bool, "error": str | None, "invalid_references": list | None}
-        """
         return validate_component_references(project_data, components, context)

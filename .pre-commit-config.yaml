@@ -48,8 +48,7 @@ repos:
         pass_filenames: false
 
       # Taal en commentaardichtheid tegen scripts/code-conventions-baseline.json. Draait over
-      # de hele boom en niet over de staged bestanden: de baseline is de vergelijking, dus
-      # pass_filenames zou alleen de scope verkleinen zonder iets toe te voegen. Zie
+      # de hele boom en niet over de staged bestanden: de baseline is de vergelijking. Zie
       # docs/development/coding-rules.md, hoofdstuk 11.
       - id: code-conventions
         name: code-conventions

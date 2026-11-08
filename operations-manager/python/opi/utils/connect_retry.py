@@ -41,8 +41,7 @@ async def retry_on_connect_error[T](
     an error on a query belongs to the caller.
 
     A budget of 0 gives exactly one attempt without sleeping. Once the budget is spent the
-    last error is raised untouched, so a caller sees the same failure as before this retry
-    existed.
+    last error is raised untouched.
     """
     slept = 0.0
     delay = _FIRST_DELAY

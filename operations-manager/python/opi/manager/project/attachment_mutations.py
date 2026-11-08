@@ -37,25 +37,16 @@ class AttachmentMutations:
         """Remove an attachment from the project's catalog.
 
         Idempotent (already-absent is a no-op success) and, by default, refuses removal
-        while the attachment is still referenced -- with ``used_by`` naming every place
-        that references it, so the caller can show what it would be breaking instead of
-        only hearing "no".
+        while the attachment is still referenced, with ``used_by`` naming every place that
+        references it.
 
-        ``confirm_in_use`` is the caller saying "I know it is in use and I want it gone
-        anyway". It then becomes one cleanup: every component and deployment-component
-        coupling is dropped along with the catalog entry, in a single save, because a
-        reference left pointing at a deleted id makes the project file invalid. The flag is
-        named for the *acknowledgement* rather than for the effect (a ``force`` says only
-        that something was overridden, not what was known) -- the same reasoning behind
-        ``rollout=false``.
+        ``confirm_in_use`` drops every component and deployment-component coupling along
+        with the catalog entry, in a single save: a reference pointing at a deleted id
+        makes the project file invalid.
 
-        One case is refused even with the confirmation: an attachment serving as a
-        publish-on-web certificate (``tls: provided``). There is no reference to remove
-        there without also deciding how the site should be served instead, and quietly
-        moving a site off its own certificate is not a decision this call gets to make.
-
-        Uses the single ProjectManager path: fresh contents from Git, save, commit and
-        push, with no cache in the mutate-commit path.
+        Refused even with the confirmation: an attachment serving as a publish-on-web
+        certificate (``tls: provided``). Removing that reference means deciding how the
+        site should be served instead.
         """
         try:
             project_data = await self._host.get_contents()
@@ -124,23 +115,16 @@ class AttachmentMutations:
         with the project's AGE public key and stored in the catalog under
         ``attachment_id``. With ``component_name`` and ``binding`` the same call also
         records the component's *use* of it (which attachment) and its *binding* (as a
-        file at a path, or as an env-var), so "upload and couple" is one request rather
-        than two that can half-fail.
+        file at a path, or as an env-var), so upload and couple is one request.
 
         ``on_existing`` / ``on_absent`` carry the verb's promise (see
         ``services/catalog/actions.py``): ``reject`` refuses, ``replace`` overwrites
-        without asking, ``create`` adds. Replacing is deliberately silent -- the caller
-        asked for an upsert -- and that is exactly why only the upsert verb passes
-        ``replace`` with an absent-id ``create``.
+        without asking, ``create`` adds.
 
         Without ``content`` the caller referenced an attachment that is already in the
         catalog: nothing is encrypted and the catalog entry is left untouched, only the
-        component's use of it is written. The verb's promise then applies to *that
-        coupling*, because that is what the request creates or changes -- the catalog
-        entry has to exist either way, or the reference points at nothing.
-
-        Uses the single ProjectManager path: fresh contents from Git, mutate, save and
-        commit, so the catalog model and the coupling checks run before anything lands.
+        component's use of it is written. The verb's promise then applies to that
+        coupling, and an absent catalog entry is a refusal.
         """
         try:
             project_data = await self._host.get_contents()
@@ -149,8 +133,7 @@ class AttachmentMutations:
             catalog = extract_attachment_catalog(project_data)
             exists = attachment_id in catalog
             if content is None:
-                # Reference only: the entry has to be there, and the verb's promise is
-                # about the coupling this request writes, not about the catalog.
+                # Reference only: the entry has to be there.
                 if not exists:
                     return {
                         "success": False,

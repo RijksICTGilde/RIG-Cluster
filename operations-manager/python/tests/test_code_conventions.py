@@ -1,10 +1,8 @@
 """Tests for scripts/code_conventions.py and its gate: the ratchet on language and comment density.
 
-The gate is only worth having if it says no, so the tests come in pairs: a Dutch identifier, a
-Dutch comment and a Dutch docstring have to count, and English, an allowlisted domain term and a
-Dutch string the user SEES must not. That second half is what keeps the gate believable. Dutch UI
-text is allowed by chapter 2 of docs/development/coding-rules.md, and a gate that alarms on a
-label is a gate people route around.
+The tests come in pairs: a Dutch identifier, a Dutch comment and a Dutch docstring have to
+count, and English, an allowlisted domain term and a Dutch string the user SEES must not. Dutch
+UI text is allowed by chapter 2 of docs/development/coding-rules.md.
 
 The ratchet itself is measured the same way: equal is fine, one more fails, a file that is not in
 the baseline has to be at zero, and updating the baseline only ever lowers a count.

@@ -117,8 +117,29 @@ Een handeling die op meerdere plekken begint, zoals een project aanmaken via de 
 Goede code heeft geen commentaar nodig. Commentaar is een eerlijke bekentenis dat de code het niet zelf kon zeggen.
 
 - **Eerst de code verbeteren.** Wil je uitleggen wat een blok doet, haal het dan uit in een functie met een naam die dat zegt.
-- **Commentaar legt het waarom uit, nooit het wat.** Wel: een afwijking van de afspraak, een bewuste keuze, een valkuil die de vorige versie in liep, een verwijzing naar een externe bug of een eis. Niet: wat de volgende regel doet.
-- **Docstrings alleen waar naam en type hints tekortschieten**: een publieke functie met een niet-voor-de-hand-liggend contract, een exception die hij gooit, een voorwaarde die de aanroeper moet kennen. Een docstring die de functienaam herhaalt, verdwijnt.
+- **Commentaar zegt wat een lezer nodig heeft om de code nu veilig te wijzigen, nooit hoe hij zo geworden is.** Wel: een randvoorwaarde die niet uit de code blijkt (een volgorde die ertoe doet, een externe API die zich vreemd gedraagt, een eis), een afwijking van een afspraak, een verwijzing naar een externe bug. Niet: wat de volgende regel doet, waarom een class of opzet gekozen is, welke alternatieven zijn afgewogen, wat de vorige versie deed, hoeveel parameters een opzet scheelt. Die afweging hoort in het commitbericht of op de PR, bij de wijziging die hem nodig had.
+- **De toets**: helpt deze zin iemand die de code morgen wijzigt en de geschiedenis niet kent? Zo niet, dan hoort hij in het commitbericht.
+
+  ```python
+  # Niet: verantwoordt de opzet, zegt niets over het gebruik
+  class DeploymentUpsertRequest:
+      """What one upsert call asks for.
+
+      Nine values that travel together through every step of an attempt. As parameters they
+      gave each step more arguments than it had of its own, and a step that needed one more
+      of them meant touching every call in the chain.
+      """
+
+  # Wel: een valkuil die nu nog geldt
+  def _apply_component_images(...) -> list[str]:
+      """Point the deployment's components at the requested images; returns the warnings.
+
+      ``change_parts`` is appended to while mutating, not compared afterwards: by then the
+      old image is gone from the deployment and every comparison says "no change".
+      """
+  ```
+
+- **Docstrings beschrijven het contract**, niet de reden waarom het object bestaat: wat erin gaat, wat eruit komt, wat hij gooit, wat de aanroeper moet weten. Alleen waar naam en type hints tekortschieten. Een docstring die de naam herhaalt, verdwijnt.
 - **Nooit meer commentaar dan code.** Een functie met meer commentaarregels dan coderegels legt iets uit dat de code zelf had moeten zeggen.
 - **Geen uitgecommentarieerde code.** Git onthoudt hem.
 - **Geen `TODO` in code.** Open werk is een kaartje op het ZAD-bord.

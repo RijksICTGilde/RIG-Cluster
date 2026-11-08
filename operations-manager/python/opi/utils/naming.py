@@ -626,12 +626,10 @@ MAIL_LOCAL_PART_MAX_LENGTH = 64
 
 #: The domains a configured sender address may lie in.
 #:
-#: A configurable sender address is a spoofing button, and since RC-399 a project operates
-#: that button itself: it requests an address and a platform admin approves it. This list is
-#: what the approver does not have to watch. Alignment with the envelope is what gets a
-#: message through DMARC (we do not sign with DKIM), so an address outside this domain would
-#: not only be somebody else's identity, it would also bounce at every recipient outside the
-#: Rijksoverheid.
+#: A project requests an address and a platform admin approves it (RC-399); this list is
+#: what the approver does not have to watch. DMARC passes on envelope alignment (we do not
+#: sign with DKIM), so an address outside this domain also bounces at every recipient
+#: outside the Rijksoverheid.
 MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})
 
 #: The local part of a configured sender address. Deliberately narrower than RFC 5321
@@ -670,13 +668,11 @@ _MAIL_SENDER_LOCAL_PART = "noreply-rijksapp"
 
 #: How much of a project name fits in BOTH the account name and the sender address.
 #:
-#: The two have to agree, character for character, and that is the whole reason this is a
-#: constant instead of two truncations that happen to be equal today. The relay works the
-#: sender address out by taking the authenticated account name and cutting the
-#: ``project-`` prefix off it (identity rule 1 in its configmap) -- it cannot look the
-#: address up per account, so it derives it. If OPI cut the label at a different length
-#: than it puts in the account name, the address OPI reports as ``SMTP_FROM`` would not be
-#: the address the relay composes, and only a project with a long name would find out.
+#: The two have to agree, character for character. The relay cannot look the address up
+#: per account, it derives it by cutting the ``project-`` prefix off the authenticated
+#: account name (identity rule 1 in its configmap). A label cut to a different length than
+#: the one in the account name gives an ``SMTP_FROM`` that is not the address the relay
+#: composes, and only a project with a long name finds out.
 #:
 #: The ceiling itself: ``noreply-rijksapp+`` is seventeen characters and a local part may
 #: be sixty-four. A cluster whose bare address has a LONGER local part than that would need
@@ -688,9 +684,8 @@ MAIL_PROJECT_LABEL_MAX_LENGTH = MAIL_LOCAL_PART_MAX_LENGTH - len(_MAIL_SENDER_LO
 def mail_project_label(project_name: str) -> str:
     """The project's label in mail: the part that follows ``project-`` and ``+``.
 
-    One label, two users -- the account name and the sender address -- so that cutting the
-    account's prefix off yields exactly the plus part of the address. That equality is what
-    lets the relay derive an address it was never told.
+    One label for the account name and the sender address both, so that cutting the
+    account's prefix off yields exactly the plus part of the address.
     """
     return _truncate_if_needed(_sanitize_for_lowercase(project_name), MAIL_PROJECT_LABEL_MAX_LENGTH)
 
@@ -730,10 +725,10 @@ def generate_deployment_mail_account_name(project_name: str, deployment_name: st
     approval. The password lives in that deployment's Kubernetes secret, like its database
     password.
 
-    The ``project-`` prefix stays, so the relay keeps deriving the sender address the same
-    way and the platform accounts stay out of reach (``MAIL_PROJECT_ACCOUNT_PREFIX``). Which
-    project an account belongs to is no longer readable from the label, so OPI writes it
-    into the relay's generated script (``zad.project.<account>``).
+    The relay derives the sender address from the ``project-`` prefix, which also keeps the
+    platform accounts out of reach (``MAIL_PROJECT_ACCOUNT_PREFIX``). The label does not
+    name the project, so OPI writes that into the relay's generated script
+    (``zad.project.<account>``).
 
     Example:
         >>> generate_deployment_mail_account_name("algor", "prod")

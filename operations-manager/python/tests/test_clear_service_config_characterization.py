@@ -1,9 +1,7 @@
 """Characterization tests for ``ProjectManager.clear_service_config``.
 
-The safety net for the move in RC-443: the method had no direct test, only mocked handler
-tests, so nothing compared the result before and after it changed file. These tests record
-the behavior as it IS, down to the dict handed to ``save_and_commit_project`` and the
-commit message, rather than the behavior one might prefer.
+These record the behavior as it IS, down to the dict handed to ``save_and_commit_project``
+and the commit message, rather than the behavior one might prefer.
 """
 
 from typing import Any

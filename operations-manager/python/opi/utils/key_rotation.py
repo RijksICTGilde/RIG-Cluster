@@ -1,8 +1,7 @@
 """The loop that moves an encrypted value from one AGE key to another.
 
-That loop (``convert_value`` and what hangs off it) used to live in
-``scripts/key_rotation.py`` and sits here, so OPI and the rotation scripts share one copy
-of it; the script imports these names.
+``convert_value`` and what hangs off it live here and not in
+``scripts/key_rotation.py``, which imports these names.
 
 ``rotate_project_key`` is the round over one project file. Every value that opens with the
 old project key moves to the new public key; what does not open with that key

@@ -366,9 +366,8 @@ class RedisSecret(BaseSecret):
 class SendEmailSecret(BaseSecret):
     """SMTP credentials for the platform mail relay.
 
-    ``from_address`` travels with the credentials on purpose: the relay pins the sender
-    to it anyway, so an application that reads it from here sends what will actually go
-    out instead of guessing and being rewritten.
+    ``from_address`` travels with the credentials because the relay pins the sender to it:
+    an application that reads it from here sends what will actually go out.
     """
 
     host: str

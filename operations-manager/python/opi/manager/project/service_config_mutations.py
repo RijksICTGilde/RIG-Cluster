@@ -52,8 +52,8 @@ class ServiceConfigMutations:
         """Select a service on the project, and optionally bind it to components.
 
         Auto-resolved dependencies of the service are selected along with it. Naming
-        components also updates their own ``services`` lists, so "select and bind" is one
-        request rather than two that can half-fail.
+        components also updates their own ``services`` lists, so select and bind is one
+        request.
         """
         try:
             project_data = await self._host.get_contents()
@@ -65,14 +65,11 @@ class ServiceConfigMutations:
                 error_type = "invalid_components" if "Components not found" in str(e) else "invalid_service"
                 return {"success": False, "error": str(e), "error_type": error_type}
 
-            # Persist whenever the project data changed. Binding an already-selected
-            # service to a component IS a change: gating on services_added alone threw
-            # that mutation away while the response still reported the component as
-            # updated, which is the ordinary second call (configure, then bind).
+            # Binding an already-selected service to a component is a change too, so the
+            # gate cannot be on services_added alone.
             if result["services_added"] or result["components_updated"]:
-                # Selecting the service IS the request, here as much as in
-                # configure_service and in the portal. This route skipped it, so a service
-                # needing approval, switched on through the API, never asked for anything.
+                # Switching on a service that needs approval has to make the request, as
+                # the portal does.
                 ensure_approval_requests(project_data)
                 commit_message = self._add_service_commit_message(project_name, service_name, result)
                 await self._host.save_and_commit_project(project_data, commit_message)
@@ -101,13 +98,10 @@ class ServiceConfigMutations:
     ) -> dict[str, Any]:
         """Upsert one service's config block at a target layer, then persist.
 
-        The write itself is the pure ``ServiceAdapter.set_service_config``; this
-        method resolves the target, ensures the service is selected, and commits
-        through ``save_and_commit_project`` -- the single validated write path. A
-        config the service's model rejects surfaces as ``validation_error`` carrying
-        the chokepoint's message (which lists the accepted fields), so the same
-        guard the wizard hits also guards the API. ``target`` is a ``ConfigLayer``
-        value (``project`` / ``component`` / ``deployment`` / ``deployment-component``).
+        ``target`` is a ``ConfigLayer`` value (``project`` / ``component`` /
+        ``deployment`` / ``deployment-component``). A config the service's model rejects
+        surfaces as ``validation_error`` carrying the chokepoint's message, which lists
+        the accepted fields.
         """
         try:
             layer = ConfigLayer(target)
@@ -131,14 +125,11 @@ class ServiceConfigMutations:
                 return {"success": False, "error": str(e), "error_type": "invalid_target"}
 
             # What the writer left empty and the service fills in itself, today an invite
-            # key. The portal already did this through post_merge and this route did not, so
-            # an invite created through the API kept the empty string and a useless link.
+            # key.
             generated = generate_missing_values(project_data)
 
-            # Domains and subdomains are on request, and this route could claim one without
-            # making the request: the config was written, no ingress appeared on the asked-for
-            # address, and nothing told the client why. Same request the portal makes, in the
-            # same block, for the same administrator.
+            # A domain or subdomain in this config is on request: without the request no
+            # ingress ever appears on the address that was asked for.
             ensure_approval_requests(project_data)
 
             commit_message = f"Configure service '{service_name}' at {target} target in project '{project_name}'"
@@ -172,9 +163,8 @@ class ServiceConfigMutations:
     ) -> dict[str, Any]:
         """Remove one service's config at a target layer (demote to bare string).
 
-        Idempotent: removing config that is not there is a success no-op and, per
-        the logging rule, writes nothing to the log. Only a real change commits and
-        logs one INFO line.
+        Idempotent: removing config that is not there is a success no-op and writes
+        nothing to the log. Only a real change commits and logs one INFO line.
         """
         try:
             layer = ConfigLayer(target)
@@ -222,14 +212,11 @@ class ServiceConfigMutations:
     ) -> dict[str, Any]:
         """Add/update/remove items in one list of a service's config, then persist.
 
-        The merge itself is the pure ``ServiceAdapter.patch_service_config_list``: only
-        the named items change, on the freshly read project file, so a caller that
+        Only the named items change, on the freshly read project file, so a caller that
         adjusts one storage mount, attachment coupling, invite, access rule or sleep-mode
-        pattern never rewrites the rest (and cannot silently drop them). ``list_field``
-        names the list inside an object-shaped config and is ``None`` when the config
-        itself is the list. Commits through ``save_and_commit_project`` like every write.
-        Even a full no-op commits nothing extra -- an unchanged file is an unchanged
-        push, and the counts in the result tell which run it was.
+        pattern never rewrites the rest. ``list_field`` names the list inside an
+        object-shaped config and is ``None`` when the config itself is the list. A no-op
+        pushes nothing, and the counts in the result say what changed.
         """
         try:
             layer = ConfigLayer(target)
@@ -294,15 +281,14 @@ class ServiceConfigMutations:
 
         The sibling of ``configure_service`` for the two services that own a plain
         component property instead of a block in a ``services:`` list. The whole
-        decrypt -> mutate -> re-encrypt round trip happens inside the change function so
-        it runs against the freshest committed file, and re-runs against whatever landed
-        if someone else pushed first -- a block ciphertext computed before the read would
-        otherwise drop the other writer's entries.
+        decrypt -> mutate -> re-encrypt round trip belongs inside the change function: a
+        ciphertext computed before the read drops the entries of a writer who pushed
+        first.
 
         Returns ``changed=False`` when the resulting values equal what is already stored.
-        AGE is not deterministic, so re-encrypting an unchanged set would produce a
-        different ciphertext and therefore a commit per call; comparing after decryption
-        is the only comparison that means anything here.
+        AGE is not deterministic, so only a comparison after decryption means anything
+        here: re-encrypting an unchanged set gives a different ciphertext, and so a
+        commit per call.
         """
         service = get_service(ServiceType(service_name))
         owned_property = service.owned_property
@@ -318,7 +304,7 @@ class ServiceConfigMutations:
             for key, value in (values or {}).items():
                 # The API refuses these too, with a 422. Repeated here because this is the
                 # write path: a value the storage form normalises would differ from what is
-                # stored on every read, so the no-op check below could never be true again.
+                # stored on every read, so the no-op check below could never be true.
                 validate_value_for_storage(key, value)
                 # And the service's own rule on its values: an alias must point at a
                 # platform variable that exists (RC-66, bevinding 5).
@@ -355,6 +341,6 @@ class ServiceConfigMutations:
             return {"success": False, "error": str(e), "error_type": "validation_error"}
 
         if committed:
-            # The names are not secret and are what makes this line useful; the values are.
+            # The names are not secret, the values are.
             logger.info("Applied %s of %s values on %s", operation, service_name, where)
         return {"success": True, "service": service_name, "target": layer, "changed": committed}

@@ -11,8 +11,7 @@ still breaks. ``pyproject.toml`` pulls it in with ``extend``, so a rule from
 predates it stays green, and new code falls under it at once.
 
 A default run only REMOVES. A rule a file no longer breaks disappears, nothing is ever added,
-and adding an entry is a hand edit that shows up in the diff. That is what makes it a ratchet
-instead of a list of excuses.
+and adding an entry is a hand edit that shows up in the diff.
 
 The measurement runs ruff with ``lint.per-file-ignores = {}``, which drops the generated
 baseline and keeps the handwritten ``extend-per-file-ignores`` from ``pyproject.toml``: without

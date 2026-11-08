@@ -13,11 +13,8 @@ if TYPE_CHECKING:
 class ProjectFileAccess(Protocol):
     """What the mutations reach from their host: reading and writing the project file.
 
-    Breaks the import cycle: groups depend on this protocol rather than on
-    ``ProjectManager``. Narrower by design: the groups need only what they pass, so a
-    protocol that promised more would invite ``enforce_validation=False``. The
-    compare-and-swap base stays on the host, where the retry on ``process_project_from_git``
-    happens.
+    The groups depend on this protocol and not on ``ProjectManager``, which would be an
+    import cycle.
     """
 
     _project_file_handler: ProjectFileHandler

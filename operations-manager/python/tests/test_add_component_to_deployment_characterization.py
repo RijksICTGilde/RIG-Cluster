@@ -1,8 +1,7 @@
 """Characterization tests for ``ProjectManager.add_component_to_deployment``.
 
-The safety net for the move in RC-443: the method had no direct test, only mocked handler
-tests. These tests record the behavior as it IS, down to the component reference appended
-to the deployment, the commit message, and each of the three refusals.
+These record the behavior as it IS, down to the component reference appended to the
+deployment, the commit message, and each of the three refusals.
 """
 
 from typing import Any

@@ -9,14 +9,12 @@ Three counts per Python file:
 3. **Functions with more comment than code.** Chapter 6: a function with more ``#`` lines than
    code lines explains something the code should have said itself.
 
-Recognising Dutch is a word list and nothing more, deliberately: a language detector would be a
-dependency and a probability where a reviewer needs a reason. The list therefore holds only words
-that cannot be read as English, and a word is left out when it can be both. That makes the counts
-an undercount, which is the right direction for a ratchet: a missing word loses signal, a wrong
-one produces an alarm nobody can act on.
+Recognising Dutch is a word list and nothing more. It holds only words that cannot be read as
+English, and a word is left out when it can be both, so the counts are an undercount: that is
+the direction a ratchet can carry, because a wrong word produces an alarm nobody can act on.
 
-``check-code-conventions.py`` is the thin entry point over this module: it parses the flags and
-returns the exit code, and everything it decides with lives here, where a test can reach it.
+``check-code-conventions.py`` is the entry point over this module: it parses the flags and
+returns the exit code.
 """
 
 from __future__ import annotations
@@ -66,11 +64,9 @@ MEASURES = (DUTCH_IDENTIFIERS, DUTCH_COMMENTS, COMMENT_HEAVY)
 
 _NON_LETTERS = re.compile(r"[^A-Za-z]+")
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-#: Quoted spans are left out of prose. Both false positives the 50-finding sample turned up were
-#: of this shape: an English docstring quoting a Dutch UI string, and one quoting an example
-#: database name whose parts happened to read as Dutch. What is left out is an undercount, which
-#: is the direction a ratchet can carry; single quotes are deliberately not here, because an
-#: apostrophe would pair up with the next one and swallow the prose between them.
+#: Quoted spans are left out of prose: an English docstring may quote a Dutch UI string or an
+#: example database name. Single quotes are deliberately not here, because an apostrophe would
+#: pair up with the next one and swallow the prose between them.
 _QUOTED = re.compile(r'"[^"\n]*"|`[^`\n]*`')
 
 
@@ -111,7 +107,7 @@ def dutch_in_prose(text: str) -> str | None:
 
 @dataclass(frozen=True)
 class _Parsed:
-    """What one walk over the tree yields, so the three measures do not each walk it again."""
+    """What one walk over the tree yields, for all three measures."""
 
     functions: list[ast.FunctionDef | ast.AsyncFunctionDef]
     definition_spans: list[tuple[int, int]]

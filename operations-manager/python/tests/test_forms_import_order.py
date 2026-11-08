@@ -1,11 +1,10 @@
 """Importing opi.forms must not depend on the load order.
 
-``opi/forms/__init__.py`` used to re-export its submodules, so importing any
-``opi.forms.*`` module also ran ``opi.forms.visualizers.providers``, which reads
-``opi.services.catalog.image_registries``, whose modules read ``opi.forms`` back. That
-cycle only resolved because the order in which a process imported them came out right, and
-it made a single ``import opi.forms.layout`` pull in the whole application, config and logging
-included: 1.39 seconds in a fresh interpreter before, 0.03 after.
+An ``opi/forms/__init__.py`` that re-exports its submodules makes any ``opi.forms.*`` import
+run ``opi.forms.visualizers.providers``, which reads
+``opi.services.catalog.image_registries``, whose modules read ``opi.forms`` back. That cycle
+resolves only when the order a process imports them in comes out right, and it makes a single
+``import opi.forms.layout`` pull in the whole application, config and logging included.
 """
 
 from __future__ import annotations

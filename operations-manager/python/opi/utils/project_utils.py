@@ -44,11 +44,9 @@ def _apply_web_address_settings(
 ) -> None:
     """Write the web-address settings of a freshly created deployment (RC-60).
 
-    One function for what used to be two near-identical blocks twenty lines apart -- the
-    kind of duplication where a change lands in one copy and the other keeps writing the
-    old shape. Every write goes through ``set_domain_setting``, so the location is decided
-    in one place (``catalog/publish_on_web/domain_config.py``) and creation cannot disagree
-    with the migration about where a value belongs.
+    Every write goes through ``set_domain_setting``, so the location is decided in one
+    place (``catalog/publish_on_web/domain_config.py``) and creation cannot disagree with
+    the migration about where a value belongs.
 
     Only settings the user actually chose are written: an absent setting means "inherit",
     and writing an empty one would turn that into an explicit empty value.
@@ -213,13 +211,11 @@ async def build_component_config(
     }
 
     # Add resource limits if specified, in the canonical nested form. Deliberately NOT
-    # through apply_user_resource_intent (RC-141): that path also records the values as a
-    # wish the tuner has to leave alone, and here they are not one. Creation always carries
-    # both limits -- the wizard prefills 1 CPU / 256Mi and the API defaults to the same --
-    # so routing this through the intent path pinned EVERY new component at its creation
-    # value, with request == limit and no burst headroom, until an OOM-kill or an expiry
-    # that needs usage under half the pinned value. A value nobody chose is not a wish; the
-    # first real edit of the component is, and that one does go through the intent path.
+    # through apply_user_resource_intent (RC-141): that path records the values as a wish
+    # the tuner has to leave alone, and creation always carries both limits (the wizard
+    # prefills 1 CPU / 256Mi, the API defaults to the same), so it would pin every new
+    # component at its creation value. A value nobody chose is not a wish; the first real
+    # edit of the component is, and that one does go through the intent path.
     # Nothing is lost by writing straight here: a component that does not exist yet has no
     # deployment override to clear and no history to carry.
     if cpu_limit or memory_limit:
@@ -370,8 +366,8 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
         raise HTTPException(status_code=500, detail=f"Cannot create project: AGE key generation failed. {e!s}")
 
     # The first credential of this project: a token of the ``project-api`` service account.
-    # No ``config.api-key`` any more (schema version 2.12): only the hash goes into the
-    # file, so nobody can read the value back afterwards and the caller has to keep it now.
+    # Only the hash goes into the file (schema version 2.12), so the value cannot be read
+    # back afterwards and the caller is the one that has to keep it.
     #
     # Only when the caller actually RECEIVES that value, which is the case on creation
     # through the API. The wizard does not receive it, so there the account stays without a
@@ -517,8 +513,8 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
                 chosen = sorted(role.value for role in roles_from_value(role_value))
                 users.append({"email": email.strip(), "roles": chosen or list(PROJECT_API_ROLLEN)})
 
-    # The service account carrying the API access of this project. The roles of an admin,
-    # because it replaces the project key and that one opened the whole write side.
+    # The service account carrying the API access of this project, with the roles of an
+    # admin: it opens the whole write side.
     users.append(
         {
             "type": "service-account",
@@ -572,11 +568,9 @@ async def generate_base_project_file(
     it -- components and deployments -- is configured afterwards, so this file
     deliberately declares neither.
 
-    The content is not assembled here. It comes out of
-    ``generate_self_service_project_yaml``, the same builder the self-service
-    portal uses, so the repositories block, the AGE keypair and the API key are
-    produced in exactly one place. Only the parts that describe what runs are
-    removed afterwards.
+    The content comes out of ``generate_self_service_project_yaml``, the same builder the
+    self-service portal uses; only the parts that describe what runs are removed
+    afterwards.
 
     Args:
         project_name: Technical project name (already validated)

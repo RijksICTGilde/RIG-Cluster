@@ -199,8 +199,8 @@ Plans, TODO lists, run reports, design briefs for unbuilt work (the old `feature
 Geldt voor alle code, commentaar, documentatie en commit-berichten in deze repo.
 
 - **Minimale uitleg.** Een commentaar of docstring zegt kort *wat* iets doet, en alleen als dat niet al uit de code volgt. Herhaalt de uitleg wat de code zelf zegt, dan is het ruis die veroudert.
-- **Comply or explain.** Wijk je af van een afspraak of van de voor de hand liggende oplossing, leg dan uit waarom. Volg je de afspraak, dan hoeft daar niets bij.
-- **Wat wel blijft staan**: waarom een afwijking bestaat, welke valkuil de vorige versie in liep, welke afspraak hier geldt. Dat kan een lezer niet uit de code halen.
+- **Comply or explain.** Wijk je af van een afspraak, leg dan uit waarom. Volg je de afspraak, dan hoeft daar niets bij.
+- **Wat wel blijft staan**: een afwijking van een afspraak, een valkuil die nu nog geldt, een randvoorwaarde die niet uit de code blijkt. Niet: waarom de code zo is opgezet, welke alternatieven zijn afgewogen of wat de vorige versie deed; dat hoort in het commitbericht of de PR.
 - **Nooit meer commentaar dan code.** Een functie met meer commentaarregels dan coderegels legt iets uit dat de code zelf had moeten zeggen. Een conventiecheck meet dit per bestand; de regel staat in hoofdstuk 6 van `docs/development/coding-rules.md`.
 - **Nooit em dashes.** Niet in code, niet in commentaar, niet in documentatie, niet in commit-berichten. Gebruik een komma, een dubbele punt of een punt.
 

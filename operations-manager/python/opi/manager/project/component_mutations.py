@@ -160,11 +160,7 @@ def _update_ports(component: dict[str, Any], port: int | None, ports: list[int] 
 
 
 def _update_path(component: dict[str, Any], path: str | None, rewrite: str | None) -> None:
-    """Write match and rewrite into the path entry that is already there.
-
-    They are two halves of one entry, so replacing the entry would mean that updating only
-    the rewrite dropped the match, and the other way round.
-    """
+    """Write match and rewrite into the path entry that is already there."""
     if path is None and not rewrite:
         return
 
@@ -280,8 +276,7 @@ def _refuse_attachment(
 ) -> dict[str, Any] | None:
     """Why this component cannot join this deployment, or None when it can.
 
-    The deployment is found by the caller, which is also where an absent one is refused:
-    returning that from here would leave the type optional for everything after it.
+    The deployment is found by the caller, which is also where an absent one is refused.
     """
     if _find_by_name(project_data.get("components", []), component_name) is None:
         return {
@@ -350,17 +345,15 @@ class ComponentMutations:
 
             # A service the project has not selected is added here when the service allows
             # it (RC-84), and refused with a message naming it when it needs a project-level
-            # decision first. The write goes through save_and_commit_project below, like
-            # every other change to the project file.
+            # decision first.
             if services:
                 try:
                     ServiceAdapter.ensure_project_selection(project_data, *services)
                 except ServiceValidationError as e:
                     return {"success": False, "error": str(e), "error_type": "invalid_services"}
 
-            # Normalize the image, if there is one. The image lives on the deployment
-            # reference and nowhere else -- build_component_config below does not carry it --
-            # so defining a component without attaching it anywhere needs no image at all.
+            # The image lives on the deployment reference and nowhere else, so a component
+            # that is not attached anywhere needs no image.
             warnings: list[str] = []
             normalized_image = ""
             if image:
@@ -368,7 +361,6 @@ class ComponentMutations:
                 if warning:
                     warnings.append(warning)
 
-            # Build component config using shared function
             public_key = get_project_public_key(project_data)
             try:
                 component_config = await build_component_config(
@@ -416,9 +408,8 @@ class ComponentMutations:
             return result
 
         except (ProjectSchemaError, ProjectIntegrityError) as e:
-            # User-input validation failure: expected, surfaced to the caller. Log once
-            # at WARNING (not exception/ERROR) so a bad component request does not page
-            # ops. The validator no longer self-logs, so this is the single log line.
+            # Expected user-input failure, surfaced to the caller. At WARNING and not
+            # ERROR, so a bad component request does not page ops.
             logger.warning("Component '%s' rejected by project validation: %s", name, e)
             return {"success": False, "error": str(e), "error_type": "validation_error"}
         except Exception as e:
@@ -429,26 +420,16 @@ class ComponentMutations:
     async def delete_component(self, component_name: str, *, confirm_in_use: bool = False) -> dict[str, Any]:
         """Remove a component definition from the project.
 
-        Mirrors add_component's read-mutate-save-commit lifecycle so the deletion goes through
-        the single ProjectManager path (fresh contents from Git, save, commit+push). It never
-        builds the commit from the in-memory cache, which could lag behind Git and silently
-        overwrite components added since the cache was last refreshed.
+        Refuses a component that is still referenced, with ``used_by`` naming every place.
+        ``confirm_in_use`` drops every deployment entry and every ``uses-components``
+        mention together with the definition, in a single save: a reference pointing at a
+        component that no longer exists makes the project file invalid.
 
-        By default it refuses a component that is still referenced -- with ``used_by`` naming
-        every place -- so the caller can show what the deletion would break instead of only
-        hearing "no". ``confirm_in_use`` is the caller saying "I have seen that list and I
-        want it gone anyway": every deployment entry and every ``uses-components`` mention is
-        dropped together with the definition, in a single save, because a reference left
-        pointing at a component that no longer exists makes the project file invalid. Same
-        shape, same flag name and the same reasoning as ``remove_attachment`` (RC-52).
+        Refused even with the confirmation: a component a deployment's web address is built
+        around (``root-component`` or ``expose-component-on-bare-domain``). Removing that
+        reference means deciding how the site should be served instead.
 
-        One case is refused even with the confirmation: a component a deployment's web address
-        is built around (``root-component`` or ``expose-component-on-bare-domain``). There is
-        no reference to remove there without also deciding how that site should be served
-        instead, and that is not a decision this call gets to make.
-
-        The rule itself lives in ``remove_component``; the components modal removes a
-        component through the same function, so there is one implementation of it.
+        The refusal rule itself lives in ``remove_component``.
         """
         try:
             project_data = await self._host.get_contents()
@@ -507,10 +488,7 @@ class ComponentMutations:
     ) -> dict[str, Any]:
         """Update fields of an existing component (partial update).
 
-        Only the provided (non-None) fields are changed; the rest are left as-is. Mirrors
-        delete_component's read-mutate-save-commit lifecycle so the change goes through the
-        single ProjectManager path (fresh contents from Git, schema + structural validation
-        in save_and_commit_project, commit+push). No cache in the mutate-commit path.
+        Only the provided (non-None) fields are changed; the rest are left as-is.
         """
         try:
             project_data = await self._host.get_contents()
@@ -543,9 +521,9 @@ class ComponentMutations:
                 return service_error
 
             if cpu_limit is not None or memory_limit is not None:
-                # Through the shared user-intent path: a limit set here has to beat any
-                # override the tuner wrote for this component, and be remembered as the
-                # user's own value (RC-141). The API knows limits only, never requests.
+                # A limit set here beats any override the tuner wrote for this component,
+                # and is remembered as the user's own value (RC-141). The API knows limits
+                # only, never requests.
                 self._host._project_file_handler.apply_user_resource_intent(
                     project_data,
                     name,
@@ -607,7 +585,6 @@ class ComponentMutations:
             component_ref: dict[str, Any] = {"reference": component_name, "image": normalized_image}
             target_deployment.setdefault("components", []).append(component_ref)
 
-            # Validate (schema + structural) then save and commit through the single path
             commit_message = (
                 f"Add component '{component_name}' to deployment '{deployment_name}' in project '{project_name}'"
             )

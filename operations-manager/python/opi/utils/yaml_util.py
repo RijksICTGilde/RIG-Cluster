@@ -195,9 +195,8 @@ def dump_yaml_to_string(data: dict[str, Any]) -> str:
     """Dump YAML data to a string through the canonical writer.
 
     Raises:
-        Propagates any dumper error. It previously returned "" on failure, which is a
-        dangerous sentinel now that ProjectStore commits this string straight into git:
-        an empty string would silently publish an empty project file.
+        Propagates any dumper error: ProjectStore commits this string straight into git,
+        where an empty string would publish an empty project file.
     """
     yaml = _create_yaml_writer()
 

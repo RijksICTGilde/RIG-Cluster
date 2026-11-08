@@ -2,9 +2,9 @@
 
 ``KubectlConnector.__init__`` probes the cluster with a blocking ``kubectl auth whoami`` and
 the singleton is reset around every test, so without the arrangement in
-``tests/kubectl_probe.py`` every test that builds a connector starts that process: measured
-138 of them in one run of the fast layer, each a ten second wait when the cluster is
-unreachable. These tests fail when that arrangement stops working.
+``tests/kubectl_probe.py`` every test that builds a connector starts that process, each a ten
+second wait when the cluster is unreachable. These tests fail when that arrangement stops
+working.
 """
 
 from __future__ import annotations
