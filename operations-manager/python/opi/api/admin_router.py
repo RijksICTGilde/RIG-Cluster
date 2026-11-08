@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+
 from opi.api.user_token_auth import validate_platform_admin_token
 from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action

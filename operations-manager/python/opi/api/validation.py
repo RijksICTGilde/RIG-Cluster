@@ -16,6 +16,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
+
 from opi.forms.editables.fields.components import (
     COMPONENT_DESCRIPTION_EDITABLE,
     COMPONENT_IMAGE_EDITABLE,

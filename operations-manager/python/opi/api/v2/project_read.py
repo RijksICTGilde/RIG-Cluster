@@ -35,6 +35,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from opi.services.catalog.base import ConfigLayer
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_values
@@ -43,7 +45,6 @@ from opi.services.registry import get_service
 from opi.services.services import service_entry_config, service_entry_data, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.age import carries_encrypted_value
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 

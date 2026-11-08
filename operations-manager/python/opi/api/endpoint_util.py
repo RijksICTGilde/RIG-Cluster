@@ -6,6 +6,8 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
+from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
+
 from opi.api.principal import (
     AccessDenied,
     NotRecognised,
@@ -34,7 +36,6 @@ from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get
 from opi.services.project_roles import build_resource, resource_path
 from opi.services.project_store import get_project_store
 from opi.services.services_enums import CloneFromType
-from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
 if TYPE_CHECKING:
     from opi.services.project_service import ProjectSummary

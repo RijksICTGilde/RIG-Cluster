@@ -12,11 +12,12 @@ from urllib.parse import quote_plus
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.responses import Response
+
 from opi.middleware.server_side_session import ServerSideSession
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_service import get_user_service
-from sqlalchemy.exc import SQLAlchemyError
-from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 

@@ -20,7 +20,6 @@ from opi.core.project_environment import environment_markings, log_production_do
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, production_marking_change, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
-from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import (
@@ -29,6 +28,8 @@ from opi.forms.editables.service_path import (
     smart_get_value,
     smart_set_value,
 )
+from opi.forms.i18n import get_default_nl_translator
+from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug

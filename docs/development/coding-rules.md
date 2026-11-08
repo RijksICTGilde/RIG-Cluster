@@ -172,6 +172,12 @@ De repo in één keer omzetten is gevaarlijk. Een ronde volgt deze regels:
 7. **Elke stap is een commit.** Tests, `ruff check`, `ruff format --check` en `pyright` staan groen op die commit, niet pas op een verzamelcommit aan het eind.
 8. **Buiten een ronde geldt "Surgical changes"** uit `CLAUDE.md`: raak alleen aan wat je taak vraagt. Opruimen gebeurt in een ronde, niet terloops.
 
+### Hoe je meet
+
+`task code-metrics` meet `opi/` tegen de getallen hierboven: per module, functie en class de maat, het aantal dat boven elke drempel van hoofdstuk 3 en 4 zit, de langste en meest complexe functies, en per package de import-pijlen uit hoofdstuk 5 (apart geteld voor een import bovenaan, een import in een functie en een import onder `TYPE_CHECKING`). Met `CSV=<map>` komen de vier tabellen in die map, zodat een ronde zijn cijfers tegen een eerdere run kan leggen.
+
+De telwijze staat vast in `operations-manager/python/scripts/measure_code.py` en zijn toetsen: een ronde vergelijkt met een vorige meting, dus een wijziging in hoe geteld wordt maakt die vergelijking stuk.
+
 ### Gates die de regels afdwingen
 
 Een gate staat voor de hele `operations-manager` aan, niet per package. Wat bestond toen hij

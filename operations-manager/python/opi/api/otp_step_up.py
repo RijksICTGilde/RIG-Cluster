@@ -24,9 +24,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
 from opi.core.step_up import StepUpAction
 from opi.services.user_otp_service import OtpVerification, UserOtpService
-from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from starlette.requests import Request

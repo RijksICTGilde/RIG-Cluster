@@ -41,6 +41,7 @@ from opi.utils.sops import generate_sops_key_pair
 from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
 from tests.image_pins import REPO_ROOT, pinned_image
+from tests.kubectl_probe import kubectl_arrangement_for
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
@@ -350,14 +351,14 @@ def stub_platform_repo_sync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def reset_kubectl_singleton() -> Any:
-    """Reset KubectlConnector singleton between tests."""
+def reset_kubectl_singleton(request: pytest.FixtureRequest) -> Any:
+    """Reset the KubectlConnector singleton between tests, and keep its cluster probe out of
+    the layers that have no cluster (see ``tests/kubectl_probe.py``)."""
     from opi.connectors.kubectl import KubectlConnector
 
-    # Reset singleton state
     KubectlConnector._instance = None
-    yield
-    # Clean up after test
+    with kubectl_arrangement_for(request.node):
+        yield
     KubectlConnector._instance = None
 
 

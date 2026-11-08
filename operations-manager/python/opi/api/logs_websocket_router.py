@@ -29,6 +29,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
+from websockets.exceptions import ConnectionClosed
+
 from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_component_pods
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
@@ -42,8 +45,6 @@ from opi.services.project_authorization import (
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
 from opi.utils.naming import generate_unique_name
-from starlette.websockets import WebSocketState
-from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 

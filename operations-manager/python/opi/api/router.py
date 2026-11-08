@@ -4,6 +4,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, model_validator
+
 from opi.api.endpoint_util import (
     default_marking,
     deployment_in_body,
@@ -57,7 +59,6 @@ from opi.utils.project_utils import (
     normalize_container_image,
     validate_project_name,
 )
-from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 

@@ -82,8 +82,9 @@ tegenkomt, en komen er niet in:
   falen, dus het meet niets.
 
 Een module die dekking verliest doordat er een toets weg is, is een teken dat die toets wél
-iets mat: kijk dan opnieuw. De drempels in `.github/workflows/ci.yml` (71, en 86 voor de
-beveiligingskritische modules) gaan niet omlaag.
+iets mat: kijk dan opnieuw. De drempels gaan niet omlaag: 71 over alles (`fail_under` in
+`pyproject.toml`, de enige plek) en 86 voor de beveiligingskritische modules (de tweede
+coverage-stap in `.github/workflows/ci.yml`).
 
 ## De inventaris
 

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+
 from opi.api.user_token_auth import validate_platform_admin_token
 from opi.connectors.opi import OpiConnector
 from opi.core.authz.actions import Action, action

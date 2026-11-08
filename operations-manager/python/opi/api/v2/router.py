@@ -14,6 +14,8 @@ from typing import Annotated, Any, NamedTuple, cast
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
+
 from opi.api.endpoint_util import (
     default_marking,
     deployment_in_body,
@@ -189,7 +191,6 @@ from opi.utils.project_utils import (
 )
 from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 from opi.utils.yaml_util import dump_yaml_to_string
-from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 

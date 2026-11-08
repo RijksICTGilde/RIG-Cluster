@@ -60,6 +60,12 @@ Most tools talk to live infrastructure and read credentials/config from environm
 |---|---|
 | `transip_delete_dns.py` | Delete TransIP DNS records (the TransIP API key is IP-whitelisted; calls must originate from an allowed IP). |
 
+## De code zelf
+
+| Gereedschap | Wat het doet |
+|---|---|
+| `measure_code.py` | Meet `opi/` tegen de drempels van `docs/development/coding-rules.md`: per module, functie en class de maat, en per package de import-pijlen (apart voor top-level, in een functie en onder `TYPE_CHECKING`). Draai via `task code-metrics`, met `CSV=<map>` voor de tabellen. |
+
 ## De testsuite
 
 | Gereedschap | Wat het doet |

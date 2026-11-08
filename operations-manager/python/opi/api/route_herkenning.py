@@ -9,12 +9,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from starlette.routing import WebSocketRoute
+
 from opi.api.endpoint_util import (
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
 )
 from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
-from starlette.routing import WebSocketRoute
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

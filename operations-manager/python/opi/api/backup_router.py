@@ -4,6 +4,8 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import DeploymentNamePath, ProjectNamePath
@@ -29,7 +31,6 @@ from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 

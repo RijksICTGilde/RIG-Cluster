@@ -28,10 +28,10 @@ from tests.e2e.helpers.forgejo import ForgejoClient
 from tests.e2e.helpers.sandbox_api import make_session_cookie
 from tests.e2e.testserver import (
     SECRET_KEY,
-    _preinitialize_kubectl_without_probing,
     create_test_app,
     get_in_memory_session_store,
 )
+from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -129,7 +129,7 @@ def _keep_kubectl_from_probing() -> None:
     Root-conftest fixtures are set up before package-level ones, so this runs after the
     reset and puts the initialised singleton back.
     """
-    _preinitialize_kubectl_without_probing()
+    preinitialize_kubectl_without_probing()
 
 
 @pytest.fixture(scope="session")

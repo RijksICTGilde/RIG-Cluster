@@ -407,6 +407,7 @@ async def test_a_command_without_input_opens_no_stdin_pipe(connector):
     process.communicate.assert_awaited_once_with(input=None)
 
 
+@pytest.mark.own_kubectl
 async def test_a_manifest_containing_a_line_eof_is_data_and_not_a_command(connector, fake_kubectl, tmp_path):
     """Under the heredoc a line reading exactly ``EOF`` ended the input and the shell ran the
     rest. The templates quote their values today, but the connector may not depend on that."""
@@ -421,6 +422,7 @@ async def test_a_manifest_containing_a_line_eof_is_data_and_not_a_command(connec
     assert not sentinel.exists(), "the input after the EOF line was executed by a shell"
 
 
+@pytest.mark.own_kubectl
 async def test_no_secret_from_the_input_appears_in_the_argv_of_the_process(connector, fake_kubectl):
     """Measured on the old path: the marker was visible in ``/proc/<pid>/cmdline`` of
     ``/bin/sh`` for as long as the apply ran."""
@@ -432,6 +434,7 @@ async def test_no_secret_from_the_input_appears_in_the_argv_of_the_process(conne
     assert marker not in argv_dump.read_text()
 
 
+@pytest.mark.own_kubectl
 async def test_an_input_of_several_megabytes_is_no_longer_bounded_by_the_argument_length(connector, fake_kubectl):
     """As a shell argument this hit the kernel limit (``E2BIG``); through a pipe it does not."""
     env, _argv_dump, stdin_dump = fake_kubectl

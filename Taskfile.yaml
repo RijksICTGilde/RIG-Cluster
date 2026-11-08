@@ -1081,7 +1081,9 @@ tasks:
           kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
         elif [ "$VOOR" != "$NA" ]; then
           echo "De pod-template is gewijzigd; Kubernetes rolt zelf uit (geen restart nodig)."
-        elif echo "$UIT" | grep -qE '^(secret/operations-manager-(env-secrets|access)|configmap/operations-manager-config) configured'; then
+        # Geen grep -q: die stopt bij de eerste match, en met pipefail maakt de SIGPIPE van
+        # echo de hele pipeline non-zero. Dan wordt deze tak soms overgeslagen (1 op 300).
+        elif echo "$UIT" | grep -E '^(secret/operations-manager-(env-secrets|access)|configmap/operations-manager-config) configured' >/dev/null; then
           echo "Alleen een secret of de configmap is gewijzigd; herstart zodat de pod de nieuwe waarden laadt."
           kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
         else
@@ -3512,6 +3514,18 @@ tasks:
       - npm install
       - npm run build
 
+  code-metrics:
+    desc: "Meet opi/ tegen de drempels van docs/development/coding-rules.md (CSV= map voor de tabellen)"
+    summary: |
+      Per module, functie en class hoe ver de code van de drempels uit hoofdstuk 3 en 4 af
+      staat, plus de import-pijlen tussen de packages van hoofdstuk 5. Met CSV= komen de
+      vier tabellen in die map, zodat een opruimronde zijn cijfers tegen een eerdere run
+      kan leggen.
+    dir: operations-manager/python
+    cmds:
+      - uv run python scripts/measure_code.py {{if .CSV}}--csv "{{.CSV}}"{{end}} {{.CLI_ARGS}}
+    silent: false
+
   # ========================================
   # Coding rules (docs/development/coding-rules.md)
   # ========================================
@@ -5787,7 +5801,8 @@ tasks:
 
         # Het PAT van ArgoCD (lezen op de staging-repos), direct versleuteld op zijn plek.
         for f in "{{.SECRETS_DIR}}"/bootstrap/argocd-repo-*.sops.yaml; do
-          if sops --decrypt "$f" | grep -q 'password: PLACEHOLDER'; then
+          # Geen grep -q: met pipefail maakt de SIGPIPE van sops de pipeline non-zero.
+          if sops --decrypt "$f" | grep 'password: PLACEHOLDER' >/dev/null; then
             ARGOCD_TOKEN="${ARGOCD_TOKEN:-$(vraag STAGING_ARGOCD_TOKEN 'PAT van ArgoCD (lezen)')}"
             sops --set "[\"stringData\"][\"password\"] $(python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$ARGOCD_TOKEN")" "$f"
             echo "✅ token gezet in $(basename "$f")"

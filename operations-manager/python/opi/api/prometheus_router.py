@@ -9,9 +9,10 @@ import logging
 
 from fastapi import APIRouter
 from fastapi.responses import Response
-from opi.api.endpoint_util import validate_metrics_scrape_token
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.requests import Request
+
+from opi.api.endpoint_util import validate_metrics_scrape_token
 
 logger = logging.getLogger(__name__)
 

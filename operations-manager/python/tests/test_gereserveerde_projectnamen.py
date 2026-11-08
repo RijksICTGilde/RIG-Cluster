@@ -22,6 +22,7 @@ from opi.core.cluster_config import (
 from opi.core.project_schema import ProjectIntegrityError
 from opi.handlers.sops import SopsHandler
 from opi.manager.project_validation import validate_project_structure
+from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
 PLATFORM_NAMESPACE = "rig-prd-operations"
 
@@ -243,8 +244,9 @@ class TestEenPlatformnamespaceWordtNooitVerwijderd:
 
     @pytest.fixture
     def connector(self) -> KubectlConnector:
-        with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
-            return KubectlConnector()
+        """The singleton without its cluster probe: ``__init__`` would start a real kubectl."""
+        preinitialize_kubectl_without_probing()
+        return KubectlConnector()
 
     async def test_verwijderen_van_een_platformnamespace_gooit(self, connector: KubectlConnector) -> None:
         with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as run:

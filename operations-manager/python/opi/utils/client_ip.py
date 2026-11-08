@@ -15,8 +15,9 @@ Append``) zet zijn waarde als APARTE tweede headerregel achter die van de client
 import ipaddress
 import logging
 
-from opi.core.config import settings
 from starlette.requests import Request  # noqa: TC002 -- FastAPI heeft Request tijdens runtime nodig
+
+from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
 

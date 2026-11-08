@@ -18,6 +18,7 @@ one declaration.
 from typing import Annotated
 
 from fastapi import Path, Query
+
 from opi.utils.patterns import DNS1123_LABEL, DNS1123_SUBDOMAIN
 
 #: A project's technical name, as used in the project file and in every path.

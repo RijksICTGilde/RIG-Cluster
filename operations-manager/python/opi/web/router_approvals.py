@@ -24,7 +24,8 @@ from opi.connectors.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_dom
 from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
-from opi.forms import FormRenderer, get_default_nl_translator
+from opi.forms.i18n import get_default_nl_translator
+from opi.forms.renderer import FormRenderer
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.forms.wizard.resolver import (

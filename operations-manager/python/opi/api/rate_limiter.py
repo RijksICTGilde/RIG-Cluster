@@ -21,10 +21,11 @@ from collections import defaultdict
 from typing import NoReturn
 
 from fastapi import HTTPException
+from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
+
 from opi.core.config import settings
 from opi.utils.client_ip import client_ip
 from opi.utils.logging_redact import fingerprint_for_log
-from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
 logger = logging.getLogger(__name__)
 

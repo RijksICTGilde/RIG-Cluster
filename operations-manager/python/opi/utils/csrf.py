@@ -23,9 +23,10 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request
-from opi.utils.logging_redact import redact_invite_key_in_path
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
+from opi.utils.logging_redact import redact_invite_key_in_path
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable

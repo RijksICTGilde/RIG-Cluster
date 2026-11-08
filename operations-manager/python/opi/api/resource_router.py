@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+
 from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector

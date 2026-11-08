@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+
 from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath, ResourceNamePath
@@ -23,6 +24,8 @@ from opi.handlers.project_file_handler import (
 
 if TYPE_CHECKING:
     from opi.handlers.project_file_handler import ProjectFileHandler
+from pydantic import BaseModel, Field, model_validator
+
 from opi.manager.backup import (
     BucketRestoreResult,
     DatabaseRestoreResult,
@@ -55,7 +58,6 @@ from opi.utils.patterns import (
     S3_BUCKET_NAME,
 )
 from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
-from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 

@@ -22,7 +22,7 @@ The goal: a reviewer should be able to see that every behaviour the PR changes i
 
 - **Lifecycle-affecting changes.** If the change alters how a project is provisioned, deployed, or torn down, prefer a live-sandbox test (`-m "e2e and sandbox"`) that drives it through the real UI/API and verifies the outcome against Forgejo and/or the cluster.
 
-- **Run what you touched.** Only run tests for changed files - `task test-changed`, or `uv run pytest tests/<file> -x -q --tb=short` for the files you name yourself; never the whole suite blindly. The fast layer (`task test`, a few minutes) is worth it when the PR is broad. The broad layer (`task test-wide`) and the live groups belong to the phase before the merge, not to every review round; `docs/development/toetsen.md` has the layers. Coverage floor is 90%.
+- **Run what you touched.** Only run tests for changed files - `task test-changed`, or `uv run pytest tests/<file> -x -q --tb=short` for the files you name yourself; never the whole suite blindly. The fast layer (`task test`, a few minutes) is worth it when the PR is broad. The broad layer (`task test-wide`) and the live groups belong to the phase before the merge, not to every review round; `docs/development/toetsen.md` has the layers. Coverage floor is 71% (`fail_under` in `pyproject.toml`).
 
 ## When something is missing
 

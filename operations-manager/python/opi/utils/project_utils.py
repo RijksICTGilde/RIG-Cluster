@@ -11,6 +11,9 @@ from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException
+from ruamel.yaml import YAML
+from ruamel.yaml.scalarstring import LiteralScalarString
+
 from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
@@ -22,8 +25,6 @@ from opi.utils.age import encrypt_age_content, wrap_project_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
-from ruamel.yaml import YAML
-from ruamel.yaml.scalarstring import LiteralScalarString
 
 logger = logging.getLogger(__name__)
 

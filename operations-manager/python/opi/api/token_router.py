@@ -25,6 +25,8 @@ import logging
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+
 from opi.api.params import ProjectNamePath
 from opi.api.user_token_auth import validate_user_token
 from opi.core.auth_decorators import get_current_user, requires_step_up
@@ -43,7 +45,6 @@ from opi.services.api_token_service import (
 )
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.step_up_conditions import vraagt_altijd_step_up
-from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 

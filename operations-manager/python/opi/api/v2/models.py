@@ -2,9 +2,10 @@
 
 from enum import StrEnum
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from opi.core.project_environment import Omgeving
 from opi.services.catalog.approval import ApprovalStatus
-from pydantic import BaseModel, ConfigDict, Field
 
 
 class DeploymentStatus(StrEnum):

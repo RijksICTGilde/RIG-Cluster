@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
+
 from opi.core.config import settings
 
 if TYPE_CHECKING:

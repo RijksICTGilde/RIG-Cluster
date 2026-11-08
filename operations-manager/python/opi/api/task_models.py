@@ -9,6 +9,8 @@ Provides:
 
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from opi.api.v2.models import (
     APPROVALS_DESCRIPTION,
     ApprovalNoticeResponse,
@@ -18,7 +20,6 @@ from opi.api.v2.models import (
 )
 from opi.core import progress_steps
 from opi.core.async_task_service import TaskType
-from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Shared sub-models
