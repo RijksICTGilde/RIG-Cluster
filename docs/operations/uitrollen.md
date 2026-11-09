@@ -40,7 +40,7 @@ Bouwt `linux/amd64` en `linux/arm64`, pusht de CalVer-tag (plus `latest`) naar G
 
 ### 2. De env-secret nalopen
 
-`publish-operations-manager` genereert de env-secret in de secrets-repo opnieuw (`../zad-staging-secrets` voor staging). SOPS versleutelt dan opnieuw, ook als de inhoud gelijk is, en een dirty secrets-repo laat de volgende publish of deploy weigeren. Vergelijk de ontsleutelde inhoud met `HEAD`: is die gelijk, zet het bestand dan terug met `git checkout`. Verschilt hij, dan is er echt iets veranderd en hoort dat in een eigen commit in die repo.
+`publish-operations-manager` en `deploy-operations-manager` versleutelen allebei de env-secret opnieuw: voor staging in `../zad-staging-secrets`, voor productie in RIG-Cluster zelf (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-env-secrets.yaml`). Loop dit dus na elke publish en na elke deploy na. SOPS versleutelt dan opnieuw, ook als de inhoud gelijk is, en een dirty secrets-repo laat de volgende publish of deploy weigeren. Vergelijk de ontsleutelde inhoud met `HEAD`: is die gelijk, zet het bestand dan terug met `git checkout`. Verschilt hij, dan is er echt iets veranderd en hoort dat in een eigen commit in die repo.
 
 ### 3. De pin committen en deployen
 
