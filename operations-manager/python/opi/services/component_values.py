@@ -40,6 +40,7 @@ from typing import Any
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.services.catalog.base import ConfigLayer
+from opi.services.project import Project
 from opi.utils.age import (
     decrypt_age_content_sync,
     encrypt_age_content_sync,
@@ -169,16 +170,10 @@ def locate(
             (c for c in components if isinstance(c, dict) and c.get("name") == component_name),
             None,
         )
-    deployment = next(
-        (d for d in project_data.get("deployments") or [] if isinstance(d, dict) and d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         return None
-    return next(
-        (c for c in deployment.get("components") or [] if isinstance(c, dict) and c.get("reference") == component_name),
-        None,
-    )
+    return Project.locate(deployment.get("components") or [], reference=component_name)
 
 
 def decode(raw: Any, project_data: dict[str, Any], private_key: str | None = None) -> dict[str, str]:

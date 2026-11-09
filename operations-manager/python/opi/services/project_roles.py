@@ -14,6 +14,7 @@ from opi.core.actor import ActorKind, get_actor
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, decide, effective_roles
 from opi.core.project_environment import Omgeving, effective_environment, highest_environment
 from opi.core.step_up import is_elevated_admin
+from opi.services.project import Project
 from opi.services.user_service import get_user_service
 
 if TYPE_CHECKING:
@@ -101,10 +102,8 @@ def deployment_marking(project_data: dict[str, Any], deployment_name: str | None
     """De effectieve markering van deze deployment, of None als er geen deployment is."""
     if not deployment_name:
         return None
-    for deployment in project_data.get("deployments") or []:
-        if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
-            return effective_environment(deployment).value
-    return None
+    deployment = Project(project_data).find("deployments", name=deployment_name)
+    return effective_environment(deployment).value if deployment is not None else None
 
 
 def component_in_production(project_data: dict[str, Any], component_name: str | None) -> bool:

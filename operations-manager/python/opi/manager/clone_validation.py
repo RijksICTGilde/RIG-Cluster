@@ -231,12 +231,7 @@ def validate_clone_readiness(project_data: dict[str, Any], deployment_name: str)
     Returns:
         ``{"validation": {"passed": bool, "checks": [{"name", "status", "message"}]}}``
     """
-    deployment: dict[str, Any] | None = None
-    for candidate in project_data.get("deployments", []):
-        if isinstance(candidate, dict) and candidate.get("name") == deployment_name:
-            deployment = candidate
-            break
-
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         return _report([_check("deployment_exists", False, f"Deployment '{deployment_name}' not found in project")])
 

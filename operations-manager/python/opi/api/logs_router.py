@@ -28,6 +28,7 @@ from opi.core.errors import reference_for, with_reference
 from opi.core.step_up import has_fresh_step_up, step_up_fresh
 from opi.middleware.authorization import get_user
 from opi.services.catalog.image_registries.resolution import display_image
+from opi.services.project import Project
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
@@ -68,14 +69,7 @@ async def resolve_component_pods(
     if project_info is None:
         return None
 
-    deployment = next(
-        (
-            depl
-            for depl in (project_info.data or {}).get("deployments", []) or []
-            if depl.get("name") == deployment_name
-        ),
-        None,
-    )
+    deployment = Project(project_info.data or {}).find("deployments", name=deployment_name)
     if deployment is None or deployment.get("cluster") != settings.CLUSTER_MANAGER:
         return None
 

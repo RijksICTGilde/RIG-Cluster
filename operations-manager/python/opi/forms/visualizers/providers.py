@@ -35,6 +35,7 @@ from opi.services.catalog.shared.noncurrent_versions import (
     project_noncurrent_expire_days,
 )
 from opi.services.catalog.shared.storage import STORAGE_SIZES
+from opi.services.project import Project
 from opi.services.project_roles import actor_may_set
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
@@ -1545,13 +1546,6 @@ def _cross_domain_peer_project_data(yaml_data: dict[str, Any], project_name: str
     return summary.data if summary is not None and isinstance(summary.data, dict) else None
 
 
-def _cross_domain_deployment(project_data: dict[str, Any] | None, deployment_name: str | None) -> dict[str, Any]:
-    for deployment in (project_data or {}).get("deployments") or []:
-        if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
-            return deployment
-    return {}
-
-
 def _cross_domain_options(
     names: list[str],
     current_value: str | None,
@@ -1732,7 +1726,7 @@ class CrossDomainPeerComponentOptionsProvider:
             for deployment in (project_data or {}).get("deployments") or []
             if isinstance(deployment, dict) and deployment.get("cluster") == settings.CLUSTER_MANAGER
         ]
-        chosen = _cross_domain_deployment(project_data, peer.get("deployment"))
+        chosen = Project(project_data or {}).find("deployments", name=peer.get("deployment")) or {}
         if chosen:
             deployments = [chosen]
         names: list[str] = []

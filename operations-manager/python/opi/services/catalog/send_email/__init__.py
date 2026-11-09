@@ -71,7 +71,8 @@ from opi.services.catalog.base import (
 from opi.services.catalog.send_email.actions import send_email_actions
 from opi.services.catalog.send_email.config_model import SendEmailConfig, SendEmailDeploymentConfig
 from opi.services.catalog.send_email.variables import SendEmailVariables
-from opi.services.services import ServiceDefinition, deployment_index, service_entry_config, service_entry_name
+from opi.services.project import Project
+from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.naming import (
     generate_deployment_mail_sender_address,
@@ -291,18 +292,10 @@ MESSAGES_PER_DAY_APPROVAL = config_value_approval(
 # in is a request of its own.
 
 
-def _deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
-    """The deployment with this name, or an empty block when the project does not know it."""
-    index = deployment_index(project_data, deployment_name)
-    if index is None:
-        return {}
-    deployment = project_data["deployments"][index]
-    return deployment if isinstance(deployment, dict) else {}
-
-
 def _deployment_config(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
     """The service's config block ON THIS DEPLOYMENT, empty when there is none."""
-    for entry in _deployment(project_data, deployment_name).get("services", []) or []:
+    deployment = Project(project_data).find("deployments", name=deployment_name) or {}
+    for entry in deployment.get("services", []) or []:
         if service_entry_name(entry) == ServiceType.SEND_EMAIL.value:
             config = service_entry_config(entry)
             return config if isinstance(config, dict) else {}

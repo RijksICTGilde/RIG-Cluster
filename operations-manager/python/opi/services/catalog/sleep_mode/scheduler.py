@@ -23,6 +23,7 @@ from opi.services.catalog.sleep_mode import config as sleep_config
 from opi.services.catalog.sleep_mode import flow, service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, STATE_WAKING
+from opi.services.project import Project
 from opi.services.project_store import ConflictError
 
 logger = logging.getLogger(__name__)
@@ -152,9 +153,7 @@ class SleepModeScheduler:
             project_data = await project_manager.get_contents()
             handler = ProjectFileHandler()
             for deployment_name, action in plan:
-                deployment = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
+                deployment = Project(project_data).find("deployments", name=deployment_name)
                 if deployment is None:
                     continue
                 if action == STAMP:

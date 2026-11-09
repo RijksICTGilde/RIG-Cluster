@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from opi.services.project import Project
+
 
 class DisabledState(StrEnum):
     """How much of a deployment is switched off."""
@@ -85,10 +87,7 @@ def deployment_disabled_state(project_data: dict[str, Any], deployment_name: str
     the first. An unknown deployment name yields the same empty answer -- a caller asking
     about a deployment that is not in the file has nothing to weigh.
     """
-    deployment = next(
-        (d for d in project_data.get("deployments", []) or [] if d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     components = (deployment or {}).get("components", []) or []
     total = len(components)
     disabled = sum(1 for component in components if component_is_disabled(project_data, component))

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from opi.core.cluster_config import get_prefixed_namespace
+from opi.services.project import Project
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
@@ -53,13 +54,6 @@ class ResolvedRule:
     local_component: str
     peer: PeerSelector | None
     port: int
-
-
-def _find_deployment(project_data: dict, deployment_name: str) -> dict | None:
-    for deployment in project_data.get("deployments", []) or []:
-        if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
-            return deployment
-    return None
 
 
 def _component_in_deployment(deployment: dict, component_name: str) -> bool:
@@ -165,7 +159,7 @@ def resolve_rules(
             continue
         assert rule.peer_deployment is not None  # noqa: S101  # to_merged_rule dropped the open ones
         assert rule.peer_component is not None  # noqa: S101  # required on a complete rule
-        deployment = _find_deployment(project_data, rule.peer_deployment)
+        deployment = Project(project_data).find("deployments", name=rule.peer_deployment)
         if deployment is None:
             logger.warning(
                 "cross-domain rule '%s': deployment '%s' not found in project '%s', skipped",

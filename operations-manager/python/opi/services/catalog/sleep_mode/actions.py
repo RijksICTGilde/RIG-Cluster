@@ -13,14 +13,8 @@ from typing import Any
 from opi.services.catalog.sleep_mode import config as sleep_config
 from opi.services.catalog.sleep_mode.config import SleepModeConfigError
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, read
+from opi.services.project import Project
 from opi.services.services import DeploymentAction
-
-
-def _find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
-    for deployment in project_data.get("deployments", []) or []:
-        if deployment.get("name") == deployment_name:
-            return deployment
-    return None
 
 
 def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[DeploymentAction]:
@@ -42,7 +36,7 @@ def sleep_actions(project_data: dict[str, Any], deployment_name: str) -> list[De
     target the session-authenticated web routes (admin/owner), so a manual sleep and a
     manual wake are the two halves of one toggle.
     """
-    deployment = _find_deployment(project_data, deployment_name)
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         return []
     try:

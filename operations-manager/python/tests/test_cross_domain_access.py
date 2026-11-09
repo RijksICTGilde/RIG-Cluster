@@ -831,6 +831,12 @@ class TestPeerCascade:
         row = _peer_row(project="regelrecht", deployment="dev")
         assert self._components(row) == ["", "api"]
 
+    def test_components_of_an_unknown_deployment_fall_back_to_the_union(self) -> None:
+        # A stored deployment the peer project no longer has: not found means "no deployment
+        # chosen", so the component stays fillable instead of offering an empty list.
+        row = _peer_row(project="regelrecht", deployment="weg")
+        assert self._components(row) == ["", "api", "events"]
+
     def test_components_without_a_deployment_are_the_union_over_this_cluster(self) -> None:
         # A project-level rule may leave the peer deployment open; the component must still be
         # fillable, and a component name is project-level, so the union is exactly right.

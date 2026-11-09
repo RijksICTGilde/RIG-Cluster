@@ -384,11 +384,10 @@ class DeploymentMutations:
         change_parts: list[str] = []
 
         normalized_warnings: list[str] = []
-        for deployment in project_data["deployments"]:
-            if deployment.get("name") == request.deployment_name:
-                normalized_warnings = _apply_component_images(request, deployment, change_parts)
-                self._apply_deployment_settings(request, deployment, project_data)
-                break
+        deployment = Project(project_data).find("deployments", name=request.deployment_name)
+        if deployment is not None:
+            normalized_warnings = _apply_component_images(request, deployment, change_parts)
+            self._apply_deployment_settings(request, deployment, project_data)
 
         domain_error, certificate_notes = await self._domain_validation(request, project_data)
         if domain_error:
@@ -397,15 +396,12 @@ class DeploymentMutations:
 
         # The services clear what they recorded about the old content through this hook
         # (RC-37), for the components this call names.
-        upsert_deployment_dict = next(
-            (d for d in project_data.get("deployments", []) if d.get("name") == request.deployment_name), None
-        )
         state_notices: list[str] = []
-        if upsert_deployment_dict is not None:
+        if deployment is not None:
             state_notices = await run_redeploy_hooks(
                 project_name,
                 project_data,
-                upsert_deployment_dict,
+                deployment,
                 [component.reference for component in request.components],
             )
 

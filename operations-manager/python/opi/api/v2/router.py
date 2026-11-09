@@ -822,14 +822,7 @@ async def get_deployment_v2(
     project_data: dict[str, Any] = project.data
     current_cluster = settings.CLUSTER_MANAGER
 
-    deployment = next(
-        (
-            d
-            for d in project_data.get("deployments", [])
-            if d.get("name") == deployment_name and d.get("cluster") == current_cluster
-        ),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name, cluster=current_cluster)
     if not deployment:
         raise HTTPException(
             status_code=404,

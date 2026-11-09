@@ -64,6 +64,7 @@ from opi.services.catalog.send_email import (
     RELAY_POD_LABELS,
     RELAY_POD_PORT,
     SendEmailService,
+    deployment_from_address,
     deployment_messages_per_day,
 )
 from opi.services.catalog.send_email.config_model import MAX_MESSAGES_PER_DAY, SendEmailConfig
@@ -4025,3 +4026,20 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         await app.state.startup_retry_task
 
         assert meegegeven == [False]
+
+
+class TestOnbekendeDeployment:
+    """A name the project does not know reads as "deployment fills in nothing"."""
+
+    def test_from_address_falls_back_to_the_project(self) -> None:
+        project = {"deployments": [{"name": "productie"}]}
+        assert deployment_from_address(project, "ghost") == ""
+
+    def test_messages_per_day_falls_back_to_the_project(self) -> None:
+        project = {"deployments": [{"name": "productie"}]}
+        assert deployment_messages_per_day(project, "ghost") == deployment_messages_per_day(project, "productie")
+
+    def test_non_dict_deployment_entry_is_skipped(self) -> None:
+        assert deployment_messages_per_day({"deployments": ["productie"]}, "productie") == deployment_messages_per_day(
+            {"deployments": []}, "productie"
+        )

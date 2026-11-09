@@ -1835,10 +1835,7 @@ class ProjectManager:
         previous_yaml = self._project_changes.get("previous_yaml")
         if not previous_yaml:
             return None
-        for dep in previous_yaml.get("deployments", []):
-            if isinstance(dep, dict) and dep.get("name") == deployment_name:
-                return dep
-        return None
+        return Project(previous_yaml).find("deployments", name=deployment_name)
 
     def get_progress_manager(self) -> AnyTaskProgressManager | None:
         """Get the task progress manager for tracking operation status."""
@@ -8074,14 +8071,7 @@ class ProjectManager:
         # never reached the project_data that gets committed. The store then saw no diff
         # (current == data) and committed nothing, silently dropping the image update.
         # Match get_deployments' cluster filter so we pick the same deployment it would.
-        deployment = next(
-            (
-                d
-                for d in project_data.get("deployments", [])
-                if d.get("name") == deployment_name and d.get("cluster") == settings.CLUSTER_MANAGER
-            ),
-            None,
-        )
+        deployment = Project(project_data).find("deployments", name=deployment_name, cluster=settings.CLUSTER_MANAGER)
         if not deployment:
             # TaskInputError en geen ValueError: dit is geen storing maar een verzoek dat
             # niet kan, en de worker maakt er daardoor een blijvende mislukking van MET een

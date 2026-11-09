@@ -39,6 +39,7 @@ from opi.core.config import settings
 from opi.core.session_guard import valid_session_user
 from opi.core.step_up import session_step_up_until, step_up_fresh
 from opi.manager.run_support import LABEL_RUN
+from opi.services.project import Project
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
 )
@@ -382,14 +383,7 @@ async def stream_logs(
             return
 
         project_data = project_info.data or {}
-        deployments_list = project_data.get("deployments", [])
-
-        # Find the deployment
-        target_deployment = None
-        for depl in deployments_list:
-            if depl.get("name") == deployment:
-                target_deployment = depl
-                break
+        target_deployment = Project(project_data).find("deployments", name=deployment)
 
         namespace = get_prefixed_namespace(current_cluster, project_name)
 
@@ -852,13 +846,7 @@ async def stream_logs(
                                 break
 
                             fresh_data = fresh_project.data or {}
-                            fresh_deployments = fresh_data.get("deployments", [])
-
-                            fresh_deployment = None
-                            for depl in fresh_deployments:
-                                if depl.get("name") == deployment:
-                                    fresh_deployment = depl
-                                    break
+                            fresh_deployment = Project(fresh_data).find("deployments", name=deployment)
 
                             if not fresh_deployment:
                                 await send_message(websocket, "error", message="Deployment no longer exists")

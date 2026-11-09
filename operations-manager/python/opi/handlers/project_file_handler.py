@@ -1097,6 +1097,13 @@ class ProjectFileHandler:
         """
         return Project(project_data).find("deployments", name=deployment_name)
 
+    def _find_deployment_component(
+        self, project_data: dict[str, Any], deployment_name: str, component_reference: str
+    ) -> dict[str, Any] | None:
+        """Find a deployment's component dict by its reference, or None."""
+        deployment = self._find_deployment(project_data, deployment_name)
+        return Project.locate((deployment or {}).get("components") or [], reference=component_reference)
+
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
         """Decrypt individual env var values.
 
@@ -1272,15 +1279,11 @@ class ProjectFileHandler:
 
         # 1. Per-deployment-component override (under services.publish-on-web.config)
         if deployment_name:
-            for dep in project_data.get("deployments", []):
-                if dep.get("name") != deployment_name:
-                    continue
-                for comp in dep.get("components", []):
-                    if comp.get("reference") == component_name:
-                        cfg = ((comp.get("services") or {}).get("publish-on-web") or {}).get("config") or {}
-                        if cfg.get("tls") in valid:
-                            return cfg
-                break
+            comp = self._find_deployment_component(project_data, deployment_name, component_name)
+            if comp is not None:
+                cfg = ((comp.get("services") or {}).get("publish-on-web") or {}).get("config") or {}
+                if cfg.get("tls") in valid:
+                    return cfg
 
         # 2. Component-level. Format-agnostic: the legacy-only read (isinstance
         # entry.get("publish-on-web")) missed a {reference: publish-on-web, config} record.
@@ -1384,20 +1387,15 @@ class ProjectFileHandler:
         caller can fall back to the component-level command (or the image
         default). Same defensive type checks as the component-level extractor.
         """
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            for comp in deployment.get("components", []):
-                if comp.get("reference") != component_reference:
-                    continue
-                raw = comp.get("command")
-                if not isinstance(raw, list) or not raw:
-                    return None
-                if not all(isinstance(item, str) for item in raw):
-                    return None
-                return list(raw)
-        return None
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is None:
+            return None
+        raw = comp.get("command")
+        if not isinstance(raw, list) or not raw:
+            return None
+        if not all(isinstance(item, str) for item in raw):
+            return None
+        return list(raw)
 
     def extract_component_security(self, project_data: dict[str, Any], component_name: str) -> dict[str, int] | None:
         """Extract the optional ``security`` block from a component definition.
@@ -1466,21 +1464,14 @@ class ProjectFileHandler:
         Returns:
             Flat dictionary with resource overrides, or None if absent
         """
-        # Navigate manually for nested array filter
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            components = deployment.get("components", [])
-            for comp in components:
-                if comp.get("reference") != component_reference:
-                    continue
-                raw_resources = comp.get("resources")
-                if raw_resources is None:
-                    return None
-                # Parse without defaults - return only what's explicitly set
-                return _parse_resources_block_partial(raw_resources)
-        return None
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is None:
+            return None
+        raw_resources = comp.get("resources")
+        if raw_resources is None:
+            return None
+        # Parse without defaults - return only what's explicitly set
+        return _parse_resources_block_partial(raw_resources)
 
     def extract_component_disabled(self, project_data: dict[str, Any], component_name: str) -> tuple[bool, str]:
         """
@@ -1571,20 +1562,14 @@ class ProjectFileHandler:
         Returns:
             True if the deployment component was found and updated, False otherwise
         """
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            components = deployment.get("components", [])
-            for comp in components:
-                if comp.get("reference") != component_reference:
-                    continue
-                _apply_flat_resources(comp, resources)
-                logger.info(
-                    f"Updated resources for component '{component_reference}' "
-                    f"in deployment '{deployment_name}': {resources}"
-                )
-                return True
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is not None:
+            _apply_flat_resources(comp, resources)
+            logger.info(
+                f"Updated resources for component '{component_reference}' "
+                f"in deployment '{deployment_name}': {resources}"
+            )
+            return True
         logger.warning(
             f"Component '{component_reference}' not found in deployment '{deployment_name}' for resource update"
         )
@@ -1826,21 +1811,15 @@ class ProjectFileHandler:
         Returns:
             True if the deployment component was found and updated
         """
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            components = deployment.get("components", [])
-            for comp in components:
-                if comp.get("reference") != component_reference:
-                    continue
-                if "resources" not in comp:
-                    comp["resources"] = {}
-                history = comp["resources"].get("history", [])
-                history.insert(0, entry)
-                comp["resources"]["history"] = _prune_resource_history(history, max_entries)
-                return True
-        return False
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is None:
+            return False
+        if "resources" not in comp:
+            comp["resources"] = {}
+        history = comp["resources"].get("history", [])
+        history.insert(0, entry)
+        comp["resources"]["history"] = _prune_resource_history(history, max_entries)
+        return True
 
     def compact_resource_history(self, project_data: dict[str, Any], max_entries: int = 5) -> bool:
         """Compact every component's resource history in place (task 7).
@@ -1912,16 +1891,11 @@ class ProjectFileHandler:
             return floor
 
         # Check deployment-component history
-        for dep in project_data.get("deployments", []):
-            if dep.get("name") != deployment_name:
-                continue
-            for comp in dep.get("components", []):
-                if comp.get("reference") != component_reference:
-                    continue
-                for entry in comp.get("resources", {}).get("history", []):
-                    if entry.get("source") == "oom-watcher":
-                        floor = consider(entry)
-                        break  # only check most recent oom-watcher entry
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        for entry in (comp or {}).get("resources", {}).get("history", []):
+            if entry.get("source") == "oom-watcher":
+                floor = consider(entry)
+                break  # only check most recent oom-watcher entry
 
         # Check component-definition history (scoped to this deployment)
         for comp in project_data.get("components", []):
@@ -1979,16 +1953,11 @@ class ProjectFileHandler:
                 take(entry)
                 break  # only the most recent manual entry
 
-        for dep in project_data.get("deployments", []):
-            if dep.get("name") != deployment_name:
-                continue
-            for comp in dep.get("components", []):
-                if comp.get("reference") != component_reference:
-                    continue
-                for entry in comp.get("resources", {}).get("history", []):
-                    if entry.get("source") == "manual":
-                        take(entry)
-                        break
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        for entry in (comp or {}).get("resources", {}).get("history", []):
+            if entry.get("source") == "manual":
+                take(entry)
+                break
 
         if not fields:
             return None
@@ -2011,16 +1980,9 @@ class ProjectFileHandler:
         Returns:
             Tuple of (disabled, reason)
         """
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            components = deployment.get("components", [])
-            for comp in components:
-                if comp.get("reference") != component_reference:
-                    continue
-                if "disabled" in comp:
-                    return bool(comp.get("disabled", False)), str(comp.get("disabled-reason", ""))
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is not None and "disabled" in comp:
+            return bool(comp.get("disabled", False)), str(comp.get("disabled-reason", ""))
 
         # Fall back to component-definition-level disabled state
         return self.extract_component_disabled(project_data, component_reference)
@@ -2043,15 +2005,9 @@ class ProjectFileHandler:
         Returns:
             True if auto-tuning should run for this component
         """
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            for comp in deployment.get("components", []):
-                if comp.get("reference") != component_reference:
-                    continue
-                if "auto-tune-resources" in comp:
-                    return bool(comp.get("auto-tune-resources"))
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is not None and "auto-tune-resources" in comp:
+            return bool(comp.get("auto-tune-resources"))
 
         # Fall back to the component definition, default enabled
         for comp in project_data.get("components", []):
@@ -2082,46 +2038,40 @@ class ProjectFileHandler:
         Returns:
             True if the deployment component was found and updated, False otherwise
         """
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") != deployment_name:
-                continue
-            components = deployment.get("components", [])
-            for comp in components:
-                if comp.get("reference") != component_reference:
-                    continue
-                # Kubelet alternates between ErrImagePull and ImagePullBackOff for one
-                # and the same failure, so the message text changes while nothing about
-                # the component does. Rewriting the reason on every sweep turns that
-                # into a commit, a push and an ArgoCD refresh carrying no information --
-                # 88 of them on 2026-09-10 alone. Already disabled over the same image
-                # is already said.
-                if (
-                    disabled
-                    and comp.get("disabled") is True
-                    and is_image_pull_disable_reason(reason)
-                    and comp.get("disabled-image") == comp.get("image")
-                ):
-                    return True
-
-                comp["disabled"] = disabled
-                if disabled:
-                    comp["disabled-reason"] = reason
-                    # Record the offending image for image-pull disables so the
-                    # disable can be auto-cleared once the image changes, no matter
-                    # which edit path (modal, git, image API) makes the change.
-                    if is_image_pull_disable_reason(reason) and comp.get("image"):
-                        comp["disabled-image"] = comp["image"]
-                    else:
-                        comp.pop("disabled-image", None)
-                else:
-                    comp.pop("disabled-reason", None)
-                    comp.pop("disabled-image", None)
-                logger.info(
-                    f"Set component '{component_reference}' in deployment '{deployment_name}' "
-                    f"disabled={disabled}" + (f" reason='{reason}'" if disabled else "")
-                )
+        comp = self._find_deployment_component(project_data, deployment_name, component_reference)
+        if comp is not None:
+            # Kubelet alternates between ErrImagePull and ImagePullBackOff for one
+            # and the same failure, so the message text changes while nothing about
+            # the component does. Rewriting the reason on every sweep turns that
+            # into a commit, a push and an ArgoCD refresh carrying no information --
+            # 88 of them on 2026-09-10 alone. Already disabled over the same image
+            # is already said.
+            if (
+                disabled
+                and comp.get("disabled") is True
+                and is_image_pull_disable_reason(reason)
+                and comp.get("disabled-image") == comp.get("image")
+            ):
                 return True
+
+            comp["disabled"] = disabled
+            if disabled:
+                comp["disabled-reason"] = reason
+                # Record the offending image for image-pull disables so the
+                # disable can be auto-cleared once the image changes, no matter
+                # which edit path (modal, git, image API) makes the change.
+                if is_image_pull_disable_reason(reason) and comp.get("image"):
+                    comp["disabled-image"] = comp["image"]
+                else:
+                    comp.pop("disabled-image", None)
+            else:
+                comp.pop("disabled-reason", None)
+                comp.pop("disabled-image", None)
+            logger.info(
+                f"Set component '{component_reference}' in deployment '{deployment_name}' "
+                f"disabled={disabled}" + (f" reason='{reason}'" if disabled else "")
+            )
+            return True
         logger.warning(
             f"Component '{component_reference}' not found in deployment '{deployment_name}' for disabled state update"
         )
@@ -2214,62 +2164,55 @@ class ProjectFileHandler:
         Returns:
             Generation number if set, None if not present (no version suffix will be used)
         """
-        # Navigate manually since JSONPath with nested array filters can be tricky
-        deployments = project_data.get("deployments", [])
-
-        # Log available deployments for debugging
-        deployment_names = [d.get("name") for d in deployments]
+        deployment_names = [d.get("name") for d in project_data.get("deployments") or [] if isinstance(d, dict)]
         logger.info(
             f"Looking for generation: deployment={deployment_name}, component={component_name}, "
             f"service_type={service_type}, reference={reference_name}. "
             f"Available deployments: {deployment_names}"
         )
 
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                components = deployment.get("components", [])
-                component_refs = [c.get("reference") for c in components]
-                logger.info(f"Found deployment '{deployment_name}', components: {component_refs}")
+        deployment = self._find_deployment(project_data, deployment_name)
+        components = (deployment or {}).get("components") or []
+        if deployment is not None:
+            component_refs = [c.get("reference") for c in components if isinstance(c, dict)]
+            logger.info(f"Found deployment '{deployment_name}', components: {component_refs}")
 
-                for component in components:
-                    if component.get("reference") == component_name:
-                        services = component.get("services", {})
-                        logger.info(f"Found component '{component_name}', services keys: {list(services.keys())}")
-                        service_items = services.get(service_type, [])
+        component = Project.locate(components, reference=component_name)
+        if component is not None:
+            services = component.get("services", {})
+            logger.info(f"Found component '{component_name}', services keys: {list(services.keys())}")
+            service_items = services.get(service_type, [])
 
-                        # Handle list format (new pattern)
-                        if isinstance(service_items, list):
-                            item_refs = [i.get("reference") if isinstance(i, dict) else str(i) for i in service_items]
-                            logger.info(f"Service items (list format) for '{service_type}': {item_refs}")
+            # Handle list format (new pattern)
+            if isinstance(service_items, list):
+                item_refs = [i.get("reference") if isinstance(i, dict) else str(i) for i in service_items]
+                logger.info(f"Service items (list format) for '{service_type}': {item_refs}")
+                item = Project.locate(service_items, reference=reference_name)
+                if item is not None:
+                    config = item.get("config", {})
+                    generation = config.get("generation")
+                    logger.info(f"Found item '{reference_name}', config={config}, generation={generation}")
+                    if generation is not None:
+                        logger.info(
+                            f"Returning generation {generation} for {deployment_name}/{component_name}/"
+                            f"{service_type}/{reference_name}"
+                        )
+                        return int(generation)
+                    logger.info(f"Generation is None for {reference_name}, returning None")
+                    return None
 
-                            for item in service_items:
-                                if isinstance(item, dict) and item.get("reference") == reference_name:
-                                    config = item.get("config", {})
-                                    generation = config.get("generation")
-                                    logger.info(
-                                        f"Found item '{reference_name}', config={config}, generation={generation}"
-                                    )
-                                    if generation is not None:
-                                        logger.info(
-                                            f"Returning generation {generation} for {deployment_name}/{component_name}/"
-                                            f"{service_type}/{reference_name}"
-                                        )
-                                        return int(generation)
-                                    logger.info(f"Generation is None for {reference_name}, returning None")
-                                    return None
-
-                        # Handle dict format (old pattern - backward compatibility)
-                        elif isinstance(service_items, dict) and reference_name in service_items:
-                            item_config = service_items[reference_name]
-                            if isinstance(item_config, dict):
-                                generation = item_config.get("generation")
-                                if generation is not None:
-                                    logger.debug(
-                                        f"Service generation (old pattern) for {deployment_name}/"
-                                        f"{component_name}/{service_type}/{reference_name}: {generation}"
-                                    )
-                                    return int(generation)
-                                return None
+            # Handle dict format (old pattern - backward compatibility)
+            elif isinstance(service_items, dict) and reference_name in service_items:
+                item_config = service_items[reference_name]
+                if isinstance(item_config, dict):
+                    generation = item_config.get("generation")
+                    if generation is not None:
+                        logger.debug(
+                            f"Service generation (old pattern) for {deployment_name}/"
+                            f"{component_name}/{service_type}/{reference_name}: {generation}"
+                        )
+                        return int(generation)
+                    return None
 
         logger.info(f"No generation found for {deployment_name}/{component_name}/{service_type}/{reference_name}")
         return None
@@ -2301,79 +2244,45 @@ class ProjectFileHandler:
         Returns:
             Updated project_data dictionary
         """
-        deployments = project_data.get("deployments", [])
-        component_found = False
-
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                components = deployment.get("components", [])
-                for component in components:
-                    if component.get("reference") == component_name:
-                        component_found = True
-
-                        # Ensure 'services' dict exists
-                        if "services" not in component:
-                            component["services"] = {}
-
-                        # Ensure service_type list exists
-                        if service_type not in component["services"]:
-                            component["services"][service_type] = []
-
-                        service_items = component["services"][service_type]
-
-                        # Handle list format (new pattern)
-                        if isinstance(service_items, list):
-                            # Find existing item or add new one
-                            item_found = False
-                            for item in service_items:
-                                if isinstance(item, dict) and item.get("reference") == reference_name:
-                                    # Ensure config dict exists
-                                    if "config" not in item:
-                                        item["config"] = {}
-                                    item["config"]["generation"] = generation
-                                    item_found = True
-                                    break
-
-                            if not item_found:
-                                # Add new item with reference/config pattern
-                                service_items.append(
-                                    {"reference": reference_name, "config": {"generation": generation}}
-                                )
-
-                        # Handle dict format (old pattern) - convert to new pattern
-                        elif isinstance(service_items, dict):
-                            # Convert old dict pattern to new list pattern
-                            new_list = []
-                            for ref_name, ref_config in service_items.items():
-                                if ref_name == reference_name:
-                                    # Update this item with new generation
-                                    new_list.append({"reference": ref_name, "config": {"generation": generation}})
-                                elif isinstance(ref_config, dict) and "generation" in ref_config:
-                                    # Preserve existing items
-                                    new_list.append(
-                                        {"reference": ref_name, "config": {"generation": ref_config["generation"]}}
-                                    )
-                                else:
-                                    # Item without generation
-                                    new_list.append({"reference": ref_name})
-
-                            # If reference wasn't found in old dict, add it
-                            if not any(item.get("reference") == reference_name for item in new_list):
-                                new_list.append({"reference": reference_name, "config": {"generation": generation}})
-
-                            component["services"][service_type] = new_list
-
-                        logger.info(
-                            f"Set service generation for {deployment_name}/{component_name}/"
-                            f"{service_type}/{reference_name} to {generation}"
-                        )
-                        break
-
-                if component_found:
-                    break
-
-        if not component_found:
+        component = self._find_deployment_component(project_data, deployment_name, component_name)
+        if component is None:
             logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
+            return project_data
+
+        if "services" not in component:
+            component["services"] = {}
+        if service_type not in component["services"]:
+            component["services"][service_type] = []
+
+        service_items = component["services"][service_type]
+
+        if isinstance(service_items, list):
+            item = Project.locate(service_items, reference=reference_name)
+            if item is not None:
+                if "config" not in item:
+                    item["config"] = {}
+                item["config"]["generation"] = generation
+            else:
+                service_items.append({"reference": reference_name, "config": {"generation": generation}})
+        elif isinstance(service_items, dict):
+            new_list = []
+            for ref_name, ref_config in service_items.items():
+                if ref_name == reference_name:
+                    new_list.append({"reference": ref_name, "config": {"generation": generation}})
+                elif isinstance(ref_config, dict) and "generation" in ref_config:
+                    new_list.append({"reference": ref_name, "config": {"generation": ref_config["generation"]}})
+                else:
+                    new_list.append({"reference": ref_name})
+
+            if not any(item.get("reference") == reference_name for item in new_list):
+                new_list.append({"reference": reference_name, "config": {"generation": generation}})
+
+            component["services"][service_type] = new_list
+
+        logger.info(
+            f"Set service generation for {deployment_name}/{component_name}/"
+            f"{service_type}/{reference_name} to {generation}"
+        )
 
         return project_data
 
@@ -2561,28 +2470,27 @@ class ProjectFileHandler:
         """
         from opi.services.services import service_entry_name
 
-        deployments = project_data.get("deployments", [])
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                services = deployment.get("services", [])
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is None:
+            return None
+        services = deployment.get("services", [])
 
-                # Services is a list of {reference: ..., config: ...}
-                if isinstance(services, list):
-                    for item in services:
-                        # Resolve identity format-agnostically: a deployment clone-state entry
-                        # may be {reference}, {name} or a bare string; matching only on
-                        # ``reference`` silently missed the other forms (checklist 5).
-                        if isinstance(item, dict) and service_entry_name(item) == service_type:
-                            config = item.get("config", {})
-                            generation = config.get("generation")
-                            if generation is not None:
-                                logger.debug(
-                                    f"Deployment service generation for {deployment_name}/{service_type}: {generation}"
-                                )
-                                return int(generation)
-                            return None
+        # Services is a list of {reference: ..., config: ...}
+        if isinstance(services, list):
+            for item in services:
+                # Resolve identity format-agnostically: a deployment clone-state entry
+                # may be {reference}, {name} or a bare string; matching only on
+                # ``reference`` silently missed the other forms (checklist 5).
+                if isinstance(item, dict) and service_entry_name(item) == service_type:
+                    config = item.get("config", {})
+                    generation = config.get("generation")
+                    if generation is not None:
+                        logger.debug(
+                            f"Deployment service generation for {deployment_name}/{service_type}: {generation}"
+                        )
+                        return int(generation)
+                    return None
 
-                return None
         return None
 
     def set_deployment_service_generation(
@@ -2608,60 +2516,52 @@ class ProjectFileHandler:
                 config:
                   generation: 1
         """
-        deployments = project_data.get("deployments", [])
-        deployment_found = False
-
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                deployment_found = True
-
-                # Ensure services list exists
-                if "services" not in deployment:
-                    deployment["services"] = []
-                services = deployment["services"]
-
-                # Convert dict to list if needed (migration from old format)
-                if isinstance(services, dict):
-                    new_list = []
-                    for ref_name, ref_config in services.items():
-                        if isinstance(ref_config, dict) and "generation" in ref_config:
-                            new_list.append({"reference": ref_name, "config": {"generation": ref_config["generation"]}})
-                        else:
-                            new_list.append({"reference": ref_name})
-                    deployment["services"] = new_list
-                    services = deployment["services"]
-
-                # Find existing service entry or create new one. Identity is resolved
-                # format-agnostically, exactly as the getter does: matching only on
-                # ``reference`` missed an entry written as {name} or as a bare string, so the
-                # setter appended a SECOND entry for the same service and the getter kept
-                # reading the first one -- the generation was written and never read back.
-                service_entry: dict[str, Any] | None = None
-                for index, item in enumerate(services):
-                    if service_entry_name(item) != service_type:
-                        continue
-                    if isinstance(item, dict):
-                        service_entry = item
-                    else:
-                        # Bare string entry: promote it to a record in place so the
-                        # generation has somewhere to live, keeping its position.
-                        service_entry = {"reference": service_type}
-                        services[index] = service_entry
-                    break
-
-                if service_entry is None:
-                    service_entry = {"reference": service_type, "config": {"generation": generation}}
-                    services.append(service_entry)
-                else:
-                    if "config" not in service_entry or not isinstance(service_entry["config"], dict):
-                        service_entry["config"] = {}
-                    service_entry["config"]["generation"] = generation
-
-                logger.info(f"Set deployment service generation for {deployment_name}/{service_type} to {generation}")
-                break
-
-        if not deployment_found:
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is None:
             logger.warning(f"Deployment '{deployment_name}' not found in project data")
+            return project_data
+
+        if "services" not in deployment:
+            deployment["services"] = []
+        services = deployment["services"]
+
+        if isinstance(services, dict):
+            new_list = []
+            for ref_name, ref_config in services.items():
+                if isinstance(ref_config, dict) and "generation" in ref_config:
+                    new_list.append({"reference": ref_name, "config": {"generation": ref_config["generation"]}})
+                else:
+                    new_list.append({"reference": ref_name})
+            deployment["services"] = new_list
+            services = deployment["services"]
+
+        # Find existing service entry or create new one. Identity is resolved
+        # format-agnostically, exactly as the getter does: matching only on
+        # ``reference`` missed an entry written as {name} or as a bare string, so the
+        # setter appended a SECOND entry for the same service and the getter kept
+        # reading the first one -- the generation was written and never read back.
+        service_entry: dict[str, Any] | None = None
+        for index, item in enumerate(services):
+            if service_entry_name(item) != service_type:
+                continue
+            if isinstance(item, dict):
+                service_entry = item
+            else:
+                # Bare string entry: promote it to a record in place so the
+                # generation has somewhere to live, keeping its position.
+                service_entry = {"reference": service_type}
+                services[index] = service_entry
+            break
+
+        if service_entry is None:
+            service_entry = {"reference": service_type, "config": {"generation": generation}}
+            services.append(service_entry)
+        else:
+            if "config" not in service_entry or not isinstance(service_entry["config"], dict):
+                service_entry["config"] = {}
+            service_entry["config"]["generation"] = generation
+
+        logger.info(f"Set deployment service generation for {deployment_name}/{service_type} to {generation}")
 
         return project_data
 
@@ -2699,11 +2599,9 @@ class ProjectFileHandler:
         Returns:
             True if backup should be enabled for this storage
         """
-        # First check project-level backup setting
         backup_config = self.extract_backup_config(project_data)
         project_backup_enabled = backup_config.get("enabled", False)
 
-        # Then check per-storage override - look in component services for storage config
         storage_backup = None
         component = self._find_component(project_data, component_name)
         if component:
@@ -2712,7 +2610,6 @@ class ProjectFileHandler:
                     storage_backup = item["backup"]
                     break
 
-        # Per-storage setting overrides project setting if specified
         if storage_backup is not None:
             logger.debug(f"Storage {component_name}/{storage_name} backup override: {storage_backup}")
             return bool(storage_backup)
@@ -2817,26 +2714,21 @@ class ProjectFileHandler:
         Returns:
             Updated project_data dictionary
         """
-        deployments = project_data.get("deployments", [])
-
-        for deployment in deployments:
-            if deployment.get("name") == deployment_name:
-                clone_from = deployment.get("clone-from")
-                if not clone_from:
-                    raise ValueError(
-                        f"Cannot set clone status for '{deployment_name}': no clone-from configuration found"
-                    )
-                if not isinstance(clone_from, dict):
-                    raise ValueError(
-                        f"Cannot set clone status for '{deployment_name}': clone-from must be a dict "
-                        f"with 'type', 'reference', and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
-                    )
-                clone_from["status"] = {
-                    "completed": completed,
-                    "timestamp": timestamp,
-                }
-                logger.info(f"Set clone status for {deployment_name}: completed={completed}, timestamp={timestamp}")
-                break
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is not None:
+            clone_from = deployment.get("clone-from")
+            if not clone_from:
+                raise ValueError(f"Cannot set clone status for '{deployment_name}': no clone-from configuration found")
+            if not isinstance(clone_from, dict):
+                raise ValueError(
+                    f"Cannot set clone status for '{deployment_name}': clone-from must be a dict "
+                    f"with 'type', 'reference', and 'mode' keys, got: {type(clone_from).__name__} = {clone_from!r}"
+                )
+            clone_from["status"] = {
+                "completed": completed,
+                "timestamp": timestamp,
+            }
+            logger.info(f"Set clone status for {deployment_name}: completed={completed}, timestamp={timestamp}")
 
         return project_data
 
@@ -2854,18 +2746,17 @@ class ProjectFileHandler:
         Returns:
             True als de vlag nu pas aan ging.
         """
-        for deployment in project_data.get("deployments", []):
-            if deployment.get("name") != deployment_name:
-                continue
-            clone_from = deployment.get("clone-from")
-            if not isinstance(clone_from, dict) or clone_from.get("mode", "once") != "once":
-                return False
-            status = clone_from.setdefault("status", {})
-            if status.get("completed") or status.get("in-progress"):
-                return False
-            status["in-progress"] = True
-            return True
-        return False
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is None:
+            return False
+        clone_from = deployment.get("clone-from")
+        if not isinstance(clone_from, dict) or clone_from.get("mode", "once") != "once":
+            return False
+        status = clone_from.setdefault("status", {})
+        if status.get("completed") or status.get("in-progress"):
+            return False
+        status["in-progress"] = True
+        return True
 
     def get_clone_mode(self, project_data: dict[str, Any], deployment_name: str) -> str:
         """
@@ -3046,26 +2937,25 @@ class ProjectFileHandler:
         Raises ValueError on mismatch.
         """
         project_name = project_data.get("name")
-        for deployment in project_data.get("deployments", []):
-            if deployment.get("name") != deployment_name:
-                continue
-            declared = deployment.get("namespace")
-            if declared is not None and project_name is not None and declared != project_name:
-                raise ValueError(
-                    f"Deployment '{deployment_name}' in project '{project_name}' "
-                    f"gebruikt namespace '{declared}', maar de namespace "
-                    f"moet gelijk zijn aan de projectnaam '{project_name}'. "
-                    f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
-                    f"tot de resources van een ander project zou geven."
-                )
-            if project_name is None:
-                logger.warning(f"No project name found while resolving namespace for deployment '{deployment_name}'")
-                return declared
-            logger.debug(f"Pinned namespace '{project_name}' for deployment '{deployment_name}'")
-            return project_name
+        deployment = self._find_deployment(project_data, deployment_name)
+        if deployment is None:
+            logger.warning(f"No deployment '{deployment_name}' found while resolving namespace")
+            return None
 
-        logger.warning(f"No deployment '{deployment_name}' found while resolving namespace")
-        return None
+        declared = deployment.get("namespace")
+        if declared is not None and project_name is not None and declared != project_name:
+            raise ValueError(
+                f"Deployment '{deployment_name}' in project '{project_name}' "
+                f"gebruikt namespace '{declared}', maar de namespace "
+                f"moet gelijk zijn aan de projectnaam '{project_name}'. "
+                f"Een afwijkende namespace is niet toegestaan omdat dit toegang "
+                f"tot de resources van een ander project zou geven."
+            )
+        if project_name is None:
+            logger.warning(f"No project name found while resolving namespace for deployment '{deployment_name}'")
+            return declared
+        logger.debug(f"Pinned namespace '{project_name}' for deployment '{deployment_name}'")
+        return project_name
 
     def extract_deployment_cluster(self, project_data: dict[str, Any], deployment_name: str) -> str | None:
         """
@@ -3927,15 +3817,13 @@ def extract_deployment_component_attachment_uses(
     the system revision-map entries, and the ``config`` wrapper keeps the structure
     consistent with the base-component coupling (``services: - attachments: config:``).
     """
-    for dep in project_data.get("deployments", []):
-        if not isinstance(dep, dict) or dep.get("name") != deployment_name:
-            continue
-        for comp in dep.get("components", []):
-            if isinstance(comp, dict) and comp.get("reference") == component_reference:
-                attachments = (comp.get("services") or {}).get("attachments") or {}
-                config = attachments.get("config") or []
-                return [item for item in config if isinstance(item, dict) and item.get("reference")]
-    return []
+    deployment = Project(project_data).find("deployments", name=deployment_name)
+    comp = Project.locate((deployment or {}).get("components") or [], reference=component_reference)
+    if comp is None:
+        return []
+    attachments = (comp.get("services") or {}).get("attachments") or {}
+    config = attachments.get("config") or []
+    return [item for item in config if isinstance(item, dict) and item.get("reference")]
 
 
 def _merge_attachment_uses(base: list[dict[str, Any]], override: list[dict[str, Any]]) -> list[dict[str, Any]]:

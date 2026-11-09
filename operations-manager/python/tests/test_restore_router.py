@@ -171,6 +171,40 @@ class TestRestoreProjectPvc:
 
         _assert_read_mutate_save(mock_manager, project_data)
 
+    def test_unknown_deployment_is_404(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}",
+            headers={"X-API-Key": API_KEY},
+            json={"deployment_name": "ghost", "component_name": "web", "storage_name": "data"},
+        )
+        assert response.status_code == 404, response.text
+        assert "ghost" in response.json()["detail"]
+        mock_manager.save_and_commit_project.assert_not_awaited()
+
+    def test_unknown_component_is_404(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}",
+            headers={"X-API-Key": API_KEY},
+            json={"deployment_name": "main", "component_name": "ghost", "storage_name": "data"},
+        )
+        assert response.status_code == 404, response.text
+        assert "ghost" in response.json()["detail"]
+        mock_manager.save_and_commit_project.assert_not_awaited()
+
     def test_missing_project_file_is_404(
         self,
         client: TestClient,

@@ -1924,10 +1924,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # werk zijn voor blokken die niemand ziet.
         backups_sections: list[Any] = []
         if tab_from_path(request.url.path) == "backups":
-            open_deployment = next(
-                (dep for dep in project_data_decrypted.get("deployments", []) if dep.get("name") == deployment_open),
-                None,
-            )
+            open_deployment = Project(project_data_decrypted).find("deployments", name=deployment_open)
             if open_deployment is not None:
                 backups_sections = collect_backups_sections(deployment_page_context(open_deployment))
 
@@ -2437,10 +2434,7 @@ async def argocd_status_fragment(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    deployment = next(
-        (d for d in (project.data or {}).get("deployments", []) if d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project.data or {}).find("deployments", name=deployment_name)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
@@ -2520,10 +2514,7 @@ async def oom_status_fragment(request: Request, project_name: str, deployment_na
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_data = project.data or {}
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
@@ -2619,15 +2610,7 @@ async def deployment_metrics_fragment(
         raise HTTPException(status_code=404, detail="Project not found")
 
     project_data = project.data or {}
-    deployments = project_data.get("deployments", [])
-
-    # Find the requested deployment
-    deployment = None
-    for d in deployments:
-        if d.get("name") == deployment_name:
-            deployment = d
-            break
-
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 

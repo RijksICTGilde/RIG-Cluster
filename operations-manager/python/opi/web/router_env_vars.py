@@ -25,6 +25,7 @@ from opi.core.step_up import StepUpAction
 from opi.forms.editables.converters import KeyValueConverter, keep_existing_ciphertext_if_unchanged
 from opi.forms.editables.validators import KeyValueValidator
 from opi.manager.project_manager import ProjectManager
+from opi.services.project import Project
 from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import ConflictError
 from opi.utils.age import unwrap_project_key
@@ -44,18 +45,16 @@ _VALIDATOR = KeyValueValidator()
 
 def _scope_holder(project_data: dict[str, Any], component_name: str, deployment_name: str | None) -> dict[str, Any]:
     """Het dict in het projectbestand dat de ``user-env-vars`` draagt, of een 404."""
+    project = Project(project_data)
     if deployment_name is None:
-        for component in project_data.get("components") or []:
-            if isinstance(component, dict) and component.get("name") == component_name:
-                return component
+        component = project.find("components", name=component_name)
+        if component is not None:
+            return component
         raise HTTPException(status_code=404, detail=f"Component '{component_name}' niet gevonden")
-    for deployment in project_data.get("deployments") or []:
-        if not isinstance(deployment, dict) or deployment.get("name") != deployment_name:
-            continue
-        for dep_component in deployment.get("components") or []:
-            if isinstance(dep_component, dict) and dep_component.get("reference") == component_name:
-                return dep_component
-        break
+    deployment = project.find("deployments", name=deployment_name)
+    dep_component = Project.locate((deployment or {}).get("components") or [], reference=component_name)
+    if dep_component is not None:
+        return dep_component
     raise HTTPException(
         status_code=404, detail=f"Component '{component_name}' niet gevonden in deployment '{deployment_name}'"
     )

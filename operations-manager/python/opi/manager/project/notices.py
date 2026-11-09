@@ -11,6 +11,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     custom_domain_certificate_note,
     get_domain_setting,
 )
+from opi.services.project import Project
 
 
 def approval_notices(project_data: dict[str, Any], deployment_name: str | None) -> list[dict[str, Any]]:
@@ -20,10 +21,7 @@ def approval_notices(project_data: dict[str, Any], deployment_name: str | None) 
     """
     if not deployment_name:
         return []
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if isinstance(d, dict) and d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         return []
     return list(collect_deployment_approval_notices(project_data, deployment))
@@ -36,10 +34,7 @@ def certificate_warnings(project_data: dict[str, Any], deployment_name: str) -> 
     for it is no longer reported once an approver grants it, which is exactly when the
     certificate never appears (zad-cli, bevinding 22).
     """
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if isinstance(d, dict) and d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         return []
     note = custom_domain_certificate_note(

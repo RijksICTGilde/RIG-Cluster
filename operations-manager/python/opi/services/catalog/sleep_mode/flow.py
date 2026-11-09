@@ -21,6 +21,7 @@ from typing import Any
 
 from opi.core import progress_steps
 from opi.services.catalog.sleep_mode.api_models import DISABLED
+from opi.services.project import Project
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +85,6 @@ class _Steps:
         self.done()
         if self._progress is not None:
             self._progress.complete_task(self._progress.add_task(name))
-
-
-def _find_deployment(project_data: dict, deployment_name: str) -> dict | None:
-    for deployment in project_data.get("deployments", []) or []:
-        if deployment.get("name") == deployment_name:
-            return deployment
-    return None
 
 
 async def _verify_token(project_data: dict, deployment_name: str, presented_token: str) -> None:
@@ -168,7 +162,7 @@ async def wake(
     try:
         steps.begin(progress_steps.PROJECT_DATA_FETCH)
         project_data = await project_manager.get_contents()
-        deployment = _find_deployment(project_data, deployment_name)
+        deployment = Project(project_data).find("deployments", name=deployment_name)
         if deployment is None:
             steps.failed(progress_steps.deployment_not_in_project(deployment_name))
             raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
@@ -246,7 +240,7 @@ async def finish_wake(project_name: str, deployment_name: str, *, progress: Any 
     # through the cache. The mutation below re-reads from git.
     project_data = project.data
     filename = project.filename
-    deployment = _find_deployment(project_data, deployment_name)
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 
@@ -352,7 +346,7 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
     try:
         steps.begin(progress_steps.PROJECT_DATA_FETCH)
         project_data = await project_manager.get_contents()
-        deployment = _find_deployment(project_data, deployment_name)
+        deployment = Project(project_data).find("deployments", name=deployment_name)
         if deployment is None:
             steps.failed(progress_steps.deployment_not_in_project(deployment_name))
             raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
@@ -424,7 +418,7 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
     if not project or not project.data:
         raise DeploymentNotFoundError(f"Project '{project_name}' not found")
     project_data = project.data
-    deployment = _find_deployment(project_data, deployment_name)
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if deployment is None:
         raise DeploymentNotFoundError(f"Deployment '{deployment_name}' not found in project '{project_name}'")
 

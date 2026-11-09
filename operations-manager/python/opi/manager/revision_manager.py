@@ -8,6 +8,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
@@ -34,12 +35,6 @@ class RevisionManager:
         """
         self._handler = project_file_handler
 
-    def _find_deployment(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
-        for deployment in project_data.get("deployments", []) or []:
-            if isinstance(deployment, dict) and deployment.get("name") == deployment_name:
-                return deployment
-        return None
-
     def _get_service_config(
         self, project_data: dict[str, Any], deployment_name: str, service_type: str
     ) -> dict[str, Any] | None:
@@ -52,7 +47,7 @@ class RevisionManager:
         Returns:
             Config dict or None if not found
         """
-        deployment = self._find_deployment(project_data, deployment_name)
+        deployment = Project(project_data).find("deployments", name=deployment_name)
         if deployment is None:
             return None
         for entry in deployment.get("services", []) or []:
@@ -75,7 +70,7 @@ class RevisionManager:
         Returns:
             Config dict, or None if deployment not found
         """
-        deployment = self._find_deployment(project_data, deployment_name)
+        deployment = Project(project_data).find("deployments", name=deployment_name)
         if deployment is None:
             logger.warning(f"Deployment '{deployment_name}' not found in project data")
             return None
@@ -328,45 +323,34 @@ class RevisionManager:
         Returns:
             Config dict, or None if deployment/component not found
         """
-        for deployment in project_data.get("deployments", []):
-            if deployment.get("name") != deployment_name:
-                continue
+        deployment = Project(project_data).find("deployments", name=deployment_name)
+        component = Project.locate((deployment or {}).get("components") or [], reference=component_name)
+        if component is None:
+            logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
+            return None
 
-            for component in deployment.get("components", []):
-                if component.get("reference") != component_name:
-                    continue
+        if "services" not in component:
+            component["services"] = {}
+        if service_type not in component["services"]:
+            component["services"][service_type] = []
 
-                # Ensure services dict exists
-                if "services" not in component:
-                    component["services"] = {}
+        service_items = component["services"][service_type]
+        if not isinstance(service_items, list):
+            logger.warning(
+                f"Expected list for {deployment_name}/{component_name}/{service_type}, "
+                f"got {type(service_items).__name__}"
+            )
+            return None
 
-                # Ensure service_type list exists
-                if service_type not in component["services"]:
-                    component["services"][service_type] = []
+        item = Project.locate(service_items, reference=reference_name)
+        if item is not None:
+            if "config" not in item:
+                item["config"] = {}
+            return item["config"]
 
-                service_items = component["services"][service_type]
-
-                if not isinstance(service_items, list):
-                    logger.warning(
-                        f"Expected list for {deployment_name}/{component_name}/{service_type}, "
-                        f"got {type(service_items).__name__}"
-                    )
-                    return None
-
-                # Find existing item
-                for item in service_items:
-                    if isinstance(item, dict) and item.get("reference") == reference_name:
-                        if "config" not in item:
-                            item["config"] = {}
-                        return item["config"]
-
-                # Create new item
-                new_item: dict[str, Any] = {"reference": reference_name, "config": {}}
-                service_items.append(new_item)
-                return new_item["config"]
-
-        logger.warning(f"Component '{component_name}' in deployment '{deployment_name}' not found in project data")
-        return None
+        new_item: dict[str, Any] = {"reference": reference_name, "config": {}}
+        service_items.append(new_item)
+        return new_item["config"]
 
     def record_component_clone(
         self,

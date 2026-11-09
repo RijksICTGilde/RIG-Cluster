@@ -60,6 +60,7 @@ from opi.handlers.project_file_handler import extract_attachment_catalog
 from opi.manager.clone_validation import build_restore_target_deployment
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
+from opi.services.project import Project
 from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.authz import (
@@ -436,10 +437,7 @@ def _seed_components_for_new_deployment(state: Any, dep_idx: int) -> None:
     # Build image lookup from the source deployment
     source_images: dict[str, str] = {}
     if clone_ref:
-        source_dep = next(
-            (d for d in deployments if isinstance(d, dict) and d.get("name") == clone_ref),
-            None,
-        )
+        source_dep = Project.locate(deployments, name=clone_ref)
         if source_dep and source_dep.get("components"):
             source_images = {
                 c.get("reference", ""): c.get("image", "") for c in source_dep["components"] if isinstance(c, dict)

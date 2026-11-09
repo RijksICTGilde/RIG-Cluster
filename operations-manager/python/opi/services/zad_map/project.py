@@ -34,6 +34,7 @@ from opi.services.catalog.cross_domain_access.merge import (
 from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
 from opi.services.catalog.sleep_mode import config as sleep_mode_config
 from opi.services.help_text import render_service_help
+from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICE_DEFINITIONS
 from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
@@ -477,7 +478,7 @@ def usage_targets(project_name: str, deployment_name: str) -> tuple[set[str], se
     """What the map of one deployment measures: (namespaces, database names)."""
     summary = get_project_store().get(project_name)
     data = (summary.data or {}) if summary else {}
-    deployment = next((item for item in data.get("deployments") or [] if item.get("name") == deployment_name), None)
+    deployment = Project(data).find("deployments", name=deployment_name)
     if deployment is None:
         return set(), set()
     handler = ProjectFileHandler()
@@ -650,7 +651,7 @@ def project_graph(project_name: str, deployment_name: str | None = None, usage: 
     data = summary.data or {}
     deployment: dict[str, Any] | None = None
     if deployment_name is not None:
-        deployment = next((item for item in data.get("deployments") or [] if item.get("name") == deployment_name), None)
+        deployment = Project(data).find("deployments", name=deployment_name)
         if deployment is None:
             raise KeyError(deployment_name)
         running = {entry.get("reference") for entry in deployment.get("components") or []}

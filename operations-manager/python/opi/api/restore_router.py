@@ -39,6 +39,7 @@ from opi.manager.backup import (
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
+from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     generate_bucket_name,
@@ -940,20 +941,12 @@ async def restore_project_pvc(
             raise HTTPException(status_code=404, detail=f"Project file not found: {project.filename}") from e
 
         # 4. Find the deployment and component reference
-        deployments = project_data.get("deployments", [])
         base_components = {c.get("name"): c for c in project_data.get("components", [])}
-        target_deployment = None
-        target_component_ref = None
-
-        for dep in deployments:
-            if dep.get("name") == body.deployment_name:
-                target_deployment = dep
-                for comp in dep.get("components", []):
-                    # Deployment components use "reference" to point to base component
-                    if comp.get("reference") == body.component_name:
-                        target_component_ref = comp
-                        break
-                break
+        target_deployment = Project(project_data).find("deployments", name=body.deployment_name)
+        # Deployment components use "reference" to point to base component
+        target_component_ref = Project.locate(
+            (target_deployment or {}).get("components") or [], reference=body.component_name
+        )
 
         if not target_deployment:
             raise HTTPException(status_code=404, detail=f"Deployment '{body.deployment_name}' not found in project")

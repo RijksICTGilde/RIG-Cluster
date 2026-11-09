@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from opi.services.services import deployment_index, service_entry_config, service_entry_name
+from opi.services.project import Project
+from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -832,16 +833,10 @@ def deployment_value_approval(
     service = service_type.value
     selection = _ApprovalState(service, state_key)
 
-    def _deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any]:
-        """The deployment with this name, or an empty block when the project does not know it."""
-        index = deployment_index(project_data, deployment_name)
-        if index is None:
-            return {}
-        deployment = project_data["deployments"][index]
-        return deployment if isinstance(deployment, dict) else {}
-
     def _state(deployment_name: str) -> _ApprovalState:
-        return _ApprovalState(service, state_key, holder=lambda pd: _deployment(pd, deployment_name))
+        return _ApprovalState(
+            service, state_key, holder=lambda pd: Project(pd).find("deployments", name=deployment_name) or {}
+        )
 
     def _deployment_names(project_data: dict[str, Any]) -> list[str]:
         return [

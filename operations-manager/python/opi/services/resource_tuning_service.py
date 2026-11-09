@@ -33,6 +33,7 @@ from opi.handlers.project_file_handler import (
 )
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.catalog.resource_tuning.config import resource_tuning_config
+from opi.services.project import Project
 from opi.services.project_store import get_project_store
 from opi.services.resource_analyzer import (
     _k8s_memory_to_mb,
@@ -237,24 +238,21 @@ def _unanswered_oom_window_minutes(
     """
     full_window = window_hours * 60
 
+    deployment = Project(project_data).find("deployments", name=deployment_name)
+    component = Project.locate((deployment or {}).get("components") or [], reference=component_reference)
+
     newest: datetime | None = None
-    for dep in project_data.get("deployments", []):
-        if dep.get("name") != deployment_name:
+    for entry in ((component or {}).get("resources") or {}).get("history") or []:
+        if entry.get("source") != "oom-watcher":
             continue
-        for comp in dep.get("components", []):
-            if comp.get("reference") != component_reference:
-                continue
-            for entry in (comp.get("resources") or {}).get("history") or []:
-                if entry.get("source") != "oom-watcher":
-                    continue
-                try:
-                    moment = datetime.fromisoformat(entry.get("timestamp") or "")
-                except ValueError:
-                    continue
-                if moment.tzinfo is None:
-                    moment = moment.replace(tzinfo=UTC)
-                if newest is None or moment > newest:
-                    newest = moment
+        try:
+            moment = datetime.fromisoformat(entry.get("timestamp") or "")
+        except ValueError:
+            continue
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        if newest is None or moment > newest:
+            newest = moment
 
     if newest is None:
         return full_window
@@ -929,10 +927,7 @@ async def observe_recent_oom_kills(
     Namen van deployments en componenten zijn DNS-1123-labels (a-z, 0-9, koppelteken),
     dus ze kunnen de selector hieronder niet oprekken.
     """
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=deployment_name)
     if not deployment:
         return []
 

@@ -2171,9 +2171,7 @@ class DatabaseManager:
                 if not project_data:
                     raise Exception(f"Project '{project_name}' not found")
 
-                deployment = next(
-                    (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name), None
-                )
+                deployment = Project(project_data).find("deployments", name=deployment_name)
                 if not deployment:
                     raise Exception(f"Deployment '{deployment_name}' not found")
 

@@ -55,6 +55,7 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.deployment_health import deployment_health_service
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
+from opi.services.project import Project
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
@@ -743,14 +744,7 @@ async def _run_oom_check(
         logger.warning("Health watcher: project lookup failed for %s: %s", project_name, e)
         return
 
-    # Find the deployment in project data
-    deployments = project_data.get("deployments", [])
-    target_dep = None
-    for dep in deployments:
-        if dep.get("name") == deployment_name:
-            target_dep = dep
-            break
-
+    target_dep = Project(project_data).find("deployments", name=deployment_name)
     if not target_dep:
         logger.warning("Health watcher: deployment '%s' not found in project '%s'", deployment_name, project_name)
         return
@@ -1348,10 +1342,7 @@ def resolve_oom_component(kill: ObservedOomKill, project_data: dict) -> str | No
     names in, so a component whose name happens to contain a separator cannot be matched
     to the wrong one.
     """
-    deployment = next(
-        (d for d in project_data.get("deployments", []) if d.get("name") == kill.deployment_name),
-        None,
-    )
+    deployment = Project(project_data).find("deployments", name=kill.deployment_name)
     if deployment is None:
         return None
 
