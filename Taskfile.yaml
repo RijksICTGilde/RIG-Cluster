@@ -5161,13 +5161,20 @@ tasks:
       - |
         echo "Initializing Forgejo..."
 
+        # A Ready pod can still be migrating its database; then user create fails with
+        # "no such table: user". migrate is idempotent and returns once the schema is there.
+        kubectl exec -n rig-system forgejo-0 -- forgejo migrate
+
         # Create admin user via kubectl exec (username "admin" is reserved in Forgejo)
         echo "Creating rig-admin user..."
-        kubectl exec -n rig-system forgejo-0 -- forgejo admin user create \
+        if ! OUT=$(kubectl exec -n rig-system forgejo-0 -- forgejo admin user create \
           --admin --username rig-admin --password admin1234 \
-          --email admin@example.com --must-change-password=false 2>&1 || {
-          echo "rig-admin user may already exist (this is OK)"
-        }
+          --email admin@example.com --must-change-password=false 2>&1); then
+          case "$OUT" in
+            *"already exists"*) echo "rig-admin user already exists" ;;
+            *) echo "$OUT"; exit 1 ;;
+          esac
+        fi
 
         # Wait a moment for the user to be fully created
         sleep 2
