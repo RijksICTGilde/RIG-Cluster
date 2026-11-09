@@ -21,8 +21,7 @@ from typing import Any
 import pytest
 from opi.services.catalog.keycloak import KeycloakService
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.utils.age import encrypt_age_content
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import encrypt_age_content, generate_age_key_pair
 from starlette.requests import Request
 
 API_KEY = "api-key-van-de-toets"
@@ -32,7 +31,7 @@ TOTP_SEED = "otpseedvandetoets"
 
 async def _projectbestand(globale_publieke_sleutel: str) -> tuple[dict[str, Any], str]:
     """Een projectbestand met de vier geheimen versleuteld, plus de private key erbij."""
-    project_prive, project_publiek = generate_sops_key_pair()
+    project_prive, project_publiek = generate_age_key_pair()
     data = {
         "schema-version": 2,
         "name": "geheimtoets",
@@ -93,7 +92,7 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
     """Rendert de detailpagina voor een lid met deze rol: (context, html, private key)."""
     from opi.web import authz, lotc_switch, router
 
-    _, globale_publiek = generate_sops_key_pair()
+    _, globale_publiek = generate_age_key_pair()
     data, project_prive = await _projectbestand(globale_publiek)
     naam = data["name"]
 
@@ -106,11 +105,9 @@ async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, 
         lambda zelf, ctx: echte_realm_block(zelf, replace(ctx, can=lambda _handeling: True)),
     )
 
-    # De projectsleutel wordt sinds RC-254 met de KEK uitgepakt (``unwrap_project_key``) en
-    # niet meer met de globale SOPS-sleutel; deze toets patchte nog de oude naam en faalde
-    # daarop. De vorige opzet wordt hier aangehouden: de toets levert de sleutel die de
-    # pagina nodig heeft, zodat er geen KEK bij komt.
-    monkeypatch.setattr(router, "unwrap_project_key", _vast(project_prive))
+    # De projectsleutel wordt met de KEK uitgepakt, en die hoort niet bij wat hier gemeten
+    # wordt: de toets levert de sleutel die de pagina nodig heeft.
+    monkeypatch.setattr(router, "get_decoded_project_private_key", _vast(project_prive))
     monkeypatch.setattr(router, "is_user_authorized_for_project", lambda *_: True)
     monkeypatch.setattr(router, "get_user_roles_for_project", lambda *_: rol)
     # Ook op authz: het sjabloon roept can(...) aan, en die leest dezelfde store.

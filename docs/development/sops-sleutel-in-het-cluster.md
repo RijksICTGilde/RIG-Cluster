@@ -34,7 +34,7 @@ De platform-sidecar heeft geen token en geen Role: zijn sleutel is een mount. Ee
 
 ### Wie de sleutellezer zet, en wanneer
 
-Sinds RC-384 zet OPI hem overal waar het secret staat, niet alleen waar hij het secret zelf plaatst. Dat is `SopsHandler.ensure_cmp_key_reader(namespace)`, en er is maar die ene weg:
+Sinds RC-384 zet OPI hem overal waar het secret staat, niet alleen waar hij het secret zelf plaatst. Dat is `ProjectKeySecretHandler.ensure_cmp_key_reader(namespace)`, en er is maar die ene weg:
 
 | wanneer | wat |
 |---|---|

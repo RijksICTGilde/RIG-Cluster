@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import generate_age_key_pair
 from opi.web import router_tokens
 from starlette.requests import Request
 
@@ -77,10 +77,10 @@ def _verzoek(pad: str, sessie: dict[str, Any]) -> Request:
 async def _pagina(monkeypatch: pytest.MonkeyPatch, pad: str, sessie: dict[str, Any]):
     from opi.web import router
 
-    project_prive, project_publiek = generate_sops_key_pair()
+    project_prive, project_publiek = generate_age_key_pair()
     # De sleutel uitpakken vraagt de KEK van het cluster, en die hoort niet bij wat hier
     # gemeten wordt: de header op het antwoord.
-    monkeypatch.setattr(router, "unwrap_project_key", _vast(project_prive))
+    monkeypatch.setattr(router, "get_decoded_project_private_key", _vast(project_prive))
     monkeypatch.setattr(router, "is_user_authorized_for_project", lambda *_: True)
     monkeypatch.setattr(router, "get_user_roles_for_project", lambda *_: ["admin", "ops"])
     project = ProjectSummary(

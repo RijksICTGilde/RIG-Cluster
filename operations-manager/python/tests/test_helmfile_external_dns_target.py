@@ -30,7 +30,7 @@ type Values = dict[str, Any] | list[dict[str, Any]]
 def _manager():
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.generation.manifests.ManifestGenerator"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -76,7 +76,6 @@ def _wire(
         return_value={"name": "mb-docs-helmfile", "config": {"age-public-key": "age1demo"}}
     )
     manager.get_deployment_by_name = AsyncMock(return_value=deployment if deployment_vindbaar else None)
-    manager._sops_private_key_for = AsyncMock(return_value="AGE-SECRET-KEY-PROJECT")
     manager._clone_helmfile_source = AsyncMock(return_value=("unused", None))
     manager._write_helmfile_custom_files = MagicMock(return_value={})
     manager._create_deployment_secrets = AsyncMock(return_value=[])

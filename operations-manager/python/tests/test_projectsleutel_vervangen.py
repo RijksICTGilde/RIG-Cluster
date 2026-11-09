@@ -26,23 +26,22 @@ from opi.api.v2 import router as v2_router_module
 from opi.connectors.kopia import KopiaConnector, KopiaExecutionError, KopiaRepositoryConfig, _is_missing_repository
 from opi.core import task_handlers_operations as handlers
 from opi.core.cluster_config import get_prefixed_namespace
-from opi.handlers.sops import format_age_key_file
+from opi.core.config import format_age_key_file
 from opi.manager.backup.base import BaseBackupManager, derive_backup_password
 from opi.services.project_store import ProjectNotFoundError, ProjectStoreError
 from opi.utils import key_rotation
-from opi.utils.age import encrypt_age_content
+from opi.utils.age import encrypt_age_content, generate_age_key_pair
 from opi.utils.key_rotation import ConversionError, decrypt_field, opens_with, rotate_project_key
-from opi.utils.sops import generate_sops_key_pair
 
 
 @pytest.fixture
 def platform_pair() -> tuple[str, str]:
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 @pytest.fixture
 def project_pair() -> tuple[str, str]:
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 async def _project_file(platform_pair: tuple[str, str], project_pair: tuple[str, str]) -> dict[str, Any]:
@@ -80,7 +79,7 @@ async def _project_file(platform_pair: tuple[str, str], project_pair: tuple[str,
 async def test_elk_veld_op_de_projectsleutel_gaat_mee_en_de_rest_blijft_staan(
     platform_pair: tuple[str, str], project_pair: tuple[str, str]
 ) -> None:
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     project_data = await _project_file(platform_pair, project_pair)
     before = copy.deepcopy(project_data)
 
@@ -106,7 +105,7 @@ async def test_elk_veld_op_de_projectsleutel_gaat_mee_en_de_rest_blijft_staan(
 async def test_een_veld_dat_niet_omgezet_kan_worden_breekt_de_hele_omzetting_af(
     platform_pair: tuple[str, str], project_pair: tuple[str, str]
 ) -> None:
-    _, new_public = generate_sops_key_pair()
+    _, new_public = generate_age_key_pair()
     project_data = await _project_file(platform_pair, project_pair)
     before = copy.deepcopy(project_data)
 
@@ -124,7 +123,7 @@ async def test_een_veld_dat_de_oude_sleutel_nog_opent_is_een_fout(
     platform_pair: tuple[str, str], project_pair: tuple[str, str]
 ) -> None:
     """De naronde telt opnieuw: een omzetting die de waarde liet staan mag niet doorgaan."""
-    _, new_public = generate_sops_key_pair()
+    _, new_public = generate_age_key_pair()
     project_data = await _project_file(platform_pair, project_pair)
     unchanged = MagicMock(new_value=project_data["config"]["api-key"])
 
@@ -235,13 +234,13 @@ async def test_de_taak_slaat_een_nieuwe_sleutel_op_en_verwerkt_het_project(
     """Zonder project-KEK gaat de nieuwe sleutel onder de platformsleutel, zoals op de sandbox."""
     platform_private, _ = platform_pair
     project_data = await _project_file(platform_pair, project_pair)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data)
     refresh = AsyncMock(return_value={"status": "success", "processing": {"status": "completed"}})
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", refresh),
     ):
         result = await handlers.handle_rotate_project_key({"project_name": "demo"}, MagicMock())
@@ -269,14 +268,14 @@ async def test_met_een_project_kek_komt_de_nieuwe_sleutel_onder_de_kek_en_niet_o
     gebruikt er stil doorheen en zet de sleutel terug op de platformsleutel.
     """
     platform_private, _ = platform_pair
-    kek_private, kek_public = generate_sops_key_pair()
+    kek_private, kek_public = generate_age_key_pair()
     project_data = await _project_file(platform_pair, project_pair)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data, kek_pair=(kek_private, kek_public))
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", AsyncMock(return_value={"status": "success"})),
     ):
         result = await handlers.handle_rotate_project_key({"project_name": "demo"}, MagicMock())
@@ -298,7 +297,7 @@ async def test_een_veld_dat_er_tijdens_de_rotatie_bij_kwam_gaat_ook_mee(
     ``age_pattern_violations`` toetst dat een waarde versleuteld is, niet voor welke recipient.
     """
     project_data = await _project_file(platform_pair, project_pair)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     # Wat een andere schrijver toevoegde terwijl de taak liep.
     project_data["components"].append(
         {"name": "component-2", "user-env-vars": await encrypt_age_content("LATER=1", project_pair[1])}
@@ -307,7 +306,7 @@ async def test_een_veld_dat_er_tijdens_de_rotatie_bij_kwam_gaat_ook_mee(
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", AsyncMock(return_value={"status": "success"})),
     ):
         result = await handlers.handle_rotate_project_key({"project_name": "demo"}, MagicMock())
@@ -402,7 +401,7 @@ async def test_een_mislukte_opslag_verwerkt_het_project_niet_meer(
 ) -> None:
     """Plan, punt 5: faalt het opslaan, dan start de herverwerking niet."""
     project_data = await _project_file(platform_pair, project_pair)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data)
     store.mutate = AsyncMock(side_effect=ProjectStoreError("git-push geweigerd"))
     refresh = AsyncMock()
@@ -410,7 +409,7 @@ async def test_een_mislukte_opslag_verwerkt_het_project_niet_meer(
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", refresh),
         pytest.raises(ProjectStoreError),
     ):
@@ -428,7 +427,7 @@ async def test_een_mislukte_herverwerking_geeft_status_failed_en_de_foutvelden_d
     """De sleutel staat dan al vast (git-historie = terugzetpad), dus het nieuwe paar en de
     omgezette velden komen terug, ook als het herverwerken erna faalt."""
     project_data = await _project_file(platform_pair, project_pair)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data)
     refresh = AsyncMock(
         return_value={
@@ -443,7 +442,7 @@ async def test_een_mislukte_herverwerking_geeft_status_failed_en_de_foutvelden_d
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", refresh),
     ):
         result = await handlers.handle_rotate_project_key({"project_name": "demo"}, MagicMock())
@@ -466,7 +465,7 @@ async def test_het_backupwachtwoord_verhuist_mee_naar_de_nieuwe_sleutel(
     """Zonder deze stap opent de Kopia-repository na de rotatie niet meer en wist de pod de prefix."""
     cluster = opi.core.config.settings.CLUSTER_MANAGER
     project_data = await _project_file_met_deployment(platform_pair, project_pair, cluster)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data)
 
     namespace = get_prefixed_namespace(cluster, "demo")
@@ -476,7 +475,7 @@ async def test_het_backupwachtwoord_verhuist_mee_naar_de_nieuwe_sleutel(
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", AsyncMock(return_value={"status": "success"})),
         patch.object(BaseBackupManager, "_derive_backup_key", AsyncMock(return_value=oud_wachtwoord)),
         patch("opi.connectors.kopia.create_kopia_connector", return_value=kopia),
@@ -505,7 +504,7 @@ async def test_de_wachtwoordwissel_komt_na_de_opslag_en_voor_het_verwerken(
     """
     cluster = opi.core.config.settings.CLUSTER_MANAGER
     project_data = await _project_file_met_deployment(platform_pair, project_pair, cluster)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data)
 
     volgorde: list[str] = []
@@ -528,7 +527,7 @@ async def test_de_wachtwoordwissel_komt_na_de_opslag_en_voor_het_verwerken(
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", AsyncMock(side_effect=refresh)),
         patch.object(BaseBackupManager, "_derive_backup_key", AsyncMock(return_value="oud")),
         patch("opi.connectors.kopia.create_kopia_connector", return_value=kopia),
@@ -549,7 +548,7 @@ async def test_een_mislukte_wachtwoordverhuizing_verwerkt_het_project_niet_meer(
     """
     cluster = opi.core.config.settings.CLUSTER_MANAGER
     project_data = await _project_file_met_deployment(platform_pair, project_pair, cluster)
-    new_private, new_public = generate_sops_key_pair()
+    new_private, new_public = generate_age_key_pair()
     store = _rotatie_omgeving(monkeypatch, platform_pair, project_data)
 
     refresh = AsyncMock(return_value={"status": "success"})
@@ -558,7 +557,7 @@ async def test_een_mislukte_wachtwoordverhuizing_verwerkt_het_project_niet_meer(
 
     with (
         patch.object(handlers, "get_project_store", return_value=store),
-        patch.object(handlers, "generate_sops_key_pair", return_value=(new_private, new_public)),
+        patch.object(handlers, "generate_age_key_pair", return_value=(new_private, new_public)),
         patch.object(handlers, "handle_refresh_project", refresh),
         patch.object(BaseBackupManager, "_derive_backup_key", AsyncMock(return_value="oud")),
         patch("opi.connectors.kopia.create_kopia_connector", return_value=kopia),

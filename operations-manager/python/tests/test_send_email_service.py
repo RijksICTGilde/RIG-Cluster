@@ -1954,7 +1954,7 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
         return connector
 
     def _project_met_adres(self, status: str | None, blok_adres: str | None = None) -> dict:
-        from opi.utils.sops import generate_sops_key_pair
+        from opi.utils.age import generate_age_key_pair
 
         adres = "noreply@rijksoverheid.nl"
         project = _project(
@@ -1967,7 +1967,7 @@ class TestDePoortOpDeSchrijfwegNaarDeRelay:
                 "status": status,
                 "history": [],
             }
-        _, public_key = generate_sops_key_pair()
+        _, public_key = generate_age_key_pair()
         project["config"] = {"age-public-key": public_key}
         return project
 
@@ -2025,7 +2025,7 @@ class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
         blok_waarde: int | None = None,
         laatst_goedgekeurd: int | None = None,
     ) -> dict:
-        from opi.utils.sops import generate_sops_key_pair
+        from opi.utils.age import generate_age_key_pair
 
         config: dict[str, Any] = {} if getal is None else {"messages-per-day": getal}
         project = _project(component_services=[ServiceType.SEND_EMAIL.value], config=config)
@@ -2038,7 +2038,7 @@ class TestDeBudgetpoortOpDeSchrijfwegNaarDeRelay:
             if laatst_goedgekeurd is not None:
                 blok["approved-value"] = str(laatst_goedgekeurd)
             project["services"][0]["config"]["messages-per-day-approval"] = blok
-        _, public_key = generate_sops_key_pair()
+        _, public_key = generate_age_key_pair()
         project["config"] = {"age-public-key": public_key}
         return project
 

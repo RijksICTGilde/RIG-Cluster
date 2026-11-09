@@ -27,8 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import yaml
 from opi.core.step_up import has_fresh_step_up
 from opi.services.otp_herlogin_service import Herlogin
-from opi.utils.age import encrypt_age_content_sync
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import encrypt_age_content_sync, generate_age_key_pair
 from tests.inmemory_session_store import InMemorySessionStore
 from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
@@ -52,9 +51,9 @@ def test_age_keypair() -> tuple[str, str]:
     the wizard encrypts a project's key with the public half and reads it back with the private
     one within the same server.
 
-    Requires ``age-keygen``, which the E2E suite needs for the real ``age`` calls anyway.
+    In process, so the E2E suite needs no ``age-keygen`` for this.
     """
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 TEST_USER_EMAIL = "test@example.com"
@@ -580,7 +579,7 @@ def _munt_projectsleutelpaar(data: dict) -> None:
     config = data.get("config")
     if not isinstance(config, dict) or not config.get("age-private-key"):
         return
-    project_private, project_public = generate_sops_key_pair()
+    project_private, project_public = generate_age_key_pair()
     config["age-public-key"] = project_public
     config["age-private-key"] = encrypt_age_content_sync(project_private, test_age_keypair()[1])
 

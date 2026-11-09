@@ -20,7 +20,7 @@ from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
-from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, project_private_key_or_none
 from opi.utils.naming import generate_storage_name
 
 if TYPE_CHECKING:
@@ -1420,7 +1420,7 @@ def relocate_api_key_to_service_account(project_data: dict[str, Any]) -> bool:
         return False
 
     opgeslagen = str(config["api-key"])
-    plat = _plattegrond_van_de_sleutel(str(project_data.get("name") or "?"), opgeslagen, config)
+    plat = _plattegrond_van_de_sleutel(opgeslagen, project_data)
     if plat is None:
         logger.error(
             "Projectsleutel van '%s' ging niet open; hij blijft als config.api-key staan "
@@ -1449,21 +1449,12 @@ def relocate_api_key_to_service_account(project_data: dict[str, Any]) -> bool:
     return True
 
 
-def _plattegrond_van_de_sleutel(project_name: str, opgeslagen: str, config: dict[str, Any]) -> str | None:
-    """De platte projectsleutel, of None als hij niet open te krijgen is.
-
-    Dezelfde twee stappen als ``ProjectService._resolve_plaintext_api_key``: de
-    projectsleutel uitpakken met de KEK en daarmee de waarde ontsleutelen.
-    """
+def _plattegrond_van_de_sleutel(opgeslagen: str, project_data: dict[str, Any]) -> str | None:
+    """De platte projectsleutel, of None als hij niet open te krijgen is."""
     if not is_age_encrypted(opgeslagen):
         return opgeslagen
-    ingepakt = config.get("age-private-key")
-    if not ingepakt:
-        return None
-    try:
-        private_key = unwrap_project_key_sync(str(ingepakt))
-    except ValueError as e:
-        logger.warning("Projectsleutel van '%s' niet uit te pakken: %s", project_name, e)
+    private_key = project_private_key_or_none(project_data)
+    if private_key is None:
         return None
     return decrypt_age_content_sync(opgeslagen, private_key) or None
 

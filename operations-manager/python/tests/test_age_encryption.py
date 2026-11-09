@@ -2,7 +2,7 @@
 Tests for age encryption functionality in opi.utils.age.
 
 Complements test_age_password_decryption.py by covering encrypt_age_content,
-_encrypt_with_age_and_base64encode_as_prefixed_string, and edge cases.
+encrypt_to_base64_age, and edge cases.
 """
 
 import base64
@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 import pytest
 from opi.utils.age import (
-    _encrypt_with_age_and_base64encode_as_prefixed_string,
     decrypt_age_content,
     encrypt_age_content,
+    encrypt_to_base64_age,
     get_project_public_key,
     is_age_encrypted,
 )
@@ -57,14 +57,14 @@ class TestEncryptAgeContent:
 
 
 class TestEncryptWithAgeAndBase64Encode:
-    """Tests for _encrypt_with_age_and_base64encode_as_prefixed_string."""
+    """Tests for encrypt_to_base64_age."""
 
     @pytest.mark.asyncio
     async def test_returns_prefixed_base64_string(self):
         """Should return base64+age: prefixed string."""
         encrypted = "-----BEGIN AGE ENCRYPTED FILE-----\ndata\n-----END AGE ENCRYPTED FILE-----"
         with patch("opi.utils.age.encrypt_age_content", return_value=encrypted):
-            result = await _encrypt_with_age_and_base64encode_as_prefixed_string("my_secret", "age1pub")
+            result = await encrypt_to_base64_age("my_secret", "age1pub")
 
         assert result.startswith("base64+age:")
         # Decode the base64 part and verify

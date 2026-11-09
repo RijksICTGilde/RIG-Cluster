@@ -115,7 +115,7 @@ class TestWatErGeschrevenWordt:
 def _manager() -> ProjectManager:
     with (
         patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.handlers.sops.SopsHandler"),
+        patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
         patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
         patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
         patch("opi.manager.delete_project_manager.DeleteProjectManager", return_value=MagicMock()),

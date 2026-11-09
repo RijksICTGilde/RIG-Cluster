@@ -11,7 +11,7 @@ That is what these tests measure, on real ciphertext produced by the real ``age`
 * a project file keeps every other field, including its comments and its multi-line
   ``age-private-key`` block scalar.
 
-Both keys are generated per test through ``generate_sops_key_pair`` -- the same helper OPI
+Both keys are generated per test through ``generate_age_key_pair`` -- the same helper OPI
 uses when it makes a project key. No fixed key appears in this file, so the scanner has
 nothing to trip over here.
 """
@@ -27,8 +27,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from opi.utils.age import BASE64_AGE_PREFIX, decrypt_age_content, encrypt_age_content
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import BASE64_AGE_PREFIX, decrypt_age_content, encrypt_age_content, generate_age_key_pair
 from opi.utils.yaml_util import load_yaml_from_path, load_yaml_from_string
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
@@ -73,13 +72,13 @@ pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires th
 @pytest.fixture
 def key_pair_a() -> tuple[str, str]:
     """A throwaway keypair standing in for the old platform key."""
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 @pytest.fixture
 def key_pair_b() -> tuple[str, str]:
     """A second throwaway keypair standing in for the new platform key."""
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 async def _base64_value(plaintext: str, public_key: str) -> str:
@@ -727,7 +726,7 @@ async def test_rotating_a_project_file_keeps_everything_else(
     """The measurement that matters: only the two platform fields differ, content and all."""
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
-    project_pair = generate_sops_key_pair()
+    project_pair = generate_age_key_pair()
     path = tmp_path / "proefproject.yaml"
     repo_password, api_key = await _write_project(path, public_a, project_pair)
     before = path.read_text()
@@ -765,7 +764,7 @@ async def test_rotating_a_project_file_twice_does_nothing_the_second_time(
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
     path = tmp_path / "proefproject.yaml"
-    await _write_project(path, public_a, generate_sops_key_pair())
+    await _write_project(path, public_a, generate_age_key_pair())
 
     await rotate_project_file(path, private_a, private_b, dry_run=False)
     after_first = path.read_text()
@@ -784,7 +783,7 @@ async def test_a_dry_run_on_a_project_file_writes_nothing(
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
     path = tmp_path / "proefproject.yaml"
-    await _write_project(path, public_a, generate_sops_key_pair())
+    await _write_project(path, public_a, generate_age_key_pair())
     before = path.read_text()
 
     report = await rotate_project_file(path, private_a, private_b, dry_run=True)
@@ -802,7 +801,7 @@ async def test_a_broken_project_file_is_skipped_and_left_alone(
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
     path = tmp_path / "kapot.yaml"
-    await _write_project(path, public_a, generate_sops_key_pair())
+    await _write_project(path, public_a, generate_age_key_pair())
     text = path.read_text().replace(
         "password: base64+age:", "password: base64+age:" + base64.b64encode(b"not-age").decode() + "#"
     )
@@ -823,7 +822,7 @@ async def test_a_pat_replacement_touches_only_the_repository_password(
     """The second entry point on the same loop: the project key is recrypted, not replaced."""
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
-    project_pair = generate_sops_key_pair()
+    project_pair = generate_age_key_pair()
     path = tmp_path / "proefproject.yaml"
     await _write_project(path, public_a, project_pair)
 
@@ -861,7 +860,7 @@ async def test_a_password_that_is_not_the_current_pat_is_recrypted_and_kept(
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
     path = tmp_path / "proefproject.yaml"
-    await _write_project(path, public_a, generate_sops_key_pair())
+    await _write_project(path, public_a, generate_age_key_pair())
 
     report = await rotate_project_file(
         path, private_a, private_b, current_pat="ghp_a_different_token", new_pat="ghp_brand_new", dry_run=False
@@ -891,7 +890,7 @@ async def test_a_pat_round_without_the_current_pat_is_refused(
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
     path = tmp_path / "proefproject.yaml"
-    await _write_project(path, public_a, generate_sops_key_pair())
+    await _write_project(path, public_a, generate_age_key_pair())
     before = path.read_text()
 
     with pytest.raises(ConversionError, match="needs the current PAT"):
@@ -908,7 +907,7 @@ async def test_a_decrypted_project_key_is_refused_rather_than_written(
     private_a, public_a = key_pair_a
     private_b, _public_b = key_pair_b
     path = tmp_path / "proefproject.yaml"
-    await _write_project(path, public_a, generate_sops_key_pair())
+    await _write_project(path, public_a, generate_age_key_pair())
 
     data = load_yaml_from_path(str(path))
     set_project_field(data, "repositories[0].password", "plain-text-token")

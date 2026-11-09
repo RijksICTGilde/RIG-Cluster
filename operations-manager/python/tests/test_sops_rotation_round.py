@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
-from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
+from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content, generate_age_key_pair
+from opi.utils.sops import encrypt_to_sops_files
 from opi.utils.yaml_util import load_yaml_from_path
 from tests.conftest import write_private_file
 from tests.documented_commands import BARE_PYTHON, LAUNCHER, command_lines, documented_lines, flags
@@ -173,8 +173,8 @@ async def _env_file(path: Path, values: dict[str, str], public_key: str) -> Path
 
 @pytest.mark.asyncio
 async def test_the_plan_lists_a_field_that_still_sits_on_the_old_key(tmp_path: Path) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
 
     with patch.object(tool, "sops_files_for", return_value=[]):
@@ -193,8 +193,8 @@ async def test_the_plan_calls_an_already_converted_field_done(tmp_path: Path) ->
     A loose ``base64+age:`` value does not carry its recipient in the text, so without the
     decryption attempt the plan would list it as "to do" again and then strand.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"GIT_ARGO_APPLICATIONS_PASSWORD": "hunter2"}, new_public)
 
     with patch.object(tool, "sops_files_for", return_value=[]):
@@ -208,9 +208,9 @@ async def test_the_plan_calls_an_already_converted_field_done(tmp_path: Path) ->
 @pytest.mark.asyncio
 async def test_the_plan_reports_a_field_that_opens_with_neither_key(tmp_path: Path) -> None:
     """A value only a third key opens is a finding, not something to convert blindly."""
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
-    _stranger_private, stranger_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
+    _stranger_private, stranger_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "x"}, stranger_public)
 
     with patch.object(tool, "sops_files_for", return_value=[]):
@@ -222,8 +222,8 @@ async def test_the_plan_reports_a_field_that_opens_with_neither_key(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_the_round_converts_the_env_line_in_place(tmp_path: Path) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"A_PASSWORD": "first", "B_PASSWORD": "second"}, old_public)
     before = path.read_text()
 
@@ -250,8 +250,8 @@ async def test_the_fingerprint_covers_the_same_set_before_and_after_a_partial_ro
     With a single key per measurement the "before" set would hold one field and the "after" set
     two, and the comparison would report "field appeared" on a perfectly healthy tree.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = tmp_path / ".env"
     old_block = await encrypt_age_content("still-old", old_public)
     new_block = await encrypt_age_content("already-new", new_public)
@@ -278,8 +278,8 @@ async def test_the_fingerprint_covers_the_same_set_before_and_after_a_partial_ro
 
 @pytest.mark.asyncio
 async def test_fingerprint_now_reports_a_field_no_key_opens(tmp_path: Path) -> None:
-    _stranger_private, stranger_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    _stranger_private, stranger_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"A_PASSWORD": "x"}, stranger_public)
 
     measured, closed = await tool.fingerprint_now([], tool.all_loose_values([path]), new_private)
@@ -306,8 +306,8 @@ def test_the_expected_count_is_the_sum_of_the_fingerprints_that_exist(tmp_path: 
 @pytest.mark.asyncio
 async def test_the_final_check_names_a_skipped_env_field(tmp_path: Path) -> None:
     """A field left on the old key has to show up by name, not as a silent pass."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"FORGOTTEN_PASSWORD": "x"}, old_public)
 
     with (
@@ -324,8 +324,8 @@ async def test_the_final_check_names_a_skipped_env_field(tmp_path: Path) -> None
 @pytest.mark.asyncio
 async def test_the_final_check_walks_the_project_files_when_given_a_directory(tmp_path: Path) -> None:
     """Without --projects the fourth place is not walked; with it, it is."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     projects = tmp_path / "projects"
     projects.mkdir()
     argo = tmp_path / "zad-argo-user-applications"
@@ -358,8 +358,8 @@ async def test_the_final_check_walks_a_project_file_in_a_subdirectory(tmp_path: 
     that would also catch it is emptied for every test here by ``no_coverage_sweep``, and has its
     own test below.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     projects = tmp_path / "projects"
     (projects / "local-old").mkdir(parents=True)
     await _project_file(projects, "hier", new_public)
@@ -388,8 +388,8 @@ async def test_the_final_check_names_a_projects_file_no_selection_reaches(tmp_pa
     does not see. So the clone gets the same inventory this repo gets: git says which files the
     tree tracks, and any of them carrying real ciphertext that no selection reaches is a gap.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     projects = tmp_path / "projects"
     projects.mkdir()
     await _project_file(projects, "hier", new_public)
@@ -416,8 +416,8 @@ async def test_the_final_check_names_a_projects_file_no_selection_reaches(tmp_pa
 @pytest.mark.asyncio
 async def test_the_final_check_fails_when_the_count_does_not_match(tmp_path: Path) -> None:
     """All fields converted and readable, one fewer than the fingerprint: not clean."""
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / ".env", {"A_PASSWORD": "x"}, new_public)
 
     with (
@@ -542,8 +542,8 @@ async def test_the_rename_that_refuses_ends_the_run_with_a_failure(
     security.mkdir()
     left_behind = security / "old_key.txt"
     write_private_file(left_behind, "the key of the previous round")
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     old_key = security / "key.txt"
     write_private_file(old_key, old_private)
     new_key = security / "nieuw.txt"
@@ -568,7 +568,7 @@ async def test_generating_the_new_key_makes_it_at_the_answered_path(tmp_path: Pa
     a missing file and the run stops at exit 2, which is what makes this test measure the
     generation rather than the rename it rides along with.
     """
-    old_private, _old_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
     security = tmp_path / "security"
     security.mkdir()
     answered_old = security / "key.txt"
@@ -598,7 +598,7 @@ async def test_generating_refuses_to_write_over_a_key_that_is_already_there(
     WORDS: without the tool's own rule the run still ends at exit 2 with the path in it, and
     only the message tells "this is the key in use" from "the tool could not open a file".
     """
-    old_private, _old_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
     security = tmp_path / "security"
     security.mkdir()
     answered_old = security / "key.txt"
@@ -658,7 +658,7 @@ def test_renaming_does_nothing_without_a_yes(tmp_path: Path, capsys: pytest.Capt
 @pytest.mark.asyncio
 async def test_the_same_key_twice_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """Rotating onto the same key would report success while changing nothing meaningful."""
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, private)
 
@@ -679,8 +679,8 @@ async def test_a_missing_key_file_names_the_path(tmp_path: Path, capsys: pytest.
 @pytest.mark.asyncio
 async def test_verify_refuses_without_a_fingerprint(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """--verify is meant to be runnable months later, so a missing baseline is a hard error."""
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file((tmp_path / "old_key.txt"), old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
 
@@ -706,8 +706,8 @@ async def test_removing_the_old_key_is_refused_without_the_project_files(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """The plan's acceptance criterion: it refuses to delete A while projects may still be on A."""
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     old_file = tmp_path / "old_key.txt"
     write_private_file(old_file, old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
@@ -738,8 +738,8 @@ async def test_removing_the_old_key_is_refused_without_the_project_files(
 async def test_removing_the_old_key_happens_once_the_check_is_clean(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     old_file = tmp_path / "old_key.txt"
     write_private_file(old_file, old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
@@ -786,8 +786,8 @@ async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too
     wrong ends on "count differs" and leaves the old key in place. Measured on the real repo:
     118 fields walked against 28 recorded.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     old_file = tmp_path / "old_key.txt"
     write_private_file(old_file, old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
@@ -1090,8 +1090,8 @@ async def test_this_repos_own_project_file_is_part_of_the_plan(tmp_path: Path) -
     It is a project file, so the engine converts it, but it lives HERE. Pointing
     rotate-project-keys.py at a clone of zad-projects would never reach it.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     own = tmp_path / "projects"
     own.mkdir()
     await _own_project(own, "simple-example", old_public)
@@ -1123,8 +1123,8 @@ async def test_a_project_file_one_directory_down_in_own_projects_is_named_and_no
     the ciphertext inventory, which does walk the tree recursively. Without that half a sketch
     carrying ciphertext is not skipped on purpose, it is skipped in silence.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     own = tmp_path / "projects"
     (own / "ideas").mkdir(parents=True)
     flat = await _own_project(own, "simple-example", old_public)
@@ -1145,8 +1145,8 @@ async def test_a_project_file_one_directory_down_in_own_projects_is_named_and_no
 
 @pytest.mark.asyncio
 async def test_this_repos_own_project_file_is_converted_and_fingerprinted(tmp_path: Path) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     own = tmp_path / "projects"
     own.mkdir()
     path = await _own_project(own, "simple-example", old_public)
@@ -1172,8 +1172,8 @@ async def test_this_repos_own_project_file_is_converted_and_fingerprinted(tmp_pa
 @pytest.mark.asyncio
 async def test_the_final_check_walks_this_repos_own_project_file(tmp_path: Path) -> None:
     """Without this the final check would pass with a field in this repo still on the old key."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     own = tmp_path / "projects"
     own.mkdir()
     await _own_project(own, "simple-example", old_public)
@@ -1206,8 +1206,8 @@ def test_sops_rotate_moves_the_file_to_the_new_recipient_and_mints_a_new_data_ke
     data key in place, so a holder of A opens the file with the data key out of an older copy.
     The measurement is in features/sops-sleutel-roteren.md.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
     ciphertext_before = _encrypted_values(path)
     assert ciphertext_before
@@ -1223,9 +1223,9 @@ def test_sops_rotate_moves_the_file_to_the_new_recipient_and_mints_a_new_data_ke
 @needs_sops
 def test_sops_rotate_names_the_file_and_leaves_it_alone_when_the_key_does_not_fit(tmp_path: Path) -> None:
     """A failure halfway through a rotation must not leave an unreadable file behind."""
-    _old_private, old_public = generate_sops_key_pair()
-    _new_private, new_public = generate_sops_key_pair()
-    stranger_private, _stranger_public = generate_sops_key_pair()
+    _old_private, old_public = generate_age_key_pair()
+    _new_private, new_public = generate_age_key_pair()
+    stranger_private, _stranger_public = generate_age_key_pair()
     path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
     before = path.read_text()
 
@@ -1248,9 +1248,9 @@ async def test_the_round_converts_a_sops_file_and_leaves_another_recipient_alone
     the next time a file arrives on the sandbox or developer key. The proof therefore has to be
     synthetic: a second recipient in the tree, untouched.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
-    _stranger_private, stranger_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
+    _stranger_private, stranger_public = generate_age_key_pair()
     ours = _sops_file(tmp_path, "platform", SECRET_BODY, old_public)
     theirs = _sops_file(tmp_path, "practice", SECRET_BODY, stranger_public)
     theirs_before = theirs.read_text()
@@ -1274,8 +1274,8 @@ async def test_the_fingerprint_shows_a_rotated_sops_document_kept_its_content(tm
     match -- a rotation that dropped or shifted a value inside the file fails here even though
     the file still decrypts.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
 
     with _selecting_from(tmp_path):
@@ -1299,8 +1299,8 @@ async def test_the_final_check_names_a_sops_file_that_was_skipped(tmp_path: Path
     The check walks both recipients on purpose: a skipped file still sits on the old one, so
     walking only the new recipient would make it invisible and the check would come back clean.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     done = _sops_file(tmp_path, "converted", SECRET_BODY, old_public)
     forgotten = _sops_file(tmp_path, "forgotten", SECRET_BODY, old_public)
     sops_rotate(done, old_public, new_public, old_private)
@@ -1319,8 +1319,8 @@ async def test_the_final_check_names_a_sops_file_that_was_skipped(tmp_path: Path
 @needs_sops
 async def test_the_final_check_is_clean_once_every_sops_file_is_over(tmp_path: Path) -> None:
     """The other half: with nothing left on A the check says so, so a red one means something."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     for name in ("een", "twee"):
         sops_rotate(_sops_file(tmp_path, name, SECRET_BODY, old_public), old_public, new_public, old_private)
 
@@ -1356,8 +1356,8 @@ def _key_files(tmp_path: Path, old_private: str, new_private: str) -> list[str]:
 @needs_sops
 async def test_a_dry_run_names_both_places_and_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """``--dry-run`` is what the operator looks at before the irreversible half starts."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
     before = (sops_path.read_text(), env_path.read_text())
     fingerprint = tmp_path / "fingerprint.json"
@@ -1383,8 +1383,8 @@ async def test_the_whole_round_converts_both_places_and_leaves_a_checkable_finge
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """One run of the tool as the operator runs it, over a SOPS file and a loose value at once."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
@@ -1446,8 +1446,8 @@ async def test_a_second_converting_run_refuses_to_overwrite_the_record_it_disagr
     the old key still opens nothing, so the final check calls it CLEAN, and the one measurement
     that disagreed is the one that was thrown away.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     repo, clone, env_path = await _two_tree_round(tmp_path, old_public)
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
@@ -1486,8 +1486,8 @@ async def test_a_place_left_out_of_the_first_run_joins_the_record_on_the_second(
     the flag was given says the record is short of the ArgoCD secrets in the very run that put
     them in it, right above the plan the operator says yes to.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     repo, clone, env_path = await _two_tree_round(tmp_path, old_public)
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
@@ -1520,8 +1520,8 @@ async def test_a_full_round_converts_a_python_literal_and_a_whole_file_block(tmp
     entire, and it has to come back as an armored block: a value that switched storage form is
     itself a change, and nothing downstream would read it.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     source = tmp_path / "config.py"
     source.write_text(
         "class Settings:\n"
@@ -1572,8 +1572,8 @@ async def test_verify_says_clean_long_after_the_round_and_red_when_a_file_drifte
     Second half: a file put back on the old key must make it red. Without that this mode could
     report CLEAN on a tree it can no longer open.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
@@ -1604,8 +1604,8 @@ async def test_verify_still_stands_once_the_old_key_file_has_been_removed(
     Second half: the relaxation is for ``--verify`` and nothing else. The final check MEASURES
     with the old key, so there it stays a hard requirement.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(
         tmp_path / ".env",
         {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2", "GIT_ARGO_APPLICATIONS_PASSWORD": "x"},
@@ -1645,8 +1645,8 @@ async def test_verify_without_the_old_key_still_names_a_file_that_stayed_on_the_
     and a field that cannot be measured reads as gone. Without that, the one stand meant to be
     runnable months later would call a half-finished rotation clean.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     tree = tmp_path / "tree"
     tree.mkdir()
     _sops_file(tree, "converted", "value: hunter2\n", old_public)
@@ -1684,8 +1684,8 @@ async def test_verify_is_red_on_a_file_that_is_not_in_the_fingerprint_and_opens_
     carries it, which is why that list has its own say in the exit code -- otherwise this run
     prints a FAIL line and then reports CLEAN with a zero exit.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
@@ -1731,8 +1731,8 @@ async def test_verify_checks_the_projects_record_it_was_handed(tmp_path: Path, c
     The drifted value is re-encrypted for the NEW key, so "does it open" cannot catch it. Only
     the recorded hash can.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     clone = (tmp_path / "zad-projects" / "projects").resolve()
     clone.mkdir(parents=True)
@@ -1784,8 +1784,8 @@ async def test_verify_refuses_projects_without_the_record_to_check_it_against(
     Walking the clone without a record to compare against would be a decryption test wearing the
     word "unchanged", which is what ``--assert-old-key-dead`` is for.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     clone = tmp_path / "zad-projects" / "projects"
     clone.mkdir(parents=True)
@@ -1851,8 +1851,8 @@ def test_the_coverage_sweep_walks_every_tree_of_the_run_and_not_this_repo_alone(
 @pytest.mark.asyncio
 async def test_the_final_check_refuses_to_call_the_old_key_dead_over_a_gap_in_the_argo_clone(tmp_path: Path) -> None:
     """The same verdict, through the check the operator actually runs before deleting the key."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     clone = tmp_path / "zad-argo"
     clone.mkdir()
     forgotten = clone / "los.yaml"
@@ -1884,8 +1884,8 @@ async def test_a_gap_in_another_tree_stops_the_round_before_a_byte_is_written(
     stop for this repo's own tree; this one measures it for a tree handed in on the command
     line, which is the half the sweep gained and the half with no reader before it.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     before = env_path.read_text()
     clone = tmp_path / "zad-argo"
@@ -1926,9 +1926,9 @@ async def test_verify_is_red_on_a_project_field_that_opens_with_neither_key(
     in what was measured either, and nothing would say a word about it. That is what the closed
     list is for on this repo's own fields, and the projects clone has the same one.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
-    _third_private, third_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
+    _third_private, third_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     clone = (tmp_path / "zad-projects" / "projects").resolve()
     clone.mkdir(parents=True)
@@ -1978,8 +1978,8 @@ async def test_verify_matches_the_projects_record_however_the_clone_was_spelled(
     collection in which every field disappeared and another one appeared, over a rotation where
     nothing at all is wrong.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     clone = (tmp_path / "zad-projects" / "projects").resolve()
     clone.mkdir(parents=True)
@@ -2067,9 +2067,9 @@ async def test_the_round_also_converts_the_argocd_repository_secrets(tmp_path: P
     recipient inside that clone: a file there on another key is not touched, which is what the
     second SOPS file measures.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
-    other_private, other_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
+    other_private, other_public = generate_age_key_pair()
     clone = tmp_path / "zad-argo-user-applications"
     clone.mkdir()
     ours = _sops_file(clone, "argo-repository-main-repo", SECRET_BODY, old_public)
@@ -2108,8 +2108,8 @@ async def test_the_final_check_walks_this_repo_and_the_argo_clone_in_one_run(
     SOPS files do -- and either way ``--assert-old-key-dead`` calls the old key dead over a
     place it never opened, which is the one verdict the whole cutover hangs on.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     repo = tmp_path / "rig-cluster"
     clone = tmp_path / "zad-argo-user-applications"
     repo.mkdir()
@@ -2145,8 +2145,8 @@ async def test_the_final_check_names_the_places_its_flags_left_out_and_stays_qui
     a note that stands whichever flags were given tells a complete run that it was incomplete,
     and is one nobody reads any more.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     keys = _key_files(tmp_path, old_private, new_private)
     projects = tmp_path / "projects"
     projects.mkdir()
@@ -2194,8 +2194,8 @@ async def test_a_clone_path_that_is_not_there_stops_the_run_instead_of_walking_n
     complaint, so without this refusal the run walks four places, finds them clean and prints
     CLEAN -- while the ArgoCD repository secrets still sit on the old key.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     absent = tmp_path / "zad-argo-typo"
 
     with patch.object(tool, "sops_files_for", return_value=[]), patch.object(tool, "loose_paths", return_value=[]):
@@ -2221,8 +2221,8 @@ async def test_projects_is_refused_when_it_holds_no_project_file(tmp_path: Path,
     not, and that one is the sharper of the two -- it walks the fourth place over nothing and
     reports CLEAN, which is the answer the operator deletes the old key on.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     clone = tmp_path / "zad-projects"
     (clone / "projects").mkdir(parents=True)
     keys = _key_files(tmp_path, old_private, new_private)
@@ -2255,8 +2255,8 @@ async def test_verify_measures_the_argo_clone_too_and_says_so_when_it_is_left_ou
     argo field is "field disappeared" -- and that second half is exactly what the documented
     command avoids by carrying the flag.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     repo = tmp_path / "rig-cluster"
     clone = tmp_path / "zad-argo-user-applications"
     repo.mkdir()
@@ -2287,8 +2287,8 @@ async def test_the_old_key_does_not_go_away_while_the_argocd_secrets_are_unwalke
     left behind. A clean verdict over four of the five places is not a reason to throw the key
     away.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     old_file = tmp_path / "old_key.txt"
     write_private_file(old_file, old_private)
     write_private_file((tmp_path / "key.txt"), new_private)
@@ -2332,8 +2332,8 @@ async def test_a_coverage_gap_stops_the_round_before_a_byte_is_written(
     ``--assert-old-key-dead`` would report the old key dead while it still opened the file
     nobody walked. So the gap stops the run, and the file it stops on keeps its old value.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     before = env_path.read_text()
     outsider = tmp_path / "forgotten.py"
@@ -2373,8 +2373,8 @@ async def test_a_dry_run_over_a_gap_is_a_failure_and_not_a_green_preview(
     no test in the three rotation modules went red. That is the reading an operator, and a
     wrapper around this script, takes as "the round is ready to go".
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     outsider = tmp_path / "forgotten.py"
 
@@ -2394,8 +2394,8 @@ async def test_a_dry_run_over_a_gap_is_a_failure_and_not_a_green_preview(
 @pytest.mark.asyncio
 async def test_the_final_check_refuses_to_call_the_old_key_dead_over_a_gap(tmp_path: Path) -> None:
     """The half that matters most: the verdict has to be about the tree, not about the worklist."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     outsider = tmp_path / "forgotten.py"
 
     with (
@@ -2450,8 +2450,8 @@ async def test_the_final_check_measures_the_exception_list_against_the_old_key(t
     key is named, and it does not disappear into the field count -- it was never converted, so
     counting it would put the fingerprint comparison off by exactly the number of excuses.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     # Indented, like the block scalar an e2e fixture really holds: the armor has to be
     # de-indented before it can be opened at all.
     block = await encrypt_age_content("hunter2", old_public)
@@ -2489,8 +2489,8 @@ async def test_removing_the_old_key_follows_the_answered_path_not_the_default(
     exited 0 while the real key file was still on disk -- a false report on the last safety
     action of the plan.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
     write_private_file(answered_old, old_private)
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
@@ -2534,8 +2534,8 @@ async def test_renaming_follows_the_answered_path_not_the_default(
     paths from argparse made the first check in ``rename_keys`` always true: it printed "Keys
     already sit under their fixed names." and renamed nothing, whatever the operator answered.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
     write_private_file(answered_old, old_private)
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
@@ -2572,8 +2572,8 @@ async def test_the_note_about_a_missing_old_key_names_the_answered_path(
     perfectly good key. Same class as the two above, and invisible to every other test because
     they all pass ``--old-key`` and then answer and default coincide.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(
         tmp_path / ".env",
         {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2", "GIT_ARGO_APPLICATIONS_PASSWORD": "x"},
@@ -2609,8 +2609,8 @@ async def test_an_old_key_file_without_a_key_line_is_not_reported_as_an_absent_f
     as "no old key at <path>" the operator reads it as gone and stops looking at the file that is
     lying there.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(
         tmp_path / ".env",
         {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2", "GIT_ARGO_APPLICATIONS_PASSWORD": "x"},
@@ -2698,8 +2698,8 @@ async def test_the_final_check_without_a_pat_file_says_it_only_measured_the_key(
     So the verdict has to say which question it answered. Without that line CLEAN reads as "the
     rotation is done", and the operator revokes a token that is still in three places.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "o" * 36}, old_public)
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "f.json")]
 
@@ -2727,8 +2727,8 @@ async def test_the_final_check_with_a_pat_file_catches_a_token_left_behind(
     default every NEW project inherits, so a round that left it behind is invisible until the
     next project is created and then hands it a revoked credential.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "o" * 36}, old_public)
     pat_file = tmp_path / "pat.txt"
     write_private_file(pat_file, "ghp_" + "n" * 36)
@@ -2756,8 +2756,8 @@ async def test_a_git_server_password_is_not_held_to_the_github_token(
     token at all. Holding it to ``--pat-file`` would report a finding on every rotation, and the
     obvious "fix" for that finding is to overwrite OPI's own Forgejo credentials.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     pat_file = tmp_path / "pat.txt"
     write_private_file(pat_file, "ghp_" + "n" * 36)
@@ -2792,8 +2792,8 @@ async def test_a_pat_file_outside_the_final_check_is_refused(
     stayed green, while the flag that carries the sharpest half of the final check was accepted
     and ignored on a round that measures no token at all.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     pat_file = tmp_path / "pat.txt"
     write_private_file(pat_file, "ghp_" + "n" * 36)
 
@@ -2816,8 +2816,8 @@ async def test_the_final_check_catches_a_field_that_still_decrypts_to_the_curren
     Only equality with the token that was supposed to be replaced can see it -- which is why
     this half exists next to the other one rather than inside it.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
     env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": current}, new_public)
     projects = tmp_path / "projects"
@@ -2857,8 +2857,8 @@ async def test_the_final_check_says_the_current_pat_is_gone_once_it_really_is(
     one the round just wrote correctly. Measured: without the guard on it this tree reports FAIL
     in the run whose whole job is to say the OLD token is gone.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
     env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "n" * 36}, new_public)
     current_file = tmp_path / "pat_current.txt"
@@ -2889,8 +2889,8 @@ async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
     is not. Both halves are pinned here: the finding, and the count it may not change. Why:
     ``project_plain_passwords``.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
     projects = tmp_path / "projects"
     projects.mkdir()
@@ -2941,8 +2941,8 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
     equality with the replaced token (``--pat-current-file``) and the token SHAPE
     (``--pat-new-file``). Wiring one of the two in is enough to make the other stay quiet.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
     another = "ghp_" + "x" * 36
     own = tmp_path / "own-projects"
@@ -3002,8 +3002,8 @@ async def test_a_plain_password_one_directory_down_in_own_projects_is_found_too(
     lower, so the pair measures the DEPTH and nothing else; on the flat selection this run ended
     in a full CLEAN.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
     own = tmp_path / "own-projects"
     (own / "ideas").mkdir(parents=True)
@@ -3076,8 +3076,8 @@ async def test_a_stray_yaml_in_this_repos_own_projects_does_not_take_the_final_c
     takes the finding in ``twee.yaml`` with it, so the assertion that the finding still arrives
     is what says the walk continued rather than that it never got there.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
     own = tmp_path / "own-projects"
     own.mkdir()
@@ -3120,8 +3120,8 @@ async def test_a_plain_password_is_held_to_the_token_shape_as_well(
     rule, and the shape is the whole point -- a token nobody remembers replacing, lying in the
     clear, is found by its form or not at all.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     another = "ghp_" + "x" * 36
     projects = tmp_path / "projects"
     projects.mkdir()
@@ -3157,8 +3157,8 @@ async def test_the_final_check_holds_a_project_file_to_the_new_token_as_well(
     the NEW key -- the key round did its work -- and still holds the withdrawn token, which is
     the state no half of the key check can report.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     projects = tmp_path / "projects"
     projects.mkdir()
     project = await _project_file(projects, "een", new_public, token="ghp_" + "o" * 36)
@@ -3194,9 +3194,9 @@ async def test_the_own_values_of_another_recipient_stop_the_run_until_they_are_n
     Both halves are measured, because a flag that is read but never consulted passes the first
     assertion on its own.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
-    _another_private, another_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
+    _another_private, another_public = generate_age_key_pair()
     sops_path, _env_path, _ = await _two_place_tree(tmp_path, old_public)
     # A loose value on a THIRD key: neither the old nor the new one opens it.
     stranger = await _env_file(tmp_path / "stranger.env", {"GIT_PROJECTS_SERVER_PASSWORD": "x"}, another_public)
@@ -3235,9 +3235,9 @@ async def test_the_flag_also_holds_past_the_dry_run(tmp_path: Path, capsys: pyte
     Measured on the project half, because that is the worklist ``build_plan`` and the fingerprint
     reach through different doors: ``own_project_paths()`` at the bottom of both.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
-    _another_private, another_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
+    _another_private, another_public = generate_age_key_pair()
     sops_path, _env_path, _ = await _two_place_tree(tmp_path, old_public)
     # An own project file on a THIRD key: neither the old nor the new one opens it.
     projects = tmp_path / "eigen"

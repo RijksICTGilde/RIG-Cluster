@@ -12,14 +12,13 @@ import logging
 from typing import Any
 
 from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
-from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.services_enums import ServiceType
-from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync
+from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync, project_private_key_or_none
 from opi.utils.naming import upstream_host
 
 logger = logging.getLogger(__name__)
@@ -117,7 +116,7 @@ def _plain_token(registry: dict[str, Any], project_data: dict[str, Any]) -> str 
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:
         return None
-    private_key = resolve_project_private_key(project_data) if carries_encrypted_value(stored) else None
+    private_key = project_private_key_or_none(project_data) if carries_encrypted_value(stored) else None
     try:
         return decrypt_password_smart_sync(stored, private_key)
     except ValueError:

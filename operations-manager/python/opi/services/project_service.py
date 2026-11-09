@@ -19,7 +19,7 @@ from opi.core.members import MemberKind
 from opi.services.project import Project
 from opi.services.schema_migration import ROLE_MIGRATION, migrate_to_latest
 from opi.services.user_service import get_user_service
-from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, project_private_key_or_none
 
 
 class ProjectToken(BaseModel):
@@ -247,7 +247,7 @@ class ProjectService:
         self._projects.clear()
         logger.debug("Cleared all project mappings")
 
-    def _resolve_plaintext_api_key(self, project_name: str, api_key: str, config: dict[str, Any]) -> str | None:
+    def _resolve_plaintext_api_key(self, project_name: str, api_key: str, project_data: dict[str, Any]) -> str | None:
         """Return the plaintext API key for in-memory registration.
 
         ``config.api-key`` is AGE-encrypted with the project key, which is in
@@ -259,16 +259,11 @@ class ProjectService:
         if not is_age_encrypted(api_key):
             return api_key
 
-        encoded_private_key = config.get("age-private-key")
-        if encoded_private_key:
-            try:
-                private_key = unwrap_project_key_sync(str(encoded_private_key))
-            except ValueError as e:
-                logger.warning(f"Could not unwrap the project key of '{project_name}': {e}")
-            else:
-                plaintext = decrypt_age_content_sync(api_key, private_key)
-                if plaintext:
-                    return plaintext
+        private_key = project_private_key_or_none(project_data)
+        if private_key:
+            plaintext = decrypt_age_content_sync(api_key, private_key)
+            if plaintext:
+                return plaintext
 
         existing = self._projects.get(project_name)
         if existing and existing.api_key and not is_age_encrypted(existing.api_key):
@@ -310,8 +305,7 @@ class ProjectService:
             # 401s all API calls for the project until the next process run
             # re-registers the decrypted key.
             if summary.api_key:
-                config = project_data.get("config", {})
-                summary.api_key = self._resolve_plaintext_api_key(summary.name, summary.api_key, config)
+                summary.api_key = self._resolve_plaintext_api_key(summary.name, summary.api_key, project_data)
             return summary
         except Exception:
             logger.exception("Error building project from project data")

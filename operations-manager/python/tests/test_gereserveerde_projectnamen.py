@@ -20,7 +20,7 @@ from opi.core.cluster_config import (
     is_reserved_project_name,
 )
 from opi.core.project_schema import ProjectIntegrityError
-from opi.handlers.sops import SopsHandler
+from opi.handlers.project_key_secret import ProjectKeySecretHandler
 from opi.manager.project_validation import validate_project_structure
 from tests.kubectl_probe import preinitialize_kubectl_without_probing
 
@@ -156,7 +156,7 @@ class TestWeigeringBijEenGitCommit:
     def _manager_met(previous_yaml: dict | None, name: str):
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
@@ -213,7 +213,7 @@ class TestDeSleutelLandtNooitInEenPlatformnamespace:
     async def test_schrijven_in_een_platformnamespace_gooit(self) -> None:
         kubectl = MagicMock()
         kubectl.apply_manifest = AsyncMock()
-        handler = SopsHandler(kubectl_connector=kubectl)
+        handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
 
         with pytest.raises(ValueError, match="platform zelf"):
             await handler.store_project_sops_key_in_namespace(PLATFORM_NAMESPACE, "AGE-SECRET-KEY-1x", "age1x")
@@ -223,7 +223,7 @@ class TestDeSleutelLandtNooitInEenPlatformnamespace:
     async def test_schrijven_in_een_projectnamespace_gaat_door(self) -> None:
         kubectl = MagicMock()
         kubectl.apply_manifest = AsyncMock()
-        handler = SopsHandler(kubectl_connector=kubectl)
+        handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
 
         assert await handler.store_project_sops_key_in_namespace("rig-prd-demo", "AGE-SECRET-KEY-1x", "age1x") is True
         # Het secret, en daarna de Role die de CMP-sidecar precies dat secret laat lezen.

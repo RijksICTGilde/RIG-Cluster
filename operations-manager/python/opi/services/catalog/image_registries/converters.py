@@ -1,7 +1,7 @@
 """Converters for the ``image-registries`` service.
 
-Encrypted with the PROJECT key and not with the system key, so ``AGEEncryptConverter``
-(which uses ``settings.SOPS_AGE_PUBLIC_KEY``) cannot do this.
+The token is encrypted with the PROJECT key, so the key comes from the project file and
+never from ``settings.SOPS_AGE_*``.
 """
 
 from __future__ import annotations
@@ -11,9 +11,14 @@ from typing import Any
 
 from ruamel.yaml.scalarstring import LiteralScalarString
 
-from opi.forms.editables.converters import resolve_project_private_key
 from opi.services.catalog.image_registries.upstream import normalize_upstream
-from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync, encrypt_age_content_sync
+from opi.utils.age import (
+    carries_encrypted_value,
+    decrypt_password_smart_sync,
+    encrypt_age_content_sync,
+    get_project_public_key,
+    project_private_key_or_none,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +54,7 @@ class ProjectAgeSecretConverter:
         if not carries_encrypted_value(value):
             # Strips a ``plain:`` prefix and leaves bare text alone.
             return decrypt_password_smart_sync(value, None)
-        private_key = resolve_project_private_key(context_data)
+        private_key = project_private_key_or_none(context_data)
         if private_key:
             try:
                 return decrypt_password_smart_sync(value, private_key)
@@ -69,7 +74,7 @@ class ProjectAgeSecretConverter:
         # the real token is gone.
         if carries_encrypted_value(text):
             return value
-        public_key = (context_data or {}).get("config", {}).get("age-public-key")
+        public_key = get_project_public_key(context_data or {})
         if not public_key:
             logger.warning("[ProjectAgeSecretConverter] Geen project-publieke sleutel; token blijft leesbaar")
             return text

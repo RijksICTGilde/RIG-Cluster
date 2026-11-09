@@ -23,8 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content, generate_age_key_pair
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -75,8 +74,8 @@ def test_which_plaintexts_count_as_a_github_token(plaintext: str, expected: bool
 @pytest.mark.asyncio
 async def test_the_carrier_is_replaced_and_the_git_server_password_is_not(tmp_path: Path) -> None:
     """Both halves in one file, because that is how they really sit: same file, same key."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(
         tmp_path / "config.py",
         old_public,
@@ -96,8 +95,8 @@ async def test_the_carrier_is_replaced_and_the_git_server_password_is_not(tmp_pa
 @pytest.mark.asyncio
 async def test_the_replaced_value_moves_to_the_new_key_as_well(tmp_path: Path) -> None:
     """One pass, not two: the value is re-encrypted for B in the same write that replaces it."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": OLD_TOKEN})
 
     result = await classify_loose_values([path], old_private, new_private)
@@ -110,8 +109,8 @@ async def test_the_replaced_value_moves_to_the_new_key_as_well(tmp_path: Path) -
 
 @pytest.mark.asyncio
 async def test_a_dry_run_writes_nothing(tmp_path: Path) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": OLD_TOKEN})
     before = path.read_text()
 
@@ -130,8 +129,8 @@ async def test_a_second_round_leaves_the_value_where_it_is(tmp_path: Path) -> No
     Re-encrypting it would be harmless for the content and wrong for the operator: a second run
     that rewrites files says "something happened here" when nothing did.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": OLD_TOKEN})
     first = await classify_loose_values([path], old_private, new_private)
     await run_loose_round(first, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
@@ -148,9 +147,9 @@ async def test_a_second_round_leaves_the_value_where_it_is(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_a_value_that_opens_with_neither_key_is_a_finding(tmp_path: Path) -> None:
     """Not a skip: the round's exit code has to say so, or a missed file reads as success."""
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
-    _stranger_private, stranger_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
+    _stranger_private, stranger_public = generate_age_key_pair()
     path = await _env_file(tmp_path / "config.py", stranger_public, {"PROJECT_REPO_PASSWORD": OLD_TOKEN})
 
     result = await classify_loose_values([path], old_private, new_private)
@@ -167,8 +166,8 @@ async def test_the_repo_record_is_corrected_for_exactly_the_replaced_fields(tmp_
     one round where a plaintext is supposed to change. The field next to it must NOT move, which
     is why the correction is per name rather than a fresh recording of the whole file.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     path = await _env_file(
         tmp_path / "config.py",
         old_public,
@@ -227,8 +226,8 @@ async def test_a_carrier_holding_an_older_token_is_left_alone(tmp_path: Path) ->
     live repos, two of the 67 ArgoCD secrets are exactly that case -- and the operator has no
     way of knowing an older credential was flattened rather than rotated.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     older_token = "ghp_" + "x" * 36
     path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": older_token})
 
@@ -257,8 +256,8 @@ async def test_a_kept_value_that_already_sits_on_the_new_key_is_not_rewritten_at
     as well -- and it would rewrite files on every run of a round that decided to change nothing,
     which reads as "something happened here" in a repo people watch.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     older_token = "ghp_" + "x" * 36
     path = await _env_file(tmp_path / "config.py", new_public, {"PROJECT_REPO_PASSWORD": older_token})
     before = path.read_text()

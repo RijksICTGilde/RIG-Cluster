@@ -2,7 +2,7 @@
 
 Vroeger: project hield zijn key, private helft opnieuw versleuteld voor sandbox. Risico:
 waarden die later in productie bijkomen openen ook op sandbox. Nu: conversie maakt eigen
-sleutelpaar. Sleutels per test via generate_sops_key_pair.
+sleutelpaar. Sleutels per test via generate_age_key_pair.
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ from opi.utils.age import (
     decrypt_age_content_sync,
     encrypt_age_content_sync,
     encrypt_file_to_age_block_sync,
+    generate_age_key_pair,
     is_age_encrypted,
 )
-from opi.utils.sops import generate_sops_key_pair
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -46,9 +46,9 @@ class Keys:
     """De drie sleutelparen die in dit verhaal meedoen."""
 
     def __init__(self) -> None:
-        self.prod_private, self.prod_public = generate_sops_key_pair()
-        self.sandbox_private, self.sandbox_public = generate_sops_key_pair()
-        self.project_private, self.project_public = generate_sops_key_pair()
+        self.prod_private, self.prod_public = generate_age_key_pair()
+        self.sandbox_private, self.sandbox_public = generate_age_key_pair()
+        self.project_private, self.project_public = generate_age_key_pair()
 
 
 @pytest.fixture
@@ -264,7 +264,7 @@ class TestRekeyAliasesUnreadable:
     def test_a_string_alias_block_is_left_alone_and_reported(
         self, production_project: dict, keys: Keys, caplog: pytest.LogCaptureFixture
     ) -> None:
-        _, other_public = generate_sops_key_pair()
+        _, other_public = generate_age_key_pair()
         unreadable = encrypt_age_content_sync(ALIASES, other_public)
         production_project["components"][0]["aliases"] = unreadable
 
@@ -277,7 +277,7 @@ class TestRekeyAliasesUnreadable:
     def test_a_legacy_mapping_value_is_left_alone_and_reported(
         self, production_project: dict, keys: Keys, caplog: pytest.LogCaptureFixture
     ) -> None:
-        _, other_public = generate_sops_key_pair()
+        _, other_public = generate_age_key_pair()
         unreadable = encrypt_age_content_sync("$DATABASE_SERVER_HOST", other_public)
         production_project["components"][0]["aliases"] = {"POSTGRES_HOST": unreadable}
 

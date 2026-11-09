@@ -1,17 +1,13 @@
-"""SOPS key generation, encryption and decryption. For pure AGE encryption, see age.py."""
+"""The sops CLI, and the file names a secret carries through it. AGE itself is age.py."""
 
-import contextlib
 import glob
 import logging
 import os
 import subprocess
-import tempfile
-import uuid
 from typing import NamedTuple
 
 import yaml
 
-from opi.core.config import settings
 from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
@@ -34,10 +30,6 @@ def sops_filenames(name: str) -> SopsFilenames:
     return SopsFilenames(f"{stem}{TO_SOPS_SUFFIX}", f"{stem}{SOPS_SUFFIX}")
 
 
-class SOPSKeyEncryptionError(Exception):
-    """Raised when SOPS key encryption fails."""
-
-
 class SOPSKeyNotAvailableError(Exception):
     """Raised when SOPS AGE key is not available for encryption."""
 
@@ -50,10 +42,6 @@ class SOPSEncryptionError(Exception):
     the working tree holds the secret in plain text. Callers MUST treat this
     as fatal and abort before committing/pushing to git.
     """
-
-
-def get_sops_private_key() -> str | None:
-    return settings.SOPS_AGE_PRIVATE_KEY
 
 
 def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_key: str) -> bool:
@@ -235,61 +223,3 @@ def encrypt_to_sops_files_or_fail(
             f".to-sops.yaml bestand(en) over: {', '.join(remaining)}. "
             "Dit zou secrets in platte tekst naar git committen; deployment afgebroken."
         )
-
-
-def generate_sops_key_pair() -> tuple[str, str]:
-    """
-    Generate a new SOPS AGE key pair.
-
-    Returns:
-        Tuple of (private_key, public_key)
-
-    Raises:
-        SOPSKeyEncryptionError: When key generation fails
-    """
-    try:
-        temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, f"age_key_{uuid.uuid4().hex}")
-
-        try:
-            result = subprocess.run(  # noqa: S603  # no shell; the variable parts are separate argv elements
-                ["age-keygen", "-o", temp_file_path],  # noqa: S607  # a tool from the image's PATH, not a fixed path
-                capture_output=True,
-                text=True,
-                check=True,
-                env=child_env(),
-            )
-
-            with open(temp_file_path) as f:
-                private_key_content = f.read().strip()
-
-            # age-keygen writes the public key on stderr.
-            public_key = None
-            for line in result.stderr.splitlines():
-                if line.startswith("Public key: "):
-                    public_key = line.replace("Public key: ", "").strip()
-                    break
-
-            if not public_key:
-                raise SOPSKeyEncryptionError("Failed to extract public key from age-keygen output")
-
-            private_key = None
-            for line in private_key_content.splitlines():
-                if line.startswith("AGE-SECRET-KEY-"):
-                    private_key = line.strip()
-                    break
-
-            if not private_key:
-                raise SOPSKeyEncryptionError("Failed to extract private key from generated content")
-
-            logger.debug("Successfully generated SOPS AGE key pair")
-            return private_key, public_key
-
-        finally:
-            with contextlib.suppress(OSError):
-                os.unlink(temp_file_path)
-
-    except subprocess.CalledProcessError as e:
-        raise SOPSKeyEncryptionError(f"age-keygen command failed: {e.stderr}") from e
-    except Exception as e:
-        raise SOPSKeyEncryptionError(f"Failed to generate SOPS key pair: {e}") from e

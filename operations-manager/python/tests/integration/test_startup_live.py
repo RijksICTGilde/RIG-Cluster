@@ -41,7 +41,7 @@ from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
 from opi.core.readiness import get_readiness_state
 from opi.core.startup import check_minio_availability, run_startup_tasks
-from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME
+from opi.handlers.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME
 from opi.server import create_app, lifespan
 from opi.services import project_store as project_store_module
 from opi.services.project_store import get_project_store, reset_project_store

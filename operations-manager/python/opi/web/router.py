@@ -49,7 +49,7 @@ from opi.services.zad_map import platform_graph, project_graph
 from opi.services.zad_map.platform import current_cluster_folder
 from opi.services.zad_map.project import usage_targets
 from opi.services.zad_map.usage import measure_usage
-from opi.utils.age import decrypt_password_smart, unwrap_project_key
+from opi.utils.age import decrypt_password_smart, get_decoded_project_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.url_paths import local_redirect_path
@@ -1566,7 +1566,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         project_data_decrypted = copy.deepcopy(project_data)
 
-        project_private_key = await unwrap_project_key(project_data["config"]["age-private-key"])
+        project_private_key = await get_decoded_project_private_key(project_data)
 
         # Kaart laadt via eigen route: geen geheimen in de context, geen Prometheus, ArgoCD of Kopia.
         map_tab = tab_from_path(request.url.path) == "kaart"

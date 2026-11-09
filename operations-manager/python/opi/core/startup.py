@@ -38,7 +38,7 @@ from opi.core.no_mail_reconciler import reconcile_no_mail_records
 from opi.core.platform_database_access import restrict_platform_databases
 from opi.core.project_schema import check_schema_versions
 from opi.core.version import set_running_image
-from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, SopsHandler
+from opi.handlers.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
@@ -183,7 +183,11 @@ def _cluster_deployment_namespaces() -> dict[str, str]:
 
 
 async def _ensure_cmp_key_reader_in_namespace(
-    namespace: str, project_name: str, kubectl: KubectlConnector, sops_handler: SopsHandler, counts: dict[str, int]
+    namespace: str,
+    project_name: str,
+    kubectl: KubectlConnector,
+    sops_handler: ProjectKeySecretHandler,
+    counts: dict[str, int],
 ) -> None:
     """Put the key reader in one namespace and update the counts."""
     role_present = await kubectl.resource_exists("role", CMP_SOPS_ROLE_NAME, namespace)
@@ -233,7 +237,7 @@ async def ensure_cmp_key_readers() -> dict[str, int]:
     Returns the counts, keyed ``gezet``, ``aanwezig``, ``overgeslagen`` and ``gefaald``.
     """
     kubectl = create_kubectl_connector()
-    sops_handler = SopsHandler(kubectl)
+    sops_handler = ProjectKeySecretHandler(kubectl)
     counts = {"gezet": 0, "aanwezig": 0, "overgeslagen": 0, "gefaald": 0}
 
     namespaces = _cluster_deployment_namespaces()

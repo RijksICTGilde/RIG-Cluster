@@ -172,7 +172,7 @@ async def test_without_htmx_the_refusal_is_a_plain_403() -> None:
 async def test_the_window_shows_the_real_values() -> None:
     with (
         _access_patch(),
-        patch("opi.web.router_env_vars.unwrap_project_key", AsyncMock(return_value="priv")) as unwrap,
+        patch("opi.web.router_env_vars.get_decoded_project_private_key", AsyncMock(return_value="priv")) as unwrap,
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value={"A": "1", "B": "geheim"})) as lees,
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
@@ -180,7 +180,7 @@ async def test_the_window_shows_the_real_values() -> None:
 
     assert antwoord.status_code == 200
     html = antwoord.body.decode()
-    unwrap.assert_awaited_once_with("verpakt")
+    unwrap.assert_awaited_once()
     lees.assert_awaited_once()
     assert lees.await_args.args[0] == "AGE-BLOK"
     assert "'vars_text': 'A=1\\nB=geheim'" in html
@@ -190,7 +190,7 @@ async def test_the_window_shows_the_real_values() -> None:
 async def test_the_window_of_an_unreadable_block_warns_and_stays_empty() -> None:
     with (
         _access_patch(),
-        patch("opi.web.router_env_vars.unwrap_project_key", AsyncMock(return_value="priv")),
+        patch("opi.web.router_env_vars.get_decoded_project_private_key", AsyncMock(return_value="priv")),
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value=None)),
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
@@ -205,7 +205,7 @@ async def test_the_window_of_an_unreadable_block_warns_and_stays_empty() -> None
 async def test_the_deployment_scope_reads_the_override() -> None:
     with (
         _access_patch(),
-        patch("opi.web.router_env_vars.unwrap_project_key", AsyncMock(return_value="priv")),
+        patch("opi.web.router_env_vars.get_decoded_project_private_key", AsyncMock(return_value="priv")),
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value={})) as lees,
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: repr(context)),
     ):
@@ -278,7 +278,7 @@ async def test_het_venster_levert_een_beslissing_per_verzoek() -> None:
     request = _request()
     with (
         _access_patch(),
-        patch("opi.web.router_env_vars.unwrap_project_key", AsyncMock(return_value="priv")),
+        patch("opi.web.router_env_vars.get_decoded_project_private_key", AsyncMock(return_value="priv")),
         patch("opi.web.router_env_vars.read_user_env_vars", AsyncMock(return_value={})),
         patch("opi.web.router_env_vars.render_fragment", lambda _r, template, context: ""),
     ):

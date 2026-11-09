@@ -17,6 +17,7 @@ from opi.core.cluster_config import CLUSTER_CONFIG, get_external_clone_allowed_p
 from opi.core.task_handlers_operations import handle_clone_bucket, handle_clone_database
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
+from opi.utils.age import generate_age_key_pair
 from opi.utils.egress_guard import (
     REFUSED_CLONE_SOURCE_REASON,
     UNREACHABLE_SOURCE_REASON,
@@ -24,7 +25,6 @@ from opi.utils.egress_guard import (
     host_is_allowed,
     host_is_public,
 )
-from opi.utils.sops import generate_sops_key_pair
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -155,7 +155,7 @@ def age_keys() -> Iterator[tuple[str, str]]:
     Op de plek waar de route en de handler hem lezen: ``mock_settings`` legt een MagicMock
     over ``opi.core.config.settings``, en die reist mee naar wie hem al geïmporteerd had.
     """
-    private_key, public_key = generate_sops_key_pair()
+    private_key, public_key = generate_age_key_pair()
     with (
         patch("opi.api.router.settings.SOPS_AGE_PUBLIC_KEY", public_key),
         patch("opi.utils.age.settings.SOPS_AGE_PRIVATE_KEY", private_key),

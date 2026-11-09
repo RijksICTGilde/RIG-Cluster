@@ -777,6 +777,16 @@ class Settings(BaseSettings):
         return self
 
 
+def format_age_key_file(private_key: str, public_key: str) -> str:
+    """An AGE key file as text: the form the Secret ``sops-age-key`` carries.
+
+    Next to :func:`parse_sops_age_key_content`, which reads it back. The Kopia password of
+    a namespace is derived from this whole text, so predicting what lands there after a key
+    replacement means producing exactly these bytes.
+    """
+    return f"# created: project-specific key\n# public key: {public_key}\n{private_key}\n"
+
+
 def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
     """Returns the pair ``(public_key, private_key)`` out of the multiline SOPS age key content."""
     if not content:

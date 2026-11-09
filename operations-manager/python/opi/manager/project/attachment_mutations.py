@@ -19,7 +19,7 @@ from opi.handlers.project_file_handler import (
 )
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import ConfigLayer
-from opi.utils.age import encrypt_file_to_age_block_sync
+from opi.utils.age import encrypt_file_to_age_block_sync, get_project_public_key
 
 if TYPE_CHECKING:
     from opi.manager.project.access import ProjectFileAccess
@@ -153,7 +153,7 @@ class AttachmentMutations:
                     "error_type": "not_found",
                 }
 
-            public_key = (project_data.get("config") or {}).get("age-public-key")
+            public_key = get_project_public_key(project_data)
             if content is not None and not public_key:
                 # Fail closed rather than store the bytes unencrypted: the catalog is
                 # committed to the projects repository, and attachments are certificates.

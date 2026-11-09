@@ -48,12 +48,11 @@ rules:
         - "**/opi/"
       exclude:
         - "**/opi/connectors/"
-        # De vier bestaande crypto- en CLI-helpers: ze roepen sops, age, gpg en openssl aan
-        # met een vaste argumentenlijst en zijn ouder dan de connector-afspraak. De regel is
-        # er voor NIEUWE aanroepsites; deze vier verplaatsen is een eigen wijziging.
+        # De drie bestaande crypto- en CLI-helpers: ze roepen sops, gpg en openssl aan met
+        # een vaste argumentenlijst en zijn ouder dan de connector-afspraak. De regel is er
+        # voor NIEUWE aanroepsites; deze drie verplaatsen is een eigen wijziging.
         - "**/opi/utils/sops.py"
         - "**/opi/utils/git_signing.py"
-        - "**/opi/handlers/sops.py"
         - "**/opi/core/cluster_config.py"
     pattern-either:
       - pattern: subprocess.$F(...)

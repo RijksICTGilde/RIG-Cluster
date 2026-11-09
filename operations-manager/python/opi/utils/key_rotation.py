@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING, Any
 from opi.utils.age import (
     BASE64_AGE_PREFIX,
     AgeDecryptionError,
-    _encrypt_with_age_and_base64encode_as_prefixed_string,
     decrypt_age_content,
     encrypt_age_content,
+    encrypt_to_base64_age,
     is_age_encrypted,
 )
 
@@ -113,7 +113,7 @@ async def convert_value(
     plain_after = new_plaintext if new_plaintext is not None else plain_before
 
     if form is Form.BASE64:
-        new_value = await _encrypt_with_age_and_base64encode_as_prefixed_string(plain_after, new_public_key)
+        new_value = await encrypt_to_base64_age(plain_after, new_public_key)
     else:
         new_value = await encrypt_age_content(plain_after, new_public_key)
 

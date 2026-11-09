@@ -18,7 +18,7 @@ from opi.services.catalog.publish_on_web.issuer import derive_issuer
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
 from opi.services.component_values import encode as encode_component_values
-from opi.utils.age import is_age_encrypted
+from opi.utils.age import carries_encrypted_value, get_project_public_key, is_age_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,9 @@ class AGEKeyPairGenerator:
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.utils.sops import generate_sops_key_pair
+        from opi.utils.age import generate_age_key_pair
 
-        private_key, public_key = generate_sops_key_pair()
+        private_key, public_key = generate_age_key_pair()
         # Stash plain private key in a temp namespace for later encryption
         yaml_data.setdefault("_generated", {})["age-private-key-plain"] = private_key
         logger.debug("Generated AGE key pair for project")
@@ -114,7 +114,7 @@ class AttachmentStagingResolveGenerator:
         from opi.services import upload_staging
         from opi.utils.age import encrypt_file_to_age_block_sync
 
-        public_key = yaml_data.get("config", {}).get("age-public-key")
+        public_key = get_project_public_key(yaml_data)
 
         for service in yaml_data.get("services", []):
             if not isinstance(service, dict) or not isinstance(service.get("attachments"), dict):
@@ -163,7 +163,7 @@ class UserEnvVarsEncryptGenerator:
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        public_key = yaml_data.get("config", {}).get("age-public-key")
+        public_key = get_project_public_key(yaml_data)
         if not public_key:
             logger.debug("No project public key available, skipping user-env-vars encryption")
             return True
@@ -193,7 +193,7 @@ class UserEnvVarsEncryptGenerator:
         user_env_vars = component.get("user-env-vars")
         if not user_env_vars or not isinstance(user_env_vars, str):
             return
-        if "BEGIN AGE ENCRYPTED FILE" in user_env_vars:
+        if carries_encrypted_value(user_env_vars):
             return
         component["user-env-vars"] = LiteralScalarString(encrypt_age_content_sync(user_env_vars, public_key))
         logger.debug("Encrypted user-env-vars for component %s", label or "unknown")
@@ -212,7 +212,7 @@ class RegistryPasswordsEncryptGenerator:
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        public_key = yaml_data.get("config", {}).get("age-public-key")
+        public_key = get_project_public_key(yaml_data)
         if not public_key:
             logger.debug("No project public key available, skipping registry token encryption")
             return True
@@ -239,7 +239,7 @@ class ComponentAliasesEncryptGenerator:
     """
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        public_key = yaml_data.get("config", {}).get("age-public-key")
+        public_key = get_project_public_key(yaml_data)
         if not public_key:
             logger.debug("No project public key available, skipping aliases encryption")
             return True

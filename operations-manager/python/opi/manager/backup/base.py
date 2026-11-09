@@ -25,6 +25,7 @@ from opi.core.backup_constants import (
 )
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
+from opi.handlers.project_key_secret import SOPS_SECRET_NAME
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
 from opi.services.catalog.image_registries.resolution import cluster_rules
 from opi.utils.naming import generate_backup_prefix, generate_project_service_account_name
@@ -832,7 +833,7 @@ class BaseBackupManager:
         from the project's SOPS key.
         """
         # Get the SOPS age secret from the namespace
-        age_key = await self.kubectl.get_sops_secret_from_namespace(namespace)
+        age_key = await self.kubectl.get_sops_secret_from_namespace(namespace, SOPS_SECRET_NAME)
 
         if not age_key:
             # Fallback to a namespace-based key if no SOPS key found

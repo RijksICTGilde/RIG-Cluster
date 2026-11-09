@@ -17,6 +17,7 @@ from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import create_project_file_handler
+from opi.handlers.project_key_secret import SOPS_SECRET_NAME
 from opi.manager.backup import (
     BackupResult,
     BucketBackupResult,
@@ -828,7 +829,7 @@ async def delete_snapshot(
 
         # Get SOPS key for this namespace and derive Kopia password
         kubectl = create_kubectl_connector()
-        age_key = await kubectl.get_sops_secret_from_namespace(k8s_namespace)
+        age_key = await kubectl.get_sops_secret_from_namespace(k8s_namespace, SOPS_SECRET_NAME)
 
         if not age_key:
             logger.warning(f"No SOPS key found in namespace {k8s_namespace}, using namespace-based key")

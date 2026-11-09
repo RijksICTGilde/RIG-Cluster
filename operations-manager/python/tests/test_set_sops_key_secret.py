@@ -19,7 +19,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import generate_age_key_pair
 from tests.conftest import write_private_file
 from tests.documented_commands import documented_lines, flags
 
@@ -43,7 +43,7 @@ def _secret(namespace: str, private_key: str) -> dict:
 
 
 def test_the_public_key_is_read_back_out_of_the_secret() -> None:
-    private, public = generate_sops_key_pair()
+    private, public = generate_age_key_pair()
     assert tool.public_key_from_secret_data(_secret("rig-system", private)["data"]["key"]) == public
 
 
@@ -58,10 +58,10 @@ def test_only_the_namespaces_on_the_old_platform_key_are_selected(capsys: pytest
     Without the key comparison this selection would return all four namespaces, and the two
     project keys would be overwritten with the platform key.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
-    project_one_private, project_one_public = generate_sops_key_pair()
-    project_two_private, _project_two_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
+    project_one_private, project_one_public = generate_age_key_pair()
+    project_two_private, _project_two_public = generate_age_key_pair()
     payload = {
         "kind": "SecretList",
         "items": [
@@ -85,8 +85,8 @@ def test_only_the_namespaces_on_the_old_platform_key_are_selected(capsys: pytest
 
 def test_a_namespace_already_on_the_new_key_is_not_selected(capsys: pytest.CaptureFixture) -> None:
     """Makes the step safe to rerun: a second run finds nothing to do."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     payload = {"kind": "SecretList", "items": [_secret("rig-prd-operations", new_private)]}
 
     targets = tool.report_holders(tool.holders_from_secret_list(payload), old_public, new_public)
@@ -98,7 +98,7 @@ def test_a_namespace_already_on_the_new_key_is_not_selected(capsys: pytest.Captu
 
 def test_a_single_secret_response_is_handled_as_well() -> None:
     """``kubectl get`` returns a bare Secret rather than a list when it is asked for one."""
-    private, public = generate_sops_key_pair()
+    private, public = generate_age_key_pair()
     payload = {"kind": "Secret", **_secret("rig-system", private)}
     holders = tool.holders_from_secret_list(payload)
     assert [(holder.namespace, holder.public_key) for holder in holders] == [("rig-system", public)]
@@ -111,9 +111,9 @@ def test_an_unreadable_secret_is_not_reported_as_a_project_key(capsys: pytest.Ca
     the old key live in that namespace -- which the final check cannot see, because it measures
     files and not cluster secrets.
     """
-    old_private, old_public = generate_sops_key_pair()
-    _new_private, new_public = generate_sops_key_pair()
-    project_private, project_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    _new_private, new_public = generate_age_key_pair()
+    project_private, project_public = generate_age_key_pair()
     payload = {
         "kind": "SecretList",
         "items": [
@@ -142,7 +142,7 @@ def test_an_unreadable_secret_is_not_reported_as_a_project_key(capsys: pytest.Ca
 @pytest.mark.asyncio
 async def test_the_secret_keeps_the_whole_key_file_as_its_value(tmp_path: Path) -> None:
     """The CMP plugin greps ``^AGE-SECRET-KEY-`` out of the value, so the file shape must survive."""
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, f"# created: today\n# public key: x\n{private}")
     connector = AsyncMock()
@@ -170,7 +170,7 @@ async def test_the_manifest_never_travels_through_argv(tmp_path: Path) -> None:
     So this checks the property and not the spelling: a future rewrite is free to reach the
     cluster differently as long as the key stays out of argv.
     """
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, f"# created: today\n{private}")
     manifest = f"apiVersion: v1\nkind: Secret\ndata:\n  key: {base64.b64encode(private.encode()).decode()}\n"
@@ -194,7 +194,7 @@ async def test_the_rendered_manifest_lands_in_a_private_file_outside_the_reposit
     checked again afterwards, because a manifest holding the platform key that survives the run
     is the leak moved rather than closed.
     """
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, f"# created: today\n{private}")
     seen: list[Path] = []
@@ -220,7 +220,7 @@ async def test_the_rendered_manifest_lands_in_a_private_file_outside_the_reposit
 @pytest.mark.asyncio
 async def test_a_failing_apply_still_takes_the_manifest_with_it(tmp_path: Path) -> None:
     """Without the ``finally`` the one run that goes wrong is the one that leaves the key behind."""
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, f"# created: today\n{private}")
     seen: list[Path] = []
@@ -249,7 +249,7 @@ async def test_an_interrupt_during_the_apply_still_takes_the_manifest_with_it(tm
     ``KeyboardInterrupt``: the test above would stay green on a cleanup that named ``RuntimeError``
     and left the key in the temp dir of a shared dev server.
     """
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, f"# created: today\n{private}")
     seen: list[Path] = []
@@ -314,8 +314,8 @@ async def test_the_listing_uses_a_field_selector() -> None:
 @pytest.mark.asyncio
 async def test_a_wrong_cluster_name_changes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """The confirmation is the only guard on an irreversible step, so it has to bite."""
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file(tmp_path / "old_key.txt", old_private)
     write_private_file(tmp_path / "key.txt", new_private)
     connector = AsyncMock()
@@ -348,8 +348,8 @@ async def test_a_wrong_cluster_name_changes_nothing(tmp_path: Path, capsys: pyte
 
 @pytest.mark.asyncio
 async def test_a_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file(tmp_path / "old_key.txt", old_private)
     write_private_file(tmp_path / "key.txt", new_private)
     connector = AsyncMock()
@@ -383,7 +383,7 @@ async def test_a_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFi
 
 @pytest.mark.asyncio
 async def test_the_same_key_twice_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    private, _public = generate_sops_key_pair()
+    private, _public = generate_age_key_pair()
     write_private_file(tmp_path / "old_key.txt", private)
     write_private_file(tmp_path / "key.txt", private)
 
@@ -429,9 +429,9 @@ async def test_the_run_writes_only_where_the_old_platform_key_sits(
     overwrite the keys this tool exists to leave alone. So this asserts which namespaces were
     written and restarted, and that the others were touched by neither.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
-    _project_private, project_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
+    _project_private, project_public = generate_age_key_pair()
     write_private_file(tmp_path / "old_key.txt", old_private)
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, new_private)
@@ -492,8 +492,8 @@ async def test_the_secret_is_written_from_the_answered_key_file_not_the_default(
     on the wrong file; here it would put a different key into ``sops-age-key`` on a production
     cluster, which is the one step of the cutover that cannot be taken back.
     """
-    old_private, old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
     write_private_file(answered_old, old_private)
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
@@ -523,8 +523,8 @@ async def test_a_second_run_finds_nothing_to_do_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """Rerun safety at the entry point: every namespace already on the new key is a no-op."""
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, new_public = generate_age_key_pair()
     write_private_file(tmp_path / "old_key.txt", old_private)
     write_private_file(tmp_path / "key.txt", new_private)
     write = AsyncMock()
@@ -561,8 +561,8 @@ async def test_an_unreachable_cluster_stops_before_anything_is_touched(
     Without the listing there is no way to tell the platform key from a project's own, so
     guessing is the one thing this tool may not do.
     """
-    old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     write_private_file(tmp_path / "old_key.txt", old_private)
     write_private_file(tmp_path / "key.txt", new_private)
     connector = AsyncMock()
@@ -661,7 +661,7 @@ async def test_een_onbereikbaar_cluster_laat_de_kek_controle_niet_gokken() -> No
 
 @pytest.mark.asyncio
 async def test_een_kek_dry_run_schrijft_niets(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
-    kek_private, kek_public = generate_sops_key_pair()
+    kek_private, kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "project-kek.txt", kek_private)
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=("", "", 0))
@@ -701,7 +701,7 @@ async def test_een_verkeerde_clusternaam_plaatst_de_kek_niet(tmp_path: Path, cap
     De bevestiging vraagt om het CLUSTER en niet om de kubectl-context: staging en productie
     delen die context, dus het typen ervan zegt niets over welke van de twee de sleutel krijgt.
     """
-    kek_private, _kek_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "project-kek.txt", kek_private)
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=("", "", 0))
@@ -753,7 +753,7 @@ async def test_zonder_een_namespace_die_opi_draait_gebeurt_er_niets(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """Draait OPI daar niet, dan is dit het verkeerde cluster of de verkeerde context."""
-    kek_private, _kek_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     write_private_file(tmp_path / "project-kek.txt", kek_private)
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=("", "", 0))
@@ -790,7 +790,7 @@ async def test_de_kek_gaat_naar_een_namespace_en_laat_sops_age_key_staan(
     De platformsleutel-tak zoekt naar sops-age-key in twaalf namespaces; deze tak mag die
     secrets niet aanraken, want elk project heeft daar zijn eigen sleutel in staan.
     """
-    kek_private, _kek_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_age_key_pair()
     kek_file = tmp_path / "project-kek.txt"
     write_private_file(kek_file, kek_private)
     geschreven: list[tuple[str, Path, str]] = []

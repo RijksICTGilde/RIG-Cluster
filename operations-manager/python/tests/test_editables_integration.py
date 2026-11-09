@@ -56,7 +56,9 @@ class TestFullRenderPipeline:
             label="API Key",
             readonly=True,
         )
-        yaml_data = {"config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata..."}}
+        yaml_data = {
+            "config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata...\n-----END AGE ENCRYPTED FILE-----"}
+        }
         field = editable_to_form_field(editable, yaml_data)
         adapter = LOTCWidgetAdapter()
         html = adapter.render_field(field)

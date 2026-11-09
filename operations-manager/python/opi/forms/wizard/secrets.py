@@ -27,7 +27,7 @@ The pair is:
   back exactly as it was stored.
 
 The one deliberate exception is ``config/age-private-key``. It is not user-editable, but
-the converters decrypt and re-encrypt field values with it (``resolve_project_private_key``),
+the converters decrypt and re-encrypt field values with it (``project_private_key_or_none``),
 so removing it would break editing every encrypted field.
 """
 

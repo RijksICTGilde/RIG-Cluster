@@ -66,7 +66,7 @@ Weigeren bij het aanmaken is de regel; de twee plekken waar de schade zou vallen
 zelf ook, zodat een namespace van het platform ook langs een onvoorzien pad buiten bereik
 blijft:
 
-- `SopsHandler.store_project_sops_key_in_namespace` schrijft `sops-age-key` nooit in een
+- `ProjectKeySecretHandler.store_project_sops_key_in_namespace` schrijft `sops-age-key` nooit in een
   platformnamespace en gooit daar een `ValueError`;
 - `KubectlConnector.delete_namespace` verwijdert nooit een platformnamespace en gooit daar
   een `KubectlExecutionError`.

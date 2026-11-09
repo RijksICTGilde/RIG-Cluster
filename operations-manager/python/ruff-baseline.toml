@@ -126,7 +126,7 @@
 "opi/handlers/bootstrap_api_handler.py" = ["ANN401"]
 "opi/handlers/keycloak_yaml_handler.py" = ["ANN401", "BLE001", "C901", "PLR0912", "PLR0915"]
 "opi/handlers/project_file_handler.py" = ["ANN401", "BLE001", "C901", "ERA001", "PLR0912", "PLR0913"]
-"opi/handlers/sops.py" = ["ANN001", "ANN204", "BLE001"]
+"opi/handlers/project_key_secret.py" = ["ANN204", "BLE001"]
 "opi/jobs/reconciliation.py" = ["BLE001", "C901", "PLR0912", "PLR0913", "PLR0915"]
 "opi/jobs/service_orphan_sweep.py" = ["C901", "PLR0912", "PLR0915"]
 "opi/manager/argo_manager.py" = ["BLE001", "C901", "N818", "PLR0912", "PLR0913", "PLR0915"]

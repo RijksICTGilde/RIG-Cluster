@@ -230,7 +230,7 @@ def test_een_versleutelde_projectsleutel_wordt_eerst_ontsleuteld(monkeypatch: py
     """
     import opi.services.schema_migration as sm
 
-    monkeypatch.setattr(sm, "unwrap_project_key_sync", lambda *_: "projectsleutel-plat")
+    monkeypatch.setattr(sm, "project_private_key_or_none", lambda *_: "projectsleutel-plat")
     monkeypatch.setattr(sm, "decrypt_age_content_sync", lambda *_: "de-echte-platte-sleutel")
 
     gemigreerd, veranderd = migrate_to_latest(_op_2_11_versleuteld())
@@ -247,7 +247,7 @@ def test_een_niet_te_ontsleutelen_projectsleutel_blijft_staan(monkeypatch: pytes
     het bij een volgende ronde opnieuw probeert."""
     import opi.services.schema_migration as sm
 
-    monkeypatch.setattr(sm, "unwrap_project_key_sync", lambda *_: (_ for _ in ()).throw(ValueError("verkeerde kek")))
+    monkeypatch.setattr(sm, "project_private_key_or_none", lambda *_: None)
 
     bestand = _op_2_11_versleuteld()
     gemigreerd, _ = migrate_to_latest(bestand)

@@ -7,6 +7,7 @@ recognises a secret the same way.
 """
 
 import base64
+import binascii
 import contextlib
 import logging
 from typing import Any, cast
@@ -18,11 +19,12 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class AgeDecryptionError(Exception):
-    """Age could not open this content: wrong key or damaged ciphertext.
+class AgeDecryptionError(ValueError):
+    """Age could not open this content: wrong key, damaged ciphertext, or non-text plaintext.
 
-    A type of its own, so a caller that treats "this key does not open it" as a normal
-    outcome can tell it apart from any other error.
+    A ``ValueError``, so a caller that only distinguishes "unusable value" catches it with
+    everything else this module refuses; a type of its own for a caller that treats "this
+    key does not open it" as a normal outcome.
     """
 
 
@@ -36,16 +38,38 @@ def _encrypt_in_process(plain_content: str, public_key: str) -> str:
     return pyrage.encrypt(plain_content.encode(), [recipient], armored=True).decode("utf-8").strip()
 
 
-def _decrypt_in_process(encrypted_content: str, private_key: str) -> str:
-    """Decrypt without starting the age binary: no fork per field, and the private key
-    stays in memory instead of in a tempfile.
+def generate_age_key_pair() -> tuple[str, str]:
+    """A fresh AGE key pair as ``(private_key, public_key)``, generated in process.
+
+    No ``age-keygen`` and no tempfile: the private key is never written to disk, and the
+    call does not hold the event loop while a process starts.
     """
-    identity = pyrage.x25519.Identity.from_str(private_key.strip())
-    return pyrage.decrypt(encrypted_content.strip().encode(), [identity]).decode("utf-8").strip()
+    identity = pyrage.x25519.Identity.generate()
+    return str(identity), str(identity.to_public())
+
+
+def _decrypt_block(encrypted_content: str, private_key: str) -> str:
+    """Decrypt an armored AGE block, without starting the age binary.
+
+    No fork per field, and the private key stays in memory instead of in a tempfile. The
+    only place a pyrage failure becomes ours, so every variant below answers the same way.
+
+    Raises:
+        ValueError: when content or key is missing.
+        AgeDecryptionError: wrong key, damaged ciphertext, or plaintext that is not utf-8.
+            The message never carries the key or the ciphertext.
+    """
+    if not encrypted_content or not private_key:
+        raise ValueError("Missing encrypted content or private key for decryption")
+    try:
+        identity = pyrage.x25519.Identity.from_str(private_key.strip())
+        return pyrage.decrypt(encrypted_content.strip().encode(), [identity]).decode("utf-8").strip()
+    except (pyrage.DecryptError, pyrage.IdentityError, UnicodeDecodeError) as e:
+        raise AgeDecryptionError(f"Age decryption failed: {e}") from e
 
 
 async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
-    """Decrypt age-encrypted content with the given private key.
+    """Decrypt an armored AGE block, or raise.
 
     Stays async without awaiting anything: that is what keeps every caller unchanged.
 
@@ -53,42 +77,25 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
         ValueError: when content or key is missing.
         AgeDecryptionError: when age cannot open the content.
     """
-    if not encrypted_content or not private_key:
-        raise ValueError("Missing encrypted content or private key for decryption")
-
-    try:
-        return _decrypt_in_process(encrypted_content, private_key)
-    except (pyrage.DecryptError, pyrage.IdentityError) as e:
-        logger.error(f"Age decryption failed: {e}")
-        raise AgeDecryptionError(f"Age decryption failed: {e}") from e
+    return _decrypt_block(encrypted_content, private_key)
 
 
-async def _encrypt_with_age_and_base64encode_as_prefixed_string(client_secret: str, public_key: str | None) -> str:
+async def encrypt_to_base64_age(plain_content: str, public_key: str | None) -> str:
     """Encrypt to the one-line ``base64+age:`` form.
 
     That form fits where a single-line value is expected, such as a ``KEY=value`` env line.
     """
-    encrypted_content = await encrypt_age_content(client_secret, public_key)
-    return f"base64+age:{base64.b64encode(encrypted_content.encode()).decode()}"
+    encrypted_content = await encrypt_age_content(plain_content, public_key)
+    return f"{BASE64_AGE_PREFIX}{base64.b64encode(encrypted_content.encode()).decode()}"
 
 
 async def encrypt_age_content(plain_content: str, public_key: str | None) -> str:
-    """Encrypt content to an armored AGE block with the given public key."""
-
-    if not public_key:
-        raise ValueError("Missing public age key for encryption")
-    if not plain_content:
-        raise ValueError("Missing plain content for encryption")
-
-    try:
-        return _encrypt_in_process(plain_content, public_key)
-    except (pyrage.EncryptError, pyrage.RecipientError) as e:
-        logger.error(f"Age encryption failed: {e}")
-        raise Exception(f"Age encryption failed: {e}") from e
+    """The async side of :func:`encrypt_age_content_sync`."""
+    return encrypt_age_content_sync(plain_content, public_key)
 
 
 def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
-    """Synchronous variant of :func:`encrypt_age_content`.
+    """Encrypt content to an armored AGE block with the given public key.
 
     Raises:
         ValueError: when public_key or plain_content is missing.
@@ -102,12 +109,12 @@ def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
     try:
         return _encrypt_in_process(plain_content, public_key)
     except (pyrage.EncryptError, pyrage.RecipientError) as e:
-        logger.error(f"Age encryption failed (sync): {e}")
+        logger.error(f"Age encryption failed: {e}")
         raise Exception(f"Age encryption failed: {e}") from e
 
 
 def decrypt_age_content_sync(encrypted_content: str, private_key: str, *, log_failure: bool = True) -> str | None:
-    """Synchronous variant of :func:`decrypt_age_content`, returning None on failure.
+    """Decrypt an armored AGE block, returning None instead of raising.
 
     Args:
         encrypted_content: the age-encrypted content, BEGIN/END markers included.
@@ -116,52 +123,36 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str, *, log_fa
             :func:`unwrap_project_key_sync` does: a candidate that does not fit is no
             error there.
     """
-    if not encrypted_content or not private_key:
-        logger.error("Missing encrypted content or private key for decryption")
-        logger.error(f"Encrypted content provided: {bool(encrypted_content)}")
-        logger.error(f"Private key provided: {bool(private_key)}")
-        return None
-
     try:
-        decrypted_content = _decrypt_in_process(encrypted_content, private_key)
-    except (pyrage.DecryptError, pyrage.IdentityError) as e:
-        logger.log(logging.ERROR if log_failure else logging.DEBUG, f"Age decryption failed (sync): {e}")
+        return _decrypt_block(encrypted_content, private_key)
+    except ValueError as e:
+        logger.log(logging.ERROR if log_failure else logging.DEBUG, f"Age decryption failed: {e}")
         return None
-
-    logger.debug(f"Successfully decrypted age content (sync) - result length: {len(decrypted_content)}")
-    return decrypted_content
-
-
-async def encrypt_file_to_age_block(raw_bytes: bytes, public_key: str | None) -> str:
-    """
-    Encrypt raw file bytes to an armored AGE block.
-
-    The bytes are base64-encoded first so an arbitrary (binary) payload survives the
-    string-based age helpers; the inner content is therefore always base64. Use
-    decrypt_age_block_to_bytes to recover the original bytes.
-    """
-    b64 = base64.b64encode(raw_bytes).decode("ascii")
-    return await encrypt_age_content(b64, public_key)
 
 
 def encrypt_file_to_age_block_sync(raw_bytes: bytes, public_key: str | None) -> str:
-    """Synchronous variant of encrypt_file_to_age_block."""
+    """Encrypt raw file bytes to an armored AGE block.
+
+    The bytes are base64-encoded first so an arbitrary (binary) payload survives the
+    string-based age helpers; the inner content is therefore always base64. Use
+    :func:`decrypt_age_block_to_bytes` to recover the original bytes.
+    """
     b64 = base64.b64encode(raw_bytes).decode("ascii")
     return encrypt_age_content_sync(b64, public_key)
 
 
-async def decrypt_age_block_to_bytes(age_block: str, private_key: str) -> bytes:
-    """Decrypt an AGE block produced by encrypt_file_to_age_block back to the original bytes."""
-    b64 = await decrypt_age_content(age_block, private_key)
-    return base64.b64decode(b64)
-
-
 def decrypt_age_block_to_bytes_sync(age_block: str, private_key: str) -> bytes:
-    """Synchronous variant of decrypt_age_block_to_bytes."""
-    b64 = decrypt_age_content_sync(age_block, private_key)
-    if b64 is None:
-        raise ValueError("Age decryption of attachment block failed")
-    return base64.b64decode(b64)
+    """Decrypt a block from :func:`encrypt_file_to_age_block_sync` back to the original bytes.
+
+    Raises:
+        ValueError: when age cannot open the block, or the plaintext is not base64.
+    """
+    return base64.b64decode(_decrypt_block(age_block, private_key))
+
+
+async def decrypt_age_block_to_bytes(age_block: str, private_key: str) -> bytes:
+    """The async side of :func:`decrypt_age_block_to_bytes_sync`."""
+    return decrypt_age_block_to_bytes_sync(age_block, private_key)
 
 
 def is_age_encrypted(content: str) -> bool:
@@ -241,48 +232,8 @@ async def decrypt_password_smart_auto(password: str) -> str:
 
 
 async def decrypt_password_smart(password: str, private_key: str | None) -> str:
-    """Decrypt a password by the prefix it carries, and return a plain one untouched.
-
-    Supports:
-    - age:encrypted_content          -> Direct Age decryption
-    - base64+age:base64_content      -> Base64 decode then Age decrypt
-    - plain:password                 -> Return as-is (no decryption)
-    - Auto-detect for backward compatibility
-    """
-    if not password:
-        return password or ""
-
-    encoding_type, content = parse_password_with_prefix(password)
-
-    logger.debug(f"Encoding type detected: {encoding_type}")
-
-    if encoding_type == "plain":
-        return content
-
-    elif encoding_type == "age":
-        if not private_key:
-            raise ValueError("Age encrypted password found but no private key available")
-
-        decrypted = await decrypt_age_content(content, private_key)
-        if decrypted is None:
-            raise ValueError("Failed to decrypt Age password")
-        return decrypted
-
-    elif encoding_type == "base64+age":
-        if not private_key:
-            raise ValueError("Base64+Age encrypted password found but no private key available")
-
-        try:
-            decoded_content = base64.b64decode(content).decode("utf-8")
-            decrypted = await decrypt_age_content(decoded_content, private_key)
-            if decrypted is None:
-                raise ValueError("Failed to decrypt base64+Age password")
-            return decrypted
-
-        except Exception as e:
-            raise ValueError(f"Failed to decode base64 content: {e}") from e
-
-    raise ValueError(f"Unknown encoding type: {encoding_type}")
+    """The async side of :func:`decrypt_password_smart_sync`."""
+    return decrypt_password_smart_sync(password, private_key)
 
 
 async def decrypt_tree(data: Any, private_key: str, *, include_prefixed: bool = False) -> None:
@@ -385,7 +336,7 @@ def unwrap_project_key_sync(wrapped: str, candidates: list[tuple[str, str]] | No
             # log_failure off: during the transition the KEK does not fit a file that has not
             # been converted yet, and that is the expected state, not an error.
             decoded = decrypt_password_smart_sync(wrapped, private_key, log_failure=False)
-        except ValueError, pyrage.DecryptError, pyrage.IdentityError:
+        except ValueError:
             continue
         if decoded:
             logger.debug(f"Project private key unwrapped with the {label}")
@@ -427,6 +378,22 @@ def get_decoded_project_private_key_sync(project_config: dict) -> str:
     return unwrap_project_key_sync(config.get("age-private-key"))
 
 
+def project_private_key_or_none(project_data: dict[str, Any] | None) -> str | None:
+    """The project's unwrapped AGE private key, or None when it cannot be resolved.
+
+    For a read path that has something to show without the key: a form that leaves the
+    stored value standing, or a skip-if-unchanged check that re-encrypts instead. A write
+    path uses :func:`get_decoded_project_private_key_sync`, which refuses instead.
+    """
+    if not project_data:
+        return None
+    try:
+        return get_decoded_project_private_key_sync(project_data)
+    except ValueError as e:
+        logger.warning(f"No usable project private key: {e}")
+        return None
+
+
 def decrypt_password_smart_auto_sync(password: str) -> str:
     """:func:`decrypt_password_smart_sync` with the platform key from the settings."""
     private_key = get_global_private_key()
@@ -434,36 +401,39 @@ def decrypt_password_smart_auto_sync(password: str) -> str:
 
 
 def decrypt_password_smart_sync(password: str, private_key: str | None, *, log_failure: bool = True) -> str:
-    """Synchronous variant of :func:`decrypt_password_smart`, with the same prefixes."""
+    """Decrypt a stored value in whichever form it carries, and return a plain one untouched.
 
+    Args:
+        password: an armored block, ``age:``, ``base64+age:``, ``plain:`` or bare text.
+        private_key: the age private key; only an encrypted form needs one.
+        log_failure: False when the caller tries several keys, as
+            :func:`unwrap_project_key_sync` does: a candidate that does not fit is no
+            error there.
+
+    Raises:
+        ValueError: an encrypted form without a key, or a ``base64+age:`` payload that is
+            not base64.
+        AgeDecryptionError: when age cannot open the content.
+    """
     if not password:
         return password or ""
 
     encoding_type, content = parse_password_with_prefix(password)
 
-    logger.debug(f"Encoding type detected: {encoding_type}")
-
     if encoding_type == "plain":
         return content
 
-    elif encoding_type == "age":
-        if not private_key:
-            raise ValueError("Age encrypted password found but no private key available")
+    if not private_key:
+        raise ValueError(f"{encoding_type} encrypted password found but no private key available")
 
-        decrypted = decrypt_age_content_sync(content, private_key, log_failure=log_failure)
-        if decrypted is None:
-            raise ValueError("Failed to decrypt Age password, returning original")
-        return decrypted
+    if encoding_type == "base64+age":
+        try:
+            content = base64.b64decode(content).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as e:
+            raise ValueError(f"Failed to decode base64 content: {e}") from e
 
-    elif encoding_type == "base64+age":
-        logger.debug("Processing base64-encoded Age encrypted password")
-        if not private_key:
-            raise ValueError("Base64+Age encrypted password found but no private key available")
-
-        decoded_content = base64.b64decode(content).decode("utf-8")
-        decrypted = decrypt_age_content_sync(decoded_content, private_key, log_failure=log_failure)
-        if decrypted is None:
-            raise ValueError("Failed to decrypt base64+Age password")
-        return decrypted
-
-    raise ValueError(f"Unknown encoding type: {encoding_type}")
+    try:
+        return _decrypt_block(content, private_key)
+    except AgeDecryptionError as e:
+        logger.log(logging.ERROR if log_failure else logging.DEBUG, str(e))
+        raise

@@ -27,7 +27,7 @@ Veldpaden, nooit waarden: het resultaat is leesbaar voor wie de taak polt.
 
 ## Wat de taak doet
 
-1. Een nieuw sleutelpaar maken met `generate_sops_key_pair`.
+1. Een nieuw sleutelpaar maken met `generate_age_key_pair`.
 2. De omzetting en de opslag in één `ProjectStore.mutate`: de store leest de verse staat uit git, de omzetting loopt daarop, en het resultaat wordt gevalideerd en gecommit. De commitboodschap noemt het aantal omgezette velden.
    - Elk veld dat met de OUDE projectsleutel opengaat gaat naar de nieuwe publieke sleutel, met dezelfde plaintext en dezelfde opslagvorm (een gepantserd AGE-blok blijft een blok, `base64+age:` blijft `base64+age:`). Dat is `rotate_project_key` in `opi/utils/key_rotation.py`, die dezelfde lus gebruikt als de platformrotatie in `scripts/`.
    - Het nieuwe paar komt in `config`: de publieke helft plat, de private helft ingepakt met `wrap_project_key`, net als bij projectaanmaak. Dat is de project-KEK zodra die er is, en de platformsleutel als terugval (RC-334, `features/sops-sleutel-roteren.md`). De oude helft wordt met `unwrap_project_key` gelezen, dus ook een projectbestand dat nog onder de platformsleutel staat gaat mee.
@@ -117,7 +117,6 @@ Faalt de taak halverwege, dan noemt hij de stap waarin het misging. Is het proje
 
 ## Afhankelijkheden
 
-- `age-keygen` in de OPI-image, voor `generate_sops_key_pair`.
 - De project-KEK (`PROJECT_KEK_FILE`) om de huidige projectsleutel te openen en de nieuwe in te pakken, met de platformsleutel (`SOPS_AGE_PRIVATE_KEY`) als terugval zolang niet elk projectbestand is omgezet. Draait de rotatie met een KEK, dan staat de nieuwe projectsleutel onder de KEK en opent de platformsleutel hem niet meer.
 - Een platformbeheerder met een geldig SSO-token; zie `features/platformbeheer-via-de-api.md`.
 - `kopia` in de OPI-image, voor het meeverhuizen van het backupwachtwoord.

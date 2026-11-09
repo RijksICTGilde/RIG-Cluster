@@ -117,11 +117,10 @@ De drempel verschilt per scanner, en met een reden:
   publiek bij ontwerp en wordt alleen op local en sandboxed-local geregistreerd.
 - `zad-subprocess-buiten-connector` en `zad-subprocess-via-een-shell`: de connector-afspraak
   uit `CLAUDE.md`. Dit is het scherpste pad van dit platform: een veld uit een projectbestand
-  dat in de argumentenlijst van `kubectl`, `git`, `sops` of `mc` belandt. De vier bestaande
+  dat in de argumentenlijst van `kubectl`, `git`, `sops` of `mc` belandt. De drie bestaande
   crypto- en CLI-helpers (`opi/utils/sops.py`, `opi/utils/git_signing.py`,
-  `opi/handlers/sops.py`, `opi/core/cluster_config.py`) staan buiten de regel: ze roepen hun
-  binary met een vaste argumentenlijst aan en zijn ouder dan de afspraak. De regel is er voor
-  nieuwe aanroepsites.
+  `opi/core/cluster_config.py`) staan buiten de regel: ze roepen hun binary met een vaste
+  argumentenlijst aan en zijn ouder dan de afspraak. De regel is er voor nieuwe aanroepsites.
 
 Waarom dit naast ruff staat en niet erin: `pyproject.toml` zet `S603`, `S607` en `S608` voor
 heel `opi/` uit. Dat is precies het injectiepad, en een taint-bewust werktuig is wat dat gat

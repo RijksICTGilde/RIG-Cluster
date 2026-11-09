@@ -11,14 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.kubectl import KubectlExecutionError
-from opi.handlers.sops import SopsHandler
+from opi.handlers.project_key_secret import ProjectKeySecretHandler
 from opi.manager.project_manager import ProjectManager
 
 
 def _handler_with(apply_side_effect):
     kubectl = MagicMock()
     kubectl.apply_manifest = AsyncMock(side_effect=apply_side_effect)
-    return SopsHandler(kubectl_connector=kubectl), kubectl
+    return ProjectKeySecretHandler(kubectl_connector=kubectl), kubectl
 
 
 @pytest.mark.asyncio
@@ -99,7 +99,7 @@ async def test_one_loop_covers_the_race_and_the_caller_does_not_retry_again():
     )
     manager = ProjectManager.__new__(ProjectManager)
     manager._kubectl_connector = kubectl
-    manager._sops_handler = SopsHandler(kubectl_connector=kubectl)
+    manager._sops_handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
 
     with (
         patch("opi.manager.project_manager.get_project_public_key", return_value="age1x"),

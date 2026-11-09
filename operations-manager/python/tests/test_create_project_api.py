@@ -24,7 +24,7 @@ from opi.core.project_schema import validate_project_schema
 from opi.manager.project_validation import validate_project_structure
 from opi.services.project_leden import hash_van
 from opi.utils import age, api_keys, project_utils
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import generate_age_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
@@ -42,7 +42,7 @@ def sops_keys(monkeypatch: Any) -> Any:
     Each module keeps its own reference to ``settings``, and the shared test client
     replaces that object, so the values are set per module rather than once.
     """
-    private_key, public_key = generate_sops_key_pair()
+    private_key, public_key = generate_age_key_pair()
     values = {
         "SOPS_AGE_PUBLIC_KEY": public_key,
         "SOPS_AGE_PRIVATE_KEY": private_key,

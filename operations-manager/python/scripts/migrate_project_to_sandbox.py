@@ -64,12 +64,12 @@ from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
     decrypt_password_smart_sync,
     encrypt_age_content_sync,
     encrypt_file_to_age_block_sync,
+    generate_age_key_pair,
     project_key_candidates_for,
     unwrap_project_key_sync,
     wrap_project_key_sync,
 )
 from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
-from opi.utils.sops import generate_sops_key_pair  # noqa: E402
 from opi.utils.yaml_util import (  # noqa: E402
     load_yaml_from_path,
     save_yaml_to_path,
@@ -305,7 +305,7 @@ def migrate_project(
         # Dezelfde projectsleutel hergebruiken scheidde productie en testomgeving niet: elke
         # waarde die later in productie met die sleutel bijkomt, opent daarna ook op de
         # sandbox (BIO2 8.31, 8.33). Dus een nieuw paar, met OPI's eigen generator.
-        new_project_private_key, project_public_key = generate_sops_key_pair()
+        new_project_private_key, project_public_key = generate_age_key_pair()
         config["age-public-key"] = project_public_key
         config["age-private-key"] = LiteralScalarString(
             wrap_project_key_sync(new_project_private_key, sandbox_kek_public or sandbox_public_key)

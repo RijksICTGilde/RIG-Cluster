@@ -37,7 +37,7 @@ from opi.core.db import Base
 # session, so a later test fails or passes depending on which tests ran before it.
 from opi.server import create_app
 from opi.services.user_otp_service import OtpStatus, OtpVerification
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.age import generate_age_key_pair
 from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
 from tests.image_pins import REPO_ROOT, pinned_image
@@ -80,7 +80,7 @@ def make_age_keypair() -> Callable[[], tuple[str, str]]:
 
     def make() -> tuple[str, str]:
         """Returns (private_key, public_key)."""
-        return generate_sops_key_pair()
+        return generate_age_key_pair()
 
     return make
 

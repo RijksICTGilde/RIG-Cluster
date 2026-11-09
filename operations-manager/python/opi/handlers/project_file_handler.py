@@ -567,6 +567,9 @@ class ProjectFileHandler:
         Returns:
             Normalized AGE content with proper newlines
         """
+        # Deliberately not is_age_encrypted: that one asks whether the WHOLE value is a
+        # block, and an escaped value may carry a literal trailing "\n" that keeps it from
+        # ending on the marker. This has to catch exactly that value.
         if not age_content or "-----BEGIN AGE ENCRYPTED FILE-----" not in age_content:
             return age_content
 
@@ -576,76 +579,20 @@ class ProjectFileHandler:
         logger.debug("Normalized AGE content format (converted escaped newlines)")
         return normalized
 
-    def _looks_like_env_format(self, text: str) -> bool:
-        """
-        Check if text looks like ENV format (KEY=VALUE lines).
-        Checks only the first 1-2 non-empty, non-comment lines.
+    def _decrypt_with_private_key(self, encrypted_value: str, private_key: str | None) -> str:
+        """The plaintext of a stored value, in whichever form it carries.
 
-        Args:
-            text: Text to check
+        The plaintext comes back as text, never parsed: the callers that want a tree
+        (``extract_*_helm*_values``) already parse it, and parsing here turned a plain
+        ``"123"`` into an int and ``"a: b"`` into a dict.
 
-        Returns:
-            True if text appears to be in ENV format
-        """
-        if not text or not isinstance(text, str):
-            return False
-
-        lines = text.strip().split("\n")
-        checked_lines = 0
-
-        for line in lines:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            # ENV format: KEY=VALUE where KEY starts with letter/underscore
-            # and contains only letters, numbers, and underscores
-            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", line):
-                return True
-
-            checked_lines += 1
-            # Only check first 2 actual content lines
-            if checked_lines >= 2:
-                break
-
-        return False
-
-    def _decrypt_with_private_key(self, encrypted_value: str, private_key: str | None) -> Any:
-        """
-        Decrypt an AGE encrypted value using the provided private key and parse as YAML if applicable.
-
-        Args:
-            encrypted_value: The AGE encrypted content (may have escaped newlines)
-            private_key: The private key (may itself be encrypted and have escaped newlines)
-
-        Returns:
-            Decrypted and parsed value (string, dict, list, etc.) or original value if decryption fails
+        Raises:
+            ValueError: when there is no key, or age cannot open the value.
         """
         if not private_key:
             raise ValueError("Private key is required for decryption")
 
-        # Normalize both the encrypted value and private key to handle escaped newlines
-        normalized_encrypted_value = self._normalize_age_content(encrypted_value)
-        normalized_private_key = self._normalize_age_content(private_key)
-
-        decrypted_value = decrypt_password_smart_sync(normalized_encrypted_value, normalized_private_key)
-
-        # Check if decrypted content looks like ENV format (KEY=VALUE lines)
-        # If so, return as-is and let validate_and_parse_env_vars handle it
-        if self._looks_like_env_format(decrypted_value):
-            logger.debug("Decrypted content appears to be ENV format, returning as string")
-            return decrypted_value
-
-        # Try to parse as YAML in case the decrypted content is a YAML block
-        try:
-            yaml = YAML()
-            parsed_value = yaml.load(decrypted_value)
-            logger.debug(f"Successfully parsed decrypted content as YAML: {type(parsed_value)}")
-            return parsed_value
-        except Exception:
-            # If YAML parsing fails, return the decrypted string as-is
-            logger.debug("Decrypted content is not valid YAML, returning as string")
-            return decrypted_value
+        return decrypt_password_smart_sync(self._normalize_age_content(encrypted_value), private_key)
 
     # read_project_file() was removed together with its last caller. It read a
     # project file straight off the filesystem, which for the shared warm working

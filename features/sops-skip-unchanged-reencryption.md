@@ -72,8 +72,8 @@ private key is available:
 
 - **Project secrets** (deployment secrets, helm values, helmfile values,
   infrastructure secrets) use the project's own AGE key, resolved via
-  `ProjectManager._sops_private_key_for()`, which returns `None` for legacy
-  projects without an `age-private-key` (those fall back to always
+  `project_private_key_or_none()` (`opi/utils/age.py`), which returns `None` for
+  legacy projects without an `age-private-key` (those fall back to always
   re-encrypting).
 - **ArgoCD repository secrets** use the cluster's `SOPS_AGE_PRIVATE_KEY` from
   settings.
@@ -89,7 +89,7 @@ encrypt_to_sops_files_or_fail(
     target_path,
     public_key,
     f"secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-    private_key=await self._sops_private_key_for(project_data),
+    private_key=project_private_key_or_none(project_data),
 )
 
 # Always re-encrypt (no key) — original behaviour:

@@ -161,7 +161,7 @@
     },
     "opi/forms/editables/converters.py": {
       "dutch-identifiers": 2,
-      "dutch-comments": 13,
+      "dutch-comments": 12,
       "comment-heavy-functions": 1
     },
     "opi/forms/editables/editable.py": {
@@ -279,9 +279,6 @@
     },
     "opi/handlers/project_file_handler.py": {
       "dutch-comments": 5
-    },
-    "opi/handlers/sops.py": {
-      "dutch-comments": 14
     },
     "opi/jobs/reconciliation.py": {
       "dutch-identifiers": 4,
@@ -3039,7 +3036,7 @@
     },
     "tests/test_projectpagina_geheimen_per_rol.py": {
       "dutch-identifiers": 21,
-      "dutch-comments": 18
+      "dutch-comments": 16
     },
     "tests/test_projectpagina_nieuw_token_cache.py": {
       "dutch-identifiers": 14,

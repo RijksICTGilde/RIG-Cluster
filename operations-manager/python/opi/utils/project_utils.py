@@ -19,9 +19,8 @@ from opi.services.project_leden import hash_van, nieuw_token, vervaldatum
 from opi.services.project_roles import CREATOR_ROLES, roles_from_value
 from opi.services.project_service import get_project_service
 from opi.services.schema_migration import PROJECT_API_ACCOUNT, PROJECT_API_ROLLEN
-from opi.utils.age import encrypt_age_content, wrap_project_key
+from opi.utils.age import encrypt_age_content, generate_age_key_pair, wrap_project_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
-from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
@@ -348,7 +347,7 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
     attributes; ``generate_base_project_file`` passes a ``SimpleNamespace``.
     """
     try:
-        private_key, public_key = generate_sops_key_pair()
+        private_key, public_key = generate_age_key_pair()
         encrypted_private_key = await wrap_project_key(private_key)
         logger.debug(f"Generated AGE key pair for project: {project_data.project_name}")
     except Exception as e:
@@ -376,17 +375,15 @@ async def generate_self_service_project_yaml(project_data: Any, *, api_token: st
     # plain form it is encrypted here before it lands on disk; a value that is already
     # base64+age is encrypted and is left exactly as it is.
     from opi.utils.age import (
-        _encrypt_with_age_and_base64encode_as_prefixed_string,
         decrypt_password_smart,
+        encrypt_to_base64_age,
         parse_password_with_prefix,
     )
 
     form, _ = parse_password_with_prefix(repo_password)
     if form != "base64+age":
         plain_password = await decrypt_password_smart(repo_password, settings.SOPS_AGE_PRIVATE_KEY)
-        repo_password = await _encrypt_with_age_and_base64encode_as_prefixed_string(
-            plain_password, settings.SOPS_AGE_PUBLIC_KEY
-        )
+        repo_password = await encrypt_to_base64_age(plain_password, settings.SOPS_AGE_PUBLIC_KEY)
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])

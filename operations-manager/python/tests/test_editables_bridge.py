@@ -38,7 +38,9 @@ class TestEditableToFormField:
             widget=WidgetType.DISPLAY_CARD,
             label="API Key",
         )
-        yaml_data = {"config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata"}}
+        yaml_data = {
+            "config": {"api-key": "-----BEGIN AGE ENCRYPTED FILE-----\ndata\n-----END AGE ENCRYPTED FILE-----"}
+        }
         field = editable_to_form_field(editable, yaml_data)
         assert field.value == "Versleuteld opgeslagen"
 

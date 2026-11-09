@@ -469,10 +469,10 @@ class TestDeRolWeigertEenPlatformNamespace:
 
     @pytest.mark.asyncio
     async def test_de_rol_gaat_niet_in_een_platformnamespace(self) -> None:
-        from opi.handlers.sops import SopsHandler
+        from opi.handlers.project_key_secret import ProjectKeySecretHandler
 
         kubectl = AsyncMock()
-        handler = SopsHandler(kubectl)
+        handler = ProjectKeySecretHandler(kubectl)
 
         with pytest.raises(ValueError, match="platform"):
             await handler.ensure_cmp_key_reader("rig-prd-operations")
@@ -481,10 +481,10 @@ class TestDeRolWeigertEenPlatformNamespace:
 
     @pytest.mark.asyncio
     async def test_de_rol_gaat_wel_in_een_projectnamespace(self) -> None:
-        from opi.handlers.sops import SopsHandler
+        from opi.handlers.project_key_secret import ProjectKeySecretHandler
 
         kubectl = AsyncMock()
-        handler = SopsHandler(kubectl)
+        handler = ProjectKeySecretHandler(kubectl)
 
         await handler.ensure_cmp_key_reader("rig-prd-demo")
 

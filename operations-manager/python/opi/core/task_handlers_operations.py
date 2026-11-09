@@ -15,17 +15,20 @@ from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
 from opi.core import progress_steps as steps
 from opi.core.actor import get_actor
 from opi.core.cluster_config import get_prefixed_namespace
-from opi.core.config import settings
+from opi.core.config import format_age_key_file, settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.task_errors import platform_failure_fields
-from opi.handlers.sops import format_age_key_file
 from opi.manager.backup.base import BaseBackupManager
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_store import ProjectStoreError, get_project_store
-from opi.utils.age import decrypt_password_smart_auto, get_decoded_project_private_key, wrap_project_key
+from opi.utils.age import (
+    decrypt_password_smart_auto,
+    generate_age_key_pair,
+    get_decoded_project_private_key,
+    wrap_project_key,
+)
 from opi.utils.key_rotation import ConversionError, rotate_project_key
 from opi.utils.project_names import validate_project_name
-from opi.utils.sops import generate_sops_key_pair
 
 logger = logging.getLogger(__name__)
 
@@ -652,7 +655,7 @@ async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
     progress.complete_task(lookup_task)
 
     rotate_task = progress.add_task(steps.PROJECT_KEY_ROTATE)
-    new_private_key, new_public_key = generate_sops_key_pair()
+    new_private_key, new_public_key = generate_age_key_pair()
     # Under the project KEK, as when a project is created; without a KEK wrap_project_key
     # falls back to the platform key (RC-334).
     encrypted_new_private_key = await wrap_project_key(new_private_key)

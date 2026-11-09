@@ -155,7 +155,7 @@ class TestDeSchrijfwegMeldtDeGegenereerdeCode:
     def _manager(self) -> Any:
         with (
             patch("opi.manager.project_manager.KubectlConnector"),
-            patch("opi.handlers.sops.SopsHandler"),
+            patch("opi.handlers.project_key_secret.ProjectKeySecretHandler"),
             patch("opi.generation.manifests.ManifestGenerator"),
             patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
             patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),

@@ -216,7 +216,7 @@ class TestFoutgedrag:
 
 
 class TestRandenVanDeInvoer:
-    """De twee ``strip()``-aanroepen in ``_decrypt_in_process``: pyrage is strenger dan het binary."""
+    """De twee ``strip()``-aanroepen in ``_decrypt_block``: pyrage is strenger dan het binary."""
 
     @pytest.mark.asyncio
     async def test_sleutel_met_een_regeleinde_erachter_opent(self, age_keypair: tuple[str, str]) -> None:

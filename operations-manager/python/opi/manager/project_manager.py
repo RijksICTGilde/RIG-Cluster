@@ -100,7 +100,7 @@ from opi.handlers.project_file_handler import (
     extract_service_names_from_component,
     image_is_confirmed_absent,
 )
-from opi.handlers.sops import CMP_SOPS_ROLE_NAME, SopsHandler
+from opi.handlers.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
     ARGOCD_HERSTEL_BUDGET_SECONDEN,
@@ -162,10 +162,11 @@ from opi.services.registry import (
     provisioning_services,
 )
 from opi.utils.age import (
-    decrypt_age_content,
+    carries_encrypted_value,
     decrypt_password_smart,
     get_decoded_project_private_key,
     get_project_public_key,
+    project_private_key_or_none,
 )
 from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.env_vars import (
@@ -686,7 +687,7 @@ class ProjectManager:
         logger.debug("Initializing ProjectManager")
         self._project_file_relative_path = project_file_relative_path
         self._kubectl_connector = KubectlConnector()
-        self._sops_handler = SopsHandler(self._kubectl_connector)
+        self._sops_handler = ProjectKeySecretHandler(self._kubectl_connector)
         self._manifest_generator = ManifestGenerator()
         self._project_file_handler = ProjectFileHandler()
         self._revision_manager = RevisionManager(self._project_file_handler)
@@ -2308,7 +2309,7 @@ class ProjectManager:
             raise RuntimeError(msg)
         private_key = await get_decoded_project_private_key(project_data)
 
-        existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace)
+        existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace, SOPS_SECRET_NAME)
 
         create_sops_secret = False
         if existing_secret is None:
@@ -2907,7 +2908,7 @@ class ProjectManager:
                     infra_resources_dir,
                     project_public_key,
                     f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
-                    private_key=await self._sops_private_key_for(project_data),
+                    private_key=project_private_key_or_none(project_data),
                 )
 
                 # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
@@ -4430,19 +4431,6 @@ class ProjectManager:
         repo = Project.locate(repositories, name=repository_name)
         return repo.get("path", "") if repo else ""
 
-    @staticmethod
-    async def _sops_private_key_for(project_data: dict[str, Any]) -> str | None:
-        """Decode the project's AGE private key for SOPS skip-if-unchanged.
-
-        Returns None when the key can't be decoded (e.g. legacy project without
-        ``age-private-key``), so the caller falls back to always re-encrypting.
-        """
-        try:
-            return await get_decoded_project_private_key(project_data)
-        except Exception as e:
-            logger.info(f"No project private key for SOPS unchanged-check, re-encrypting: {e}")
-            return None
-
     def _prune_obsolete_component_manifests(
         self, deployment: dict[str, Any], target_path: str, generated_files: list[str]
     ) -> None:
@@ -4589,7 +4577,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"projectbrede secrets van '{project_name}' (namespace '{namespace}')",
-            private_key=await self._sops_private_key_for(project_data),
+            private_key=project_private_key_or_none(project_data),
         )
 
     async def _process_deployment_manifests(
@@ -4724,7 +4712,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-            private_key=await self._sops_private_key_for(project_data),
+            private_key=project_private_key_or_none(project_data),
         )
         logger.info("All .to-sops.yaml files successfully encrypted")
 
@@ -5332,7 +5320,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"helm values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-            private_key=await self._sops_private_key_for(project_data),
+            private_key=project_private_key_or_none(project_data),
         )
 
         logger.info("All helm values files successfully encrypted")
@@ -5591,16 +5579,15 @@ class ProjectManager:
                 # project without one keeps working even if no key is configured.
                 env_private_key: str | None = None
                 for key, value in env_vars.items():
-                    # Decrypt if value is AGE-encrypted
-                    if isinstance(value, str) and "-----BEGIN AGE ENCRYPTED FILE-----" in value:
+                    if carries_encrypted_value(value):
                         if env_private_key is None:
-                            env_private_key = await self._sops_private_key_for(project_data)
+                            env_private_key = project_private_key_or_none(project_data)
                         if not env_private_key:
                             raise ValueError(
                                 f"Helmfile deployment {deployment_name} has AGE-encrypted env var "
-                                f"'{key}' but no project age-private-key is configured"
+                                f"'{key}' but the project age-private-key could not be read"
                             )
-                        plain_value = await decrypt_age_content(value, env_private_key)
+                        plain_value = await decrypt_password_smart(value, env_private_key)
                     else:
                         plain_value = str(value)
 
@@ -5783,7 +5770,7 @@ class ProjectManager:
             target_path,
             public_key,
             f"helmfile values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-            private_key=await self._sops_private_key_for(project_data),
+            private_key=project_private_key_or_none(project_data),
         )
 
         logger.info("All helmfile values files successfully encrypted")
@@ -6289,7 +6276,7 @@ class ProjectManager:
         """
         project_data = await self.get_contents()
         working_dir = await git_connector.get_working_dir()
-        private_key = await self._sops_private_key_for(project_data)
+        private_key = project_private_key_or_none(project_data)
 
         project_name = await self.get_name()
         logger.info(f"Creating application manifests for project: {project_name}")

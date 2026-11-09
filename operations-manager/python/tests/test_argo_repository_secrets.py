@@ -33,9 +33,9 @@ import pytest
 from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import ArgoManager
-from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
+from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content, generate_age_key_pair
 from opi.utils.naming import generate_argocd_repository_secret_name, get_output_filename_from_template
-from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files_or_fail, generate_sops_key_pair
+from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 from tests.conftest import write_private_file
 
@@ -130,7 +130,7 @@ async def write_project(
     url: str = "https://github.com/example/app.git",
 ) -> Path:
     """One project file whose repository password sits on the platform key."""
-    project_private, project_public = generate_sops_key_pair()
+    project_private, project_public = generate_age_key_pair()
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.yaml"
     path.write_text(
@@ -179,7 +179,7 @@ async def write_repository_secret_as_opi_would(
 
 @pytest.fixture
 def platform_keys() -> tuple[str, str]:
-    return generate_sops_key_pair()
+    return generate_age_key_pair()
 
 
 def decrypted(path: Path, private_key: str) -> dict[str, Any]:
@@ -620,7 +620,7 @@ async def test_the_final_check_sees_a_secret_left_on_the_old_token(
     """
     platform_private, platform_public = platform_keys
     projects, clone, _secret = await a_pair(tmp_path, platform_private, platform_public)
-    old_private, _old_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
 
     check = FinalCheck()
     await check_repository_secrets(clone, projects, old_private, platform_private, check)
@@ -635,7 +635,7 @@ async def test_the_final_check_sees_a_secret_left_on_the_old_token(
 async def test_the_final_check_is_clean_once_the_round_has_run(tmp_path: Path, platform_keys: tuple[str, str]) -> None:
     platform_private, platform_public = platform_keys
     projects, clone, _secret = await a_pair(tmp_path, platform_private, platform_public)
-    old_private, _old_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
     await round_tool.run_argo_round(clone, projects, old_private, platform_private, dry_run=False)
 
     check = FinalCheck(token_checked=True)
@@ -659,7 +659,7 @@ async def test_the_final_check_holds_the_argo_password_to_the_new_token(
     projects, clone, _secret = await a_pair(
         tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
     )
-    old_private, _old_public = generate_sops_key_pair()
+    old_private, _old_public = generate_age_key_pair()
 
     without = FinalCheck()
     await check_repository_secrets(clone, projects, old_private, platform_private, without)
@@ -721,7 +721,7 @@ async def test_a_secret_that_opens_with_neither_key_stops_the_round(
     """
     platform_private, platform_public = platform_keys
     projects, clone, _secret = await a_pair(tmp_path, platform_private, platform_public)
-    stranger_private, stranger_public = generate_sops_key_pair()
+    stranger_private, stranger_public = generate_age_key_pair()
     lost = await write_repository_secret_as_opi_would(
         clone,
         "vreemde-sleutel",
@@ -775,8 +775,8 @@ def test_a_secret_on_more_than_one_recipient_is_refused_and_no_plaintext_is_writ
     would hide one operation inside the other, and the key round's fingerprint would have
     nothing to say about it.
     """
-    _private_a, public_a = generate_sops_key_pair()
-    _private_b, public_b = generate_sops_key_pair()
+    _private_a, public_a = generate_age_key_pair()
+    _private_b, public_b = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public_a, public_b])
 
     with pytest.raises(ConversionError) as refused:
@@ -789,7 +789,7 @@ def test_a_secret_on_more_than_one_recipient_is_refused_and_no_plaintext_is_writ
 def test_a_file_that_is_not_a_sops_file_is_refused(tmp_path: Path) -> None:
     """``.sops.yaml`` in, ``.to-sops.yaml`` out: without that pairing the plaintext would land
     under a name nothing encrypts, and stay there."""
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.yaml", [public])
 
     with pytest.raises(ConversionError) as refused:
@@ -805,7 +805,7 @@ def test_a_failing_encryption_takes_the_plaintext_with_it(tmp_path: Path) -> Non
     The plaintext has to be on disk for SOPS to read it, so the window exists; what may not
     survive is the failure. ``sops`` not being on the PATH is enough to produce this.
     """
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
 
     with (
@@ -824,7 +824,7 @@ def test_an_interrupt_during_the_encryption_takes_the_plaintext_with_it(tmp_path
     the test above names, so the cleanup is measured here on something that is not a failure at
     all. Why it has to run anyway: ``write_repository_secret``.
     """
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
 
     with (
@@ -844,7 +844,7 @@ def test_an_interrupt_halfway_through_the_write_takes_the_plaintext_with_it(tmp_
     ``.to-sops.yaml`` name and the write then stops, which is exactly what a torn write leaves
     behind.
     """
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
     source = tmp_path / "argo-repository-https-een.to-sops.yaml"
 
@@ -882,7 +882,7 @@ def test_the_plaintext_sops_reads_is_readable_by_nobody_else(tmp_path: Path) -> 
     test on the mode, and the neighbour below on there being no separate file at all at that
     moment, since such a write builds the plaintext straight onto the target's own name.
     """
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
     source = tmp_path / "argo-repository-https-een.to-sops.yaml"
     seen: list[int] = []
@@ -927,7 +927,7 @@ def test_while_the_plaintext_is_being_written_it_lies_next_to_the_target_and_sop
     The glob assertion states the consequence the two names are protecting against and stands
     behind the stricter of them.
     """
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
     source = tmp_path / "argo-repository-https-een.to-sops.yaml"
     alongside: list[list[str]] = []
@@ -957,7 +957,7 @@ def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(
     So the outcome is measured rather than the exit code: the ``.to-sops.yaml`` is gone, and the
     round hears that the secret was not written.
     """
-    _private, public = generate_sops_key_pair()
+    _private, public = generate_age_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
 
     with (
@@ -1037,7 +1037,7 @@ async def test_the_entry_point_converts_all_three_places_in_one_round(
     -- and the record next to them, because that is what the following ``--verify`` compares.
     """
     old_private, old_public = platform_keys
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     projects, _clone, secret, loose, arguments = await a_round_to_run(tmp_path, old_private, old_public, new_private)
 
     with patch.object(round_tool, "loose_paths", return_value=[loose]):
@@ -1065,7 +1065,7 @@ async def test_a_finding_in_the_argo_clone_stops_the_round_before_a_single_file_
     on different tokens -- with the project files already committed.
     """
     old_private, old_public = platform_keys
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     projects, clone, _secret, loose, arguments = await a_round_to_run(tmp_path, old_private, old_public, new_private)
     await write_repository_secret_as_opi_would(
         clone,
@@ -1100,7 +1100,7 @@ async def test_an_argo_clone_that_is_not_there_is_refused_before_anything_is_wri
     once, which is the direction that does not stop the round, and ArgoCD keeps the old token.
     """
     old_private, old_public = platform_keys
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     projects, _clone, _secret, loose, arguments = await a_round_to_run(tmp_path, old_private, old_public, new_private)
     arguments[arguments.index("--argo-applications") + 1] = str(tmp_path / "een-typefout")
     before = (projects / "een.yaml").read_text()
@@ -1164,7 +1164,7 @@ async def test_the_three_numbers_count_every_place_and_are_printed_by_the_real_r
     nothing to replace anywhere and has to say exactly that, in three numbers and by path.
     """
     old_private, old_public = platform_keys
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, _new_public = generate_age_key_pair()
     projects, _clone, secret, loose, arguments = await a_round_to_run(
         tmp_path, old_private, old_public, new_private, in_all_three=OLDER_TOKEN
     )

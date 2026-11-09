@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
+from opi.handlers.project_key_secret import SOPS_SECRET_NAME
 from opi.utils.argocd_tracking import INSTANCE_LABEL, TrackedResource
 from tests.integration.kubernetes_live import (
     DEPLOYMENT,
@@ -323,8 +324,10 @@ async def test_get_sops_secret_from_namespace_decodes_the_age_key(
     sleutel = "AGE-SECRET-KEY-1EXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE"
     kubectl.ok("create", "secret", "generic", "sops-age-key", "-n", namespace, f"--from-literal=key={sleutel}")
 
-    assert await connector.get_sops_secret_from_namespace(namespace) == sleutel
-    assert await connector.get_sops_secret_from_namespace(other) is None, "elke namespace heeft zijn eigen sleutel"
+    assert await connector.get_sops_secret_from_namespace(namespace, SOPS_SECRET_NAME) == sleutel
+    assert await connector.get_sops_secret_from_namespace(other, SOPS_SECRET_NAME) is None, (
+        "elke namespace heeft zijn eigen sleutel"
+    )
 
 
 async def test_resource_exists_tells_present_from_absent(

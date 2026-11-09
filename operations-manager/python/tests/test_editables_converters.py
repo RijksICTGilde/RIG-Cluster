@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from contextlib import ExitStack
 from unittest.mock import patch
 
+from opi.core.config import settings
 from opi.forms.editables.converters import (
-    AGEEncryptConverter,
     CloneFromConverter,
     ContainerImageConverter,
     DeploymentServicesDisplayConverter,
@@ -16,6 +17,7 @@ from opi.forms.editables.converters import (
 )
 from opi.forms.editables.generators import ComponentAliasesEncryptGenerator, UserEnvVarsEncryptGenerator
 from opi.forms.editables.validators import KeyValueValidator
+from opi.utils.age import AgeDecryptionError
 
 FAKE_AGE_ENCRYPTED = "-----BEGIN AGE ENCRYPTED FILE-----\nencrypted\n-----END AGE ENCRYPTED FILE-----"
 FAKE_PUBLIC_KEY = "age1testpublickey"
@@ -24,7 +26,7 @@ FAKE_PUBLIC_KEY = "age1testpublickey"
 class TestEncryptedDisplayConverter:
     def test_view_age_encrypted(self):
         conv = EncryptedDisplayConverter()
-        assert conv.view("-----BEGIN AGE ENCRYPTED FILE-----\ndata") == "Versleuteld opgeslagen"
+        assert conv.view(FAKE_AGE_ENCRYPTED) == "Versleuteld opgeslagen"
 
     def test_view_plain_value(self):
         assert EncryptedDisplayConverter().view("some-value") == "Geconfigureerd"
@@ -438,7 +440,7 @@ class TestKeyValueConverterEncryption:
 
         with (
             patch("opi.utils.age.decrypt_age_content_sync", return_value="decrypted"),
-            patch("opi.forms.editables.converters.resolve_project_private_key", return_value="AGE-SECRET-KEY-1TEST"),
+            patch("opi.forms.editables.converters.project_private_key_or_none", return_value="AGE-SECRET-KEY-1TEST"),
         ):
             result = conv.read(stored, context_data={"config": {}})
 
@@ -629,59 +631,6 @@ class TestComponentAliasesEncryptGenerator:
         mock.assert_not_called()
 
 
-class TestAGEEncryptConverter:
-    """Verify that AGEEncryptConverter encrypts/decrypts field values."""
-
-    def test_write_encrypts_plain_value(self):
-        """Plain text must be encrypted with the system AGE key."""
-        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
-
-        with patch("opi.utils.age.encrypt_age_content_sync", return_value=FAKE_AGE_ENCRYPTED):
-            result = conv.write("my-secret-value")
-
-        assert "BEGIN AGE ENCRYPTED FILE" in result
-
-    def test_write_skips_already_encrypted(self):
-        """Already-encrypted values must not be double-encrypted."""
-        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
-
-        with patch("opi.utils.age.encrypt_age_content_sync") as mock:
-            result = conv.write(FAKE_AGE_ENCRYPTED)
-
-        mock.assert_not_called()
-        assert result == FAKE_AGE_ENCRYPTED
-
-    def test_write_empty_returns_empty(self):
-        """Empty values should return empty string, not attempt encryption."""
-        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
-        assert conv.write("") == ""
-        assert conv.write(None) == ""
-
-    def test_read_decrypts_encrypted_value(self):
-        """Encrypted values should be decrypted for form display."""
-        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
-
-        with (
-            patch("opi.utils.age.decrypt_age_content_sync", return_value="decrypted-secret"),
-            patch("opi.core.config.settings") as mock_settings,
-        ):
-            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1TEST"
-            result = conv.read(FAKE_AGE_ENCRYPTED)
-
-        assert result == "decrypted-secret"
-
-    def test_view_always_masked(self):
-        """View should never reveal the actual value."""
-        conv = AGEEncryptConverter(public_key=FAKE_PUBLIC_KEY)
-        assert conv.view(FAKE_AGE_ENCRYPTED) == "********"
-        assert conv.view("plain-text") == "********"
-        assert conv.view(None) == "Niet geconfigureerd"
-
-
-# ---------------------------------------------------------------------------
-# keep_existing_ciphertext_if_unchanged
-# ---------------------------------------------------------------------------
-
 OLD_CIPHERTEXT = "-----BEGIN AGE ENCRYPTED FILE-----\nb2xk\n-----END AGE ENCRYPTED FILE-----"
 NEW_CIPHERTEXT = "-----BEGIN AGE ENCRYPTED FILE-----\nbmV3\n-----END AGE ENCRYPTED FILE-----"
 ENCODED_PROJECT_KEY = "-----BEGIN AGE ENCRYPTED FILE-----\na2V5\n-----END AGE ENCRYPTED FILE-----"
@@ -689,29 +638,55 @@ PROJECT_PRIVATE_KEY = "AGE-SECRET-KEY-1PROJECT"
 CONTEXT = {"config": {"age-private-key": ENCODED_PROJECT_KEY}}
 
 
+def _plaintexts(new_plaintext: str) -> dict[str, str]:
+    """What the two entry points below are supposed to open: the project key and both values."""
+    return {
+        ENCODED_PROJECT_KEY: PROJECT_PRIVATE_KEY,
+        OLD_CIPHERTEXT: "FOO=bar",
+        NEW_CIPHERTEXT: new_plaintext,
+    }
+
+
 def _fake_decrypt(new_plaintext: str):
-    """Decrypt stub: resolves the project key and both ciphertexts."""
+    """Stub for the variant that answers None when a key does not fit."""
+    table = _plaintexts(new_plaintext)
 
     def decrypt(content: str, key: str, **_kwargs: object) -> str | None:
-        return {
-            ENCODED_PROJECT_KEY: PROJECT_PRIVATE_KEY,
-            OLD_CIPHERTEXT: "FOO=bar",
-            NEW_CIPHERTEXT: new_plaintext,
-        }.get(content)
+        return table.get(content)
 
     return decrypt
+
+
+def _fake_decrypt_strict(new_plaintext: str):
+    """Stub for the core that raises; the project-key unwrap runs through that one."""
+    table = _plaintexts(new_plaintext)
+
+    def decrypt(content: str, key: str, **_kwargs: object) -> str:
+        plain = table.get(content)
+        if plain is None:
+            raise AgeDecryptionError("Age decryption failed: no matching keys found")
+        return plain
+
+    return decrypt
+
+
+def _patched_age(new_plaintext: str):
+    """Both decrypt paths plus the settings the project-key unwrap reads."""
+    return (
+        patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt(new_plaintext)),
+        patch("opi.utils.age._decrypt_block", side_effect=_fake_decrypt_strict(new_plaintext)),
+        patch.object(settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-1SYSTEM"),
+        patch.object(settings, "PROJECT_KEK_PRIVATE_KEY", None),
+    )
 
 
 class TestKeepExistingCiphertextIfUnchanged:
     def test_keeps_existing_when_plaintext_identical(self):
         from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 
-        with (
-            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=bar")),
-            patch("opi.utils.age.settings") as mock_settings,
-        ):
-            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
-            mock_settings.PROJECT_KEK_PRIVATE_KEY = None
+        with ExitStack() as stack:
+            for patcher in _patched_age("FOO=bar"):
+                stack.enter_context(patcher)
             result = keep_existing_ciphertext_if_unchanged(OLD_CIPHERTEXT, NEW_CIPHERTEXT, CONTEXT)
 
         assert result == OLD_CIPHERTEXT
@@ -719,12 +694,9 @@ class TestKeepExistingCiphertextIfUnchanged:
     def test_returns_new_when_plaintext_differs(self):
         from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 
-        with (
-            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=changed")),
-            patch("opi.utils.age.settings") as mock_settings,
-        ):
-            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
-            mock_settings.PROJECT_KEK_PRIVATE_KEY = None
+        with ExitStack() as stack:
+            for patcher in _patched_age("FOO=changed"):
+                stack.enter_context(patcher)
             result = keep_existing_ciphertext_if_unchanged(OLD_CIPHERTEXT, NEW_CIPHERTEXT, CONTEXT)
 
         assert result == NEW_CIPHERTEXT
@@ -748,12 +720,8 @@ class TestKeepExistingCiphertextIfUnchanged:
     def test_returns_new_when_decrypt_fails(self):
         from opi.forms.editables.converters import keep_existing_ciphertext_if_unchanged
 
-        with (
-            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=bar")) as mock_decrypt,
-            patch("opi.utils.age.settings") as mock_settings,
-        ):
-            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
-            mock_settings.PROJECT_KEK_PRIVATE_KEY = None
+        with ExitStack() as stack:
+            mock_decrypt, *_ = [stack.enter_context(patcher) for patcher in _patched_age("FOO=bar")]
             # Unknown ciphertext (e.g. rotated key) decrypts to None
             unknown = "-----BEGIN AGE ENCRYPTED FILE-----\ncm90YXRlZA==\n-----END AGE ENCRYPTED FILE-----"
             result = keep_existing_ciphertext_if_unchanged(unknown, NEW_CIPHERTEXT, CONTEXT)
@@ -786,13 +754,10 @@ class TestWriteFieldCiphertextReuse:
         from opi.forms.editables.processor import EditableFormProcessor
 
         data = self._data()
-        with (
-            patch("opi.utils.age.encrypt_age_content_sync", return_value=NEW_CIPHERTEXT),
-            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=bar")),
-            patch("opi.utils.age.settings") as mock_settings,
-        ):
-            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
-            mock_settings.PROJECT_KEK_PRIVATE_KEY = None
+        with ExitStack() as stack:
+            stack.enter_context(patch("opi.utils.age.encrypt_age_content_sync", return_value=NEW_CIPHERTEXT))
+            for patcher in _patched_age("FOO=bar"):
+                stack.enter_context(patcher)
             EditableFormProcessor._write_field(self._editable(), "components[0]/user-env-vars", "FOO=bar", data)
 
         assert data["components"][0]["user-env-vars"] == OLD_CIPHERTEXT
@@ -801,13 +766,10 @@ class TestWriteFieldCiphertextReuse:
         from opi.forms.editables.processor import EditableFormProcessor
 
         data = self._data()
-        with (
-            patch("opi.utils.age.encrypt_age_content_sync", return_value=NEW_CIPHERTEXT),
-            patch("opi.utils.age.decrypt_age_content_sync", side_effect=_fake_decrypt("FOO=changed")),
-            patch("opi.utils.age.settings") as mock_settings,
-        ):
-            mock_settings.SOPS_AGE_PRIVATE_KEY = "AGE-SECRET-KEY-1SYSTEM"
-            mock_settings.PROJECT_KEK_PRIVATE_KEY = None
+        with ExitStack() as stack:
+            stack.enter_context(patch("opi.utils.age.encrypt_age_content_sync", return_value=NEW_CIPHERTEXT))
+            for patcher in _patched_age("FOO=changed"):
+                stack.enter_context(patcher)
             EditableFormProcessor._write_field(self._editable(), "components[0]/user-env-vars", "FOO=changed", data)
 
         assert data["components"][0]["user-env-vars"] == NEW_CIPHERTEXT

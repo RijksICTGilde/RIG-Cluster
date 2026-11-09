@@ -216,73 +216,6 @@ class IntegerListConverter:
             return []
 
 
-class AGEEncryptedConverter:
-    """
-    Converter for AGE-encrypted values.
-
-    Encrypts sensitive values for storage and decrypts for display.
-    Uses OPI's AGE encryption utilities.
-    """
-
-    def __init__(self, public_key: str | None = None) -> None:
-        """
-        Initialize with AGE public key.
-
-        Args:
-            public_key: AGE public key for encryption. If None, uses settings.
-        """
-        self.public_key = public_key
-
-    async def to_form(self, value: Any) -> str:
-        """
-        Convert AGE-encrypted value for form display.
-
-        For security, encrypted values are displayed as masked placeholders.
-        The actual decrypted value is not shown in the form.
-        """
-        if value is None:
-            return ""
-        if isinstance(value, str) and value.startswith("age:"):
-            # Return a placeholder to indicate encrypted value exists
-            return "********"
-        return str(value) if value else ""
-
-    async def from_form(self, value: Any) -> str:
-        """
-        Convert form value to AGE-encrypted format.
-
-        Encrypts the value using AGE if not already encrypted.
-        """
-        if value is None or value == "":
-            return ""
-
-        # If value is unchanged placeholder, return original (caller handles)
-        if value == "********":
-            return value
-
-        # Check if already encrypted
-        if isinstance(value, str) and value.startswith("age:"):
-            return value
-
-        # Encrypt the value
-        try:
-            from opi.core.config import get_settings
-            from opi.utils.age import encrypt_age_content
-
-            public_key = self.public_key
-            if public_key is None:
-                settings = get_settings()
-                public_key = settings.age_public_key
-
-            if public_key:
-                encrypted = await encrypt_age_content(str(value), public_key)
-                return f"age:{encrypted}"
-            return str(value)
-        except ImportError:
-            # AGE utilities not available, return as-is
-            return str(value)
-
-
 class YAMLConverter:
     """
     Converter for YAML-formatted values.
@@ -367,7 +300,6 @@ CONVERTER_REGISTRY: dict[str, type[Converter]] = {
     "BooleanConverter": BooleanConverter,
     "ListConverter": ListConverter,
     "IntegerListConverter": IntegerListConverter,
-    "AGEEncryptedConverter": AGEEncryptedConverter,
     "YAMLConverter": YAMLConverter,
     "KeyValueConverter": KeyValueConverter,
 }

@@ -509,20 +509,20 @@ class KubectlConnector:
         logger.warning(f"Could not determine existence of {resource_type} '{resource_name}' in '{namespace}': {stderr}")
         return None
 
-    async def get_sops_secret_from_namespace(self, namespace: str) -> str | None:
+    async def get_sops_secret_from_namespace(self, namespace: str, secret_name: str) -> str | None:
         """
         Retrieve the SOPS AGE private key from the specified namespace.
 
         Args:
             namespace: The namespace to retrieve the secret from
+            secret_name: Name of the Secret holding the key; the caller owns that name
 
         Returns:
             The private key if found, None otherwise
         """
         logger.debug(f"Retrieving SOPS secret from namespace: {namespace}")
 
-        # Get the secret from Kubernetes
-        args = ["get", "secret", "sops-age-key", "-n", namespace, "-o", "jsonpath={.data.key}"]
+        args = ["get", "secret", secret_name, "-n", namespace, "-o", "jsonpath={.data.key}"]
 
         stdout, stderr, code = await self._run_kubectl_command(args)
 

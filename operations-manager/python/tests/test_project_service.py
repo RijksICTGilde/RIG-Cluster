@@ -151,10 +151,9 @@ class TestApiKeyDecryptionOnLoad:
     def _patch_decrypt(self, monkeypatch):
         """Route the two-step chain: unwrap the project key, then open the api key with it."""
 
-        def fake_unwrap(wrapped: str) -> str:
-            if wrapped == AGE_PRIVATE_KEY:
-                return "AGE-SECRET-KEY-PROJECT"
-            raise ValueError("not the project key")
+        def fake_lookup(project_data: dict) -> str | None:
+            wrapped = project_data.get("config", {}).get("age-private-key")
+            return "AGE-SECRET-KEY-PROJECT" if wrapped == AGE_PRIVATE_KEY else None
 
         def fake_decrypt(content: str, private_key: str) -> str | None:
             if content == AGE_API_KEY and private_key == "AGE-SECRET-KEY-PROJECT":
@@ -163,7 +162,7 @@ class TestApiKeyDecryptionOnLoad:
 
         import opi.services.project_service as ps
 
-        monkeypatch.setattr(ps, "unwrap_project_key_sync", fake_unwrap)
+        monkeypatch.setattr(ps, "project_private_key_or_none", fake_lookup)
         monkeypatch.setattr(ps, "decrypt_age_content_sync", fake_decrypt)
 
     def test_encrypted_api_key_is_decrypted_before_registration(self, service, monkeypatch):
@@ -176,7 +175,7 @@ class TestApiKeyDecryptionOnLoad:
         import opi.services.project_service as ps
 
         service.register("proj", "plain-api-key", "proj.yaml")
-        monkeypatch.setattr(ps, "unwrap_project_key_sync", lambda *_: "AGE-SECRET-KEY-PROJECT")
+        monkeypatch.setattr(ps, "project_private_key_or_none", lambda *_: "AGE-SECRET-KEY-PROJECT")
         monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
@@ -197,7 +196,7 @@ class TestApiKeyDecryptionOnLoad:
         """
         import opi.services.project_service as ps
 
-        monkeypatch.setattr(ps, "unwrap_project_key_sync", lambda *_: "AGE-SECRET-KEY-PROJECT")
+        monkeypatch.setattr(ps, "project_private_key_or_none", lambda *_: "AGE-SECRET-KEY-PROJECT")
         monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
@@ -206,27 +205,26 @@ class TestApiKeyDecryptionOnLoad:
     def test_zonder_age_private_key_in_config_blijft_de_vorige_sleutel_staan(self, service, monkeypatch):
         """``age-private-key`` kan ontbreken (een bestand midden in de projectsleutel-
         migratie); zonder sleutel om mee te ontsleutelen valt het terug op het vorige
-        geregistreerde adres, net als bij een mislukte ontsleuteling."""
+        geregistreerde adres, net als bij een mislukte ontsleuteling.
+
+        Zonder patch op de opzoeker: die geeft op een config zonder ``age-private-key``
+        echt None, en dat is precies het pad dat hier gemeten wordt."""
         import opi.services.project_service as ps
 
         service.register("proj", "plain-api-key", "proj.yaml")
-        monkeypatch.setattr(
-            ps, "unwrap_project_key_sync", lambda *_: (_ for _ in ()).throw(AssertionError("niet aan te roepen"))
-        )
+        monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: pytest.fail("niet aan te roepen"))
 
         data = {"name": "proj", "config": {"api-key": AGE_API_KEY}}
         assert service.load_project_from_data(data, "proj.yaml") is True
         assert service.get_project("proj").api_key == "plain-api-key"
 
     def test_een_niet_uit_te_pakken_projectsleutel_valt_terug_op_de_vorige(self, service, monkeypatch):
-        """``unwrap_project_key_sync`` faalt met een verkeerde KEK; de eerder geregistreerde
+        """De opzoeker geeft None bij een verkeerde KEK; de eerder geregistreerde
         plaintext blijft staan in plaats van de pijplijn stuk te maken op een 401."""
         import opi.services.project_service as ps
 
         service.register("proj", "plain-api-key", "proj.yaml")
-        monkeypatch.setattr(
-            ps, "unwrap_project_key_sync", lambda *_: (_ for _ in ()).throw(ValueError("verkeerde kek"))
-        )
+        monkeypatch.setattr(ps, "project_private_key_or_none", lambda *_: None)
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
         assert service.get_project("proj").api_key == "plain-api-key"

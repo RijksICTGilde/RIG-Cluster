@@ -256,12 +256,6 @@ class EditableConverter(Protocol):
 Voorbeelden uit de codebase:
 
 ```python
-class AGEEncryptConverter:
-    """Encrypt/decrypt met AGE keys."""
-    def read(self, value):   # decrypt voor bewerking
-    def write(self, value):  # encrypt voor opslag
-    def view(self, value):   # toont "********"
-
 class KeyValueConverter:
     """KEY=value tekst ↔ dict/string opslag, met AGE encrypt/decrypt."""
 
@@ -288,7 +282,7 @@ class ProjectNameGenerator:
 
 class AGEKeyPairGenerator:
     def generate(self, yaml_data):
-        private_key, public_key = generate_sops_key_pair()
+        private_key, public_key = generate_age_key_pair()
         # Stash private key voor EncryptedPrivateKeyGenerator
         yaml_data.setdefault("_generated", {})["age-private-key-plain"] = private_key
         return public_key

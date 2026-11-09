@@ -28,7 +28,7 @@ from opi.manager.project_manager import ProjectManager
 from opi.services.project import Project
 from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import ConflictError
-from opi.utils.age import unwrap_project_key
+from opi.utils.age import get_decoded_project_private_key
 from opi.utils.yaml_util import dump_yaml_to_string
 from opi.web.authz import authorized_project
 from opi.web.lotc_switch import render_fragment
@@ -121,7 +121,7 @@ async def show_env_vars_window(
 
     where = _scope_label(component_name, deployment_name)
     try:
-        private_key = await unwrap_project_key(project_data["config"]["age-private-key"])
+        private_key = await get_decoded_project_private_key(project_data)
         parsed = await read_user_env_vars(holder.get("user-env-vars"), private_key, where=where)
     except (KeyError, ValueError) as exc:
         logger.warning("Projectsleutel van %s niet te lezen voor %s: %s", project_name, where, exc)
