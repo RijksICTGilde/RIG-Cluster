@@ -7,11 +7,9 @@ import contextlib
 import logging
 from time import monotonic
 
-import httpx
-
 from opi.connectors.mail import MailRelayNotConfiguredError, create_mail_connector
+from opi.connectors.ntfy import notify
 from opi.core.config import settings
-from opi.services.log_watcher import LogWatchConfig, send_ntfy
 
 logger = logging.getLogger(__name__)
 
@@ -110,18 +108,5 @@ class MailRelayWatcher:
         return await connector.is_ready()
 
     async def _send(self, title: str, text: str, priority: str) -> None:
-        if not settings.LOGWATCHER_NTFY_TOPIC:
-            logger.warning("Mailrelay-melding niet verstuurd: LOGWATCHER_NTFY_TOPIC ontbreekt (%s)", title)
-            return
-        cfg = LogWatchConfig(
-            grafana_url=settings.GRAFANA_URL,
-            ntfy_topic=settings.LOGWATCHER_NTFY_TOPIC,
-            ntfy_server=settings.LOGWATCHER_NTFY_SERVER,
-        )
-        # send_ntfy is synchronous (httpx), the same as in the log_watcher scheduler.
-        await asyncio.to_thread(self._post, cfg, title, text, priority)
-
-    @staticmethod
-    def _post(cfg: LogWatchConfig, title: str, text: str, priority: str) -> None:
-        with httpx.Client() as client:
-            send_ntfy(client, cfg, title, text, priority, "mailbox")
+        # notify is synchronous (httpx), the same as in the log_watcher scheduler.
+        await asyncio.to_thread(notify, title, text, priority, "mailbox")

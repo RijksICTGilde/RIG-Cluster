@@ -16,11 +16,16 @@ import aiohttp
 from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 from keycloak.exceptions import KeycloakError, KeycloakGetError, KeycloakPostError
 
+from opi.connectors.http import client_session
 from opi.core.config import settings
 from opi.utils.redirect_uris import derive_web_origin
 from opi.utils.totp import build_credential_representation
 
 logger = logging.getLogger(__name__)
+
+#: Budget for a discovery or JWKS read. These serve from memory, so a slow answer means
+#: the realm is not serving rather than busy.
+DISCOVERY_TIMEOUT_SECONDS = 10.0
 
 # Alias of the custom first-broker-login flow that auto-links a brokered SSO identity to a
 # pre-existing local account matched by username/email, replacing the stock flow's
@@ -516,16 +521,20 @@ class KeycloakConnector:
         unreachable endpoint simply leaves the earlier answer standing.
         """
         discovery_url = self.get_discovery_url(realm_name)
-        timeout = aiohttp.ClientTimeout(total=10)
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session, session.get(discovery_url) as response:
+            async with (
+                client_session(DISCOVERY_TIMEOUT_SECONDS) as session,
+                session.get(discovery_url) as response,
+            ):
                 if response.status == 200:
                     logger.debug(f"Realm '{realm_name}' serves its OIDC discovery document")
                     return True
                 logger.debug(f"Discovery document for realm '{realm_name}' returned HTTP {response.status}")
                 return False
-        except aiohttp.ClientError as e:
-            logger.warning(f"Could not reach the discovery document for realm '{realm_name}': {e}")
+        except (aiohttp.ClientError, TimeoutError) as e:
+            logger.warning(
+                f"Could not reach the discovery document for realm '{realm_name}': {str(e) or type(e).__name__}"
+            )
             return False
 
     async def get_realm(self, realm_name: str) -> dict[str, Any] | None:
@@ -4421,8 +4430,7 @@ async def fetch_oidc_metadata(discovery_url: str) -> dict[str, Any]:
     Raises:
         aiohttp.ClientError: When the document cannot be retrieved
     """
-    timeout = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession(timeout=timeout) as session, session.get(discovery_url) as response:
+    async with client_session(DISCOVERY_TIMEOUT_SECONDS) as session, session.get(discovery_url) as response:
         response.raise_for_status()
         metadata: dict[str, Any] = await response.json()
     logger.debug("Fetched OIDC metadata from %s", discovery_url)
@@ -4441,8 +4449,7 @@ async def fetch_jwks(jwks_uri: str) -> dict[str, Any]:
     Raises:
         aiohttp.ClientError: When the key set cannot be retrieved
     """
-    timeout = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession(timeout=timeout) as session, session.get(jwks_uri) as response:
+    async with client_session(DISCOVERY_TIMEOUT_SECONDS) as session, session.get(jwks_uri) as response:
         response.raise_for_status()
         jwks: dict[str, Any] = await response.json()
     logger.debug("Fetched JWKS from %s", jwks_uri)

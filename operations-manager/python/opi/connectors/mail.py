@@ -20,6 +20,7 @@ from typing import Any
 
 import aiohttp
 
+from opi.connectors.http import client_session
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto
 from opi.utils.connect_retry import retry_on_connect_error
@@ -35,6 +36,10 @@ RELAY_CONNECT_RETRY_SECONDS = 30.0
 #: Een readiness-meting mag niet in een trage relay blijven hangen: de uitkomst van een
 #: meting die langer duurt dan de tik zelf is toch niet meer actueel.
 RELAY_READY_TIMEOUT_SECONDS = 5.0
+
+#: Budget for one management call. Generous: the relay writes its account store to disk.
+#: Without it aiohttp waits out its own 300 seconds.
+RELAY_REQUEST_TIMEOUT_SECONDS = 30.0
 
 
 class MailRelayError(RuntimeError):
@@ -194,9 +199,8 @@ class MailConnector:
         """Een management-aanroep zonder herhaling en zonder omzetting van transportfouten."""
         url = f"{self.base_url}{path}"
         auth = aiohttp.BasicAuth(self._username, self._password)
-        connector = aiohttp.TCPConnector(ssl=self._verify_tls)
         async with (
-            aiohttp.ClientSession(connector=connector) as session,
+            client_session(RELAY_REQUEST_TIMEOUT_SECONDS, ssl=self._verify_tls) as session,
             session.request(method, url, json=payload, auth=auth) as response,
         ):
             if response.status == 404 and allow_missing:
@@ -232,11 +236,9 @@ class MailConnector:
         ``_request`` gehouden omdat het antwoordlichaam geen JSON is en een herhaling
         hier juist niet hoort: wie meet of de relay er is, wil het antwoord van nu.
         """
-        connector = aiohttp.TCPConnector(ssl=self._verify_tls)
-        timeout = aiohttp.ClientTimeout(total=RELAY_READY_TIMEOUT_SECONDS)
         try:
             async with (
-                aiohttp.ClientSession(connector=connector, timeout=timeout) as session,
+                client_session(RELAY_READY_TIMEOUT_SECONDS, ssl=self._verify_tls) as session,
                 session.get(f"{self.base_url}/healthz/ready") as response,
             ):
                 return response.status == 200

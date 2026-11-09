@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi import server
 from opi.connectors.mail import MailConnector, MailRelayNotConfiguredError
+from opi.connectors.ntfy import notify as ntfy_notify
 from opi.core.config import settings
 from opi.core.mail_relay_watcher import MailRelayWatcher
 
@@ -49,7 +50,7 @@ def _watcher(monkeypatch: pytest.MonkeyPatch, *, ready: bool | list[bool]) -> tu
         "opi.core.mail_relay_watcher.create_mail_connector", AsyncMock(return_value=connector), raising=True
     )
     meldingen = MagicMock()
-    monkeypatch.setattr(MailRelayWatcher, "_post", staticmethod(meldingen))
+    monkeypatch.setattr("opi.core.mail_relay_watcher.notify", meldingen)
     return MailRelayWatcher(), meldingen
 
 
@@ -70,8 +71,8 @@ class TestDeMeldingBijEenStoring:
             await watcher.tick()
 
         assert meldingen.call_count == 1, "een melding per storing, niet per tik"
-        titel = meldingen.call_args.args[1]
-        tekst = meldingen.call_args.args[2]
+        titel = meldingen.call_args.args[0]
+        tekst = meldingen.call_args.args[1]
         assert "niet bereikbaar" in titel
         assert "send-email" in tekst
 
@@ -94,7 +95,7 @@ class TestDeMeldingBijEenStoring:
         for _ in range(5):
             await watcher.tick()
 
-        titels = [aanroep.args[1] for aanroep in meldingen.call_args_list]
+        titels = [aanroep.args[0] for aanroep in meldingen.call_args_list]
         assert titels == ["Mailrelay is niet bereikbaar", "Mailrelay is weer bereikbaar"]
 
     @pytest.mark.asyncio
@@ -106,7 +107,7 @@ class TestDeMeldingBijEenStoring:
         for _ in range(5):
             await watcher.tick()
 
-        titels = [aanroep.args[1] for aanroep in meldingen.call_args_list]
+        titels = [aanroep.args[0] for aanroep in meldingen.call_args_list]
         assert titels == [
             "Mailrelay is niet bereikbaar",
             "Mailrelay is weer bereikbaar",
@@ -119,7 +120,7 @@ class TestWatErNietGemetenIsWordtNietGemeld:
     async def test_zonder_relay_doet_de_check_niets(self, monkeypatch) -> None:
         monkeypatch.setattr(settings, "LOGWATCHER_NTFY_TOPIC", "geheim-topic")
         meldingen = MagicMock()
-        monkeypatch.setattr(MailRelayWatcher, "_post", staticmethod(meldingen))
+        monkeypatch.setattr("opi.core.mail_relay_watcher.notify", meldingen)
         monkeypatch.setattr(
             "opi.core.mail_relay_watcher.create_mail_connector",
             AsyncMock(side_effect=MailRelayNotConfiguredError("geen relay")),
@@ -137,7 +138,7 @@ class TestWatErNietGemetenIsWordtNietGemeld:
         hoek wijzen: het relaywachtwoord is van ons, niet van de relay."""
         monkeypatch.setattr(settings, "LOGWATCHER_NTFY_TOPIC", "geheim-topic")
         meldingen = MagicMock()
-        monkeypatch.setattr(MailRelayWatcher, "_post", staticmethod(meldingen))
+        monkeypatch.setattr("opi.core.mail_relay_watcher.notify", meldingen)
         monkeypatch.setattr(
             "opi.core.mail_relay_watcher.create_mail_connector",
             AsyncMock(side_effect=ValueError("Failed to decrypt password: no matching AGE key")),
@@ -152,14 +153,18 @@ class TestWatErNietGemetenIsWordtNietGemeld:
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("_relay")
     async def test_zonder_ntfy_topic_wordt_er_niets_gepost(self, monkeypatch) -> None:
+        """Measured below ``notify``: without a topic the notice never leaves the process."""
         monkeypatch.setattr(settings, "LOGWATCHER_NTFY_TOPIC", None)
-        watcher, meldingen = _watcher(monkeypatch, ready=False)
+        watcher, _ = _watcher(monkeypatch, ready=False)
+        verstuurd = MagicMock()
+        monkeypatch.setattr("opi.connectors.ntfy.send_ntfy", verstuurd)
+        monkeypatch.setattr("opi.core.mail_relay_watcher.notify", ntfy_notify)
         _klok(monkeypatch, [0, 400])
 
         await watcher.tick()
         await watcher.tick()
 
-        meldingen.assert_not_called()
+        verstuurd.assert_not_called()
 
 
 class TestDeWiring:

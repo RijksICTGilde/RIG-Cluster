@@ -20,8 +20,7 @@ import os
 import tempfile
 from typing import Any
 
-import aiohttp
-
+from opi.connectors.http import client_session
 from opi.connectors.minio_mc import MinioExecutionError, create_minio_connector
 from opi.core.cluster_config import get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
@@ -305,8 +304,10 @@ class SeaweedfsConnector:
         is het 403. Dit is dus de meting of het admin-sleutelpaar zijn werk doet, en niet
         of een secret bestaat.
         """
-        timeout = aiohttp.ClientTimeout(total=ANONIEME_TOETS_TIMEOUT_SECONDS)
-        async with aiohttp.ClientSession(timeout=timeout) as sessie, sessie.get(f"{s3_endpoint}/") as antwoord:
+        async with (
+            client_session(ANONIEME_TOETS_TIMEOUT_SECONDS) as sessie,
+            sessie.get(f"{s3_endpoint}/") as antwoord,
+        ):
             return antwoord.status == 200
 
     async def grant_bucket_access(self, user: str, bucket: str, policy_name: str) -> None:

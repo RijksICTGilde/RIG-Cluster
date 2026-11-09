@@ -35,8 +35,8 @@ def captured_ntfy(monkeypatch) -> list[dict]:
     """Replace send_ntfy with a recorder; returns the list of sent notifications."""
     sent: list[dict] = []
 
-    def _fake_send(client, cfg, title, body, priority, tags):
-        sent.append({"title": title, "body": body, "priority": priority, "tags": tags})
+    def _fake_send(target, message):
+        sent.append({"title": message.title, "body": message.body, "priority": message.priority, "tags": message.tags})
         return True
 
     monkeypatch.setattr(log_watcher, "send_ntfy", _fake_send)

@@ -15,12 +15,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
-
 from opi.connectors.grafana_prometheus import create_grafana_prometheus_connector
 from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
+from opi.connectors.ntfy import notify
 from opi.core.config import settings
-from opi.services.log_watcher import LogWatchConfig, send_ntfy
 
 logger = logging.getLogger(__name__)
 
@@ -157,22 +155,9 @@ class CapacityWatcher:
         ]
 
     async def _send(self, body: str, priority: str) -> None:
-        if not settings.LOGWATCHER_NTFY_TOPIC:
-            logger.warning("Capacity notice not sent: LOGWATCHER_NTFY_TOPIC missing")
-            return
-        cfg = LogWatchConfig(
-            grafana_url=settings.GRAFANA_URL,
-            ntfy_topic=settings.LOGWATCHER_NTFY_TOPIC,
-            ntfy_server=settings.LOGWATCHER_NTFY_SERVER,
-        )
         title = f"ZAD {settings.CLUSTER_MANAGER}: weinig ruimte in tenant {settings.CAPACITY_WATCH_TENANT}"
-        await asyncio.to_thread(_post, cfg, title, body, priority)
+        await asyncio.to_thread(notify, title, body, priority, "chart_with_upwards_trend")
 
 
 def _by_resource(results: list[dict[str, Any]]) -> dict[str, float]:
     return {r["metric"]["resource"]: float(r["value"][1]) for r in results if "resource" in r.get("metric", {})}
-
-
-def _post(cfg: LogWatchConfig, title: str, body: str, priority: str) -> None:
-    with httpx.Client() as client:
-        send_ntfy(client, cfg, title, body, priority, "chart_with_upwards_trend")

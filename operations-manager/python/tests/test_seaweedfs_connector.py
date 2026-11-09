@@ -365,7 +365,7 @@ class _NepAntwoord:
 
 
 class _NepSessie:
-    """Staat in voor ``aiohttp.ClientSession``: legt de gevraagde URL vast."""
+    """Staat in voor de sessie uit ``client_session``: legt de gevraagde URL vast."""
 
     def __init__(self, status: int) -> None:
         self._status = status
@@ -390,7 +390,7 @@ class TestAnonymousAccessAllowed:
         self, monkeypatch: pytest.MonkeyPatch, status: int, verwacht: bool
     ) -> None:
         sessie = _NepSessie(status)
-        monkeypatch.setattr("opi.connectors.seaweedfs_shell.aiohttp.ClientSession", lambda timeout=None: sessie)
+        monkeypatch.setattr("opi.connectors.seaweedfs_shell.client_session", lambda *a, **k: sessie)
 
         resultaat = await SeaweedfsConnector().anonymous_access_allowed("http://seaweedfs:8333")
 

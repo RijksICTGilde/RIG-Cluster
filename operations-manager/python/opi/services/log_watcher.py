@@ -33,6 +33,8 @@ from pathlib import Path
 
 import httpx
 
+from opi.connectors.ntfy import NtfyMessage, NtfyTarget, send_ntfy
+
 logger = logging.getLogger(__name__)
 
 # Ignore-list ships inside the package so both entrypoints read the same file.
@@ -378,27 +380,6 @@ def group_by_flow(entries: list[dict]) -> list[dict]:
     return problems
 
 
-def send_ntfy(client: httpx.Client, cfg: LogWatchConfig, title: str, body: str, priority: str, tags: str) -> bool:
-    server = cfg.ntfy_server.rstrip("/")
-    # NEVER log the multi-line body: each body line lands in Loki as its own
-    # detected_level=error entry that lacks this module name, so it escapes both the
-    # error-only query and the self-exclusion - and the watcher re-ingests its own
-    # alert next cycle (a growing "ERR ERR ERR" feedback loop). Log a one-line summary.
-    logger.info("ntfy push [%s] %s (%d problem line(s))", priority, title, body.count("\n\n") + 1 if body else 0)
-    try:
-        client.post(
-            f"{server}/{cfg.ntfy_topic}",
-            content=body.encode("utf-8"),
-            headers={"Title": title.encode("ascii", "ignore").decode(), "Priority": priority, "Tags": tags},
-            timeout=15,
-        )
-        logger.info("ntfy sent to %s/%s (priority %s)", server, cfg.ntfy_topic, priority)
-        return True
-    except httpx.HTTPError as e:
-        logger.error("ntfy POST failed: %s", e)
-        return False
-
-
 def _effective_window(cfg: LogWatchConfig) -> str:
     """Widen to the morning catch-up window for early runs, when configured."""
     if cfg.morning_before_hour is None or cfg.morning_window is None:
@@ -550,7 +531,7 @@ def run_cycle(
         title = f"OPI log-watch: {len(problems)} issue(s)"
 
         if send_notification:
-            send_ntfy(client, cfg, title, body, priority, "mag")
+            send_ntfy(NtfyTarget(cfg.ntfy_server, cfg.ntfy_topic), NtfyMessage(title, body, priority, "mag"))
         else:
             logger.info("notification disabled - would have sent to %s/%s", cfg.ntfy_server, cfg.ntfy_topic)
 

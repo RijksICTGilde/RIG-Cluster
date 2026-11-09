@@ -36,6 +36,10 @@ from opi.web.lotc_switch import render
 
 logger = logging.getLogger(__name__)
 
+#: Budget for one Keycloak call in the invite flow. Kept short: the invited person is
+#: waiting on the page, and a token exchange answers in milliseconds.
+KEYCLOAK_HTTP_TIMEOUT_SECONDS = 5.0
+
 
 def _hourly_limiter(per_hour: int) -> IPRateLimiter:
     """Een emmer die per UUR vult, met de hele uurgrens als burst."""
@@ -180,7 +184,7 @@ async def _exchange_code_for_token(
         Token response dict
 
     Raises:
-        httpx.HTTPStatusError: If token exchange fails
+        httpx.HTTPError: If the token exchange fails or Keycloak cannot be reached
     """
     token_endpoint = f"{keycloak_url}/realms/{realm_name}/protocol/openid-connect/token"
 
@@ -192,7 +196,7 @@ async def _exchange_code_for_token(
         "code_verifier": code_verifier,
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=KEYCLOAK_HTTP_TIMEOUT_SECONDS) as client:
         response = await client.post(
             token_endpoint,
             data=data,
@@ -215,11 +219,11 @@ async def _get_userinfo(keycloak_url: str, realm_name: str, access_token: str) -
         User info dict
 
     Raises:
-        httpx.HTTPStatusError: If userinfo request fails
+        httpx.HTTPError: If the userinfo request fails or Keycloak cannot be reached
     """
     userinfo_endpoint = f"{keycloak_url}/realms/{realm_name}/protocol/openid-connect/userinfo"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=KEYCLOAK_HTTP_TIMEOUT_SECONDS) as client:
         response = await client.get(
             userinfo_endpoint,
             headers={"Authorization": f"Bearer {access_token}"},
@@ -699,7 +703,7 @@ async def invite_sso_callback(request: Request, key: str) -> Response:
 
         return RedirectResponse(url=f"/invite/{key}/success", status_code=302)
 
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPError as e:
         logger.exception(f"HTTP error in SSO callback for invite {fingerprint_for_log(key)}: {e}")
         return RedirectResponse(url=f"/invite/{key}/error?code=token_error", status_code=302)
     except InviteDomainError as e:

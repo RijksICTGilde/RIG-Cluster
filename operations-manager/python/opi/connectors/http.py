@@ -1,20 +1,42 @@
-"""
-HTTP connector for bootstrap API actions.
+"""The shared aiohttp session, and the HTTP connector for bootstrap API actions.
 
-This connector provides HTTP client functionality with support for various
-authentication methods including Keycloak OAuth2, Basic Auth, and Bearer tokens.
+Every connector that speaks HTTP builds its session with ``client_session``, so no
+outgoing call can be left without a timeout: aiohttp's own default is five minutes per
+request, which in a task worker reads as a hang.
+
+The connector itself supports Keycloak OAuth2, Basic Auth and Bearer tokens.
 """
+
+from __future__ import annotations
 
 import json
 import logging
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
 from opi.utils.age import decrypt_password_smart_auto
 
+if TYPE_CHECKING:
+    from ssl import SSLContext
+
 logger = logging.getLogger(__name__)
+
+#: Budget for one bootstrap API call. Generous: the action behind it may provision.
+HTTP_TIMEOUT_SECONDS = 30.0
+
+
+def client_session(timeout: float, ssl: SSLContext | bool = True) -> aiohttp.ClientSession:
+    """A session with ``timeout`` seconds as its total budget per request.
+
+    ``ssl`` goes to the connector as aiohttp takes it: a context, True for the system
+    trust store, or False to accept any certificate.
+    """
+    return aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=timeout),
+        connector=aiohttp.TCPConnector(ssl=ssl),
+    )
 
 
 class AuthType(Enum):
@@ -45,7 +67,7 @@ class HttpConnector:
 
     async def __aenter__(self):
         """Async context manager entry."""
-        self.session = aiohttp.ClientSession()
+        self.session = client_session(HTTP_TIMEOUT_SECONDS)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
