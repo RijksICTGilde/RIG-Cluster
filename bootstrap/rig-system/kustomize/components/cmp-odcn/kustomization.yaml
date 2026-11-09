@@ -53,7 +53,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/repo/sidecarContainers/0/image
-        value: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops:2026.11.02.2053-7128fb61@sha256:d2b684cba5bc35f6967466e2a27338d37524ba20328bd4d81d69adcb09194374
+        value: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops:2026.11.09.1459-2393c125@sha256:c05cd6a05a3200c479c9ca1180b58ea607e63be5ae12b2e5de67e066d024e530
   - target:
       kind: ArgoCD
       name: argocd
@@ -118,7 +118,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/repo/sidecarContainers/1/image
-        value: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops:2026.11.02.2053-7128fb61@sha256:d2b684cba5bc35f6967466e2a27338d37524ba20328bd4d81d69adcb09194374
+        value: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops:2026.11.09.1459-2393c125@sha256:c05cd6a05a3200c479c9ca1180b58ea607e63be5ae12b2e5de67e066d024e530
       - op: add
         path: /spec/repo/sidecarContainers/1/env
         value:
