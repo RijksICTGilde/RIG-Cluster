@@ -270,8 +270,8 @@ def write_helmfile_custom_files(
         reserved = [part for part in filename.split("/") if part in HELMFILE_RESERVED_FILENAMES]
         if reserved:
             raise ValueError(
-                f"File '{filename}' is not allowed: '{reserved[0]}' is reserved by the render chain "
-                "and would overwrite the generated deployment."
+                f"Bestand '{filename}' mag niet: '{reserved[0]}' is voorbehouden aan de renderketen "
+                "en zou de gegenereerde deployment overschrijven."
             )
 
         file_path = os.path.join(target_path, filename)
