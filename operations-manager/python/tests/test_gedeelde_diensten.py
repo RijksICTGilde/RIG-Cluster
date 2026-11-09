@@ -67,7 +67,7 @@ class _Connector:
         self.antwoorden = antwoorden
         self.queries: list[str] = []
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
         naam = {v: k for k, v in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES}.items()}[query]
         return self.antwoorden.get(naam, [])
@@ -211,7 +211,7 @@ class TestHaalOpslag:
         "de bron is onbereikbaar" er precies zo uit als "er is niets aan de hand".
         """
         connector = AsyncMock()
-        connector.custom_query.side_effect = RuntimeError("prometheus onbereikbaar")
+        connector.query.side_effect = RuntimeError("prometheus onbereikbaar")
 
         with _met_connector(connector), caplog.at_level(logging.WARNING, logger="opi.services.gedeelde_diensten"):
             blok = await haal_opslag()
@@ -302,7 +302,7 @@ class TestHaalDatabases:
     @pytest.mark.asyncio
     async def test_een_mislukte_meting_zegt_dat_hij_mislukte(self, caplog: pytest.LogCaptureFixture) -> None:
         connector = AsyncMock()
-        connector.custom_query.side_effect = RuntimeError("mimir weigert")
+        connector.query.side_effect = RuntimeError("mimir weigert")
 
         with _met_connector(connector), caplog.at_level(logging.WARNING, logger="opi.services.gedeelde_diensten"):
             blok = await haal_databases()
@@ -358,7 +358,7 @@ class _ResourceConnector:
             sjabloon.format(namespaces=filter_regex): naam for naam, sjabloon in _RESOURCE_QUERIES.items()
         }
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
         return self.antwoorden.get(self.per_query[query], [])
 
@@ -454,7 +454,7 @@ class TestHaalResources:
     @pytest.mark.asyncio
     async def test_een_mislukte_meting_zegt_dat_hij_mislukte(self, caplog: pytest.LogCaptureFixture) -> None:
         connector = AsyncMock()
-        connector.custom_query.side_effect = RuntimeError("mimir onbereikbaar")
+        connector.query.side_effect = RuntimeError("mimir onbereikbaar")
 
         with (
             _met_namespaces(["rig-prd-operations"]),

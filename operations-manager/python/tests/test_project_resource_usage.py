@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
+from opi.services.metrics_queries import namespace_usage_queries
 from opi.web import router
 
 _TEMPLATES = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc" / "bg"
@@ -45,16 +46,18 @@ def test_it_sits_high_on_the_project_tab_under_the_actions() -> None:
 
 
 def test_it_sums_across_namespaces_not_per_deployment() -> None:
+    """Aggregated with a namespace regex, through the queries the dashboard uses too."""
     source = inspect.getsource(router.project_resource_usage_fragment)
-    # Aggregated with a namespace regex, the same shape the dashboard uses.
-    assert 'namespace=~"{ns_regex}"' in source
-    assert "sum(" in source
+    assert "namespace_usage_queries(namespaces)" in source
+
+    queries = namespace_usage_queries(["rig-demo", "rig-demo-infrastructure"])
+    assert queries["cpu_cores"].startswith("sum(")
+    assert 'namespace=~"rig-demo|rig-demo-infrastructure"' in queries["cpu_cores"]
 
 
 def test_memory_is_the_working_set_not_the_limit() -> None:
     """'wat echt in gebruik is' -- resident memory, not the configured limit."""
-    source = inspect.getsource(router.project_resource_usage_fragment)
-    assert "container_memory_working_set_bytes" in source
+    assert "container_memory_working_set_bytes" in namespace_usage_queries(["rig-demo"])["memory_bytes"]
 
 
 def test_a_prometheus_failure_is_shown_not_swallowed() -> None:

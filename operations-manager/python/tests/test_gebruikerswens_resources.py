@@ -702,7 +702,7 @@ async def _draai_tuner(
     """Draai de tuner over een project met gemodelleerde meetdata."""
     connector = AsyncMock()
     meting = [{"value": [0, str(int(max_mb * 1024 * 1024))]}]
-    connector.custom_query.side_effect = [meting, meting, [{"value": [0, "1"]}] if oom else []]
+    connector.query.side_effect = [meting, meting, [{"value": [0, "1"]}] if oom else []]
     vpa = (
         VpaContainerRecommendation(
             container_name="app",

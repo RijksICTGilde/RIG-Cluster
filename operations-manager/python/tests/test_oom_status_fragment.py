@@ -35,7 +35,7 @@ class _FakeConnector:
         self.pods = pods
         self.queries: list[str] = []
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
         return [{"metric": {"pod": pod}, "value": [0, "1"]} for pod in self.pods]
 

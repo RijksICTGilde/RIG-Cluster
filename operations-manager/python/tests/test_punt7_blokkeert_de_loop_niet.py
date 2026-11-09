@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from opi.connectors.prometheus import PrometheusConnector
 from opi.core.cluster_config import _ca_hash_cache, _compute_ca_hash
+from opi.services.metrics_queries import TimeWindow, deployment_pod_prefixes, timeseries_per_workload
 from opi.utils.chisel_helper import chisel_tunnel
 from tests.loop_meeloper import meeloper
 
@@ -51,18 +52,25 @@ async def test_het_opzetten_van_een_chisel_tunnel_blokkeert_de_loop_niet() -> No
 
 @pytest.mark.asyncio
 async def test_de_tijdreeksen_van_drie_componenten_blokkeren_de_loop_niet() -> None:
-    """Drie queries die elk 0,3 s duren liepen op ``future.result()`` binnen een async def."""
+    """Negen queries per component liepen op ``future.result()`` binnen een async def.
+
+    Meet de echte sandbox-backend: alleen de synchrone library-client is gefaket, want die
+    is wat de loop vasthield.
+    """
     verbinding = PrometheusConnector.__new__(PrometheusConnector)
-
-    def traag(namespace: str, pod_prefix: str, duration_minutes: int, step_minutes: int) -> dict[str, object]:
-        time.sleep(_TRAAG)
-        return {"pod": pod_prefix}
-
-    verbinding.get_component_metrics_timeseries = traag  # type: ignore[method-assign]
+    verbinding._initialized = True
+    verbinding._prometheus_url = "http://prometheus:9090"
+    verbinding.prom = MagicMock()
+    verbinding.prom.custom_query_range.side_effect = lambda **_: time.sleep(_TRAAG) or []
+    verbinding.prom.custom_query.side_effect = lambda *_a, **_k: time.sleep(_TRAAG) or []
+    PrometheusConnector.is_connected = True
 
     async with meeloper() as meting:
-        resultaat = await verbinding.get_deployment_component_metrics_timeseries(
-            "rig-demo", ["backend", "frontend", "worker"], "productie"
+        resultaat = await timeseries_per_workload(
+            verbinding,
+            "rig-demo",
+            deployment_pod_prefixes("productie", ["backend", "frontend", "worker"]),
+            TimeWindow(),
         )
 
     assert sorted(resultaat) == ["backend", "frontend", "worker"]

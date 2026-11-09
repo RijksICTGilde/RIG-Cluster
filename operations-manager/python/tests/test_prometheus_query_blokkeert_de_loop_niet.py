@@ -1,4 +1,4 @@
-"""``PrometheusConnector.custom_query`` houdt de event loop niet vast.
+"""``PrometheusConnector.query`` houdt de event loop niet vast.
 
 WAAROM DIT EEN EIGEN TEST HEEFT
 
@@ -66,7 +66,7 @@ def connector() -> PrometheusConnector:
 async def test_de_loop_blijft_draaien_tijdens_een_trage_query(connector: PrometheusConnector) -> None:
     """Een trage query laat andere taken gewoon aan de beurt komen."""
 
-    def traag(query: str) -> list[dict]:
+    def traag(query: str, params: dict | None = None) -> list[dict]:
         time.sleep(_QUERYDUUR)
         return [{"metric": {}, "value": [0, "1"]}]
 
@@ -82,7 +82,7 @@ async def test_de_loop_blijft_draaien_tijdens_een_trage_query(connector: Prometh
             ticks += 1
 
     taak = asyncio.create_task(meeloper())
-    resultaat = await connector.custom_query("up")
+    resultaat = await connector.query("up")
     bezig = False
     await taak
 
@@ -102,12 +102,12 @@ async def test_een_fout_uit_de_thread_komt_gewoon_terug(connector: PrometheusCon
     op het scherm dat er niet gemeten kon worden. Verdwijnt de fout in de thread, dan leest
     een mislukte meting weer als "niets te melden".
     """
-    from opi.connectors.prometheus import PrometheusQueryError
+    from opi.connectors.metrics_backend import MetricsQueryError
 
-    def stuk(query: str) -> list[dict]:
+    def stuk(query: str, params: dict | None = None) -> list[dict]:
         raise ConnectionError("naam niet op te lossen")
 
     connector.prom.custom_query = stuk
 
-    with pytest.raises(PrometheusQueryError):
-        await connector.custom_query("up")
+    with pytest.raises(MetricsQueryError):
+        await connector.query("up")

@@ -580,7 +580,7 @@
     {
      "name": "grafana_prometheus",
      "file": "opi/connectors/grafana_prometheus.py",
-     "uses": 4
+     "uses": 3
     },
     {
      "name": "prometheus",

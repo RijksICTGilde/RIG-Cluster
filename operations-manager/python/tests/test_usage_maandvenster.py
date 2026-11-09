@@ -16,13 +16,17 @@ niet een gemiddelde over een venster dat toevallig in de vorige maand hangt.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
+import pytest
 from freezegun import freeze_time
+from opi.connectors.grafana_prometheus import GrafanaPrometheusConnector
 from opi.web.router_usage import (
     MEMORY_USAGE_QUERY,
     RECORDED_USAGE_QUERY,
     _get_month_end,
     _is_lopende_maand,
+    _query_month_usage,
     _venster_en_noemer,
 )
 
@@ -93,3 +97,67 @@ class TestDeTweeQueries:
 
             assert "[668h" in ingevuld
             assert "/ 744 /" in ingevuld
+
+
+@pytest.fixture
+def grafana_connector() -> Any:
+    """A fake billing connector in the ``GrafanaPrometheusConnector`` singleton slot.
+
+    ``_query_month_usage`` constructs the connector itself, so the fake has to sit where
+    the singleton pattern looks for it, not be passed in.
+    """
+    fake = GrafanaPrometheusConnector.__new__(GrafanaPrometheusConnector)
+    fake._initialized = True
+    fake.calls: list[dict[str, Any]] = []
+    GrafanaPrometheusConnector._instance = fake
+    yield fake
+    GrafanaPrometheusConnector._instance = None
+
+
+_MONTH = {"year": 2026, "month": 7, "days": 31, "name": "July"}
+
+
+class TestQueryMonthUsage:
+    """The connector gets the evaluation moment and the billing datasource."""
+
+    @freeze_time(NU)
+    async def test_the_billing_datasource_and_the_month_end_are_passed_through(self, grafana_connector: Any) -> None:
+        async def fake_answer(query: str, *, at: Any, datasource_uid: str) -> list[dict[str, Any]]:
+            grafana_connector.calls.append({"query": query, "at": at, "datasource_uid": datasource_uid})
+            return [{"value": [0, "12.5"]}]
+
+        grafana_connector.query = fake_answer
+
+        result = await _query_month_usage(_MONTH, "rig-prd-.*", "billing-uid")
+
+        assert result["gib"] == 12.5
+        assert len(grafana_connector.calls) == 1, "the recorded query already answers, so no fallback is needed"
+        done = grafana_connector.calls[0]
+        assert done["datasource_uid"] == "billing-uid"
+        assert done["at"] == _get_month_end(2026, 7, 31)
+
+    async def test_a_zero_answer_falls_back_to_the_raw_query(self, grafana_connector: Any) -> None:
+        """Months before the recording rule answer 0; then the heavy query counts."""
+
+        async def fake_answer(query: str, **_kwargs: Any) -> list[dict[str, Any]]:
+            grafana_connector.calls.append(query)
+            if "kube_pod_resource_request" in query:
+                return [{"value": [0, "7.0"]}]
+            return [{"value": [0, "0"]}]
+
+        grafana_connector.query = fake_answer
+
+        result = await _query_month_usage(_MONTH, "rig-prd-.*", "billing-uid")
+
+        assert result["gib"] == 7.0
+        assert len(grafana_connector.calls) == 2, "first the recorded query, then the fallback"
+
+    async def test_a_connector_failure_yields_zero_instead_of_a_crash(self, grafana_connector: Any) -> None:
+        async def fake_answer(*_args: Any, **_kwargs: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("mimir unreachable")
+
+        grafana_connector.query = fake_answer
+
+        result = await _query_month_usage(_MONTH, "rig-prd-.*", "billing-uid")
+
+        assert result["gib"] == 0.0

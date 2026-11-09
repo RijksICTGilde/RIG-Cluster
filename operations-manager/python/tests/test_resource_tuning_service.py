@@ -96,7 +96,7 @@ class TestTuneDeploymentResources:
         mock_pm_cls.return_value = AsyncMock()
 
         mock_connector = AsyncMock()
-        mock_connector.custom_query.side_effect = [
+        mock_connector.query.side_effect = [
             [],  # max: no data
             [],  # avg: no data
             [{"value": [0, "1"]}],  # OOM kill detected
@@ -135,7 +135,7 @@ class TestTuneDeploymentResources:
         mock_get_from_git.return_value = (project_data, "my-project.yaml")
 
         mock_connector = AsyncMock()
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         result = await tune_deployment_resources("my-project")
@@ -219,7 +219,7 @@ class TestGrowthCeiling:
         baseline. The ceiling bounds it; it must not disable it.
         """
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [],  # max: no data
             [],  # avg: no data
             [{"value": [0, "1"]}],  # OOM kill detected
@@ -327,7 +327,7 @@ class TestGrowthCeiling:
         mock_pm_cls.return_value = AsyncMock()
 
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [{"value": [0, str(900 * 1024 * 1024)]}],  # max: 900Mi
             [{"value": [0, str(850 * 1024 * 1024)]}],  # avg: 850Mi
             [],  # no OOM kills
@@ -371,7 +371,7 @@ class TestGrowthCeiling:
         mock_pm_cls.return_value = AsyncMock()
 
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [{"value": [0, str(3000 * 1024 * 1024)]}],  # max: 3000Mi
             [{"value": [0, str(2900 * 1024 * 1024)]}],  # avg: 2900Mi
             [],  # no OOM kills
@@ -410,7 +410,7 @@ class TestGrowthCeiling:
         mock_pm_cls.return_value = AsyncMock()
 
         connector = AsyncMock()
-        connector.custom_query.side_effect = [
+        connector.query.side_effect = [
             [{"value": [0, str(100 * 1024 * 1024)]}],  # max: 100Mi
             [{"value": [0, str(80 * 1024 * 1024)]}],  # avg: 80Mi
             [],  # no OOM kills

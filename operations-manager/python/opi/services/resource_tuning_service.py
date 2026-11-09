@@ -509,7 +509,7 @@ async def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        max_results = await connector.custom_query(max_query)
+        max_results = await connector.query(max_query)
         if max_results:
             for result in max_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -522,7 +522,7 @@ async def _analyze_component_resources(
             f'container="app"}}'
             f"[{window_hours}h])"
         )
-        avg_results = await connector.custom_query(avg_query)
+        avg_results = await connector.query(avg_query)
         if avg_results:
             for result in avg_results:
                 value = float(result.get("value", [0, 0])[1])
@@ -553,7 +553,7 @@ async def _analyze_component_resources(
             f'pod=~"{unique_name}.*"}}'
             f"[{oom_window_minutes}m])"
         )
-        oom_results = await connector.custom_query(oom_query)
+        oom_results = await connector.query(oom_query)
         has_oom_kills = has_oom_kills or bool(oom_results)
     except Exception as e:
         logger.warning(f"Failed to query OOM kills for {unique_name}: {e}, assuming none")
@@ -954,7 +954,7 @@ async def observe_recent_oom_kills(
         f"[{window_hours}h])"
     )
     try:
-        results = await connector.custom_query(query)
+        results = await connector.query(query)
     except Exception as e:
         logger.warning(f"OOM check failed for {deployment_name}: {e}, reporting nothing")
         return []

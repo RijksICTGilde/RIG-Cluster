@@ -14,8 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from opi.connectors.grafana_prometheus import GrafanaConnectionError, GrafanaQueryError
-from opi.connectors.prometheus import PrometheusConnectionError, PrometheusQueryError, get_metrics_connector
+from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
+from opi.connectors.prometheus import get_metrics_connector
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,8 @@ _VOLUME_CAPACITY = (
 _DATABASE_SIZE = 'max by (datname) (last_over_time(cnpg_pg_database_size_bytes{{datname=~"{databases}"}}[6h]))'
 
 _QUERY_ERRORS = (
-    PrometheusQueryError,
-    PrometheusConnectionError,
-    GrafanaQueryError,
-    GrafanaConnectionError,
+    MetricsQueryError,
+    MetricsUnavailableError,
     TimeoutError,
 )
 
@@ -95,7 +93,7 @@ async def measure_usage(namespaces: set[str], databases: set[str]) -> MeasuredUs
         async with asyncio.timeout(TIMEOUT_SECONDS):
             connector = await get_metrics_connector()
             names = list(queries)
-            results = await asyncio.gather(*(connector.custom_query(queries[name]) for name in names))
+            results = await asyncio.gather(*(connector.query(queries[name]) for name in names))
     except _QUERY_ERRORS as error:
         logger.warning("map: sizes not measured: %s", error)
         return usage

@@ -9,11 +9,8 @@ import asyncio
 
 import httpx
 import pytest
-from opi.connectors.grafana_prometheus import (
-    GrafanaConnectionError,
-    GrafanaPrometheusConnector,
-    GrafanaQueryError,
-)
+from opi.connectors.grafana_prometheus import GrafanaPrometheusConnector
+from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
 
 
 class Backend:
@@ -90,8 +87,8 @@ async def test_transport_error_marks_unavailable_and_starts_one_task(connector):
     attach(connector, backend)
     connector._mark_available()
 
-    with pytest.raises(GrafanaConnectionError):
-        await connector.custom_query("up")
+    with pytest.raises(MetricsUnavailableError):
+        await connector.query("up")
 
     assert connector.is_connected is False
     first_task = connector._recovery_task
@@ -114,8 +111,8 @@ async def test_queries_fail_fast_without_a_request(connector):
     seen = len(backend.requests)
 
     for _ in range(10):
-        with pytest.raises(GrafanaConnectionError):
-            await connector.custom_query("up")
+        with pytest.raises(MetricsUnavailableError):
+            await connector.query("up")
 
     assert len(backend.requests) == seen
 
@@ -127,8 +124,8 @@ async def test_bad_request_leaves_the_status_alone(connector):
     attach(connector, backend)
     connector._mark_available()
 
-    with pytest.raises(GrafanaQueryError):
-        await connector.custom_query("not promql")
+    with pytest.raises(MetricsQueryError):
+        await connector.query("not promql")
 
     assert connector.is_connected is True
     assert connector._recovery_task is None
@@ -170,7 +167,7 @@ async def test_one_client_through_outage_and_recovery(connector):
 
     connector.start_probe()
     await asyncio.wait_for(connector._recovery_task, timeout=5)
-    await connector.custom_query("up")
+    await connector.query("up")
 
     assert connector._client is client
 

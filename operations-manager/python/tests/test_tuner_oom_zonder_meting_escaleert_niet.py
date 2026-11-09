@@ -89,14 +89,14 @@ def _project() -> dict[str, Any]:
 def _connector(gemeten_mi: float | None, oom: bool = True) -> Any:
     """Prometheus die niets teruggeeft (``None``) of een meting, plus het OOM-signaal."""
 
-    async def custom_query(query: str) -> list[dict[str, Any]]:
+    async def answer(query: str) -> list[dict[str, Any]]:
         if "kube_pod_container_status_last_terminated_reason" in query:
             return [{"value": [0, "1"]}] if oom else []
         if gemeten_mi is None:
             return []
         return [{"value": [0, str(gemeten_mi * 1024 * 1024)]}]
 
-    return AsyncMock(custom_query=AsyncMock(side_effect=custom_query))
+    return AsyncMock(query=AsyncMock(side_effect=answer))
 
 
 def _heeft_getuned(observatie: AfterSyncObservation) -> bool:

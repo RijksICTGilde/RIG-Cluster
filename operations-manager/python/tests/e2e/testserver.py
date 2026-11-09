@@ -511,11 +511,11 @@ def _fake_metrics_connector():
 
     op_query = {query: naam for naam, query in {**_OPSLAG_QUERIES, **_DATABASE_QUERIES, **_KEYCLOAK_QUERIES}.items()}
 
-    async def custom_query(query: str) -> list[dict]:
+    async def answer(query: str) -> list[dict]:
         return _DIENSTEN_METRIEKEN.get(op_query.get(query, ""), [])
 
     connector = MagicMock()
-    connector.custom_query = AsyncMock(side_effect=custom_query)
+    connector.query = AsyncMock(side_effect=answer)
     return connector
 
 

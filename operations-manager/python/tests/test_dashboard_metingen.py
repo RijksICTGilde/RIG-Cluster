@@ -30,7 +30,7 @@ class _Connector:
     def __init__(self) -> None:
         self.queries: list[str] = []
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
         return [{"value": [0, "42"]}]
 
@@ -99,7 +99,7 @@ async def test_een_mislukte_meting_is_te_horen(monkeypatch: pytest.MonkeyPatch, 
     class _Stuk:
         is_connected = True
 
-        async def custom_query(self, query: str) -> list[dict[str, Any]]:
+        async def query(self, query: str) -> list[dict[str, Any]]:
             raise RuntimeError("prometheus onbereikbaar")
 
         async def query_range(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
@@ -124,7 +124,7 @@ async def test_de_pagina_blijft_overeind_als_de_meting_faalt(monkeypatch: pytest
     class _Stuk:
         is_connected = True
 
-        async def custom_query(self, query: str) -> list[dict[str, Any]]:
+        async def query(self, query: str) -> list[dict[str, Any]]:
             raise RuntimeError("stuk")
 
         async def query_range(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:

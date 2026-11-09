@@ -3057,7 +3057,7 @@
       "dutch-identifiers": 16,
       "dutch-comments": 9
     },
-    "tests/test_prometheus_custom_query_blokkeert_niet.py": {
+    "tests/test_prometheus_query_blokkeert_de_loop_niet.py": {
       "dutch-identifiers": 5,
       "dutch-comments": 7
     },

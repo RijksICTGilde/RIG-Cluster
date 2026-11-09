@@ -928,7 +928,7 @@ class TestOomMetricSweep:
     @pytest.mark.asyncio
     async def test_a_hit_is_verified_and_then_tuned(self):
         metrics = MagicMock()
-        metrics.custom_query = AsyncMock(
+        metrics.query = AsyncMock(
             return_value=[
                 {
                     "metric": {
@@ -947,8 +947,8 @@ class TestOomMetricSweep:
         ):
             assert await run_oom_metric_sweep("local") == 1
 
-        assert 'reason="OOMKilled"' in metrics.custom_query.await_args[0][0]
-        assert 'namespace=~"rig-.*"' in metrics.custom_query.await_args[0][0]
+        assert 'reason="OOMKilled"' in metrics.query.await_args[0][0]
+        assert 'namespace=~"rig-.*"' in metrics.query.await_args[0][0]
         assert handle.await_args.kwargs["source"] == "metric sweep"
 
     @pytest.mark.asyncio
@@ -957,7 +957,7 @@ class TestOomMetricSweep:
         waker-pod, de pod-status bevestigt de OOM, en er mag toch niets getuned worden.
         """
         metrics = MagicMock()
-        metrics.custom_query = AsyncMock(
+        metrics.query = AsyncMock(
             return_value=[
                 {
                     "metric": {
@@ -984,11 +984,11 @@ class TestOomMetricSweep:
     @pytest.mark.asyncio
     async def test_the_prefix_comes_from_the_cluster(self):
         metrics = MagicMock()
-        metrics.custom_query = AsyncMock(return_value=[])
+        metrics.query = AsyncMock(return_value=[])
         with patch(f"{WATCHER}.get_metrics_connector", new=AsyncMock(return_value=metrics)):
             await run_oom_metric_sweep("odcn-production")
 
-        assert 'namespace=~"rig-prd-.*"' in metrics.custom_query.await_args[0][0]
+        assert 'namespace=~"rig-prd-.*"' in metrics.query.await_args[0][0]
 
     @pytest.mark.asyncio
     async def test_without_a_metrics_backend_the_net_falls_away(self):
@@ -1006,7 +1006,7 @@ class TestOomMetricSweep:
     @pytest.mark.asyncio
     async def test_a_hit_the_pod_no_longer_confirms_starts_no_tune(self):
         metrics = MagicMock()
-        metrics.custom_query = AsyncMock(
+        metrics.query = AsyncMock(
             return_value=[{"metric": {"namespace": "rig-regel-k4c", "pod": "weg", "container": "app"}}]
         )
         with (
@@ -1025,7 +1025,7 @@ class TestOomMetricSweep:
         row = {"namespace": "rig-regel-k4c", "pod": "pr1644-api-7c9f4d8b6d-x2klm", "container": "app"}
         del row[missing]
         metrics = MagicMock()
-        metrics.custom_query = AsyncMock(return_value=[{"metric": row}])
+        metrics.query = AsyncMock(return_value=[{"metric": row}])
         with (
             patch(f"{WATCHER}.get_metrics_connector", new=AsyncMock(return_value=metrics)),
             patch(f"{WATCHER}.read_pod_oom_kill", new=AsyncMock()) as read,
@@ -1036,7 +1036,7 @@ class TestOomMetricSweep:
     @pytest.mark.asyncio
     async def test_a_backend_that_answers_with_nothing_tunes_nothing(self):
         metrics = MagicMock()
-        metrics.custom_query = AsyncMock(return_value=None)
+        metrics.query = AsyncMock(return_value=None)
         with (
             patch(f"{WATCHER}.get_metrics_connector", new=AsyncMock(return_value=metrics)),
             patch(f"{WATCHER}.handle_observed_oom_kill", new=AsyncMock()) as handle,

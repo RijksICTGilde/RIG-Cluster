@@ -28,7 +28,7 @@ class _FakeProm:
         self.queries: list[str] = []
         self._series = series or {}
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.queries.append(query)
         for sleutel, per_namespace in self._series.items():
             if sleutel in query and "by (namespace)" in query:

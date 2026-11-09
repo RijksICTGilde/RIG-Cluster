@@ -394,7 +394,7 @@ def _mock_prometheus_with_usage(max_mb, avg_mb, has_oom=False):
     max_bytes = max_mb * 1024 * 1024
     avg_bytes = avg_mb * 1024 * 1024
 
-    async def custom_query(query):
+    async def answer(query):
         # OOMKilled EERST. De OOM-query is sinds RC-163 zelf ook een max_over_time
         # (hij moet over een bereik kijken, want de metric bestaat alleen zolang de
         # gestopte pod bestaat), dus "max_over_time in query" onderscheidt de twee
@@ -409,7 +409,7 @@ def _mock_prometheus_with_usage(max_mb, avg_mb, has_oom=False):
             return [{"value": [0, str(avg_bytes)]}] if avg_mb > 0 else []
         return []
 
-    mock.custom_query.side_effect = custom_query
+    mock.query.side_effect = answer
     return mock
 
 

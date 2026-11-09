@@ -947,7 +947,7 @@ async def _sum_by_namespace(prom: Any, promql: str) -> dict[str, float]:
     nul, zoals het bij de andere Prometheus-queries in dit bestand ook doet.
     """
     try:
-        result = await prom.custom_query(promql)
+        result = await prom.query(promql)
     except Exception as e:
         logger.warning(f"Dashboard per-namespace query failed: {e}")
         return {}
@@ -982,32 +982,33 @@ async def collect_dashboard_metrics(
     metrics: dict = {}
     prometheus_available = False
     pod_count = 0
-    ns_regex = "|".join(all_namespaces)
 
     if all_namespaces:
         try:
             from opi.connectors.prometheus import get_metrics_connector
+            from opi.services.metrics_queries import (
+                namespace_usage_queries,
+                network_traffic_queries,
+                usage_per_namespace_queries,
+            )
 
             prom = await get_metrics_connector()
             prometheus_available = prom.is_connected
 
             if prometheus_available:
+                queries = namespace_usage_queries(all_namespaces)
                 # CPU usage and limits
                 cpu_usage_val = 0.0
                 cpu_limit_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
-                    )
+                    result = await prom.query(queries["cpu_cores"])
                     if result and result[0].get("value"):
                         cpu_usage_val = float(result[0]["value"][1])
                 except Exception as e:
                     logger.warning(f"Dashboard CPU usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
-                    )
+                    result = await prom.query(queries["cpu_limit_cores"])
                     if result and result[0].get("value"):
                         cpu_limit_val = float(result[0]["value"][1])
                 except Exception as e:
@@ -1017,18 +1018,14 @@ async def collect_dashboard_metrics(
                 mem_usage_val = 0.0
                 mem_limit_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
-                    )
+                    result = await prom.query(queries["memory_bytes"])
                     if result and result[0].get("value"):
                         mem_usage_val = float(result[0]["value"][1])
                 except Exception as e:
                     logger.warning(f"Dashboard memory usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
-                    )
+                    result = await prom.query(queries["memory_limit_bytes"])
                     if result and result[0].get("value"):
                         mem_limit_val = float(result[0]["value"][1])
                 except Exception as e:
@@ -1046,9 +1043,7 @@ async def collect_dashboard_metrics(
                 # een getal meer op een regel zijn.
                 mem_request_val = 0.0
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kube_pod_container_resource_requests{{namespace=~"{ns_regex}",resource="memory"}})'
-                    )
+                    result = await prom.query(queries["memory_request_bytes"])
                     if result and result[0].get("value"):
                         mem_request_val = float(result[0]["value"][1])
                 except Exception as e:
@@ -1058,16 +1053,14 @@ async def collect_dashboard_metrics(
                 storage_used_val = 0.0
                 storage_cap_val = 0.0
                 try:
-                    result = await prom.custom_query(f'sum(kubelet_volume_stats_used_bytes{{namespace=~"{ns_regex}"}})')
+                    result = await prom.query(queries["storage_used_bytes"])
                     if result and result[0].get("value"):
                         storage_used_val = float(result[0]["value"][1])
                 except Exception as e:
                     logger.warning(f"Dashboard storage usage query failed: {e}")
 
                 try:
-                    result = await prom.custom_query(
-                        f'sum(kubelet_volume_stats_capacity_bytes{{namespace=~"{ns_regex}"}})'
-                    )
+                    result = await prom.query(queries["storage_capacity_bytes"])
                     if result and result[0].get("value"):
                         storage_cap_val = float(result[0]["value"][1])
                 except Exception as e:
@@ -1075,7 +1068,7 @@ async def collect_dashboard_metrics(
 
                 # Pod count
                 try:
-                    result = await prom.custom_query(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                    result = await prom.query(queries["pod_count"])
                     if result and result[0].get("value"):
                         pod_count = int(float(result[0]["value"][1]))
                 except Exception as e:
@@ -1088,8 +1081,9 @@ async def collect_dashboard_metrics(
                     now = datetime.now(UTC)
                     start = now.timestamp() - 1800  # 30 minutes ago
                     end = now.timestamp()
+                    traffic = network_traffic_queries(all_namespaces)
                     in_results = await prom.query_range(
-                        f'sum(rate(container_network_receive_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                        traffic["network_in"],
                         start_time=str(int(start)),
                         end_time=str(int(end)),
                         step="300",
@@ -1104,7 +1098,7 @@ async def collect_dashboard_metrics(
                             )
 
                     out_results = await prom.query_range(
-                        f'sum(rate(container_network_transmit_bytes_total{{namespace=~"{ns_regex}"}}[5m]))',
+                        traffic["network_out"],
                         start_time=str(int(start)),
                         end_time=str(int(end)),
                         step="300",
@@ -1171,22 +1165,11 @@ async def collect_dashboard_metrics(
                 # projecten op een fragment dat al apart geladen wordt. Het was er eerst een
                 # per project, dus dit is ook voor CPU minder werk dan voorheen -- zodra er
                 # meer dan vier projecten zijn is de hele kaart netto goedkoper.
-                cpu_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))',
-                )
-                cpu_limit_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})',
-                )
-                mem_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})',
-                )
-                mem_limit_by_ns = await _sum_by_namespace(
-                    prom,
-                    f'sum by (namespace) (kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})',
-                )
+                per_namespace = usage_per_namespace_queries(all_namespaces)
+                cpu_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_cores"])
+                cpu_limit_by_ns = await _sum_by_namespace(prom, per_namespace["cpu_limit_cores"])
+                mem_by_ns = await _sum_by_namespace(prom, per_namespace["memory_bytes"])
+                mem_limit_by_ns = await _sum_by_namespace(prom, per_namespace["memory_limit_bytes"])
 
                 for project in user_projects:
                     proj_ns = project.get("namespaces", [])
@@ -2343,10 +2326,10 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
     ctx: dict[str, Any] = {"project": project, "usage": None, "usage_error": None}
 
     if namespaces:
-        ns_regex = "|".join(namespaces)
         # Boven de try, want de except hieronder noemt deze fouten.
-        from opi.connectors.grafana_prometheus import GrafanaConnectionError
-        from opi.connectors.prometheus import PrometheusConnectionError, get_metrics_connector
+        from opi.connectors.metrics_backend import MetricsUnavailableError
+        from opi.connectors.prometheus import get_metrics_connector
+        from opi.services.metrics_queries import namespace_usage_queries
 
         try:
             prom = await get_metrics_connector()
@@ -2355,24 +2338,17 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
             else:
 
                 async def _scalar(promql: str) -> float:
-                    result = await prom.custom_query(promql)
+                    result = await prom.query(promql)
                     if result and result[0].get("value"):
                         return float(result[0]["value"][1])
                     return 0.0
 
-                cpu_used = await _scalar(
-                    f'sum(rate(container_cpu_usage_seconds_total{{namespace=~"{ns_regex}",container!=""}}[5m]))'
-                )
-                cpu_limit = await _scalar(
-                    f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="cpu"}})'
-                )
-                mem_used = await _scalar(
-                    f'sum(container_memory_working_set_bytes{{namespace=~"{ns_regex}",container!=""}})'
-                )
-                mem_limit = await _scalar(
-                    f'sum(kube_pod_container_resource_limits{{namespace=~"{ns_regex}",resource="memory"}})'
-                )
-                pods = await _scalar(f'count(kube_pod_info{{namespace=~"{ns_regex}"}})')
+                queries = namespace_usage_queries(namespaces)
+                cpu_used = await _scalar(queries["cpu_cores"])
+                cpu_limit = await _scalar(queries["cpu_limit_cores"])
+                mem_used = await _scalar(queries["memory_bytes"])
+                mem_limit = await _scalar(queries["memory_limit_bytes"])
+                pods = await _scalar(queries["pod_count"])
 
                 ctx["usage"] = {
                     "cpu_used": cpu_used,
@@ -2386,7 +2362,7 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
                         [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
                     ),
                 }
-        except (GrafanaConnectionError, PrometheusConnectionError) as fout:
+        except MetricsUnavailableError as fout:
             # De metingsbron viel weg TIJDENS de bevraging. Dezelfde melding als hierboven,
             # want voor de lezer is het hetzelfde: er is nu niets te meten.
             logger.warning("Metrics niet beschikbaar voor %s: %s", project_name, fout)
@@ -2490,7 +2466,7 @@ async def oom_status_fragment(request: Request, project_name: str, deployment_na
     ArgoCD-kaart meldt wat er NU mis is, dit meldt wat er in het afgelopen etmaal is
     gebeurd -- en juist dat verdwijnt uit die kaart zodra de auto-tuner het heeft
     rechtgezet. Ten tweede praat dit met Prometheus en de kaart niet; een metriekbron die
-    niet oplost kost de volledige DNS- en retryketen (zie custom_query in
+    niet oplost kost de volledige DNS- en retryketen (zie query in
     connectors/prometheus.py), en dan hoort de ArgoCD-stand niet mee te wachten.
 
     Er staat er precies EEN per pagina, net als de ArgoCD-kaart: het deploymentpaneel
@@ -2621,7 +2597,7 @@ async def deployment_metrics_fragment(
 
     metrics: dict[str, dict[str, Any]] = {}
     discovered_workloads: list[dict[str, Any]] = []
-    pvc_storage: dict[str, dict[str, Any]] = {}
+    deployment_volumes: dict[str, dict[str, Any]] = {}
     # Prometheus die niet antwoordt is iets anders dan Prometheus die antwoordt met niets,
     # en het fragment hoort die twee niet dezelfde melding te geven. Zonder deze vlag zag
     # de lezer in beide gevallen zes lege grafieken.
@@ -2631,44 +2607,42 @@ async def deployment_metrics_fragment(
         try:
             from opi.connectors.prometheus import get_metrics_connector
             from opi.core.cluster_config import get_prefixed_namespace
+            from opi.services.metrics_queries import (
+                TimeWindow,
+                deployment_pod_prefixes,
+                discover_workloads,
+                pvc_storage,
+                timeseries_per_workload,
+                workload_pod_prefixes,
+            )
 
             prom = await get_metrics_connector()
             prometheus_bereikbaar = prom.is_connected
             if prom.is_connected:
                 k8s_namespace = get_prefixed_namespace(cluster, base_namespace)
+                window = TimeWindow(duration_minutes=duration, step_minutes=step)
 
                 if components:
                     component_names = [c.get("reference") for c in components if c.get("reference")]
                     if component_names:
-                        metrics = await prom.get_deployment_component_metrics_timeseries(
-                            namespace=k8s_namespace,
-                            components=component_names,
-                            deployment_name=deployment_name,
-                            duration_minutes=duration,
-                            step_minutes=step,
+                        metrics = await timeseries_per_workload(
+                            prom, k8s_namespace, deployment_pod_prefixes(deployment_name, component_names), window
                         )
                 elif helm_charts:
-                    workloads = await prom.discover_workloads_in_namespace(k8s_namespace)
+                    workloads = await discover_workloads(prom, k8s_namespace)
                     if workloads:
                         discovered_workloads = workloads
-                        metrics = await prom.get_discovered_workload_metrics_timeseries(
-                            namespace=k8s_namespace,
-                            workloads=workloads,
-                            duration_minutes=duration,
-                            step_minutes=step,
+                        metrics = await timeseries_per_workload(
+                            prom, k8s_namespace, workload_pod_prefixes(workloads), window
                         )
 
                 try:
-                    pvc_data = await prom.get_pvc_storage_by_namespace(
-                        namespace=k8s_namespace,
-                        duration_minutes=duration,
-                        step_minutes=step,
-                    )
+                    pvc_data = await pvc_storage(prom, k8s_namespace, window)
                     if pvc_data:
                         # Filter PVCs to only those belonging to this deployment
                         # PVC names follow the pattern: {deployment_name}-{component_name}-...
                         prefix = f"{deployment_name}-"
-                        pvc_storage = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
+                        deployment_volumes = {name: data for name, data in pvc_data.items() if name.startswith(prefix)}
                 except Exception as pvc_error:
                     logging.getLogger(__name__).warning(
                         f"Failed to fetch PVC storage for deployment {deployment_name}: {pvc_error}"
@@ -2706,12 +2680,12 @@ async def deployment_metrics_fragment(
             "deployment": deployment_ctx,
             "metrics": metrics,
             "discovered_workloads": discovered_workloads,
-            "pvc_storage": pvc_storage,
+            "pvc_storage": deployment_volumes,
             "duration": duration,
             "prometheus_bereikbaar": prometheus_bereikbaar,
             "ander_cluster": ander_cluster,
             "eigen_cluster": settings.CLUSTER_MANAGER,
-            "metingen_leeg": not _heeft_metingen(metrics, pvc_storage),
+            "metingen_leeg": not _heeft_metingen(metrics, deployment_volumes),
         },
     )
 

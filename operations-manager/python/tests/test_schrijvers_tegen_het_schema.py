@@ -125,7 +125,7 @@ async def test_de_tuner_laat_een_geldig_projectbestand_achter() -> None:
     connector = AsyncMock()
     # max, avg, oom-kills: geen meetdata plus een OOM-kill, de weg die de tuner de limiet
     # laat verdubbelen en dus zowel limits als requests laat schrijven.
-    connector.custom_query.side_effect = [[], [], [{"value": [0, "1"]}]]
+    connector.query.side_effect = [[], [], [{"value": [0, "1"]}]]
     kubectl = MagicMock(
         get_deployment_status=AsyncMock(return_value=None), get_vpa_recommendation=AsyncMock(return_value=None)
     )

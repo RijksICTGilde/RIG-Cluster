@@ -1,9 +1,28 @@
 """Tests for the deployment sanitization API endpoint."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.prometheus import PrometheusConnector
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS
+
+
+def sandbox_backend(restarts: list[dict[str, Any]]) -> PrometheusConnector:
+    """The real sandbox backend, with only its library client faked.
+
+    The restart check ran against an ``AsyncMock`` for a long time, and that mock answered
+    an await that the sandbox backend could not: the check never worked there.
+    """
+    connector = PrometheusConnector.__new__(PrometheusConnector)
+    connector._initialized = True
+    connector._prometheus_url = "http://prometheus:9090"
+    connector.prom = MagicMock()
+    connector.prom.custom_query.side_effect = lambda query, **_: (
+        restarts if "kube_pod_container_status_restarts_total" in query else []
+    )
+    PrometheusConnector.is_connected = True
+    return connector
 
 
 class TestSanitizeUnhealthyPods:
@@ -49,16 +68,10 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl.get_deployment_status.return_value = [{"ready": "0/1", "replicas": "1"}]
         mock_kubectl_cls.return_value = mock_kubectl
 
-        # Prometheus returns 15 restarts
-        mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = [
-            {
-                "metric": {"pod": "production-api-abc123"},
-                "value": [0, "15"],
-            }
-        ]
-        mock_connector.custom_query.return_value = []  # No OOM kills
-        mock_get_connector.return_value = mock_connector
+        # Prometheus reports 15 restarts, and no OOM kills
+        mock_get_connector.return_value = sandbox_backend(
+            [{"metric": {"pod": "production-api-abc123"}, "value": [0, "15"]}]
+        )
 
         from opi.api.resource_router import sanitize_deployment
 
@@ -112,16 +125,10 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl.get_deployment_status.return_value = [{"ready": "1/1", "replicas": "1"}]
         mock_kubectl_cls.return_value = mock_kubectl
 
-        # Prometheus returns low restarts
-        mock_connector = MagicMock()
-        mock_connector.get_pod_restarts.return_value = [
-            {
-                "metric": {"pod": "production-api-abc123"},
-                "value": [0, "2"],
-            }
-        ]
-        mock_connector.custom_query.return_value = []
-        mock_get_connector.return_value = mock_connector
+        # Prometheus reports restarts below the threshold
+        mock_get_connector.return_value = sandbox_backend(
+            [{"metric": {"pod": "production-api-abc123"}, "value": [0, "2"]}]
+        )
 
         from opi.api.resource_router import sanitize_deployment
 
@@ -178,8 +185,7 @@ class TestSanitizeUnhealthyPods:
 
         # Prometheus: restarts below the threshold, but OOM kills present.
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = [{"metric": {"pod": "production-api-abc123"}, "value": [0, "2"]}]
-        mock_connector.custom_query.return_value = [{"value": [0, "1"]}]
+        mock_connector.query.return_value = [{"value": [0, "1"]}]
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -297,8 +303,7 @@ class TestSanitizeUnhealthyPods:
 
         # Prometheus: no restarts, no OOM
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -381,8 +386,7 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -453,8 +457,7 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment
@@ -519,8 +522,7 @@ class TestSanitizeUnhealthyPods:
         mock_kubectl_cls.return_value = mock_kubectl
 
         mock_connector = AsyncMock()
-        mock_connector.get_pod_restarts.return_value = []
-        mock_connector.custom_query.return_value = []
+        mock_connector.query.return_value = []
         mock_get_connector.return_value = mock_connector
 
         from opi.api.resource_router import sanitize_deployment

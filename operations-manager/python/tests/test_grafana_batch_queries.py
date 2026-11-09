@@ -1,15 +1,13 @@
 """Tests for Grafana Prometheus connector batch query optimization."""
 
-import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from opi.connectors.grafana_prometheus import (
-    GrafanaConnectionError,
-    GrafanaPrometheusConnector,
-)
+from opi.connectors.grafana_prometheus import GrafanaPrometheusConnector
+from opi.connectors.metrics_backend import MetricsUnavailableError
+from opi.services.metrics_queries import TimeWindow, component_timeseries
 
 
 @pytest.fixture(autouse=True)
@@ -182,7 +180,7 @@ class TestExecuteBatchQueries:
         mock_resp.text = "Internal Server Error"
         connector._client.request = AsyncMock(return_value=mock_resp)
 
-        with pytest.raises(GrafanaConnectionError, match="HTTP 500"):
+        with pytest.raises(MetricsUnavailableError, match="HTTP 500"):
             await connector._execute_batch_queries(
                 queries={"A": "up"},
                 instant=True,
@@ -213,88 +211,8 @@ class TestExecuteBatchQueries:
         assert results["memory"] == []
 
 
-class TestComponentMetricsBatching:
-    """Test that get_component_metrics uses batched queries."""
-
-    @pytest.mark.asyncio
-    async def test_batches_cpu_and_memory(self, connector):
-        """CPU and memory should be fetched in a single batched request."""
-        batch_response = make_grafana_response(
-            {
-                "cpu": (True, {}, [(1000000, 0.25)]),
-                "memory": (True, {}, [(1000000, 134217728)]),
-            }
-        )
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = batch_response
-        connector._client.request = AsyncMock(return_value=mock_resp)
-
-        result = await connector.get_component_metrics("test-ns", "my-pod", "6h")
-
-        assert result["cpu_cores"] == 0.25
-        assert result["memory_bytes"] == 134217728
-        assert result["memory_mb"] == 134217728 / (1024 * 1024)
-
-        # 1 batch call for CPU + memory, then 3 sequential HTTP request metric attempts
-        # (all return empty from the same mock, so all 3 are tried)
-        assert connector._client.request.call_count == 4
-
-    @pytest.mark.asyncio
-    async def test_http_requests_metric_tried_sequentially(self, connector):
-        """HTTP request metrics should still be tried one by one after the batch."""
-        batch_response = make_grafana_response(
-            {
-                "cpu": (True, {}, [(1000000, 0.1)]),
-                "memory": (True, {}, [(1000000, 1048576)]),
-            }
-        )
-        # First call: batch. Second call: http_requests_total (empty). Third: found.
-        http_empty = make_grafana_response({"A": (True, {}, [])})
-        http_found = make_grafana_response({"A": (True, {}, [(1000000, 42.0)])})
-
-        call_count = 0
-
-        async def mock_request(method, url, headers=None, json=None):
-            nonlocal call_count
-            call_count += 1
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            if call_count == 1:
-                mock_resp.json.return_value = batch_response
-            elif call_count == 2:
-                mock_resp.json.return_value = http_empty
-            else:
-                mock_resp.json.return_value = http_found
-            return mock_resp
-
-        connector._client.request = mock_request
-
-        result = await connector.get_component_metrics("test-ns", "my-pod", "6h")
-
-        assert result["cpu_cores"] == 0.1
-        # First try returns empty, second try finds it
-        assert result["requests_per_second"] == 42.0
-        # 1 batch + up to 3 sequential HTTP metric attempts
-        assert call_count >= 2
-
-    @pytest.mark.asyncio
-    async def test_not_connected_returns_none_values(self, connector):
-        """When not connected, should return None values without HTTP calls."""
-        GrafanaPrometheusConnector.is_connected = False
-
-        result = await connector.get_component_metrics("test-ns", "my-pod")
-
-        assert result == {
-            "cpu_cores": None,
-            "memory_bytes": None,
-            "memory_mb": None,
-            "requests_per_second": None,
-        }
-
-
 class TestComponentMetricsTimeseriesBatching:
-    """Test that get_component_metrics_timeseries uses batched queries."""
+    """The component time-series takes two Grafana requests, one range and one instant."""
 
     @pytest.mark.asyncio
     async def test_uses_two_requests(self, connector):
@@ -333,7 +251,7 @@ class TestComponentMetricsTimeseriesBatching:
 
         connector._client.request = mock_request
 
-        result = await connector.get_component_metrics_timeseries("test-ns", "my-pod", 60, 5)
+        result = await component_timeseries(connector, "test-ns", "my-pod", TimeWindow())
 
         # Exactly 2 HTTP requests
         assert call_count == 2
@@ -350,92 +268,6 @@ class TestComponentMetricsTimeseriesBatching:
         assert result["cpu_limit"] == round(1.0 * 1000, 0)
         assert result["memory_limit"] == round(536870912 / (1024 * 1024), 0)
         assert result["memory_request"] == round(268435456 / (1024 * 1024), 0)
-
-
-class TestDeploymentParallelization:
-    """Test that multi-component methods run in parallel."""
-
-    @pytest.mark.asyncio
-    async def test_deployment_metrics_timeseries_parallel(self, connector):
-        """Components should be fetched in parallel, not sequentially."""
-        call_times: list[float] = []
-
-        original_method = connector.get_component_metrics_timeseries
-
-        async def mock_timeseries(namespace, pod_prefix, duration_minutes=60, step_minutes=5):
-            call_times.append(asyncio.get_event_loop().time())
-            await asyncio.sleep(0.05)  # simulate network latency
-            return {
-                "cpu": [],
-                "memory": [],
-                "network_in": [],
-                "network_out": [],
-                "disk_read": [],
-                "disk_write": [],
-                "cpu_limit": None,
-                "memory_limit": None,
-                "memory_request": None,
-                "cpu_timestamps": [],
-                "memory_timestamps": [],
-                "network_timestamps": [],
-                "disk_timestamps": [],
-            }
-
-        connector.get_component_metrics_timeseries = mock_timeseries
-
-        result = await connector.get_deployment_component_metrics_timeseries(
-            namespace="test-ns",
-            components=["web", "api", "worker"],
-            deployment_name="my-app",
-            duration_minutes=60,
-            step_minutes=5,
-        )
-
-        assert set(result.keys()) == {"web", "api", "worker"}
-        # All 3 calls should start nearly simultaneously (within 20ms of each other)
-        assert len(call_times) == 3
-        assert max(call_times) - min(call_times) < 0.02
-
-    @pytest.mark.asyncio
-    async def test_discovered_workloads_parallel(self, connector):
-        """Discovered workloads should be fetched in parallel."""
-        call_count = 0
-
-        async def mock_timeseries(namespace, pod_prefix, duration_minutes=60, step_minutes=5):
-            nonlocal call_count
-            call_count += 1
-            await asyncio.sleep(0.05)
-            return {
-                "cpu": [],
-                "memory": [],
-                "network_in": [],
-                "network_out": [],
-                "disk_read": [],
-                "disk_write": [],
-                "cpu_limit": None,
-                "memory_limit": None,
-                "memory_request": None,
-                "cpu_timestamps": [],
-                "memory_timestamps": [],
-                "network_timestamps": [],
-                "disk_timestamps": [],
-            }
-
-        connector.get_component_metrics_timeseries = mock_timeseries
-
-        workloads = [
-            {"name": "frontend"},
-            {"name": "backend"},
-            {"name": ""},  # should be skipped
-        ]
-
-        result = await connector.get_discovered_workload_metrics_timeseries(
-            namespace="test-ns",
-            workloads=workloads,
-        )
-
-        assert set(result.keys()) == {"frontend", "backend"}
-        assert call_count == 2
 
 
 class TestConvertBatchGrafanaResponse:

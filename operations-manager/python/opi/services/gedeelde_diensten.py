@@ -476,7 +476,7 @@ async def _voer_queries_uit(queries: dict[str, str]) -> dict[str, list[dict[str,
     connector = await get_metrics_connector()
 
     namen = list(queries)
-    resultaten = await asyncio.gather(*(connector.custom_query(queries[naam]) for naam in namen))
+    resultaten = await asyncio.gather(*(connector.query(queries[naam]) for naam in namen))
     return dict(zip(namen, resultaten, strict=True))
 
 
@@ -702,7 +702,7 @@ async def haal_keycloak() -> Blok:
     try:
         prom = PrometheusConnector()
         namen = list(_KEYCLOAK_QUERIES)
-        uitkomsten = await asyncio.gather(*(prom.custom_query(_KEYCLOAK_QUERIES[naam]) for naam in namen))
+        uitkomsten = await asyncio.gather(*(prom.query(_KEYCLOAK_QUERIES[naam]) for naam in namen))
         antwoorden = dict(zip(namen, uitkomsten, strict=True))
     except Exception as fout:
         # Zie haal_opslag: breed gevangen zodat dit blok valt en niet de pagina, en op

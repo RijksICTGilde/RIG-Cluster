@@ -20,6 +20,7 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
 from opi.manager.project_manager import ProjectManager
+from opi.services.metrics_queries import pod_restarts
 from opi.services.project_store import get_project_store
 from opi.services.resource_tuning_service import (
     trigger_reprocessing,
@@ -218,8 +219,7 @@ async def _run_sanitize(
             restart_count = 0
             if connector:
                 try:
-                    pod_restarts = await connector.get_pod_restarts(namespace)
-                    for pod_data in pod_restarts:
+                    for pod_data in await pod_restarts(connector, namespace):
                         pod_name = pod_data.get("metric", {}).get("pod", "")
                         if pod_name.startswith(unique_name):
                             count = int(float(pod_data.get("value", [0, 0])[1]))

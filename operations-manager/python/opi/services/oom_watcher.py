@@ -1660,7 +1660,7 @@ async def run_oom_metric_sweep(cluster: str) -> int:
     query = _OOM_METRIC_QUERY.format(prefix=get_namespace_prefix(cluster))
     try:
         connector = await get_metrics_connector()
-        rows = await connector.custom_query(query)
+        rows = await connector.query(query)
     except Exception as e:
         logger.info("OOM metric sweep: disabled, no metrics backend answered the query: %s", e)
         return 0

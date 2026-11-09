@@ -190,7 +190,7 @@ async def _query_month_usage(
             venster=venster,
             noemer_uren=noemer_uren,
         )
-        results = await connector.custom_query(query, datasource_uid=datasource_uid, eval_time=eval_time)
+        results = await connector.query(query, at=eval_time, datasource_uid=datasource_uid)
         return float(results[0].get("value", [None, "0"])[1]) if results else 0.0
 
     try:

@@ -17,11 +17,8 @@ from typing import Any
 
 import httpx
 
-from opi.connectors.grafana_prometheus import (
-    GrafanaConnectionError,
-    GrafanaQueryError,
-    create_grafana_prometheus_connector,
-)
+from opi.connectors.grafana_prometheus import create_grafana_prometheus_connector
+from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
 from opi.core.config import settings
 from opi.services.log_watcher import LogWatchConfig, send_ntfy
 
@@ -127,7 +124,7 @@ class CapacityWatcher:
     async def tick(self) -> None:
         try:
             quotas = await self._fetch()
-        except (GrafanaConnectionError, GrafanaQueryError) as e:
+        except (MetricsUnavailableError, MetricsQueryError) as e:
             logger.info("Capacity watcher: skipping this round, no metrics: %s", e)
             return
         if not quotas:
@@ -152,7 +149,7 @@ class CapacityWatcher:
         uid = settings.GRAFANA_BILLING_DATASOURCE_UID
         usage = _METRIC.format(kind="usage", tenant=tenant)
         used, limit, ago = [
-            _by_resource(await connector.custom_query(query, datasource_uid=uid))
+            _by_resource(await connector.query(query, datasource_uid=uid))
             for query in (usage, _METRIC.format(kind="limit", tenant=tenant), f"{usage} offset 24h")
         ]
         return [

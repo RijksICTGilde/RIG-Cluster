@@ -48,7 +48,7 @@ Geen verbindingsfout, dus de status blijft staan:
 - HTTP 400 of een foute PromQL. Dat is een fout in de query, niet in de backend.
 
 Zolang de status "niet beschikbaar" is, doet geen querymethode nog een request: ze gooien
-meteen een `GrafanaConnectionError` of geven leeg terug. Dat is het punt: anders wacht elke
+meteen een `MetricsUnavailableError` of geven leeg terug. Dat is het punt: anders wacht elke
 projectpagina en elke job de client-timeouts (10s connect, 30s read) opnieuw uit.
 
 Alleen de OVERGANG komt in de log: een warning bij het wegvallen met de reden, een info bij
@@ -85,12 +85,14 @@ betekent: zelf opzoeken). De backoff staat als `RECOVERY_FIRST_DELAY` en `RECOVE
 
 Op de sandbox draait `PrometheusConnector`. Die is stateless: `is_connected` is altijd
 `True` en er is geen status om bij te houden. Een mislukte query komt er als
-`PrometheusQueryError` of `PrometheusConnectionError` uit, en de aanroepers tonen daarvoor
-dezelfde melding.
+`MetricsQueryError` uit, en de aanroepers tonen daarvoor dezelfde melding. Beide backends
+delen dat fouttypepaar; zie
+[metriekbackends-en-queries.md](metriekbackends-en-queries.md).
 
 ## Afhankelijkheden
 
 - `opi/connectors/grafana_prometheus.py`: de status, de probe en het herstel
+- `opi/connectors/metrics_backend.py`: `MetricsUnavailableError` en `MetricsQueryError`
 - `opi/connectors/prometheus.py`: `get_metrics_connector()` en `close_metrics_connector()`
 - `opi/core/startup.py`: start de eerste probe
 - `opi/server.py`: sluit de connector bij shutdown

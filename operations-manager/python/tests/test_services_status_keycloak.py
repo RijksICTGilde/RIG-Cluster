@@ -26,7 +26,7 @@ class _Prom:
     def __init__(self) -> None:
         self.gevraagd: list[str] = []
 
-    async def custom_query(self, query: str) -> list[dict[str, Any]]:
+    async def query(self, query: str) -> list[dict[str, Any]]:
         self.gevraagd.append(query)
         if "realms_total" in query:
             return [{"metric": {}, "value": [0, "12"]}]
@@ -113,7 +113,7 @@ async def test_dit_blok_gebruikt_onze_eigen_prometheus(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_een_kapotte_bron_kost_het_blok_en_niet_de_pagina(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Stuk:
-        async def custom_query(self, query: str) -> list[dict[str, Any]]:
+        async def query(self, query: str) -> list[dict[str, Any]]:
             raise RuntimeError("prometheus onbereikbaar")
 
     monkeypatch.setattr("opi.connectors.prometheus.PrometheusConnector", lambda *a, **k: _Stuk())
