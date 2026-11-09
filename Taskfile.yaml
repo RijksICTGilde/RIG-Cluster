@@ -3544,6 +3544,13 @@ tasks:
       - uv run python ../../scripts/lint_baseline.py --check
     silent: true
 
+  lint-imports:
+    desc: "Toets het layers-contract uit pyproject.toml; de uitzonderingenlijst kan alleen krimpen"
+    dir: operations-manager/python
+    cmds:
+      - uv run lint-imports
+    silent: true
+
   golden-pipeline-baseline:
     desc: "Leg de golden-uitvoer van de manifestpipeline opnieuw vast; lees de diff regel voor regel"
     dir: operations-manager/python

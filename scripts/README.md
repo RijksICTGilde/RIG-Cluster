@@ -201,8 +201,10 @@ hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
 ## De gates op de coding rules
 
-`docs/development/coding-rules.md` is de maatlat. Twee gates houden nieuwe overtredingen tegen
-zonder dat bestaande code rood wordt, elk met een baseline die alleen kan krimpen.
+`docs/development/coding-rules.md` is de maatlat. Drie gates houden nieuwe overtredingen tegen
+zonder dat bestaande code rood wordt, elk met een baseline die alleen kan krimpen. Twee ervan
+staan hier als script; de derde, het layers-contract van import-linter, is configuratie in
+`operations-manager/python/pyproject.toml` en draait met `task lint-imports`.
 
 | bestand | doet |
 |---|---|

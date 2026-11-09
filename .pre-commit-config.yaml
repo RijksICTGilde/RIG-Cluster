@@ -57,6 +57,14 @@ repos:
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
 
+      # Lagencontract van het lagenmodel; uitzonderingen kunnen alleen krimpen
+      - id: lint-imports
+        name: lint-imports
+        entry: uv run --directory operations-manager/python lint-imports
+        language: system
+        files: ^operations-manager/python/(.*\.py|pyproject\.toml)$
+        pass_filenames: false
+
       # quick secret scan - zie ook features/sops-sleutel-roteren.md.
       - id: secret-scan
         name: secret-scan

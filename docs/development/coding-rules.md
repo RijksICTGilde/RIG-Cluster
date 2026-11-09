@@ -74,23 +74,23 @@ Het belangrijkste hoofdstuk voor deze repo. Code staat op de plek waar hij hoort
 
 ### Lagen
 
-De packages onder `opi/` vormen lagen. Een laag importeert alleen uit de lagen **onder** zich, nooit uit een laag erboven, en lagen op hetzelfde niveau importeren elkaar niet.
+De packages onder `opi/` vormen lagen. Een laag importeert alleen uit de lagen **onder** zich, nooit uit een laag erboven. Staan er meerdere packages in één laag, dan zegt het contract per laag of ze elkaar mogen importeren: `api`, `web` en `middleware` niet, `runtime` en `jobs` wel, en `services`, `forms` en `generation` ook.
 
-| Laag | Packages (doel) | Rol |
+| Laag | Packages | Rol |
 |---|---|---|
 | 1. Composition | `server.py`, `worker_main.py`, `__main__.py`, `tools` | Zet de applicatie in elkaar |
 | 2. Ingang | `api`, `web`, `middleware` | HTTP en UI, dunne adapters (zie "Eén pad per handeling") |
-| 3. HTTP-gedeeld | `http` (voorstel): auth-decorators, session guard, step-up, template-helpers, rate limiter | Wat alle ingangen delen |
-| 4. Runtime | `runtime` (voorstel): opstart, schedulers, task worker en task handlers, watchers, reconcilers, plus `jobs` | Ingangen die niet uit HTTP komen |
+| 3. HTTP-gedeeld | `http`: auth-decorators, session guard, step-up, template-helpers, rate limiter | Wat alle ingangen delen |
+| 4. Runtime | `runtime`: opstart, schedulers, task worker en task handlers, watchers, reconcilers, plus `jobs` | Ingangen die niet uit HTTP komen |
 | 5. Orchestratie | `manager` | Eén use case per handeling |
 | 6. Domein | `services`, `forms`, `generation` | De regels van ZAD; vandaag één laag, later sublagen |
 | 7. Integratie | `connectors` | Eén extern systeem per module, geen ZAD-begrippen |
 | 8. Fundament-hulp | `utils` | Generieke hulpmiddelen, leest `core.config` |
-| 9. Fundament | `core` (alleen configuratie, logging, metrics-registratie) | Importeert niets uit `opi` buiten zichzelf |
+| 9. Fundament | `core`: configuratie, logging, metrics-registratie, database-infrastructuur en request-context | Importeert niets uit `opi` buiten zichzelf |
 
-`handlers` verdwijnt als package: elke module daarin hoort in het domein, de orchestratie of bij een connector.
+`handlers` is als package verdwenen: elke module daaruit staat nu in het domein, de orchestratie of bij een connector.
 
-Dit is het **doelbeeld**, niet de huidige indeling. De namen `runtime` en `http` zijn voorstellen tot de ronde die de modules verplaatst, en de import-linter-gate gaat pas na die ronde aan. Vandaag importeert onder meer `core` uit `manager` en `api`, `services` uit `web`, en `connectors` uit `services`. Precies die pijlen omhoog maken de repo moeilijk te veranderen.
+Dit is de indeling, en `import-linter` dwingt hem af: het contract staat in `operations-manager/python/pyproject.toml` en draait als gate (hoofdstuk 11). De 57 pijlen omhoog die opschoonronde 6 heeft laten staan zijn uitzonderingen in dat contract, per oorzaak gegroepeerd, en die lijst kan alleen krimpen. Het zijn vooral de catalogus-plugins die hun eigen route en flow dragen, `core.metrics` dat gauges uit hogere lagen leest, en connectors die ZAD-begrippen kennen.
 
 ### Eén pad per handeling
 
@@ -207,7 +207,7 @@ bestaande code wordt niet rood, en een opruimronde kan de lijst alleen korter ma
 toevoegen aan een baseline kan niet met gereedschap; dat is een handmatige wijziging die in de
 diff staat en op de PR verdedigd wordt.
 
-**Aan, met een baseline per bestand:**
+**Aan, met een baseline:**
 
 | Regel | Gate | In de baseline |
 |---|---|---|
@@ -222,8 +222,10 @@ diff staat en op de PR verdedigd wordt.
 | Taal in identifiers | conventiecheck | 10907 regels in 768 bestanden |
 | Taal in commentaar en docstrings | conventiecheck | 16087 regels in 1181 bestanden |
 | Niet meer commentaar dan code | conventiecheck | 80 functies in 65 bestanden |
+| Lagen, en geen cycli tussen lagen | `import-linter`, het `layers`-contract in `pyproject.toml` | 57 import-paren |
 
-De aantallen zijn de meting van opschoonronde 1. De ruff-getallen zijn de overtredingen in `opi/`
+De aantallen zijn de meting van opschoonronde 1, op de import-paren na: die zijn de meting van
+opschoonronde 6, die ze van 183 naar 57 bracht. De ruff-getallen zijn de overtredingen in `opi/`
 zonder `migrations`; de baseline noteert per bestand welke regel, en dat zijn 700 regels in 315
 bestanden. De conventiecheck meet `opi/` en `tests/`, en zijn baseline telt 27074 regels in 1199
 bestanden.
@@ -233,6 +235,7 @@ task lint-baseline                  # ruff: een regel die een bestand niet meer 
 task lint-baseline-check            # ruff: faalt op een verouderde regel
 task code-conventions               # de conventiecheck zoals de hook hem draait
 task code-conventions-baseline      # conventies: verlaagt de aantallen naar wat de code nu is
+task lint-imports                   # het layers-contract; faalt op een nieuwe pijl omhoog en op een overbodige uitzondering
 ```
 
 De ruff-baseline is `operations-manager/python/ruff-baseline.toml`, binnengehaald met `extend`;
@@ -241,6 +244,20 @@ in plaats van elkaar overschrijven. De conventiebaseline is
 `scripts/code-conventions-baseline.json`. Beide hangen in `.pre-commit-config.yaml`, en CI draait
 pre-commit. `tests/test_lint_baseline.py` faalt als de ruff-baseline een regel bevat die een
 bestand niet meer overtreedt, zodat een opgeruimd bestand ook echt van de lijst gaat.
+
+Het layers-contract staat in `operations-manager/python/pyproject.toml`, met de lagen uit
+hoofdstuk 5 en de 57 pijlen omhoog als `ignore_imports`, per oorzaak gegroepeerd en met exacte
+paren in plaats van wildcards. De ratchet zit in `unmatched_ignore_imports_alerting = "error"`:
+een uitzondering die niet meer nodig is maakt de gate rood, net als een nieuwe pijl omhoog. De
+lijst kan daarmee alleen krimpen, en wie een pijl oplost haalt zijn regel in dezelfde PR weg. De
+gate hangt als hook `lint-imports` in `.pre-commit-config.yaml`, dus hij draait ook in CI. Een
+`independence`-contract hoeft er niet naast: de lagen die elkaar niet mogen importeren staan in
+het contract met `|` gescheiden, die het wel mogen met `:`. Wat het contract niet ziet is een
+cyclus BINNEN een laag, zoals twee modules in `services` die elkaar importeren, en een package
+onder `opi/` dat in geen laag staat: `opi.migrations` valt er bewust buiten, maar een nieuw
+package valt er ook buiten tot iemand het in de lijst zet. Een import die alleen onder
+`TYPE_CHECKING` staat ziet hij ook niet: `exclude_type_checking_imports = true` laat hem buiten
+beschouwing, want hij is geen koppeling op looptijd.
 
 Wat de ruff-ratchet niet ziet: hij zet een regel per BESTAND stil, dus een tweede `C901` in een
 bestand dat al voor `C901` op de lijst staat valt er niet door. Elke andere regel in dat bestand
@@ -251,7 +268,6 @@ wel, en de conventiecheck telt wel per regel. Fijner dan per bestand zou een `no
 
 | Regel | Gate | Wanneer |
 |---|---|---|
-| Lagen en geen cycli | `import-linter` met een `layers`-contract en `independence`-contracten | na de ronde die de modules verplaatst, want het doelbeeld in hoofdstuk 5 is nog geen indeling |
 | Modulelengte | een check in de Taskfile op het aantal regels per bestand | als de grote bestanden zijn opgesplitst; nu zou de baseline de hele lijst zijn |
 | pyright `standard` | `typeCheckingMode` in `pyproject.toml` | ronde voor ronde, zie hoofdstuk 8 |
 

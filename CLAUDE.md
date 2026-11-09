@@ -178,8 +178,9 @@ which also states which folder is for what (`docs/development/` vs `features/` v
 - `docs/development/services.md` - the service system: what a service owns, how config, forms,
   provisioning, manifests and approvals hook in, and how to add one.
 - `docs/development/coding-rules.md` - de regels waar code hier aan voldoet, en de gates die ze
-  afdwingen: de ruff-ratchet (`operations-manager/python/ruff-baseline.toml`) en de conventiecheck
-  op taal en commentaardichtheid (`scripts/code-conventions-baseline.json`). Beide baselines kunnen
+  afdwingen: de ruff-ratchet (`operations-manager/python/ruff-baseline.toml`), de conventiecheck
+  op taal en commentaardichtheid (`scripts/code-conventions-baseline.json`) en het layers-contract
+  van import-linter (`operations-manager/python/pyproject.toml`). Alle drie de baselines kunnen
   alleen krimpen, dus bestaande overtredingen blijven staan en nieuwe worden geweigerd.
 
 When introducing a new feature, create a markdown document in `features/` with: what it is, how to use it, configuration, examples, dependencies. Use kebab-case filenames, and add a line for it to `features/README.md`.
