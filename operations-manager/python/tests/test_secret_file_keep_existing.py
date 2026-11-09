@@ -215,7 +215,7 @@ class TestDeployment:
         git.get_working_dir = AsyncMock(return_value=working_dir)
         spec = SecretFileSpec(secret_name=NAME, secret_pairs={"cookie-secret": value}, keep_existing_values=True)
         with (
-            patch("opi.manager.project_manager.get_decoded_project_private_key", AsyncMock(return_value=PRIVATE_KEY)),
+            patch("opi.manager.project_manager.project_private_key_or_none", return_value=PRIVATE_KEY),
             patch(
                 "opi.manager.project_manager.collect_manifest_contributions",
                 return_value=[ManifestContribution(secret_files=[spec])],
