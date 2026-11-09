@@ -1,30 +1,28 @@
-"""Unit test for ProjectManager._emit_acme_network_policy.
+"""Unit test for ``emit_acme_network_policy``.
 
 Voor RC-336 opende de ACME-policy poort 80 en 8089 voor elke pod in de namespace. De
 geextraheerde helper mag alleen de HTTP-01-solver selecteren, alleen poort 8089 openen
-en de bron beperken tot de router van het cluster. Mocking volgt het patroon van
-test_sleep_mode_emit.py: de manifest generator wordt vervangen, de methode wordt
-rechtstreeks aangeroepen.
+en de bron beperken tot de router van het cluster.
 """
 
 from unittest.mock import MagicMock
 
 from opi.core.cluster_config import get_ingress_controller_selector
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project.emitters import emit_acme_network_policy
 
 
 def _emit(cluster_name: str = "odcn-production") -> tuple[str, dict]:
-    pm = ProjectManager.__new__(ProjectManager)
-    pm._manifest_generator = MagicMock()
-    pm._manifest_generator.create_manifest_file.return_value = "/tmp/out/acme-http-prod-network-policy.yaml"
+    manifest_generator = MagicMock()
+    manifest_generator.create_manifest_file.return_value = "/tmp/out/acme-http-prod-network-policy.yaml"
 
-    result = pm._emit_acme_network_policy(
+    result = emit_acme_network_policy(
+        manifest_generator,
         deployment_name="prod",
         namespace="rig-demo",
         cluster_name=cluster_name,
         output_dir="/tmp/out",
     )
-    _, kwargs = pm._manifest_generator.create_manifest_file.call_args
+    _, kwargs = manifest_generator.create_manifest_file.call_args
     return result, kwargs
 
 

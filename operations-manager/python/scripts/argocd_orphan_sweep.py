@@ -234,7 +234,7 @@ def helmfile_projects(projects_repo: Path) -> set[str]:
 
     Their manifests come from charts OPI passes through, not from OPI's own templates, so
     what is theirs is not this tool's to judge. Same test OPI applies
-    (ProjectManager._deployment_uses_helmfile).
+    (``deployment_uses_helmfile`` in ``opi/manager/project/helm_deployment.py``).
     """
     return {
         name

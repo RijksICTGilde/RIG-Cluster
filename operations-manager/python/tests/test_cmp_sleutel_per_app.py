@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.manager.project.infrastructure import Infrastructure
 from ruamel.yaml import YAML
 from tests.cmp_plugin import plugin, render_script
 from tests.programma import echt_programma
@@ -249,9 +250,9 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         from opi.manager.project_manager import ProjectManager
 
         pm = ProjectManager(project_file_relative_path="projects/demo.yaml")
-        monkeypatch.setattr("opi.manager.project_manager.get_project_public_key", lambda _: "age1demo")
+        monkeypatch.setattr("opi.manager.project.infrastructure.get_project_public_key", lambda _: "age1demo")
         monkeypatch.setattr(
-            "opi.manager.project_manager.get_decoded_project_private_key",
+            "opi.manager.project.infrastructure.get_decoded_project_private_key",
             AsyncMock(return_value="AGE-SECRET-KEY-1DEMO"),
         )
         return pm
@@ -264,7 +265,7 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         monkeypatch.setattr(manager, "_kubectl_connector", kubectl)
         monkeypatch.setattr(manager._sops_handler, "kubectl", kubectl)
 
-        await manager._ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
+        await Infrastructure(manager).ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
 
         sjablonen = [call.args[0] for call in kubectl.apply_manifest.await_args_list]
         assert sjablonen == ["manifests/cmp-sops-key-reader.yaml.jinja"]
@@ -281,7 +282,7 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         monkeypatch.setattr(manager._sops_handler, "kubectl", kubectl)
 
         with pytest.raises(RuntimeError, match="rig-demo"):
-            await manager._ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
+            await Infrastructure(manager).ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
 
     async def test_een_ontbrekend_secret_levert_het_secret_en_de_rol_op(
         self, manager: Any, monkeypatch: pytest.MonkeyPatch
@@ -291,7 +292,7 @@ class TestDeRolGaatBijElkeVerwerkingMee:
         monkeypatch.setattr(manager, "_kubectl_connector", kubectl)
         monkeypatch.setattr(manager._sops_handler, "kubectl", kubectl)
 
-        await manager._ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
+        await Infrastructure(manager).ensure_sops_secret_in_namespace("rig-demo", {"name": "demo"})
 
         sjablonen = [call.args[0] for call in kubectl.apply_manifest.await_args_list]
         assert sjablonen == [

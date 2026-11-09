@@ -10,18 +10,16 @@ de gebruiker merkte niets.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
 
 import pytest
-from opi.manager.project_manager import HELMFILE_RESERVED_FILENAMES, ProjectManager
+from opi.manager.project.helm_deployment import HELMFILE_RESERVED_FILENAMES, write_helmfile_custom_files
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 def _write(tmp_path: Path, filename: str) -> list[str]:
-    manager = MagicMock(spec=ProjectManager)
-    return ProjectManager._write_helmfile_custom_files(manager, {"files": {filename: "inhoud"}}, {}, str(tmp_path))
+    return write_helmfile_custom_files({"files": {filename: "inhoud"}}, {}, str(tmp_path))
 
 
 @pytest.mark.parametrize("filename", sorted(HELMFILE_RESERVED_FILENAMES))

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.kubectl import KubectlExecutionError
+from opi.manager.project.infrastructure import Infrastructure
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_key_secret import ProjectKeySecretHandler
 
@@ -97,17 +98,17 @@ async def test_one_loop_covers_the_race_and_the_caller_does_not_retry_again():
         get_sops_secret_from_namespace=AsyncMock(return_value=None),
         delete_resource=AsyncMock(),
     )
-    manager = ProjectManager.__new__(ProjectManager)
-    manager._kubectl_connector = kubectl
-    manager._sops_handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
+    host = ProjectManager.__new__(ProjectManager)
+    host._kubectl_connector = kubectl
+    host._sops_handler = ProjectKeySecretHandler(kubectl_connector=kubectl)
 
     with (
-        patch("opi.manager.project_manager.get_project_public_key", return_value="age1x"),
-        patch("opi.manager.project_manager.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
+        patch("opi.manager.project.infrastructure.get_project_public_key", return_value="age1x"),
+        patch("opi.manager.project.infrastructure.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
         patch("asyncio.sleep", new=AsyncMock()),
         pytest.raises(RuntimeError),
     ):
-        await manager._ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
+        await Infrastructure(host).ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
 
     # 1, 2, 4, 8, 16, 29 seconds of waiting: one series, not ten times a short one.
     assert kubectl.apply_manifest.await_count == 7

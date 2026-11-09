@@ -169,7 +169,7 @@ def project_file(public_key: str, wrapped_private_key: str) -> str:
 
     Een deployment op dit cluster, want wat het opstarten ermee doet is de namespace en het
     sleutel-Secret neerzetten. Het AGE-sleutelpaar hoort erbij: zonder publieke sleutel
-    weigert ``_ensure_sops_secret_in_namespace``, en de private helft is ingepakt met de
+    weigert ``ensure_sops_secret_in_namespace``, en de private helft is ingepakt met de
     platformsleutel zoals een echt projectbestand hem draagt.
 
     De schemaversie komt uit het schema zelf en staat als tekenreeks in het bestand, en het

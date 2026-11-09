@@ -166,7 +166,7 @@ def tenant_baseline(
 
 
 def namespace_policies(*, namespace: str, project_name: str) -> list[dict[str, Any]]:
-    """De namespace-brede policies, met de variabelen van ``_emit_namespace_network_policies``.
+    """De namespace-brede policies, met de variabelen van ``emit_namespace_network_policies``.
 
     Een default-deny, de baseline voor pods zonder deployment-label en de toegang tot
     een toegewijd databasecluster in dezelfde namespace.
@@ -209,7 +209,7 @@ def acme_http(
     namespace: str,
     deployment_name: str,
 ) -> dict[str, Any]:
-    """De acme-http-policy, met de variabelen van ``_emit_acme_network_policy``.
+    """De acme-http-policy, met de variabelen van ``emit_acme_network_policy``.
 
     Alleen de HTTP-01-solver van cert-manager, en alleen vanaf de router.
     """

@@ -288,7 +288,7 @@ def test_the_scenario_is_a_valid_project_file(scenario: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# The Helm paths: _process_helm_chart_deployment and _process_helmfile_deployment
+# The Helm paths: process_helm_chart_deployment and process_helmfile_deployment
 # ---------------------------------------------------------------------------
 #
 # A separate matrix because a chart comes from another git repository. The clone is a fake
@@ -325,13 +325,10 @@ async def _render_helm(
     workspace = MagicMock()
     workspace.get_working_dir = AsyncMock(return_value=str(output_root))
 
-    # Two patch targets, because the two clone routes reach the class differently: the chart
-    # route imports it inside the method, the helmfile route uses the module import.
     git = _fake_git_connector(HELM_GOLDEN_DIR / scenario / "chart")
     with (
-        patch("opi.connectors.git.GitConnector", git),
-        patch("opi.manager.project_manager.GitConnector", git),
-        patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail") as encrypt,
+        patch("opi.manager.project.helm_deployment.GitConnector", git),
+        patch("opi.manager.project.helm_deployment.encrypt_to_sops_files_or_fail") as encrypt,
         freeze_time(FROZEN_NOW),
     ):
         for deployment in project["deployments"]:

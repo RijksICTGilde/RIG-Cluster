@@ -186,9 +186,12 @@ class TestDeSchrijversGaanLangsHetAnker:
         }
 
         with (
-            patch("opi.core.cluster_config.get_infrastructure_namespace", return_value="rig-prd-demo-infra"),
-            patch("opi.core.cluster_config.get_storage_class_name", return_value="standard"),
-            patch("opi.generation.manifests.render_template", return_value="kind: Secret\n"),
+            patch(
+                "opi.manager.project.infrastructure.get_infrastructure_namespace",
+                return_value="rig-prd-demo-infra",
+            ),
+            patch("opi.manager.project.infrastructure.get_storage_class_name", return_value="standard"),
+            patch("opi.manager.project.infrastructure.render_template", return_value="kind: Secret\n"),
             pytest.raises(RuntimeError) as exc,
         ):
             await manager._create_infrastructure_resources(project_data, "odcn-production")

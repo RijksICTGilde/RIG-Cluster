@@ -121,8 +121,8 @@ dragen:
 - `opi/manager/db_console_manager.py` bouwt de `DATABASE_URL` voor pgweb en dbgate zonder
   `sslmode`. Dat is een sessie die blijft openstaan, dus hij is in de metriek ook echt
   zichtbaar.
-- `opi/manager/project_manager.py` toetst met `_test_infrastructure_database_connection` of
-  een dedicated CNPG-cluster al draait. Die clusters staan in deze feature buiten scope.
+- `opi/manager/project/infrastructure.py` toetst met `test_infrastructure_database_connection`
+  of een dedicated CNPG-cluster al draait. Die clusters staan in deze feature buiten scope.
 - `opi/services/secrets.py` zet de connectiestring die OPI aan tenant-apps meegeeft. Die kiezen
   bewust zelf, zie "Wat een team met zo'n app moet doen" hieronder.
 

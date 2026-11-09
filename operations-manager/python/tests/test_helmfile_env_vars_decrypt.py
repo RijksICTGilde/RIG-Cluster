@@ -44,9 +44,13 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.manager.project.helm_deployment import HelmDeployment
 from opi.utils.age import generate_age_key_pair
 from opi.utils.sops import decrypt_sops_with_key, sops_filenames
 from ruamel.yaml import YAML
+
+#: Where the helmfile path binds its module names, and so where a patch has to land.
+_HELM = "opi.manager.project.helm_deployment"
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -89,12 +93,8 @@ def _deployment(env_vars: dict[str, str]) -> dict[str, Any]:
 
 
 def _wire(manager: Any, public_key: str = "age1demo") -> None:
-    """Alles rond het cmp-env-blok: git-clone, values-extractie, secrets, SOPS."""
+    """What the host supplies: the project file and the values extraction."""
     manager.get_contents = AsyncMock(return_value={"name": "docs", "config": {"age-public-key": public_key}})
-    manager._get_helm_values_context = AsyncMock(return_value={})
-    manager._clone_helmfile_source = AsyncMock(return_value=("unused", None))
-    manager._write_helmfile_custom_files = MagicMock(return_value={})
-    manager._create_deployment_secrets = AsyncMock(return_value=[])
     manager._project_file_handler = MagicMock()
     manager._project_file_handler.get_helmfile_by_name = MagicMock(return_value={"name": "docs"})
     manager._project_file_handler.extract_helmfile_values = AsyncMock(return_value={})
@@ -111,13 +111,18 @@ async def _process(
 ) -> MagicMock:
     """Run the helmfile path, and return the mocked key lookup."""
     with ExitStack() as stack:
-        stack.enter_context(patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-docs"))
+        for target_name, replacement in (
+            ("get_helm_values_context", AsyncMock(return_value={})),
+            ("create_deployment_secrets", AsyncMock(return_value=[])),
+        ):
+            stack.enter_context(patch.object(HelmDeployment, target_name, replacement))
+        stack.enter_context(patch(f"{_HELM}.clone_helmfile_source", AsyncMock(return_value=("unused", None))))
+        stack.enter_context(patch(f"{_HELM}.write_helmfile_custom_files", MagicMock(return_value={})))
+        stack.enter_context(patch(f"{_HELM}.get_prefixed_namespace", return_value="rig-docs"))
         if not echte_sops:
-            stack.enter_context(patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail"))
-        sleutelopzoeker = stack.enter_context(
-            patch("opi.manager.project_manager.project_private_key_or_none", return_value=project_key)
-        )
-        await manager._process_helmfile_deployment(deployment, MagicMock(), str(target))
+            stack.enter_context(patch(f"{_HELM}.encrypt_to_sops_files_or_fail"))
+        sleutelopzoeker = stack.enter_context(patch(f"{_HELM}.project_private_key_or_none", return_value=project_key))
+        await HelmDeployment(manager).process_helmfile_deployment(deployment, MagicMock(), str(target))
         return sleutelopzoeker
 
 
@@ -133,7 +138,7 @@ async def test_versleutelde_env_vars_openen_met_de_projectsleutel(tmp_path: Path
     _wire(manager)
 
     deployment = _deployment({"EERSTE": AGE_BLOCK_1, "TWEEDE": AGE_BLOCK_2, "PLAT": "ja"})
-    with patch("opi.manager.project_manager.decrypt_password_smart", decrypt):
+    with patch(f"{_HELM}.decrypt_password_smart", decrypt):
         sleutelopzoeker = await _process(manager, deployment, tmp_path)
 
     assert _env_vars_op_schijf(tmp_path) == {
@@ -155,7 +160,7 @@ async def test_platte_env_vars_raken_het_sleutelpad_niet(tmp_path: Path) -> None
     manager = _manager()
     _wire(manager)
 
-    with patch("opi.manager.project_manager.decrypt_password_smart", AsyncMock()) as decrypt:
+    with patch(f"{_HELM}.decrypt_password_smart", AsyncMock()) as decrypt:
         await _process(manager, _deployment({"ALLEEN": "plat"}), tmp_path)
 
     assert _env_vars_op_schijf(tmp_path) == {"ALLEEN": "plat"}
@@ -200,7 +205,7 @@ async def test_een_regeleinde_na_ontsleuteling_wordt_geweigerd(tmp_path: Path) -
 
     decrypt = AsyncMock(return_value="eerste\nARGOCD_APP_NAMESPACE=kaper")
     with (
-        patch("opi.manager.project_manager.decrypt_password_smart", decrypt),
+        patch(f"{_HELM}.decrypt_password_smart", decrypt),
         pytest.raises(ValueError, match=r"value of 'MELDING' contains a newline"),
     ):
         await _process(manager, _deployment({"MELDING": AGE_BLOCK_1}), tmp_path)

@@ -7,7 +7,6 @@ import asyncio
 import base64
 import copy
 import glob
-import hashlib
 import logging
 import os
 import posixpath
@@ -36,14 +35,13 @@ from opi.connectors.git_repo import (
     get_git_repo,
     workspace_from_repo_config,
 )
-from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
+from opi.connectors.kubectl import KubectlConnector
 from opi.core.actor import get_actor
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
     get_ca_certificate_config,
     get_cluster_cidrs,
-    get_database_operator_namespace,
     get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
     get_ingress_cluster_issuer,
@@ -51,15 +49,11 @@ from opi.core.cluster_config import (
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_ingress_tls_enabled,
-    get_letsencrypt_contact_email,
     get_namespace,
     get_ops_egress,
-    get_pod_security_labels,
     get_prefixed_namespace,
     is_reserved_project_name,
-    namespace_labels,
     supports_vpa,
-    uses_capsule,
 )
 from opi.core.config import settings
 from opi.core.metrics import (
@@ -69,13 +63,10 @@ from opi.core.metrics import (
     rollout_phase,
 )
 from opi.generation.manifests import (
-    CMP_ENV_NAME,
-    CMP_ENV_PLAINTEXT_FILENAME,
     CONFIG_HASH_IGNORE_LABEL_KEY,
     CONFIG_HASH_IGNORE_LABEL_VALUE,
     MANIFEST_TEMPLATES_DIR,
     ManifestGenerator,
-    cmp_env_rejection,
 )
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
@@ -93,6 +84,13 @@ from opi.manager.project.attachment_mutations import AttachmentMutations
 from opi.manager.project.component_mutations import ComponentMutations
 from opi.manager.project.database_schema_mutations import DatabaseSchemaMutations
 from opi.manager.project.deployment_mutations import DeploymentMutations
+from opi.manager.project.emitters import emit_letsencrypt_issuer, emit_namespace_network_policies
+from opi.manager.project.helm_deployment import (
+    HelmDeployment,
+    deployment_uses_helm_charts,
+    deployment_uses_helmfile,
+)
+from opi.manager.project.infrastructure import Infrastructure
 from opi.manager.project.registry_mutations import RegistryMutations
 from opi.manager.project.service_config_mutations import ServiceConfigMutations
 from opi.manager.project_validation import validate_project_structure
@@ -114,7 +112,6 @@ from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_d
 from opi.services.catalog.image_registries.resolution import (
     build_rules,
     resolve_deployment_component_image,
-    resolve_project_image,
     set_deployment_component_registry,
 )
 from opi.services.catalog.publish_on_web.domain_config import (
@@ -137,15 +134,15 @@ from opi.services.project_file_handler import (
     extract_service_names_from_component,
     image_is_confirmed_absent,
 )
-from opi.services.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
+from opi.services.project_key_secret import ProjectKeySecretHandler
 from opi.services.project_reconciliation_service import record_reconciliation
 from opi.services.project_schema import ProjectIntegrityError, validate_project_schema
 from opi.services.project_store import get_project_store
 from opi.services.project_utils import (
     RESERVED_PROJECT_NAME_MESSAGE,
-    namespace_level_deployment,
     normalize_container_image,
     project_level_deployment,
+    resolve_deployment_filter,
 )
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
@@ -156,31 +153,19 @@ from opi.services.registry import (
 )
 from opi.services.secrets import (
     BaseSecret,
-    DatabaseSecret,
     KeycloakSecret,
-    MinIOSecret,
     PlatformSecret,
-    RedisSecret,
     UserSecret,
 )
 from opi.services.tasks import progress_steps as steps
 from opi.services.tasks.async_task_service import AsyncTaskService
 from opi.services.tasks.task_errors import TaskInputError
 from opi.utils.age import (
-    carries_encrypted_value,
-    decrypt_password_smart,
-    get_decoded_project_private_key,
     get_project_public_key,
     project_private_key_or_none,
 )
-from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.env_vars import (
     substitute_known_variables,
-)
-from opi.utils.fs_paths import (
-    reject_escaping_symlinks,
-    safe_join,
-    single_segment,
 )
 
 # Environment variables are now generated using service definitions
@@ -192,13 +177,8 @@ from opi.utils.naming import (
     generate_bare_domain_hostname,
     generate_cluster_manifest_folder_path,
     generate_deployment_manifest_path,
-    generate_external_hostname,
-    generate_helm_values_filename,
-    generate_infrastructure_manifest_path,
     generate_ingress_name_from_path,
-    generate_issuer_manifest_name,
     generate_issuer_name,
-    generate_issuer_secret_name,
     generate_manifest_name,
     generate_network_policy_manifest_name,
     generate_network_policy_name,
@@ -213,7 +193,6 @@ from opi.utils.naming import (
     generate_unique_name,
     get_component_ingress_map,
 )
-from opi.utils.render_sources import path_inside_clone, require_allowed_render_source
 from opi.utils.sops import (
     SOPS_SUFFIX,
     TO_SOPS_SUFFIX,
@@ -223,9 +202,6 @@ from opi.utils.sops import (
 )
 from opi.utils.yaml_util import (
     YAMLError,
-    dump_yaml_for_go,
-    dump_yaml_for_go_unfolded,
-    load_yaml_round_trip,
     load_yaml_safe,
 )
 
@@ -237,30 +213,10 @@ if TYPE_CHECKING:
     from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
     from opi.services.catalog.image_registries.rules import ResolvedImage
 
-# Bestandsnamen waar de renderketen zelf betekenis aan geeft: een helmfile-bron die er een
-# van meebrengt, zou de gegenereerde deployment overschrijven.
-HELMFILE_RESERVED_FILENAMES = frozenset(
-    {
-        "kustomization.yaml",
-        "kustomization.yml",
-        "decrypt-sops.yaml",
-        CMP_ENV_PLAINTEXT_FILENAME,
-        ".helmfile-entry",
-        *sops_filenames("values"),
-        *sops_filenames(CMP_ENV_NAME),
-    }
-)
-
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
 
 logger = logging.getLogger(__name__)
-
-_EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
-
-# ArgoCD reports a CNPG cluster healthy as soon as the pod is Ready, which is before the
-# primary accepts connections. This is the budget for that gap.
-DATABASE_CONNECT_TIMEOUT_SECONDS = 180
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
@@ -310,11 +266,6 @@ def _deployment_names_for_paths(paths: Iterable[str], yaml_doc: dict[str, Any] |
     return list(dict.fromkeys(names))
 
 
-#: Vingerafdrukken van infrastructuur-credentials die in dit proces al met succes getoetst
-#: zijn. Zie _test_infrastructure_database_connection.
-_validated_infrastructure_credentials: set[str] = set()
-
-
 def _remote_identity(repo_config: dict[str, str]) -> tuple[str, str, str]:
     """De remote waar een repo-config naar wijst: URL zonder credentials, branch en pad.
 
@@ -326,21 +277,6 @@ def _remote_identity(repo_config: dict[str, str]) -> tuple[str, str, str]:
         repo_config.get("branch", "main"),
         (repo_config.get("path") or "").strip("/"),
     )
-
-
-def _resolve_deployment_filter(deployment_name: str | None, deployment_names: list[str] | None) -> list[str] | None:
-    """Normalize the single/plural deployment-filter arguments into one list.
-
-    Returns None when no filter is requested (process all deployments). When a
-    list is returned it is the exhaustive set of deployment names to target -
-    an empty list therefore means *zero* deployments, not "all". ``deployment_names``
-    takes precedence over the singular ``deployment_name`` convenience argument.
-    """
-    if deployment_names is not None:
-        return deployment_names
-    if deployment_name is not None:
-        return [deployment_name]
-    return None
 
 
 async def _deployments_being_deleted(project_name: str) -> dict[str, str]:
@@ -561,20 +497,6 @@ def _looks_like_render_failure(detail: str | None) -> bool:
         return False
     lowered = detail.lower()
     return any(marker in lowered for marker in _RENDER_FAILURE_MARKERS)
-
-
-def _clear_destination(path: str) -> None:
-    """Haal `path` weg zodat een kopie die symlinks behoudt er niet op stuit.
-
-    `os.symlink` en een geneste symlink in `copytree` weigeren op een bestaande
-    bestemming, en bij een tweede uitrol staat de vorige ronde er nog.
-    """
-    if not os.path.lexists(path):
-        return
-    if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path)
-    else:
-        os.remove(path)
 
 
 @dataclass
@@ -890,7 +812,7 @@ class ProjectManager:
 
         # Filter by deployment name(s) if requested. ``is not None`` (not truthiness)
         # so an empty target list correctly resolves to zero deployments.
-        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        targets = resolve_deployment_filter(deployment_name, deployment_names)
         if targets is not None:
             target_set = set(targets)
             deployments = [d for d in deployments if d.get("name") in target_set]
@@ -1680,930 +1602,24 @@ class ProjectManager:
         deployment_names: list[str] | None = None,
         known_namespace_labels: dict[str, dict[str, str]] | None = None,
     ) -> bool:
-        """
-        Check and create namespaces for all deployments in the project for this cluster.
-
-        Args:
-            deployment_name: Optional single deployment to process
-            deployment_names: Optional explicit set of deployments to process
-                (takes precedence over ``deployment_name``)
-            known_namespace_labels: namespace -> its labels, as read in one call by the
-                caller. Given this, an existing namespace with the right labels costs no
-                kubectl invocation at all. Startup passes it because it walks every
-                project; per-request callers leave it None and each check talks to the
-                cluster, which is what you want for a single deployment.
-
-        Returns:
-            True if all namespaces were checked/created successfully
-        """
-
-        project_data: dict[str, str | list | dict[str, str]] = await self.get_contents()
-        logger.info(f"Checking namespaces for project: {project_data['name']}")
-
-        # Track namespace creation with progress manager if available
-        progress_manager = self.get_progress_manager()
-        namespace_subtask = None
-        if progress_manager:
-            namespace_subtask = progress_manager.add_task(steps.ENVIRONMENT_SETUP)
-
-        # Get deployments for THIS cluster using helper method
-        deployments = await self.get_deployments(
-            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        """Create the namespaces of this project's deployments; see :class:`Infrastructure`."""
+        return await Infrastructure(self).check_and_create_namespaces(
+            deployment_name, deployment_names, known_namespace_labels
         )
-
-        targets = _resolve_deployment_filter(deployment_name, deployment_names)
-        if targets is not None:
-            logger.info(f"Checking namespaces only for deployment(s): {targets}")
-
-        if not deployments:
-            logger.info(f"No deployments found in project {project_data['name']}")
-            return True
-
-        all_successful = True
-
-        # Deployments share a namespace (one per project, not per deployment), so the
-        # same namespace was checked and labelled once per deployment: 127 rounds for
-        # 44 namespaces at startup. Collapse to the distinct set first.
-        namespaces: dict[str, list[str]] = {}
-        for deployment in deployments:
-            namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast("str", deployment["namespace"]))
-            namespaces.setdefault(namespace, []).append(cast("str", deployment["name"]))
-
-        wanted_labels = namespace_labels(settings.CLUSTER_MANAGER)
-
-        for namespace, deployment_list in namespaces.items():
-            logger.info(
-                f"Checking namespace '{namespace}' for deployment(s) {deployment_list} for project '{project_data['name']}':"
-            )
-
-            if known_namespace_labels is not None:
-                namespace_exists = namespace in known_namespace_labels
-                present = known_namespace_labels.get(namespace, {})
-                labels_are_correct = all(present.get(key) == value for key, value in wanted_labels.items())
-            else:
-                namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
-                labels_are_correct = False  # unknown, so apply them as before
-
-            if namespace_exists:
-                logger.info(f"Namespace '{namespace}' already exists for project '{project_data['name']}'")
-            else:
-                logger.info(f"Creating namespace '{namespace}' for project '{project_data['name']}':")
-                # Create the namespace using shared function
-                await self._create_namespace_with_argocd_label(namespace)
-                labels_are_correct = True  # applied as part of creation
-
-            # Idempotent, but not free: skip it when we already read the right values.
-            if not labels_are_correct:
-                await self._ensure_namespace_labels(namespace)
-
-            if progress_manager:
-                progress_manager.set_namespace(namespace)
-
-        # Complete namespace subtask if progress manager is available
-        if progress_manager and namespace_subtask:
-            if all_successful:
-                progress_manager.complete_task(namespace_subtask)
-            else:
-                progress_manager.fail_task(namespace_subtask, "Failed to create one or more namespaces")
-
-        return all_successful
-
-    async def _create_namespace_with_argocd_label(self, namespace: str) -> None:
-        """
-        Create a Kubernetes namespace with ArgoCD managed-by label.
-
-        This is the shared implementation used by both deployment namespaces
-        and infrastructure namespaces.
-
-        Args:
-            namespace: Full namespace name (with cluster prefix already applied)
-
-        Raises:
-            KubectlExecutionError: If applying the namespace manifest fails.
-            RuntimeError: If Capsule does not assign the tenant label in time.
-        """
-        logger.info(f"Creating namespace '{namespace}'")
-
-        # Create the namespace using the manifest template
-        manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
-
-        # Template variables
-        variables = {
-            "namespace": namespace,
-            "manager": get_argo_namespace(settings.CLUSTER_MANAGER),
-            "pod_security_labels": get_pod_security_labels(settings.CLUSTER_MANAGER),
-        }
-
-        await self._kubectl_connector.apply_manifest(manifest_path, variables)
-
-        # If Capsule is enabled, wait for Capsule to assign the tenant label
-        # before attempting to modify the namespace with additional labels
-        if uses_capsule(settings.CLUSTER_MANAGER):
-            logger.info(f"Cluster uses Capsule, waiting for tenant label assignment on namespace '{namespace}'")
-            capsule_ready = await self._kubectl_connector.wait_for_capsule_tenant_label(namespace, timeout=30)
-
-            if not capsule_ready:
-                raise RuntimeError(
-                    f"Timeout waiting for Capsule to assign tenant label to namespace '{namespace}'. "
-                    "Cannot proceed with namespace configuration."
-                )
-
-        # Nog een keer labelen na het aanmaken: het manifest zet ze al, maar op een cluster
-        # met Capsule komt dit pas langs nadat de tenantlabel-wacht klaar is.
-        await self._ensure_namespace_labels(namespace)
-
-        logger.info(f"Successfully created namespace '{namespace}' with the managed-by and Pod Security labels")
-
-    async def _ensure_namespace_labels(self, namespace: str) -> None:
-        """Ensure the managed-by and Pod Security labels exist on this namespace (idempotent)."""
-        label_result = await self._kubectl_connector.apply_labels_to_resource(
-            resource_type="namespace",
-            resource_name=namespace,
-            labels=namespace_labels(settings.CLUSTER_MANAGER),
-        )
-        if label_result:
-            logger.info(f"Ensured ArgoCD managed-by and Pod Security labels on namespace: {namespace}")
-        else:
-            raise RuntimeError(
-                f"Failed to apply the managed-by and Pod Security labels to namespace '{namespace}'. "
-                "ArgoCD will not be able to manage resources in this namespace."
-            )
-
-    async def _ensure_sops_secret_in_namespace(self, namespace: str, project_data: dict[str, Any]) -> None:
-        """
-        Ensure SOPS secret exists in the given namespace.
-
-        Creates or updates the SOPS secret as needed. This is the shared implementation
-        used by both deployment namespaces and infrastructure namespaces.
-
-        Args:
-            namespace: Full namespace name (with cluster prefix already applied)
-            project_data: Project configuration containing SOPS keys
-
-        Raises:
-            RuntimeError: If SOPS secret creation fails
-        """
-        project_name = project_data.get("name", "unknown")
-        logger.info(f"Checking SOPS secret for project {project_name} in namespace {namespace}")
-
-        public_key = get_project_public_key(project_data)
-        if not public_key:
-            msg = f"Project {project_name} has no AGE public key; a SOPS secret cannot be written without it"
-            raise RuntimeError(msg)
-        private_key = await get_decoded_project_private_key(project_data)
-
-        existing_secret = await self._kubectl_connector.get_sops_secret_from_namespace(namespace, SOPS_SECRET_NAME)
-
-        create_sops_secret = False
-        if existing_secret is None:
-            logger.info(f"SOPS secret not found for project {project_name} in namespace {namespace}")
-            create_sops_secret = True
-        elif public_key not in existing_secret:
-            create_sops_secret = True
-            logger.warning(
-                f"Found existing SOPS secret in namespace {namespace} for project {project_name}. "
-                f"Project has new SOPS keys - the old secret is now obsolete and will be replaced."
-            )
-            try:
-                await self._kubectl_connector.delete_resource("secret", "sops-age-key", namespace)
-                logger.info(f"Deleted old SOPS secret from namespace {namespace}")
-            except Exception as e:
-                logger.warning(f"Failed to delete old SOPS secret (continuing anyway): {e}")
-
-        if create_sops_secret:
-            # The handler owns the retry on the RBAC race; a False is its final answer.
-            if not await self._sops_handler.store_project_sops_key_in_namespace(namespace, private_key, public_key):
-                message = (
-                    f"Failed to create SOPS secret in namespace {namespace}. "
-                    "RBAC permissions may not have propagated for this namespace."
-                )
-                logger.error(message)
-                raise RuntimeError(message)
-            logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
-        else:
-            logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
-            # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
-            # hem niet, en dan rendert ArgoCD dit project niet meer.
-            try:
-                await self._sops_handler.ensure_cmp_key_reader(namespace)
-            except KubectlExecutionError as e:
-                raise RuntimeError(
-                    f"Failed to apply the CMP key reader role ({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {e}"
-                ) from e
-
-    @staticmethod
-    async def _test_infrastructure_database_connection(username: str, password: str, host: str) -> tuple[bool, str]:
-        """
-        Test if infrastructure database credentials are valid by attempting a direct connection.
-
-        This method creates its own connection since it needs to test with the superuser credentials
-        before the infrastructure is fully set up.
-
-        Args:
-            username: Database username to test (typically 'postgres')
-            password: Database password to test
-            host: Database host (namespace-specific service endpoint)
-
-        Returns:
-            Tuple of (success: bool, error_type: str) where error_type is:
-            - "success" if connection successful
-            - "auth_error" if authentication failed (wrong password)
-            - "connection_error" if database not reachable (not running yet)
-            - "unknown_error" for other errors
-        """
-        import socket
-
-        import asyncpg
-
-        # Een geslaagde toets op precies deze (host, gebruiker, wachtwoord) blijft gelden
-        # zolang het proces leeft: het secret is niet veranderd, dus de verbinding opnieuw
-        # opzetten meet hetzelfde (RC-418). Een wachtwoord dat SERVERKANT wijzigt zonder dat
-        # het secret meewijzigt valt hier buiten, maar komt bij de eerste echte
-        # databasehandeling van die ronde alsnog als auth-fout naar boven.
-        memo = hashlib.sha256(f"{host}\n{username}\n{password}".encode()).hexdigest()
-        if memo in _validated_infrastructure_credentials:
-            logger.debug("Infrastructuur-credentials voor %s@%s zijn in dit proces al getoetst", username, host)
-            return True, "success"
-
-        try:
-            # Create a direct connection with the superuser credentials to the postgres database
-            conn = await asyncpg.connect(
-                host=host, port=5432, user=username, password=password, database="postgres", timeout=5
-            )
-            await conn.close()
-            logger.debug(f"Infrastructure database connection test successful for {username}@{host}/postgres")
-            _validated_infrastructure_credentials.add(memo)
-            return True, "success"
-        except asyncpg.InvalidPasswordError as e:
-            # Authentication failed - wrong password
-            logger.debug(f"Infrastructure database authentication failed for user {username}: {e}")
-            return False, "auth_error"
-        except (ConnectionRefusedError, socket.gaierror, OSError) as e:
-            # Database not reachable - likely not running yet or DNS not ready
-            logger.debug(f"Infrastructure database not reachable at {host}: {e}")
-            return False, "connection_error"
-        except Exception as e:
-            # Other errors
-            logger.debug(f"Infrastructure database connection test failed for user {username}: {e}")
-            return False, "unknown_error"
-
-    async def _read_database_cluster_status(self, cluster_name: str, project_name: str) -> dict[str, Any]:
-        """The CNPG Cluster status of the project's dedicated cluster.
-
-        Empty when the resource is absent or unreadable, so a caller cannot tell those
-        apart and must stay silent instead of reporting a cluster as unhealthy.
-        """
-        from opi.core.cluster_config import get_infrastructure_namespace
-        from opi.utils.naming import _sanitize_for_lowercase
-
-        cluster = await self._kubectl_connector.get_namespaced_resource(
-            "clusters.postgresql.cnpg.io",
-            f"{_sanitize_for_lowercase(project_name)}-db",
-            get_infrastructure_namespace(cluster_name, project_name),
-        )
-        if not cluster:
-            return {}
-        status = cluster.get("status", {})
-        return status if isinstance(status, dict) else {}
-
-    @staticmethod
-    def _database_cluster_phase_summary(status: dict[str, Any]) -> str:
-        """What CNPG says about the cluster, as a suffix for a message, or an empty string."""
-        parts = [f"{key}: {status[key]}" for key in ("phase", "phaseReason") if status.get(key)]
-        return f" ({', '.join(parts)})" if parts else ""
-
-    async def _wait_until_database_accepts_connections(
-        self, project_name: str, cluster_name: str, username: str, password: str
-    ) -> None:
-        """Wait until the project's PostgreSQL primary answers a superuser query.
-
-        On 3 November 2026 provisioning of pocpl-0g8 died on a ConnectionRefusedError
-        straight after ArgoCD called the infrastructure healthy, and the task failed
-        permanently.
-
-        Raises:
-            RuntimeError: If no connection was accepted within the timeout.
-        """
-        from opi.core.cluster_config import get_database_cluster_service_endpoint
-
-        host = get_database_cluster_service_endpoint(cluster_name, project_name)
-
-        async def _select_one() -> None:
-            conn = await asyncpg.connect(
-                host=host, port=5432, user=username, password=password, database="postgres", timeout=5
-            )
-            try:
-                await conn.fetchval("SELECT 1")
-            finally:
-                await conn.close()
-
-        try:
-            await retry_on_connect_error(
-                _select_one,
-                DATABASE_CONNECT_TIMEOUT_SECONDS,
-                f"PostgreSQL at {host}",
-                retry_on=(OSError,),
-            )
-        except OSError as e:
-            summary = self._database_cluster_phase_summary(
-                await self._read_database_cluster_status(cluster_name, project_name)
-            )
-            raise RuntimeError(
-                f"Database of project '{project_name}' accepts no connections at {host} after "
-                f"{DATABASE_CONNECT_TIMEOUT_SECONDS}s{summary}: {e}"
-            ) from e
-        logger.info(f"Database of project '{project_name}' accepts connections at {host}")
-
-    async def _warn_when_database_cluster_not_ready(
-        self,
-        project_name: str,
-        cluster_name: str,
-        progress_manager: PersistentTaskProgressManager | None,
-        infra_task: str | None,
-    ) -> None:
-        """Report a dedicated cluster that CNPG itself does not call Ready, without blocking.
-
-        The database answering queries is what provisioning needs; the operator reaching
-        the instances is what backup and failover need. A cluster whose Ready condition
-        stays false therefore gets a warning instead of a failure.
-        """
-        status = await self._read_database_cluster_status(cluster_name, project_name)
-        if not status:
-            return
-
-        conditions = status.get("conditions") or []
-        ready = next((c for c in conditions if isinstance(c, dict) and c.get("type") == "Ready"), None)
-        if ready and ready.get("status") == "True":
-            return
-
-        summary = self._database_cluster_phase_summary(status)
-        logger.warning(
-            f"CNPG does not report the database cluster of project '{project_name}' as Ready{summary}. "
-            f"The database accepts connections, but the operator cannot reach the instances, so backups "
-            f"and failover through the operator are not guaranteed."
-        )
-        if progress_manager and infra_task:
-            warning_step = progress_manager.add_subtask(infra_task, steps.database_not_ready(summary))
-            progress_manager.complete_task(warning_step)
-
-    async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
-        """
-        Create infrastructure namespace for namespace-specific PostgreSQL databases.
-
-        This namespace hosts:
-        - CloudNativePG database cluster
-        - Superuser credentials secret
-        - Database-related infrastructure resources
-
-        Following the same pattern as regular deployment namespaces:
-        - Creates namespace with ArgoCD managed-by label
-        - Creates SOPS secret for secret decryption
-
-        Args:
-            project_data: The project configuration data
-            cluster_name: Name of the cluster
-
-        Raises:
-            RuntimeError: If namespace creation fails
-        """
-        from opi.core.cluster_config import get_infrastructure_namespace
-
-        project_name = project_data.get("name")
-        if not project_name:
-            raise ValueError("Project name is required in project_data")
-
-        # Get infrastructure namespace with cluster-specific prefix
-        infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
-
-        logger.info(f"Checking infrastructure namespace '{infrastructure_namespace}' for project '{project_name}'")
-
-        # Track namespace creation with progress manager if available
-        progress_manager = self.get_progress_manager()
-        namespace_subtask = None
-        if progress_manager:
-            namespace_subtask = progress_manager.add_task(steps.ENVIRONMENT_SETUP, subject="projectdatabase")
-
-        try:
-            # Check if namespace exists, create if needed (using shared function)
-            namespace_exists = await self._kubectl_connector.namespace_exists(infrastructure_namespace)
-            if not namespace_exists:
-                await self._create_namespace_with_argocd_label(infrastructure_namespace)
-            else:
-                logger.info(
-                    f"Infrastructure namespace '{infrastructure_namespace}' already exists for project '{project_name}'"
-                )
-
-            # Always ensure the managed-by and Pod Security labels exist (idempotent)
-            await self._ensure_namespace_labels(infrastructure_namespace)
-
-            # Create SOPS secret in the infrastructure namespace (using shared function)
-            await self._ensure_sops_secret_in_namespace(infrastructure_namespace, project_data)
-
-            if progress_manager and namespace_subtask:
-                progress_manager.complete_task(namespace_subtask)
-
-        except Exception as e:
-            logger.error(f"Failed to create infrastructure namespace '{infrastructure_namespace}': {e}")
-            if progress_manager and namespace_subtask:
-                progress_manager.fail_task(namespace_subtask, f"Failed to create infrastructure namespace: {e}")
-            raise RuntimeError(f"Cannot create infrastructure namespace '{infrastructure_namespace}': {e}") from e
-
-    async def _create_infrastructure_resources(self, project_data: dict[str, Any], cluster_name: str) -> None:
-        """
-        Create and deploy infrastructure resources for namespace-specific PostgreSQL databases.
-
-        This method orchestrates the complete infrastructure provisioning workflow:
-        1. Generate database superuser credentials secret
-        2. Generate CloudNativePG cluster manifest
-        3. Generate infrastructure kustomization.yaml
-        4. Commit manifests to deployment Git repository
-        5. Create ArgoCD infrastructure application (with sync-wave 0)
-        6. Refresh user-applications to detect new infrastructure application
-        7. Wait for infrastructure application to be created by ArgoCD
-        8. Refresh the infrastructure application to pick up latest changes
-        9. Wait for ArgoCD to report infrastructure as Synced + Healthy
-        10. Wait until the database accepts connections, which ArgoCD does not report
-        11. Warn when CNPG itself does not call the cluster Ready
-
-        Args:
-            project_data: The project configuration data
-            cluster_name: Name of the cluster
-
-        Raises:
-            RuntimeError: If infrastructure provisioning fails
-            TimeoutError: If infrastructure doesn't become ready within timeout
-        """
-        from opi.core.cluster_config import get_infrastructure_namespace, get_storage_class_name
-        from opi.generation.manifests import render_template
-        from opi.utils.naming import _sanitize_for_lowercase
-        from opi.utils.passwords import generate_secure_password
-        from opi.utils.sops import encrypt_to_sops_files_or_fail
-
-        project_name = project_data.get("name")
-        if not project_name:
-            raise ValueError("Project name is required in project_data")
-
-        # Get configuration
-        infrastructure_namespace = get_infrastructure_namespace(cluster_name, project_name)
-        # Initialize database manager for configuration only (skip credential check during bootstrap)
-        db_manager = await self._ensure_database_manager(skip_credential_check=True)
-        database_cluster_config = db_manager._get_database_cluster_config(project_data, cluster_name)
-        storage_class = get_storage_class_name(cluster_name)
-        project_clean = _sanitize_for_lowercase(project_name)
-
-        logger.info(f"Creating infrastructure resources for project '{project_name}' in cluster '{cluster_name}'")
-
-        # Track infrastructure creation with progress manager
-        progress_manager = self.get_progress_manager()
-        infra_task = None
-        if progress_manager:
-            infra_task = progress_manager.add_task(steps.PROJECT_DATABASE_SETUP)
-
-        try:
-            # STEP 1: Check for existing superuser credentials and validate them
-            from opi.core.cluster_config import get_database_cluster_service_endpoint
-            from opi.utils.naming import generate_postgres_superuser_secret_name
-
-            superuser_secret_name = generate_postgres_superuser_secret_name(project_name)
-            existing_secret = await self._kubectl_connector.get_secret(superuser_secret_name, infrastructure_namespace)
-
-            if existing_secret:
-                logger.info(f"Found existing superuser secret for project '{project_name}', validating credentials")
-                superuser_username = existing_secret.get("username", "postgres")
-                superuser_password = existing_secret.get("password")
-
-                if not superuser_password:
-                    raise RuntimeError(
-                        f"Superuser secret '{superuser_secret_name}' exists but has no password. "
-                        f"Manual intervention required to fix or delete the secret."
-                    )
-
-                # Test the credentials against the PostgreSQL cluster
-                db_host = get_database_cluster_service_endpoint(cluster_name, project_name)
-                credentials_valid, error_type = await self._test_infrastructure_database_connection(
-                    username=superuser_username,
-                    password=superuser_password,
-                    host=db_host,
-                )
-
-                if not credentials_valid:
-                    if error_type == "auth_error":
-                        # Actual authentication failure - wrong password
-                        raise RuntimeError(
-                            f"Superuser credentials for project '{project_name}' are invalid. "
-                            f"The password in secret '{superuser_secret_name}' does not match the PostgreSQL cluster. "
-                            f"This usually happens when the secret was regenerated after the cluster was created. "
-                            f"Manual intervention required: either restore the correct password in the secret, "
-                            f"or delete both the secret and the PostgreSQL cluster to recreate from scratch."
-                        )
-                    elif error_type == "connection_error":
-                        # Database not reachable yet - assume credentials are correct and continue
-                        logger.info(
-                            f"Cannot verify superuser credentials for project '{project_name}' because database is not reachable yet. "
-                            f"Assuming existing credentials are correct and proceeding with infrastructure creation."
-                        )
-                    else:
-                        # Unknown error - log warning but continue
-                        logger.warning(
-                            f"Could not verify superuser credentials for project '{project_name}' due to unknown error. "
-                            f"Assuming existing credentials are correct and proceeding with infrastructure creation."
-                        )
-                else:
-                    logger.info(f"Existing superuser credentials validated successfully for project '{project_name}'")
-            else:
-                # No existing secret - generate new credentials for first-time creation
-                logger.info(
-                    f"No existing superuser secret found, generating new credentials for project '{project_name}'"
-                )
-                superuser_username = "postgres"
-                superuser_password = generate_secure_password(
-                    min_uppercase=3, min_lowercase=3, min_digits=3, total_length=32
-                )
-
-            # STEP 2: Create secret manifest with validated or new credentials
-            secret_manifest = render_template(
-                "generic-secret.yaml.to-sops.jinja",
-                {
-                    "name": superuser_secret_name,
-                    "namespace": infrastructure_namespace,
-                    "secret_type": "postgres-credentials",
-                    "secret_k8s_type": "kubernetes.io/basic-auth",
-                    "secret_pairs": {"username": superuser_username, "password": superuser_password},
-                },
-            )
-
-            # STEP 2: Generate PostgreSQL cluster manifest
-            logger.info(f"Generating PostgreSQL cluster manifest for project '{project_name}'")
-
-            # Handle registry configuration for PostgreSQL image
-            database_config = database_cluster_config["database_config"]
-            registry_name = database_config.get("registry")
-            image_pull_secrets_map = {}
-            registry_config = None
-
-            if registry_name:
-                logger.info(f"PostgreSQL database configured with registry: {registry_name}")
-
-                # Reuse existing registry extraction logic
-                registries = self._project_file_handler.extract_registries(project_data)
-                for registry in registries:
-                    if registry.get("name") == registry_name:
-                        registry_config = registry
-                        break
-
-                if not registry_config:
-                    raise ValueError(
-                        f"Registry '{registry_name}' specified in namespace-postgresql-database service "
-                        f"but not found in project registries. Available registries: "
-                        f"{[r.get('name') for r in registries]}"
-                    )
-
-                database_image = database_config.get("image")
-                secret_name_ref = registry_config.get("secretName")
-
-                if secret_name_ref:
-                    # Pre-existing secret: use directly, skip creation
-                    registry_secret_name = secret_name_ref
-                    logger.info(
-                        f"PostgreSQL will use pre-existing imagePullSecret '{registry_secret_name}' "
-                        f"for image '{database_image}'"
-                    )
-                else:
-                    # Generate registry secret name for infrastructure (using "infrastructure" as deployment name)
-                    from opi.utils.naming import generate_registry_secret_name
-
-                    registry_secret_name = generate_registry_secret_name("infrastructure", registry_name)
-                    logger.info(
-                        f"PostgreSQL will use imagePullSecret '{registry_secret_name}' for image '{database_image}'"
-                    )
-
-                # Map the database image to its registry secret
-                image_pull_secrets_map[database_image] = registry_secret_name
-
-            # De clusterrewrite geldt ook voor de database-image. Zonder dit staat het kale
-            # ghcr-pad in git terwijl de admission van ODCN de pod naar rcr.rijksapps.nl
-            # herschrijft, en dan is de infrastructure-applicatie permanent OutOfSync. Dat is
-            # niet alleen ruis: de verwerking wacht op een Synced infrastructuur voordat ze
-            # verdergaat, dus een refresh van zo'n project loopt vast. Dezelfde regels als elke
-            # andere image, dus een projectregistry wint nog steeds van de gedeelde proxy.
-            resolved_db = resolve_project_image(
-                database_config.get("image", ""), project_data, cluster_name, registry_name
-            )
-            if resolved_db.image != database_config.get("image"):
-                logger.info(f"PostgreSQL-image '{database_config.get('image')}' opgelost naar '{resolved_db.image}'")
-                database_config = {**database_config, "image": resolved_db.image}
-            if resolved_db.secret and resolved_db.image not in image_pull_secrets_map:
-                image_pull_secrets_map[resolved_db.image] = resolved_db.secret
-
-            cluster_manifest = render_template(
-                "postgresql-cluster.yaml.jinja",
-                {
-                    "project_name": project_clean,
-                    "infrastructure_namespace": infrastructure_namespace,
-                    "database_config": database_config,
-                    "storage_class": storage_class,
-                    "imagePullSecretsMap": image_pull_secrets_map,
-                },
-            )
-
-            # STEP 3: Write infrastructure resource manifests to deployment Git repository
-            logger.info(f"Committing infrastructure manifests to deployment repo for project '{project_name}'")
-
-            # Get project's main repository (infrastructure uses same repo as deployments)
-            repositories = project_data.get("repositories", [])
-            if not repositories:
-                raise ValueError("No repositories defined in project data")
-            main_repo = repositories[0]
-
-            # Create repo config for infrastructure (treated as a special deployment)
-            infra_repo_config = {
-                "name": "infrastructure",
-                "url": main_repo.get("url", ""),
-                "username": main_repo.get("username"),
-                "password": main_repo.get("password"),
-                "branch": main_repo.get("branch", "main"),
-                "path": main_repo.get("path", ""),
-            }
-
-            infra_workspace = await self.get_deployment_workspace("infrastructure", infra_repo_config)
-
-            async def _write_infrastructure_manifests() -> None:
-                """Zet de infrastructuurmap neer in de werkmap van deze ronde."""
-                deployment_working_dir = await infra_workspace.get_working_dir()
-
-                # Create infrastructure resources directory in deployment repo
-                # Path: {cluster}/{project_name}/infrastructure/
-                # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
-                infra_resources_dir = os.path.join(
-                    deployment_working_dir,
-                    generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
-                )
-                os.makedirs(infra_resources_dir, exist_ok=True)
-
-                # Write manifests - secret as .to-sops.yaml for encryption
-                secret_path = os.path.join(
-                    infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
-                )
-                cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
-
-                with open(secret_path, "w") as f:
-                    f.write(secret_manifest)
-                with open(cluster_path, "w") as f:
-                    f.write(cluster_manifest)
-
-                # Create a least-privilege baseline network policy for the
-                # infrastructure namespace. This namespace hosts the project's
-                # PostgreSQL cluster, so it must accept ingress from the project's
-                # own tenant app namespaces (where the application pods connect
-                # from) while denying everything else. It is NOT allow-all.
-                tenant_namespaces = sorted(
-                    {
-                        get_prefixed_namespace(cluster_name, deployment_def["namespace"])
-                        for deployment_def in project_data.get("deployments", [])
-                        if deployment_def.get("cluster") == cluster_name and deployment_def.get("namespace")
-                    }
-                )
-                logger.info(
-                    f"Generating baseline network policy for infrastructure namespace: {infrastructure_namespace} "
-                    f"(ingress allowed from tenant namespaces: {tenant_namespaces})"
-                )
-                network_policy_manifest = render_template(
-                    "tenant-baseline-network-policy.yaml.jinja",
-                    {
-                        "name": "tenant-baseline",
-                        "namespace": infrastructure_namespace,
-                        # No deployment_selector: this policy covers the whole
-                        # infrastructure namespace (CNPG operator + cluster pods,
-                        # none of which carry our `deployment:` label).
-                        "deployment_selector": None,
-                        "ops_namespace": get_namespace(cluster_name),
-                        "backup_namespace": get_backup_namespace(cluster_name),
-                        "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
-                        "ops_egress": get_ops_egress(cluster_name),
-                        "cluster_cidrs": get_cluster_cidrs(cluster_name),
-                        # The CNPG operator (in its own namespace) must reach the
-                        # dedicated cluster's pods to extract instance status, or the
-                        # Cluster never becomes Ready. The DB subsystem owns which
-                        # namespace that is; only the infra namespace needs this rule.
-                        "database_operator_namespace": database_cluster_config["database_operator_namespace"],
-                        # The project's app namespaces must reach the PostgreSQL
-                        # cluster that lives in this infrastructure namespace.
-                        "allowed_ingress_namespaces": tenant_namespaces,
-                        # Skip the "project infra" egress rule: this IS the infra
-                        # namespace, so an explicit self-rule would be redundant.
-                        "project_infra_namespace": None,
-                    },
-                )
-                network_policy_path = os.path.join(infra_resources_dir, "tenant-baseline-network-policy.yaml")
-                with open(network_policy_path, "w") as f:
-                    f.write(network_policy_manifest)
-                logger.info(f"Created baseline network policy for infrastructure namespace: {infrastructure_namespace}")
-
-                # Create registry secret if PostgreSQL uses a private registry (skip for pre-existing secrets)
-                if registry_name and registry_config and not registry_config.get("secretName"):
-                    logger.info(
-                        f"Creating registry secret for PostgreSQL infrastructure in namespace: {infrastructure_namespace}"
-                    )
-
-                    # Decrypt registry credentials (reuse existing logic)
-                    from opi.services.secrets import RegistrySecret
-
-                    registry_url = registry_config.get("upstream", "")
-                    username = registry_config.get("username", "")
-                    password_encrypted = registry_config.get("password", "")
-
-                    private_key = await get_decoded_project_private_key(project_data)
-                    password = await decrypt_password_smart(password_encrypted, private_key)
-
-                    # Create RegistrySecret instance (same as deployments)
-                    registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
-
-                    # Use generic secret template with kubernetes.io/dockerconfigjson type (same as deployments)
-                    registry_secret_manifest = render_template(
-                        "generic-secret.yaml.to-sops.jinja",
-                        {
-                            "name": registry_secret_name,
-                            "namespace": infrastructure_namespace,
-                            "secret_type": "registry",
-                            "secret_k8s_type": "kubernetes.io/dockerconfigjson",
-                            "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
-                        },
-                    )
-
-                    # Write registry secret to infrastructure directory
-                    registry_secret_path = os.path.join(
-                        infra_resources_dir, sops_filenames(registry_secret_name).plaintext
-                    )
-                    with open(registry_secret_path, "w") as f:
-                        f.write(registry_secret_manifest)
-
-                    logger.info(
-                        f"Created registry secret '{registry_secret_name}' for registry '{registry_name}' ({registry_url})"
-                    )
-
-                # STEP 4: SOPS encrypt the secrets using project's SOPS key
-                logger.info(f"Encrypting secret with SOPS for project '{project_name}'")
-                project_public_key = get_project_public_key(project_data)
-                if not project_public_key:
-                    raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
-                await asyncio.to_thread(
-                    encrypt_to_sops_files_or_fail,
-                    infra_resources_dir,
-                    project_public_key,
-                    f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
-                    private_key=project_private_key_or_none(project_data),
-                )
-
-                # STEP 5: Generate kustomization.yaml and decrypt-sops.yaml for infrastructure resources
-                logger.info(f"Generating infrastructure kustomization for project '{project_name}'")
-                kustomization_success = self._manifest_generator.create_kustomization_files(
-                    output_dir=infra_resources_dir,
-                    namespace=infrastructure_namespace,
-                )
-                if not kustomization_success:
-                    raise RuntimeError(f"Failed to create kustomization files for project '{project_name}'")
-
-            await infra_workspace.mutate_and_push(
-                f"Add infrastructure resources for {project_name} in {cluster_name} cluster",
-                _write_infrastructure_manifests,
-            )
-
-            logger.info(
-                f"Successfully committed infrastructure manifests to deployment repo for project '{project_name}'"
-            )
-
-            # STEP 6: Create ArgoCD Application, repo secret, and AppProject in ArgoCD applications repo
-            # This folder is detected by App-of-Apps pattern and creates the ArgoCD Application
-            logger.info(
-                f"Creating ArgoCD application resources for infrastructure in {cluster_name}/{project_name}-infrastructure"
-            )
-
-            success = await self._argo_manager.create_infrastructure_application(
-                project_data=project_data, database_config=database_cluster_config, cluster_name=cluster_name
-            )
-
-            if not success:
-                raise RuntimeError(f"Failed to create ArgoCD infrastructure application for project '{project_name}'")
-
-            logger.info(f"Successfully created ArgoCD infrastructure application for project '{project_name}'")
-
-            # STEP 7: ArgoCD-verbinding voor de verversbewaker hieronder en voor STEP 9
-            logger.info(
-                f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
-            )
-            argo_connector = create_argo_connector()
-
-            if not await argo_connector.login():
-                raise RuntimeError("Failed to login to ArgoCD")
-
-            # STEP 8: Wait for infrastructure application to be created by ArgoCD
-            infra_app_name = f"{project_name}-infrastructure"
-            if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_ROLLOUT)
-
-            async with self._umbrella_verversbewaker(argo_connector):
-                await self._argo_manager.wait_for_application_created(
-                    app_name=infra_app_name,
-                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-                    poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
-                )
-
-            logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
-
-            # STEP 9: Refresh the infrastructure application to ensure it picks up latest changes
-            infra_reconciled_at = await argo_connector.refresh_application(infra_app_name)
-            if not infra_reconciled_at:
-                raise RuntimeError(f"Failed to refresh ArgoCD infrastructure application '{infra_app_name}'")
-
-            logger.info(f"Infrastructure application '{infra_app_name}' refreshed successfully")
-
-            # STEP 10: Wait for infrastructure to be synced and healthy
-            logger.info(
-                f"Waiting for infrastructure to be ready for project '{project_name}' (this may take a few minutes)..."
-            )
-
-            if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_WAIT_READY)
-
-            await self._argo_manager.wait_for_infrastructure_ready(
-                project_name=project_name,
-                cluster_name=cluster_name,
-                timeout=600,  # 10 minutes timeout
-                refreshed_after=infra_reconciled_at,
-            )
-
-            logger.info(f"Infrastructure is ready for project '{project_name}'")
-
-            if progress_manager and infra_task:
-                progress_manager.update_task(infra_task, steps.PROJECT_DATABASE_WAIT_CONNECTIONS)
-
-            await self._wait_until_database_accepts_connections(
-                project_name=project_name,
-                cluster_name=cluster_name,
-                username=superuser_username,
-                password=superuser_password,
-            )
-
-            await self._warn_when_database_cluster_not_ready(
-                project_name=project_name,
-                cluster_name=cluster_name,
-                progress_manager=progress_manager,
-                infra_task=infra_task,
-            )
-
-            if progress_manager and infra_task:
-                progress_manager.complete_task(infra_task)
-
-        except (TimeoutError, RuntimeError) as e:
-            logger.error(f"Failed to create infrastructure resources for project '{project_name}': {e}")
-            if progress_manager and infra_task:
-                progress_manager.fail_task(infra_task, f"Infrastructure provisioning failed: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error creating infrastructure resources for project '{project_name}': {e}")
-            if progress_manager and infra_task:
-                progress_manager.fail_task(infra_task, f"Unexpected error: {e}")
-            raise RuntimeError(f"Cannot create infrastructure resources for project '{project_name}': {e}") from e
 
     async def check_and_create_sops_secrets_in_namespaces(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None
     ) -> None:
-        """
-        Creates SOPS secrets in the specified namespaces. If no SOPS information is in the project file,
-        a new sops pair is created.
+        """Write the SOPS secret in every namespace of this project; see :class:`Infrastructure`."""
+        await Infrastructure(self).check_and_create_sops_secrets_in_namespaces(deployment_name, deployment_names)
 
-        Args:
-            deployment_name: Optional single deployment to process
-            deployment_names: Optional explicit set of deployments to process
-                (takes precedence over ``deployment_name``)
-        """
-        contents = await self.get_contents()
-        project_name = contents.get("name")
+    async def _create_infrastructure_namespace(self, project_data: dict[str, Any], cluster_name: str) -> None:
+        """Create the namespace of this project's own database; see :class:`Infrastructure`."""
+        await Infrastructure(self).create_infrastructure_namespace(project_data, cluster_name)
 
-        # Get deployments for THIS cluster using helper method
-        deployments = await self.get_deployments(
-            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
-        )
-
-        targets = _resolve_deployment_filter(deployment_name, deployment_names)
-        if targets is not None:
-            logger.info(f"Creating SOPS secrets only for deployment(s): {targets}")
-
-        if not deployments:
-            logger.warning(f"No deployments found in project: {project_name}")
-            return
-
-        # The SOPS secret lives per namespace, and deployments of a project share one,
-        # so iterating deployments read the same secret several times: 128 `kubectl get
-        # secret` calls for 44 namespaces at startup. Same fix as for the namespaces.
-        namespaces = {
-            get_prefixed_namespace(cast("str", deployment["cluster"]), cast("str", deployment["namespace"]))
-            for deployment in deployments
-        }
-
-        for namespace in sorted(namespaces):
-            # Use shared function for SOPS secret creation
-            await self._ensure_sops_secret_in_namespace(namespace, contents)
+    async def _create_infrastructure_resources(self, project_data: dict[str, Any], cluster_name: str) -> None:
+        """Provision this project's own database; see :class:`Infrastructure`."""
+        await Infrastructure(self).create_infrastructure_resources(project_data, cluster_name)
 
     def _analyze_deployment_changes(
         self, changes: dict[str, Any], current_yaml: dict[str, Any], previous_yaml: dict[str, Any] | None = None
@@ -2760,7 +1776,7 @@ class ProjectManager:
         # Resolve the single/plural deployment filter once; threaded into both
         # process_project() and the ArgoCD sync loop below so a scoped redeploy
         # only touches the affected deployment(s).
-        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        targets = resolve_deployment_filter(deployment_name, deployment_names)
 
         logger.info(f"Processing project from Git: {relative_project_file_path}")
 
@@ -3890,7 +2906,8 @@ class ProjectManager:
 
         # Voor alle drie de soorten deployments, want juist een helm- of helmfile-pod
         # draagt geen deployment-label en viel tot nu toe buiten elk beleid.
-        namespace_policy_files = self._emit_namespace_network_policies(
+        namespace_policy_files = emit_namespace_network_policies(
+            self._manifest_generator,
             project_data=project_data,
             project_name=project_name,
             deployment=deployment,
@@ -3900,14 +2917,14 @@ class ProjectManager:
         )
 
         # Check if this is a helmfile deployment, helm chart deployment, or component deployment
-        if self._deployment_uses_helmfile(deployment):
+        if deployment_uses_helmfile(deployment):
             # Process helmfile deployment (ArgoCD CMP runs helmfile template)
             logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
             await self._process_helmfile_deployment(deployment, git_connector, target_path, namespace_policy_files)
             # Note: SOPS encryption is handled inside _process_helmfile_deployment
             return
 
-        if self._deployment_uses_helm_charts(deployment):
+        if deployment_uses_helm_charts(deployment):
             # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
             logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
             await self._process_helm_chart_deployment(deployment, git_connector, target_path, namespace_policy_files)
@@ -3996,407 +3013,6 @@ class ProjectManager:
     # Helm Chart Processing Methods
     # ==========================================================================
 
-    def _deployment_uses_helm_charts(self, deployment: dict[str, Any]) -> bool:
-        """
-        Check if a deployment uses helm-charts instead of components.
-
-        Args:
-            deployment: Deployment configuration
-
-        Returns:
-            True if deployment has helm-charts defined
-        """
-        helm_charts = deployment.get("helm-charts", [])
-        return len(helm_charts) > 0
-
-    def _deployment_uses_helmfile(self, deployment: dict[str, Any]) -> bool:
-        """
-        Check if a deployment uses helmfile instead of components or helm-charts.
-
-        Args:
-            deployment: Deployment configuration
-
-        Returns:
-            True if deployment has helmfile defined
-        """
-        helmfiles = deployment.get("helmfile", [])
-        return len(helmfiles) > 0
-
-    async def _get_helm_values_context(self, deployment_name: str) -> dict[str, Any]:
-        """
-        Build a context dictionary with all service credentials for alias resolution.
-
-        This collects credentials from all service managers (database, minio, keycloak, redis)
-        and deployment-level variables (hostname, subdomain, base-domain, issuer).
-
-        Args:
-            deployment_name: Name of the deployment
-
-        Returns:
-            Dictionary mapping alias names to resolved values (preserving types for integers)
-        """
-        context: dict[str, Any] = {}
-
-        # Get deployment for cluster info
-        deployment = await self.get_deployment_by_name(deployment_name)
-        if not deployment:
-            logger.warning(f"Deployment '{deployment_name}' not found")
-            return context
-
-        # Add deployment-level variables for hostname, subdomain, base-domain, issuer
-        cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
-        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-        # record_base=False: a projection that only needs the project's domain block, so it
-        # must not become the compare-and-swap base of whoever saves next.
-        issuer_config = effective_issuer(await self.get_contents(record_base=False), deployment, cluster_name)
-        use_https = get_ingress_tls_enabled(cluster_name)
-
-        # Calculate hostname based on configuration
-        if base_domain and subdomain:
-            # External domain mode: subdomain.base-domain
-            hostname = generate_external_hostname(subdomain, base_domain)
-        elif subdomain:
-            # Subdomain with cluster domain
-            ingress_postfix = get_ingress_postfix(cluster_name)
-            hostname = f"{subdomain}.{ingress_postfix}"
-        else:
-            # Fallback: use deployment name with cluster domain
-            ingress_postfix = get_ingress_postfix(cluster_name)
-            hostname = f"{deployment_name}.{ingress_postfix}"
-
-        # Determine issuer name
-        if issuer_config:
-            if issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
-                # Generate full issuer name to match the Issuer resource we create
-                context["ISSUER"] = generate_issuer_name(base_domain, issuer_config, deployment_name)
-            else:
-                context["ISSUER"] = issuer_config
-        else:
-            # Use cluster's default ClusterIssuer
-            cluster_issuer = get_ingress_cluster_issuer(cluster_name)
-            if cluster_issuer:
-                context["ISSUER"] = cluster_issuer
-
-        # Add hostname-related variables
-        public_url = generate_public_url(hostname, use_https)
-        context["PUBLIC_HOST"] = public_url
-        context["PUBLIC_HOSTNAME"] = hostname
-        context["HOSTNAME"] = hostname
-        if subdomain:
-            context["SUBDOMAIN"] = subdomain
-        if base_domain:
-            context["BASE_DOMAIN"] = base_domain
-
-        logger.debug(f"Added deployment variables: PUBLIC_HOST={public_url}, HOSTNAME={hostname}")
-
-        # Get database credentials if available
-        db_secret = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
-        if db_secret:
-            context["DATABASE_SERVER_HOST"] = db_secret.host
-            context["DATABASE_SERVER_PORT"] = db_secret.port  # Keep as int for YAML type preservation
-            context["DATABASE_SERVER_USER"] = db_secret.username
-            context["DATABASE_PASSWORD"] = db_secret.password
-            context["DATABASE_DB"] = db_secret.database
-            context["DATABASE_SCHEMA"] = db_secret.schema
-
-        # Get MinIO credentials if available
-        minio_secret = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
-        if minio_secret:
-            context["OBJECT_STORE_HOST"] = minio_secret.host
-            context["OBJECT_STORE_PORT"] = minio_secret.port  # Keep as int for YAML type preservation
-            context["OBJECT_STORE_URL"] = minio_secret.url
-            context["OBJECT_STORE_ENDPOINT_URL"] = minio_secret.endpoint_url
-            context["OBJECT_STORE_USER"] = minio_secret.access_key
-            context["OBJECT_STORE_PASSWORD"] = minio_secret.secret_key
-            context["OBJECT_STORE_BUCKET_NAME"] = minio_secret.bucket_name
-            context["OBJECT_STORE_REGION"] = minio_secret.region
-
-        # Get Keycloak credentials if available
-        keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
-        if keycloak_secret:
-            context["OIDC_DISCOVERY_URL"] = keycloak_secret.discovery_url
-            context["OIDC_CLIENT_ID"] = keycloak_secret.client_id
-            context["OIDC_CLIENT_SECRET"] = keycloak_secret.client_secret
-            context["KEYCLOAK_BASE_URL"] = keycloak_secret.base_url
-            context["KEYCLOAK_REALM"] = keycloak_secret.realm
-
-        # Get Redis credentials if available
-        redis_secret = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
-        if redis_secret:
-            context["REDIS_HOST"] = redis_secret.host
-            context["REDIS_PORT"] = redis_secret.port  # Keep as int for YAML type preservation
-            context["REDIS_PASSWORD"] = redis_secret.password
-            context["REDIS_USERNAME"] = redis_secret.username
-            context["REDIS_URL"] = redis_secret.url
-
-        logger.debug(f"Built helm values context with {len(context)} variables for deployment '{deployment_name}'")
-        return context
-
-    def _resolve_nested_aliases(self, obj: Any, context: dict[str, Any]) -> Any:
-        """
-        Recursively resolve $ALIAS references in a nested YAML structure.
-
-        Supports both $VAR and ${VAR} syntax for variable substitution.
-        Preserves types (int, bool) when the entire value is a single variable reference.
-
-        Args:
-            obj: The object to process (can be dict, list, or scalar)
-            context: Dictionary of alias_name -> value for substitution
-
-        Returns:
-            The object with all aliases resolved
-        """
-        if isinstance(obj, str):
-            # Check if entire string is exactly a single variable reference
-            # This preserves types (e.g., integers) instead of converting to string
-            for key, value in context.items():
-                if obj == f"${key}" or obj == f"${{{key}}}":
-                    return value  # Return raw value, preserving original type
-            # Otherwise do string replacement (for partial matches or multiple variables)
-            result = obj
-            for key, value in context.items():
-                result = result.replace(f"${key}", str(value))
-                result = result.replace(f"${{{key}}}", str(value))
-            return result
-        elif isinstance(obj, dict):
-            return {k: self._resolve_nested_aliases(v, context) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._resolve_nested_aliases(item, context) for item in obj]
-        return obj
-
-    def _deep_merge_dicts(self, base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-        """
-        Deep merge two dictionaries, with override values taking precedence.
-
-        Args:
-            base: Base dictionary
-            override: Override dictionary (values take precedence)
-
-        Returns:
-            Merged dictionary
-        """
-        result = base.copy()
-        for key, value in override.items():
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = self._deep_merge_dicts(result[key], value)
-            else:
-                result[key] = value
-        return result
-
-    async def _clone_helm_chart(
-        self,
-        helm_chart: dict[str, Any],
-        target_dir: str,
-    ) -> str:
-        """
-        Clone a Helm chart from git and return the path to the chart.
-
-        Args:
-            helm_chart: Helm chart configuration from project
-            target_dir: Directory where chart should be cloned
-
-        Returns:
-            Path to the chart directory
-        """
-        source_type = helm_chart.get("source-type", "git-clone")
-
-        if source_type != "git-clone":
-            raise ValueError(f"Unsupported helm chart source-type: {source_type}")
-
-        git_url = helm_chart.get("git-url")
-        git_ref = helm_chart.get("git-ref", "main")
-        chart_path = helm_chart.get("chart-path", ".")
-        chart_name = helm_chart.get("name")
-
-        if not git_url:
-            raise ValueError(f"Helm chart '{chart_name}' missing git-url")
-        if not chart_name:
-            raise ValueError("Helm chart missing required 'name' field")
-
-        require_allowed_render_source(git_url, f"helm chart '{chart_name}'")
-
-        logger.info(f"Cloning helm chart '{chart_name}' from {git_url}#{git_ref}")
-
-        # Create a temporary git connector to clone the chart repo
-        import shutil
-        import tempfile
-
-        dest_chart_path = ""  # Will be set inside the temp directory context
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Clone the repository
-            from opi.connectors.git import GitConnector
-
-            git_connector = GitConnector(
-                repo_url=git_url,
-                branch=git_ref,
-                working_dir=temp_dir,
-            )
-
-            await git_connector.clone()
-
-            # Get the chart source path
-            source_chart_path = path_inside_clone(temp_dir, chart_path, f"helm chart '{chart_name}'")
-
-            if not os.path.exists(source_chart_path):
-                raise FileNotFoundError(f"Chart path not found: {chart_path} in {git_url}")
-
-            reject_escaping_symlinks(source_chart_path)
-
-            # Create charts directory in target
-            charts_dir = os.path.join(target_dir, "charts")
-            os.makedirs(charts_dir, exist_ok=True)
-
-            # Copy chart to target directory
-            dest_chart_path = safe_join(charts_dir, single_segment(chart_name, "helm-charts[].name"))
-            if os.path.exists(dest_chart_path):
-                await asyncio.to_thread(shutil.rmtree, dest_chart_path)
-            await asyncio.to_thread(shutil.copytree, source_chart_path, dest_chart_path, symlinks=True)
-
-            logger.info(f"Copied helm chart '{chart_name}' to {dest_chart_path}")
-
-            # Check for chart dependencies (common chart)
-            chart_yaml_path = os.path.join(dest_chart_path, "Chart.yaml")
-            if os.path.exists(chart_yaml_path):
-                with open(chart_yaml_path) as f:
-                    chart_data = load_yaml_round_trip(f.read())
-
-                dependencies = chart_data.get("dependencies", [])
-                for dep in dependencies:
-                    dep_name = dep.get("name")
-                    dep_repo = dep.get("repository", "")
-
-                    # Handle local file:// dependencies
-                    if dep_repo.startswith("file://"):
-                        rel_path = dep_repo.replace("file://", "")
-                        dep_source = path_inside_clone(
-                            temp_dir,
-                            os.path.join(chart_path, rel_path),
-                            f"dependency '{dep_name}' of helm chart '{chart_name}'",
-                        )
-
-                        if os.path.exists(dep_source):
-                            reject_escaping_symlinks(dep_source)
-                            dep_dest = safe_join(charts_dir, single_segment(dep_name, "Chart.yaml dependencies[].name"))
-                            if os.path.exists(dep_dest):
-                                await asyncio.to_thread(shutil.rmtree, dep_dest)
-                            await asyncio.to_thread(shutil.copytree, dep_source, dep_dest, symlinks=True)
-
-                            # Update the dependency path in Chart.yaml
-                            dep["repository"] = f"file://../{dep_name}"
-                            logger.info(f"Copied dependency chart '{dep_name}' to {dep_dest}")
-
-                # Write updated Chart.yaml if dependencies were modified
-                with open(chart_yaml_path, "w") as f:
-                    f.write(dump_yaml_for_go(chart_data))
-
-            await git_connector.close()
-
-        return dest_chart_path
-
-    def _emit_acme_network_policy(
-        self,
-        *,
-        deployment_name: str,
-        namespace: str,
-        cluster_name: str,
-        output_dir: str,
-    ) -> str:
-        """NetworkPolicy voor de HTTP-01-solver van cert-manager op poort 8089 vanaf de router."""
-        template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "network-policy.yaml.jinja")
-        manifest_name = generate_network_policy_manifest_name("acme-http", deployment_name)
-        path = self._manifest_generator.create_manifest_file(
-            template_path=template_path,
-            values={
-                "name": generate_network_policy_name("acme-http", deployment_name),
-                "namespace": namespace,
-                "pod_selector": 'acme.cert-manager.io/http01-solver: "true"',
-                "from_selector": get_ingress_controller_selector(cluster_name),
-                "ports": [8089],
-            },
-            output_dir=output_dir,
-            output_filename=manifest_name,
-            use_sops=False,
-        )
-        logger.info(f"Created ACME HTTP-01 solver network policy: {path}")
-        return f"{manifest_name}.yaml"
-
-    def _emit_namespace_network_policies(
-        self,
-        *,
-        project_data: dict[str, Any],
-        project_name: str,
-        deployment: dict[str, Any],
-        cluster_name: str,
-        namespace: str,
-        output_dir: str,
-    ) -> list[str]:
-        """Create or clean up namespace-level NetworkPolicies (default-deny, unlabeled-baseline, dedicated-database)."""
-        default_deny_name = generate_network_policy_manifest_name("default-deny")
-        unlabeled_name = generate_network_policy_manifest_name("unlabeled-baseline")
-        database_name = generate_network_policy_manifest_name("dedicated-database")
-
-        owner = namespace_level_deployment(project_data.get("deployments", []), cluster_name, deployment["namespace"])
-        if owner is None or owner["name"] != deployment["name"]:
-            for filename in (default_deny_name, unlabeled_name, database_name):
-                stale = os.path.join(output_dir, f"{filename}.yaml")
-                if os.path.exists(stale):
-                    os.remove(stale)
-                    logger.info(f"Removed namespace network policy '{filename}' from non-owner '{deployment['name']}'")
-            return []
-
-        os.makedirs(output_dir, exist_ok=True)
-        baseline_values = {
-            "name": generate_network_policy_name("unlabeled-baseline"),
-            "namespace": namespace,
-            # Geen deployment_selector maar de tegenhanger ervan: precies de pods die
-            # het label niet dragen, met dezelfde rechten als een deployment.
-            "deployment_selector": None,
-            "unlabeled_selector": True,
-            "ops_namespace": get_namespace(cluster_name),
-            "backup_namespace": get_backup_namespace(cluster_name),
-            "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
-            "ops_egress": get_ops_egress(cluster_name),
-            "cluster_cidrs": get_cluster_cidrs(cluster_name),
-            # De operator komt bij het databasecluster via de policy hieronder, niet via
-            # de baseline: hij hoeft de helm-pods in deze namespace niet te bereiken.
-            "database_operator_namespace": None,
-            "project_infra_namespace": get_infrastructure_namespace(cluster_name, project_name),
-        }
-        specs = (
-            (
-                default_deny_name,
-                "default-deny-network-policy.yaml.jinja",
-                {"name": generate_network_policy_name("default-deny"), "namespace": namespace},
-            ),
-            (unlabeled_name, "tenant-baseline-network-policy.yaml.jinja", baseline_values),
-            (
-                database_name,
-                "dedicated-database-network-policy.yaml.jinja",
-                {
-                    "name": generate_network_policy_name("dedicated-database"),
-                    "namespace": namespace,
-                    "database_operator_namespace": get_database_operator_namespace(cluster_name),
-                },
-            ),
-        )
-        created_files = []
-        for filename, template_name, values in specs:
-            self._manifest_generator.create_manifest_file(
-                template_path=os.path.join(MANIFEST_TEMPLATES_DIR, template_name),
-                values=values,
-                output_dir=output_dir,
-                output_filename=filename,
-                use_sops=False,
-            )
-            created_files.append(f"{filename}.yaml")
-        logger.info(
-            f"Created namespace network policies for '{namespace}' "
-            f"(owner deployment '{deployment['name']}'): {', '.join(created_files)}"
-        )
-        return created_files
-
     async def _process_helm_chart_deployment(
         self,
         deployment: dict[str, Any],
@@ -4404,353 +3020,10 @@ class ProjectManager:
         target_path: str,
         namespace_policy_files: list[str] | None = None,
     ) -> None:
-        """
-        Process a deployment that uses helm-charts instead of components.
-
-        This method:
-        1. Clones the helm chart(s) from git
-        2. Extracts and merges helm-values (base + deployment-specific)
-        3. Resolves $ALIAS references using service credentials
-        4. Creates values.yaml with resolved values
-        5. Generates kustomization.yaml with helmCharts section
-
-        Args:
-            deployment: Deployment configuration
-            git_connector: Git connector for the target repository
-            target_path: Full path to the deployment directory
-        """
-        project_data = await self.get_contents()
-        deployment_name = deployment.get("name")
-        if not deployment_name:
-            raise ValueError("Deployment missing required 'name' field")
-
-        cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
-        prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
-
-        logger.info(f"Processing helm chart deployment: {deployment_name}")
-
-        # Ensure target directory exists
-        os.makedirs(target_path, exist_ok=True)
-
-        # Get helm charts from deployment
-        helm_chart_refs = deployment.get("helm-charts", [])
-
-        # Build the credentials context for alias resolution
-        context = await self._get_helm_values_context(deployment_name)
-
-        # Process each helm chart reference
-        helm_charts_config: list[dict[str, Any]] = []  # For kustomization.yaml helmCharts section
-
-        for helm_chart_ref in helm_chart_refs:
-            chart_reference = helm_chart_ref.get("reference")
-            if not chart_reference:
-                raise ValueError("Helm chart reference missing required 'reference' field")
-
-            release_name = helm_chart_ref.get("release-name", chart_reference)
-
-            logger.info(f"Processing helm chart reference: {chart_reference}")
-
-            # Find the helm-chart definition in project
-            helm_chart_def = self._project_file_handler.get_helm_chart_by_name(project_data, chart_reference)
-            if not helm_chart_def:
-                raise ValueError(f"Helm chart '{chart_reference}' not found in project definition")
-
-            # Clone the chart to target directory
-            chart_path = await self._clone_helm_chart(helm_chart_def, target_path)
-
-            # Extract base helm-values from helm-chart definition
-            base_values = await self._project_file_handler.extract_helm_chart_values(project_data, chart_reference)
-
-            # Extract deployment-level helm-values
-            deployment_values = await self._project_file_handler.extract_deployment_helm_chart_values(
-                project_data, deployment_name, chart_reference
-            )
-
-            # Deep merge values (deployment overrides base)
-            merged_values = self._deep_merge_dicts(base_values, deployment_values)
-
-            # Resolve $ALIAS references in the merged values
-            resolved_values = self._resolve_nested_aliases(merged_values, context)
-
-            # Write values as .to-sops.yaml (will be encrypted later)
-            # Use naming convention that matches CMP plugin pattern: *-helm-values.sops.yaml
-            values_file_sops = generate_helm_values_filename(deployment_name, chart_reference, encrypted=True)
-            values_file_to_sops = sops_filenames(values_file_sops).plaintext
-            values_path = os.path.join(target_path, values_file_to_sops)
-
-            with open(values_path, "w") as f:
-                f.write(dump_yaml_for_go(resolved_values))
-
-            logger.info(f"Created helm values file (to be encrypted): {values_path}")
-
-            # Add to helmCharts config for kustomization.yaml
-            # Reference the final .sops.yaml name (after encryption)
-            helm_charts_config.append(
-                {
-                    "name": chart_reference,
-                    "releaseName": release_name,
-                    "namespace": prefixed_namespace,
-                    "valuesFile": values_file_sops,
-                    "repo": f"file://./charts/{chart_reference}",
-                }
-            )
-
-        # Create service secret manifests (database, minio, redis, keycloak)
-        secret_files = await self._create_deployment_secrets(
-            deployment_name,
-            target_path,
-            prefixed_namespace,
-            cluster_name,
+        """Render a helm-charts deployment; see :class:`HelmDeployment`."""
+        await HelmDeployment(self).process_helm_chart_deployment(
+            deployment, git_connector, target_path, namespace_policy_files
         )
-        logger.info(f"Created {len(secret_files)} service secret manifests for helm deployment")
-
-        # De namespace-brede policies staan al op schijf; ze moeten alleen nog in de
-        # kustomization, want die wordt hier uit een lijst gebouwd en niet uit een scan.
-        regular_files: list[str] = list(namespace_policy_files or [])
-
-        # Create Let's Encrypt Issuer manifest if configured
-        issuer_config = effective_issuer(project_data, deployment, cluster_name)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-
-        # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
-        # If issuer_config already contains a domain suffix, use it as-is (no generation needed)
-        if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
-            # Determine contact email: project override or cluster default
-            project_contact_email = project_data.get("config", {}).get("contact-email")
-            cluster_contact_email = get_letsencrypt_contact_email(cluster_name)
-            contact_email = project_contact_email or cluster_contact_email
-
-            if contact_email:
-                issuer_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "issuer-letsencrypt.yaml.jinja")
-
-                issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
-                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
-                issuer_manifest_filename = generate_issuer_manifest_name(
-                    base_domain, issuer_config, deployment_name
-                ).replace(".yaml", "")
-
-                issuer_variables = {
-                    "issuer_name": issuer_name_generated,
-                    "issuer_secret_name": issuer_secret_name,
-                    "contact_email": contact_email,
-                    "staging": issuer_config == "letsencrypt-staging",
-                    "namespace": prefixed_namespace,
-                }
-
-                issuer_manifest_path = self._manifest_generator.create_manifest_file(
-                    template_path=issuer_template_path,
-                    values=issuer_variables,
-                    output_dir=target_path,
-                    output_filename=issuer_manifest_filename,
-                    use_sops=False,
-                )
-
-                regular_files.append(f"{issuer_manifest_filename}.yaml")
-                logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
-
-                regular_files.append(
-                    self._emit_acme_network_policy(
-                        deployment_name=deployment_name,
-                        namespace=prefixed_namespace,
-                        cluster_name=cluster_name,
-                        output_dir=target_path,
-                    )
-                )
-            else:
-                logger.warning(
-                    f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
-                    f"(set contact-email in project config or letsencrypt.contact_email in cluster config)"
-                )
-
-        # Create kustomization.yaml with helmCharts section and secret resources
-        await self._create_helm_kustomization(
-            target_path,
-            prefixed_namespace,
-            helm_charts_config,
-            secret_files,
-            regular_files,
-        )
-
-        # Encrypt .to-sops.yaml files to .sops.yaml
-        public_key = get_project_public_key(project_data)
-        if not public_key:
-            raise ValueError(
-                f"No public key found for project, cannot encrypt helm values for deployment: {deployment_name}. "
-                "This would commit secrets in plain text to git!"
-            )
-
-        logger.info(f"Encrypting helm values files for deployment: {deployment_name}")
-
-        # List .to-sops.yaml files before encryption for debugging
-        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
-        to_sops_files = glob.glob(to_sops_pattern)
-        logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
-        for file_path in to_sops_files:
-            logger.info(f"  - {os.path.basename(file_path)}")
-
-        await asyncio.to_thread(
-            encrypt_to_sops_files_or_fail,
-            target_path,
-            public_key,
-            f"helm values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-            private_key=project_private_key_or_none(project_data),
-        )
-
-        logger.info("All helm values files successfully encrypted")
-        logger.info(f"Helm chart deployment processing complete for: {deployment_name}")
-
-    # ==========================================================================
-    # Helmfile Processing Methods
-    # ==========================================================================
-
-    def _write_helmfile_custom_files(
-        self,
-        helmfile_def: dict[str, Any],
-        helmfile_ref: dict[str, Any],
-        target_path: str,
-    ) -> list[str]:
-        """
-        Write custom files defined in helmfile definition and deployment reference.
-
-        Files can be defined at two levels:
-        1. helmfile.files - base files that apply to all deployments
-        2. deployment.helmfile[].files - deployment-specific files (override base)
-
-        Args:
-            helmfile_def: Helmfile definition from project (contains base files)
-            helmfile_ref: Helmfile reference from deployment (contains override files)
-            target_path: Directory where files should be written
-
-        Returns:
-            List of filenames that were written
-        """
-        written_files: list[str] = []
-
-        # Merge files: base files first, then deployment files override
-        base_files = helmfile_def.get("files", {}) or {}
-        deployment_files = helmfile_ref.get("files", {}) or {}
-
-        # Combine with deployment files taking precedence
-        all_files = {**base_files, **deployment_files}
-
-        if not all_files:
-            return written_files
-
-        logger.info(f"Writing {len(all_files)} custom file(s) to {target_path}")
-
-        for filename, content in all_files.items():
-            if not isinstance(content, str):
-                logger.warning(f"Skipping file '{filename}': content must be a string")
-                continue
-
-            # Security: prevent path traversal
-            if ".." in filename or filename.startswith("/"):
-                logger.warning(f"Skipping file '{filename}': path traversal not allowed")
-                continue
-
-            reserved = [part for part in filename.split("/") if part in HELMFILE_RESERVED_FILENAMES]
-            if reserved:
-                raise ValueError(
-                    f"Bestand '{filename}' mag niet: '{reserved[0]}' is voorbehouden aan de renderketen "
-                    "en zou de gegenereerde deployment overschrijven."
-                )
-
-            file_path = os.path.join(target_path, filename)
-
-            # Create parent directories if needed
-            file_dir = os.path.dirname(file_path)
-            if file_dir and file_dir != target_path:
-                os.makedirs(file_dir, exist_ok=True)
-
-            with open(file_path, "w") as f:
-                f.write(content)
-
-            written_files.append(filename)
-            logger.info(f"  Created custom file: {filename}")
-
-        return written_files
-
-    async def _clone_helmfile_source(
-        self,
-        helmfile_def: dict[str, Any],
-        target_path: str,
-    ) -> tuple[str, str]:
-        """
-        Clone a helmfile source repository to the target directory.
-
-        Args:
-            helmfile_def: Helmfile definition containing url, ref, path, and entry
-            target_path: Directory where the helmfile should be placed
-
-        Returns:
-            Tuple of (path to cloned directory, entry point relative path)
-            The entry point is the subdirectory containing the helmfile to execute.
-        """
-        import tempfile
-
-        helmfile_name = helmfile_def.get("name", "unknown")
-        source_url = helmfile_def.get("url")
-        source_ref = helmfile_def.get("ref", "main")
-        source_path = helmfile_def.get("path", "")
-        entry_path = helmfile_def.get("entry", "")  # Subdirectory containing the helmfile
-
-        if not source_url:
-            raise ValueError(f"Helmfile '{helmfile_name}' missing required 'url' field")
-
-        require_allowed_render_source(source_url, f"helmfile '{helmfile_name}'")
-
-        # Create a temporary directory for cloning the source
-        with tempfile.TemporaryDirectory() as temp_dir:
-            git_connector = GitConnector(
-                repo_url=source_url,
-                branch=source_ref,
-                working_dir=temp_dir,
-            )
-            await git_connector.clone()
-
-            # Determine source path within the cloned repo
-            full_source_path = path_inside_clone(temp_dir, source_path, f"helmfile '{helmfile_name}'")
-
-            if not os.path.exists(full_source_path):
-                await git_connector.close()
-                raise ValueError(f"Helmfile path '{source_path}' not found in repository for '{helmfile_name}'")
-
-            reject_escaping_symlinks(full_source_path)
-
-            # If entry is specified, verify it exists within the source path
-            if entry_path:
-                full_entry_path = path_inside_clone(full_source_path, entry_path, f"helmfile '{helmfile_name}'")
-                if not os.path.exists(full_entry_path):
-                    await git_connector.close()
-                    raise ValueError(
-                        f"Helmfile entry '{entry_path}' not found within path '{source_path}' for '{helmfile_name}'"
-                    )
-
-            # Copy helmfile content to target directory
-            # This includes the helmfile.yaml and all related files (charts, values, etc.)
-            dest_helmfile_path = target_path
-            os.makedirs(dest_helmfile_path, exist_ok=True)
-
-            # Copy all files from source to destination
-            # Skip .git directory to prevent Git from treating the target as a submodule
-            for item in os.listdir(full_source_path):
-                if item == ".git":
-                    continue
-                src_item = os.path.join(full_source_path, item)
-                dst_item = os.path.join(dest_helmfile_path, item)
-                await asyncio.to_thread(_clear_destination, dst_item)
-                if os.path.isdir(src_item) and not os.path.islink(src_item):
-                    await asyncio.to_thread(shutil.copytree, src_item, dst_item, symlinks=True)
-                else:
-                    await asyncio.to_thread(shutil.copy2, src_item, dst_item, follow_symlinks=False)
-
-            logger.info(f"Copied helmfile source from {full_source_path} to {dest_helmfile_path}")
-            if entry_path:
-                logger.info(f"Helmfile entry point: {entry_path}")
-
-            await git_connector.close()
-
-        return dest_helmfile_path, entry_path
 
     async def _process_helmfile_deployment(
         self,
@@ -4759,433 +3032,9 @@ class ProjectManager:
         target_path: str,
         namespace_policy_files: list[str] | None = None,
     ) -> None:
-        """
-        Process a deployment that uses helmfile instead of components or helm-charts.
-
-        This method:
-        1. Clones the helmfile source from git
-        2. Extracts and merges helm-values (base + deployment-specific)
-        3. Resolves $ALIAS references using service credentials
-        4. Creates values.sops.yaml with resolved values (CMP decrypts at runtime)
-        5. Creates service secret manifests (database, minio, redis, keycloak)
-
-        The CMP plugin will:
-        - Detect helmfile.yaml in the directory
-        - Decrypt values.sops.yaml -> values.yaml
-        - Run: helmfile template --values values.yaml
-        - Output rendered manifests to ArgoCD
-
-        Args:
-            deployment: Deployment configuration
-            git_connector: Git connector for the target repository
-            target_path: Full path to the deployment directory
-        """
-        project_data = await self.get_contents()
-        deployment_name = deployment.get("name")
-        if not deployment_name:
-            raise ValueError("Deployment missing required 'name' field")
-
-        cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
-        prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
-
-        logger.info(f"Processing helmfile deployment: {deployment_name}")
-
-        # Ensure target directory exists
-        os.makedirs(target_path, exist_ok=True)
-
-        # Get helmfile references from deployment
-        helmfile_refs = deployment.get("helmfile", [])
-
-        # Build the credentials context for alias resolution
-        context = await self._get_helm_values_context(deployment_name)
-
-        # Add namespace to context for alias resolution
-        context["NAMESPACE"] = prefixed_namespace
-
-        # De chart rendert de ingresses van een helmfile-deployment zelf, dus de annotatie uit
-        # manifests/ingress.yaml.jinja bereikt ze niet. Zonder target schrijft external-dns een
-        # CNAME naar de router-hostname van het cluster, en zo'n verwijzing over de zonegrens
-        # overleeft de DNSSEC-validatie bij Google niet (docs.rijksapp.nl gaf SERVFAIL, EDE 12).
-        # De chart rendert meer hostnames dan deze ene (docs en static-docs) uit dezelfde
-        # annotatiemap: dat gaat goed zolang ze in dezelfde zone zitten.
-        helmfile_hostname = context.get("PUBLIC_HOSTNAME")
-        external_dns_target = (
-            get_external_dns_target_for_hostname(cluster_name, helmfile_hostname) if helmfile_hostname else None
-        )
-
-        # Process each helmfile reference
-        for helmfile_ref in helmfile_refs:
-            helmfile_reference = helmfile_ref.get("reference")
-            if not helmfile_reference:
-                raise ValueError("Helmfile reference missing required 'reference' field")
-
-            logger.info(f"Processing helmfile reference: {helmfile_reference}")
-
-            # Find the helmfile definition in project
-            helmfile_def = self._project_file_handler.get_helmfile_by_name(project_data, helmfile_reference)
-            if not helmfile_def:
-                raise ValueError(f"Helmfile '{helmfile_reference}' not found in project definition")
-
-            # Clone the helmfile source to target directory
-            _, entry_path = await self._clone_helmfile_source(helmfile_def, target_path)
-
-            # Write helmfile entry config for CMP to use
-            if entry_path:
-                helmfile_config_path = os.path.join(target_path, ".helmfile-entry")
-                with open(helmfile_config_path, "w") as f:
-                    f.write(entry_path)
-                logger.info(f"Created helmfile entry config: {helmfile_config_path} -> {entry_path}")
-
-            # De env-vars voor de CMP gaan als SOPS-bestand naar git; de plugin
-            # ontsleutelt ze met de projectsleutel en leest ze daarna als KEY=waarde.
-            cmp_env_names = sops_filenames(CMP_ENV_NAME)
-            cmp_env_to_sops_path = os.path.join(target_path, cmp_env_names.plaintext)
-            cmp_env_sops_path = os.path.join(target_path, cmp_env_names.encrypted)
-            cmp_env_plaintext_path = os.path.join(target_path, CMP_ENV_PLAINTEXT_FILENAME)
-            cmp_env_vars: dict[str, str] = {}
-
-            # Add env-vars from the deployment's helmfile reference
-            # These can be plain text or AGE-encrypted values
-            env_vars = helmfile_ref.get("env-vars", {})
-            if env_vars and isinstance(env_vars, dict):
-                # Only fetched when an encrypted value is actually present, so a
-                # project without one keeps working even if no key is configured.
-                env_private_key: str | None = None
-                for key, value in env_vars.items():
-                    if carries_encrypted_value(value):
-                        if env_private_key is None:
-                            env_private_key = project_private_key_or_none(project_data)
-                        if not env_private_key:
-                            raise ValueError(
-                                f"Helmfile deployment {deployment_name} has AGE-encrypted env var "
-                                f"'{key}' but the project age-private-key could not be read"
-                            )
-                        plain_value = await decrypt_password_smart(value, env_private_key)
-                    else:
-                        plain_value = str(value)
-
-                    # De plugin leest de env-vars als regels KEY=waarde en weigert hetzelfde.
-                    # Toetsen gebeurt na ontsleuteling: alleen daar is te zien wat de
-                    # plugin uiteindelijk voor zich krijgt.
-                    rejection = cmp_env_rejection(key, plain_value)
-                    if rejection:
-                        raise ValueError(
-                            f"Helmfile deployment {deployment_name} cannot pass this env var to the CMP: {rejection}"
-                        )
-                    cmp_env_vars[key] = plain_value
-
-            if cmp_env_vars:
-                # Vaste sleutelvolgorde, zodat de skip-if-unchanged van SOPS een
-                # ongewijzigde map ook echt als ongewijzigd ziet.
-                with open(cmp_env_to_sops_path, "w") as f:
-                    f.write(dump_yaml_for_go_unfolded({key: cmp_env_vars[key] for key in sorted(cmp_env_vars)}))
-                logger.info(f"Created CMP environment file (to be encrypted): {cmp_env_to_sops_path}")
-            elif os.path.exists(cmp_env_sops_path):
-                # Weggehaalde env-vars moeten ook uit de render verdwijnen.
-                os.remove(cmp_env_sops_path)
-                logger.info(f"Removed CMP environment file, deployment has no env-vars: {cmp_env_sops_path}")
-
-            if os.path.exists(cmp_env_plaintext_path):
-                os.remove(cmp_env_plaintext_path)
-                logger.info(f"Removed plain-text CMP environment file: {cmp_env_plaintext_path}")
-
-            # Extract base helm-values from helmfile definition
-            base_values = await self._project_file_handler.extract_helmfile_values(project_data, helmfile_reference)
-
-            # Extract deployment-level helm-values
-            deployment_values = await self._project_file_handler.extract_deployment_helmfile_values(
-                project_data, deployment_name, helmfile_reference
-            )
-
-            # Deep merge values (deployment overrides base)
-            merged_values = self._deep_merge_dicts(base_values, deployment_values)
-
-            # Als basis gemerged, niet eroverheen: bestaande annotaties blijven staan en een
-            # target uit de projectvalues wint, net als elke andere waarde in dit pad.
-            if external_dns_target:
-                merged_values = self._deep_merge_dicts(
-                    {"cluster": {"ingress": {"annotations": {_EXTERNAL_DNS_TARGET_ANNOTATION: external_dns_target}}}},
-                    merged_values,
-                )
-                logger.info(
-                    f"Set external-dns target '{external_dns_target}' on helmfile values for "
-                    f"{deployment_name} ({helmfile_hostname})"
-                )
-
-            # Resolve $ALIAS references in the merged values
-            resolved_values = self._resolve_nested_aliases(merged_values, context)
-
-            # Write values as .to-sops.yaml (will be encrypted later)
-            # CMP plugin looks for values.sops.yaml in helmfile directories
-            values_file_to_sops = sops_filenames("values").plaintext
-            values_path = os.path.join(target_path, values_file_to_sops)
-
-            with open(values_path, "w") as f:
-                f.write(dump_yaml_for_go(resolved_values))
-
-            logger.info(f"Created helmfile values file (to be encrypted): {values_path}")
-
-            # Write custom files defined in project (base) and deployment (override)
-            # This allows users to override helmfile.yaml.gotmpl or add other files
-            custom_files = self._write_helmfile_custom_files(helmfile_def, helmfile_ref, target_path)
-            if custom_files:
-                logger.info(f"Wrote {len(custom_files)} custom file(s) for helmfile deployment")
-
-        # Create service secret manifests (database, minio, redis, keycloak)
-        secret_files = await self._create_deployment_secrets(
-            deployment_name,
-            target_path,
-            prefixed_namespace,
-            cluster_name,
-        )
-        logger.info(f"Created {len(secret_files)} service secret manifests for helmfile deployment")
-
-        # De namespace-brede policies staan al op schijf; ze moeten alleen nog in de
-        # kustomization, want die wordt hier uit een lijst gebouwd en niet uit een scan.
-        regular_files: list[str] = list(namespace_policy_files or [])
-
-        # Create Let's Encrypt Issuer manifest if configured
-        issuer_config = effective_issuer(project_data, deployment, cluster_name)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-
-        if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
-            project_contact_email = project_data.get("config", {}).get("contact-email")
-            cluster_contact_email = get_letsencrypt_contact_email(cluster_name)
-            contact_email = project_contact_email or cluster_contact_email
-
-            if contact_email:
-                issuer_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "issuer-letsencrypt.yaml.jinja")
-
-                issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
-                issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
-                issuer_manifest_filename = generate_issuer_manifest_name(
-                    base_domain, issuer_config, deployment_name
-                ).replace(".yaml", "")
-
-                issuer_variables = {
-                    "issuer_name": issuer_name_generated,
-                    "issuer_secret_name": issuer_secret_name,
-                    "contact_email": contact_email,
-                    "staging": issuer_config == "letsencrypt-staging",
-                    "namespace": prefixed_namespace,
-                }
-
-                issuer_manifest_path = self._manifest_generator.create_manifest_file(
-                    template_path=issuer_template_path,
-                    values=issuer_variables,
-                    output_dir=target_path,
-                    output_filename=issuer_manifest_filename,
-                    use_sops=False,
-                )
-
-                regular_files.append(f"{issuer_manifest_filename}.yaml")
-                logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
-
-                regular_files.append(
-                    self._emit_acme_network_policy(
-                        deployment_name=deployment_name,
-                        namespace=prefixed_namespace,
-                        cluster_name=cluster_name,
-                        output_dir=target_path,
-                    )
-                )
-            else:
-                logger.warning(f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured")
-
-        # Create kustomization.yaml for additional resources (Issuer, NetworkPolicy, Secrets)
-        # The CMP plugin will run BOTH kustomize build AND helmfile template
-        # This ensures Let's Encrypt Issuer, secrets, and other resources are applied alongside helmfile output
-        # Convert .to-sops.yaml filenames to .sops.yaml (they get encrypted below)
-        sops_files = [sops_filenames(f).encrypted for f in secret_files]
-
-        if regular_files or sops_files:
-            logger.info(
-                f"Creating kustomization.yaml for helmfile deployment with "
-                f"{len(regular_files)} resources and {len(sops_files)} SOPS files"
-            )
-            self._manifest_generator.create_kustomization_files(
-                output_dir=target_path,
-                namespace=prefixed_namespace,
-                sops_files=sops_files,  # Include secret SOPS files
-                regular_files=regular_files,
-                helm_charts=[],  # No helm charts - helmfile handles this
-            )
-            logger.info(f"Created kustomization.yaml with resources: {regular_files}, sops: {sops_files}")
-        else:
-            logger.debug("No additional resources for kustomization.yaml, skipping creation")
-
-        # Encrypt .to-sops.yaml files to .sops.yaml
-        public_key = get_project_public_key(project_data)
-        if not public_key:
-            raise ValueError(
-                f"No public key found for project, cannot encrypt helm values for deployment: {deployment_name}. "
-                "This would commit secrets in plain text to git!"
-            )
-
-        logger.info(f"Encrypting helmfile values files for deployment: {deployment_name}")
-
-        # List .to-sops.yaml files before encryption for debugging
-        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
-        to_sops_files = glob.glob(to_sops_pattern)
-        logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
-        for file_path in to_sops_files:
-            logger.info(f"  - {os.path.basename(file_path)}")
-
-        await asyncio.to_thread(
-            encrypt_to_sops_files_or_fail,
-            target_path,
-            public_key,
-            f"helmfile values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-            private_key=project_private_key_or_none(project_data),
-        )
-
-        logger.info("All helmfile values files successfully encrypted")
-        logger.info(f"Helmfile deployment processing complete for: {deployment_name}")
-
-    async def _create_deployment_secrets(
-        self,
-        deployment_name: str,
-        target_path: str,
-        namespace: str,
-        cluster: str,
-    ) -> list[str]:
-        """
-        Create Kubernetes Secret manifests for all services used by a deployment.
-
-        This method creates secret manifests based on what's stored in self._secrets_to_create.
-        It's used by both component-based and helm-chart-based deployments.
-
-        Args:
-            deployment_name: Name of the deployment
-            target_path: Directory where secret manifests should be created
-            namespace: Target namespace for the secrets
-            cluster: Cluster name for cluster-specific configurations
-
-        Returns:
-            List of created secret filenames (*.to-sops.yaml)
-        """
-        created_files: list[str] = []
-
-        secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
-
-        # Create Keycloak/SSO secret if available
-        keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
-        if keycloak_secret:
-            keycloak_secret_data = keycloak_secret.to_k8s_secret_data()
-            secret_vars = {
-                "name": KeycloakSecret.get_secret_name(deployment_name),
-                "namespace": namespace,
-                "secret_pairs": keycloak_secret_data,
-            }
-            manifest_name = f"{KeycloakSecret.get_secret_name(deployment_name)}-secret"
-            self._manifest_generator.create_manifest_file(
-                template_path=secret_template_path,
-                values=secret_vars,
-                output_dir=target_path,
-                output_filename=manifest_name,
-                use_sops=True,
-            )
-            created_files.append(sops_filenames(manifest_name).plaintext)
-            logger.info(f"Created Keycloak secret manifest: {manifest_name}")
-
-        # Create Database secret if available
-        db_secret = self._get_secret_from_map(deployment_name, "database", DatabaseSecret)
-        if db_secret:
-            db_secret_data = db_secret.to_k8s_secret_data()
-            secret_vars = {
-                "name": DatabaseSecret.get_secret_name(deployment_name),
-                "namespace": namespace,
-                "secret_pairs": db_secret_data,
-            }
-            manifest_name = f"{DatabaseSecret.get_secret_name(deployment_name)}-secret"
-            self._manifest_generator.create_manifest_file(
-                template_path=secret_template_path,
-                values=secret_vars,
-                output_dir=target_path,
-                output_filename=manifest_name,
-                use_sops=True,
-            )
-            created_files.append(sops_filenames(manifest_name).plaintext)
-            logger.info(f"Created Database secret manifest: {manifest_name}")
-
-        # Create MinIO secret if available
-        minio_secret = self._get_secret_from_map(deployment_name, "minio", MinIOSecret)
-        if minio_secret:
-            minio_secret_data = minio_secret.to_k8s_secret_data()
-            secret_vars = {
-                "name": MinIOSecret.get_secret_name(deployment_name),
-                "namespace": namespace,
-                "secret_pairs": minio_secret_data,
-            }
-            manifest_name = f"{MinIOSecret.get_secret_name(deployment_name)}-secret"
-            self._manifest_generator.create_manifest_file(
-                template_path=secret_template_path,
-                values=secret_vars,
-                output_dir=target_path,
-                output_filename=manifest_name,
-                use_sops=True,
-            )
-            created_files.append(sops_filenames(manifest_name).plaintext)
-            logger.info(f"Created MinIO secret manifest: {manifest_name}")
-
-        # Create Redis secret if available
-        redis_secret = self._get_secret_from_map(deployment_name, "redis", RedisSecret)
-        if redis_secret:
-            redis_secret_data = redis_secret.to_k8s_secret_data()
-            secret_vars = {
-                "name": RedisSecret.get_secret_name(deployment_name),
-                "namespace": namespace,
-                "secret_pairs": redis_secret_data,
-            }
-            manifest_name = f"{RedisSecret.get_secret_name(deployment_name)}-secret"
-            self._manifest_generator.create_manifest_file(
-                template_path=secret_template_path,
-                values=secret_vars,
-                output_dir=target_path,
-                output_filename=manifest_name,
-                use_sops=True,
-            )
-            created_files.append(sops_filenames(manifest_name).plaintext)
-            logger.info(f"Created Redis secret manifest: {manifest_name}")
-
-        return created_files
-
-    async def _create_helm_kustomization(
-        self,
-        target_path: str,
-        namespace: str,
-        helm_charts: list[dict[str, Any]],
-        secret_files: list[str] | None = None,
-        regular_files: list[str] | None = None,
-    ) -> None:
-        """
-        Create kustomization.yaml and decrypt-sops.yaml files for helm chart deployment.
-
-        Uses the shared create_kustomization_files method from ManifestGenerator.
-
-        Args:
-            target_path: Directory where kustomization files should be created
-            namespace: Target namespace
-            helm_charts: List of helm chart configurations
-            secret_files: Optional list of secret manifest files (.to-sops.yaml) to include
-            regular_files: Optional list of regular manifest files (e.g., Issuer) to include
-        """
-        # Collect SOPS files for decryption (Secret manifests only)
-        # NOTE: Helm values files are NOT included here - they are decrypted by the
-        # CMP plugin's decrypt_helm_values function, not by KSOPS. KSOPS only handles
-        # Kubernetes Secret manifests that need to be decrypted and applied as resources.
-        all_sops_files: list[str] = []
-
-        if secret_files:
-            all_sops_files.extend(secret_files)
-
-        # Use the shared manifest generator method
-        self._manifest_generator.create_kustomization_files(
-            output_dir=target_path,
-            namespace=namespace,
-            sops_files=all_sops_files or None,
-            regular_files=regular_files or [],
-            helm_charts=helm_charts,
+        """Render a helmfile deployment; see :class:`HelmDeployment`."""
+        await HelmDeployment(self).process_helmfile_deployment(
+            deployment, git_connector, target_path, namespace_policy_files
         )
 
     async def close(self) -> None:
@@ -5247,7 +3096,7 @@ class ProjectManager:
         self._force_clone_override = force_clone
         self._terminated_sync_operations = []
 
-        targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        targets = resolve_deployment_filter(deployment_name, deployment_names)
         # De scope zoals de AANROEPER hem gaf. De grendel hieronder mag een projectbrede
         # ronde versmallen, maar dat maakt hem niet tot een gerichte ronde.
         project_wide = targets is None
@@ -6757,55 +4606,18 @@ class ProjectManager:
                 issuer_key = f"{base_domain}:{issuer_config}"
                 if issuer_key not in created_issuers:
                     created_issuers.add(issuer_key)
-
-                    # Determine contact email: project override or cluster default
-                    project_contact_email = project_data.get("config", {}).get("contact-email")
-                    cluster_contact_email = get_letsencrypt_contact_email(cluster)
-                    contact_email = project_contact_email or cluster_contact_email
-
-                    if contact_email:
-                        issuer_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "issuer-letsencrypt.yaml.jinja")
-
-                        issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
-                        issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
-                        issuer_manifest_filename = generate_issuer_manifest_name(
-                            base_domain, issuer_config, deployment_name
-                        ).replace(".yaml", "")
-
-                        issuer_variables = {
-                            "issuer_name": issuer_name_generated,
-                            "issuer_secret_name": issuer_secret_name,
-                            "contact_email": contact_email,
-                            "staging": issuer_config == "letsencrypt-staging",
-                            "namespace": namespace,
-                        }
-
-                        issuer_manifest_path = self._manifest_generator.create_manifest_file(
-                            template_path=issuer_template_path,
-                            values=issuer_variables,
+                    created_files.extend(
+                        emit_letsencrypt_issuer(
+                            self._manifest_generator,
+                            project_data=project_data,
+                            deployment_name=deployment_name,
+                            base_domain=base_domain,
+                            issuer_config=issuer_config,
+                            cluster_name=cluster,
+                            namespace=namespace,
                             output_dir=full_output_dir,
-                            output_filename=issuer_manifest_filename,
-                            use_sops=False,
                         )
-
-                        created_files.append(f"{issuer_manifest_filename}.yaml")
-                        logger.info(
-                            f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
-                        )
-
-                        created_files.append(
-                            self._emit_acme_network_policy(
-                                deployment_name=deployment_name,
-                                namespace=namespace,
-                                cluster_name=cluster,
-                                output_dir=full_output_dir,
-                            )
-                        )
-                    else:
-                        logger.warning(
-                            f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
-                            f"(set contact-email in project config or letsencrypt.contact_email in cluster config)"
-                        )
+                    )
 
             # Write each used service's declared secret files via the shared writer
             # (RC-5 Phase 6c). The typed secret plus alias/register flags are built by

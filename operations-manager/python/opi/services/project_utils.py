@@ -258,6 +258,21 @@ def normalize_container_image(image: str) -> tuple[str, bool]:
     return normalized, was_normalized
 
 
+def resolve_deployment_filter(deployment_name: str | None, deployment_names: list[str] | None) -> list[str] | None:
+    """Normalize the single/plural deployment-filter arguments into one list.
+
+    Returns None when no filter is requested (process all deployments). When a
+    list is returned it is the exhaustive set of deployment names to target -
+    an empty list therefore means *zero* deployments, not "all". ``deployment_names``
+    takes precedence over the singular ``deployment_name`` convenience argument.
+    """
+    if deployment_names is not None:
+        return deployment_names
+    if deployment_name is not None:
+        return [deployment_name]
+    return None
+
+
 def deployments_using_component(project_data: dict[str, Any], component_name: str) -> list[str]:
     """The names of the deployments referencing this component, in file order."""
     names = []

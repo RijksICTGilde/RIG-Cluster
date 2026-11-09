@@ -126,25 +126,25 @@ class TestResolveDeploymentFilter:
     """The single/plural deployment-filter normalizer underpins scoped redeploys."""
 
     def test_none_when_both_absent(self):
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter(None, None) is None
+        assert resolve_deployment_filter(None, None) is None
 
     def test_single_name_wraps_to_list(self):
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter("dev", None) == ["dev"]
+        assert resolve_deployment_filter("dev", None) == ["dev"]
 
     def test_list_takes_precedence_over_single(self):
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter("dev", ["a", "b"]) == ["a", "b"]
+        assert resolve_deployment_filter("dev", ["a", "b"]) == ["a", "b"]
 
     def test_empty_list_preserved_not_collapsed_to_none(self):
         """Empty list means 'zero deployments', must not become None ('all')."""
-        from opi.manager.project_manager import _resolve_deployment_filter
+        from opi.services.project_utils import resolve_deployment_filter
 
-        assert _resolve_deployment_filter("dev", []) == []
+        assert resolve_deployment_filter("dev", []) == []
 
 
 class TestGetDeploymentsListFilter:

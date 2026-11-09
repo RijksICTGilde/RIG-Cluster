@@ -1,9 +1,9 @@
 """Direct measurements of the two Helm helpers that every Helm test stubs away.
 
-``_get_helm_values_context`` and ``_create_deployment_secrets`` have no test of their own:
-the three tests on ``_process_helm_chart_deployment`` and ``_process_helmfile_deployment``
+``get_helm_values_context`` and ``create_deployment_secrets`` have no test of their own:
+the three tests on ``process_helm_chart_deployment`` and ``process_helmfile_deployment``
 replace exactly these two with a mock, so no test runs the Helm path with a real values
-context and real secret manifests. Both are measured here on a real instance, with the real
+context and real secret manifests. Both are measured here on a real host, with the real
 ``ManifestGenerator`` writing into a tmp directory.
 """
 
@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opi.generation.manifests import ManifestGenerator
+from opi.manager.project.helm_deployment import HelmDeployment
 from opi.manager.project_manager import ProjectManager
 from opi.services.secrets import DatabaseSecret, KeycloakSecret, MinIOSecret, RedisSecret
 from opi.utils.sops import sops_filenames
@@ -27,14 +28,14 @@ INGRESS_POSTFIX = ".sandbox.rijksapp.dev"
 PROJECT = {"name": "demo"}
 
 
-def _manager(deployment: dict[str, Any] | None, secrets: dict[str, Any] | None = None) -> ProjectManager:
-    """A half-built manager: only what these two helpers reach."""
-    manager = ProjectManager.__new__(ProjectManager)
-    manager._secrets_to_create = {"production": dict(secrets)} if secrets else {}
-    manager._manifest_generator = ManifestGenerator()
-    manager.get_deployment_by_name = AsyncMock(return_value=deployment)
-    manager.get_contents = AsyncMock(return_value=PROJECT)
-    return manager
+def _helm(deployment: dict[str, Any] | None, secrets: dict[str, Any] | None = None) -> HelmDeployment:
+    """The helm rendering around a half-built host: only what these two helpers reach."""
+    host = ProjectManager.__new__(ProjectManager)
+    host._secrets_to_create = {"production": dict(secrets)} if secrets else {}
+    host._manifest_generator = ManifestGenerator()
+    host.get_deployment_by_name = AsyncMock(return_value=deployment)
+    host.get_contents = AsyncMock(return_value=PROJECT)
+    return HelmDeployment(host)
 
 
 def _deployment(**overrides: Any) -> dict[str, Any]:
@@ -84,13 +85,13 @@ class TestHelmValuesContext:
 
     @pytest.mark.asyncio
     async def test_an_unknown_deployment_yields_an_empty_context(self) -> None:
-        assert await _manager(None)._get_helm_values_context("production") == {}
+        assert await _helm(None).get_helm_values_context("production") == {}
 
     @pytest.mark.asyncio
     async def test_without_a_subdomain_the_hostname_falls_back_to_the_deployment_name(self) -> None:
         """On the cluster domain the name carries a double dot, which is what the code does
         today: ``get_ingress_postfix`` already starts with one and this path adds another."""
-        context = await _manager(_deployment())._get_helm_values_context("production")
+        context = await _helm(_deployment()).get_helm_values_context("production")
 
         assert context["HOSTNAME"] == f"production.{INGRESS_POSTFIX}"
         assert context["PUBLIC_HOST"] == f"https://production.{INGRESS_POSTFIX}"
@@ -100,7 +101,7 @@ class TestHelmValuesContext:
     @pytest.mark.asyncio
     async def test_a_subdomain_on_the_cluster_domain(self) -> None:
         """Same double dot as the fallback above; pinned, not endorsed."""
-        context = await _manager(_deployment(subdomain="app"))._get_helm_values_context("production")
+        context = await _helm(_deployment(subdomain="app")).get_helm_values_context("production")
 
         assert context["HOSTNAME"] == f"app.{INGRESS_POSTFIX}"
         assert context["PUBLIC_HOSTNAME"] == f"app.{INGRESS_POSTFIX}"
@@ -109,7 +110,7 @@ class TestHelmValuesContext:
     @pytest.mark.asyncio
     async def test_a_subdomain_on_an_own_base_domain(self) -> None:
         deployment = _deployment(subdomain="app", **{"base-domain": "voorbeeld.nl"})
-        context = await _manager(deployment)._get_helm_values_context("production")
+        context = await _helm(deployment).get_helm_values_context("production")
 
         assert context["HOSTNAME"] == "app.voorbeeld.nl"
         assert context["PUBLIC_HOST"] == "https://app.voorbeeld.nl"
@@ -119,20 +120,20 @@ class TestHelmValuesContext:
     async def test_a_letsencrypt_issuer_on_an_own_domain_gets_the_generated_name(self) -> None:
         """The name must match the Issuer resource the manifest generation creates."""
         deployment = _deployment(subdomain="app", **{"base-domain": "voorbeeld.nl", "issuer": "letsencrypt"})
-        context = await _manager(deployment)._get_helm_values_context("production")
+        context = await _helm(deployment).get_helm_values_context("production")
 
         assert context["ISSUER"] == "letsencrypt-voorbeeld-nl-production"
 
     @pytest.mark.asyncio
     async def test_any_other_issuer_is_passed_through_unchanged(self) -> None:
         deployment = _deployment(subdomain="app", issuer="eigen-issuer")
-        context = await _manager(deployment)._get_helm_values_context("production")
+        context = await _helm(deployment).get_helm_values_context("production")
 
         assert context["ISSUER"] == "eigen-issuer"
 
     @pytest.mark.asyncio
     async def test_every_service_credential_lands_in_the_context(self) -> None:
-        manager = _manager(
+        helm = _helm(
             _deployment(subdomain="app"),
             {
                 "database": _database_secret(),
@@ -142,7 +143,7 @@ class TestHelmValuesContext:
             },
         )
 
-        context = await manager._get_helm_values_context("production")
+        context = await helm.get_helm_values_context("production")
 
         assert context["DATABASE_SERVER_HOST"] == "rig-db-rw.rig-db"
         assert context["DATABASE_SERVER_USER"] == "demo_user"
@@ -162,11 +163,11 @@ class TestHelmValuesContext:
     @pytest.mark.asyncio
     async def test_ports_stay_integers(self) -> None:
         """A quoted port in a values file is a type error in the chart, not a cosmetic one."""
-        manager = _manager(
+        helm = _helm(
             _deployment(), {"database": _database_secret(), "minio": _minio_secret(), "redis": _redis_secret()}
         )
 
-        context = await manager._get_helm_values_context("production")
+        context = await helm.get_helm_values_context("production")
 
         assert context["DATABASE_SERVER_PORT"] == 5432
         assert context["OBJECT_STORE_PORT"] == 9000
@@ -176,7 +177,7 @@ class TestHelmValuesContext:
 
     @pytest.mark.asyncio
     async def test_a_deployment_without_services_gets_no_credentials(self) -> None:
-        context = await _manager(_deployment())._get_helm_values_context("production")
+        context = await _helm(_deployment()).get_helm_values_context("production")
 
         assert not [key for key in context if key.startswith(("DATABASE_", "OBJECT_STORE_", "OIDC_", "REDIS_"))]
 
@@ -190,16 +191,14 @@ class TestDeploymentSecrets:
 
     @pytest.mark.asyncio
     async def test_without_secrets_nothing_is_written(self, tmp_path: Path) -> None:
-        created = await _manager(_deployment())._create_deployment_secrets(
-            "production", str(tmp_path), "rig-demo", CLUSTER
-        )
+        created = await _helm(_deployment()).create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
 
         assert created == []
         assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.asyncio
     async def test_one_manifest_per_service_with_the_plaintext_name(self, tmp_path: Path) -> None:
-        manager = _manager(
+        helm = _helm(
             _deployment(),
             {
                 "keycloak": _keycloak_secret(),
@@ -209,7 +208,7 @@ class TestDeploymentSecrets:
             },
         )
 
-        created = await manager._create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
+        created = await helm.create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
 
         assert created == [
             sops_filenames(f"production-{service}-secret").plaintext
@@ -219,9 +218,9 @@ class TestDeploymentSecrets:
 
     @pytest.mark.asyncio
     async def test_the_written_pairs_are_the_credentials_of_that_service(self, tmp_path: Path) -> None:
-        manager = _manager(_deployment(), {"database": _database_secret()})
+        helm = _helm(_deployment(), {"database": _database_secret()})
 
-        created = await manager._create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
+        created = await helm.create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
 
         pairs = self._pairs(tmp_path, created[0])
         assert pairs == _database_secret().to_k8s_secret_data()
@@ -229,9 +228,9 @@ class TestDeploymentSecrets:
 
     @pytest.mark.asyncio
     async def test_the_namespace_is_the_one_passed_in(self, tmp_path: Path) -> None:
-        manager = _manager(_deployment(), {"redis": _redis_secret()})
+        helm = _helm(_deployment(), {"redis": _redis_secret()})
 
-        created = await manager._create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
+        created = await helm.create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
 
         manifest = YAML(typ="safe").load((tmp_path / created[0]).read_text())
         assert manifest["metadata"]["namespace"] == "rig-demo"
@@ -239,8 +238,8 @@ class TestDeploymentSecrets:
 
     @pytest.mark.asyncio
     async def test_only_the_services_in_the_map_get_a_manifest(self, tmp_path: Path) -> None:
-        manager = _manager(_deployment(), {"minio": _minio_secret()})
+        helm = _helm(_deployment(), {"minio": _minio_secret()})
 
-        created = await manager._create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
+        created = await helm.create_deployment_secrets("production", str(tmp_path), "rig-demo", CLUSTER)
 
         assert created == [sops_filenames("production-minio-secret").plaintext]

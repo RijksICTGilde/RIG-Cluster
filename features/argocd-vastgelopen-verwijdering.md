@@ -493,9 +493,9 @@ versleutelt alleen wat het als `.to-sops.yaml` schrijft.
 * Endpoints en EndpointSlices: ArgoCD sluit ze zelf uit (`resource.exclusions`), en
   Endpoints dragen geen `ownerReference` om ze aan te herkennen.
 * Alles van een helmfile-project (een deployment met een `helmfile`-lijst, dezelfde toets
-  als `ProjectManager._deployment_uses_helmfile`): niet in de argo-laag, niet in de
-  deployments-repo, en hun namespaces niet in het cluster. Dat vraagt de projects-repo,
-  dus gebruik `GITOPS`.
+  als `deployment_uses_helmfile` in `opi/manager/project/helm_deployment.py`): niet in de
+  argo-laag, niet in de deployments-repo, en hun namespaces niet in het cluster. Dat vraagt
+  de projects-repo, dus gebruik `GITOPS`.
 * Een map in de deployments-repo die de projects-repo nog vraagt, ook als er op dit moment
   geen Application naar wijst. Dat is precies de stand die een forcering achterlaat: de
   deployment staat nog in het projectbestand en ArgoCD maakt de Application opnieuw aan, dus

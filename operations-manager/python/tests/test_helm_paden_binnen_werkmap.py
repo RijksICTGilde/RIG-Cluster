@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.config import settings
+from opi.manager.project.helm_deployment import clone_helm_chart, clone_helmfile_source
 from opi.services.project_schema import ProjectSchemaError, validate_project_schema
 from opi.utils.fs_paths import reject_escaping_symlinks, safe_join, single_segment
 
@@ -31,24 +32,6 @@ if TYPE_CHECKING:
 def _allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     """De clone-routes toetsen hun bron tegen de allowlist, en deze fixtures klonen van example.test."""
     monkeypatch.setattr(settings, "RENDER_SOURCE_ALLOWLIST", "https://example.test", raising=False)
-
-
-def _manager() -> Any:
-    with (
-        patch("opi.manager.project_manager.KubectlConnector"),
-        patch("opi.services.project_key_secret.ProjectKeySecretHandler"),
-        patch("opi.generation.manifests.ManifestGenerator"),
-        patch("opi.manager.argo_manager.ArgoManager", return_value=MagicMock()),
-        patch("opi.manager.bootstrap_manager.BootstrapManager", return_value=MagicMock()),
-        patch("opi.manager.delete_project_manager.DeleteProjectManager", return_value=MagicMock()),
-        patch("opi.manager.keycloak_manager.KeycloakManager", return_value=MagicMock()),
-        patch("opi.manager.minio_manager.MinioManager", return_value=MagicMock()),
-        patch("opi.manager.redis_manager.RedisManager", return_value=MagicMock()),
-        patch("opi.manager.pvc_manager.PVCManager", return_value=MagicMock()),
-    ):
-        from opi.manager.project_manager import ProjectManager
-
-        return ProjectManager()
 
 
 def _fake_git_connector(fill: Callable[[Path], None]) -> MagicMock:
@@ -149,12 +132,11 @@ async def test_chart_dependency_buiten_de_clone_wordt_geweigerd(tmp_path: Path) 
     def fill(root: Path) -> None:
         _chart(root, "name: app\ndependencies:\n  - name: common\n    repository: file://../../..\n")
 
-    manager = _manager()
     with (
-        patch("opi.connectors.git.GitConnector", _fake_git_connector(fill)),
+        patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)),
         pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
-        await manager._clone_helm_chart(
+        await clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "chart"},
             str(target),
         )
@@ -170,12 +152,11 @@ async def test_dependencynaam_met_een_scheidingsteken_wordt_geweigerd(tmp_path: 
     def fill(root: Path) -> None:
         _chart(root, "name: app\ndependencies:\n  - name: ../ontsnapt\n    repository: file://.\n")
 
-    manager = _manager()
     with (
-        patch("opi.connectors.git.GitConnector", _fake_git_connector(fill)),
+        patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)),
         pytest.raises(ValueError, match="één padsegment"),
     ):
-        await manager._clone_helm_chart(
+        await clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "chart"},
             str(target),
         )
@@ -189,12 +170,14 @@ async def test_chartnaam_met_een_scheidingsteken_wordt_geweigerd(tmp_path: Path)
     sentinel = tmp_path / "sentinel.txt"
     sentinel.write_text("onaangeroerd")
 
-    manager = _manager()
     with (
-        patch("opi.connectors.git.GitConnector", _fake_git_connector(lambda root: _chart(root, "name: app\n"))),
+        patch(
+            "opi.manager.project.helm_deployment.GitConnector",
+            _fake_git_connector(lambda root: _chart(root, "name: app\n")),
+        ),
         pytest.raises(ValueError, match="één padsegment"),
     ):
-        await manager._clone_helm_chart(
+        await clone_helm_chart(
             {"name": "../../sentinel.txt", "git-url": "https://example.test/app.git", "chart-path": "chart"},
             str(target),
         )
@@ -207,12 +190,14 @@ async def test_chartpad_buiten_de_clone_wordt_geweigerd(tmp_path: Path) -> None:
     target = tmp_path / "deployment"
     target.mkdir()
 
-    manager = _manager()
     with (
-        patch("opi.connectors.git.GitConnector", _fake_git_connector(lambda root: _chart(root, "name: app\n"))),
+        patch(
+            "opi.manager.project.helm_deployment.GitConnector",
+            _fake_git_connector(lambda root: _chart(root, "name: app\n")),
+        ),
         pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
-        await manager._clone_helm_chart(
+        await clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "/etc"},
             str(target),
         )
@@ -229,9 +214,8 @@ async def test_een_gewone_chart_wordt_nog_gekopieerd(tmp_path: Path) -> None:
         common.mkdir()
         (common / "Chart.yaml").write_text("name: common\n")
 
-    manager = _manager()
-    with patch("opi.connectors.git.GitConnector", _fake_git_connector(fill)):
-        dest = await manager._clone_helm_chart(
+    with patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)):
+        dest = await clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "chart"},
             str(target),
         )
@@ -252,9 +236,8 @@ async def test_een_interne_symlink_in_de_chart_blijft_een_symlink(tmp_path: Path
         _chart(root, "name: app\n")
         (root / "chart" / "values-link.yaml").symlink_to(root / "chart" / "values.yaml")
 
-    manager = _manager()
-    with patch("opi.connectors.git.GitConnector", _fake_git_connector(fill)):
-        await manager._clone_helm_chart(
+    with patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)):
+        await clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "chart"},
             str(target),
         )
@@ -272,12 +255,11 @@ async def test_een_symlink_naar_buiten_in_de_chart_wordt_geweigerd(tmp_path: Pat
         (root / "geheim.txt").write_text("nee")
         (root / "chart" / "link.txt").symlink_to(root / "geheim.txt")
 
-    manager = _manager()
     with (
-        patch("opi.connectors.git.GitConnector", _fake_git_connector(fill)),
+        patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)),
         pytest.raises(ValueError, match="wijst buiten"),
     ):
-        await manager._clone_helm_chart(
+        await clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "chart"},
             str(target),
         )
@@ -292,13 +274,12 @@ async def test_een_symlink_naar_buiten_in_de_chart_wordt_geweigerd(tmp_path: Pat
 async def test_helmfilepad_buiten_de_clone_wordt_geweigerd(tmp_path: Path) -> None:
     target = tmp_path / "deployment"
 
-    manager = _manager()
     fake = _fake_git_connector(lambda root: (root / "helmfile.yaml").write_text("releases: []\n"))
     with (
-        patch("opi.manager.project_manager.GitConnector", fake),
+        patch("opi.manager.project.helm_deployment.GitConnector", fake),
         pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
-        await manager._clone_helmfile_source(
+        await clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git", "path": "../../etc"},
             str(target),
         )
@@ -310,13 +291,12 @@ async def test_helmfilepad_buiten_de_clone_wordt_geweigerd(tmp_path: Path) -> No
 async def test_helmfile_entry_buiten_het_pad_wordt_geweigerd(tmp_path: Path) -> None:
     target = tmp_path / "deployment"
 
-    manager = _manager()
     fake = _fake_git_connector(lambda root: (root / "helmfile.yaml").write_text("releases: []\n"))
     with (
-        patch("opi.manager.project_manager.GitConnector", fake),
+        patch("opi.manager.project.helm_deployment.GitConnector", fake),
         pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
-        await manager._clone_helmfile_source(
+        await clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git", "entry": "/etc"},
             str(target),
         )
@@ -332,12 +312,11 @@ async def test_symlink_naar_buiten_in_de_helmfilebron_wordt_geweigerd(tmp_path: 
 
     (tmp_path / "geheim.txt").write_text("nee")
 
-    manager = _manager()
     with (
-        patch("opi.manager.project_manager.GitConnector", _fake_git_connector(fill)),
+        patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)),
         pytest.raises(ValueError, match="wijst buiten"),
     ):
-        await manager._clone_helmfile_source(
+        await clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git"},
             str(target),
         )
@@ -354,9 +333,8 @@ async def test_een_gewone_helmfilebron_wordt_nog_gekopieerd(tmp_path: Path) -> N
         (root / "environments").mkdir()
         (root / "environments" / "prd.yaml").write_text("a: 1\n")
 
-    manager = _manager()
-    with patch("opi.manager.project_manager.GitConnector", _fake_git_connector(fill)):
-        dest, entry = await manager._clone_helmfile_source(
+    with patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)):
+        dest, entry = await clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git", "path": ""},
             str(target),
         )
@@ -373,9 +351,8 @@ async def test_een_interne_symlink_in_de_helmfilebron_blijft_een_symlink(tmp_pat
         (root / "helmfile.yaml").write_text("releases: []\n")
         (root / "helmfile-link.yaml").symlink_to(root / "helmfile.yaml")
 
-    manager = _manager()
-    with patch("opi.manager.project_manager.GitConnector", _fake_git_connector(fill)):
-        await manager._clone_helmfile_source(
+    with patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)):
+        await clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git"},
             str(target),
         )
@@ -393,9 +370,8 @@ async def test_een_symlink_naar_een_map_in_de_helmfilebron_blijft_een_symlink(tm
         (root / "environments" / "prd.yaml").write_text("a: 1\n")
         (root / "env-link").symlink_to("environments", target_is_directory=True)
 
-    manager = _manager()
-    with patch("opi.manager.project_manager.GitConnector", _fake_git_connector(fill)):
-        await manager._clone_helmfile_source(
+    with patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)):
+        await clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git"},
             str(target),
         )
@@ -406,10 +382,9 @@ async def test_een_symlink_naar_een_map_in_de_helmfilebron_blijft_een_symlink(tm
 
 async def _twee_keer_clonen(fill: Callable[[Path], None], target: Path) -> None:
     """Twee uitrollen van dezelfde bron naar hetzelfde target_path."""
-    manager = _manager()
-    with patch("opi.manager.project_manager.GitConnector", _fake_git_connector(fill)):
+    with patch("opi.manager.project.helm_deployment.GitConnector", _fake_git_connector(fill)):
         for _ in range(2):
-            await manager._clone_helmfile_source(
+            await clone_helmfile_source(
                 {"name": "docs", "url": "https://example.test/infra.git"},
                 str(target),
             )

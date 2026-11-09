@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 import pytest
 from opi.core.cluster_config import namespace_labels
 from opi.core.config import settings
+from opi.manager.project.infrastructure import Infrastructure
 from opi.manager.project_manager import ProjectManager
 
 MANAGED_BY = "argocd.argoproj.io/managed-by"
@@ -100,7 +101,7 @@ async def test_a_namespace_missing_from_the_map_is_created(
     """
     kubectl = _kubectl(monkeypatch, manager)
     created = AsyncMock()
-    monkeypatch.setattr(manager, "_create_namespace_with_argocd_label", created)
+    monkeypatch.setattr(Infrastructure, "create_namespace_with_argocd_label", created)
 
     assert await manager.check_and_create_namespaces(known_namespace_labels={}) is True
 
@@ -117,7 +118,7 @@ async def test_the_sops_secret_is_checked_once_per_namespace(
     and (re)write the same secret three times.
     """
     ensure = AsyncMock()
-    monkeypatch.setattr(manager, "_ensure_sops_secret_in_namespace", ensure)
+    monkeypatch.setattr(Infrastructure, "ensure_sops_secret_in_namespace", ensure)
 
     await manager.check_and_create_sops_secrets_in_namespaces()
 
