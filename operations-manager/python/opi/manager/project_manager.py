@@ -4,12 +4,9 @@ Processing means it can create, update, or delete any resources defined in a pro
 """
 
 import asyncio
-import base64
 import copy
-import glob
 import logging
 import os
-import posixpath
 import shutil
 import tempfile
 import time
@@ -18,7 +15,6 @@ from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated anno
     Iterator,
 )
 from contextlib import AbstractAsyncContextManager, contextmanager
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -28,7 +24,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.connectors import create_argo_connector
 from opi.connectors.git import GitConnector, repo_lock_key
 from opi.connectors.git_repo import (
-    GitRepoConflictError,
     GitRepoWorkspace,
     argo_workspace,
     credentials_from_repo_config,
@@ -39,21 +34,9 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.actor import get_actor
 from opi.core.cluster_config import (
     get_argo_namespace,
-    get_backup_namespace,
-    get_ca_certificate_config,
-    get_cluster_cidrs,
-    get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
-    get_ingress_cluster_issuer,
-    get_ingress_controller_selector,
-    get_ingress_ip_whitelist,
-    get_ingress_postfix,
-    get_ingress_tls_enabled,
-    get_namespace,
-    get_ops_egress,
     get_prefixed_namespace,
     is_reserved_project_name,
-    supports_vpa,
 )
 from opi.core.config import settings
 from opi.core.metrics import (
@@ -63,9 +46,6 @@ from opi.core.metrics import (
     rollout_phase,
 )
 from opi.generation.manifests import (
-    CONFIG_HASH_IGNORE_LABEL_KEY,
-    CONFIG_HASH_IGNORE_LABEL_VALUE,
-    MANIFEST_TEMPLATES_DIR,
     ManifestGenerator,
 )
 from opi.manager.argo_manager import (
@@ -74,64 +54,40 @@ from opi.manager.argo_manager import (
 )
 from opi.manager.project.aliases import (
     DeploymentAliases,
-    generate_storage_env_vars_from_services,
-    generate_web_env_vars_from_services,
-    resolve_aliases,
-    scope_direct_aliases_to_component,
 )
 from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project.attachment_mutations import AttachmentMutations
 from opi.manager.project.component_mutations import ComponentMutations
 from opi.manager.project.database_schema_mutations import DatabaseSchemaMutations
 from opi.manager.project.deployment_mutations import DeploymentMutations
-from opi.manager.project.emitters import emit_letsencrypt_issuer, emit_namespace_network_policies
 from opi.manager.project.helm_deployment import (
     HelmDeployment,
-    deployment_uses_helm_charts,
-    deployment_uses_helmfile,
 )
 from opi.manager.project.infrastructure import Infrastructure
+from opi.manager.project.manifests.application import ApplicationManifests
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project.registry_mutations import RegistryMutations
+from opi.manager.project.results import (  # noqa: TC001 - used in an eagerly-evaluated annotation (no future-annotations)
+    DeploymentResult,
+)
 from opi.manager.project.service_config_mutations import ServiceConfigMutations
 from opi.manager.project_validation import validate_project_structure
 from opi.manager.revision_manager import RevisionManager
-from opi.manager.run_support import resolve_image
-from opi.services import ServiceAdapter, ServiceType
 from opi.services.argocd_operation import (
     describe_sync_waiting,
 )
 from opi.services.catalog.base import (
-    DeploymentManifestContext,
-    ManifestContext,
-    ManifestContribution,
-    ProjectManifestContext,
     ProvisionContext,
     SecretFileSpec,
 )
-from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_directory
 from opi.services.catalog.image_registries.resolution import (
-    build_rules,
-    resolve_deployment_component_image,
     set_deployment_component_registry,
 )
-from opi.services.catalog.publish_on_web.domain_config import (
-    DomainSetting,
-    get_domain_setting,
-)
-from opi.services.catalog.publish_on_web.issuer import effective_issuer
-from opi.services.catalog.publish_on_web.subdomain import (
-    get_supported_base_domains,
-    is_deployment_domain_approved,
-    validate_bare_domain_allowed,
-)
-from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.deployment_order import order_deployments_by_clone_dependency
-from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project import Project
 from opi.services.project_file_handler import (
     ProjectFileHandler,
-    extract_service_names_from_component,
     image_is_confirmed_absent,
 )
 from opi.services.project_key_secret import ProjectKeySecretHandler
@@ -141,68 +97,26 @@ from opi.services.project_store import get_project_store
 from opi.services.project_utils import (
     RESERVED_PROJECT_NAME_MESSAGE,
     normalize_container_image,
-    project_level_deployment,
     resolve_deployment_filter,
 )
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
-    deployment_manifest_services,
-    manifest_services,
-    project_manifest_services,
     provisioning_services,
 )
 from opi.services.secrets import (
     BaseSecret,
-    KeycloakSecret,
-    PlatformSecret,
-    UserSecret,
 )
 from opi.services.tasks import progress_steps as steps
 from opi.services.tasks.async_task_service import AsyncTaskService
 from opi.services.tasks.task_errors import TaskInputError
-from opi.utils.age import (
-    get_project_public_key,
-    project_private_key_or_none,
-)
-from opi.utils.env_vars import (
-    substitute_known_variables,
-)
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
-    ROOT_COMPONENT_FORMAT_IDS,
     RepositoryPathError,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
-    generate_bare_domain_hostname,
     generate_cluster_manifest_folder_path,
-    generate_deployment_manifest_path,
-    generate_ingress_name_from_path,
-    generate_issuer_name,
-    generate_manifest_name,
-    generate_network_policy_manifest_name,
-    generate_network_policy_name,
-    generate_project_level_manifest_path,
     generate_project_manifest_folder_path,
-    generate_project_service_account_name,
-    generate_public_url,
-    generate_pvc_name,
-    generate_root_hostname,
-    generate_storage_name,
-    generate_tls_secret_name,
-    generate_unique_name,
-    get_component_ingress_map,
-)
-from opi.utils.sops import (
-    SOPS_SUFFIX,
-    TO_SOPS_SUFFIX,
-    decrypt_sops_with_key,
-    encrypt_to_sops_files_or_fail,
-    sops_filenames,
-)
-from opi.utils.yaml_util import (
-    YAMLError,
-    load_yaml_safe,
 )
 
 if TYPE_CHECKING:
@@ -211,7 +125,6 @@ if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
     from opi.manager.database_manager import DatabaseManager
     from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
-    from opi.services.catalog.image_registries.rules import ResolvedImage
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
@@ -292,168 +205,6 @@ async def _deployments_being_deleted(project_name: str) -> dict[str, str]:
         return {}
 
 
-# Filename extensions used for generated per-component manifests. A file is only
-# considered for pruning when it ends with one of these (covers plain manifests
-# and both pre/post SOPS-encryption secret files).
-_COMPONENT_MANIFEST_EXTENSIONS: tuple[str, ...] = (
-    SOPS_SUFFIX,
-    TO_SOPS_SUFFIX,
-    ".yaml",
-    ".yml",
-)
-
-
-def _is_generated(basename: str, generated_files: set[str]) -> bool:
-    """Whether a file belongs to the desired state of this run.
-
-    The ``.sops.yaml`` of a secret written this run as ``.to-sops.yaml`` is its previous
-    ciphertext, which the skip-if-unchanged compares against after the prune.
-    """
-    if basename in generated_files:
-        return True
-    if basename.endswith(SOPS_SUFFIX):
-        return sops_filenames(basename).plaintext in generated_files
-    return False
-
-
-def _existing_secret_pairs(sops_path: str, private_key: str | None) -> dict[str, str]:
-    """The ``stringData`` of a previously written SOPS secret, empty on any doubt."""
-    if private_key is None or not os.path.exists(sops_path):
-        return {}
-    decrypted = decrypt_sops_with_key(sops_path, private_key)
-    if decrypted is None:
-        return {}
-    try:
-        doc = load_yaml_safe(decrypted)
-    except YAMLError:
-        logger.info(f"Could not parse decrypted {os.path.basename(sops_path)}, writing fresh values")
-        return {}
-    string_data = doc.get("stringData") if isinstance(doc, dict) else None
-    if not isinstance(string_data, dict):
-        return {}
-    return {key: value for key, value in string_data.items() if isinstance(value, str)}
-
-
-def _attachment_secret_prefix(deployment_name: str) -> str:
-    """Prefix of the Secrets that carry the file-mode attachments of a deployment."""
-    return f"{deployment_name}-attch-"
-
-
-def _select_obsolete_component_manifests(
-    directory: str,
-    component_names: set[str],
-    generated_files: set[str],
-    deployment_name: str,
-) -> list[str]:
-    """Select per-component manifest files that this run did not (re)generate.
-
-    Per-component manifests are named with the component reference as the filename
-    prefix (e.g. ``<component>-deployment.yaml``, ``<component>-service.yaml``,
-    ``<component>-platform-secret.yaml``, ``<component>-user-secret.sops.yaml``,
-    ingress/pvc/configmap variants), and the authorization-wall cookie secret uses
-    the deployment-scoped unique name (``<deployment>-<component>-oauth2-cookie-...``).
-
-    A per-component file is obsolete when the current run did not generate it
-    (``generated_files`` is the complete set written this run). That covers both a
-    removed component (none of its files are regenerated) and a renamed/dropped file of
-    a surviving component (e.g. an ingress whose path changed, so its filename changed).
-    Shared/deployment-level files (kustomization, decrypt-sops, issuer-*,
-    *-network-policy, keycloak/registry secrets, etc.) never start with a component
-    prefix and are left alone. ``*.marked-for-deletion.yaml`` PVCs are skipped so their
-    data lifecycle stays governed by the reconciliation grace period.
-
-    Args:
-        directory: Deployment manifest directory to scan (non-recursive).
-        component_names: All component references owning files here (current + previous).
-        generated_files: Basenames generated this run (the desired-state set).
-        deployment_name: Deployment name (for the unique-name oauth2 cookie prefix).
-
-    Returns:
-        Sorted list of basenames to remove.
-    """
-    if not os.path.isdir(directory):
-        return []
-
-    def _owning_component(basename: str) -> str | None:
-        """Return the component that a basename belongs to, longest prefix wins.
-
-        Considers both the bare ``<component>-`` prefix and the deployment-scoped
-        ``<deployment>-<component>-`` prefix used by the oauth2 cookie secret.
-        """
-        best: str | None = None
-        best_len = -1
-        for comp in component_names:
-            for prefix in (f"{comp}-", f"{deployment_name}-{comp}-"):
-                if basename.startswith(prefix) and len(prefix) > best_len:
-                    best = comp
-                    best_len = len(prefix)
-        return best
-
-    selected: list[str] = []
-    for path in glob.glob(os.path.join(directory, "*")):
-        if not os.path.isfile(path):
-            continue
-        basename = os.path.basename(path)
-        if not basename.endswith(_COMPONENT_MANIFEST_EXTENSIONS):
-            continue
-        # PVC manifests for a removed service are renamed to *.marked-for-deletion.yaml
-        # by pvc_manager.handle_service_removal so ArgoCD keeps the volume alive until
-        # the reconciliation grace period (recoverable if the removal was a mistake).
-        # Hard-deleting them here would prune the PVC and its data immediately.
-        if basename.endswith(".marked-for-deletion.yaml"):
-            continue
-        # Generated this run -> part of the desired state, keep it.
-        if _is_generated(basename, generated_files):
-            continue
-        # Only prune files that belong to a component; shared/deployment-level files
-        # (no component prefix) are never selected.
-        if _owning_component(basename) is not None:
-            selected.append(basename)
-
-    return sorted(selected)
-
-
-def _select_obsolete_service_manifests(
-    directory: str,
-    service_prefixes: set[str],
-    generated_files: set[str],
-) -> list[str]:
-    """Select deployment-wide, service-owned manifest files this run did not (re)generate.
-
-    Symmetric with ``_select_obsolete_component_manifests`` but keyed on the service
-    prefix ``f"{deployment_name}-{service_type.value}-"`` that every
-    ``DeploymentManifestSpec`` filename must carry (RC-15). A service-owned deployment
-    manifest has no component prefix, so the component prune never touches it; without
-    this, a NetworkPolicy would linger after its service is switched off and keep the
-    opening alive. ``*.marked-for-deletion.yaml`` files are left to the reconciliation
-    lifecycle.
-
-    Args:
-        directory: Deployment manifest directory to scan (non-recursive).
-        service_prefixes: One ``f"{deployment_name}-{svc.value}-"`` per ServiceType.
-        generated_files: Basenames generated this run (the desired-state set).
-
-    Returns:
-        Sorted list of basenames to remove.
-    """
-    if not os.path.isdir(directory):
-        return []
-    selected: list[str] = []
-    for path in glob.glob(os.path.join(directory, "*")):
-        if not os.path.isfile(path):
-            continue
-        basename = os.path.basename(path)
-        if not basename.endswith(_COMPONENT_MANIFEST_EXTENSIONS):
-            continue
-        if basename.endswith(".marked-for-deletion.yaml"):
-            continue
-        if _is_generated(basename, generated_files):
-            continue
-        if any(basename.startswith(prefix) for prefix in service_prefixes):
-            selected.append(basename)
-    return sorted(selected)
-
-
 # Registry auth/permission failures (missing or expired pull secret, denied robot)
 # are real, actionable errors worth an ERROR log + alert. A not-found / not-yet-built
 # image is expected churn for CI/CD and PR builds and belongs at WARNING, not ERROR
@@ -497,78 +248,6 @@ def _looks_like_render_failure(detail: str | None) -> bool:
         return False
     lowered = detail.lower()
     return any(marker in lowered for marker in _RENDER_FAILURE_MARKERS)
-
-
-@dataclass
-class DeploymentResult:
-    """Result information for a processed deployment."""
-
-    deployment_name: str
-    cluster: str
-    namespace: str
-    urls: dict[str, str] = field(default_factory=dict)  # component_name -> public_url
-    status: str = "success"
-    errors: list[str] = field(default_factory=list)
-
-
-def _secret_labels_for(spec: SecretFileSpec) -> dict[str, str]:
-    """The Secret's metadata labels, including the config-hash opt-out when it applies.
-
-    A service declares ``include_in_config_hash=False`` when only its own auxiliary pod
-    reads the secret; translating that into the label happens here, once, for every
-    secret the manager writes.
-    """
-    labels = dict(spec.secret_labels or {})
-    if not spec.include_in_config_hash:
-        labels[CONFIG_HASH_IGNORE_LABEL_KEY] = CONFIG_HASH_IGNORE_LABEL_VALUE
-    return labels
-
-
-def collect_manifest_contributions(
-    ctx: ManifestContext, *, component_services: list[str], project_services: list[str]
-) -> list[ManifestContribution]:
-    """Every contributing service's ``ManifestContribution`` for one component.
-
-    Which services are asked depends on where their selection lives. Most read the
-    COMPONENT's own ``services`` list -- each component decides whether it sits behind
-    login, gets database credentials, is scraped. A service that declares
-    ``selectable_per_component=False`` has no per-component choice to make and reads the
-    PROJECT's list instead; no component ever ticks such a service, so a
-    component-scoped question would answer "no" for every component forever.
-
-    Module-level so both halves of that rule can be measured without building a whole
-    deployment first.
-    """
-    return [
-        provider.contribute_manifest_context(ctx)
-        for provider in manifest_services()
-        if any(
-            service_type.value
-            in (component_services if provider.definition.selectable_per_component else project_services)
-            for service_type in provider.manifest_activation_types()
-        )
-    ]
-
-
-def apply_manifest_contributions(variables: dict[str, Any], contributions: list[ManifestContribution]) -> None:
-    """Merge the contributions into a component's template context, in ``manifest_order``.
-
-    Three merge semantics, and the difference is load-bearing:
-
-    * ``template_vars`` OVERRIDE a base key (auth-wall moves ``service_port`` 8080 ->
-      4180).
-    * ``env_vars`` are ADDITIVE: they join the component's own variables instead of
-      replacing them. That is why they are a field of their own rather than a
-      ``template_vars`` entry -- as an override, one service handing out one variable
-      would wipe every variable the component itself declared.
-    * ``sidecars`` are additive too.
-    """
-    for contribution in contributions:
-        variables.update(contribution.template_vars)
-        if contribution.env_vars:
-            variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
-        if contribution.sidecars:
-            variables.setdefault("sidecars", []).extend(contribution.sidecars)
 
 
 class ProjectManager:
@@ -632,6 +311,10 @@ class ProjectManager:
         # Structure: {deployment_name: DeploymentResult}
         # Contains URLs, status, and errors for each processed deployment
         self._deployment_results: dict[str, DeploymentResult] = {}
+
+        # The subdomain registration of the deployment being rendered, to be undone when its
+        # manifests fail. Set by the manifest generation, read back by its rollback.
+        self._pending_subdomain_rollback: dict[str, Any] | None = None
 
         # Track clones performed during processing
         # Structure: {deployment_name: {service_type: {"generation": int | None, "timestamp": str}}}
@@ -710,7 +393,7 @@ class ProjectManager:
             else:
                 return self._database_manager
 
-        from opi.core.cluster_config import get_database_cluster_service_endpoint, get_infrastructure_namespace
+        from opi.core.cluster_config import get_database_cluster_service_endpoint
         from opi.manager.database_manager import DatabaseManager
         from opi.utils.naming import generate_postgres_superuser_secret_name
 
@@ -860,17 +543,8 @@ class ProjectManager:
         return self._deployment_results
 
     def _track_public_urls(self, project_data: dict[str, Any], deployment: dict[str, Any], project_name: str) -> None:
-        """Record the public addresses this deployment offers on its result.
-
-        The addresses come from publish-on-web, the service that decides whether a component
-        gets an ingress, so they are the same ones the deployment endpoint returns and the
-        detail page links. Deriving them here from the naming alone is what made a refresh
-        promise an address that nothing serves (RC-104, vraag 13): a component without an
-        ingress has a name, not an address.
-        """
-        self._deployment_results[deployment["name"]].urls.update(
-            public_url_map_for_deployment(project_data, deployment, project_name, self._project_file_handler)
-        )
+        """Record this deployment's public addresses; see :class:`ApplicationManifests`."""
+        ApplicationManifests(self).track_public_urls(project_data, deployment, project_name)
 
     def get_processing_error(self) -> str | None:
         """
@@ -1032,40 +706,8 @@ class ProjectManager:
         return cast("T", secret)
 
     async def _rollback_subdomain_if_needed(self) -> bool:
-        """
-        Rollback subdomain registration if one is pending.
-
-        This is called when manifest creation fails after subdomain was registered.
-        Uses the rollback info stored in self._pending_subdomain_rollback.
-
-        Returns:
-            True if rollback was performed, False otherwise
-        """
-        rollback_info = getattr(self, "_pending_subdomain_rollback", None)
-        if not rollback_info or not rollback_info.get("should_rollback"):
-            return False
-
-        connector = rollback_info.get("connector")
-        project_name = rollback_info.get("project_name")
-        deployment_name = rollback_info.get("deployment_name")
-        subdomain = rollback_info.get("subdomain")
-        base_domain = rollback_info.get("base_domain")
-
-        if not connector:
-            logger.warning("Cannot rollback subdomain: no connector available")
-            return False
-
-        try:
-            await connector.delete_by_deployment(project_name, deployment_name)
-            logger.info(
-                f"Rolled back subdomain '{subdomain}.{base_domain}' for {project_name}/{deployment_name} "
-                f"due to deployment failure"
-            )
-            self._pending_subdomain_rollback = None
-            return True
-        except Exception as e:
-            logger.error(f"Failed to rollback subdomain '{subdomain}.{base_domain}': {e}")
-            return False
+        """Undo a pending subdomain registration; see :class:`ApplicationManifests`."""
+        return await ApplicationManifests(self).rollback_subdomain_if_needed()
 
     async def _collect_deployment_aliases(self, deployment_name: str) -> dict[str, dict[str, dict[str, str]]]:
         """Collect the aliases of every component in a deployment, categorised."""
@@ -1087,120 +729,20 @@ class ProjectManager:
         created_files: list[str],
         private_key: str | None,
     ) -> None:
-        """Emit the sleep-mode waker for one component, or nothing.
-
-        Renders the waker Deployment + ConfigMap and its SOPS token Secret behind the
-        component's Service (same ``app`` label, ``zad-role: waker``) when the deployment
-        is asleep/waking and this is the chosen waker component. The token comes from the
-        deployment's own ``sleep.wake-token`` (minted on its first sleep). All files go into
-        ``created_files`` so the obsolete-manifest prune removes them once awake.
-
-        ``service_port`` is what this component's Service targets -- the value the caller
-        already resolved for the Service itself, contributions included. The waker has to
-        listen there or the Service selects a pod that answers nothing, so it is taken
-        from the caller rather than assumed.
-        """
-        from opi.services.catalog.sleep_mode import config as sleep_config
-        from opi.services.catalog.sleep_mode import manifests as sleep_manifests
-        from opi.services.catalog.sleep_mode import state as sleep_state
-        from opi.services.catalog.sleep_mode import token as sleep_token
-        from opi.services.catalog.sleep_mode.secret import WakeTokenSecret
-        from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING
-
-        deployment_name = deployment.get("name", "")
-        config = sleep_config.load(project_data, cluster)
-        if config is None or not config.waker:
-            return
-        current = sleep_state.read(project_data, deployment_name)
-        if current.state not in (STATE_SLEEPING, STATE_WAKING):
-            return
-        selected = sleep_manifests.select_waker_component(project_data, deployment, config, self._project_file_handler)
-        if selected != component_reference:
-            return
-        if not service_port:
-            # No Service to sit behind, so nothing would reach the waker anyway. Same
-            # honesty as the other no-waker branches: the deployment still sleeps and is
-            # wakeable from the portal or the API.
-            logger.warning(
-                "sleep-mode: component '%s' on %s/%s has no service port; skipping waker manifests",
-                component_reference,
-                project_name,
-                deployment_name,
-            )
-            return
-        if not current.wake_token:
-            logger.warning(
-                "sleep-mode: no wake token stored for %s/%s; skipping waker manifests",
-                project_name,
-                deployment_name,
-            )
-            return
-
-        generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        # Waker Deployment
-        deployment_values = sleep_manifests.build_waker_deployment_values(
-            app_name=unique_name,
-            namespace=namespace,
-            project_name=project_name,
-            deployment_name=deployment_name,
-            cluster=cluster,
-            port=service_port,
-            generated_at=generated_at,
-        )
-        deployment_template = os.path.join(MANIFEST_TEMPLATES_DIR, "deployment.yaml.jinja")
-        deployment_manifest_name = generate_manifest_name(component_name, "waker-deployment")
-        self._manifest_generator.create_manifest_file(
-            template_path=deployment_template,
-            values=deployment_values,
-            output_dir=output_dir,
-            output_filename=deployment_manifest_name,
-            use_sops=False,
-        )
-        created_files.append(f"{deployment_manifest_name}.yaml")
-
-        # Waker ConfigMap
-        configmap_values = sleep_manifests.build_waker_configmap_values(
-            app_name=unique_name,
-            namespace=namespace,
-            project_name=project_name,
-            deployment_name=deployment_name,
+        """Emit the sleep-mode waker of one component; see :class:`ApplicationManifests`."""
+        await ApplicationManifests(self).emit_waker_manifests(
+            project_data=project_data,
+            deployment=deployment,
+            component_name=component_name,
             component_reference=component_reference,
-            config=config,
-            cluster=cluster,
-            port=service_port,
-        )
-        configmap_template = os.path.join(MANIFEST_TEMPLATES_DIR, "configmap.yaml.jinja")
-        configmap_manifest_name = generate_manifest_name(component_name, "waker-config")
-        self._manifest_generator.create_manifest_file(
-            template_path=configmap_template,
-            values=configmap_values,
-            output_dir=output_dir,
-            output_filename=configmap_manifest_name,
-            use_sops=False,
-        )
-        created_files.append(f"{configmap_manifest_name}.yaml")
-
-        # Waker token Secret (SOPS), from the deployment's stored wake token
-        plain_token = await sleep_token.decrypt(current.wake_token, project_data)
-        secret_template = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
-        await self._write_secret_file(
-            SecretFileSpec(
-                secret_name=sleep_manifests.waker_token_secret_name(unique_name),
-                secret_pairs=WakeTokenSecret(token=plain_token).to_k8s_secret_data(),
-                # Only the waker pod reads this, and it is pruned on wake. Counting it in
-                # the config hash restarted the application again right after it came up.
-                include_in_config_hash=False,
-            ),
-            deployment_name=deployment_name,
+            unique_name=unique_name,
             namespace=namespace,
+            cluster=cluster,
+            project_name=project_name,
+            service_port=service_port,
             output_dir=output_dir,
-            template_path=secret_template,
             created_files=created_files,
             private_key=private_key,
-        )
-        logger.info(
-            "sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference
         )
 
     async def _write_secret_file(
@@ -1214,54 +756,16 @@ class ProjectManager:
         created_files: list[str],
         private_key: str | None,
     ) -> None:
-        """Write one deployment SOPS secret manifest (RC-5 Phase 6c shared writer).
-
-        The single place that turns a service's ``SecretFileSpec`` into a file:
-        optional secret registration, cross-component alias resolution,
-        ``create_manifest_file`` and obsolete-prune bookkeeping. Services declare the
-        spec (``Service.build_secret_files``); this stays service-agnostic.
-        """
-        if spec.register_secret is not None:
-            if not spec.secret_type:
-                msg = f"SecretFileSpec '{spec.secret_name}' registers a secret without a secret_type to file it under"
-                raise ValueError(msg)
-            self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
-
-        secret_data = dict(spec.secret_pairs)
-        manifest_name = f"{spec.secret_name}-secret"
-        if spec.keep_existing_values:
-            # In een thread: dit start het sops-binary om de vorige ciphertext te lezen.
-            existing = await asyncio.to_thread(
-                _existing_secret_pairs, os.path.join(output_dir, sops_filenames(manifest_name).encrypted), private_key
-            )
-            secret_data.update({key: existing[key] for key in spec.secret_pairs if key in existing})
-        if spec.resolve_aliases and spec.secret_type:
-            aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
-            if aliases:
-                logger.debug(f"Resolving {len(aliases)} {spec.secret_type} aliases for deployment {deployment_name}")
-                resolved_aliases = resolve_aliases(aliases, secret_data)
-                secret_data.update(resolved_aliases)
-                logger.info(f"Added {len(resolved_aliases)} resolved {spec.secret_type} aliases to deployment secret")
-
-        secret_path = self._manifest_generator.create_manifest_file(
-            template_path=template_path,
-            values={
-                "name": spec.secret_name,
-                "namespace": namespace,
-                "secret_pairs": secret_data,
-                # One place turns "this is not application config" into the label the
-                # ArgoCD plugin filters on, so a service states what its secret IS and
-                # never has to know a config-hash exists.
-                "secret_labels": _secret_labels_for(spec),
-            },
+        """Write one deployment SOPS secret manifest; see :class:`ApplicationManifests`."""
+        await ApplicationManifests(self).write_secret_file(
+            spec,
+            deployment_name=deployment_name,
+            namespace=namespace,
             output_dir=output_dir,
-            output_filename=manifest_name,
-            use_sops=True,
+            template_path=template_path,
+            created_files=created_files,
+            private_key=private_key,
         )
-        sops_filename = sops_filenames(manifest_name).plaintext
-        created_files.append(sops_filename)
-        logger.info(f"Secret '{spec.secret_name}' will be SOPS encrypted: {sops_filename}")
-        logger.debug(f"Successfully created secret manifest: {secret_path}")
 
     async def get_argo_workspace(self) -> GitRepoWorkspace:
         """De werkmap op de argo-applications repo voor dit project, een per taak."""
@@ -2575,57 +2079,10 @@ class ProjectManager:
         deployment_names: list[str] | None = None,
         reset_running_sync: bool = False,
     ) -> None:
-        """
-        Process application manifests for the in-scope deployments.
-
-        Args:
-            deployment_name: Optional single deployment to process only.
-            deployment_names: Optional explicit set of deployments to process
-                (takes precedence over ``deployment_name``). Use this to keep a
-                scoped op (e.g. an upsert of one deployment) from regenerating
-                every deployment's manifest folder -- which would otherwise
-                rewrite unrelated deployments and collide with a concurrent
-                delete.
-            reset_running_sync: Break off a sync that is still running, however
-                young. Komt van een refresh; zie ``_clear_blocking_sync_operations``.
-
-        Returns: None
-        """
-        project_name = await self.get_name()
-        logger.info(f"Processing application manifests for {project_name}")
-
-        repositories = await self.get_repositories()
-        if not repositories:
-            logger.warning("No repositories defined in project data")
-            return
-
-        # Group deployments by repository (only for current cluster), already
-        # filtered to the requested scope -- get_deployments honours both
-        # deployment_name and deployment_names.
-        deployments = await self.get_deployments(
-            cluster_filter=True, deployment_name=deployment_name, deployment_names=deployment_names
+        """Write the manifests of the in-scope deployments; see :class:`RepositoryManifests`."""
+        await RepositoryManifests(self).process_application_manifests(
+            deployment_name, deployment_names, reset_running_sync
         )
-        if deployment_names is not None or deployment_name:
-            logger.info(f"Processing application manifests only for: {deployment_names or [deployment_name]}")
-
-        deployments_by_repo = {}
-        for deployment in deployments:
-            repo_name = deployment.get("repository")
-            if repo_name not in deployments_by_repo:
-                deployments_by_repo[repo_name] = []
-            deployments_by_repo[repo_name].append(deployment)
-
-        # Process each repository
-        for repo_name, repo_deployments in deployments_by_repo.items():
-            logger.info(f"Processing repository: {repo_name} with {len(repo_deployments)} deployments")
-
-            repo_info = Project.locate(repositories, name=repo_name)
-            if not repo_info:
-                raise Exception(f"Repository configuration not found: {repo_name}")
-
-            await self._process_repository_manifests(repo_info, repo_deployments, reset_running_sync=reset_running_sync)
-
-        logger.info(f"Successfully processed all application manifests for {project_name}")
 
     async def _process_repository_manifests(
         self,
@@ -2633,78 +2090,8 @@ class ProjectManager:
         deployments: list[dict[str, Any]],
         reset_running_sync: bool = False,
     ) -> None:
-        """
-        Process manifests for a specific repository.
-
-        Args:
-            repo_config: Repository configuration
-            deployments: List of deployments for this repository
-            reset_running_sync: Break off a sync that is still running, however young.
-                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
-
-        Returns:
-            None
-        """
-        project_data = await self.get_contents()
-        project_name = project_data.get("name")
-
-        workspace = await self.get_deployment_workspace(repo_config["name"], repo_config)
-        owner = project_level_deployment(await self.get_deployments(cluster_filter=True))
-
-        async def _generate() -> None:
-            """Zet de manifests van deze repo neer in de werkmap van deze ronde."""
-            # Deployments are already filtered for current cluster by caller
-            for deployment in deployments:
-                with self._step(steps.DEPLOYMENT_CONFIG_BUILD, subject=str(deployment["name"])):
-                    await self._process_deployment_manifests(deployment, workspace)
-
-            # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
-            # project deployments over twee repo's heeft. Welke, beslist
-            # project_level_deployment, dezelfde functie die de applicatie gebruikt.
-            if owner is not None and owner.get("repository") == repo_config.get("name"):
-                with self._step(steps.PROJECT_CONFIG_BUILD):
-                    await self._process_project_manifests(
-                        repo_config,
-                        str(owner["cluster"]),
-                        get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
-                        workspace,
-                    )
-                self._project_level_repo = repo_config.get("name")
-
-            # Vlak VOOR de write, en niet erna: ArgoCD probeert een revisie die al eens faalde
-            # niet opnieuw, dus beeindigen na de push laat de blokkade staan voor precies de
-            # commit die hem moet oplossen. Een storing hierin houdt de write niet tegen
-            # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
-            await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
-
-        names = ", ".join(str(deployment["name"]) for deployment in deployments)
-        # Fetching and pushing each get their own step, so a hanging or failing remote shows
-        # up on the progress page at that phase, not at the last service or manifest. The
-        # fetch lives inside mutate_and_push because it belongs under the lock. A conflict
-        # is retried there, so it does not fail the push step.
-        await workspace.mutate_and_push(
-            f"Update manifests for {project_name} ({names})",
-            _generate,
-            on_prepare=lambda: self._step(steps.CONFIG_FETCH, subject=str(repo_config["name"])),
-            on_push=lambda: self._step(
-                steps.CONFIG_PUBLISH, subject=str(repo_config["name"]), retried_on=GitRepoConflictError
-            ),
-        )
-
-        # Of het PROJECTNIVEAU deze ronde echt veranderde. Zo niet, dan hoeft de grendel in
-        # wait_for_project_level_application niet op een nieuwe sync te wachten. Alleen de
-        # repo die het projectniveau bezit kan dat meten; voor een andere blijft het True,
-        # want die weet er niets van. De paden van de write zijn repo-relatief en
-        # genormaliseerd, en ``_project_level_path`` is dat niet (``./cluster/...`` bij een
-        # repositories[].path van '.'), dus beide kanten gaan door normpath.
-        if owner is not None and owner.get("repository") == repo_config.get("name") and self._project_level_path:
-            prefix = f"{posixpath.normpath(self._project_level_path)}/"
-            self._project_level_manifests_changed = bool(
-                workspace.last_write
-                and any(posixpath.normpath(path).startswith(prefix) for path in workspace.last_write.paths)
-            )
-
-        logger.info(f"Successfully processed repository: {repo_config['name']}")
+        """Write one repository's manifests; see :class:`RepositoryManifests`."""
+        await RepositoryManifests(self).process_repository_manifests(repo_config, deployments, reset_running_sync)
 
     async def _terminate_operation_we_waited_on(self, app_name: str, cluster: str | None) -> None:
         """Terminate the operation that OPI's own wait has just run out on."""
@@ -2717,95 +2104,14 @@ class ProjectManager:
         await ArgoCDSync(self)._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
 
     async def get_repository_path(self, repository_name: str) -> str | None:
-        project_data = await self.get_contents()
-        repositories = project_data.get("repositories") or []
-        repositories: list[dict[str, str]] = repositories
-        repo = Project.locate(repositories, name=repository_name)
-        return repo.get("path", "") if repo else ""
+        """The configured path of a repository; see :class:`RepositoryManifests`."""
+        return await RepositoryManifests(self).get_repository_path(repository_name)
 
     def _prune_obsolete_component_manifests(
         self, deployment: dict[str, Any], target_path: str, generated_files: list[str]
     ) -> None:
-        """Delete per-component manifest files this run did not (re)generate.
-
-        ``create_application_manifests`` only writes/overwrites files for the CURRENT
-        components, and the kustomization is rebuilt from the on-disk glob, so any
-        leftover per-component file would otherwise be re-adopted and keep its dead
-        workload running in ArgoCD. This prunes those obsolete files, covering both a
-        removed component (none of its files regenerated) and a renamed/dropped file of
-        a surviving component (e.g. an ingress whose path changed). Shared files and
-        ``*.marked-for-deletion.yaml`` PVCs are preserved.
-
-        Args:
-            deployment: Current deployment configuration.
-            target_path: Absolute deployment manifest directory in the cloned repo.
-            generated_files: Basenames generated this run (the desired-state set).
-        """
-        deployment_name = deployment["name"]
-
-        def _component_refs(dep: dict[str, Any]) -> set[str]:
-            return {
-                ref for comp in dep.get("components", []) if isinstance(comp, dict) and (ref := comp.get("reference"))
-            }
-
-        # Components that own files here: current ones (stale-file pruning) plus any
-        # from the previous version (removed-component pruning).
-        component_names = _component_refs(deployment) | _component_refs(
-            self.get_previous_deployment(deployment_name) or {}
-        )
-        if not component_names:
-            return
-
-        obsolete = _select_obsolete_component_manifests(
-            target_path, component_names, set(generated_files), deployment_name
-        )
-        if not obsolete:
-            return
-
-        logger.info(
-            f"Pruning {len(obsolete)} obsolete component manifest(s) from {deployment_name}: {', '.join(obsolete)}"
-        )
-        for basename in obsolete:
-            os.remove(os.path.join(target_path, basename))
-
-    def _prune_obsolete_service_manifests(
-        self, deployment: dict[str, Any], target_path: str, generated_files: list[str]
-    ) -> None:
-        """Delete deployment-wide, service-owned manifest files this run did not regenerate.
-
-        The counterpart of ``_prune_obsolete_component_manifests`` for the RC-15
-        deployment-manifest hook: a service (cross-domain-access today) writes files named
-        ``<deployment>-<service>-...``. When the service is switched off, its last rule is
-        removed, a component scope disappears, or a target project vanishes, the run no
-        longer generates that file, and this removes it (ArgoCD then prunes the resource).
-        The component prune leaves these alone because they carry no component prefix.
-        """
-        deployment_name = deployment["name"]
-        service_prefixes = {f"{deployment_name}-{service.value}-" for service in ServiceType}
-        # The attachment Secrets predate the RC-15 naming; renaming them would recreate every
-        # mounted Secret, so their own prefix joins the set instead.
-        service_prefixes.add(_attachment_secret_prefix(deployment_name))
-        obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
-        if not obsolete:
-            return
-        logger.info(
-            f"Pruning {len(obsolete)} obsolete service manifest(s) from {deployment_name}: {', '.join(obsolete)}"
-        )
-        for basename in obsolete:
-            os.remove(os.path.join(target_path, basename))
-
-    def _prune_obsolete_project_manifests(self, target_path: str, generated_files: list[str]) -> None:
-        """Verwijder projectbrede dienstbestanden die deze run niet opnieuw heeft gemaakt.
-
-        Dezelfde vorm als de prune op deploymentniveau, een laag hoger.
-        """
-        service_prefixes = {f"{service.value}-" for service in ServiceType}
-        obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
-        if not obsolete:
-            return
-        logger.info(f"Pruning {len(obsolete)} obsolete project manifest(s): {', '.join(obsolete)}")
-        for basename in obsolete:
-            os.remove(os.path.join(target_path, basename))
+        """Delete per-component manifests this run did not write; see :class:`RepositoryManifests`."""
+        RepositoryManifests(self).prune_obsolete_component_manifests(deployment, target_path, generated_files)
 
     async def _process_project_manifests(
         self,
@@ -2814,200 +2120,16 @@ class ProjectManager:
         namespace: str,
         git_connector: GitRepoWorkspace,
     ) -> None:
-        """Schrijf het PROJECTniveau van de deployments-repo: ``<cluster>/<project>/_project/``.
-
-        De generieke emitter: wat er komt te staan bepalen de diensten met
-        ``contribute_project_manifests``.
-        """
-        project_data = await self.get_contents()
-        project_name = await self.get_name()
-
-        # Dezelfde functie als de ArgoCD-applicatie die naar deze map wijst, zodat de map
-        # en de verwijzing ernaar niet uit elkaar kunnen lopen.
-        project_dir = generate_project_level_manifest_path(cluster_name, project_name, repo_config.get("path", ""))
-        # Onthouden voor _project_level_already_applied: dat is de map waarvan bewezen moet
-        # worden dat ArgoCD hem al heeft toegepast.
-        self._project_level_path = project_dir
-        target_path = os.path.join(await git_connector.get_working_dir(), project_dir)
-        os.makedirs(target_path, exist_ok=True)
-
-        ctx = ProjectManifestContext(
-            project_name=project_name,
-            project_data=project_data,
-            cluster=cluster_name,
-            namespace=namespace,
-        )
-
-        created_files: list[str] = []
-        for service in project_manifest_services():
-            for spec in service.contribute_project_manifests(ctx):
-                self._manifest_generator.create_manifest_file(
-                    template_path=os.path.join(MANIFEST_TEMPLATES_DIR, spec.template_path),
-                    values=spec.values,
-                    output_dir=target_path,
-                    output_filename=spec.filename,
-                    use_sops=spec.encrypt,
-                )
-                if spec.encrypt:
-                    created_files.append(sops_filenames(spec.filename).plaintext)
-                else:
-                    created_files.append(f"{spec.filename}.yaml")
-                logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
-
-        self._prune_obsolete_project_manifests(target_path, created_files)
-
-        sops_files, regular_files = self._manifest_generator.collect_manifest_files(
-            target_path, include_subfolders=False
-        )
-        await self.create_kustomization_file(git_connector, namespace, sops_files, regular_files, project_dir)
-
-        public_key = get_project_public_key(project_data)
-        if not public_key:
-            raise RuntimeError(f"Geen SOPS public key voor het projectniveau van '{project_name}'")
-        await asyncio.to_thread(
-            encrypt_to_sops_files_or_fail,
-            target_path,
-            public_key,
-            f"projectbrede secrets van '{project_name}' (namespace '{namespace}')",
-            private_key=project_private_key_or_none(project_data),
-        )
+        """Write the project level of a deployments repository; see :class:`RepositoryManifests`."""
+        await RepositoryManifests(self).process_project_manifests(repo_config, cluster_name, namespace, git_connector)
 
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
         git_connector: GitRepoWorkspace,
     ) -> None:
-        """
-        Process manifests for a specific deployment.
-
-        Supports two deployment types:
-        1. Component-based deployments: Traditional OPI components with deployment/service/ingress manifests
-        2. Helm chart deployments: External Helm charts rendered via Kustomize helmCharts
-
-        Args:
-            deployment: Deployment configuration
-            git_connector: de werkmap van de repository
-
-        Returns:
-            None
-        """
-        project_data = await self.get_contents()
-        project_name = await self.get_name()
-        deployment_name = deployment["name"]
-        cluster_name = deployment["cluster"]
-
-        repo_path = await self.get_repository_path(deployment["repository"]) or ""
-        deployment_path = generate_deployment_manifest_path(cluster_name, project_name, deployment_name, repo_path)
-
-        prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
-        target_path = os.path.join(await git_connector.get_working_dir(), deployment_path)
-
-        logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
-
-        # Voor alle drie de soorten deployments, want juist een helm- of helmfile-pod
-        # draagt geen deployment-label en viel tot nu toe buiten elk beleid.
-        namespace_policy_files = emit_namespace_network_policies(
-            self._manifest_generator,
-            project_data=project_data,
-            project_name=project_name,
-            deployment=deployment,
-            cluster_name=cluster_name,
-            namespace=prefixed_namespace,
-            output_dir=target_path,
-        )
-
-        # Check if this is a helmfile deployment, helm chart deployment, or component deployment
-        if deployment_uses_helmfile(deployment):
-            # Process helmfile deployment (ArgoCD CMP runs helmfile template)
-            logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
-            await self._process_helmfile_deployment(deployment, git_connector, target_path, namespace_policy_files)
-            # Note: SOPS encryption is handled inside _process_helmfile_deployment
-            return
-
-        if deployment_uses_helm_charts(deployment):
-            # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
-            logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
-            await self._process_helm_chart_deployment(deployment, git_connector, target_path, namespace_policy_files)
-            # Note: SOPS encryption is handled inside _process_helm_chart_deployment
-            return
-
-        # Standard component-based deployment processing
-        logger.info(f"Deployment '{deployment_name}' uses components - processing as standard deployment")
-
-        # Pre-scan: Collect all aliases from components before creating any manifests
-        # This allows deployment-level secrets to include aliases from all components
-        self._deployment_aliases[deployment_name] = await self._collect_deployment_aliases(deployment_name)
-
-        try:
-            created_files = await self.create_application_manifests(deployment, git_connector, deployment_path)
-        except Exception as e:
-            # Rollback subdomain registration if manifest creation fails
-            await self._rollback_subdomain_if_needed()
-            raise
-
-        # Hoort bij de gewenste staat van deze map, dus de prunes hieronder laten ze staan.
-        created_files.extend(namespace_policy_files)
-
-        # Note: SSO and user secrets are already created in create_application_manifests above
-
-        # Prune obsolete per-component manifests: any file this run did not regenerate
-        # (removed component, or a renamed/dropped file of a surviving component such as
-        # an ingress whose path changed). The kustomization is rebuilt from the on-disk
-        # glob, so leftovers would otherwise be re-adopted and keep dead workloads in
-        # ArgoCD. Symmetric with the removed-service cleanup in DeleteProjectManager.
-        self._prune_obsolete_component_manifests(deployment, target_path, created_files)
-
-        # Prune obsolete deployment-wide, service-owned manifests (RC-15). A service (e.g.
-        # cross-domain-access) writes <deployment>-<service>-* files; when the service is
-        # switched off or stops contributing, this removes the leftover so ArgoCD prunes
-        # the resource. Symmetric with the component prune above and non-overlapping (those
-        # files carry no component prefix).
-        self._prune_obsolete_service_manifests(deployment, target_path, created_files)
-
-        # De registrypas voor de images die niet door de componentlus lopen, zoals een
-        # sidecar met een vaste waarde in zijn sjabloon. Idempotent op de rest.
-        apply_rules_to_directory(target_path, build_rules(project_data, cluster_name))
-
-        # Create a kustomization file BEFORE encrypting .to-sops.yaml files
-        # This ensures kustomization and decrypt-sops.yaml can see all .to-sops.yaml files
-        sops_files, regular_files = self._manifest_generator.collect_manifest_files(
-            target_path, include_subfolders=False
-        )
-        logger.info(f"Found {len(sops_files)} SOPS files and {len(regular_files)} regular files for kustomization")
-        await self.create_kustomization_file(
-            git_connector, prefixed_namespace, sops_files, regular_files, deployment_path, deployment
-        )
-
-        # FINAL STEP: Convert .to-sops.yaml files to .sops.yaml files
-        # This must be done AFTER kustomization creation so that decrypt-sops.yaml
-        # can reference the original .to-sops.yaml filenames
-        public_key = get_project_public_key(project_data)
-        logger.info(f"Encrypting .to-sops.yaml files for deployment: {deployment_name}")
-        logger.info(f"Using SOPS public key for namespace: {prefixed_namespace}")
-        logger.info(f"SOPS encryption target path: {target_path}")
-
-        # List .to-sops.yaml files before encryption for debugging
-
-        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
-        to_sops_files = glob.glob(to_sops_pattern)
-        logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files for final encryption:")
-        for file_path in to_sops_files:
-            logger.info(f"  - {os.path.basename(file_path)}")
-
-        if not public_key:
-            raise RuntimeError(
-                f"Geen SOPS public key voor deployment '{deployment_name}'; "
-                "dit zou secrets in platte tekst naar git committen."
-            )
-
-        await asyncio.to_thread(
-            encrypt_to_sops_files_or_fail,
-            target_path,
-            public_key,
-            f"secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
-            private_key=project_private_key_or_none(project_data),
-        )
-        logger.info("All .to-sops.yaml files successfully encrypted")
+        """Write one deployment's manifest directory; see :class:`RepositoryManifests`."""
+        await RepositoryManifests(self).process_deployment_manifests(deployment, git_connector)
 
     # ==========================================================================
     # Helm Chart Processing Methods
@@ -3377,1340 +2499,8 @@ class ProjectManager:
         git_connector: GitRepoWorkspace,
         target_dir: str | None = None,
     ) -> list[str]:
-        """
-        Create application manifests (deployment, service, ingress) in the git repository.
-        This creates the application manifest files for each component in each deployment.
-
-        Args:
-            deployment: current deployment
-            git_connector: The git connector with an already cloned repository
-            target_dir: Optional subdirectory within the git repository
-
-        Returns:
-            List of created manifest filenames, empty list if failed
-        """
-        project_data = await self.get_contents()
-        working_dir = await git_connector.get_working_dir()
-        private_key = project_private_key_or_none(project_data)
-
-        project_name = await self.get_name()
-        logger.info(f"Creating application manifests for project: {project_name}")
-
-        created_files = []
-
-        deployment_name = deployment["name"]
-        cluster = deployment["cluster"]
-        namespace = get_prefixed_namespace(cluster, deployment["namespace"])
-
-        # Initialize deployment result tracking
-        if deployment_name not in self._deployment_results:
-            self._deployment_results[deployment_name] = DeploymentResult(
-                deployment_name=deployment_name,
-                cluster=cluster,
-                namespace=namespace,
-            )
-
-        self._track_public_urls(project_data, deployment, project_name)
-
-        logger.info(f"Processing deployment: {deployment_name} in prefixed namespace: {namespace}")
-
-        # Check if deployment has components
-        components = deployment.get("components", [])
-        if not components:
-            logger.warning(f"No components found in deployment {deployment_name}, skipping")
-            return []
-
-        # Register subdomain for the dotted component-per-subdomain layouts (with rollback
-        # on failure). Keyed on domain-format: the legacy ``domain-mode: nice-url`` files
-        # were migrated to ``component.subdomain`` (schema v2.8).
-        subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-        base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-        domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
-        uses_dotted_subdomain_layout = domain_format in ROOT_COMPONENT_FORMAT_IDS
-        subdomain_registered = False  # Track if we registered a new subdomain for rollback
-        subdomain_connector = None  # Initialize for use in rollback
-
-        # Validate the layout's requirements BEFORE subdomain registration
-        # This prevents orphaned subdomain entries when validation fails
-        root_component_name = get_domain_setting(deployment, DomainSetting.ROOT_COMPONENT)
-        # Every component with publish-on-web gets an ingress, in every layout, and an ingress
-        # points at the component's Service on its first inbound port. A component without
-        # one gets no Service, so its ingress would carry `port.number: None` and ArgoCD
-        # refuses the whole Application. This check used to run for the dotted layouts only.
-        components_missing_ports = []
-        for component in components:
-            component_name = component.get("reference") or component.get("name")
-            if not component_name:
-                continue
-            has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
-                project_data, component_name
-            )
-            if has_publish_on_web and not self._project_file_handler.component_has_ports(project_data, component_name):
-                components_missing_ports.append(component_name)
-
-        if components_missing_ports:
-            raise ValueError(
-                f"Components with 'publish-on-web' must have at least one port configured. "
-                f"Missing ports for: {', '.join(components_missing_ports)}. "
-                f"Add 'ports.inbound' to the component definition."
-            )
-
-        # Validate that root component has publish-on-web (required for root ingress creation)
-        if uses_dotted_subdomain_layout and subdomain and base_domain and root_component_name:
-            root_has_publish_on_web = self._project_file_handler.extract_component_publish_on_web(
-                project_data, root_component_name
-            )
-            if not root_has_publish_on_web:
-                raise ValueError(
-                    f"Component '{root_component_name}' is marked as root but does not have 'publish-on-web' enabled. "
-                    f"Root components must have a service exposed for the root URL to work."
-                )
-
-        if uses_dotted_subdomain_layout and subdomain and base_domain:
-            subdomain_connector = SubdomainConnector()
-
-            # Check if this is a new registration (for rollback purposes)
-            existing_registration = await subdomain_connector.get_by_deployment(project_name, deployment_name)
-            is_new_registration = existing_registration is None
-
-            # Use register_or_update to handle both new registrations and subdomain changes
-            # This method:
-            # 1. Checks if deployment already has a registration
-            # 2. If subdomain unchanged, returns existing
-            # 3. If subdomain changed, deletes old and registers new
-            # 4. Raises appropriate errors on validation/availability issues
-            await subdomain_connector.register_or_update_for_deployment(
-                subdomain=subdomain,
-                base_domain=base_domain,
-                project_name=project_name,
-                deployment_name=deployment_name,
-                cluster=cluster,
-                created_by=None,  # Could be enhanced to track user in future
-            )
-            subdomain_registered = is_new_registration  # Mark for rollback only if new
-            logger.info(f"Subdomain '{subdomain}.{base_domain}' registered/updated for project '{project_name}'")
-
-        # Register or clean up bare domain in subdomain registry
-        expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT)
-        bare_domain_registered = False
-        # Opslaan mag, toepassen niet: het formulier laat een kaal domein op een nog niet
-        # goedgekeurd eigen domein door (RC-216), dus de goedkeuring hangt hier, aan
-        # dezelfde voorwaarde als het rootadres.
-        if (
-            expose_on_bare_domain
-            and base_domain
-            and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
-        ):
-            # The publication path enforces the bare-domain rule itself, not just the form
-            # layer: the setting is also writable through the service config API, which the
-            # form enforcer never sees. This is the point of no return -- past it a
-            # registration and an apex certificate exist, on a domain that has to be this
-            # project's own: the rule covers both "not a platform domain" and "approved
-            # for this project".
-            validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster), project_data)
-            if subdomain_connector is None:
-                subdomain_connector = SubdomainConnector()
-            await subdomain_connector.register_bare_domain(
-                base_domain=base_domain,
-                project_name=project_name,
-                deployment_name=deployment_name,
-                cluster=cluster,
-            )
-            bare_domain_registered = True
-            logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
-        elif base_domain:
-            # Bare domain deselected, or not (yet) approved: clean up any existing registration
-            if expose_on_bare_domain:
-                logger.warning(
-                    "Bare domain '%s' not applied for deployment '%s': the domain is not approved for project '%s'",
-                    base_domain,
-                    deployment_name,
-                    project_name,
-                )
-            if subdomain_connector is None:
-                subdomain_connector = SubdomainConnector()
-            # Scoped to this project: the base-domain is just a string in a project file,
-            # so an unscoped delete lets one project remove another tenant's apex
-            # registration by naming their domain.
-            deleted = await subdomain_connector.delete_bare_domain(base_domain, project_name=project_name)
-            if deleted:
-                logger.info(f"Bare domain '{base_domain}' deregistered for project '{project_name}'")
-
-        # Store rollback info for use in exception handler
-        # These variables are used by _rollback_subdomain_on_failure if needed
-        should_rollback = subdomain_registered or bare_domain_registered
-        self._pending_subdomain_rollback = (
-            {
-                "should_rollback": should_rollback,
-                "connector": subdomain_connector,
-                "project_name": project_name,
-                "deployment_name": deployment_name,
-                "subdomain": subdomain,
-                "base_domain": base_domain,
-            }
-            if should_rollback
-            else None
-        )
-
-        # Waar komt de image van elk component vandaan, en welk pull-secret hoort erbij.
-        # Het secret zelf is namespace-scoped en staat op het projectniveau.
-        component_definitions = {
-            c.get("name"): c for c in project_data.get("components", []) or [] if isinstance(c, dict)
-        }
-        resolved_images: dict[str, ResolvedImage] = {}
-        image_pull_secrets_map: dict[str, str] = {}  # image_url (opgelost) -> secret_name
-
-        for component in components:
-            component_reference = component.get("reference")
-            if not component_reference or not component.get("image"):
-                continue
-            resolved = resolve_deployment_component_image(
-                project_data, component, component_definitions.get(component_reference), cluster
-            )
-            resolved_images[component_reference] = resolved
-            if resolved.secret:
-                image_pull_secrets_map[resolved.image] = resolved.secret
-            if resolved.image != component.get("image"):
-                logger.info(
-                    f"Component '{component_reference}' image '{component.get('image')}' opgelost naar "
-                    f"'{resolved.image}' met pull-secret '{resolved.secret}'"
-                )
-
-        # Track created issuers to avoid duplicates (per base-domain/issuer combination)
-        created_issuers: set[str] = set()
-
-        # Process each component within the deployment
-        for component in components:
-            # Get component reference and image from deployment
-            component_reference = component.get("reference")
-            image_url = component.get("image", "")
-
-            if not component_reference:
-                logger.warning(f"Component missing reference in deployment {deployment_name}, skipping")
-                continue
-
-            if not image_url:
-                logger.info(f"Component '{component_reference}' has no image in deployment {deployment_name}, skipping")
-                continue
-
-            # Vanaf hier de opgeloste verwijzing: die komt in het manifest en is de sleutel
-            # van imagePullSecretsMap.
-            image_url = resolved_images[component_reference].image
-
-            component_name = component_reference
-
-            # Update component deployment name if progress manager is available
-            progress_manager = self.get_progress_manager()
-            if progress_manager:
-                deployment_resource_name = f"{project_name}-{component_name}"
-                progress_manager.update_component_deployment(component_name, deployment_resource_name)
-                logger.debug(f"Updated component {component_name} deployment name to {deployment_resource_name}")
-
-            # Extract the application port from the component definition using the file handler
-            # A component may declare no inbound port (background worker). Read the real
-            # list with no default fallback: no ports -> no Service, no probe, no
-            # containerPort. application_port is None in that case.
-            inbound_ports = self._project_file_handler.extract_component_inbound_ports(
-                project_data, component_reference
-            )
-            has_inbound_port = bool(inbound_ports)
-            application_port = inbound_ports[0] if has_inbound_port else None
-
-            # Base health-probe scheme: a plain TCP probe on the first inbound port.
-            # A component without an inbound port cannot be probed by the kubelet, so
-            # scheme=none disables all probes. The optional health-check service
-            # overrides scheme/port/paths from here via its manifest contribution.
-            probe_scheme = "tcp" if has_inbound_port else "none"
-
-            # Extract publication paths: deployment-level overrides component-level
-            component_paths = self._project_file_handler.extract_deployment_component_paths(
-                project_data, deployment, component_reference
-            )
-            # For backward compatibility, use first path as the primary path
-            component_path = component_paths[0]["match"] if component_paths else "/"
-
-            # Extract imagePullPolicy from deployment-level component configuration (not component definition)
-            # This allows overriding the pull policy per deployment
-            # Resolve image + pull policy via the shared helper (handles the
-            # local/ Kind-image special); one implementation across deployments,
-            # the database console and jobs.
-            image_url, image_pull_policy = resolve_image(image_url, component.get("imagePullPolicy", "Always"))
-
-            # Extract storage configuration from component
-            storage_configs = self._project_file_handler.extract_component_storage(project_data, component_reference)
-
-            # Extract publish-on-web flag from component
-            publish_on_web = self._project_file_handler.extract_component_publish_on_web(
-                project_data, component_reference
-            )
-
-            # Extract optional per-component security context override (sandbox-only).
-            # Hidden YAML-only feature — defaults to None (template falls back to 1001/1001/1001).
-            component_security = self._project_file_handler.extract_component_security(
-                project_data, component_reference
-            )
-
-            # Extract optional container `command` override (K8s containers[].command).
-            # Hidden YAML-only feature: deployment-level override wins over the
-            # component-level default; both default to None so the image's own
-            # ENTRYPOINT/CMD remains in effect when neither is set.
-            command_override = self._project_file_handler.extract_deployment_component_command(
-                project_data, deployment_name, component_reference
-            )
-            if command_override is None:
-                command_override = self._project_file_handler.extract_component_command(
-                    project_data, component_reference
-                )
-
-            # Extract resource configuration (component-level, then deployment-level overrides)
-            component_resources = self._project_file_handler.extract_component_resources(
-                project_data, component_reference
-            )
-            deployment_resources = self._project_file_handler.extract_deployment_component_resources(
-                project_data, deployment_name, component_reference
-            )
-            if deployment_resources:
-                logger.info(f"Found deployment-level resource overrides for component: {component_name}")
-                component_resources.update(deployment_resources)
-
-            # Extract disabled state - disabled components get replicas: 0
-            # Check deployment-level first, falls back to component-definition level
-            is_disabled, disabled_reason = self._project_file_handler.extract_deployment_component_disabled(
-                project_data, deployment_name, component_reference
-            )
-            # Sleep-mode: a sleeping deployment scales every component to zero (a broken
-            # image `disabled` always wins). `waking` keeps the app at 1 so it cold-starts
-            # while the waker still serves the loading page. Applies to every component,
-            # endpoint or not.
-            from opi.services.catalog.sleep_mode import state as sleep_mode_state
-
-            sleep_state = sleep_mode_state.read(project_data, deployment_name).state
-            is_sleeping = sleep_state == sleep_mode_state.STATE_SLEEPING
-            replicas = 0 if (is_disabled or is_sleeping) else 1
-            if is_disabled:
-                logger.info(f"Component '{component_name}' is disabled (reason: {disabled_reason}), setting replicas=0")
-            elif is_sleeping:
-                logger.info(
-                    f"Deployment '{deployment_name}' is sleeping, setting component '{component_name}' replicas=0"
-                )
-
-            # Extract user environment variables from component definition
-            user_env_vars = await self._project_file_handler.extract_component_user_env_vars(
-                project_data, component_reference
-            )
-
-            # Extract deployment-level user-env-vars and merge (deployment takes precedence)
-            deployment_user_env_vars = await self._project_file_handler.extract_deployment_component_user_env_vars(
-                project_data, deployment_name, component_reference
-            )
-            if deployment_user_env_vars:
-                logger.info(
-                    f"Found {len(deployment_user_env_vars)} deployment-level user-env-vars for component: {component_name}"
-                )
-                # Deployment-level user-env-vars override component-level user-env-vars
-                user_env_vars.update(deployment_user_env_vars)
-
-            # Extract deployment-level env-vars (plaintext) and merge with user-env-vars
-            deployment_env_vars = component.get("env-vars", {})
-            if deployment_env_vars:
-                logger.info(
-                    f"Found {len(deployment_env_vars)} deployment-level env-vars for component: {component_name}"
-                )
-                # Deployment-level env-vars override all other env-vars
-                user_env_vars.update(deployment_env_vars)
-
-            # Resolve attachment uses for this component: file mounts and env-var content.
-            # File-mode attachments become a binary Secret mounted read-only at a path; env-var
-            # mode (text only) is injected via the existing user secret / envFrom path.
-            attachment_secret_mounts: list[dict[str, str]] = []
-            attachment_file_secrets: dict[str, dict[str, str]] = {}
-            resolved_attachments = await self._project_file_handler.resolve_attachments_for_component(
-                project_data, component_reference, deployment_name=deployment_name
-            )
-            for att in resolved_attachments:
-                reference = att["reference"]
-                if att["provide-as"] == "env-var":
-                    # Content was verified UTF-8 decodable in resolve(); expose as an env-var value.
-                    user_env_vars[att["env-name"]] = att["content_bytes"].decode("utf-8")
-                else:
-                    secret_name = f"{_attachment_secret_prefix(deployment_name)}{reference}"
-                    attachment_file_secrets[secret_name] = {
-                        reference: base64.b64encode(att["content_bytes"]).decode("ascii")
-                    }
-                    attachment_secret_mounts.append(
-                        {
-                            "name": f"attch-{reference}",
-                            "secret_name": secret_name,
-                            "mount_path": att["path"],
-                            "sub_path": reference,
-                        }
-                    )
-
-            # Create unique name combining deployment name and component name using centralized utility
-            # Project name is not included since resources are deployed within project-specific namespaces
-            unique_name = generate_unique_name(deployment_name, component_name)
-
-            # Add unique names to storage configs for templating
-            processed_storage_configs = []
-            for i, storage in enumerate(storage_configs):
-                storage_copy = storage.copy()
-                # Generate unique storage name based on mount path or index using centralized utility
-                mount_path = storage.get("mount-path", f"/storage-{i}")
-                storage_name = generate_storage_name(mount_path, i)
-                storage_copy["name"] = storage_name
-
-                # For persistent storage, add the versioned PVC name
-                if storage.get("type") == "persistent":
-                    # Get generation for this storage from project data
-                    generation = self._project_file_handler.get_storage_generation(
-                        project_data, deployment_name, component_name, storage_name
-                    )
-                    # Generate versioned PVC name
-                    pvc_name = generate_pvc_name(unique_name, storage_name, generation)
-                    storage_copy["pvc_name"] = pvc_name
-
-                processed_storage_configs.append(storage_copy)
-
-            # Generate ingress map based on cluster configuration and optional subdomain using centralized utility
-            ingress_postfix = get_ingress_postfix(cluster)
-            use_https = get_ingress_tls_enabled(cluster)
-            subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
-            base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-            issuer_config = effective_issuer(project_data, deployment, cluster)
-            domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
-            expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
-            logger.info(
-                f"Extracted subdomain for {component_name}: {subdomain}, base-domain: {base_domain}, "
-                f"issuer: {issuer_config}, domain-format: {domain_format}, "
-                f"expose-component-on-bare-domain: {expose_on_bare_domain}"
-            )
-
-            # Get ingress map using centralized function
-            ingress_map = get_component_ingress_map(
-                component_name=component_name,
-                deployment_name=deployment_name,
-                project_name=project_name,
-                ingress_postfix=ingress_postfix,
-                subdomain=subdomain,
-                base_domain=base_domain,
-                domain_format=domain_format,
-                project_data=project_data,
-                cluster=settings.CLUSTER_MANAGER,
-            )
-            hostname = next(iter(ingress_map.values()))
-
-            logger.info(f"Generated ingress_map for {component_name}: {ingress_map}")
-            logger.info(f"Primary hostname for {component_name}: {hostname}")
-
-            # Show the component's public address in the background-task UI, but only the one
-            # that publish-on-web recorded for this deployment: a component without an ingress
-            # has no address to show, and the hostname above is only what it would be called.
-            web_address = self._deployment_results[deployment_name].urls.get(component_name)
-            if web_address and progress_manager:
-                progress_manager.update_component_web_address(component_name, web_address)
-
-            # Generate environment variables using service-based registration pattern
-            env_vars = {}
-
-            # Register storage environment variables using service definitions
-            if storage_configs:
-                storage_env_vars = generate_storage_env_vars_from_services(processed_storage_configs)
-                if storage_env_vars:
-                    env_vars.update(storage_env_vars)
-
-            # Register publish-on-web environment variables using service definitions
-            if publish_on_web and hostname:
-                web_env_vars = generate_web_env_vars_from_services(hostname, use_https)
-                if web_env_vars:
-                    env_vars.update(web_env_vars)
-
-            # Resolve and add direct aliases (aliases that reference direct env vars).
-            # Scoped to the declaring component: the context below holds only THIS
-            # component's storage and publish-on-web variables, so a sibling without
-            # those services would resolve another component's aliases against an
-            # empty context and fail.
-            direct_aliases = scope_direct_aliases_to_component(
-                self._deployment_aliases.get(deployment_name, {}).get("direct", {}),
-                project_data,
-                component_name,
-            )
-            for service_category, service_aliases in direct_aliases.items():
-                if service_aliases:
-                    logger.debug(
-                        f"Resolving {len(service_aliases)} direct {service_category} aliases for component {component_name}"
-                    )
-                    # Resolve aliases using current env_vars as context
-                    resolved_direct_aliases = resolve_aliases(service_aliases, env_vars)
-                    # Add resolved aliases to env_vars
-                    env_vars.update(resolved_direct_aliases)
-                    logger.info(
-                        f"Added {len(resolved_direct_aliases)} resolved direct {service_category} aliases to component {component_name}"
-                    )
-
-            # Register user environment variables
-            # NOTE: User env vars go into a secret and are referenced via envFrom, not as direct env vars
-            if user_env_vars:
-                # Resolve $VAR / ${VAR} in user-env-vars against everything this component
-                # can see: the storage, publish-on-web and resolved-alias variables built
-                # above. This used to special-case PUBLIC_HOST and PUBLIC_HOSTNAME by hand,
-                # with a note to extend the alias system if more were ever needed -- so
-                # this is that extension, using the same engine aliases already use.
-                #
-                # Deliberately the LENIENT substitution: an unknown $NAME is left as-is.
-                # In an alias a missing reference is a typo and must fail, but a user-env-var
-                # value is often just a password that happens to contain a dollar. Measured
-                # on production: regel-k4c's ADMIN_PASSWORD and rijks-595's DJANGO_SECRET_KEY
-                # both carry one, and strict substitution would fail their deploy outright.
-                substituted_user_env_vars: dict[str, Any] = {}
-                for key, value in user_env_vars.items():
-                    if not isinstance(value, str) or "$" not in value:
-                        substituted_user_env_vars[key] = value
-                        continue
-                    substituted_value = substitute_known_variables(
-                        # No key name: a user-env-var's NAME is the user's business too, and
-                        # the component is enough to locate the warning.
-                        value,
-                        env_vars,
-                        where=f"a user-env-var of component {component_name}",
-                    )
-                    substituted_user_env_vars[key] = substituted_value
-                    if substituted_value != value:
-                        # Neither the value nor the name: user-env-vars are the user's.
-                        logger.debug(f"Substituted variable references in a user-env-var of {component_name}")
-                user_env_vars = substituted_user_env_vars
-
-            # Service contributions (envFrom, sidecars, template vars, secret files) are
-            # driven generically off the provider registry (RC-5 Phase 6). Only the
-            # auth-wall observability log below still needs an explicit flag.
-            component_uses_authorization_wall = False
-            component_def = None
-            all_services: list[str] = []
-
-            if component_reference:
-                component_def = self._project_file_handler._find_component(project_data, component_reference)
-                all_services = extract_service_names_from_component(component_def) if component_def else []
-
-                component_uses_authorization_wall = ServiceType.AUTHORIZATION_WALL.value in all_services
-
-            # Collect each used service's manifest contribution once (RC-5 Phase 6).
-            # A provider may add envFrom secrets + sidecars (additive) and override
-            # template vars (e.g. auth-wall service_port 8080 -> 4180). envFrom is
-            # applied here (it is a template var itself); template_vars/sidecars are
-            # merged after the template context dict is built, below.
-            manifest_ctx = ManifestContext(
-                deployment_name=deployment_name,
-                project_data=project_data,
-                unique_name=unique_name,
-                cluster=cluster,
-                get_secret=self._get_secret_from_map,
-                component_def=component_def,
-            )
-            manifest_contributions = collect_manifest_contributions(
-                manifest_ctx,
-                component_services=all_services,
-                project_services=ServiceAdapter.extract_service_names_from_project_services(
-                    project_data.get("services", []) or []
-                ),
-            )
-
-            # Build envFrom secrets list based on services used and user env vars
-            # This list determines which secrets are referenced in the deployment manifest
-            # Note: Secret FILES are only generated if the secret is in _secrets_to_create map
-            env_from_secrets = []
-
-            # Add deployment-level secrets in manifest_order -- byte-identical to the old
-            # fixed db -> minio -> keycloak -> redis -> metrics append sequence.
-            for contribution in manifest_contributions:
-                env_from_secrets.extend(contribution.env_from_secrets)
-
-            # Platform secret (always present, per-component)
-            platform_secret_name = PlatformSecret.get_secret_name(unique_name)
-            env_from_secrets.append(platform_secret_name)
-            logger.debug(f"Platform secret added to envFrom: {platform_secret_name}")
-
-            # Add component-level user secret if user env vars exist
-            if user_env_vars:
-                logger.info(
-                    f"Processing {len(user_env_vars)} user environment variables for component: {component_name}"
-                )
-                user_secret_name = UserSecret.get_secret_name(unique_name)
-                env_from_secrets.append(user_secret_name)
-                logger.debug(f"User secret added to envFrom: {user_secret_name}")
-
-            # NOTE: SSO integration is now handled at deployment level by keycloak_manager
-            # in create_resources_for_deployment(), not per-component here
-
-            pod_replacement_mode = (
-                "Recreate" if any(item.get("type") == "persistent" for item in storage_configs) else "RollingUpdate"
-            )
-
-            # Prepare variables for templating
-            # Generate timestamp for pod annotation to force restart when secrets change
-            generated_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-            variables = {
-                "name": unique_name,
-                "deployment_name": deployment_name,
-                "component_name": component_name,
-                "namespace": namespace,
-                "hostname": hostname,
-                "project": {"name": project_name},
-                "cluster": cluster,  # Add cluster information for template conditionals
-                "pod_replacement_mode": pod_replacement_mode,
-                "imageURL": image_url,
-                "imagePullPolicy": image_pull_policy,  # Image pull policy (Always, IfNotPresent, Never)
-                "application_port": application_port,
-                "service_port": application_port,  # Service's primary port; overridden to 4180 when an auth wall fronts it
-                # The full inbound-port list. Both the Deployment (containerPorts) and the
-                # Service render every port; the first is the primary (ingress + probe).
-                "inbound_ports": inbound_ports,
-                # Base probe: tcp on the application port (or none when there is no
-                # inbound port). The health-check service overrides these via its
-                # manifest contribution; the template keeps its own path defaults
-                # (| default('/')) and falls probe_port back to application_port.
-                "probe_scheme": probe_scheme,  # none | tcp | http | https
-                "probe_port": None,  # None -> template falls back to application_port
-                "path": component_path,  # Publication path for ingress routing
-                "storage_configs": processed_storage_configs,
-                "env_vars": env_vars,
-                "env_from_secrets": env_from_secrets,  # List of secrets for envFrom
-                "attachment_secret_mounts": attachment_secret_mounts,  # File-mode attachment volume mounts
-                # Cluster-specific ingress configuration
-                "enable_tls": get_ingress_tls_enabled(cluster),
-                "ip_whitelist": get_ingress_ip_whitelist(cluster),
-                # Registry authentication
-                "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
-                # De eigen serviceaccount van het project; elke podspec draagt daarnaast zijn
-                # eigen pull-secret, dus de erfenis van de default serviceaccount vervalt.
-                "service_account_name": generate_project_service_account_name(project_name),
-                # Timestamp to force pod restart when secrets are regenerated
-                "generated_at": generated_at,
-                # CA certificate configuration for SSL/TLS
-                "ca_config": get_ca_certificate_config(cluster),
-                # Prometheus metrics configuration. Base is None; the metrics-scraper
-                # provider overrides this with the component's scrape {port, path} via
-                # its manifest contribution (RC-5 Phase 6b) when the service is used.
-                "metrics_config": None,
-                # Resource configuration (requests and limits)
-                "resources_requests_memory": component_resources["requests_memory"],
-                "resources_requests_cpu": component_resources["requests_cpu"],
-                "resources_limits_memory": component_resources["limits_memory"],
-                "resources_limits_cpu": component_resources["limits_cpu"],
-                # Replicas (0 when component is disabled)
-                "replicas": replicas,
-                # Optional per-component pod securityContext override (sandbox-only).
-                # Template reads K8s-native field names (runAsUser/runAsGroup/fsGroup).
-                "security": (
-                    {
-                        "runAsUser": component_security.get("run-as-user"),
-                        "runAsGroup": component_security.get("run-as-group"),
-                        "fsGroup": component_security.get("fs-group"),
-                    }
-                    if component_security
-                    else None
-                ),
-                # Optional container command override (K8s containers[].command).
-                # None => template omits the field => image's ENTRYPOINT/CMD stays.
-                "command": command_override,
-            }
-
-            logger.info(f"Creating manifests for component: {component_name} with image: {image_url}")
-
-            # Merge each service's manifest contribution into the template context
-            # (RC-5 Phase 6b). The contributions were collected once, above, before the
-            # dict was built; the merge semantics per field live with the function.
-            apply_manifest_contributions(variables, manifest_contributions)
-
-            # Auth-wall observability: the provider contributes nothing when a component
-            # asks for an auth wall but no keycloak secret is provisioned (old warn path).
-            # The cookie secret itself is now part of the auth-wall provider's
-            # contribution (secret_files), written in the shared loop below.
-            if component_uses_authorization_wall:
-                if "authorization_wall" in variables:
-                    logger.info(f"Authorization wall enabled for component '{component_name}'")
-                else:
-                    logger.warning(
-                        f"Component '{component_name}' uses authorization-wall but no keycloak service configured"
-                    )
-
-            # Generate extra manifests for sidecars (e.g. ConfigMaps)
-            # Each sidecar template can define a 'configmap' section that produces a standalone manifest
-            if "sidecars" in variables:
-                if target_dir:
-                    sidecar_output_dir = os.path.join(working_dir, target_dir)
-                else:
-                    sidecar_output_dir = os.path.join(working_dir, project_name, deployment_name)
-
-                for sidecar_name in variables["sidecars"]:
-                    sidecar_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, f"sidecar-{sidecar_name}.yaml.jinja")
-                    configmap_variables = variables.copy()
-                    configmap_variables["section"] = "configmap"
-                    configmap_manifest_name = generate_manifest_name(component_name, f"{sidecar_name}-configmap")
-                    self._manifest_generator.create_manifest_file(
-                        template_path=sidecar_template_path,
-                        values=configmap_variables,
-                        output_dir=sidecar_output_dir,
-                        output_filename=configmap_manifest_name,
-                        use_sops=False,
-                    )
-                    created_files.append(f"{configmap_manifest_name}.yaml")
-                    logger.info(f"Created sidecar configmap for '{sidecar_name}': {configmap_manifest_name}")
-
-            # Create each manifest type in the git repository.
-            # NOTE: tenant-baseline-network-policy.yaml.jinja is intentionally
-            # NOT emitted here. It is rendered ONCE per deployment after the
-            # component loop completes (see _emit_tenant_baseline_policy
-            # call below). Emitting per-component caused file collisions and
-            # last-write-wins behaviour for multi-component deployments.
-            manifests = ["deployment.yaml.jinja"]
-            # A component with no inbound port gets no Service (nothing to expose).
-            if has_inbound_port:
-                manifests.append("service.yaml.jinja")
-
-            # Add ingress manifest only if publish-on-web is enabled for this component
-            if publish_on_web:
-                manifests.append("ingress.yaml.jinja")
-                logger.info(f"Including ingress manifest for component '{component_name}' (publish-on-web: true)")
-            else:
-                logger.debug(f"Skipping ingress manifest for component '{component_name}' (publish-on-web: false)")
-
-            # Add an Off-mode VerticalPodAutoscaler only on clusters that run a VPA
-            # recommender. It mutates nothing (advice only); the auto-tuner reads its
-            # .status.recommendation to size memory and CPU via GitOps.
-            if supports_vpa(cluster):
-                manifests.append("vpa.yaml.jinja")
-                logger.debug(
-                    f"Including VPA manifest for component '{component_name}' (cluster '{cluster}' supports VPA)"
-                )
-
-            # Construct the full output directory path once for reuse
-            if target_dir:
-                # target_dir already contains the complete path structure (cluster/project/deployment)
-                full_output_dir = os.path.join(working_dir, target_dir)
-            else:
-                # Only add project_name/deployment_name when no target_dir is provided
-                full_output_dir = os.path.join(working_dir, project_name, deployment_name)
-
-            for manifest_file in manifests:
-                manifest_path = os.path.join(MANIFEST_TEMPLATES_DIR, manifest_file)
-
-                if not os.path.exists(manifest_path):
-                    logger.warning(f"Manifest file not found: {manifest_path}")
-                    continue
-
-                # Use enhanced manifest generator for proper directory structure
-                # Extract just the manifest name (without .yaml.jinja extension)
-                manifest_name = manifest_file.replace(".yaml.jinja", "")
-
-                # Handle ingress manifests - iterate through paths and ingress_map
-                if manifest_name == "ingress":
-                    for ingress_base_name, ingress_hostname in ingress_map.items():
-                        # Iterate over each path to create separate ingress for each
-                        for path_config in component_paths:
-                            path_value = path_config["match"] or "/"
-                            rewrite_value = path_config.get("rewrite")
-
-                            # Generate unique ingress name that includes the path
-                            ingress_name = generate_ingress_name_from_path(ingress_base_name, path_value)
-
-                            # Create unique manifest filename that includes the path suffix
-                            if path_value == "/" or not path_value:
-                                unique_manifest_name = generate_manifest_name(component_name, manifest_name)
-                            else:
-                                # Sanitize path for filename: /api -> api, /v1/users -> v1users
-                                path_suffix = path_value.lstrip("/").replace("/", "").lower()
-                                unique_manifest_name = generate_manifest_name(
-                                    component_name, f"{manifest_name}-{path_suffix}"
-                                )
-
-                            # Create ingress-specific variables
-                            ingress_variables = variables.copy()
-
-                            # Determine which issuer to use
-                            ingress_issuer_name = None
-                            ingress_cluster_issuer = None
-
-                            # Resolve the publish-on-web TLS mode for this component.
-                            # passthrough: the pod presents its own certificate; provided: the
-                            # customer's own certificate rendered as a kubernetes.io/tls Secret
-                            # on the ingress. Both leave the issuers None so no cert-manager
-                            # annotation is emitted and the platform issues nothing.
-                            tls_mode = self._project_file_handler.extract_component_publish_on_web_tls(
-                                project_data, component_name, deployment_name
-                            )
-                            ingress_passthrough = tls_mode == "passthrough"
-
-                            # provided: build a SOPS-encrypted tls Secret from the referenced
-                            # PEM attachment and point the ingress at it (idempotent per path).
-                            provided_tls_secret_name: str | None = None
-                            if tls_mode == "provided":
-                                try:
-                                    tls_data = await self._project_file_handler.resolve_publish_on_web_certificate(
-                                        project_data, component_name, deployment_name
-                                    )
-                                except ValueError as cert_error:
-                                    # A bad/missing customer certificate is a per-component config
-                                    # error. Don't abort the whole deployment: log it, record it on
-                                    # the deployment result, and skip just this ingress so the rest
-                                    # of the project still deploys.
-                                    logger.error(
-                                        f"publish-on-web 'provided' certificate error for "
-                                        f"{deployment_name}/{component_name}, skipping its ingress: {cert_error}"
-                                    )
-                                    result = self._deployment_results.get(deployment_name)
-                                    if result is not None:
-                                        result.status = "failed"
-                                        result.errors.append(str(cert_error))
-                                    continue
-                                if tls_data:
-                                    provided_tls_secret_name = f"{deployment_name}-{component_name}-provided-tls"
-                                    provided_tls_manifest_name = generate_manifest_name(
-                                        provided_tls_secret_name, "tls-secret"
-                                    )
-                                    self._manifest_generator.create_manifest_file(
-                                        template_path=os.path.join(
-                                            MANIFEST_TEMPLATES_DIR,
-                                            "binary-secret.yaml.to-sops.jinja",
-                                        ),
-                                        values={
-                                            "name": provided_tls_secret_name,
-                                            "namespace": namespace,
-                                            "secret_type": "tls",
-                                            "secret_k8s_type": "kubernetes.io/tls",
-                                            "data_pairs": tls_data,
-                                        },
-                                        output_dir=full_output_dir,
-                                        output_filename=provided_tls_manifest_name,
-                                        use_sops=True,
-                                    )
-                                    provided_tls_sops_filename = sops_filenames(provided_tls_manifest_name).plaintext
-                                    if provided_tls_sops_filename not in created_files:
-                                        created_files.append(provided_tls_sops_filename)
-
-                            if ingress_passthrough or provided_tls_secret_name:
-                                # No platform issuance: pod cert (passthrough) or customer cert (provided).
-                                pass
-                            elif base_domain and issuer_config:
-                                # External domain with specified issuer
-                                if issuer_config in ("letsencrypt", "letsencrypt-staging"):
-                                    # Auto-generated namespace Issuer for Let's Encrypt
-                                    ingress_issuer_name = generate_issuer_name(
-                                        base_domain, issuer_config, deployment_name
-                                    )
-                                else:
-                                    # Custom issuer name - use as namespace-scoped Issuer reference
-                                    ingress_issuer_name = issuer_config
-                            else:
-                                # Standard mode: use cluster's ClusterIssuer
-                                ingress_cluster_issuer = get_ingress_cluster_issuer(cluster)
-
-                            ingress_variables.update(
-                                {
-                                    "name": ingress_name,  # Unique ingress resource name (includes path)
-                                    "service_name": unique_name,  # Service name stays the same
-                                    "hostname": ingress_hostname,
-                                    "path": path_value,  # Path for this specific ingress
-                                    "rewrite": rewrite_value,  # Path rewrite target (e.g. "/" to strip prefix)
-                                    "issuer_name": ingress_issuer_name,  # Namespace-scoped Issuer (for external domains)
-                                    "cluster_issuer": ingress_cluster_issuer,  # ClusterIssuer (for cluster domains)
-                                    "tls_secret_name": generate_tls_secret_name(ingress_name),
-                                    "external_dns_target": get_external_dns_target_for_hostname(
-                                        cluster, ingress_hostname
-                                    ),
-                                    "passthrough": ingress_passthrough,
-                                    "provided_tls_secret": provided_tls_secret_name,
-                                }
-                            )
-
-                            # Create the ingress manifest file
-                            manifest_file_path = self._manifest_generator.create_manifest_file(
-                                template_path=manifest_path,
-                                values=ingress_variables,
-                                output_dir=full_output_dir,
-                                output_filename=unique_manifest_name,
-                                use_sops=False,
-                            )
-                            created_files.append(f"{unique_manifest_name}.yaml")
-                            logger.info(
-                                f"Successfully created {manifest_file} manifest for {ingress_hostname}{path_value}: {manifest_file_path}"
-                            )
-
-                    # Create the root ingress (``subdomain.base-domain``) when this is the
-                    # root component of a dotted component-per-subdomain layout. Keyed on
-                    # domain-format: the legacy ``domain-mode: nice-url`` files were
-                    # migrated to ``component.subdomain`` (schema v2.8), and only the
-                    # dotted formats WITH a component segment carry a root address next to
-                    # the per-component ones.
-                    # The root ingress composes ``subdomain.base-domain`` itself instead of
-                    # asking get_component_ingress_map, so the approval fallback that moves
-                    # the components to the cluster address does not reach it. Without this
-                    # check an unapproved domain still got an apex-style ingress plus a
-                    # certificate request for a domain nobody granted this project.
-                    is_root_component = component_name == root_component_name
-                    if (
-                        domain_format in ROOT_COMPONENT_FORMAT_IDS
-                        and subdomain
-                        and base_domain
-                        and is_root_component
-                        and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
-                    ):
-                        root_hostname = generate_root_hostname(subdomain, base_domain)
-                        root_ingress_name = f"{deployment_name}-root"
-                        root_manifest_name = generate_manifest_name(component_name, "ingress-root")
-
-                        # Create root ingress variables
-                        root_ingress_variables = variables.copy()
-
-                        # Determine issuer for root ingress (same logic as component ingress)
-                        root_issuer_name = None
-                        root_cluster_issuer = None
-
-                        if base_domain and issuer_config:
-                            if issuer_config in ("letsencrypt", "letsencrypt-staging"):
-                                root_issuer_name = generate_issuer_name(base_domain, issuer_config, deployment_name)
-                            else:
-                                root_issuer_name = issuer_config
-                        else:
-                            root_cluster_issuer = get_ingress_cluster_issuer(cluster)
-
-                        root_ingress_variables.update(
-                            {
-                                "name": root_ingress_name,
-                                "service_name": unique_name,  # Points to same service as component
-                                "hostname": root_hostname,
-                                "path": "/",  # Root always uses /
-                                "issuer_name": root_issuer_name,
-                                "cluster_issuer": root_cluster_issuer,
-                                "tls_secret_name": generate_tls_secret_name(root_ingress_name),
-                                "external_dns_target": get_external_dns_target_for_hostname(cluster, root_hostname),
-                            }
-                        )
-
-                        # Create the root ingress manifest
-                        root_manifest_file_path = self._manifest_generator.create_manifest_file(
-                            template_path=manifest_path,
-                            values=root_ingress_variables,
-                            output_dir=full_output_dir,
-                            output_filename=root_manifest_name,
-                            use_sops=False,
-                        )
-                        created_files.append(f"{root_manifest_name}.yaml")
-                        logger.info(
-                            f"Successfully created root ingress manifest for {root_hostname}: {root_manifest_file_path}"
-                        )
-
-                        # Track root URL in deployment results
-                        root_web_address = generate_public_url(root_hostname, use_https)
-                        self._deployment_results[deployment_name].urls["root"] = root_web_address
-                        logger.info(f"Tracked root URL: {root_web_address}")
-
-                        # Clean up stale root ingress from previous root component
-                        previous_dep = self.get_previous_deployment(deployment_name)
-                        if previous_dep:
-                            old_root = get_domain_setting(previous_dep, DomainSetting.ROOT_COMPONENT)
-                            if old_root and old_root != root_component_name:
-                                old_manifest = f"{generate_manifest_name(old_root, 'ingress-root')}.yaml"
-                                old_manifest_path = os.path.join(full_output_dir, old_manifest)
-                                if os.path.exists(old_manifest_path):
-                                    os.remove(old_manifest_path)
-                                    logger.info(
-                                        f"Removed stale root ingress manifest '{old_manifest}' "
-                                        f"(root-component changed from '{old_root}' to '{root_component_name}')"
-                                    )
-
-                    # Create bare domain ingress for expose-component-on-bare-domain mode.
-                    # expose_on_bare_domain holds the component name that should serve the bare domain.
-                    if (
-                        expose_on_bare_domain
-                        and base_domain
-                        and component_name == expose_on_bare_domain
-                        and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
-                    ):
-                        # Same rule as at registration: never an apex ingress plus
-                        # certificate from a tenant namespace on a platform domain, nor on
-                        # a domain that is not approved for this project.
-                        validate_bare_domain_allowed(base_domain, get_supported_base_domains(cluster), project_data)
-                        bare_hostname = generate_bare_domain_hostname(base_domain)
-                        bare_ingress_name = f"{deployment_name}-bare-domain"
-                        bare_manifest_name = generate_manifest_name(component_name, "ingress-bare-domain")
-
-                        bare_ingress_variables = variables.copy()
-
-                        # Determine issuer for bare domain ingress (same logic as component ingress)
-                        bare_issuer_name = None
-                        bare_cluster_issuer = None
-
-                        if base_domain and issuer_config:
-                            if issuer_config in ("letsencrypt", "letsencrypt-staging"):
-                                bare_issuer_name = generate_issuer_name(base_domain, issuer_config, deployment_name)
-                            else:
-                                bare_issuer_name = issuer_config
-                        else:
-                            bare_cluster_issuer = get_ingress_cluster_issuer(cluster)
-
-                        bare_ingress_variables.update(
-                            {
-                                "name": bare_ingress_name,
-                                "service_name": unique_name,  # Points to same service as component
-                                "hostname": bare_hostname,
-                                "path": "/",
-                                "issuer_name": bare_issuer_name,
-                                "cluster_issuer": bare_cluster_issuer,
-                                "tls_secret_name": generate_tls_secret_name(bare_ingress_name),
-                                "external_dns_target": get_external_dns_target_for_hostname(cluster, bare_hostname),
-                            }
-                        )
-
-                        # Create the bare domain ingress manifest
-                        bare_manifest_file_path = self._manifest_generator.create_manifest_file(
-                            template_path=manifest_path,
-                            values=bare_ingress_variables,
-                            output_dir=full_output_dir,
-                            output_filename=bare_manifest_name,
-                            use_sops=False,
-                        )
-                        created_files.append(f"{bare_manifest_name}.yaml")
-                        logger.info(
-                            f"Successfully created bare domain ingress manifest for {bare_hostname}: {bare_manifest_file_path}"
-                        )
-
-                        # Track bare domain URL in deployment results
-                        bare_web_address = generate_public_url(bare_hostname, use_https)
-                        self._deployment_results[deployment_name].urls["bare-domain"] = bare_web_address
-                        logger.info(f"Tracked bare domain URL: {bare_web_address}")
-
-                        # Clean up stale bare domain ingress from previous component
-                        previous_dep = self.get_previous_deployment(deployment_name)
-                        if previous_dep:
-                            old_bare = get_domain_setting(previous_dep, DomainSetting.BARE_DOMAIN_COMPONENT)
-                            if old_bare and old_bare != expose_on_bare_domain:
-                                old_manifest = f"{generate_manifest_name(old_bare, 'ingress-bare-domain')}.yaml"
-                                old_manifest_path = os.path.join(full_output_dir, old_manifest)
-                                if os.path.exists(old_manifest_path):
-                                    os.remove(old_manifest_path)
-                                    logger.info(
-                                        f"Removed stale bare domain ingress manifest '{old_manifest}' "
-                                        f"(expose-component-on-bare-domain changed from '{old_bare}' to '{expose_on_bare_domain}')"
-                                    )
-
-                else:
-                    # Standard single manifest creation
-                    unique_manifest_name = generate_manifest_name(component_name, manifest_name)
-
-                    # Use SOPS encryption for generic secrets (SSO/OIDC), regular processing for others
-                    use_sops_for_manifest = manifest_name == "generic-secret"
-
-                    # Create manifest file in the specific directory structure
-                    manifest_file_path = self._manifest_generator.create_manifest_file(
-                        template_path=manifest_path,
-                        values=variables,
-                        output_dir=full_output_dir,
-                        output_filename=unique_manifest_name,
-                        use_sops=use_sops_for_manifest,
-                    )
-
-                    # Add to the list of created files with component name for uniqueness
-                    created_files.append(f"{unique_manifest_name}.yaml")
-                    logger.info(f"Successfully created {manifest_file} manifest: {manifest_file_path}")
-
-            # Sleep-mode: emit the waker (Deployment + ConfigMap + token Secret) behind
-            # this component's Service when the deployment sleeps and this is the chosen
-            # waker component. No-op otherwise. Pruned by the obsolete-manifest sweep like
-            # any other component file once the deployment is awake again.
-            await self._emit_waker_manifests(
-                project_data=project_data,
-                deployment=deployment,
-                component_name=component_name,
-                component_reference=component_reference,
-                unique_name=unique_name,
-                namespace=namespace,
-                cluster=cluster,
-                project_name=project_name,
-                # The Service's own targetPort, contributions applied (the authorization
-                # wall moves it to the oauth2-proxy port). Taken from the built values so
-                # the waker can never drift from the Service it sits behind.
-                service_port=variables.get("service_port"),
-                output_dir=full_output_dir,
-                created_files=created_files,
-                private_key=private_key,
-            )
-
-            # Create PVC manifests for persistent storage using PVCManager
-            persistent_storage = self._project_file_handler.get_persistent_storage(processed_storage_configs)
-
-            if persistent_storage:
-                logger.info(f"Creating {len(persistent_storage)} PVC manifests for component: {component_name}")
-
-                # Delegate PVC creation to PVCManager which handles generation and cleanup
-                created_pvc_files = await self._pvc_manager.create_pvc_manifests_for_component(
-                    project_data=project_data,
-                    deployment=deployment,
-                    component_name=component_name,
-                    unique_name=unique_name,
-                    persistent_storage=persistent_storage,
-                    namespace=namespace,
-                    cluster=cluster,
-                    full_output_dir=full_output_dir,
-                    manifest_generator=self._manifest_generator,
-                    force_clone_override=self._force_clone_override,
-                )
-                created_files.extend(created_pvc_files)
-
-            # Create separate secret manifests for SSO and user secrets
-            secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
-
-            # Create SSO secret if Keycloak credentials are available in secrets map
-            keycloak_credentials = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
-            if keycloak_credentials:
-                # Always use SOPS encryption for secrets (security requirement)
-                use_sops_for_sso = True
-
-                # Use the existing Keycloak secret instance directly (no need to recreate)
-                keycloak_secret = keycloak_credentials
-
-                # Get base Keycloak secret data
-                keycloak_secret_data = keycloak_secret.to_k8s_secret_data()
-
-                # Add resolved Keycloak aliases from all components
-                keycloak_aliases = (
-                    self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("keycloak", {})
-                )
-                if keycloak_aliases:
-                    logger.debug(f"Resolving {len(keycloak_aliases)} keycloak aliases for deployment {deployment_name}")
-                    resolved_aliases = resolve_aliases(keycloak_aliases, keycloak_secret_data)
-                    keycloak_secret_data.update(resolved_aliases)
-                    logger.info(f"Added {len(resolved_aliases)} resolved keycloak aliases to deployment secret")
-
-                # Only include fields needed for the generic-secret template
-                # NOTE: Keycloak secret is per-deployment, not per-component
-                sso_secret_vars = {
-                    "name": KeycloakSecret.get_secret_name(deployment_name),
-                    "namespace": namespace,
-                    "secret_type": "keycloak",  # For proper labeling
-                    "secret_pairs": keycloak_secret_data,  # Now includes base + aliases
-                }
-
-                # Create SSO secret with keycloak naming convention (deployment-level)
-                sso_manifest_name = generate_manifest_name(deployment_name, "keycloak-secret")
-
-                sso_secret_path = self._manifest_generator.create_manifest_file(
-                    template_path=secret_template_path,
-                    values=sso_secret_vars,
-                    output_dir=full_output_dir,
-                    output_filename=sso_manifest_name,
-                    use_sops=use_sops_for_sso,
-                )
-
-                # All secrets are SOPS encrypted for security
-                sops_filename = sops_filenames(sso_manifest_name).plaintext
-                created_files.append(sops_filename)
-                logger.info(f"SSO secret will be SOPS encrypted: {sops_filename}")
-                logger.info(f"Successfully created SSO secret manifest: {sso_secret_path}")
-
-            # Create platform secret (always present, per-component)
-            platform_secret = PlatformSecret(
-                deployment_name=deployment_name,
-                component_name=component_name,
-            )
-            platform_secret_data = platform_secret.to_k8s_secret_data()
-
-            # Resolve platform aliases if any
-            platform_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("platform", {})
-            if platform_aliases:
-                logger.debug(f"Resolving {len(platform_aliases)} platform aliases for component {component_name}")
-                resolved_platform_aliases = resolve_aliases(platform_aliases, platform_secret_data)
-                platform_secret_data.update(resolved_platform_aliases)
-                logger.info(
-                    f"Added {len(resolved_platform_aliases)} resolved platform aliases to component {component_name}"
-                )
-
-            platform_secret_vars = {
-                "name": PlatformSecret.get_secret_name(unique_name),
-                "namespace": namespace,
-                "secret_type": "platform",
-                "secret_pairs": platform_secret_data,
-            }
-
-            platform_manifest_name = generate_manifest_name(component_name, "platform-secret")
-            self._manifest_generator.create_manifest_file(
-                template_path=secret_template_path,
-                values=platform_secret_vars,
-                output_dir=full_output_dir,
-                output_filename=platform_manifest_name,
-                use_sops=False,
-            )
-            created_files.append(f"{platform_manifest_name}.yaml")
-            logger.info(f"Created platform secret manifest: {platform_manifest_name}")
-
-            # Create user secret if configured
-            if user_env_vars:
-                logger.debug(f"Processing {len(user_env_vars)} user environment variables for {component_name}")
-
-                # Create typed User secret
-                user_secret = UserSecret(env_vars=user_env_vars)
-
-                # Only include fields needed for the generic-secret template
-                user_secret_vars = {
-                    "name": UserSecret.get_secret_name(unique_name),
-                    "namespace": namespace,
-                    "secret_type": "user",  # For proper labeling
-                    "secret_pairs": user_secret.to_k8s_secret_data(),
-                }
-
-                # Create user secret with user naming convention
-                user_manifest_name = generate_manifest_name(component_name, "user-secret")
-                # Always use SOPS encryption for secrets (security requirement)
-                use_sops_for_user = True
-
-                user_secret_path = self._manifest_generator.create_manifest_file(
-                    template_path=secret_template_path,
-                    values=user_secret_vars,
-                    output_dir=full_output_dir,
-                    output_filename=user_manifest_name,
-                    use_sops=use_sops_for_user,
-                )
-
-                # All secrets are SOPS encrypted for security
-                sops_filename = sops_filenames(user_manifest_name).plaintext
-                created_files.append(sops_filename)
-                logger.info(f"User secret will be SOPS encrypted: {sops_filename}")
-                logger.info(f"Successfully created user secret manifest: {user_secret_path}")
-
-            # Create binary secrets for file-mode attachments (one per attachment id per deployment).
-            # Keyed by secret name so duplicate references across components stay idempotent.
-            if attachment_file_secrets:
-                binary_secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "binary-secret.yaml.to-sops.jinja")
-                for secret_name, data_pairs in attachment_file_secrets.items():
-                    attachment_secret_vars = {
-                        "name": secret_name,
-                        "namespace": namespace,
-                        "secret_type": "attachment",
-                        "data_pairs": data_pairs,
-                    }
-                    attachment_manifest_name = generate_manifest_name(secret_name, "attachment-secret")
-                    self._manifest_generator.create_manifest_file(
-                        template_path=binary_secret_template_path,
-                        values=attachment_secret_vars,
-                        output_dir=full_output_dir,
-                        output_filename=attachment_manifest_name,
-                        use_sops=True,
-                    )
-                    attachment_sops_filename = sops_filenames(attachment_manifest_name).plaintext
-                    if attachment_sops_filename not in created_files:
-                        created_files.append(attachment_sops_filename)
-                    logger.info(f"Created attachment secret manifest: {secret_name}")
-
-            # Create Let's Encrypt Issuer manifest if configured (once per unique base-domain/issuer combination)
-            if base_domain and issuer_config and issuer_config.startswith("letsencrypt"):
-                # Track created issuers to avoid duplicates within this deployment
-                issuer_key = f"{base_domain}:{issuer_config}"
-                if issuer_key not in created_issuers:
-                    created_issuers.add(issuer_key)
-                    created_files.extend(
-                        emit_letsencrypt_issuer(
-                            self._manifest_generator,
-                            project_data=project_data,
-                            deployment_name=deployment_name,
-                            base_domain=base_domain,
-                            issuer_config=issuer_config,
-                            cluster_name=cluster,
-                            namespace=namespace,
-                            output_dir=full_output_dir,
-                        )
-                    )
-
-            # Write each used service's declared secret files via the shared writer
-            # (RC-5 Phase 6c). The typed secret plus alias/register flags are built by
-            # the service provider (build_secret_files); this loop only drives the
-            # shared write. Byte-identical to the old per-service blocks -- write order
-            # is immaterial (kustomization is built from a disk scan and the
-            # obsolete-manifest prune keeps a name set, both order-independent).
-            for contribution in manifest_contributions:
-                for spec in contribution.secret_files:
-                    await self._write_secret_file(
-                        spec,
-                        deployment_name=deployment_name,
-                        namespace=namespace,
-                        output_dir=full_output_dir,
-                        template_path=secret_template_path,
-                        created_files=created_files,
-                        private_key=private_key,
-                    )
-
-        # Emit one tenant-baseline NetworkPolicy per deployment after all
-        # components have been processed. The policy selects pods by the
-        # `deployment: <name>` label (added in deployment.yaml.jinja), so
-        # multiple components of the same deployment share one policy, while
-        # unlabeled pods (helm, helmfile, backup/restore) are covered by the
-        # namespace-level baseline policy.
-        if target_dir:
-            deployment_output_dir = os.path.join(working_dir, target_dir)
-        else:
-            deployment_output_dir = os.path.join(working_dir, project_name, deployment_name)
-        baseline_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "tenant-baseline-network-policy.yaml.jinja")
-        baseline_manifest_name = generate_network_policy_manifest_name(f"{deployment_name}-tenant-baseline").replace(
-            ".yaml", ""
-        )
-        baseline_variables = {
-            "name": generate_network_policy_name(f"{deployment_name}-tenant-baseline"),
-            "namespace": namespace,
-            "deployment_selector": deployment_name,
-            "ops_namespace": get_namespace(cluster),
-            "backup_namespace": get_backup_namespace(cluster),
-            "ingress_controller_selector": get_ingress_controller_selector(cluster),
-            "ops_egress": get_ops_egress(cluster),
-            "cluster_cidrs": get_cluster_cidrs(cluster),
-            # A regular app namespace hosts no CNPG cluster, so the operator does
-            # not need ingress here (only the infrastructure namespace does).
-            "database_operator_namespace": None,
-            "project_infra_namespace": get_infrastructure_namespace(cluster, project_name),
-        }
-        self._manifest_generator.create_manifest_file(
-            template_path=baseline_template_path,
-            values=baseline_variables,
-            output_dir=deployment_output_dir,
-            output_filename=baseline_manifest_name,
-            use_sops=False,
-        )
-        created_files.append(f"{baseline_manifest_name}.yaml")
-        logger.info(
-            f"Created tenant-baseline NetworkPolicy for deployment '{deployment_name}' "
-            f"(selector deployment={deployment_name}, ops={baseline_variables['ops_namespace']}, "
-            f"backup={baseline_variables['backup_namespace']}, "
-            f"ingress={baseline_variables['ingress_controller_selector']['namespace']})"
-        )
-
-        # Deployment-wide, service-owned manifests (RC-15). After the component loop and the
-        # baseline, every service that overrides contribute_deployment_manifests may add
-        # resources scoped to the whole deployment (cross-domain-access adds one NetworkPolicy
-        # per own component with rules). The kustomization is rebuilt from the on-disk glob,
-        # so writing the files is enough for them to be included; the prune in
-        # _process_deployment_manifests removes any that this run no longer generates.
-        deployment_manifest_ctx = DeploymentManifestContext(
-            project_name=project_name,
-            project_data=project_data,
-            deployment=deployment,
-            cluster=cluster,
-            namespace=namespace,
-        )
-        for service in deployment_manifest_services():
-            for spec in service.contribute_deployment_manifests(deployment_manifest_ctx):
-                self._manifest_generator.create_manifest_file(
-                    template_path=os.path.join(MANIFEST_TEMPLATES_DIR, spec.template_path),
-                    values=spec.values,
-                    output_dir=deployment_output_dir,
-                    output_filename=spec.filename,
-                    use_sops=False,
-                )
-                created_files.append(f"{spec.filename}.yaml")
-                logger.info(
-                    f"Created {service.service_type.value} deployment manifest '{spec.filename}.yaml' "
-                    f"for deployment '{deployment_name}'"
-                )
-
-        # Clear rollback info on success
-        self._pending_subdomain_rollback = None
-        return created_files
+        """Build one deployment's manifests; see :class:`ApplicationManifests`."""
+        return await ApplicationManifests(self).create_application_manifests(deployment, git_connector, target_dir)
 
     async def create_kustomization_file(
         self,
@@ -4721,43 +2511,10 @@ class ProjectManager:
         target_dir: str | None = None,
         deployment: dict[str, Any] | None = None,
     ) -> bool:
-        """
-        Create a kustomization.yaml file that includes both SOPS encrypted files and regular files.
-        Uses the new manifest generator with YAML templates.
-
-        Args:
-            git_connector: The git connector with an already cloned repository
-            namespace: Target namespace for the kustomization
-            sops_files: List of SOPS encrypted file names
-            regular_files: List of regular manifest file names
-            target_dir: Optional target directory within the git repository
-            deployment: Optional deployment data containing cluster information for namespace prefixing
-
-        Returns:
-            True if kustomization file was created successfully, False otherwise
-        """
-        working_dir = await git_connector.get_working_dir()
-        if target_dir:
-            target_path = os.path.join(working_dir, target_dir)
-            os.makedirs(target_path, exist_ok=True)
-        else:
-            target_path = working_dir
-
-        # Use the manifest generator to create kustomization files
-        result = self._manifest_generator.create_kustomization_files(
-            output_dir=target_path,
-            namespace=namespace,
-            sops_files=sops_files,
-            regular_files=regular_files,
-            deployment=deployment,
+        """Write a kustomization.yaml for a manifest directory; see :class:`ApplicationManifests`."""
+        return await ApplicationManifests(self).create_kustomization_file(
+            git_connector, namespace, sops_files, regular_files, target_dir, deployment
         )
-
-        if result:
-            logger.info(
-                f"Successfully created kustomization.yaml with {len(sops_files)} SOPS files and {len(regular_files)} regular files"
-            )
-
-        return result
 
     async def get_contents(self, *, record_base: bool = True) -> dict[str, Any]:
         """

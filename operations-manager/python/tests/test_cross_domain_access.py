@@ -914,7 +914,7 @@ class TestPortIsTheReceivingSide:
 
 class TestServiceManifestPrune:
     def test_removes_only_stale_service_files(self, tmp_path) -> None:
-        from opi.manager.project_manager import _select_obsolete_service_manifests
+        from opi.manager.project.manifests.pruning import select_obsolete_service_manifests
 
         stale = "dev-cross-domain-access-web-network-policy.yaml"
         kept_component = "web-deployment.yaml"
@@ -924,7 +924,7 @@ class TestServiceManifestPrune:
             (tmp_path / name).write_text("x")
 
         prefixes = {f"dev-{s.value}-" for s in ServiceType}
-        obsolete = _select_obsolete_service_manifests(str(tmp_path), prefixes, {current})
+        obsolete = select_obsolete_service_manifests(str(tmp_path), prefixes, {current})
         assert obsolete == [stale]
 
 

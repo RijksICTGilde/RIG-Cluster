@@ -605,7 +605,7 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 | Clusterconfig | `get_image_registries_config` in `opi/core/cluster_config.py` |
 | Organization-sjabloon | `manifests/quay-proxy-organization.yaml.jinja` |
 | Projectniveau-haak | `contribute_project_manifests` in `opi/services/catalog/base.py` |
-| Emitter en prune | `_process_project_manifests` in `opi/manager/project_manager.py` |
+| Emitter en prune | `process_project_manifests` in `opi/manager/project/manifests/repository.py` |
 | ArgoCD-applicatie | `create_project_application` in `opi/manager/argo_manager.py` |
 
 ## De eigen serviceaccount per project

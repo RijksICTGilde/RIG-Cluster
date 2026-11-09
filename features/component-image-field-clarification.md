@@ -17,7 +17,7 @@ field is currently dead data at runtime.
 - **Editable field definition**: `opi/forms/editables/fields/components.py` — `COMPONENT_IMAGE_EDITABLE`
 - **Self-service form model**: `opi/forms/models/project.py` — `ComponentFormModel.image` (default: `nginx:latest`)
 - **Wizard propagation**: `opi/forms/visualizers/wizard_sections.py` — reads `component.get("image")` and copies it to the deployment ref when distributing a component to deployments
-- **Manifest generation**: `opi/manager/project_manager.py` — only reads image from deployment component refs, ignores top-level
+- **Manifest generation**: `opi/manager/project/manifests/application.py` — only reads image from deployment component refs, ignores top-level
 
 ## Current behavior
 

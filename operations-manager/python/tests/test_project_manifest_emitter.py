@@ -24,7 +24,7 @@ import pytest
 import yaml
 from opi.generation.manifests import render_template
 from opi.manager.delete_project_manager import DeleteProjectManager
-from opi.manager.project_manager import _select_obsolete_service_manifests
+from opi.manager.project.manifests.pruning import select_obsolete_service_manifests
 from opi.manager.project_validation import validate_project_structure
 from opi.services.project_schema import ProjectIntegrityError
 from opi.services.project_utils import project_level_deployment
@@ -46,7 +46,7 @@ def _touch(directory: Any, *names: str) -> None:
 class TestDePrune:
     def test_een_bestand_van_een_dienst_die_niets_meer_bijdraagt_gaat_weg(self, tmp_path: Any) -> None:
         _touch(tmp_path, "image-registries-demo-code-overheid-registry.sops.yaml")
-        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, set()) == [
+        assert select_obsolete_service_manifests(str(tmp_path), PREFIXES, set()) == [
             "image-registries-demo-code-overheid-registry.sops.yaml"
         ]
 
@@ -57,7 +57,7 @@ class TestDePrune:
             "image-registries-demo-registry.to-sops.yaml",
         )
         generated = {"image-registries-demo-registry.to-sops.yaml"}
-        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == []
+        assert select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == []
 
     def test_een_versleutelde_kopie_zonder_to_sops_deze_run_gaat_weg(self, tmp_path: Any) -> None:
         _touch(
@@ -66,7 +66,7 @@ class TestDePrune:
             "image-registries-oud-registry.sops.yaml",
         )
         generated = {"image-registries-demo-registry.to-sops.yaml"}
-        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == [
+        assert select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == [
             "image-registries-oud-registry.sops.yaml"
         ]
 
@@ -80,18 +80,18 @@ class TestDePrune:
         )
         prefixes = {f"productie-{service.value}-" for service in ServiceType}
         generated = {"productie-keycloak-secret.to-sops.yaml", "productie-redis-secret.to-sops.yaml"}
-        assert _select_obsolete_service_manifests(str(tmp_path), prefixes, generated) == []
+        assert select_obsolete_service_manifests(str(tmp_path), prefixes, generated) == []
 
     def test_de_kustomize_plumbing_wordt_niet_aangeraakt(self, tmp_path: Any) -> None:
         _touch(tmp_path, "kustomization.yaml", "decrypt-sops.yaml")
-        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, set()) == []
+        assert select_obsolete_service_manifests(str(tmp_path), PREFIXES, set()) == []
 
     def test_een_bestand_zonder_dienstnaam_gaat_deze_prune_niet_aan(self, tmp_path: Any) -> None:
         _touch(tmp_path, "iets-anders.yaml")
-        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, set()) == []
+        assert select_obsolete_service_manifests(str(tmp_path), PREFIXES, set()) == []
 
     def test_een_lege_map_is_geen_fout(self, tmp_path: Any) -> None:
-        assert _select_obsolete_service_manifests(str(tmp_path / "bestaat-niet"), PREFIXES, set()) == []
+        assert select_obsolete_service_manifests(str(tmp_path / "bestaat-niet"), PREFIXES, set()) == []
 
 
 class TestDeMapNaam:

@@ -60,7 +60,8 @@ The manifest naming logic is complex (ingress maps, path suffixes, per-deploymen
 
 ### Location
 
-`_process_deployment_manifests()` in `opi/manager/project_manager.py` (around line 2550).
+`RepositoryManifests.process_deployment_manifests()` in
+`opi/manager/project/manifests/repository.py`.
 
 ### Flow
 

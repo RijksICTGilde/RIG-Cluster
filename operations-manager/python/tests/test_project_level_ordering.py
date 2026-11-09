@@ -34,6 +34,7 @@ from opi.manager.argo_manager import (
     ArgoManager,
 )
 from opi.manager.project.argocd_sync import ArgoCDSync
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.services.tasks import progress_steps
 from opi.utils.naming import generate_argocd_project_application_name
 
@@ -872,8 +873,6 @@ class TestWieDeGrendelMeet:
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": "demo"})
         fake.get_deployment_workspace = AsyncMock(return_value=workspace)
-        fake._process_deployment_manifests = AsyncMock()
-        fake._process_project_manifests = AsyncMock()
         fake._clear_blocking_sync_operations = AsyncMock()
         fake._project_level_path = project_level_path
         fake._project_level_manifests_changed = True
@@ -883,9 +882,13 @@ class TestWieDeGrendelMeet:
         ]
         fake.get_deployments = AsyncMock(return_value=deployments)
 
-        await ProjectManager._process_repository_manifests(
-            fake, {"name": repo}, [d for d in deployments if d["repository"] == repo]
-        )
+        with (
+            patch.object(RepositoryManifests, "process_deployment_manifests", AsyncMock()),
+            patch.object(RepositoryManifests, "process_project_manifests", AsyncMock()),
+        ):
+            await ProjectManager._process_repository_manifests(
+                fake, {"name": repo}, [d for d in deployments if d["repository"] == repo]
+            )
         return fake
 
     @pytest.mark.asyncio

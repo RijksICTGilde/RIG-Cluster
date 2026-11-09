@@ -179,7 +179,7 @@ async def _render(scenario: str, project_config: dict[str, str], output_root: Pa
 
     created: list[str] = []
     with (
-        patch("opi.manager.project_manager.SubdomainConnector", return_value=registry),
+        patch("opi.manager.project.manifests.application.SubdomainConnector", return_value=registry),
         patch("secrets.token_urlsafe", return_value=FIXED_COOKIE_SECRET) as token,
         freeze_time(FROZEN_NOW),
     ):

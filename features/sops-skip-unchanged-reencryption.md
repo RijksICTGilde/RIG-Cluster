@@ -47,7 +47,8 @@ worst it re-encrypts unnecessarily, exactly as before.
 A deployment writes its secrets, prunes the files this run did not generate, and
 encrypts last. The `.sops.yaml` of a secret written this run as `.to-sops.yaml`
 is its previous ciphertext, so the prune keeps it (`_is_generated` in
-`project_manager.py`, used by the component, service and project prune alike).
+`opi/manager/project/manifests/pruning.py`, used by the component, service and project
+prune alike).
 Removing it would leave the skip nothing to compare against. A secret that is no
 longer generated loses both forms.
 

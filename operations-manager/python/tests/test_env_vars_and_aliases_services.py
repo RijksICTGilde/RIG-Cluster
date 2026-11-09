@@ -22,6 +22,7 @@ from opi.services.project_schema import ProjectIntegrityError
 from opi.services.registry import SERVICES, property_owning_services
 from opi.services.services_enums import ServiceKind, ServiceType
 from pydantic import ValidationError
+from tests import project_manager_sources
 
 ENV_VARS = SERVICES[ServiceType.USER_ENV_VARS]
 ALIASES = SERVICES[ServiceType.ALIASES]
@@ -315,9 +316,8 @@ class TestNoUserEnvVarNamesInLogs:
         assert "app.example.nl" not in caplog.text
 
     def test_the_unresolved_warning_does_not_carry_a_var_name(self) -> None:
-        # project_manager passes `where` without the variable name, so the warning that
-        # quotes it cannot leak one.
-        source = (_OPI / "manager" / "project_manager.py").read_text(encoding="utf-8")
+        # Through project_manager_sources: a guard on one file goes quiet when the call moves.
+        source = project_manager_sources.source_text()
         assert 'where=f"a user-env-var of component {component_name}"' in source
 
     def test_the_router_logs_a_count_not_the_keys(self) -> None:

@@ -102,7 +102,7 @@ deed.
   `ServiceDefinition.shared_per_deployment`
 - `opi/services/catalog/base.py` -- `offers_component_checkbox`, `components_using_service`
 - `opi/forms/visualizers/providers.py` -- `FilteredServiceOptionsProvider`, de componentkeuze
-- `opi/manager/project_manager.py` -- `collect_manifest_contributions`, waar de selectie
-  wordt gelezen
+- `opi/manager/project/manifests/contributions.py` -- `collect_manifest_contributions`,
+  waar de selectie wordt gelezen
 - `opi/services/config_location.py` -- `selection_labels`, de chips op de dienstkaart
 - `tests/test_dienst_kiest_zijn_componentvinkje.py` -- de grendel over de hele catalogus

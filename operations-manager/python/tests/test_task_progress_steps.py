@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.runtime.tasks.persistent_task_progress import TaskStatus
 from opi.services.tasks import progress_steps
 
@@ -220,8 +221,8 @@ def _repository_manager(
     monkeypatch.setattr(
         manager, "get_deployment_workspace", AsyncMock(return_value=_workspace(push_error, during_prepare))
     )
-    monkeypatch.setattr(manager, "_process_deployment_manifests", AsyncMock(return_value=None))
-    monkeypatch.setattr(manager, "_process_project_manifests", AsyncMock(return_value=None))
+    monkeypatch.setattr(RepositoryManifests, "process_deployment_manifests", AsyncMock(return_value=None))
+    monkeypatch.setattr(RepositoryManifests, "process_project_manifests", AsyncMock(return_value=None))
     monkeypatch.setattr(manager, "get_deployments", AsyncMock(return_value=[deployment]))
     monkeypatch.setattr(manager, "_clear_blocking_sync_operations", AsyncMock(return_value=None))
     return manager, deployment

@@ -17,6 +17,8 @@ import yaml
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.project.emitters import emit_namespace_network_policies
 from opi.manager.project.helm_deployment import HelmDeployment
+from opi.manager.project.manifests.application import ApplicationManifests
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_utils import namespace_level_deployment
 
@@ -214,19 +216,19 @@ class TestComponentDeploymentKrijgtOokDeNamespacePolicies:
         manager.get_contents = AsyncMock(return_value=self.PROJECT_DATA)
         manager.get_name = AsyncMock(return_value="demo")
         manager.get_repository_path = AsyncMock(return_value="")
-        manager.create_application_manifests = AsyncMock(return_value=[])
-        manager._prune_obsolete_component_manifests = MagicMock()
-        manager._prune_obsolete_service_manifests = MagicMock()
 
         git_connector = MagicMock()
         git_connector.get_working_dir = AsyncMock(return_value=str(tmp_path))
 
         with (
-            patch("opi.manager.project_manager.get_prefixed_namespace", return_value="rig-demo"),
-            patch("opi.manager.project_manager.apply_rules_to_directory"),
-            patch("opi.manager.project_manager.encrypt_to_sops_files_or_fail"),
+            patch.object(ApplicationManifests, "create_application_manifests", AsyncMock(return_value=[])),
+            patch.object(RepositoryManifests, "prune_obsolete_component_manifests", MagicMock()),
+            patch("opi.manager.project.manifests.repository.prune_obsolete_service_manifests"),
+            patch("opi.manager.project.manifests.repository.get_prefixed_namespace", return_value="rig-demo"),
+            patch("opi.manager.project.manifests.repository.apply_rules_to_directory"),
+            patch("opi.manager.project.manifests.repository.encrypt_to_sops_files_or_fail"),
             patch(
-                "opi.manager.project_manager.emit_namespace_network_policies",
+                "opi.manager.project.manifests.repository.emit_namespace_network_policies",
                 wraps=emit_namespace_network_policies,
             ) as spy,
         ):

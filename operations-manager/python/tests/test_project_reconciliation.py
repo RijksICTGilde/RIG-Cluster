@@ -15,7 +15,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from opi.core.config import settings
 from opi.core.db import configure_engine, dispose_engine, session_scope
-from opi.manager.project_manager import DeploymentResult, ProjectManager
+from opi.manager.project.results import DeploymentResult
+from opi.manager.project_manager import ProjectManager
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.services.project_reconciliation_service import record_reconciliation
 from sqlalchemy import func, select, text

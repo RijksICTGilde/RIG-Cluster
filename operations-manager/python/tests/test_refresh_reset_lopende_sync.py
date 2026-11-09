@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
 from opi.manager.project.argocd_sync import ArgoCDSync
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.server import app
@@ -146,13 +147,13 @@ class TestDeVlagLooptDoorDeKeten:
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": PROJECT})
         fake.get_deployment_workspace = AsyncMock(return_value=workspace)
-        fake._process_deployment_manifests = AsyncMock()
         fake.get_deployments = AsyncMock(return_value=[])
         fake._project_level_path = None
         fake._clear_blocking_sync_operations = AsyncMock()
 
         deployments = [{"name": DEPLOYMENT, "cluster": "odcn-production", "namespace": PROJECT}]
-        await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments, vlag)
+        with patch.object(RepositoryManifests, "process_deployment_manifests", AsyncMock()):
+            await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments, vlag)
 
         fake._clear_blocking_sync_operations.assert_awaited_once_with(deployments, reset_running_sync=vlag)
 
@@ -163,11 +164,10 @@ class TestDeVlagLooptDoorDeKeten:
         fake.get_name = AsyncMock(return_value=PROJECT)
         fake.get_repositories = AsyncMock(return_value=[{"name": "main-repo"}])
         fake.get_deployments = AsyncMock(return_value=deployments)
-        fake._process_repository_manifests = AsyncMock()
+        with patch.object(RepositoryManifests, "process_repository_manifests", AsyncMock()) as repository_round:
+            await ProjectManager._process_application_manifests(fake, reset_running_sync=vlag)
 
-        await ProjectManager._process_application_manifests(fake, reset_running_sync=vlag)
-
-        assert fake._process_repository_manifests.await_args.kwargs["reset_running_sync"] is vlag
+        assert repository_round.await_args.kwargs["reset_running_sync"] is vlag
 
     @pytest.mark.parametrize("vlag", [True, False])
     async def test_process_project_geeft_hem_door_aan_de_manifestronde(

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from opi.forms.models.project_file import REPOSITORY_PATH_PATTERN, RepositoryModel
 from opi.manager.argo_manager import ArgoManager
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project_manager import ProjectManager
 from opi.manager.pvc_manager import PVCManager
 from opi.services.project_schema import (
@@ -149,12 +150,16 @@ class TestDeSchrijversGaanLangsHetAnker:
         manager = ProjectManager.__new__(ProjectManager)
         manager.get_contents = AsyncMock(return_value={})
         manager.get_name = AsyncMock(return_value="demo")
-        manager.get_repository_path = AsyncMock(return_value="../../../../tmp/uit-de-repo")
         git_connector = MagicMock()
         git_connector.get_working_dir = AsyncMock(return_value=str(lege_werkmap))
         deployment = {"name": "deployment-1", "cluster": "odcn-production", "namespace": "demo", "repository": "r"}
 
-        with pytest.raises(RepositoryPathError):
+        with (
+            patch.object(
+                RepositoryManifests, "get_repository_path", AsyncMock(return_value="../../../../tmp/uit-de-repo")
+            ),
+            pytest.raises(RepositoryPathError),
+        ):
             await manager._process_deployment_manifests(deployment, git_connector)
 
     @pytest.mark.asyncio

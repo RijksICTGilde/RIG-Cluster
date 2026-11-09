@@ -7,9 +7,8 @@ deployments repo, so ArgoCD kept the attachment's content in the namespace.
 """
 
 import os
-from unittest.mock import patch
 
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project.manifests.pruning import prune_obsolete_service_manifests
 
 
 def _touch(directory: str, name: str) -> None:
@@ -18,9 +17,7 @@ def _touch(directory: str, name: str) -> None:
 
 
 def _prune(directory: str, generated: list[str]) -> list[str]:
-    with patch("opi.manager.project_manager.KubectlConnector"):
-        pm = ProjectManager()
-    pm._prune_obsolete_service_manifests({"name": "main"}, directory, generated)
+    prune_obsolete_service_manifests({"name": "main"}, directory, generated)
     return sorted(os.listdir(directory))
 
 

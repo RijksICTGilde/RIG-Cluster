@@ -359,8 +359,8 @@
       "dutch-comments": 3
     },
     "opi/manager/project_manager.py": {
-      "dutch-identifiers": 5,
-      "dutch-comments": 194,
+      "dutch-identifiers": 1,
+      "dutch-comments": 80,
       "comment-heavy-functions": 3
     },
     "opi/manager/project_validation.py": {

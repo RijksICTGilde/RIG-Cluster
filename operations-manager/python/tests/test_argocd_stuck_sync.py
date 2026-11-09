@@ -35,6 +35,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
 from opi.manager.project.argocd_sync import ArgoCDSync
+from opi.manager.project.manifests.repository import RepositoryManifests
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.tasks.persistent_task_progress import TaskStatus
 from opi.services.argocd_operation import (
@@ -558,13 +559,17 @@ class TestItRunsBeforeThePush:
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": "dd-mco"})
         fake.get_deployment_workspace = AsyncMock(return_value=workspace)
-        fake._process_deployment_manifests = AsyncMock(side_effect=lambda *a: order.append("manifests"))
         fake.get_deployments = AsyncMock(return_value=[])
         fake._project_level_path = None
         fake._clear_blocking_sync_operations = AsyncMock(side_effect=lambda *a, **kw: order.append("clear"))
 
         deployments = [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]
-        await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments)
+        with patch.object(
+            RepositoryManifests,
+            "process_deployment_manifests",
+            AsyncMock(side_effect=lambda *a: order.append("manifests")),
+        ):
+            await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments)
 
         assert order == ["manifests", "clear", "write"]
         fake._clear_blocking_sync_operations.assert_awaited_once_with(deployments, reset_running_sync=False)
@@ -584,7 +589,6 @@ class TestItRunsBeforeThePush:
         fake = MagicMock(spec=ProjectManager)
         fake.get_contents = AsyncMock(return_value={"name": "dd-mco"})
         fake.get_deployment_workspace = AsyncMock(return_value=workspace)
-        fake._process_deployment_manifests = AsyncMock(side_effect=lambda *a: order.append("manifests"))
         fake.get_deployments = AsyncMock(return_value=[])
         fake._project_level_path = None
         fake.get_name = AsyncMock(return_value="dd-mco")
@@ -599,9 +603,14 @@ class TestItRunsBeforeThePush:
             fake
         )._clear_blocking_sync_operations(deployments, reset_running_sync)
 
-        await ProjectManager._process_repository_manifests(
-            fake, {"name": "main-repo"}, [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]
-        )
+        with patch.object(
+            RepositoryManifests,
+            "process_deployment_manifests",
+            AsyncMock(side_effect=lambda *a: order.append("manifests")),
+        ):
+            await ProjectManager._process_repository_manifests(
+                fake, {"name": "main-repo"}, [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]
+            )
 
         assert order == ["manifests", "write"]
         workspace.mutate_and_push.assert_awaited_once()

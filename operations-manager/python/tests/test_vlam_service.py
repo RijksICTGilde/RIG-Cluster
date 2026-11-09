@@ -28,18 +28,16 @@ and the service delivers no CA material at all.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from opi.core.cluster_config import get_vlam_config
 from opi.generation.manifests import ManifestGenerator, render_template
-from opi.manager.project_manager import (
-    ProjectManager,
+from opi.manager.project.manifests.contributions import (
     apply_manifest_contributions,
     collect_manifest_contributions,
 )
+from opi.manager.project.manifests.pruning import prune_obsolete_service_manifests
 from opi.manager.project_validation import validate_service_availability
 from opi.services.catalog.base import DeploymentManifestContext, ManifestContext, ManifestContribution
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
@@ -712,11 +710,7 @@ class TestDeOudeCaSecretWordtOpgeruimd:
         beleid = tmp_path / "prod-vlam-web-network-policy.yaml"
         beleid.write_text("kind: NetworkPolicy\n")
 
-        # De methode gebruikt alleen ``deployment["name"]`` van zichzelf; een echte
-        # ProjectManager bouwen zou hier connectors optuigen die niets met de prune doen.
-        ProjectManager._prune_obsolete_service_manifests(
-            MagicMock(), {"name": "prod"}, str(tmp_path), self._gegenereerd()
-        )
+        prune_obsolete_service_manifests({"name": "prod"}, str(tmp_path), self._gegenereerd())
 
         assert not achtergebleven.exists()
         assert beleid.exists()
@@ -725,9 +719,7 @@ class TestDeOudeCaSecretWordtOpgeruimd:
         """De kustomization wordt uit een schijfscan opgebouwd, dus dit is de uitkomst van
         de prune en niet een tweede plek om bij te werken."""
         (tmp_path / "prod-vlam-ca-secret.sops.yaml").write_text("kind: Secret\n")
-        ProjectManager._prune_obsolete_service_manifests(
-            MagicMock(), {"name": "prod"}, str(tmp_path), self._gegenereerd()
-        )
+        prune_obsolete_service_manifests({"name": "prod"}, str(tmp_path), self._gegenereerd())
 
         sops_files, regular_files = ManifestGenerator().collect_manifest_files(str(tmp_path))
         assert "prod-vlam-ca-secret.sops.yaml" not in sops_files + regular_files

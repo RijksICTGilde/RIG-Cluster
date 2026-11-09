@@ -997,7 +997,8 @@ async def provision(self, ctx: ProvisionContext) -> None:
 ## Manifests
 
 A service does not touch the manifest generator. It returns a declarative contribution and
-the generic component loop merges it (`opi/manager/project_manager.py:5108`).
+the generic component loop merges it (`ApplicationManifests._emit_component` in
+`opi/manager/project/manifests/application.py`).
 
 ```python
 def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
@@ -1029,8 +1030,8 @@ service that declares `selectable_per_component = False` has no per-component ch
 make and is switched on by the PROJECT's selection instead -- without that such a service
 never contributes at all, because no component ever ticks it. The two halves of that rule
 live in `collect_manifest_contributions` / `apply_manifest_contributions`
-(`opi/manager/project_manager.py`), module-level so they can be measured without building
-a whole deployment.
+(`opi/manager/project/manifests/contributions.py`), module-level so they can be measured
+without building a whole deployment.
 
 What you get in `ManifestContext`: `deployment_name`, `project_data`, `unique_name`,
 `cluster`, `component_def` (the resolved component, for component-level config) and
@@ -1044,11 +1045,12 @@ Two shortcuts for the common cases:
 - Contribute on behalf of another service? `manifest_activated_by` says which service types
   switch you on, so exactly one provider contributes per manager.
 
-`SecretFileSpec` declares *what* secret is needed; `ProjectManager._write_secret_file`
-(`project_manager.py:1584`) does the writing, alias resolution and prune bookkeeping. A
-random value that must survive a deploy sets `keep_existing_values=True`: the writer then
-takes it from the previous ciphertext (auth-wall's cookie secret, see
-`features/sops-skip-unchanged-reencryption.md`). Keep that writer service-agnostic.
+`SecretFileSpec` declares *what* secret is needed; `ApplicationManifests.write_secret_file`
+(`opi/manager/project/manifests/application.py`) does the writing, alias resolution and
+prune bookkeeping. A random value that must survive a deploy sets
+`keep_existing_values=True`: the writer then takes it from the previous ciphertext
+(auth-wall's cookie secret, see `features/sops-skip-unchanged-reencryption.md`). Keep that
+writer service-agnostic.
 
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
@@ -1071,7 +1073,7 @@ say), override `contribute_deployment_manifests(ctx: DeploymentManifestContext) 
 list[DeploymentManifestSpec]` instead. It runs once per deployment, after the component loop.
 Each `DeploymentManifestSpec` names a template + values + a `filename` that **must** start
 with `f"{deployment}-{service_type.value}-"` -- the symmetric prune
-(`project_manager._prune_obsolete_service_manifests`) keys on that prefix to remove a
+(`manifests.pruning.prune_obsolete_service_manifests`) keys on that prefix to remove a
 service's deployment manifests when it stops contributing (switched off, last rule removed,
 target gone). `registry.deployment_manifest_services()` collects the overriding services in
 `manifest_order`; the generic emitter in `create_application_manifests` writes the specs and
