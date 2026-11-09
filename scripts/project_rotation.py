@@ -425,13 +425,15 @@ async def classify_loose_values(paths: list[Path], old_private: str, new_private
     "does this still open with the old key?" would make the PAT round a silent no-op here.
     """
     result = LooseRound()
+    # With the same key on both sides nothing sits on an old key: a round over the token alone.
+    key_moves = public_key_of(old_private) != public_key_of(new_private)
     for field_ in all_loose_values(paths):
         for index, key in enumerate((old_private, new_private)):
             plaintext = await decrypt_field(field_.value, key)
             if plaintext is not None:
-                # By position and not by comparing the key strings: the two are refused when
-                # they are equal, but "which one opened it" must not hang on that refusal.
-                entry = LooseField(field_=field_, plaintext=plaintext, opening_key=key, on_old_key=index == 0)
+                entry = LooseField(
+                    field_=field_, plaintext=plaintext, opening_key=key, on_old_key=index == 0 and key_moves
+                )
                 (result.carriers if is_github_token(plaintext) else result.others).append(entry)
                 break
         else:
@@ -826,9 +828,8 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     except (MissingKey, OSError) as e:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
-    if public_key_of(old_private) == public_key_of(new_private):
-        print("FAIL the old and the new key are the same key", file=sys.stderr)
-        return 2
+    # The same key twice is allowed here, unlike in the key round: it is a round over the token
+    # alone, for a token that leaked while the platform key did not.
     if current_pat == new_pat:
         # The same refusal the keys get, and for the same reason: a round with nothing to move
         # to would report every field as "already holds this PAT" and read as a finished round.

@@ -846,6 +846,100 @@ async def test_the_pat_round_still_replaces_after_the_key_round(
 
 
 @pytest.mark.asyncio
+async def test_a_pat_round_on_the_same_key_rewrites_only_the_files_holding_the_current_pat(
+    projects_repo: Path,
+) -> None:
+    """The token leaked and the platform key did not: nothing moves to another key.
+
+    A file holding the current PAT gets the new one and keeps its project key byte-identical; a
+    file holding another value is not touched at all, so the round leaves no churn behind.
+    """
+    platform_private, platform_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    carrier = await _write_project(directory, "een", platform_public)
+    other = await _write_project(directory, "twee", platform_public, passwords=("ghp_another_token",))
+    key_before = load_yaml_from_path(str(carrier))["config"]["age-private-key"]
+    other_before = other.read_text()
+
+    result = await run_round(
+        directory,
+        platform_private,
+        platform_private,
+        current_pat="ghp_repository_token",
+        new_pat="ghp_new",
+        dry_run=False,
+        commit=False,
+    )
+
+    data = load_yaml_from_path(str(carrier))
+    assert await decrypt_field(data["repositories"][0]["password"], platform_private) == "ghp_new"
+    assert data["config"]["age-private-key"] == key_before
+    assert result.replaced_fields == [f"{carrier}#repositories[0].password"]
+    assert other.read_text() == other_before
+
+
+@pytest.mark.asyncio
+async def test_a_plain_password_holding_the_current_pat_leaves_the_file_encrypted(projects_repo: Path) -> None:
+    """A project file created with ``plain:<token>`` is a carrier too, and it is never written back plain."""
+    platform_private, platform_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", platform_public)
+    data = load_yaml_from_path(str(path))
+    data["repositories"][0]["password"] = "plain:ghp_repository_token"
+    save_yaml_to_path(str(path), data)
+
+    result = await run_round(
+        directory,
+        platform_private,
+        platform_private,
+        current_pat="ghp_repository_token",
+        new_pat="ghp_new",
+        dry_run=False,
+        commit=False,
+    )
+
+    password = load_yaml_from_path(str(path))["repositories"][0]["password"]
+    assert password.startswith(BASE64_AGE_PREFIX)
+    assert await decrypt_field(password, platform_private) == "ghp_new"
+    assert result.replaced_fields == [f"{path}#repositories[0].password"]
+    assert not result.fingerprint_before.compare(result.fingerprint_after, replaced=result.replaced_fields)
+
+
+@pytest.mark.asyncio
+async def test_the_pat_entry_point_takes_the_same_key_twice(
+    projects_repo: Path, tmp_path: Path, argo_clone: Path
+) -> None:
+    """Unlike the key round: a round over the token alone is the same key on both sides."""
+    platform_private, platform_public = generate_sops_key_pair()
+    write_private_file((tmp_path / "key.txt"), platform_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
+    path = await _write_project(projects_repo / "projects", "een", platform_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await _pat_round(
+        [
+            "--ja",
+            "--projects",
+            str(projects_repo / "projects"),
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+            "--old-key",
+            str(tmp_path / "key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(tmp_path / "pat-fingerprint.json"),
+        ],
+        argo_clone,
+    )
+
+    assert code == 0
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["repositories"][0]["password"], platform_private) == "ghp_brand_new"
+
+
+@pytest.mark.asyncio
 async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_repo: Path) -> None:
     """The other half: the gate opens on the token, so it closes again once that token is in.
 
