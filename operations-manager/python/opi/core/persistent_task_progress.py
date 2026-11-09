@@ -1,8 +1,7 @@
-"""Persistent task progress manager that writes to PostgreSQL via AsyncTaskService.
+"""Task progress manager that writes to PostgreSQL via AsyncTaskService.
 
-Drop-in replacement for TaskProgressManager that persists progress to the database
-instead of only keeping it in memory. Workers (possibly separate processes) report
-progress through this class, and the frontend reads it from the database.
+Workers (possibly separate processes) report progress through this class, and the
+frontend reads it back from the database.
 """
 
 import asyncio
@@ -10,22 +9,45 @@ import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from opi.core.task_manager import (
-    ProjectInfo,
-    TaskProgressManager,
-    TaskStatus,
-    _projects,
-    clamp_step_text,
-    format_step_line,
-)
 from opi.utils.logging_redact import redact_text
 
 if TYPE_CHECKING:
     from opi.core.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
+
+
+class TaskStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+def format_step_line(name: str, subject: str | None) -> str:
+    """Combine step name and subject as a single "current step" sentence."""
+    return f"{name} - {subject}" if subject else name
+
+
+# Safety net for step names; the progress page displays this as a list item title.
+MAX_STEP_NAME = 400
+
+
+def clamp_step_text(text: str) -> str:
+    """Shorten a step name to something that stays readable as a line title."""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= MAX_STEP_NAME:
+        return collapsed
+    logger.warning(
+        "Stapnaam van %d tekens ingekort tot %d; hoort deze tekst in component_failures? Volledig: %s",
+        len(collapsed),
+        MAX_STEP_NAME,
+        collapsed,
+    )
+    return collapsed[: MAX_STEP_NAME - 1].rstrip() + "\u2026"
 
 
 def _now_iso() -> str:
@@ -36,8 +58,7 @@ def _now_iso() -> str:
 class PersistentTaskProgressManager:
     """Task progress manager that persists state to PostgreSQL.
 
-    Provides the same synchronous interface as TaskProgressManager, but writes
-    progress to the database via AsyncTaskService using a periodic flush loop.
+    Local state is written to the database via AsyncTaskService by a periodic flush loop.
     """
 
     def __init__(self, task_id: str, project_name: str, task_service: AsyncTaskService):
@@ -69,15 +90,6 @@ class PersistentTaskProgressManager:
                 "for task %s; periodic flushing will not start automatically.",
                 task_id,
             )
-
-        # Legacy compat: populate the in-memory _projects dict so the web portal
-        # can read progress when running in combined (API + worker) mode.
-        _projects[task_id] = ProjectInfo(
-            id=task_id,
-            project_name=project_name,
-            status=TaskStatus.RUNNING,
-            created_at=datetime.now(tz=UTC),
-        )
 
         logger.info(
             "Created PersistentTaskProgressManager for project %s (task %s)",
@@ -303,35 +315,13 @@ class PersistentTaskProgressManager:
 
     def update_current_step(self, step: str) -> None:
         self._current_step = step
-        if self._task_id in _projects:
-            _projects[self._task_id].current_step = step
         self._mark_dirty()
-
-    def mark_legacy_completed(self) -> None:
-        """Mark the legacy in-memory entry COMPLETED, without touching the DB.
-
-        The task worker records DB completion itself (with the handler result);
-        without this call the in-memory entry stays RUNNING forever and gets
-        falsely reported as "stuck" by the periodic cleanup.
-        """
-        if self._task_id in _projects:
-            _projects[self._task_id].status = TaskStatus.COMPLETED
-            _projects[self._task_id].completed_at = datetime.now(tz=UTC)
-
-    def mark_legacy_failed(self, error: str) -> None:
-        """Mark the legacy in-memory entry FAILED, without touching the DB."""
-        if self._task_id in _projects:
-            _projects[self._task_id].status = TaskStatus.FAILED
-            _projects[self._task_id].completed_at = datetime.now(tz=UTC)
-            _projects[self._task_id].error = error
 
     def complete_project(self) -> None:
         """Mark the entire project as completed.
 
-        Schedules the DB completion call as a fire-and-forget task and
-        updates the legacy in-memory dict.
+        Schedules the DB completion call as a fire-and-forget task.
         """
-        self.mark_legacy_completed()
         self._close_phase(TaskStatus.COMPLETED)
 
         self._current_step = "Done"
@@ -380,7 +370,6 @@ class PersistentTaskProgressManager:
         # _flush_to_db.
         error = redact_text(error)
         self._project_failure = error
-        self.mark_legacy_failed(error)
         self._close_phase(TaskStatus.FAILED)
 
         # Without the error text: current_step belongs to the header and stays for 90 days,
@@ -417,29 +406,19 @@ class PersistentTaskProgressManager:
 
     def set_namespace(self, namespace: str) -> None:
         self._namespace = namespace
-        if self._task_id in _projects:
-            _projects[self._task_id].namespace = namespace
         logger.info("Set namespace %s for task %s", namespace, self._task_id)
         self._mark_dirty()
 
     def add_logs(self, logs: list[str]) -> None:
         self._logs = logs
-        if self._task_id in _projects:
-            _projects[self._task_id].logs = logs
         self._mark_dirty()
 
     def add_events(self, events: list[dict[str, str]]) -> None:
         self._events = events
-        if self._task_id in _projects:
-            _projects[self._task_id].events = events
         self._mark_dirty()
 
     def update_component_web_address(self, component_name: str, web_address: str) -> None:
         self._web_addresses[component_name] = web_address
-        if self._task_id in _projects:
-            if _projects[self._task_id].web_addresses is None:
-                _projects[self._task_id].web_addresses = {}
-            _projects[self._task_id].web_addresses[component_name] = web_address
         logger.info(
             "Task %s: Updated web address for %s: %s",
             self._task_id,
@@ -459,8 +438,6 @@ class PersistentTaskProgressManager:
             "status": deployment_ready,
         }
         self._events.append(event)
-        if self._task_id in _projects:
-            _projects[self._task_id].events = self._events
         self._mark_dirty()
 
     def start_monitoring(self) -> None:
@@ -501,12 +478,4 @@ class PersistentTaskProgressManager:
             "deployment_name": deployment_name,
         }
         self._events.append(event)
-        if self._task_id in _projects:
-            _projects[self._task_id].events = self._events
         self._mark_dirty()
-
-
-#: Either progress manager. They are unrelated classes with the same synchronous
-#: interface (this module is the drop-in replacement for the in-memory one), so a
-#: signature naming only one of them rejects half its real callers.
-AnyTaskProgressManager = TaskProgressManager | PersistentTaskProgressManager

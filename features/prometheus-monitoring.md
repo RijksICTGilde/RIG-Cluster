@@ -118,12 +118,9 @@ These custom metrics help identify which internal component is consuming memory.
 | Query | What it shows |
 |-------|---------------|
 | `opi_projects_cached` | Number of projects held in the in-memory cache |
-| `opi_task_projects_tracked` | Projects tracked by the task manager |
-| `opi_task_managers_active` | Active TaskProgressManager instances |
 | `opi_websocket_connections_global` | Active WebSocket connections |
 | `opi_websocket_connections_users` | Distinct users with WebSocket connections |
 | `opi_rate_limiter_tracked_clients` | Clients tracked by the rate limiter |
-| `opi_background_tasks_active` | Active asyncio background tasks |
 | `opi_gc_objects{generation="0"}` | Python GC gen-0 objects (short-lived) |
 | `opi_gc_objects{generation="1"}` | Python GC gen-1 objects (survived one collection) |
 | `opi_gc_objects{generation="2"}` | Python GC gen-2 objects (long-lived, potential leaks) |
@@ -230,8 +227,6 @@ opi_child_process_count{job="operations-manager"}
 
 # 5. What internal structures were growing?
 opi_projects_cached
-opi_task_managers_active
-opi_background_tasks_active
 opi_websocket_connections_global
 
 # 6. Were GC gen-2 objects accumulating? (objects that survive collection = potential leak)

@@ -25,7 +25,7 @@ from opi.services.schema_migration import normalize_service_entries
 from opi.utils.naming import generate_pvc_name, generate_storage_name, generate_unique_name
 
 if TYPE_CHECKING:
-    from opi.core.persistent_task_progress import AnyTaskProgressManager
+    from opi.core.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ async def restore_items_with_progress(
     project_data: dict[str, Any],
     app_namespace: str,
     current_cluster: str,
-    progress: AnyTaskProgressManager,
+    progress: PersistentTaskProgressManager,
     restore_task_id: str,
 ) -> bool:
     """Restore a list of backup items, one subtask per item.
@@ -165,7 +165,7 @@ async def _pre_restore_pvcs(
     source_deployment: str,
     target_deployment: str,
     pvc_items: list[dict[str, Any]],
-    task_progress: AnyTaskProgressManager,
+    task_progress: PersistentTaskProgressManager,
     pvc_task_id: str,
 ) -> None:
     """Pre-create PVCs with backup data before the infrastructure is provisioned.
@@ -285,7 +285,7 @@ async def _pre_restore_pvcs(
 async def _provision_deployment_infrastructure(
     project_name: str,
     target_deployment: str,
-    task_progress: AnyTaskProgressManager,
+    task_progress: PersistentTaskProgressManager,
 ) -> None:
     """Provision the infrastructure of a newly created deployment.
 

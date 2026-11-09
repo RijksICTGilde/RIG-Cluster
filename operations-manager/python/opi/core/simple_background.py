@@ -1,4 +1,4 @@
-"""The ArgoCD wait that runs after a deploy, on the TaskProgressManager."""
+"""The ArgoCD wait that runs after a deploy, on the task progress manager."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from opi.core import progress_steps as steps
 
 if TYPE_CHECKING:
-    from opi.core.task_manager import TaskProgressManager
+    from opi.core.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def _app_status(app: dict) -> tuple[str, str, str]:
 async def _monitor_argocd_and_deployment(
     _task_id: str,
     project_name: str,
-    task_progress_manager: TaskProgressManager,
+    task_progress_manager: PersistentTaskProgressManager,
     monitor_task: str,
     deployment_names: list[str] | None = None,
 ) -> None:

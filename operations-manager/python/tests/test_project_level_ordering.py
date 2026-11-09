@@ -705,7 +705,7 @@ class TestDeMeldingNaastDeGrendel:
         """Een substapnaam gaat door ``clamp_step_text`` naar de titel van een lijstregel. Deze
         melding is de langste die er staat, en de zin die eraf valt bij een overschrijding is
         juist de laatste: wat een time-out betekent."""
-        from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
+        from opi.core.persistent_task_progress import MAX_STEP_NAME, clamp_step_text
 
         await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
         melding = progress_steps.NEW_PROJECT_NOTICE

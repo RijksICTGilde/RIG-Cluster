@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core import progress_steps
-from opi.core.task_manager import TaskStatus, format_step_line
+from opi.core.persistent_task_progress import TaskStatus, format_step_line
 
 OPI_ROOT = pathlib.Path(__file__).resolve().parents[1] / "opi"
 

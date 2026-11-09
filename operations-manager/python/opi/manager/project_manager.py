@@ -240,7 +240,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from opi.connectors.argo import ArgoConnector
-    from opi.core.persistent_task_progress import AnyTaskProgressManager
+    from opi.core.persistent_task_progress import PersistentTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
     from opi.services.catalog.image_registries.rules import ResolvedImage
 
@@ -1813,7 +1813,7 @@ class ProjectManager:
             await self.__argo_workspace.close()
             self.__argo_workspace = None
 
-    def set_progress_manager(self, task_progress_manager: AnyTaskProgressManager) -> None:
+    def set_progress_manager(self, task_progress_manager: PersistentTaskProgressManager) -> None:
         """Set the task progress manager for tracking operation status."""
         self.__progress_manager = task_progress_manager
 
@@ -1837,7 +1837,7 @@ class ProjectManager:
             return None
         return Project(previous_yaml).find("deployments", name=deployment_name)
 
-    def get_progress_manager(self) -> AnyTaskProgressManager | None:
+    def get_progress_manager(self) -> PersistentTaskProgressManager | None:
         """Get the task progress manager for tracking operation status."""
         return self.__progress_manager
 
@@ -2493,7 +2493,7 @@ class ProjectManager:
         self,
         project_name: str,
         cluster_name: str,
-        progress_manager: AnyTaskProgressManager | None,
+        progress_manager: PersistentTaskProgressManager | None,
         infra_task: str | None,
     ) -> None:
         """Report a dedicated cluster that CNPG itself does not call Ready, without blocking.
@@ -3375,7 +3375,7 @@ class ProjectManager:
     async def process_project_from_git(
         self,
         relative_project_file_path: str,
-        task_progress_manager: AnyTaskProgressManager | None = None,
+        task_progress_manager: PersistentTaskProgressManager | None = None,
         deployment_name: str | None = None,
         force_clone: bool = False,
         argocd_resources_changed: bool = True,

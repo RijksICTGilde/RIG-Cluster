@@ -881,13 +881,3 @@ class TestUpdateTaskMethod:
         assert pm._subtasks[task_id]["name"] == "Updated name"
         assert pm._dirty is True
         assert pm._current_step == "Updated name"
-
-    def test_in_memory_update_task(self):
-        """Test that TaskProgressManager.update_task works."""
-        from opi.core.task_manager import TaskProgressManager
-
-        pm = TaskProgressManager(project_id="test-123", project_name="test-project")
-        task_id = pm.add_task("Original name")
-        pm.update_task(task_id, "Updated name")
-
-        assert pm.tasks[task_id].name == "Updated name"

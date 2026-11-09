@@ -81,7 +81,6 @@
 "opi/core/task_handlers_operations.py" = ["ANN401", "C901", "PLR0915"]
 "opi/core/task_handlers_project.py" = ["ANN401", "BLE001", "C901", "PLR0912", "PLR0915"]
 "opi/core/task_helpers.py" = ["ANN201", "PLR0913"]
-"opi/core/task_manager.py" = ["ANN204", "BLE001", "C901", "PLR0912", "PLR0915"]
 "opi/core/task_rollout.py" = ["ANN401"]
 "opi/core/task_supersede.py" = ["ANN001", "ANN201", "BLE001"]
 "opi/core/task_worker.py" = ["ANN204", "B904", "BLE001", "C901", "PLR0912", "PLR0915"]

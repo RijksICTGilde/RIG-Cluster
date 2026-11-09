@@ -12,20 +12,10 @@ gevuld door ``update_current_step``.
 
 from unittest.mock import AsyncMock
 
-import pytest
 from opi.core.persistent_task_progress import PersistentTaskProgressManager
-from opi.core.task_manager import _projects
 
 GEHEIM = "geheimwachtwoord"
 FOUT = f"kubectl apply mislukt: password={GEHEIM}"
-
-
-@pytest.fixture(autouse=True)
-def clean_projects():
-    """Isolate the global legacy _projects dict per test."""
-    _projects.clear()
-    yield
-    _projects.clear()
 
 
 def _make_progress() -> PersistentTaskProgressManager:
@@ -55,11 +45,10 @@ async def test_current_step_met_een_geheim_wordt_gemaskeerd():
     assert "***REDACTED***" in doorgegeven["current_step"]
 
 
-async def test_fail_project_maskeert_het_geheim_in_de_legacy_fout():
+async def test_fail_project_maskeert_het_geheim_in_de_gemelde_fout():
     progress = _make_progress()
     progress.fail_project(FOUT)
 
-    assert GEHEIM not in str(_projects["task-1"].error)
     assert GEHEIM not in str(progress.project_failure)
 
 

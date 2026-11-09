@@ -333,13 +333,11 @@ class TaskWorker:
                         max_attempts=0,
                         result=result if isinstance(result, dict) else None,
                     )
-                    progress.mark_legacy_failed(error_msg)
                     logger.warning(
                         "Task %s reported failure after %.1fs: %s", task_id, time.monotonic() - started, error_msg
                     )
                 else:
                     await self._task_service.complete_task(task_id, result)
-                    progress.mark_legacy_completed()
                     logger.info("Task %s completed successfully in %.1fs", task_id, time.monotonic() - started)
 
             except TaskSuperseded as superseded:
@@ -366,7 +364,6 @@ class TaskWorker:
                         },
                     },
                 )
-                progress.mark_legacy_completed()
                 logger.info("Task %s superseded after %.1fs: %s", task_id, time.monotonic() - started, superseded)
 
             except (TaskInputError, HTTPException) as bad_request:
@@ -380,11 +377,9 @@ class TaskWorker:
                 # is ours and belongs in the general branch below, new attempts included.
                 if isinstance(bad_request, HTTPException) and bad_request.status_code >= 500:
                     await progress.close()
-                    progress.mark_legacy_failed(f"{type(bad_request).__name__}: {bad_request}")
                     raise
                 await progress.close()
                 error_msg = _client_error_message(bad_request)
-                progress.mark_legacy_failed(error_msg)
                 await self._task_service.fail_task(
                     task_id=task_id,
                     error_message=error_msg,
@@ -400,13 +395,11 @@ class TaskWorker:
                 error_msg = f"Task exceeded maximum duration of {settings.TASK_WORKER_MAX_DURATION}s"
                 logger.error("Task %s timed out after %.1fs: %s", task_id, time.monotonic() - started, error_msg)
                 await progress.close()
-                progress.mark_legacy_failed(error_msg)
                 raise TimeoutError(error_msg)
 
             except Exception as exc:
                 # Close progress manager even on failure
                 await progress.close()
-                progress.mark_legacy_failed(f"{type(exc).__name__}: {exc}")
                 raise
 
             finally:

@@ -240,8 +240,6 @@ async def _run_until_completed(service: AsyncMock, handler: Callable[..., Awaita
 
         with patch("opi.core.persistent_task_progress.PersistentTaskProgressManager") as progress_cls:
             progress = AsyncMock()
-            progress.mark_legacy_completed = MagicMock()
-            progress.mark_legacy_failed = MagicMock()
             progress_cls.return_value = progress
 
             worker = TaskWorker(task_service=service, cluster="test-cluster")

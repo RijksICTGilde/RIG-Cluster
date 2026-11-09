@@ -13,7 +13,7 @@ componentfouten voor het paneel eronder.
 
 from typing import Any, ClassVar
 
-from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
+from opi.core.persistent_task_progress import MAX_STEP_NAME, clamp_step_text
 from opi.services.event_interpreter import group_component_failures
 from opi.services.oom_watcher import _describe_pod_waiting
 

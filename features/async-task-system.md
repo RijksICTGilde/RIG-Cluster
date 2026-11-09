@@ -6,7 +6,7 @@
 
 ## Problem
 
-Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts. The web portal has a working async pattern (`BackgroundTasks` + in-memory `TaskProgressManager`), but it is single-instance, in-memory, and not used by the REST API.
+Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts. The web portal has a working async pattern (`BackgroundTasks` plus an in-memory progress manager), but it is single-instance, in-memory, and not used by the REST API.
 
 | Endpoint | Method | Typical Duration |
 |----------|--------|-----------------|
@@ -30,7 +30,6 @@ Most deployment API endpoints block for 5-30+ minutes, causing HTTP 504 timeouts
 - `CLUSTER_MANAGER` setting -- each OPI manages exactly one cluster (`config.py`)
 - `validate_platform_admin_token` -- platform-admin auth already exists (`user_token_auth.py`)
 - `DatabasePool` -- asyncpg connection pool for PostgreSQL (`core/database_pool.py`)
-- `TaskProgressManager` -- in-memory task tracking with subtasks (`core/task_manager.py`)
 - `simple_background.py` -- existing background project processing
 - Project YAML `cluster` field on deployments -- routing info already in data model
 
@@ -160,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_async_tasks_affects
 ### Design Decisions
 
 - **JSONB for payload**: Each task type has different request parameters. Storing as JSONB avoids schema proliferation.
-- **subtasks as JSONB array**: Mirrors the existing `TaskProgressManager.tasks` dict but stored persistently. At most ~15 subtasks per operation.
+- **subtasks as JSONB array**: The steps of one task, stored on its row. At most ~15 subtasks per operation.
 - **heartbeat_at**: Essential for stale task recovery when a pod dies mid-task.
 - **affects_deployments**: The deployments a task reprocesses, written once by `create_task()`
   from `scope_of()`. NULL means project-wide. Claiming compares these scopes for OVERLAP, so a
@@ -370,7 +369,7 @@ In Kubernetes this is the pod name (e.g., `zad-operations-manager-7b8c5d-x4j2k`)
 
 **File**: `opi/core/persistent_task_progress.py` (new)
 
-Drop-in replacement for the existing `TaskProgressManager` (`core/task_manager.py`) that writes to PostgreSQL instead of in-memory dicts.
+Replaces the in-memory progress manager the web portal used, and writes to PostgreSQL instead of to in-process dicts.
 
 ### Why DB-backed progress is needed
 
@@ -378,7 +377,7 @@ In the target architecture, workers are **separate processes** from the frontend
 
 The write frequency is modest: ~10-20 writes over a 5-30 minute task (at step boundaries like "creating namespace", "deploying Helm chart", etc.), not continuous streaming.
 
-### Interface (matches existing TaskProgressManager)
+### Interface
 
 ```python
 class PersistentTaskProgressManager:
@@ -400,15 +399,10 @@ class PersistentTaskProgressManager:
     def start_monitoring(self) -> None
 ```
 
-### Key differences from in-memory version
+### How it writes
 
 - Writes progress to PostgreSQL via `AsyncTaskService.update_progress()` using fire-and-forget `asyncio.create_task()` calls (non-blocking)
-- Also populates the legacy `_projects` dict for web portal backward compatibility when running in combined mode
 - Batches DB writes (coalesces rapid updates within a short window to avoid excessive DB round-trips)
-
-### Combined mode optimization
-
-When running in combined mode (worker inside the API server process), the `PersistentTaskProgressManager` also writes to the in-memory `_projects` dict. This means the web portal's existing progress page works without any changes -- it reads from memory for live updates, while the DB serves as the durable store. In standalone worker mode, only the DB path is used.
 
 ---
 
@@ -737,10 +731,10 @@ The implementation is structured so that multiple agents can work in parallel. D
 
 | Unit | File(s) | Depends on | Description |
 |------|---------|------------|-------------|
-| **2A** | `opi/core/persistent_task_progress.py` | 1B | PersistentTaskProgressManager (drop-in replacement for TaskProgressManager) |
+| **2A** | `opi/core/persistent_task_progress.py` | 1B | PersistentTaskProgressManager |
 | **2B** | `opi/core/task_worker.py` | 1B, 1C | Worker loop: claim, heartbeat, route to handler, stale recovery, cleanup |
 
-**2A and 2B can be built in parallel** -- they both depend on 1B (AsyncTaskService) but not on each other. The worker calls handlers that use PersistentTaskProgressManager, but that interface is defined by the existing TaskProgressManager which is already known.
+**2A and 2B can be built in parallel** -- they both depend on 1B (AsyncTaskService) but not on each other.
 
 ### Wave 3: Handler Extraction (depends on Wave 2A)
 
@@ -827,7 +821,7 @@ Minimum sequential waves: 4 (Wave 1 -> 2 -> 3+4 -> 5D)
 1. **Single-instance async**: POST upsert-deployment returns 202; GET /api/tasks/{id} shows progress; task completes
 2. **Multi-replica**: Run 2 combined replicas, submit 4 tasks, each processes 2 (SKIP LOCKED)
 3. **Stale recovery**: Kill pod mid-task, other replica picks it up
-4. **Web portal**: `/projects/progress/{task_id}` still works via in-memory bridge in combined mode
+4. **Web portal**: `/projects/progress/{task_id}` still works, reading task state from the database
 5. **Sync fallback**: `?sync=true` on API endpoints preserves blocking behavior
 6. **Deduplication**: Submitting same deployment twice returns existing task ID
 7. **Image payloads**: Endpoints with binary data store references, not inline data

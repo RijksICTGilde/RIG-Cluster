@@ -136,24 +136,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect project cache metrics", exc_info=True)
         yield gauge
 
-        task_projects = GaugeMetricFamily(
-            "opi_task_projects_tracked",
-            "Number of projects tracked in task manager",
-        )
-        task_managers = GaugeMetricFamily(
-            "opi_task_managers_active",
-            "Number of active TaskProgressManager instances",
-        )
-        try:
-            from opi.core.task_manager import _project_managers, _projects
-
-            task_projects.add_metric([], len(_projects))
-            task_managers.add_metric([], len(_project_managers))
-        except Exception:
-            logger.debug("Failed to collect task manager metrics", exc_info=True)
-        yield task_projects
-        yield task_managers
-
         ws_global = GaugeMetricFamily(
             "opi_websocket_connections_global",
             "Number of active global WebSocket connections",
@@ -243,24 +225,6 @@ class OPICollector(Collector):
             logger.debug("Failed to collect database pool metrics", exc_info=True)
         yield db_active
         yield db_size
-
-        bg_tasks = GaugeMetricFamily(
-            "opi_background_tasks_active",
-            "Number of active asyncio background monitoring tasks",
-        )
-        try:
-            from opi.core.task_manager import (
-                _active_app_monitoring_tasks,
-                _active_monitoring_tasks,
-            )
-
-            active_count = sum(1 for t in _active_monitoring_tasks.values() if not t.done()) + sum(
-                1 for t in _active_app_monitoring_tasks.values() if not t.done()
-            )
-            bg_tasks.add_metric([], active_count)
-        except Exception:
-            logger.debug("Failed to collect background task metrics", exc_info=True)
-        yield bg_tasks
 
         gc_objects = GaugeMetricFamily(
             "opi_gc_objects",

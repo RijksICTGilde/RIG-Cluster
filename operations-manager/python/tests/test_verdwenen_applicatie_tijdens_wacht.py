@@ -16,7 +16,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_manager import TaskStatus
+from opi.core.persistent_task_progress import TaskStatus
 from opi.manager.argo_manager import ApplicationGone
 
 DEPLOYMENT = {

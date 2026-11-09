@@ -79,9 +79,6 @@ startup:
     dependencies:
       git: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
       forgejo: {status: measured, test: test_the_whole_boot_runs_three_times_without_changing_anything}
-  - step: start_periodic_cleanup
-    where: lifespan
-    dependencies: {}
   - step: start_reconcile_poll
     where: lifespan
     dependencies:
@@ -196,9 +193,6 @@ startup:
     where: lifespan
     dependencies: {}
   - step: stop_reconcile_poll
-    where: lifespan
-    dependencies: {}
-  - step: stop_periodic_cleanup
     where: lifespan
     dependencies: {}
   - step: stop_loop_watchdog

@@ -3,7 +3,7 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from opi.core.task_manager import TaskStatus
+from opi.core.persistent_task_progress import TaskStatus
 from opi.web.router import _build_task_hierarchy
 
 RUNNING = TaskStatus.RUNNING.value

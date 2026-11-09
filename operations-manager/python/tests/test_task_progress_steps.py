@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core import progress_steps
-from opi.core.task_manager import TaskStatus
+from opi.core.persistent_task_progress import TaskStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -51,7 +51,6 @@ from opi.core.errors import (
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
 from opi.core.startup import run_startup_tasks, warm_connector_singletons
 from opi.core.static_files import CacheControlledStaticFiles, lotc_cache_control
-from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.body_limit import BodyLimitMiddleware
@@ -121,9 +120,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             logger.info("Git monitoring service started successfully")
         except Exception as e:
             logger.error(f"Failed to start Git monitoring service: {e}")
-
-    # Start periodic task cleanup
-    start_periodic_cleanup()
 
     # Start the project-store fallback reconcile poll: bounds how long an
     # out-of-band edit to zad-projects (member removed, invite key revoked by a
@@ -470,9 +466,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     from opi.core.metrics import stop_peak_memory_tracking
 
     stop_peak_memory_tracking()
-
-    # Stop periodic task cleanup
-    stop_periodic_cleanup()
 
     # Stop the project-store fallback reconcile poll
     stop_reconcile_poll()
