@@ -7,7 +7,7 @@ Runs from ``operations-manager/docker-entrypoint.sh`` and not from the applicati
 needs admin credentials on this database, and it has to be done before Alembic starts as
 the app role. Idempotent, so every start may run it.
 
-To run: ``python -m opi.core.app_database_owner``
+To run: ``python -m opi.runtime.startup.app_database_owner``
 """
 
 from __future__ import annotations

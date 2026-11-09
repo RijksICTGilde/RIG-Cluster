@@ -124,7 +124,10 @@ def mock_backup_manager() -> Any:
 
     backup_manager.restore_to_project_pvc = AsyncMock(side_effect=_restore)
     backup_manager.list_snapshots = AsyncMock(return_value=[])
-    with patch("opi.api.restore_router.create_backup_manager", return_value=backup_manager):
+    with (
+        patch("opi.api.restore_router.create_backup_manager", return_value=backup_manager),
+        patch("opi.manager.backup.restore.create_backup_manager", return_value=backup_manager),
+    ):
         yield backup_manager
 
 
@@ -133,7 +136,9 @@ def mock_cluster_functions() -> Any:
     with (
         patch("opi.api.restore_router.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
         patch("opi.api.restore_router.get_storage_class_name", return_value="standard"),
+        patch("opi.manager.backup.restore.get_storage_class_name", return_value="standard"),
         patch("opi.api.restore_router.get_storage_access_modes", return_value=["ReadWriteOnce"]),
+        patch("opi.manager.backup.restore.get_storage_access_modes", return_value=["ReadWriteOnce"]),
     ):
         yield
 
@@ -509,7 +514,7 @@ class TestEenMislukteTerugzetActieGeeftNietsPrijs:
 
     async def test_de_hulpfunctie_voor_een_database_geeft_de_lezerszin_terug(self) -> None:
         """De deur die de grendel niet kende: een dict die verderop een antwoord wordt."""
-        from opi.api import restore_router as module
+        from opi.manager.backup import restore as module
 
         handler = MagicMock()
         handler.get_database_generation.return_value = 0

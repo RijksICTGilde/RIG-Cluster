@@ -20,9 +20,9 @@ from authlib.integrations.starlette_client import OAuth
 from keycloak.exceptions import KeycloakPostError
 from opi.connectors.keycloak import KeycloakConnector
 from opi.core.config import settings
-from opi.core.startup import register_oauth_client_after_keycloak_setup
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.keycloak_manager import build_project_realm_context
+from opi.runtime.startup.startup import register_oauth_client_after_keycloak_setup
 from starlette.requests import Request
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "opi" / "configs" / "keycloak"

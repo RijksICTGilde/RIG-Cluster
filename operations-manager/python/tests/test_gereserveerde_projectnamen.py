@@ -111,7 +111,7 @@ class TestWeigeringBijDeTaak:
         return progress
 
     async def test_een_nieuw_project_met_een_gereserveerde_naam_faalt(self) -> None:
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = self._progress()
         result = await handle_create_project({"project_name": "operations", "is_new_project": True}, progress)
@@ -127,7 +127,7 @@ class TestWeigeringBijDeTaak:
         Hij struikelt daarna op de ontbrekende YAML, en dat is precies het bewijs dat de
         naamregel hem niet heeft tegengehouden.
         """
-        from opi.core.task_handlers_project import handle_create_project
+        from opi.runtime.tasks.task_handlers_project import handle_create_project
 
         progress = self._progress()
         with patch("opi.services.project_store.get_project_store", side_effect=RuntimeError("doorgelaten")):

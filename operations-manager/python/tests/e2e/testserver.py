@@ -642,7 +642,7 @@ def create_test_app():
     def patched_app():
         with (
             # Patch where het GEBRUIKT wordt (opi.server) en niet waar het gedefinieerd
-            # is. ``opi/server.py`` doet ``from opi.core.startup import run_startup_tasks``
+            # is. ``opi/server.py`` doet ``from opi.runtime.startup.startup import run_startup_tasks``
             # en roept die eigen naam aan; het definitiepad patchen raakt die binding
             # alleen als opi.server hieronder voor het EERST geimporteerd wordt.
             #

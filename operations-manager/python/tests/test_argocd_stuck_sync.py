@@ -34,9 +34,9 @@ import pytest
 from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
-from opi.core.persistent_task_progress import TaskStatus
 from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
+from opi.runtime.tasks.persistent_task_progress import TaskStatus
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
     format_duration,

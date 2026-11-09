@@ -183,7 +183,7 @@ blijft om zijn eigen reden staan, zie het commentaar in `keycloak.py`.
 - `opi/bootstrap/keycloak_setup.py` - `ensure_master_admin_service_account()` (first-boot self-bootstrap),
   `ensure_master_realm_hardening()` (de stand van de master-realm, bij elke start).
 - `opi/configs/keycloak/master-realm.yaml` - die stand; `KeycloakYamlHandler.ensure_realm_hardening()` zet hem.
-- `opi/core/startup.py` - availability probe falls back to admin password before the client exists.
+- `opi/runtime/startup/startup.py` - availability probe falls back to admin password before the client exists.
 - `infrastructure/bootstrap/infrastructure/secrets/templates/keycloak-admin-secret.yaml` - generates the client secret.
 - `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml` - env injection.
 

@@ -120,7 +120,7 @@ teruggeschreven.
    terugzet. Is er niets versmald, dan is een patch met alleen een `$comment` het juiste antwoord.
 
 Vergeet je stap 3, dan **stopt het opstarten**: `check_schema_versions(SCHEMA_VERSIONS)` in
-`opi/core/startup.py` vergelijkt de keten met de schema's op schijf en weigert te booten als ze
+`opi/runtime/startup/startup.py` vergelijkt de keten met de schema's op schijf en weigert te booten als ze
 niet overeenkomen — in beide richtingen (een migratie zonder schema, én een schema zonder migratie).
 Zonder die controle zou het gevolg zijn dat bestanden die de nieuwe versie declareren stil door
 de poort geweigerd worden, maanden later en zonder aanwijsbare oorzaak.

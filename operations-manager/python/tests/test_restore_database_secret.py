@@ -23,7 +23,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.api.restore_router import _restore_database_with_versioning
+from opi.manager.backup.restore import _restore_database_with_versioning
 from opi.manager.database_manager import DatabaseManager
 from opi.utils.secrets import DatabaseSecret
 
@@ -154,8 +154,8 @@ def restore_environment(server: _FakePostgresServer, kubectl: _FakeKubectlConnec
     with (
         patch("opi.connectors.postgres.create_postgres_connector", return_value=_FakePostgresConnector(server)),
         patch("opi.core.cluster_config.get_database_server", return_value=HOST),
-        patch("opi.api.restore_router.create_database_backup_manager", return_value=backup_manager),
-        patch("opi.api.restore_router.create_kubectl_connector", return_value=kubectl),
+        patch("opi.manager.backup.restore.create_database_backup_manager", return_value=backup_manager),
+        patch("opi.manager.backup.restore.create_kubectl_connector", return_value=kubectl),
     ):
         yield backup_manager
 

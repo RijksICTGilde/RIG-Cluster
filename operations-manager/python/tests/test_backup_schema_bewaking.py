@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from freezegun import freeze_time
-from opi.core.backup_scheduler import BackupScheduler
+from opi.runtime.backup.backup_scheduler import BackupScheduler
 from opi.services.backup_schedule_report import backup_schedule_states, forget_missing, record_schedule_check
 
 _AMS = ZoneInfo("Europe/Amsterdam")
@@ -75,7 +75,7 @@ def _tick(scheduler: BackupScheduler, projects: list, snapshots: list | None) ->
         return snapshots
 
     scheduler._get_namespace_snapshots = fake_get.__get__(scheduler, BackupScheduler)  # type: ignore[method-assign]
-    with patch("opi.core.backup_scheduler.get_project_store") as store:
+    with patch("opi.runtime.backup.backup_scheduler.get_project_store") as store:
         store.return_value.get_all.return_value = projects
         asyncio.run(scheduler._check_and_schedule())
 
@@ -203,7 +203,7 @@ class TestDeErrorRegelBijUitblijven:
         )
 
     def _fouten(self, scheduler: BackupScheduler, now: datetime, caplog) -> list[str]:
-        with caplog.at_level(logging.ERROR, logger="opi.core.backup_scheduler"):
+        with caplog.at_level(logging.ERROR, logger="opi.runtime.backup.backup_scheduler"):
             caplog.clear()
             scheduler._log_overdue_backups(now)
         return [r.getMessage() for r in caplog.records]
@@ -272,7 +272,7 @@ class TestDeLogWatcherLaatHemDoor:
     """De melding loopt via de log watcher: ERROR uit Loki, door de ignore-lijst, dan ntfy."""
 
     _regel: ClassVar[str] = (
-        "2026-10-16 08:00:01,123 - opi.core.backup_scheduler - ERROR - [-] "
+        "2026-10-16 08:00:01,123 - opi.runtime.backup.backup_scheduler - ERROR - [-] "
         "Scheduled backup overdue for algor-odc/prod (schedule FREQ=DAILY;BYHOUR=2;BYMINUTE=0): "
         "last successful scheduled backup was 30 hours ago"
     )
@@ -323,7 +323,7 @@ class TestHetRequestPad:
     def test_trigger_check_bevraagt_kopia_niet_en_legt_niets_vast(self) -> None:
         scheduler = _scheduler()
         aanroepen = self._tel_listings(scheduler)
-        with patch("opi.core.backup_scheduler.get_project_store") as store:
+        with patch("opi.runtime.backup.backup_scheduler.get_project_store") as store:
             store.return_value.get_all.return_value = [_project("proj", ["prod"])]
             asyncio.run(scheduler.trigger_check())
 
@@ -335,7 +335,7 @@ class TestHetRequestPad:
         """De prijs van een reeks die ook buiten het back-upvenster iets kan zeggen."""
         scheduler = _scheduler()
         aanroepen = self._tel_listings(scheduler)
-        with patch("opi.core.backup_scheduler.get_project_store") as store:
+        with patch("opi.runtime.backup.backup_scheduler.get_project_store") as store:
             store.return_value.get_all.return_value = [_project("proj", ["prod"])]
             asyncio.run(scheduler._check_and_schedule())
 
@@ -427,7 +427,7 @@ class TestDeTickBoektOnbekend:
         scheduler = _scheduler()
         with (
             patch("opi.manager.backup.create_backup_manager", return_value=manager),
-            patch("opi.core.backup_scheduler.get_project_store") as store,
+            patch("opi.runtime.backup.backup_scheduler.get_project_store") as store,
         ):
             store.return_value.get_all.return_value = [_project("proj", ["prod"])]
             asyncio.run(scheduler._check_and_schedule())

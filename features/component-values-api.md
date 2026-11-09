@@ -350,7 +350,7 @@ curl -X POST "https://.../api/v2/projects/mijnproject/:refresh" -H "X-API-Key: $
 | declaratie dat een service een waardenmap bezit | `opi/services/catalog/base.py` (`owned_values_map`) |
 | de routes (registry-gedreven) | `opi/api/v2/router.py` (`_register_service_values_routes`) |
 | de schrijfactie | `ProjectManager.set_component_values` |
-| de taak | `opi/core/task_handlers_components.py` (`handle_configure_service_values`) |
+| de taak | `opi/runtime/tasks/task_handlers_components.py` (`handle_configure_service_values`) |
 | lezen (maskering per dienst) | `opi/api/v2/router.py` (`_make_values_read_endpoint`), `Service.owned_value_is_secret` |
 | aliasregel (verwijzing bestaat) | `opi/services/catalog/aliases/references.py` |
 | toetsen | `tests/test_component_values.py`, `tests/test_component_values_api.py`, `tests/test_component_values_manager.py`, `tests/test_component_values_read_api.py`, `tests/test_alias_reference_validation.py` |

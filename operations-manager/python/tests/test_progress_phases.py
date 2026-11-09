@@ -3,7 +3,7 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from opi.core.persistent_task_progress import TaskStatus
+from opi.runtime.tasks.persistent_task_progress import TaskStatus
 from opi.web.router import _build_task_hierarchy
 
 RUNNING = TaskStatus.RUNNING.value
@@ -13,8 +13,8 @@ FAILED = TaskStatus.FAILED.value
 
 def _progress() -> Any:
     """A real progress manager without its periodic flush loop."""
-    with patch("opi.core.persistent_task_progress.asyncio.get_running_loop", side_effect=RuntimeError):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+    with patch("opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop", side_effect=RuntimeError):
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(task_id="t", project_name="p", task_service=MagicMock())
 

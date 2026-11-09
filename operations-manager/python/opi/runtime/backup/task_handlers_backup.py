@@ -12,18 +12,18 @@ from typing import TYPE_CHECKING, Any
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core import progress_steps as steps
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
-from opi.core.backup_tasks import (
-    _create_deployment_from_source,
-    _pre_restore_pvcs,
-    _provision_deployment_infrastructure,
-    _resolve_deployment_info,
-    restore_items_with_progress,
-)
 from opi.handlers.project_file_handler import create_project_file_handler
 from opi.manager.backup import (
     create_backup_manager,
     create_bucket_backup_manager,
     create_database_backup_manager,
+)
+from opi.runtime.backup.backup_tasks import (
+    _create_deployment_from_source,
+    _pre_restore_pvcs,
+    _provision_deployment_infrastructure,
+    _resolve_deployment_info,
+    restore_items_with_progress,
 )
 from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
@@ -31,7 +31,7 @@ from opi.utils.naming import generate_backup_run_id
 from opi.utils.secrets import OBJECT_STORAGE_SERVICE_TYPES, DatabaseSecret, get_object_storage_secret
 
 if TYPE_CHECKING:
-    from opi.core.persistent_task_progress import PersistentTaskProgressManager
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 

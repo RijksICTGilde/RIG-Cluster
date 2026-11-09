@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from freezegun import freeze_time
 from opi.core.actor import scheduler_actor
 from opi.core.async_task_service import TaskType
-from opi.core.backup_scheduler import (
+from opi.runtime.backup.backup_scheduler import (
     BackupScheduler,
     _is_freq_target_day,
     _seconds_to_next_tick,
@@ -50,12 +50,12 @@ class TestSecondsToNextTick:
 
     def test_on_boundary_returns_zero(self) -> None:
         # 1_700_000_000 % 100 == 0, so we're exactly on a 100-second boundary.
-        with patch("opi.core.backup_scheduler.time.time", return_value=1_700_000_000.0):
+        with patch("opi.runtime.backup.backup_scheduler.time.time", return_value=1_700_000_000.0):
             assert _seconds_to_next_tick(100) == 0.0
 
     def test_mid_period_returns_remaining(self) -> None:
         # 17 seconds past a 100-second boundary -> 83 left.
-        with patch("opi.core.backup_scheduler.time.time", return_value=1_700_000_017.0):
+        with patch("opi.runtime.backup.backup_scheduler.time.time", return_value=1_700_000_017.0):
             assert _seconds_to_next_tick(100) == 83.0
 
 
@@ -413,7 +413,7 @@ class TestCheckAndSchedule:
             key = p.data.get("name", f"p{i}") if p.data else f"p{i}"
             projects_dict[key] = p
         _stub_snapshots(scheduler, [])  # no prior snapshots → due
-        with patch("opi.core.backup_scheduler.get_project_store") as mock_get:
+        with patch("opi.runtime.backup.backup_scheduler.get_project_store") as mock_get:
             mock_get.return_value.get_all.return_value = list(projects_dict.values())
             asyncio.run(scheduler._check_and_schedule())
 
@@ -586,7 +586,7 @@ class TestRunSetsActor:
         niet naar de persoon die toevallig de laatste wijziging in de buurt deed."""
         scheduler, _ = _make_scheduler()
 
-        with patch("opi.core.backup_scheduler.set_actor") as mock_set_actor:
+        with patch("opi.runtime.backup.backup_scheduler.set_actor") as mock_set_actor:
             await scheduler.start()
             await asyncio.sleep(0)  # laat de taak tot aan de eerste await lopen
             await scheduler.stop()

@@ -10,7 +10,7 @@ import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.core.task_worker import TaskWorker
+from opi.runtime.tasks.task_worker import TaskWorker
 
 
 def _container_sizes() -> dict[str, int]:
@@ -31,7 +31,7 @@ def _container_sizes() -> dict[str, int]:
 def worker() -> TaskWorker:
     service = AsyncMock()
     service.find_conflicting_task = AsyncMock(return_value=None)
-    with patch("opi.core.task_worker.settings") as settings:
+    with patch("opi.runtime.tasks.task_worker.settings") as settings:
         settings.TASK_WORKER_CONCURRENCY = 1
         settings.TASK_WORKER_HEARTBEAT_INTERVAL = 0.05
         settings.TASK_WORKER_MAX_DURATION = 30

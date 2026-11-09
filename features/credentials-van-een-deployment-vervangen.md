@@ -108,7 +108,7 @@ dienst en niet langs de pod.
 
 - Route: `opi/api/v2/router.py`, `rotate_credentials_v2`
 - Welke diensten kunnen: `opi/services/credential_rotation.py`
-- Taak: `handle_rotate_credentials` in `opi/core/task_handlers_operations.py`
+- Taak: `handle_rotate_credentials` in `opi/runtime/tasks/task_handlers_operations.py`
 - Rotatie zelf: `DatabaseManager._resolve_database_credentials`,
   `MinioManager.create_resources_for_deployment`,
   `KeycloakManager._setup_sso_rijk_integration` en

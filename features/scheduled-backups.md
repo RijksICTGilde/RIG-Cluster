@@ -204,9 +204,9 @@ Legacy tasks created before the `trigger` field existed are treated as `schedule
 
 | File | Purpose |
 |------|---------|
-| `opi/core/backup_scheduler.py` | Background scheduler |
+| `opi/runtime/backup/backup_scheduler.py` | Background scheduler |
 | `opi/services/backup_schedule_report.py` | Per-deployment age of the last scheduled backup |
-| `opi/core/task_handlers_backup.py` | Backup execution handler |
+| `opi/runtime/backup/task_handlers_backup.py` | Backup execution handler |
 | `opi/core/async_task_service.py` | Task queue (PostgreSQL) |
 | `opi/forms/editables/fields/deployments.py` | Editable definitions (schedule + resource_types) |
 | `opi/forms/visualizers/fields/deployments.py` | Visualizer definitions (labels, widgets) |

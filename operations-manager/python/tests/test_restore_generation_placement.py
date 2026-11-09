@@ -153,9 +153,12 @@ def restore_environment(postgres_connector: Any, minio_connector: Any) -> Any:
         patch("opi.core.cluster_config.get_database_server", return_value="postgres.local"),
         patch("opi.api.restore_router.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),
         patch("opi.api.restore_router.create_kubectl_connector", return_value=MagicMock()),
+        patch("opi.manager.backup.restore.create_kubectl_connector", return_value=MagicMock()),
         patch("opi.api.restore_router.DatabaseSecret.get_data", AsyncMock(return_value=secret)),
         patch("opi.api.restore_router.create_database_backup_manager", return_value=database_backup_manager),
+        patch("opi.manager.backup.restore.create_database_backup_manager", return_value=database_backup_manager),
         patch("opi.api.restore_router.create_bucket_backup_manager", return_value=bucket_backup_manager),
+        patch("opi.manager.backup.restore.create_bucket_backup_manager", return_value=bucket_backup_manager),
     ):
         yield {
             "database_backup_manager": database_backup_manager,

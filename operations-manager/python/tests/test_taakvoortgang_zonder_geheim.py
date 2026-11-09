@@ -12,7 +12,7 @@ gevuld door ``update_current_step``.
 
 from unittest.mock import AsyncMock
 
-from opi.core.persistent_task_progress import PersistentTaskProgressManager
+from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 GEHEIM = "geheimwachtwoord"
 FOUT = f"kubectl apply mislukt: password={GEHEIM}"

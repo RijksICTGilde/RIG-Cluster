@@ -16,8 +16,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.persistent_task_progress import TaskStatus
 from opi.manager.argo_manager import ApplicationGone
+from opi.runtime.tasks.persistent_task_progress import TaskStatus
 
 DEPLOYMENT = {
     "name": "pr-244",
@@ -30,10 +30,10 @@ DEPLOYMENT = {
 def _progress() -> Any:
     """Een echte voortgangsmanager zonder zijn periodieke flush-lus."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-under-test",

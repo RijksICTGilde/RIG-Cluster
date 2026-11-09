@@ -317,13 +317,13 @@ class TestDeOpstartronde:
 
         store = AsyncMock()
         store.get_all = lambda: [maak("zonder-rol", "zonder-rol"), maak("met-rol", "met-rol"), maak("leeg", "leeg")]
-        monkeypatch.setattr("opi.core.startup.get_project_store", lambda: store)
-        monkeypatch.setattr("opi.core.startup.settings.CLUSTER_MANAGER", "odcn-production")
+        monkeypatch.setattr("opi.runtime.startup.startup.get_project_store", lambda: store)
+        monkeypatch.setattr("opi.runtime.startup.startup.settings.CLUSTER_MANAGER", "odcn-production")
 
     async def test_de_ronde_zet_de_rol_waar_hij_ontbreekt_en_vat_samen(
         self, projecten: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         rollen = {"rig-prd-zonder-rol": False, "rig-prd-met-rol": True, "rig-prd-leeg": False}
         secrets = {"rig-prd-zonder-rol": True, "rig-prd-met-rol": True, "rig-prd-leeg": False}
@@ -343,7 +343,7 @@ class TestDeOpstartronde:
     async def test_een_namespace_die_niet_bestaat_telt_als_gefaald(
         self, projecten: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         kubectl = AsyncMock()
         kubectl.resource_exists = AsyncMock(return_value=False)
@@ -358,7 +358,7 @@ class TestDeOpstartronde:
     async def test_een_onleesbare_rol_telt_als_gefaald_en_de_ronde_gaat_door(
         self, projecten: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         kubectl = AsyncMock()
         kubectl.resource_exists = AsyncMock(side_effect=lambda _type, _naam, ns: None if ns.endswith("leeg") else False)
@@ -375,7 +375,7 @@ class TestDeOpstartronde:
     ) -> None:
         """De release controleert op de samenvatting, dus die moet er ook bij pech staan."""
         from opi.connectors.kubectl import KubectlConnectionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         kubectl = AsyncMock()
         kubectl.resource_exists = AsyncMock(side_effect=KubectlConnectionError("kubectl connection is not available"))
@@ -391,7 +391,7 @@ class TestDeOpstartronde:
         """Een traag of onbereikbaar cluster mag de opstartronde niet eindeloos ophouden."""
         import asyncio
 
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(startup, "CMP_KEY_READER_ROUND_TIMEOUT_SECONDS", 0.05)
 
@@ -422,11 +422,11 @@ class TestDeDeploymentNamespacesVanDitCluster:
         project = ProjectSummary(name="demo", api_key="", filename="demo.yaml", data={"deployments": deployments})
         store = AsyncMock()
         store.get_all = lambda: [project]
-        monkeypatch.setattr("opi.core.startup.get_project_store", lambda: store)
-        monkeypatch.setattr("opi.core.startup.settings.CLUSTER_MANAGER", "odcn-production")
+        monkeypatch.setattr("opi.runtime.startup.startup.get_project_store", lambda: store)
+        monkeypatch.setattr("opi.runtime.startup.startup.settings.CLUSTER_MANAGER", "odcn-production")
 
     def test_een_deployment_op_een_ander_cluster_telt_niet_mee(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.core.startup import _cluster_deployment_namespaces
+        from opi.runtime.startup.startup import _cluster_deployment_namespaces
 
         self._project(
             monkeypatch,
@@ -439,7 +439,7 @@ class TestDeDeploymentNamespacesVanDitCluster:
         assert _cluster_deployment_namespaces() == {"rig-prd-hier": "demo"}
 
     def test_een_deployment_zonder_namespace_telt_niet_mee(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from opi.core.startup import _cluster_deployment_namespaces
+        from opi.runtime.startup.startup import _cluster_deployment_namespaces
 
         self._project(monkeypatch, [{"name": "d1", "cluster": "odcn-production"}])
 
@@ -451,7 +451,7 @@ class TestDeDeploymentNamespacesVanDitCluster:
         Declareert een project 'operations', dan komt het uit op rig-prd-operations,
         waar 'sops-age-key' de platformsleutel is.
         """
-        from opi.core.startup import _cluster_deployment_namespaces
+        from opi.runtime.startup.startup import _cluster_deployment_namespaces
 
         self._project(
             monkeypatch,

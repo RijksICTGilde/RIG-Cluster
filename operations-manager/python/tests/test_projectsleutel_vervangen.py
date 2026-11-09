@@ -24,10 +24,10 @@ import pytest
 from fastapi import HTTPException
 from opi.api.v2 import router as v2_router_module
 from opi.connectors.kopia import KopiaConnector, KopiaExecutionError, KopiaRepositoryConfig, _is_missing_repository
-from opi.core import task_handlers_operations as handlers
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import format_age_key_file
 from opi.manager.backup.base import BaseBackupManager, derive_backup_password
+from opi.runtime.tasks import task_handlers_operations as handlers
 from opi.services.project_store import ProjectNotFoundError, ProjectStoreError
 from opi.utils import key_rotation
 from opi.utils.age import encrypt_age_content, generate_age_key_pair

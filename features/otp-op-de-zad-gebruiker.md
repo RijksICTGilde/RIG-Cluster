@@ -212,7 +212,7 @@ of als projectlid toegang heeft, komt er niet in voor. Bevestigt zo iemand een f
 dan maakt `UserOtpService._row_or_create` een rij voor hem aan, want de OTP-kolommen
 moeten ergens staan.
 
-Dat heeft een gevolg voor offboarden. `opi/core/startup.py` laadt bij elke start elk
+Dat heeft een gevolg voor offboarden. `opi/runtime/startup/startup.py` laadt bij elke start elk
 adres uit `users` in de inloglijst. Iemand uit `ALLOWED_EMAILS` of uit de ledenlijst van
 een project halen is daarna dus niet genoeg: zijn rij in `users` laat hem na een herstart
 opnieuw in het portaal. Verwijder hem ook op **Gebruikersbeheer** (`/admin/users`), waar

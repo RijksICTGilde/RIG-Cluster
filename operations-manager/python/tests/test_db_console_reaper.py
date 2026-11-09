@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from opi.core.db_console_reaper import DbConsoleReaper
+from opi.runtime.periodic.db_console_reaper import DbConsoleReaper
 
 
 async def _run_sweep(active_runs: list[dict], pods_by_ns: dict | None = None):
@@ -28,9 +28,9 @@ async def _run_sweep(active_runs: list[dict], pods_by_ns: dict | None = None):
     runs_svc.list_active_runs = AsyncMock(return_value=active_runs)
 
     with (
-        patch("opi.core.db_console_reaper.get_runs_service", return_value=runs_svc),
-        patch("opi.core.db_console_reaper.create_kubectl_connector", return_value=kubectl),
-        patch("opi.core.db_console_reaper.get_db_console_manager", return_value=MagicMock()),
+        patch("opi.runtime.periodic.db_console_reaper.get_runs_service", return_value=runs_svc),
+        patch("opi.runtime.periodic.db_console_reaper.create_kubectl_connector", return_value=kubectl),
+        patch("opi.runtime.periodic.db_console_reaper.get_db_console_manager", return_value=MagicMock()),
     ):
         await reaper._sweep()
 

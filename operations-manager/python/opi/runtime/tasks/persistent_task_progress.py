@@ -355,7 +355,7 @@ class PersistentTaskProgressManager:
 
         The worker reads this when the handler itself returns something that looks like
         success: what was reported here then wins, and the task ends on ``failed`` instead of
-        ``completed`` (see :func:`opi.core.task_worker.reported_failure`). Without it the
+        ``completed`` (see :func:`opi.runtime.tasks.task_worker.reported_failure`). Without it the
         worker races the fire-and-forget write of :meth:`fail_project` and writes
         ``completed`` over it.
         """

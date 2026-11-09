@@ -170,7 +170,7 @@ class OpiConnector:
 
 ### 3. Federation Service (Routing Layer)
 
-**File**: `opi/core/federation_service.py` (new)
+**File**: `opi/runtime/tasks/federation_service.py` (new)
 
 ```python
 class FederationService:
@@ -286,7 +286,7 @@ Federation builds on top of the async task system. All of Part 1 (async-task-sys
 |------|---------|-----------|
 | F1 | `opi/core/federation_config.py` + config.py settings | Yes (with F2) |
 | F2 | `opi/connectors/opi.py` | Yes (with F1) |
-| F3 | `opi/core/federation_service.py` | After F1+F2 |
+| F3 | `opi/runtime/tasks/federation_service.py` | After F1+F2 |
 | F4 | `opi/api/federation_router.py` | After F3 |
 | F5 | `opi/server.py` + `opi/api/router.py` | After F3 (integrate routing into endpoint conversion) |
 | F6 | `tests/test_federation.py` | After F3 |
@@ -309,7 +309,7 @@ Maximum useful parallelism: 3 agents.
 |------|---------|
 | `opi/core/federation_config.py` | PeerConfig model, FederationRegistry |
 | `opi/connectors/opi.py` | OPI-to-OPI HTTP connector |
-| `opi/core/federation_service.py` | Routing layer + route table |
+| `opi/runtime/tasks/federation_service.py` | Routing layer + route table |
 | `opi/api/federation_router.py` | Health/peers API endpoints |
 | `tests/test_federation.py` | Federation unit tests |
 

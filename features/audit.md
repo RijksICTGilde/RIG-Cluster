@@ -254,7 +254,7 @@ weggehaald in plaats van dat er nooit een was.
 
 Er is geen schakelaar om de bewaarlus uit te zetten: zonder lus bewaart de tabel
 persoonsgegevens zonder termijn. Hij start met de taakwerker mee
-(`opi/core/audit_retention_scheduler.py`) en draait één keer per etmaal.
+(`opi/runtime/periodic/audit_retention_scheduler.py`) en draait één keer per etmaal.
 
 ## Afhankelijkheden
 

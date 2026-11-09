@@ -51,7 +51,7 @@ spec:
 # role in cluster.yaml. Hier voorgemaakt zodat `alembic upgrade head` in de entrypoint van
 # operations-manager niet omvalt op een vers cluster, voordat OPI's eigen ensure-DB draait.
 # Een bestaande database verhuist mee: de operator past een gewijzigde owner toe met
-# ALTER DATABASE, en de objecten erin gaan met opi/core/app_database_owner.py.
+# ALTER DATABASE, en de objecten erin gaan met opi/runtime/startup/app_database_owner.py.
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:

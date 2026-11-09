@@ -8,12 +8,12 @@ is not in the payload keeps its state out of the database.
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-from opi.core.persistent_task_progress import PersistentTaskProgressManager
+from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 
 def _progress() -> PersistentTaskProgressManager:
     """A real progress manager without its periodic flush loop."""
-    with patch("opi.core.persistent_task_progress.asyncio.get_running_loop", side_effect=RuntimeError):
+    with patch("opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop", side_effect=RuntimeError):
         return PersistentTaskProgressManager(task_id="task-1", project_name="demo", task_service=AsyncMock())
 
 

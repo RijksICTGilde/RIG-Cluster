@@ -233,8 +233,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from opi.connectors.argo import ArgoConnector
-    from opi.core.persistent_task_progress import PersistentTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
     from opi.services.catalog.image_registries.rules import ResolvedImage
 
 # Bestandsnamen waar de renderketen zelf betekenis aan geeft: een helmfile-bron die er een

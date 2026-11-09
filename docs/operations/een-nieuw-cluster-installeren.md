@@ -563,7 +563,7 @@ Meer dan het lijkt. `features/federation-routing.md` beschrijft precies dit, met
 |---|---|---|
 | instellingen | `opi/core/config.py:426-428` (`FEDERATION_ROLE`, `FEDERATION_PEERS`, `FEDERATION_REQUEST_TIMEOUT`) | — |
 | peerregister | `opi/core/federation_config.py` | 86 |
-| routeringslaag | `opi/core/federation_service.py` | 228 |
+| routeringslaag | `opi/runtime/tasks/federation_service.py` | 228 |
 | HTTP-client naar een peer | `opi/connectors/opi.py` | 132 |
 | peers/health-endpoints | `opi/api/federation_router.py` | 74 |
 | inhaakpunt in de taakketen | `opi/core/task_helpers.py:58-61` (aanmaken), `:110-112` en `opi/api/task_router.py:166-168` (status) | — |

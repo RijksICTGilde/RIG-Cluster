@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from opi.core.actor import scheduler_actor
-from opi.core.reconciliation_scheduler import ReconciliationScheduler, _seconds_until_next_run
+from opi.runtime.periodic.reconciliation_scheduler import ReconciliationScheduler, _seconds_until_next_run
 
 TZ = ZoneInfo("Europe/Amsterdam")
 
@@ -30,7 +30,7 @@ async def test_lege_store_slaat_de_run_over() -> None:
     store.get_all = MagicMock(return_value=[])
 
     with (
-        patch("opi.core.reconciliation_scheduler.get_project_store", return_value=store),
+        patch("opi.runtime.periodic.reconciliation_scheduler.get_project_store", return_value=store),
         patch("opi.jobs.reconciliation.reconcile", new=AsyncMock()) as mock_reconcile,
     ):
         result = await scheduler.run_once()
@@ -50,7 +50,7 @@ async def test_draait_standaard_in_dry_run() -> None:
 
     reconcile_mock = AsyncMock(return_value={"purged": [], "unmarked": [], "errors": []})
     with (
-        patch("opi.core.reconciliation_scheduler.get_project_store", return_value=store),
+        patch("opi.runtime.periodic.reconciliation_scheduler.get_project_store", return_value=store),
         patch("opi.jobs.reconciliation.reconcile", new=reconcile_mock),
     ):
         await scheduler.run_once()
@@ -69,7 +69,7 @@ async def test_stoppen_zonder_gestart_te_zijn_is_veilig() -> None:
 async def test_run_zet_de_scheduler_actor_voor_de_lus() -> None:
     scheduler = ReconciliationScheduler(cluster="odcn-production")
 
-    with patch("opi.core.reconciliation_scheduler.set_actor") as mock_set_actor:
+    with patch("opi.runtime.periodic.reconciliation_scheduler.set_actor") as mock_set_actor:
         await scheduler.start()
         await asyncio.sleep(0)
         await scheduler.stop()

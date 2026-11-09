@@ -32,8 +32,8 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
        by the wizard with editables and generators).  YAML generation is
        skipped.
     """
-    from opi.core.simple_background import _monitor_argocd_and_deployment
     from opi.manager.project_manager import ProjectManager
+    from opi.runtime.tasks.simple_background import _monitor_argocd_and_deployment
     from opi.services.project_store import ConflictError, get_project_store
     from opi.utils.project_names import validate_project_name
     from opi.utils.project_utils import RESERVED_PROJECT_NAME_MESSAGE, generate_self_service_project_yaml

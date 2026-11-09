@@ -36,7 +36,7 @@ class TestGitMonitorClusterCheck:
     async def test_deployment_for_this_cluster_reaches_the_namespace_check(
         self, project_content: dict[str, Any]
     ) -> None:
-        from opi.core import git_monitor
+        from opi.runtime.periodic import git_monitor
 
         with (
             patch.object(git_monitor.settings, "CLUSTER_MANAGER", "my-cluster"),
@@ -48,7 +48,7 @@ class TestGitMonitorClusterCheck:
         check.assert_awaited_once_with(project_content)
 
     async def test_deployment_for_another_cluster_is_skipped(self, project_content: dict[str, Any]) -> None:
-        from opi.core import git_monitor
+        from opi.runtime.periodic import git_monitor
 
         with (
             patch.object(git_monitor.settings, "CLUSTER_MANAGER", "other-cluster"),

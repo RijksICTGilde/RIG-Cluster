@@ -253,7 +253,7 @@ class BackupScheduler:
         # hammering the repositories every tick.
         self._last_sweep_date = now_local.date()
 
-        from opi.core.backup_retention_sweep import BackupRetentionSweep
+        from opi.runtime.backup.backup_retention_sweep import BackupRetentionSweep
 
         await BackupRetentionSweep(self._cluster).run()
 

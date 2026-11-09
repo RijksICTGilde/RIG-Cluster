@@ -91,7 +91,7 @@ if [ "$SKIP_MIGRATIONS" = "false" ]; then
     # De app-rol draait de migraties en moet dus bezitten wat ze wijzigen. Deze stap
     # draait als admin, is idempotent, en moet daarom vóór alembic staan (RC-410).
     echo -e "${YELLOW}▶${NC} Eigendom van de eigen database naar DATABASE_APP_USER..."
-    if ! python -m opi.core.app_database_owner; then
+    if ! python -m opi.runtime.startup.app_database_owner; then
         echo -e "${RED}✗ FATAL: eigendom van de eigen database kon niet naar DATABASE_APP_USER${NC}"
         echo ""
         echo "De migraties draaien als die rol en zouden falen op een tabel die hij niet"

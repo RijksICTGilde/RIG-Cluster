@@ -21,9 +21,9 @@ import asyncpg
 import pytest
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
-from opi.core.platform_database_access import restrict_platform_databases
 from opi.core.readiness import ReadinessState
-from opi.core.startup import _setup_database
+from opi.runtime.startup.platform_database_access import restrict_platform_databases
+from opi.runtime.startup.startup import _setup_database
 from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from tests.integration.postgres_live import (
     PASSWORD,
@@ -292,11 +292,13 @@ async def test_restrict_platform_databases_locks_every_database_to_its_own_role(
     monkeypatch.setattr(settings, "DATABASE_NAME", own)
     monkeypatch.setattr(settings, "DATABASE_APP_USER", f"{PREFIX}_app")
     monkeypatch.setattr(settings, "DATABASE_RESTRICT_PUBLIC_CONNECT", "on")
-    monkeypatch.setattr("opi.core.platform_database_access.get_database_server", lambda _cluster: SERVICE_NAME)
     monkeypatch.setattr(
-        "opi.core.platform_database_access.PLATFORM_DATABASE_ROLES", {platform: (f"{PREFIX}_keycloak_role",)}
+        "opi.runtime.startup.platform_database_access.get_database_server", lambda _cluster: SERVICE_NAME
     )
-    monkeypatch.setattr("opi.core.platform_database_access.PLATFORM_BACKUP_ROLE", f"{PREFIX}_backup")
+    monkeypatch.setattr(
+        "opi.runtime.startup.platform_database_access.PLATFORM_DATABASE_ROLES", {platform: (f"{PREFIX}_keycloak_role",)}
+    )
+    monkeypatch.setattr("opi.runtime.startup.platform_database_access.PLATFORM_BACKUP_ROLE", f"{PREFIX}_backup")
 
     for role in (f"{PREFIX}_keycloak_role", f"{PREFIX}_app", f"{PREFIX}_backup", f"{PREFIX}_vreemd"):
         await live_connector.create_user(role, PASSWORD, connection_limit=5)

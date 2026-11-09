@@ -123,5 +123,5 @@ het component op productie, dan vraagt de opslag bovendien een verse OTP
 | de wandeling | `component_usage_sites` / `remove_component_references` in `opi/handlers/project_file_handler.py` |
 | dezelfde regel in de modal | `_apply_component_removals` in `opi/forms/wizard/save.py` |
 | welke rij de modal weghaalt | `reeksrij-sleutel-in-de-inzending.md` |
-| taak | `handle_delete_component` in `opi/core/task_handlers_components.py` |
+| taak | `handle_delete_component` in `opi/runtime/tasks/task_handlers_components.py` |
 | bevestigingsvenster | `opi/web/project_actions.py` |

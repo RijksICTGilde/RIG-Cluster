@@ -46,7 +46,7 @@
     },
     "opi/api/restore_router.py": {
       "dutch-identifiers": 2,
-      "dutch-comments": 16
+      "dutch-comments": 8
     },
     "opi/api/route_herkenning.py": {
       "dutch-identifiers": 5,
@@ -301,6 +301,9 @@
     },
     "opi/manager/backup/database_backup.py": {
       "dutch-comments": 2
+    },
+    "opi/manager/backup/restore.py": {
+      "dutch-comments": 5
     },
     "opi/manager/backup/runs.py": {
       "dutch-comments": 4

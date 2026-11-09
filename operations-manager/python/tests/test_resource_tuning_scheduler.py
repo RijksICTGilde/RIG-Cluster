@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from opi.core.actor import scheduler_actor
-from opi.core.resource_tuning_scheduler import ResourceTuningScheduler, _seconds_until_next_run
+from opi.runtime.periodic.resource_tuning_scheduler import ResourceTuningScheduler, _seconds_until_next_run
 
 
 class TestSecondsUntilNextRun:
@@ -33,7 +33,7 @@ class TestSecondsUntilNextRun:
 async def test_run_zet_de_scheduler_actor_voor_de_lus() -> None:
     scheduler = ResourceTuningScheduler(cluster="odcn-production")
 
-    with patch("opi.core.resource_tuning_scheduler.set_actor") as mock_set_actor:
+    with patch("opi.runtime.periodic.resource_tuning_scheduler.set_actor") as mock_set_actor:
         await scheduler.start()
         await asyncio.sleep(0)
         await scheduler.stop()

@@ -94,7 +94,7 @@ def store_and_remote(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
 
     monkeypatch.setattr(ProjectManager, "process_project_from_git", _processed)
     monkeypatch.setattr(ProjectManager, "close", _closed)
-    monkeypatch.setattr("opi.core.simple_background._monitor_argocd_and_deployment", _monitored)
+    monkeypatch.setattr("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", _monitored)
     monkeypatch.setattr("opi.core.config.settings.OOM_WATCHER_ENABLED", False)
 
     return store, remote
@@ -145,7 +145,7 @@ def _make_progress() -> MagicMock:
 
 
 async def _run_task(payload: dict[str, Any]) -> tuple[dict[str, Any], MagicMock]:
-    from opi.core.task_handlers_project import handle_create_project
+    from opi.runtime.tasks.task_handlers_project import handle_create_project
 
     progress = _make_progress()
     return await handle_create_project(payload, progress), progress

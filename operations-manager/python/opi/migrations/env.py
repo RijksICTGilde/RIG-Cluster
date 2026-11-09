@@ -14,7 +14,7 @@ def _build_url() -> str:
     """De URL van OPI's eigen database, met de app-rol die haar objecten bezit.
 
     De migraties draaien als die rol en niet als de superuser; de overdrachtsstap in
-    ``opi/core/app_database_owner.py`` zorgt dat ze alles bezit wat ze wijzigt (RC-410).
+    ``opi/runtime/startup/app_database_owner.py`` zorgt dat ze alles bezit wat ze wijzigt (RC-410).
     """
     return app_database_url("postgresql+psycopg2", "sslmode")
 

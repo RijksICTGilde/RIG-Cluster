@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from opi.connectors.metrics_backend import MetricsQueryError, MetricsUnavailableError
-from opi.core import capacity_watcher
-from opi.core.capacity_watcher import HIGH, OK, WARNING, CapacityWatcher, Quota, evaluate
+from opi.runtime.periodic import capacity_watcher
+from opi.runtime.periodic.capacity_watcher import HIGH, OK, WARNING, CapacityWatcher, Quota, evaluate
 
 GIB = 1024**3
 

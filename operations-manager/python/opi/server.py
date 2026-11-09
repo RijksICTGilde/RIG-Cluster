@@ -48,8 +48,6 @@ from opi.core.errors import (
     status_phrase,
     with_reference,
 )
-from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
-from opi.core.startup import run_startup_tasks, warm_connector_singletons
 from opi.core.static_files import CacheControlledStaticFiles, lotc_cache_control
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
@@ -58,6 +56,8 @@ from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.middleware.server_side_session import ServerSideSessionMiddleware
+from opi.runtime.periodic.git_monitor import start_git_monitoring, stop_git_monitoring
+from opi.runtime.startup.startup import run_startup_tasks, warm_connector_singletons
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.utils.logging_redact import redact_invite_key_in_path
@@ -74,7 +74,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Print distinctive boot banner
-    from opi.core.startup import print_boot_banner
+    from opi.runtime.startup.startup import print_boot_banner
 
     print_boot_banner()
 
@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         try:
             from opi.core.async_task_service import AsyncTaskService, TaskType  # type: ignore[reportMissingImports]
             from opi.core.database_pools import get_database_pool
-            from opi.core.task_worker import TaskWorker  # type: ignore[reportMissingImports]
+            from opi.runtime.tasks.task_worker import TaskWorker  # type: ignore[reportMissingImports]
 
             get_database_pool("main")  # ensure the shared asyncpg pool is initialized
             task_service = AsyncTaskService(cluster=settings.CLUSTER_MANAGER)
@@ -146,11 +146,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
             # Register handlers (imported locally to avoid circular imports)
-            from opi.core.task_handlers_backup import (  # type: ignore[reportMissingImports]
+            from opi.runtime.backup.task_handlers_backup import (  # type: ignore[reportMissingImports]
                 handle_backup,
                 handle_restore,
             )
-            from opi.core.task_handlers_components import (  # type: ignore[reportMissingImports]
+            from opi.runtime.tasks.task_handlers_components import (  # type: ignore[reportMissingImports]
                 handle_add_component,
                 handle_add_component_to_deployment,
                 handle_add_service,
@@ -160,11 +160,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_manage_database_schemas,
                 handle_update_component,
             )
-            from opi.core.task_handlers_deployment import (  # type: ignore[reportMissingImports]
+            from opi.runtime.tasks.task_handlers_deployment import (  # type: ignore[reportMissingImports]
                 handle_delete_deployment,
                 handle_update_image,
             )
-            from opi.core.task_handlers_operations import (  # type: ignore[reportMissingImports]
+            from opi.runtime.tasks.task_handlers_operations import (  # type: ignore[reportMissingImports]
                 handle_clone_bucket,
                 handle_clone_database,
                 handle_refresh_deployment,
@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_rotate_credentials,
                 handle_rotate_project_key,
             )
-            from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
+            from opi.runtime.tasks.task_handlers_project import (  # type: ignore[reportMissingImports]
                 handle_create_project,
                 handle_delete_project,
                 handle_upsert_deployment,
@@ -219,7 +219,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             # Start backup scheduler if enabled
             if settings.BACKUP_SCHEDULER_ENABLED:
                 try:
-                    from opi.core.backup_scheduler import BackupScheduler
+                    from opi.runtime.backup.backup_scheduler import BackupScheduler
 
                     _backup_scheduler = BackupScheduler(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
                     await _backup_scheduler.start()
@@ -232,7 +232,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
             if resource_tuning_config().scheduler_enabled:
                 try:
-                    from opi.core.resource_tuning_scheduler import ResourceTuningScheduler
+                    from opi.runtime.periodic.resource_tuning_scheduler import ResourceTuningScheduler
 
                     _tuning_scheduler = ResourceTuningScheduler(cluster=settings.CLUSTER_MANAGER)
                     await _tuning_scheduler.start()
@@ -242,7 +242,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
             # Start audit retention loop (geen schakelaar: zie AUDIT_RETENTION_HOUR)
             try:
-                from opi.core.audit_retention_scheduler import AuditRetentionScheduler
+                from opi.runtime.periodic.audit_retention_scheduler import AuditRetentionScheduler
 
                 _audit_retention_scheduler = AuditRetentionScheduler()
                 await _audit_retention_scheduler.start()
@@ -253,7 +253,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             # Start reconciliation scheduler if enabled
             if settings.RECONCILIATION_SCHEDULER_ENABLED:
                 try:
-                    from opi.core.reconciliation_scheduler import ReconciliationScheduler
+                    from opi.runtime.periodic.reconciliation_scheduler import ReconciliationScheduler
 
                     _reconciliation_scheduler = ReconciliationScheduler(cluster=settings.CLUSTER_MANAGER)
                     await _reconciliation_scheduler.start()
@@ -284,7 +284,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     if settings.FEDERATION_ROLE == "master" and settings.FEDERATION_PEERS:
         try:
             from opi.core.federation_config import FederationRegistry
-            from opi.core.federation_service import FederationService
+            from opi.runtime.tasks.federation_service import FederationService
 
             registry = FederationRegistry.from_settings(settings.FEDERATION_PEERS, settings.CLUSTER_MANAGER)
             fed_task_service = getattr(app.state, "task_service", None)
@@ -299,7 +299,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Start the run reaper (sweeps both console and job bundles) if either is enabled.
     if settings.DB_CONSOLE_ENABLED or settings.JOB_ENABLED:
         try:
-            from opi.core.db_console_reaper import DbConsoleReaper
+            from opi.runtime.periodic.db_console_reaper import DbConsoleReaper
 
             _db_console_reaper = DbConsoleReaper(cluster=settings.CLUSTER_MANAGER)
             await _db_console_reaper.start()
@@ -310,7 +310,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Start the log watcher scheduler if enabled
     if settings.LOGWATCHER_ENABLED:
         try:
-            from opi.core.logwatcher_scheduler import LogwatcherScheduler
+            from opi.runtime.periodic.logwatcher_scheduler import LogwatcherScheduler
 
             _logwatcher_scheduler = LogwatcherScheduler()
             await _logwatcher_scheduler.start()
@@ -322,7 +322,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # ntfy-topic is er nergens om het te melden.
     if settings.MAIL_RELAY_API_URL and settings.LOGWATCHER_NTFY_TOPIC:
         try:
-            from opi.core.mail_relay_watcher import MailRelayWatcher
+            from opi.runtime.periodic.mail_relay_watcher import MailRelayWatcher
 
             _mail_relay_watcher = MailRelayWatcher()
             await _mail_relay_watcher.start()
@@ -332,7 +332,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     if settings.CAPACITY_WATCH_ENABLED and settings.CAPACITY_WATCH_TENANT:
         try:
-            from opi.core.capacity_watcher import CapacityWatcher
+            from opi.runtime.periodic.capacity_watcher import CapacityWatcher
 
             _capacity_watcher = CapacityWatcher()
             await _capacity_watcher.start()

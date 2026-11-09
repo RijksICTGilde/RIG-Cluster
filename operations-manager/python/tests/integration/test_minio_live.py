@@ -17,9 +17,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from opi.connectors.minio_mc import MinioConnector, MinioExecutionError, create_minio_connector
 from opi.core.config import settings
-from opi.core.startup import check_minio_availability
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.minio_manager import MinioManager
+from opi.runtime.startup.startup import check_minio_availability
 from opi.utils.naming import generate_bucket_name, generate_minio_username
 from tests.integration.minio_live import (
     ADMIN_ALIAS,

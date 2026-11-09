@@ -9,7 +9,8 @@ only delete what it can positively classify.
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from opi.core.backup_retention_sweep import (
+from opi.manager.backup.base import SnapshotInfo
+from opi.runtime.backup.backup_retention_sweep import (
     ACTIVE,
     ORPHAN_EXPIRED,
     ORPHAN_YOUNG,
@@ -18,7 +19,6 @@ from opi.core.backup_retention_sweep import (
     BackupRetentionSweep,
     classify_snapshot,
 )
-from opi.manager.backup.base import SnapshotInfo
 
 # Fixed moments for the pure classify tests (cutoff is passed in explicitly).
 CUTOFF = datetime(2026, 5, 12, tzinfo=UTC)
@@ -127,7 +127,10 @@ def _wire(projects: dict, snapshots: list[SnapshotInfo]):
     patches = [
         patch("opi.services.project_store.get_project_service", return_value=project_service),
         patch("opi.manager.backup.create_backup_manager", return_value=backup_manager),
-        patch("opi.core.backup_retention_sweep.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
+        patch(
+            "opi.runtime.backup.backup_retention_sweep.get_prefixed_namespace",
+            side_effect=lambda c, ns: f"rig-prd-{ns}",
+        ),
     ]
     return backup_manager, patches
 
@@ -138,7 +141,12 @@ class TestBackupRetentionSweep:
         old_orphan = _snapshot(deployment="pr-334", timestamp=_days_ago(60))
         backup_manager, patches = _wire(projects, [old_orphan])
 
-        with patches[0], patches[1], patches[2], patch("opi.core.backup_retention_sweep.settings") as mock_settings:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patch("opi.runtime.backup.backup_retention_sweep.settings") as mock_settings,
+        ):
             mock_settings.BACKUP_SWEEP_DRY_RUN = True
             mock_settings.BACKUP_ORPHAN_RETENTION_DAYS = 30
             await BackupRetentionSweep("odcn-production").run()
@@ -165,7 +173,12 @@ class TestBackupRetentionSweep:
         )
         backup_manager, patches = _wire(projects, [active, manual, young_orphan, old_orphan, legacy])
 
-        with patches[0], patches[1], patches[2], patch("opi.core.backup_retention_sweep.settings") as mock_settings:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patch("opi.runtime.backup.backup_retention_sweep.settings") as mock_settings,
+        ):
             mock_settings.BACKUP_SWEEP_DRY_RUN = False
             mock_settings.BACKUP_ORPHAN_RETENTION_DAYS = 30
             await BackupRetentionSweep("odcn-production").run()
@@ -178,7 +191,12 @@ class TestBackupRetentionSweep:
         projects = {"wies": _project("wies", [_deployment("production", "FREQ=DAILY;BYHOUR=2", cluster="other")])}
         backup_manager, patches = _wire(projects, [_snapshot(timestamp=_days_ago(60))])
 
-        with patches[0], patches[1], patches[2], patch("opi.core.backup_retention_sweep.settings") as mock_settings:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patch("opi.runtime.backup.backup_retention_sweep.settings") as mock_settings,
+        ):
             mock_settings.BACKUP_SWEEP_DRY_RUN = False
             mock_settings.BACKUP_ORPHAN_RETENTION_DAYS = 30
             await BackupRetentionSweep("odcn-production").run()
@@ -195,7 +213,12 @@ class TestBackupRetentionSweep:
         )
         backup_manager, patches = _wire(projects, [old_scheduled])
 
-        with patches[0], patches[1], patches[2], patch("opi.core.backup_retention_sweep.settings") as mock_settings:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patch("opi.runtime.backup.backup_retention_sweep.settings") as mock_settings,
+        ):
             mock_settings.BACKUP_SWEEP_DRY_RUN = False
             mock_settings.BACKUP_ORPHAN_RETENTION_DAYS = 30
             await BackupRetentionSweep("odcn-production").run()
@@ -222,8 +245,11 @@ class TestBackupRetentionSweep:
         with (
             patch("opi.services.project_store.get_project_service", return_value=project_service),
             patch("opi.manager.backup.create_backup_manager", return_value=backup_manager),
-            patch("opi.core.backup_retention_sweep.get_prefixed_namespace", side_effect=lambda c, ns: f"rig-prd-{ns}"),
-            patch("opi.core.backup_retention_sweep.settings") as mock_settings,
+            patch(
+                "opi.runtime.backup.backup_retention_sweep.get_prefixed_namespace",
+                side_effect=lambda c, ns: f"rig-prd-{ns}",
+            ),
+            patch("opi.runtime.backup.backup_retention_sweep.settings") as mock_settings,
         ):
             mock_settings.BACKUP_SWEEP_DRY_RUN = False
             mock_settings.BACKUP_ORPHAN_RETENTION_DAYS = 30

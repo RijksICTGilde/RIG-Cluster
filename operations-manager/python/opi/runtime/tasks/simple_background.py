@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from opi.core import progress_steps as steps
 
 if TYPE_CHECKING:
-    from opi.core.persistent_task_progress import PersistentTaskProgressManager
+    from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
 logger = logging.getLogger(__name__)
 

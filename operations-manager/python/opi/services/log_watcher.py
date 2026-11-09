@@ -4,7 +4,7 @@ Both entrypoints call ``run_cycle`` here so their logic never diverges:
 
   - the standalone CLI at ``scripts/log_watch/watch.py`` injects Claude triage
     (``triage_fn``), a SOPS-decrypted token, and file-based dedup state; and
-  - the in-app ``LogwatcherScheduler`` (``opi/core/logwatcher_scheduler.py``)
+  - the in-app ``LogwatcherScheduler`` (``opi/runtime/periodic/logwatcher_scheduler.py``)
     runs it every ``LOGWATCHER_INTERVAL_SECONDS`` with no triage_fn (deterministic
     grouped body) and an in-memory dedup dict.
 
@@ -61,7 +61,7 @@ _FLOW_ID_RE = re.compile(r"\[((?:req|task)-[^\]]+)\]")
 # The watcher scans the OPI container's own logs, which include the watcher's own
 # output. Exclude those logger names at query time or it alerts on itself - a loop
 # that grows every cycle (its "RESULT: N NEW issue(s)" WARNING lines get re-picked).
-SELF_LOG_EXCLUDE = ("opi.services.log_watcher", "opi.core.logwatcher_scheduler")
+SELF_LOG_EXCLUDE = ("opi.services.log_watcher", "opi.runtime.periodic.logwatcher_scheduler")
 
 # Only a genuine Python-logging record is a distinct "issue". Loki stores each line
 # of a multi-line message (a traceback, or our own multi-line ntfy body) as its own

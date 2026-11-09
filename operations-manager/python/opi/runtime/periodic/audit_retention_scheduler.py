@@ -14,7 +14,7 @@ from datetime import datetime
 
 from opi.core.actor import scheduler_actor, set_actor
 from opi.core.config import settings
-from opi.core.reconciliation_scheduler import _TZ, _seconds_until_next_run
+from opi.runtime.periodic.reconciliation_scheduler import _TZ, _seconds_until_next_run
 from opi.services.audit import run_retention
 
 logger = logging.getLogger(__name__)

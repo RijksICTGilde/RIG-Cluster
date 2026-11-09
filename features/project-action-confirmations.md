@@ -86,9 +86,9 @@ Alle vier de verwijderingen draaien als async taak, net als herverwerken:
 
 | Taaktype | Handler |
 |---|---|
-| `delete_project` | `opi/core/task_handlers_project.py` |
-| `delete_deployment` | `opi/core/task_handlers_deployment.py` (bestond al) |
-| `delete_component` | `opi/core/task_handlers_components.py` |
+| `delete_project` | `opi/runtime/tasks/task_handlers_project.py` |
+| `delete_deployment` | `opi/runtime/tasks/task_handlers_deployment.py` (bestond al) |
+| `delete_component` | `opi/runtime/tasks/task_handlers_components.py` |
 | `delete_attachment` | `opi/services/catalog/attachments/task.py` |
 
 Een project verwijderen sloopt git, ArgoCD, de namespace, databases en buckets; inline

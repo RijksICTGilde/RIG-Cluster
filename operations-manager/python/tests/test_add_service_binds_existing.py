@@ -131,7 +131,7 @@ class TestRolloutFollowsTheBinding:
 
     @pytest.mark.asyncio
     async def test_task_handler_processes_after_a_binding_only(self):
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = MagicMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": [], "components_updated": ["api"]})
@@ -154,7 +154,7 @@ class TestRolloutFollowsTheBinding:
 
     @pytest.mark.asyncio
     async def test_task_handler_skips_when_truly_nothing_changed(self):
-        from opi.core.task_handlers_components import handle_add_service
+        from opi.runtime.tasks.task_handlers_components import handle_add_service
 
         pm = MagicMock()
         pm.add_service = AsyncMock(return_value={"success": True, "services_added": [], "components_updated": []})

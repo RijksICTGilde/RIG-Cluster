@@ -59,7 +59,7 @@ INVENTARIS: dict[str, Schrijver] = {
         "disabled/disabled-reason op de deploymentcomponent bij het opschonen van kapotte componenten",
         "test_het_uitzetten_van_een_deploymentcomponent_blijft_geldig",
     ),
-    "opi/core/backup_tasks.py": Schrijver(
+    "opi/runtime/backup/backup_tasks.py": Schrijver(
         "generatienummers per dienst op de deployment, en een hele nieuwe deployment bij een kloon",
         "test_generatienummers_van_de_backuptaken_blijven_geldig",
     ),
@@ -146,7 +146,7 @@ INVENTARIS: dict[str, Schrijver] = {
         "De goedkeuringsblokken hebben hun eigen modeltests in tests/test_domain_approval*.py; de schrijfweg is "
         "enforce=True.",
     ),
-    "opi/core/task_handlers_project.py": Schrijver(
+    "opi/runtime/tasks/task_handlers_project.py": Schrijver(
         "het projectbestand zoals de aanmaaktaak het opbouwt",
         "test_the_generated_file_passes_the_save_gates (tests/test_create_project_api.py)",
     ),

@@ -78,7 +78,7 @@ def _project_manager(gezien: dict[str, Any]) -> AsyncMock:
 
 @pytest.mark.asyncio
 async def test_upsert_wist_voor_de_uitrol_en_bewaart_wat_die_vastlegt() -> None:
-    from opi.core.task_handlers_project import handle_upsert_deployment
+    from opi.runtime.tasks.task_handlers_project import handle_upsert_deployment
 
     oom_watcher._last_tuned_pod_template_hash[_sleutel()] = _OUDE_GENERATIE
     gezien: dict[str, Any] = {}
@@ -105,7 +105,7 @@ async def test_upsert_wist_voor_de_uitrol_en_bewaart_wat_die_vastlegt() -> None:
 
 @pytest.mark.asyncio
 async def test_create_wist_voor_de_uitrol_en_bewaart_wat_die_vastlegt() -> None:
-    from opi.core.task_handlers_project import handle_create_project
+    from opi.runtime.tasks.task_handlers_project import handle_create_project
 
     oom_watcher._last_tuned_pod_template_hash[_sleutel()] = _OUDE_GENERATIE
     gezien: dict[str, Any] = {}
@@ -115,7 +115,7 @@ async def test_create_wist_voor_de_uitrol_en_bewaart_wat_die_vastlegt() -> None:
         patch("opi.utils.project_names.validate_project_name", return_value=True),
         patch("opi.connectors.git.GitConnector", return_value=git),
         patch(PM_PATH, return_value=_project_manager(gezien)),
-        patch("opi.core.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
+        patch("opi.runtime.tasks.simple_background._monitor_argocd_and_deployment", new=AsyncMock()),
         patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
     ):
         result = await handle_create_project(
@@ -133,14 +133,14 @@ async def test_create_wist_voor_de_uitrol_en_bewaart_wat_die_vastlegt() -> None:
 
 @pytest.mark.asyncio
 async def test_handmatige_refresh_wist_voor_de_uitrol() -> None:
-    from opi.core.task_handlers_operations import handle_refresh_deployment
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
     oom_watcher._last_tuned_pod_template_hash[_sleutel()] = _OUDE_GENERATIE
     gezien: dict[str, Any] = {}
     store = MagicMock(get=MagicMock(return_value=MagicMock(filename=f"{_PROJECT}.yaml")))
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         patch("opi.manager.project_manager.create_project_manager", return_value=_project_manager(gezien)),
         patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
     ):
@@ -160,14 +160,14 @@ async def test_de_automatische_refresh_wist_niets() -> None:
 
     Wiste die wel, dan zou elke escalatieronde zijn eigen rem opheffen.
     """
-    from opi.core.task_handlers_operations import handle_refresh_deployment
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
     oom_watcher._last_tuned_pod_template_hash[_sleutel()] = _OUDE_GENERATIE
     gezien: dict[str, Any] = {}
     store = MagicMock(get=MagicMock(return_value=MagicMock(filename=f"{_PROJECT}.yaml")))
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         patch("opi.manager.project_manager.create_project_manager", return_value=_project_manager(gezien)),
         patch("opi.core.config.settings.OOM_WATCHER_ENABLED", False),
     ):

@@ -40,7 +40,7 @@ Sinds RC-384 zet OPI hem overal waar het secret staat, niet alleen waar hij het 
 |---|---|
 | bij het plaatsen of vervangen van het secret | `store_project_sops_key_in_namespace` zet de Role erbij; faalt dat, dan faalt het plaatsen |
 | bij elke verwerking van een project | `_ensure_sops_secret_in_namespace` zet hem ook als het secret klopt; faalt het, dan faalt de verwerking met de namespace in de melding |
-| bij het opstarten van OPI | `ensure_cmp_key_readers` in `opi/core/startup.py` loopt alle deployment-namespaces langs en zet de Role waar hij ontbreekt. Op de achtergrond, dus de readiness wacht er niet op. Logt een telling: gezet, al aanwezig, overgeslagen, gefaald. |
+| bij het opstarten van OPI | `ensure_cmp_key_readers` in `opi/runtime/startup/startup.py` loopt alle deployment-namespaces langs en zet de Role waar hij ontbreekt. Op de achtergrond, dus de readiness wacht er niet op. Logt een telling: gezet, al aanwezig, overgeslagen, gefaald. |
 
 `task cmp-sops-role-backfill` doet hetzelfde met de hand en blijft bestaan voor een cluster waar OPI nog niet is uitgerold; `DRY_RUN=true` telt alleen.
 

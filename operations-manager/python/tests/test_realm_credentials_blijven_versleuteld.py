@@ -25,7 +25,7 @@ from opi.utils.age import decrypt_password_smart
 #: De sleutels die nooit in een return-waarde horen te staan.
 GEHEIME_SLEUTELS = frozenset({"password", "totp_secret", "totp_otpauth_uri"})
 
-HANDLERS = sorted((Path(__file__).resolve().parents[1] / "opi" / "core").glob("task_handlers*.py"))
+HANDLERS = sorted((Path(__file__).resolve().parents[1] / "opi").rglob("task_handlers*.py"))
 
 
 @pytest.mark.asyncio

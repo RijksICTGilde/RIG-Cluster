@@ -24,7 +24,6 @@ import re
 from typing import cast
 
 import pytest
-from opi.core.git_monitor import file_change_handler
 from opi.core.project_schema import (
     LEGACY_PATCH_DIR,
     SCHEMA_PATH,
@@ -38,6 +37,7 @@ from opi.core.project_schema import (
     validate_project_schema,
     version_key,
 )
+from opi.runtime.periodic.git_monitor import file_change_handler
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
     LATEST_SCHEMA_VERSION_VALUE,
@@ -360,7 +360,7 @@ class TestGitMonitorGate:
         data = _project(deployments=[{"name": "prod", "cluster": "local", "namespace": "voorbeeld"}])
         del data["schema-version"]
 
-        with caplog.at_level(logging.ERROR, logger="opi.core.git_monitor"):
+        with caplog.at_level(logging.ERROR, logger="opi.runtime.periodic.git_monitor"):
             await file_change_handler("voorbeeld.yaml", data)
 
         # Loud, and explicit that the file was skipped: the old silent warning is
@@ -379,7 +379,7 @@ class TestGitMonitorGate:
         )
         validate_declared_project_schema(data)
 
-        with caplog.at_level(logging.ERROR, logger="opi.core.git_monitor"):
+        with caplog.at_level(logging.ERROR, logger="opi.runtime.periodic.git_monitor"):
             await file_change_handler("voorbeeld.yaml", data)
 
         # No deployments block, so nothing downstream runs; the point is that the

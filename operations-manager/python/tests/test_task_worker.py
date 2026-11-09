@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.actor import ACTOR_UNKNOWN, get_actor, user_actor
-from opi.core.task_worker import TaskWorker
+from opi.runtime.tasks.task_worker import TaskWorker
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def mock_task_service() -> AsyncMock:
 @pytest.fixture
 def mock_worker_settings() -> Any:
     """Mock settings with short intervals for fast tests."""
-    with patch("opi.core.task_worker.settings") as s:
+    with patch("opi.runtime.tasks.task_worker.settings") as s:
         s.TASK_WORKER_POLL_INTERVAL = 0.05
         s.TASK_WORKER_HEARTBEAT_INTERVAL = 0.05
         s.TASK_WORKER_STALE_THRESHOLD = 120
@@ -120,7 +120,7 @@ class TestRegisterHandler:
 class TestWorkerClaimsAndDispatches:
     """Tests for the core claim-and-dispatch flow."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_claims_and_dispatches(
         self,
         mock_progress_cls: MagicMock,
@@ -162,7 +162,7 @@ class TestWorkerClaimsAndDispatches:
 class TestWorkerNoHandler:
     """Tests for tasks with no registered handler."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_no_handler(
         self,
         mock_progress_cls: MagicMock,
@@ -196,7 +196,7 @@ class TestWorkerNoHandler:
 class TestWorkerHandlerException:
     """Tests for handler exceptions."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_handler_exception(
         self,
         mock_progress_cls: MagicMock,
@@ -264,7 +264,7 @@ class TestWorkerStop:
 class TestWorkerHeartbeat:
     """Tests for heartbeat during task execution."""
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_worker_heartbeat(
         self,
         mock_progress_cls: MagicMock,
@@ -336,7 +336,7 @@ class TestWorkerSetsActor:
 
         await _run_worker_until(worker, done)
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_handler_ziet_de_actor_van_created_by(
         self,
         mock_progress_cls: MagicMock,
@@ -350,7 +350,7 @@ class TestWorkerSetsActor:
 
         assert seen["actor"] == user_actor("iemand@example.org")
 
-    @patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+    @patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
     async def test_zonder_created_by_ziet_de_handler_onbekend(
         self,
         mock_progress_cls: MagicMock,
@@ -379,7 +379,7 @@ class TestWorkerCleanupLoop:
         mock_task_service.cleanup_old_tasks.side_effect = _stop_after_call
         worker._running = True
 
-        with patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock()):
+        with patch("opi.runtime.tasks.task_worker.asyncio.sleep", new=AsyncMock()):
             await worker._cleanup_loop()
 
         mock_task_service.cleanup_old_tasks.assert_awaited_once_with(
@@ -405,9 +405,9 @@ class TestWorkerCleanupLoop:
         worker._running = True
 
         with (
-            patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock(side_effect=_stop_after_first_sleep)),
-            patch("opi.core.task_worker.UserOtpService", return_value=otp_service),
-            patch("opi.core.task_worker.get_session_store", return_value=store),
+            patch("opi.runtime.tasks.task_worker.asyncio.sleep", new=AsyncMock(side_effect=_stop_after_first_sleep)),
+            patch("opi.runtime.tasks.task_worker.UserOtpService", return_value=otp_service),
+            patch("opi.runtime.tasks.task_worker.get_session_store", return_value=store),
         ):
             await worker._cleanup_loop()
 

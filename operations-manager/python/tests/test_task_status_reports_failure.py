@@ -28,7 +28,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_worker import TaskWorker, reported_failure
+from opi.runtime.tasks.task_worker import TaskWorker, reported_failure
 
 # --------------------------------------------------------------------------------------
 # De beslissing zelf
@@ -116,7 +116,7 @@ def task_service() -> AsyncMock:
 
 @pytest.fixture
 def worker_settings() -> Any:
-    with patch("opi.core.task_worker.settings") as s:
+    with patch("opi.runtime.tasks.task_worker.settings") as s:
         s.TASK_WORKER_POLL_INTERVAL = 0.05
         s.TASK_WORKER_HEARTBEAT_INTERVAL = 0.05
         s.TASK_WORKER_STALE_THRESHOLD = 120
@@ -136,7 +136,7 @@ async def _draai_tot(worker: TaskWorker, klaar: asyncio.Event, timeout: float = 
         await run_task
 
 
-@patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+@patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
 async def test_de_afgewezen_dienstselectie_meldt_zich_als_mislukt(
     mock_progress_cls: MagicMock,
     task_service: AsyncMock,
@@ -183,7 +183,7 @@ async def test_de_afgewezen_dienstselectie_meldt_zich_als_mislukt(
     assert kwargs["result"] == antwoord, "het antwoord van de handler hoort bewaard te blijven"
 
 
-@patch("opi.core.persistent_task_progress.PersistentTaskProgressManager")
+@patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager")
 async def test_een_geslaagde_taak_verandert_niet_van_gedrag(
     mock_progress_cls: MagicMock,
     task_service: AsyncMock,

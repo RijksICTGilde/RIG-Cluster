@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.core.task_handlers_deployment import handle_delete_deployment
+from opi.runtime.tasks.task_handlers_deployment import handle_delete_deployment
 from opi.services import oom_watcher
 
 if TYPE_CHECKING:

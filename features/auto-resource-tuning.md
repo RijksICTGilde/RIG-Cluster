@@ -402,7 +402,7 @@ Auto-tuning is **on by default**. A component opts out with `auto-tune-resources
 | `opi/services/resource_tuning_service.py` | `apply_resource_tuning` (mutate project_data in place: analysis, root floor, margin) + `tune_deployment_resources` (git read + single commit) |
 | `opi/services/catalog/resource_tuning/` | The resource-tuning **system service**: its owned config (`config.py`/`config_model.py`) and its `@on(ActionEvent.AFTER_SYNC)` handler |
 | `opi/services/deployment_observation.py` | Generic after-sync runner: asks `registry.listeners(ActionEvent.AFTER_SYNC)`, lets each service observe, commits once |
-| `opi/core/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
+| `opi/runtime/periodic/resource_tuning_scheduler.py` | Nightly fleet-wide tuner (off-peak sweep + rollout pacing) |
 | `opi/connectors/vpa.py` | Parse VPA `.status.recommendation` (CPU→m, memory→Mi) |
 | `opi/api/resource_router.py` | On-demand API endpoint |
 | `opi/handlers/project_file_handler.py` | YAML manipulation: read/write resources, opt-out flag |
@@ -441,7 +441,7 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 
 ## Nightly Auto-Tuning
 
-`ResourceTuningScheduler` (`opi/core/resource_tuning_scheduler.py`, started from the server lifespan) runs **once a night** at `RESOURCE_TUNING_HOUR` (Europe/Amsterdam, default 01:00 — off-peak, and an hour before backups (~02:00) so resize-triggered pod rollouts settle before the backup snapshot). Each night it:
+`ResourceTuningScheduler` (`opi/runtime/periodic/resource_tuning_scheduler.py`, started from the server lifespan) runs **once a night** at `RESOURCE_TUNING_HOUR` (Europe/Amsterdam, default 01:00 — off-peak, and an hour before backups (~02:00) so resize-triggered pod rollouts settle before the backup snapshot). Each night it:
 
 1. Enumerates every project with a deployment on this OPI's cluster.
 2. Calls `tune_deployment_resources(project)` for each. The deadband decides what actually changes; converged projects produce no change and cost only the (cheap, read-only) analysis.

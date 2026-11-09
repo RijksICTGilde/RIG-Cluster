@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core import progress_steps
-from opi.core.persistent_task_progress import TaskStatus
+from opi.runtime.tasks.persistent_task_progress import TaskStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -26,10 +26,10 @@ if TYPE_CHECKING:
 def _progress() -> Any:
     """A real progress manager without its periodic flush loop."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-under-test",
@@ -631,8 +631,8 @@ def _refresh_manager(monkeypatch: pytest.MonkeyPatch) -> Any:
 async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     monkeypatch: pytest.MonkeyPatch, stub_platform_repo_sync: None
 ) -> None:
-    from opi.core.task_handlers_operations import handle_refresh_project
     from opi.core.task_rollout import first_phase
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
 
     manager = _refresh_manager(monkeypatch)
     project = MagicMock()
@@ -640,7 +640,7 @@ async def test_a_refresh_shows_three_phases_with_its_steps_under_them(
     store = MagicMock()
     store.get.return_value = project
     store.reconcile = AsyncMock()
-    monkeypatch.setattr("opi.core.task_handlers_operations.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.runtime.tasks.task_handlers_operations.get_project_store", lambda: store)
     monkeypatch.setattr("opi.manager.project_manager.create_project_manager", lambda *a, **k: manager)
 
     progress = _progress()

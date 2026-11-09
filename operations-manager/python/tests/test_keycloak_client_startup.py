@@ -7,11 +7,11 @@ import pytest
 from keycloak.exceptions import KeycloakConnectionError
 from opi.bootstrap import keycloak_setup as keycloak_setup_mod
 from opi.bootstrap.keycloak_setup import KeycloakSetup
-from opi.core import keycloak_client_startup as startup_mod
-from opi.core import startup as core_startup
 from opi.core.config import settings
-from opi.core.keycloak_client_startup import ensure_keycloak_credentials, validate_oidc_credentials
 from opi.core.readiness import ReadinessState
+from opi.runtime.startup import keycloak_client_startup as startup_mod
+from opi.runtime.startup import startup as core_startup
+from opi.runtime.startup.keycloak_client_startup import ensure_keycloak_credentials, validate_oidc_credentials
 
 if TYPE_CHECKING:
     from pathlib import Path

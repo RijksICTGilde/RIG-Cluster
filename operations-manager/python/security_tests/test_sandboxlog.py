@@ -168,11 +168,13 @@ def test_asgi_fouten_noemt_de_proef_waarin_ze_vielen(tmp_path: Path) -> None:
 def test_laatste_regels_geeft_het_staartje_voor_een_crash(tmp_path: Path) -> None:
     pad = _schrijf(
         tmp_path / "opi.log",
-        "".join(f"2026-10-23 07:45:00,00{nummer} INFO opi.core.startup regel {nummer}\n" for nummer in range(5)),
+        "".join(
+            f"2026-10-23 07:45:00,00{nummer} INFO opi.runtime.startup.startup regel {nummer}\n" for nummer in range(5)
+        ),
     )
     assert laatste_regels(pad, aantal=2) == (
-        "2026-10-23 07:45:00,003 INFO opi.core.startup regel 3",
-        "2026-10-23 07:45:00,004 INFO opi.core.startup regel 4",
+        "2026-10-23 07:45:00,003 INFO opi.runtime.startup.startup regel 3",
+        "2026-10-23 07:45:00,004 INFO opi.runtime.startup.startup regel 4",
     )
 
 

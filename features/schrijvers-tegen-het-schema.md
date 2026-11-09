@@ -67,7 +67,7 @@ past wat jij schrijft in het schema, en legt een test dat vast?
 | `services/oom_watcher.py` | `disabled` / `disabled-reason` na image-pull-fouten | ja |
 | `services/deployment_observation.py` | commit-punt voor de after-sync haken | ja (via de tuner) |
 | `api/resource_router.py` | `disabled` / `disabled-reason` bij het opschonen van kapotte componenten | ja |
-| `core/backup_tasks.py` | generatienummers per dienst, en een hele nieuwe deployment bij een kloon | ja |
+| `runtime/backup/backup_tasks.py` | generatienummers per dienst, en een hele nieuwe deployment bij een kloon | ja |
 | `api/restore_router.py` | generatienummers en de kloonstatus na een restore | ja |
 | `services/catalog/sleep_mode/flow.py` | `deployments[].sleep`: stand, deadline, versleuteld wektoken | ja |
 | `services/catalog/sleep_mode/scheduler.py` | dezelfde staat vanuit de nachtelijke veger | ja |
@@ -79,7 +79,7 @@ past wat jij schrijft in het schema, en legt een test dat vast?
 | Module | Schrijft | Gedraaid |
 |---|---|---|
 | `manager/project_manager.py` | vrijwel elk deel van het bestand | deels (registries, bijlagen) |
-| `web/router_wizard.py`, `core/task_handlers_project.py`, `api/router.py` | het hele bestand zoals wizard/API het opleveren | ja (`test_create_project_api.py`) |
+| `web/router_wizard.py`, `runtime/tasks/task_handlers_project.py`, `api/router.py` | het hele bestand zoals wizard/API het opleveren | ja (`test_create_project_api.py`) |
 | `web/router.py` | de domeininstellingen van een deployment | ja |
 | `web/router_detail_edit.py` | het deel dat de bewerkte stroom beslaat | nee (`tests/forms/`) |
 | `web/router_approvals.py` | de goedkeuringsstaat van domeinen en subdomeinen | nee (eigen modeltests) |

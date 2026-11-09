@@ -10,7 +10,7 @@ import os
 import socket
 import uuid
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, func, literal, or_, select, tuple_, update
 from sqlalchemy.orm import aliased
@@ -20,12 +20,32 @@ from opi.core.db import session_scope
 from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
 from opi.core.task_rollout import PROCESSING_TASK_TYPES
 from opi.core.task_supersede import Scope, covers, scope_of
-from opi.core.task_worker import notify_new_task
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.utils.logging_redact import redact_structure, redact_text
 
+if TYPE_CHECKING:
+    import asyncio
+
 logger = logging.getLogger(__name__)
+
+#: The alarm of the worker in this process, or None when no worker runs (the API-only role,
+#: and every test). It belongs to the worker and not to the module, because an asyncio.Event
+#: binds itself to the event loop of its first waiter.
+_waker: asyncio.Event | None = None
+
+
+def register_waker(waker: asyncio.Event) -> None:
+    """Make this the alarm that notify_new_task pulls."""
+    global _waker
+    _waker = waker
+
+
+def notify_new_task() -> None:
+    """Wake the task worker: there is a new task in the queue."""
+    if _waker is not None:
+        _waker.set()
+
 
 #: Safety net on the length of a stored error message. Not a column requirement (the column
 #: is TEXT), but a bound against an exception that drags a dump along. Well above every honest

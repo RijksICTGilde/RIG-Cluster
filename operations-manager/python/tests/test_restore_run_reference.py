@@ -114,8 +114,8 @@ class TestTheSavedProjectFile:
         manager.save_and_commit_project = AsyncMock()
         manager.close = AsyncMock()
         with (
-            patch("opi.core.backup_tasks.get_project_store") as store,
-            patch("opi.core.backup_tasks.ProjectManager", return_value=manager),
+            patch("opi.runtime.backup.backup_tasks.get_project_store") as store,
+            patch("opi.runtime.backup.backup_tasks.ProjectManager", return_value=manager),
         ):
             store.return_value.get.return_value = project
             yield {"project_data": project_data, "save": manager.save_and_commit_project}
@@ -123,7 +123,7 @@ class TestTheSavedProjectFile:
     @pytest.mark.asyncio
     async def test_the_saved_file_names_the_run_and_validates_against_the_schema(self, saved: Any) -> None:
         """De toets die het oude pad had moeten vangen: door de echte schemavalidatie heen."""
-        from opi.core.backup_tasks import _create_deployment_from_source
+        from opi.runtime.backup.backup_tasks import _create_deployment_from_source
 
         await _create_deployment_from_source(PROJECT, TARGET, SOURCE, backup_run_id=RUN)
 
@@ -141,7 +141,7 @@ class TestTheSavedProjectFile:
     async def test_the_wizard_service_shape_is_normalized_before_the_save(self, saved: Any) -> None:
         """Staging, wies-6z3: the restore wizard hands publish-on-web over in the name-as-key
         shape, and the schema's deployment-service envelope refused the whole file."""
-        from opi.core.backup_tasks import _create_deployment_from_source
+        from opi.runtime.backup.backup_tasks import _create_deployment_from_source
 
         deployment_config = {
             "name": TARGET,
@@ -158,7 +158,7 @@ class TestTheSavedProjectFile:
     @pytest.mark.asyncio
     async def test_the_file_is_saved_with_validation_on(self, saved: Any) -> None:
         """Een ongeldig bestand hoort de restore te stoppen voordat er iets is aangemaakt."""
-        from opi.core.backup_tasks import _create_deployment_from_source
+        from opi.runtime.backup.backup_tasks import _create_deployment_from_source
 
         await _create_deployment_from_source(PROJECT, TARGET, SOURCE, backup_run_id=RUN)
 
@@ -341,7 +341,7 @@ class TestTheItemsReachTheRightManager:
     @pytest.mark.asyncio
     async def test_the_pvc_items_reach_the_pvc_pre_restore(self) -> None:
         """De PVC's gaan voor de verwerking, dus ArgoCD neemt ze gevuld over."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": PROJECT,
@@ -354,7 +354,7 @@ class TestTheItemsReachTheRightManager:
                 {"resource_type": "pvc", "snapshot_id": "snap-pvc", "component_name": "mono", "storage_name": "data"},
             ],
         }
-        _thb = "opi.core.task_handlers_backup"
+        _thb = "opi.runtime.backup.task_handlers_backup"
         with (
             patch(f"{_thb}._create_deployment_from_source", AsyncMock()) as create,
             patch(f"{_thb}._pre_restore_pvcs", AsyncMock()) as pre_restore,
@@ -372,7 +372,7 @@ class TestAnUnknownRunCreatesNothing:
     @pytest.mark.asyncio
     async def test_a_restore_without_a_matching_run_creates_no_deployment(self) -> None:
         """Een lege run is schemageldig, dus de handler moet hem weigeren voor hij iets aanmaakt."""
-        from opi.core.task_handlers_backup import handle_restore
+        from opi.runtime.backup.task_handlers_backup import handle_restore
 
         payload = {
             "project_name": PROJECT,
@@ -382,7 +382,7 @@ class TestAnUnknownRunCreatesNothing:
             "source_deployment": "",
             "backup_items": [],
         }
-        _thb = "opi.core.task_handlers_backup"
+        _thb = "opi.runtime.backup.task_handlers_backup"
         with (
             patch(f"{_thb}._create_deployment_from_source", AsyncMock()) as create,
             patch(f"{_thb}._pre_restore_pvcs", AsyncMock()) as pre_restore,

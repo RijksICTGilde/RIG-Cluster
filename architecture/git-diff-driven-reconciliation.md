@@ -21,7 +21,7 @@ footprint should disappear too. Today that invariant holds for create/update but
 ## 2. Current state (with evidence)
 
 ### 2.1 Git monitoring does not process the full lifecycle
-- `opi/core/git_monitor.py` → `file_change_handler(file_path, content)` reacts only to
+- `opi/runtime/periodic/git_monitor.py` → `file_change_handler(file_path, content)` reacts only to
   a *changed* file and merely ensures namespaces (`check_and_create_namespaces`).
   There is **no branch for a removed project file**, and no full processing
   (DB/bucket/argo/manifests) — that is all it does.

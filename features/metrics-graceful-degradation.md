@@ -94,7 +94,7 @@ delen dat fouttypepaar; zie
 - `opi/connectors/grafana_prometheus.py`: de status, de probe en het herstel
 - `opi/connectors/metrics_backend.py`: `MetricsUnavailableError` en `MetricsQueryError`
 - `opi/connectors/prometheus.py`: `get_metrics_connector()` en `close_metrics_connector()`
-- `opi/core/startup.py`: start de eerste probe
+- `opi/runtime/startup/startup.py`: start de eerste probe
 - `opi/server.py`: sluit de connector bij shutdown
 - `tests/test_grafana_degradatie_en_herstel.py`: de metingen hierop, met een
   `httpx.MockTransport` in plaats van een echte Grafana

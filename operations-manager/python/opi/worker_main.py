@@ -19,7 +19,7 @@ async def main() -> None:
     """Initialize and run the standalone task worker."""
     from opi.core.async_task_service import AsyncTaskService, TaskType
     from opi.core.database_pool import DatabasePool
-    from opi.core.task_worker import TaskWorker
+    from opi.runtime.tasks.task_worker import TaskWorker
 
     # Initialize database pool. De app-rol, net als de hoofdpool van de frontend: de
     # worker raakt alleen OPI's eigen tabellen (RC-410).
@@ -37,7 +37,7 @@ async def main() -> None:
     worker = TaskWorker(task_service=task_service, cluster=settings.CLUSTER_MANAGER)
 
     # Register handlers
-    from opi.core.task_handlers_components import (
+    from opi.runtime.tasks.task_handlers_components import (
         handle_add_component,
         handle_add_component_to_deployment,
         handle_add_service,
@@ -47,11 +47,11 @@ async def main() -> None:
         handle_manage_database_schemas,
         handle_update_component,
     )
-    from opi.core.task_handlers_deployment import (
+    from opi.runtime.tasks.task_handlers_deployment import (
         handle_delete_deployment,
         handle_update_image,
     )
-    from opi.core.task_handlers_operations import (
+    from opi.runtime.tasks.task_handlers_operations import (
         handle_clone_bucket,
         handle_clone_database,
         handle_refresh_deployment,
@@ -59,7 +59,7 @@ async def main() -> None:
         handle_rotate_credentials,
         handle_rotate_project_key,
     )
-    from opi.core.task_handlers_project import (
+    from opi.runtime.tasks.task_handlers_project import (
         handle_create_project,
         handle_delete_project,
         handle_upsert_deployment,

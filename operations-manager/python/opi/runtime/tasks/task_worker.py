@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from fastapi import HTTPException
 
 from opi.core.actor import actor_from_stored, set_actor
+from opi.core.async_task_service import register_waker
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
 from opi.core.metrics import set_rollout_task_type
@@ -38,17 +39,6 @@ if TYPE_CHECKING:
     from opi.core.async_task_service import AsyncTaskService
 
 logger = logging.getLogger(__name__)
-
-#: The alarm of the worker in this process, or None when no worker runs (the API-only role,
-#: and every test). It belongs to the worker and not to the module, because an asyncio.Event
-#: binds itself to the event loop of its first waiter.
-_waker: asyncio.Event | None = None
-
-
-def notify_new_task() -> None:
-    """Wake the task worker: there is a new task in the queue."""
-    if _waker is not None:
-        _waker.set()
 
 
 def failure_result(message: str, error_type: str) -> dict[str, str]:
@@ -118,8 +108,6 @@ class TaskWorker:
     """
 
     def __init__(self, task_service: AsyncTaskService, cluster: str):
-        global _waker
-
         self._task_service = task_service
         self._cluster = cluster
         self._running = False
@@ -128,7 +116,7 @@ class TaskWorker:
         # The alarm notify_new_task pulls. There is one worker per process, so the last one
         # made is the alarm that counts.
         self._waker = asyncio.Event()
-        _waker = self._waker
+        register_waker(self._waker)
 
         # Handler registry - maps TaskType to handler function
         self._handlers: dict[str, Callable] = {}
@@ -281,7 +269,7 @@ class TaskWorker:
                 raise ValueError(f"No handler registered for task type: {task_type}")
 
             # Create PersistentTaskProgressManager for this task
-            from opi.core.persistent_task_progress import PersistentTaskProgressManager
+            from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
             progress = PersistentTaskProgressManager(
                 task_id=task_id,

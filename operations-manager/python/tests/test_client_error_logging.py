@@ -27,10 +27,10 @@ def test_onbekende_componentverwijzing_logt_op_warning(caplog) -> None:
 def _progress():
     """Een echte progress manager zonder zijn periodieke flush-lus."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-under-test",
@@ -43,7 +43,7 @@ def test_fail_task_met_client_error_logt_op_warning(caplog) -> None:
     progress = _progress()
     task_id = progress.add_task("Deployment validatie")
 
-    with caplog.at_level(logging.DEBUG, logger="opi.core.persistent_task_progress"):
+    with caplog.at_level(logging.DEBUG, logger="opi.runtime.tasks.persistent_task_progress"):
         progress.fail_task(task_id, "component bestaat niet", client_error=True)
 
     records = [r for r in caplog.records if "Failed task" in r.getMessage()]
@@ -54,7 +54,7 @@ def test_fail_task_zonder_vlag_blijft_error(caplog) -> None:
     progress = _progress()
     task_id = progress.add_task("Deployment validatie")
 
-    with caplog.at_level(logging.DEBUG, logger="opi.core.persistent_task_progress"):
+    with caplog.at_level(logging.DEBUG, logger="opi.runtime.tasks.persistent_task_progress"):
         progress.fail_task(task_id, "git push mislukt")
 
     records = [r for r in caplog.records if "Failed task" in r.getMessage()]

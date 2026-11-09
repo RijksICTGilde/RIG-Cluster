@@ -347,7 +347,7 @@ def stub_platform_repo_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     async def nothing() -> None:
         return None
 
-    monkeypatch.setattr("opi.core.task_handlers_operations.sync_platform_repos", nothing)
+    monkeypatch.setattr("opi.runtime.tasks.task_handlers_operations.sync_platform_repos", nothing)
 
 
 @pytest.fixture(autouse=True)

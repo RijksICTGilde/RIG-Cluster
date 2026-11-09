@@ -18,8 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from keycloak.exceptions import KeycloakError
-from opi.core import startup
 from opi.manager.keycloak_manager import KeycloakManager
+from opi.runtime.startup import startup
 
 
 def _unreachable_connector() -> MagicMock:

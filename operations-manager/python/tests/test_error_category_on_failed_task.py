@@ -135,8 +135,9 @@ class TestElkeTaakVertelt:
         import re
         from pathlib import Path
 
+        root = Path(__file__).parent.parent / "opi"
         bron = "".join(
-            (Path(__file__).parent.parent / "opi" / "core" / naam).read_text()
+            next(root.rglob(naam)).read_text()
             for naam in (
                 "task_handlers_components.py",
                 "task_handlers_project.py",
@@ -243,22 +244,22 @@ def _store() -> MagicMock:
 
 
 async def _refresh_project(fout: Exception | None) -> dict:
-    from opi.core.task_handlers_operations import handle_refresh_project
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
 
     manager = _gestrande_manager(fout)
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=_store()),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=_store()),
         patch("opi.manager.project_manager.create_project_manager", return_value=manager),
     ):
         return await handle_refresh_project({"project_name": "demo"}, MagicMock())
 
 
 async def _refresh_deployment(fout: Exception | None) -> dict:
-    from opi.core.task_handlers_operations import handle_refresh_deployment
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment
 
     manager = _gestrande_manager(fout)
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=_store()),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=_store()),
         patch("opi.manager.project_manager.create_project_manager", return_value=manager),
     ):
         return await handle_refresh_deployment(
@@ -268,7 +269,7 @@ async def _refresh_deployment(fout: Exception | None) -> dict:
 
 
 async def _create_project(fout: Exception | None) -> dict:
-    from opi.core.task_handlers_project import handle_create_project
+    from opi.runtime.tasks.task_handlers_project import handle_create_project
 
     manager = _gestrande_manager(fout)
     with (
@@ -290,7 +291,7 @@ async def _delete_component(fout: Exception | None) -> dict:
     """De component-delete-handler roept `handle_refresh_project` INTERN aan en bouwt zijn
     eigen antwoord uit het resultaat. Die geeft `error_type` door; zonder de categorie leidt
     `_with_error_category` hem opnieuw af uit "processing_failed" en is hij weer Unknown."""
-    from opi.core.task_handlers_components import handle_delete_component
+    from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
     binnen = await _refresh_project(fout)
     manager = MagicMock()
@@ -298,7 +299,7 @@ async def _delete_component(fout: Exception | None) -> dict:
     manager.close = AsyncMock(return_value=None)
     with (
         patch("opi.manager.project_manager.ProjectManager", return_value=manager),
-        patch("opi.core.task_handlers_operations.handle_refresh_project", AsyncMock(return_value=binnen)),
+        patch("opi.runtime.tasks.task_handlers_operations.handle_refresh_project", AsyncMock(return_value=binnen)),
     ):
         return await handle_delete_component({"project_name": "demo", "component_name": "api"}, MagicMock())
 

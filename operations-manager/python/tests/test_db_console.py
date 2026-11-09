@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.db_console_reaper import DbConsoleReaper
 from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
 from opi.manager.db_console_manager import (
@@ -16,6 +15,7 @@ from opi.manager.db_console_manager import (
     DbConsoleSession,
     DbConsoleTool,
 )
+from opi.runtime.periodic.db_console_reaper import DbConsoleReaper
 from opi.utils import naming
 from opi.utils.secrets import DatabaseSecret
 

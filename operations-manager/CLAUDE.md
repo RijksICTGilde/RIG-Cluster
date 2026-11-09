@@ -64,12 +64,16 @@ opi/
 |
 |-- core/                  # Application bootstrap and config
 |   |-- config.py          #   Settings (env vars, cluster config)
-|   |-- startup.py         #   Initialization tasks
 |   |-- database_pools.py  #   AsyncPG connection pool management
-|   |-- git_monitor.py     #   Git file change watcher
 |   |-- metrics.py         #   Prometheus metrics definitions
 |   |-- tracing.py         #   OpenTelemetry setup
 |   +-- auth_decorators.py #   Authentication/authorization decorators
+|
+|-- runtime/               # Startup, task worker, backup and periodic loops
+|   |-- startup/           #   Initialization tasks (startup.py and friends)
+|   |-- tasks/             #   Task worker and its task handlers
+|   |-- backup/            #   Backup scheduler, backup tasks, retention sweep
+|   +-- periodic/          #   Watchers and reconcilers (git_monitor.py, ...)
 |
 |-- generation/            # Kubernetes manifest generation
 |   +-- manifests.py       #   Jinja2 template rendering

@@ -381,7 +381,7 @@ class KeycloakSetup:
                 project_name=project_name,
                 ingress_hosts=ingress_hosts,
                 realm_name=target_realm,
-                # De OPI-login stuurt PKCE mee (opi/core/startup.py), dus Keycloak mag een
+                # De OPI-login stuurt PKCE mee (opi/runtime/startup/startup.py), dus Keycloak mag een
                 # authorization code zonder challenge weigeren.
                 require_pkce=True,
             )

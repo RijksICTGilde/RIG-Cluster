@@ -940,7 +940,7 @@ class TestEenOnleesbareSecretRoteertNiets:
         """En het blijft non-critical: de taak vangt ``KubectlExecutionError`` al, dus de
         boot gaat door en de volgende opstart leest de Secret gewoon terug."""
         from opi.connectors.kubectl import KubectlConnector
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(KubectlConnector, "get_secret", AsyncMock(return_value=None))
         monkeypatch.setattr(KubectlConnector, "secret_exists", AsyncMock(return_value=None))
@@ -976,7 +976,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
 
     @pytest.mark.asyncio
     async def test_an_unreachable_relay_is_logged_and_not_raised(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise aiohttp.ClientConnectorError(
@@ -990,7 +990,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
     @pytest.mark.asyncio
     async def test_a_relay_that_refuses_the_call_is_logged_and_not_raised(self, monkeypatch) -> None:
         from opi.connectors.mail import MailRelayError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise MailRelayError("POST /api/principal gaf 500")
@@ -1002,7 +1002,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
     async def test_a_dns_failure_is_logged_and_not_raised(self, monkeypatch) -> None:
         """``socket.gaierror`` is an ``OSError``, and it is what an unknown relay hostname
         gives before aiohttp has anything of its own to raise."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise OSError("Name or service not known")
@@ -1016,7 +1016,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
         is juist de toestand waar de kubectl-connector zijn eigen herhaallus voor heeft: de
         API-server is (nog) niet bereikbaar terwijl OPI opstart."""
         from opi.connectors.kubectl import KubectlConnectionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise KubectlConnectionError("kubectl connection is not available")
@@ -1029,7 +1029,7 @@ class TestDeStartuptaakTrektDeBootNietOm:
         """``create_mail_connector`` ontsleutelt ``MAIL_RELAY_ADMIN_PASSWORD``; een waarde die
         nog niet te ontsleutelen is geeft een kale ``ValueError``. Dat is de waarschijnlijke
         eerste toestand na het aanzetten van ``MAIL_RELAY_API_URL``, geen randgeval."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise ValueError("Failed to decrypt password: no matching AGE key")
@@ -3779,7 +3779,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
     @pytest.mark.asyncio
     async def test_an_unreachable_relay_is_logged_and_not_raised(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise aiohttp.ClientConnectorError(
@@ -3793,7 +3793,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     @pytest.mark.asyncio
     async def test_a_relay_that_refuses_the_call_is_logged_and_not_raised(self, monkeypatch) -> None:
         from opi.connectors.mail import MailRelayError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise MailRelayError("POST /api/principal gaf 500")
@@ -3805,7 +3805,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     async def test_a_dns_failure_is_logged_and_not_raised(self, monkeypatch) -> None:
         """``socket.gaierror`` is een ``OSError``, en het is wat een onbekende relayhostnaam
         geeft voordat aiohttp iets eigens te werpen heeft."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise OSError("Name or service not known")
@@ -3818,7 +3818,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
         """Deze weg LEEST een Secret in plaats van er een te schrijven, en een cluster dat
         die leesactie weigert moet gewoon opstarten zonder Keycloak-mail."""
         from opi.connectors.kubectl import KubectlExecutionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise KubectlExecutionError('secrets "keycloak-mail-credentials" is forbidden')
@@ -3832,7 +3832,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
         is juist de toestand waar de kubectl-connector zijn eigen herhaallus voor heeft: de
         API-server is tijdens het opstarten nog niet bereikbaar."""
         from opi.connectors.kubectl import KubectlConnectionError
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise KubectlConnectionError("kubectl connection is not available")
@@ -3844,7 +3844,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     async def test_an_undecryptable_admin_password_is_logged_and_not_raised(self, monkeypatch) -> None:
         """``create_mail_connector`` ontsleutelt ``MAIL_RELAY_ADMIN_PASSWORD``; een waarde die
         nog niet te ontsleutelen is geeft een kale ``ValueError``."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         async def _boom() -> None:
             raise ValueError("Failed to decrypt password: no matching AGE key")
@@ -3859,14 +3859,14 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
         RC-261 maakte dat verschil dragend: de opstart-herhaallus probeert een ``False``
         opnieuw en zou op een cluster zonder relay anders eeuwig blijven tikken."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=None))
         assert await startup.ensure_keycloak_mail_account() is None
 
     @pytest.mark.asyncio
     async def test_een_ingericht_account_meldt_true(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         account = MailAccount(
             username=settings.MAIL_KEYCLOAK_ACCOUNT,
@@ -3886,7 +3886,7 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
 
         Twee hops sinds RC-261: de boot roept ``_setup_mail_accounts`` aan en die roept beide
         accounts aan. Een toets op alleen de laatste zou een losgeraakte boot niet zien."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         assert "_setup_mail_accounts(" in inspect.getsource(startup.run_startup_tasks)
         bron = inspect.getsource(startup._setup_mail_accounts)
@@ -3907,7 +3907,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
     @pytest.fixture(autouse=True)
     def _snel(self, monkeypatch):
         """Zonder wachttijd, anders duurt elke ronde van de lus een minuut."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(startup, "STARTUP_RETRY_INTERVAL", 0)
 
@@ -3922,7 +3922,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
 
     @pytest.mark.asyncio
     async def test_een_onbereikbare_relay_wordt_opnieuw_geprobeerd_en_de_lus_stopt_na_succes(self, monkeypatch) -> None:
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         pogingen: list[int] = []
 
@@ -3949,7 +3949,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         """De tegenproef, en de reden dat ``None`` iets anders moet betekenen dan ``False``:
         zonder dat verschil zou deze lus op zo'n cluster eeuwig elke minuut een regel
         schrijven."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         platform = AsyncMock(return_value=None)
         keycloak = AsyncMock(return_value=None)
@@ -3967,7 +3967,7 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
     async def test_de_lus_blijft_proberen_zolang_een_van_de_twee_faalt(self, monkeypatch) -> None:
         """Keycloak faalt en het platformaccount staat al: dat is nog niet afgehandeld. Zonder
         deze eis zou inlogmail stil wegblijven terwijl de portalmail werkt."""
-        from opi.core import startup
+        from opi.runtime.startup import startup
 
         monkeypatch.setattr(MailManager, "ensure_platform_account", AsyncMock(return_value=self._account()))
         pogingen: list[int] = []
@@ -3991,8 +3991,8 @@ class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
         """De schakel die het geheel pas laat werken: zonder doorgeven start de lus met
         ``mail_accounts_done=True`` (de standaard) en probeert hij de accounts nooit."""
         from fastapi import FastAPI
-        from opi.core import startup
         from opi.core.readiness import get_readiness_state
+        from opi.runtime.startup import startup
 
         for dienst in get_readiness_state().get_all_services():
             dienst.mark_ready()

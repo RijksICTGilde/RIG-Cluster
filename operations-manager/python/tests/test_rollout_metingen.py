@@ -26,10 +26,10 @@ from opi.web.router import _build_task_hierarchy, _step_duration_seconds, _total
 def _progress() -> Any:
     """Een echte voortgangsmanager zonder zijn periodieke flush-lus."""
     with patch(
-        "opi.core.persistent_task_progress.asyncio.get_running_loop",
+        "opi.runtime.tasks.persistent_task_progress.asyncio.get_running_loop",
         side_effect=RuntimeError,
     ):
-        from opi.core.persistent_task_progress import PersistentTaskProgressManager
+        from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 
         return PersistentTaskProgressManager(
             task_id="task-meting",

@@ -23,7 +23,7 @@ from opi.core.async_task_service import TaskType
 PYTHON_ROOT = Path(__file__).resolve().parent.parent
 MAP = PYTHON_ROOT / "tests" / "regression" / "actions.yaml"
 SERVER = PYTHON_ROOT / "opi" / "server.py"
-STARTUP = PYTHON_ROOT / "opi" / "core" / "startup.py"
+STARTUP = PYTHON_ROOT / "opi" / "runtime" / "startup" / "startup.py"
 WORKER = PYTHON_ROOT / "opi" / "worker_main.py"
 
 #: De TaskTypes die ``opi/worker_main.py`` met opzet niet registreert. Die losse worker

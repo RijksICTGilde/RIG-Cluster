@@ -52,7 +52,7 @@ Subscribe to the same topic in the ntfy phone app to receive alerts.
 The pipeline lives in `opi/services/log_watcher.py` (`run_cycle`) and is the
 **single source of truth** shared by both entrypoints:
 
-- `opi/core/logwatcher_scheduler.py` - the in-app async loop. Starts/stops in the
+- `opi/runtime/periodic/logwatcher_scheduler.py` - the in-app async loop. Starts/stops in the
   FastAPI lifespan (`opi/server.py`), mirroring the other schedulers. The pipeline
   is synchronous (httpx), so each sweep is offloaded with `asyncio.to_thread` to
   keep the event loop free. Injects `triage_fn=None` and an in-memory dedup dict.

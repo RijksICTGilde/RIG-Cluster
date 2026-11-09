@@ -22,10 +22,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 from opi.api.restore_router import _require_namespace_owned_by_project
-from opi.core import git_monitor
 from opi.core.cluster_config import get_pod_security_labels, get_prefixed_namespace, namespace_labels
 from opi.manager.backup import RestoreResult
 from opi.manager.project_manager import ProjectManager
+from opi.runtime.periodic import git_monitor
 
 
 def _make_manager(project_data: dict) -> ProjectManager:
@@ -140,7 +140,7 @@ class TestGitMonitorNamespacePinning:
     def _spy_kubectl(self, monkeypatch):
         self.kubectl = _SpyKubectl()
         monkeypatch.setattr(
-            "opi.core.git_monitor.create_kubectl_connector",
+            "opi.runtime.periodic.git_monitor.create_kubectl_connector",
             lambda *a, **k: self.kubectl,
         )
 
@@ -172,11 +172,11 @@ class TestGitMonitorNamespacePinning:
         namespace acted on derives from the project, not attacker input."""
         monkeypatch.setattr(git_monitor.settings, "CLUSTER_MANAGER", "local")
         monkeypatch.setattr(
-            "opi.core.git_monitor.get_prefixed_namespace",
+            "opi.runtime.periodic.git_monitor.get_prefixed_namespace",
             lambda cluster, ns: ns,
         )
         monkeypatch.setattr(
-            "opi.core.git_monitor.get_argo_namespace",
+            "opi.runtime.periodic.git_monitor.get_argo_namespace",
             lambda cluster: "argocd",
         )
         project_data = {
@@ -275,7 +275,7 @@ class TestHandleCreateProjectExistenceCheck:
 
     @pytest.mark.asyncio
     async def test_create_project_blocked_when_file_already_exists(self, monkeypatch) -> None:
-        from opi.core import task_handlers_project
+        from opi.runtime.tasks import task_handlers_project
 
         # The existence check asks the ProjectStore, which owns the projects repo.
         # A store that already has the file must stop the create.
@@ -313,7 +313,7 @@ class TestHandleCreateProjectExistenceCheck:
     async def test_edit_flow_overwrites_existing_file(self, monkeypatch) -> None:
         """Edit flows (no is_new_project flag) must NOT trip the existence
         check -- they legitimately overwrite an existing project file."""
-        from opi.core import task_handlers_project
+        from opi.runtime.tasks import task_handlers_project
 
         fake_connector = AsyncMock()
         fake_connector.file_exists = AsyncMock(return_value=True)

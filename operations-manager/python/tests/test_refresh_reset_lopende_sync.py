@@ -30,9 +30,9 @@ from fastapi.testclient import TestClient
 from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
 from opi.core import progress_steps
-from opi.core.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
+from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 from opi.server import app
 from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS
 from opi.services.oom_watcher import _queue_refresh_task as queue_oom_refresh_task
@@ -304,7 +304,7 @@ class TestWieDeVlagZet:
         """Met opzet AAN: een verwijdering moet landen, en een sync op de oude staat hoort dat
         niet te vertragen. Deze toets legt vast dat het een keuze was en geen erfenis: zou de
         handler het gedrag zelf aanzetten, dan stond hier niets om op te wijzen."""
-        from opi.core.task_handlers_components import handle_delete_component
+        from opi.runtime.tasks.task_handlers_components import handle_delete_component
 
         progress = MagicMock()
         progress.add_task.return_value = "t"
@@ -316,7 +316,7 @@ class TestWieDeVlagZet:
             # De import is functie-lokaal, dus de patch hoort bij de definierende module.
             patch("opi.manager.project_manager.ProjectManager", return_value=manager),
             patch(
-                "opi.core.task_handlers_operations.handle_refresh_project",
+                "opi.runtime.tasks.task_handlers_operations.handle_refresh_project",
                 new=AsyncMock(return_value={"status": "completed"}),
             ) as refresh,
         ):
@@ -515,7 +515,7 @@ async def _drive_handler(handler: Any, manager: MagicMock, extra_payload: dict[s
     progress.add_task.return_value = "t"
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         patch("opi.manager.project_manager.create_project_manager", return_value=manager),
         patch("opi.services.oom_watcher.schedule_oom_check"),
         patch("opi.services.oom_watcher.reset_oom_tune_attempts"),

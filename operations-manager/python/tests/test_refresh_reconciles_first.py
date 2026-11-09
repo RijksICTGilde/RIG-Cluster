@@ -21,7 +21,7 @@ import pytest
 from opi.connectors.git import strip_url_credentials
 from opi.connectors.git_repo import GitRepo, argo_repo_config, deployments_repo_config
 from opi.core.config import settings
-from opi.core.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
+from opi.runtime.tasks.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
 
 
 class _Progress:
@@ -80,7 +80,7 @@ async def test_refresh_reconciles_before_looking_up_the_project(order: list[str]
     store = _store_recording_calls(order, project=None)
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         pytest.raises(ValueError, match="not found"),
     ):
         await handle_refresh_project({"project_name": "demo"}, _Progress())
@@ -96,7 +96,7 @@ async def test_refresh_rejects_an_invalid_name_without_touching_git(order: list[
     store = _store_recording_calls(order)
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         pytest.raises(ValueError, match="Invalid project name"),
     ):
         await handle_refresh_project({"project_name": "Not A Valid Name!"}, _Progress())
@@ -109,7 +109,7 @@ async def test_refresh_syncs_both_manifest_repos(order: list[str]) -> None:
     store = _store_recording_calls(order, project=None)
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         pytest.raises(ValueError, match="not found"),
     ):
         await handle_refresh_project({"project_name": "demo"}, _Progress())
@@ -129,7 +129,7 @@ async def test_deployment_refresh_syncs_both_manifest_repos(order: list[str]) ->
     store = _store_recording_calls(order, project=None)
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=store),
         pytest.raises(ValueError, match="not found"),
     ):
         await handle_refresh_deployment({"project_name": "demo", "deployment_name": "deployment-1"}, _Progress())

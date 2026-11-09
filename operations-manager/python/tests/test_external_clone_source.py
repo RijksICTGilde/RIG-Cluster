@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from opi.core.cluster_config import CLUSTER_CONFIG, get_external_clone_allowed_private_networks
-from opi.core.task_handlers_operations import handle_clone_bucket, handle_clone_database
+from opi.runtime.tasks.task_handlers_operations import handle_clone_bucket, handle_clone_database
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 from opi.utils.age import generate_age_key_pair

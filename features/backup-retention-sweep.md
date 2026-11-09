@@ -76,7 +76,7 @@ Backup retention sweep finished (would delete 54 snapshots)
 
 ## Dependencies
 
-- Backup scheduler (`opi/core/backup_scheduler.py`) — hosts the daily trigger.
+- Backup scheduler (`opi/runtime/backup/backup_scheduler.py`) — hosts the daily trigger.
 - Kopia CLI in the OPI image — the sweep queries and deletes directly, no
   pods are spawned.
 - Namespace SOPS key — repository passwords are derived per namespace, so the

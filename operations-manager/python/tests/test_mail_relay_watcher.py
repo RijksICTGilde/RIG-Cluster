@@ -26,7 +26,7 @@ from opi import server
 from opi.connectors.mail import MailConnector, MailRelayNotConfiguredError
 from opi.connectors.ntfy import notify as ntfy_notify
 from opi.core.config import settings
-from opi.core.mail_relay_watcher import MailRelayWatcher
+from opi.runtime.periodic.mail_relay_watcher import MailRelayWatcher
 
 DREMPEL = 300
 
@@ -47,15 +47,15 @@ def _watcher(monkeypatch: pytest.MonkeyPatch, *, ready: bool | list[bool]) -> tu
     else:
         connector.is_ready = AsyncMock(side_effect=antwoorden)
     monkeypatch.setattr(
-        "opi.core.mail_relay_watcher.create_mail_connector", AsyncMock(return_value=connector), raising=True
+        "opi.runtime.periodic.mail_relay_watcher.create_mail_connector", AsyncMock(return_value=connector), raising=True
     )
     meldingen = MagicMock()
-    monkeypatch.setattr("opi.core.mail_relay_watcher.notify", meldingen)
+    monkeypatch.setattr("opi.runtime.periodic.mail_relay_watcher.notify", meldingen)
     return MailRelayWatcher(), meldingen
 
 
 def _klok(monkeypatch: pytest.MonkeyPatch, seconden: list[float]) -> None:
-    monkeypatch.setattr("opi.core.mail_relay_watcher.monotonic", MagicMock(side_effect=seconden))
+    monkeypatch.setattr("opi.runtime.periodic.mail_relay_watcher.monotonic", MagicMock(side_effect=seconden))
 
 
 @pytest.mark.usefixtures("_relay")
@@ -120,9 +120,9 @@ class TestWatErNietGemetenIsWordtNietGemeld:
     async def test_zonder_relay_doet_de_check_niets(self, monkeypatch) -> None:
         monkeypatch.setattr(settings, "LOGWATCHER_NTFY_TOPIC", "geheim-topic")
         meldingen = MagicMock()
-        monkeypatch.setattr("opi.core.mail_relay_watcher.notify", meldingen)
+        monkeypatch.setattr("opi.runtime.periodic.mail_relay_watcher.notify", meldingen)
         monkeypatch.setattr(
-            "opi.core.mail_relay_watcher.create_mail_connector",
+            "opi.runtime.periodic.mail_relay_watcher.create_mail_connector",
             AsyncMock(side_effect=MailRelayNotConfiguredError("geen relay")),
         )
 
@@ -138,9 +138,9 @@ class TestWatErNietGemetenIsWordtNietGemeld:
         hoek wijzen: het relaywachtwoord is van ons, niet van de relay."""
         monkeypatch.setattr(settings, "LOGWATCHER_NTFY_TOPIC", "geheim-topic")
         meldingen = MagicMock()
-        monkeypatch.setattr("opi.core.mail_relay_watcher.notify", meldingen)
+        monkeypatch.setattr("opi.runtime.periodic.mail_relay_watcher.notify", meldingen)
         monkeypatch.setattr(
-            "opi.core.mail_relay_watcher.create_mail_connector",
+            "opi.runtime.periodic.mail_relay_watcher.create_mail_connector",
             AsyncMock(side_effect=ValueError("Failed to decrypt password: no matching AGE key")),
         )
 
@@ -158,7 +158,7 @@ class TestWatErNietGemetenIsWordtNietGemeld:
         watcher, _ = _watcher(monkeypatch, ready=False)
         verstuurd = MagicMock()
         monkeypatch.setattr("opi.connectors.ntfy.send_ntfy", verstuurd)
-        monkeypatch.setattr("opi.core.mail_relay_watcher.notify", ntfy_notify)
+        monkeypatch.setattr("opi.runtime.periodic.mail_relay_watcher.notify", ntfy_notify)
         _klok(monkeypatch, [0, 400])
 
         await watcher.tick()

@@ -652,7 +652,7 @@ class TestDeMeldingNaastDeGrendel:
         ``process_project`` maakt van de doorgelaten ``TimeoutError`` een ``return False``
         met de melding in ``get_processing_error``; dat is wat de handler hier ziet.
         """
-        from opi.core import task_handlers_project
+        from opi.runtime.tasks import task_handlers_project
 
         store = MagicMock()
         store.reconcile = AsyncMock(return_value=None)
@@ -708,7 +708,7 @@ class TestDeMeldingNaastDeGrendel:
         """Een substapnaam gaat door ``clamp_step_text`` naar de titel van een lijstregel. Deze
         melding is de langste die er staat, en de zin die eraf valt bij een overschrijding is
         juist de laatste: wat een time-out betekent."""
-        from opi.core.persistent_task_progress import MAX_STEP_NAME, clamp_step_text
+        from opi.runtime.tasks.persistent_task_progress import MAX_STEP_NAME, clamp_step_text
 
         await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
         melding = progress_steps.NEW_PROJECT_NOTICE

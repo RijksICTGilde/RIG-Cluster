@@ -26,7 +26,7 @@ from fastapi import HTTPException
 from opi.api.task_models import task_response_from_dict
 from opi.connectors.git import GitCommandTimeoutError, GitRemoteUnavailableError
 from opi.core.task_errors import TaskInputError
-from opi.core.task_worker import TaskWorker
+from opi.runtime.tasks.task_worker import TaskWorker
 
 TASK_ID = "11111111-2222-3333-4444-555555555555"
 
@@ -58,7 +58,7 @@ async def _run_with(exception: Exception) -> AsyncMock:
     progress = MagicMock()
     progress.close = AsyncMock()
 
-    with patch("opi.core.persistent_task_progress.PersistentTaskProgressManager", return_value=progress):
+    with patch("opi.runtime.tasks.persistent_task_progress.PersistentTaskProgressManager", return_value=progress):
         await worker._execute_task(_task())
     return task_service
 

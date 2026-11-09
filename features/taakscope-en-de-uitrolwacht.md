@@ -200,7 +200,7 @@ gemigreerde.
 | `opi/services/persistence/async_tasks.py` | de kolom in het model (postgresql-`ARRAY`, want alleen die heeft `.overlap()`) |
 | `opi/core/async_task_service.py` | `scope_of()` bij het aanmaken, `_scopes_overlap()`, de twee claim-clausules, `find_blocking_task()` |
 | `opi/core/task_supersede.py` | `covers()` leest de kolom in plaats van opnieuw af te leiden |
-| `opi/core/task_worker.py` | de scope van de lopende taak komt uit de kolom |
+| `opi/runtime/tasks/task_worker.py` | de scope van de lopende taak komt uit de kolom |
 | `opi/api/task_models.py`, `opi/api/task_router.py` | `waiting_for` en de afgeleide `current_step` |
 
 ## Tests

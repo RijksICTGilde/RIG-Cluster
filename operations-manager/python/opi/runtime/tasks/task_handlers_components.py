@@ -918,8 +918,8 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
             naming this component along with it. Absent means no, and a component that is
             still referenced then fails the task instead of being deleted.
     """
-    from opi.core.task_handlers_operations import handle_refresh_project
     from opi.manager.project_manager import ProjectManager
+    from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
 
     project_name: str = payload["project_name"]
     component_name: str = payload["component_name"]

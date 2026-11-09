@@ -38,10 +38,10 @@ from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_environment import Omgeving
 from opi.core.step_up import StepUpAction
-from opi.core.task_handlers_operations import terminated_sync_fields
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
+from opi.runtime.tasks.task_handlers_operations import terminated_sync_fields
 from opi.services.catalog.image_registries.config_model import (
     REGISTRY_NAME_PATTERN,
     SECRET_NAME_PATTERN,

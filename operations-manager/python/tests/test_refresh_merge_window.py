@@ -39,7 +39,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.async_task_service import AsyncTaskService
-from opi.core.task_handlers_operations import handle_refresh_project
+from opi.runtime.tasks.task_handlers_operations import handle_refresh_project
 from opi.services.project_reconciliation_service import record_reconciliation
 
 REFRESH_PAYLOAD = {"project_name": "p1", "force_clone": False}
@@ -181,7 +181,7 @@ async def test_the_refresh_reads_the_project_once_at_the_start_and_never_again(r
     manager.close = AsyncMock()
 
     with (
-        patch("opi.core.task_handlers_operations.get_project_store", return_value=recording_store),
+        patch("opi.runtime.tasks.task_handlers_operations.get_project_store", return_value=recording_store),
         patch("opi.manager.project_manager.create_project_manager", return_value=manager),
     ):
         result = await handle_refresh_project({"project_name": "p1"}, _Progress())
