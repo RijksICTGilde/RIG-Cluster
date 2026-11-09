@@ -35,6 +35,7 @@ from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, Kub
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
 from opi.core.persistent_task_progress import TaskStatus
+from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
@@ -389,14 +390,13 @@ class TestClearBlockingSyncOperations:
     async def test_it_asks_for_the_application_name_the_deployment_actually_has(self, manager: MagicMock) -> None:
         """De applicatienaam en de argo-namespace komen uit dezelfde twee functies die de
         Application aanmaken, dus een naam die hier niet bestaat kan niet ongemerkt."""
-        await ProjectManager._clear_blocking_sync_operations(manager, [{"name": "pr-68", "cluster": "odcn-production"}])
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": "pr-68", "cluster": "odcn-production"}])
         manager._kubectl_connector.get_argocd_application.assert_awaited_once_with("dd-mco-pr-68", "rig-prd-operations")
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_every_deployment_in_the_repository_is_covered(self, manager: MagicMock) -> None:
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [
                 {"name": "pr-68", "cluster": "odcn-production"},
                 {"name": "productie", "cluster": "odcn-production"},
@@ -413,8 +413,7 @@ class TestClearBlockingSyncOperations:
         en mag ook de tweede deployment niet overslaan. De patch die niet lukte is al gelogd;
         hier gaat het erom dat de rij doorloopt."""
         manager._kubectl_connector.terminate_argocd_application_operation = AsyncMock(side_effect=[False, True])
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [{"name": "pr-68", "cluster": "odcn-production"}, {"name": "productie", "cluster": "odcn-production"}],
         )
         assert [call.args[0] for call in manager._kubectl_connector.get_argocd_application.await_args_list] == [
@@ -430,8 +429,7 @@ class TestClearBlockingSyncOperations:
         manager._kubectl_connector.get_argocd_application = AsyncMock(
             side_effect=[KubectlConnectionError("connection refused"), _application()]
         )
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [{"name": "pr-68", "cluster": "odcn-production"}, {"name": "productie", "cluster": "odcn-production"}],
         )
         assert [call.args[0] for call in manager._kubectl_connector.get_argocd_application.await_args_list] == [
@@ -449,16 +447,14 @@ class TestClearBlockingSyncOperations:
         en met ``""`` levert hij ``-pr-68``, een Application die van geen enkel project is. Dit
         pad loopt vlak voor elke push, dus beide zijn daar duur."""
         manager.get_name = AsyncMock(return_value=None)
-        await ProjectManager._clear_blocking_sync_operations(manager, [{"name": "pr-68", "cluster": "odcn-production"}])
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": "pr-68", "cluster": "odcn-production"}])
         manager._kubectl_connector.get_argocd_application.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_deployment_without_a_name_or_cluster_is_skipped(self, manager: MagicMock) -> None:
         """Zonder die twee is er geen Application om naar te kijken, en een gegokte naam zou
         een Application van iemand anders kunnen raken."""
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"cluster": "odcn-production"}, {"name": "pr-68"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"cluster": "odcn-production"}, {"name": "pr-68"}])
         manager._kubectl_connector.get_argocd_application.assert_not_awaited()
 
 
@@ -496,7 +492,7 @@ class TestOpisOwnTimeOut:
         """
         started = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat().replace("+00:00", "Z")
         manager._kubectl_connector.get_argocd_application.return_value = _application(started_at=started)
-        await ProjectManager._terminate_operation_we_waited_on(manager, "dd-mco-pr-68", "odcn-production")
+        await ArgoCDSync(manager)._terminate_operation_we_waited_on("dd-mco-pr-68", "odcn-production")
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once_with(
             "dd-mco-pr-68", "rig-prd-operations"
         )
@@ -508,7 +504,7 @@ class TestOpisOwnTimeOut:
         toekomst: leeftijd -89, en zonder de klem in ``is_stuck`` nul patch-aanroepen."""
         started = (datetime.now(UTC) + timedelta(seconds=90)).isoformat().replace("+00:00", "Z")
         manager._kubectl_connector.get_argocd_application.return_value = _application(started_at=started)
-        await ProjectManager._terminate_operation_we_waited_on(manager, "dd-mco-pr-68", "odcn-production")
+        await ArgoCDSync(manager)._terminate_operation_we_waited_on("dd-mco-pr-68", "odcn-production")
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once_with(
             "dd-mco-pr-68", "rig-prd-operations"
         )
@@ -519,14 +515,14 @@ class TestOpisOwnTimeOut:
         ``.operation`` is hier al weg, dus auto-sync is vrij en een patch levert alleen een
         'missing path'."""
         manager._kubectl_connector.get_argocd_application.return_value = _application(attached=False)
-        await ProjectManager._terminate_operation_we_waited_on(manager, "dd-mco-pr-68", "odcn-production")
+        await ArgoCDSync(manager)._terminate_operation_we_waited_on("dd-mco-pr-68", "odcn-production")
         manager._kubectl_connector.terminate_argocd_application_operation.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_without_a_cluster_it_falls_back_to_the_cluster_opi_manages(self, manager: MagicMock) -> None:
         """De deployment hoeft geen cluster te noemen; dan is het die van deze OPI-instantie.
         Een verkeerde namespace zou de Application niet vinden en de blokkade laten staan."""
-        await ProjectManager._terminate_operation_we_waited_on(manager, "dd-mco-pr-68", None)
+        await ArgoCDSync(manager)._terminate_operation_we_waited_on("dd-mco-pr-68", None)
         manager._kubectl_connector.get_argocd_application.assert_awaited_once_with(
             "dd-mco-pr-68", get_argo_namespace(settings.CLUSTER_MANAGER)
         )
@@ -599,9 +595,9 @@ class TestItRunsBeforeThePush:
         # De echte opruimronde en niet een mock ervan: de grendel zit in
         # ``terminate_stuck_operation``, dus een mock hier zou de reparatie wegnemen.
         fake._terminated_sync_operations = []
-        fake._clear_blocking_sync_operations = lambda deployments, reset_running_sync: (
-            ProjectManager._clear_blocking_sync_operations(fake, deployments, reset_running_sync)
-        )
+        fake._clear_blocking_sync_operations = lambda deployments, reset_running_sync: ArgoCDSync(
+            fake
+        )._clear_blocking_sync_operations(deployments, reset_running_sync)
 
         await ProjectManager._process_repository_manifests(
             fake, {"name": "main-repo"}, [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]

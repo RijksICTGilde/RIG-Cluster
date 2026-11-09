@@ -145,6 +145,8 @@
 "opi/manager/keycloak_manager.py" = ["ANN401", "BLE001", "C901", "N806", "PLR0912", "PLR0913", "PLR0915"]
 "opi/manager/mail_manager.py" = ["ANN401", "PLR0913"]
 "opi/manager/minio_manager.py" = ["BLE001", "C901", "PLR0912", "PLR0913", "PLR0915"]
+"opi/manager/project/aliases.py" = ["ANN401", "C901", "PLR0912"]
+"opi/manager/project/argocd_sync.py" = ["BLE001"]
 "opi/manager/project/attachment_mutations.py" = ["C901", "PLR0912", "PLR0913"]
 "opi/manager/project/component_mutations.py" = ["PLR0913"]
 "opi/manager/project/database_schema_mutations.py" = ["C901", "PLR0912"]

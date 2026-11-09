@@ -15,12 +15,10 @@ import shutil
 import tempfile
 import time
 from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
-    AsyncIterator,
-    Awaitable,
     Callable,
     Iterator,
 )
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -29,7 +27,6 @@ import asyncpg
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
-from opi.connectors.argo import ArgoTransportError
 from opi.connectors.git import GitConnector, repo_lock_key
 from opi.connectors.git_repo import (
     GitRepoConflictError,
@@ -61,7 +58,6 @@ from opi.core.cluster_config import (
     get_ingress_ip_whitelist,
     get_ingress_postfix,
     get_ingress_tls_enabled,
-    get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
     get_namespace,
     get_ops_egress,
@@ -75,12 +71,9 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.core.metrics import (
     PHASE_AFTER_SYNC,
-    PHASE_ARGO_PROJECT_GATE,
-    PHASE_ARGO_UMBRELLA,
     PHASE_GENERATE,
     PHASE_PROVISION,
     rollout_phase,
-    umbrella_refresh_lost_total,
 )
 from opi.core.project_schema import ProjectIntegrityError, validate_project_schema
 from opi.core.task_errors import TaskInputError
@@ -101,13 +94,16 @@ from opi.handlers.project_file_handler import (
 from opi.handlers.project_key_secret import CMP_SOPS_ROLE_NAME, SOPS_SECRET_NAME, ProjectKeySecretHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-    ARGOCD_HERSTEL_BUDGET_SECONDEN,
-    ARGOCD_HERSTEL_POLL_SECONDEN,
-    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
-    UMBRELLA_REFRESH_MAX_POGINGEN,
-    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
+from opi.manager.project.aliases import (
+    DeploymentAliases,
+    generate_storage_env_vars_from_services,
+    generate_web_env_vars_from_services,
+    resolve_aliases,
+    scope_direct_aliases_to_component,
+)
+from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project.attachment_mutations import AttachmentMutations
 from opi.manager.project.component_mutations import ComponentMutations
 from opi.manager.project.database_schema_mutations import DatabaseSchemaMutations
@@ -117,11 +113,9 @@ from opi.manager.project.service_config_mutations import ServiceConfigMutations
 from opi.manager.project_validation import validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
-from opi.services import ServiceAdapter, ServiceType, VariableDefinition
+from opi.services import ServiceAdapter, ServiceType
 from opi.services.argocd_operation import (
-    STUCK_OPERATION_THRESHOLD_SECONDS,
     describe_sync_waiting,
-    terminate_stuck_operation,
 )
 from opi.services.catalog.base import (
     DeploymentManifestContext,
@@ -144,8 +138,6 @@ from opi.services.catalog.publish_on_web.domain_config import (
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
-from opi.services.component_values import ComponentValuesError
-from opi.services.component_values import decode as decode_component_values
 from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres
@@ -168,10 +160,7 @@ from opi.utils.age import (
 )
 from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.env_vars import (
-    detect_circular_references,
-    extract_variable_references,
     substitute_known_variables,
-    substitute_variables,
 )
 from opi.utils.fs_paths import (
     reject_escaping_symlinks,
@@ -200,7 +189,6 @@ from opi.utils.naming import (
     generate_network_policy_name,
     generate_project_level_manifest_path,
     generate_project_manifest_folder_path,
-    generate_project_realm_name,
     generate_project_service_account_name,
     generate_public_url,
     generate_pvc_name,
@@ -235,7 +223,6 @@ from opi.utils.sops import (
 )
 from opi.utils.yaml_util import (
     YAMLError,
-    compiled_jsonpath,
     dump_yaml_for_go,
     dump_yaml_for_go_unfolded,
     load_yaml_round_trip,
@@ -1122,131 +1109,6 @@ class ProjectManager:
 
         return cast("T", secret)
 
-    def _get_service_category_name(self, service_type: ServiceType) -> str:
-        """
-        Get a consistent category name for a service type.
-
-        This maps service types to their category names used in alias resolution.
-
-        Args:
-            service_type: The service type enum
-
-        Returns:
-            Category name string (e.g., "database", "minio", "keycloak", "web", "storage")
-        """
-        # Map service types to their category names. Both the shared and
-        # namespace-dedicated variants of postgresql/redis collapse to the
-        # same category so an alias referencing e.g. $REDIS_URL routes to the
-        # same secret bucket regardless of which variant the project picked.
-        # Without this, the var_to_service lookup map ends up keyed by the
-        # namespace variant (later overwrites earlier in dict iteration), and
-        # aliases categorise as "namespace-redis" -- a bucket no project
-        # consumes, silently dropping the alias.
-        category_map = {
-            ServiceType.POSTGRESQL_DATABASE: "database",
-            ServiceType.NAMESPACE_POSTGRESQL_DATABASE: "database",
-            ServiceType.REDIS: "redis",
-            ServiceType.NAMESPACE_REDIS: "redis",
-            ServiceType.MINIO_STORAGE: "minio",
-            # seaweedfs-storage hergebruikt MinIOVariables, dus dezelfde collapse als
-            # redis/postgresql: anders routeert een OBJECT_STORE_*-alias naar een bucket
-            # die geen enkel project consumeert en verdwijnt hij stil uit het secret.
-            ServiceType.SEAWEEDFS_STORAGE: "minio",
-            ServiceType.KEYCLOAK: "keycloak",
-            ServiceType.PUBLISH_ON_WEB: "web",
-            ServiceType.PERSISTENT_STORAGE: "storage",
-            ServiceType.TEMP_STORAGE: "storage",
-            ServiceType.PLATFORM: "platform",
-        }
-        return category_map.get(service_type, service_type.value)
-
-    def _categorize_alias(self, alias_name: str, alias_template: str) -> tuple[str, str]:
-        """
-        Determine which service and source type an alias belongs to based on the variables it references.
-
-        Args:
-            alias_name: Name of the alias
-            alias_template: Template string with variable references
-
-        Returns:
-            Tuple of (service_category, source_type) where:
-            - service_category: 'database', 'minio', 'keycloak', 'web', 'storage'
-            - source_type: 'secret' or 'direct'
-
-        Raises:
-            ValueError: If alias references variables from multiple services or unknown variables
-
-        Logic:
-            - Dynamically checks all services defined in ServiceAdapter.SERVICE_DEFINITIONS
-            - Categorizes based on which service's variables are referenced
-            - Determines if variables come from secrets or are direct env vars
-            - Ensures all variables in an alias come from the same service
-        """
-        # Extract all referenced variables
-        referenced_vars = extract_variable_references(alias_template)
-
-        if not referenced_vars:
-            raise ValueError(
-                f"Alias '{alias_name}' has no variable references. "
-                f"Aliases must reference at least one service variable."
-            )
-
-        # Build a mapping of variable_name -> (service_type, variable_definition)
-        # by checking all services dynamically
-        var_to_service: dict[str, tuple[ServiceType, VariableDefinition]] = {}
-        all_known_vars = set()
-
-        for service_type in ServiceAdapter.SERVICE_DEFINITIONS:
-            service_def = ServiceAdapter.get_service_definition(service_type)
-            for var_def in service_def.variables:
-                # Add primary variable name
-                var_to_service[var_def.name] = (service_type, var_def)
-                all_known_vars.add(var_def.name)
-                # Add all aliases for this variable
-                for alias in var_def.aliases:
-                    var_to_service[alias] = (service_type, var_def)
-                    all_known_vars.add(alias)
-
-        # Check for unknown variables
-        unknown_vars = [var for var in referenced_vars if var not in all_known_vars]
-        if unknown_vars:
-            known_vars_list = ", ".join(sorted(all_known_vars))
-            raise ValueError(
-                f"Alias '{alias_name}' references unknown variables: {', '.join(unknown_vars)}. "
-                f"Available variables: {known_vars_list}"
-            )
-
-        # Determine which service(s) and source type(s) are referenced
-        services_referenced: dict[str, ServiceType] = {}
-        source_types: set[str] = set()
-
-        for var in referenced_vars:
-            service_type, var_def = var_to_service[var]
-            service_category = self._get_service_category_name(service_type)
-            services_referenced[service_category] = service_type
-            source_types.add(var_def.source)
-
-        # Error if multiple services referenced
-        if len(services_referenced) > 1:
-            raise ValueError(
-                f"Alias '{alias_name}' references variables from multiple services: {', '.join(services_referenced.keys())}. "
-                f"Each alias must reference variables from only one service."
-            )
-
-        # Error if multiple source types referenced (mixing secret and direct variables)
-        if len(source_types) > 1:
-            raise ValueError(
-                f"Alias '{alias_name}' mixes variables from different sources: {', '.join(source_types)}. "
-                f"Each alias must use variables from only one source type (either 'secret' or 'direct')."
-            )
-
-        # Get the single service category and source type
-        service_category = next(iter(services_referenced.keys()))
-        source_type = next(iter(source_types))
-
-        logger.debug(f"Alias '{alias_name}' categorized as service='{service_category}', source='{source_type}'")
-        return service_category, source_type
-
     async def _rollback_subdomain_if_needed(self) -> bool:
         """
         Rollback subdomain registration if one is pending.
@@ -1284,220 +1146,8 @@ class ProjectManager:
             return False
 
     async def _collect_deployment_aliases(self, deployment_name: str) -> dict[str, dict[str, dict[str, str]]]:
-        """
-        Scan all components in a deployment and collect aliases, categorized by source type and service.
-
-        Args:
-            deployment_name: Name of the deployment
-
-        Returns:
-            Dictionary mapping source type -> service category -> aliases:
-            {
-                'direct': {
-                    'web': {alias_name: template, ...},
-                    'storage': {alias_name: template, ...}
-                },
-                'secret': {
-                    'database': {alias_name: template, ...},
-                    'minio': {alias_name: template, ...},
-                    'keycloak': {alias_name: template, ...}
-                }
-            }
-
-        Raises:
-            ValueError: If any alias has invalid references (multiple services, unknown variables, etc.)
-        """
-        logger.debug(f"Collecting aliases for deployment: {deployment_name}")
-
-        # Get project data
-        project_data = await self.get_contents(record_base=False)
-
-        # Find the deployment in project data
-        deployments = project_data.get("deployments", [])
-        deployment = Project.locate(deployments, name=deployment_name)
-
-        if not deployment:
-            logger.warning(f"Deployment '{deployment_name}' not found in project data")
-            return {"direct": {}, "secret": {}}
-
-        # Initialize categorized aliases with two-level structure: source_type -> service_category -> aliases
-        categorized_aliases: dict[str, dict[str, dict[str, str]]] = {
-            "direct": {},
-            "secret": {},
-        }
-
-        # Scan all components
-        components = deployment.get("components", [])
-        for component in components:
-            component_name = component["reference"]
-            component_definition = await self._get_by_json_path(f"$.components[?@.name=='{component_name}']")
-            if not component_definition:
-                logger.warning("Component '%s' referenced in deployment but not found in project", component_name)
-                continue
-            # Aliases are stored as ONE AGE block whose plaintext is KEY=value lines
-            # (RC-106), so reading them is a decrypt-and-parse and never a walk over the
-            # stored value. Through the shared decoder, which also still reads the
-            # unencrypted mapping and the per-value shape aliases used to be written in
-            # -- this is the deploy path, and an alias that fell away silently here is a
-            # running pod with a missing variable.
-            try:
-                component_aliases = decode_component_values(component_definition.get("aliases"), project_data)
-            except ComponentValuesError as e:
-                raise ValueError(
-                    f"Aliases of component '{component_name}' in deployment '{deployment_name}' could not be read: {e}"
-                ) from e
-
-            if not component_aliases:
-                continue
-
-            logger.debug(f"Found {len(component_aliases)} aliases in component '{component_name}'")
-
-            # Categorize each alias
-            for alias_name, alias_template in component_aliases.items():
-                try:
-                    # Determine which service and source type this alias belongs to
-                    service_category, source_type = self._categorize_alias(alias_name, alias_template)
-                except ValueError as e:
-                    # Add component context to the error
-                    raise ValueError(
-                        f"Error in component '{component_name}', deployment '{deployment_name}': {e}"
-                    ) from e
-
-                # Initialize service category dict if needed
-                if service_category not in categorized_aliases[source_type]:
-                    categorized_aliases[source_type][service_category] = {}
-
-                # Add to categorized collection. Aliases are declared per component but
-                # merged into one shared secret per service for the deployment, so two
-                # components declaring the same alias is fine ONLY if the value matches.
-                existing = categorized_aliases[source_type][service_category].get(alias_name)
-                if existing is not None and existing != alias_template:
-                    # Unresolvable: a single shared secret cannot hold two values.
-                    raise ValueError(
-                        f"Conflicting alias '{alias_name}' in deployment '{deployment_name}': "
-                        f"component '{component_name}' defines a different value than another "
-                        f"component. Aliases for a service are merged into one shared secret, "
-                        f"so they must match."
-                    )
-                if existing is not None:
-                    logger.debug(
-                        f"Alias '{alias_name}' re-declared identically by component "
-                        f"'{component_name}' in deployment '{deployment_name}' (expected for shared services)"
-                    )
-
-                categorized_aliases[source_type][service_category][alias_name] = alias_template
-
-        # Log summary
-        total_aliases = 0
-        summary_parts = []
-        for source_type, service_dict in categorized_aliases.items():
-            for service_category, aliases in service_dict.items():
-                count = len(aliases)
-                if count > 0:
-                    total_aliases += count
-                    summary_parts.append(f"{source_type}.{service_category}: {count}")
-
-        if total_aliases > 0:
-            summary = ", ".join(summary_parts)
-            logger.info(f"Collected {total_aliases} aliases for deployment '{deployment_name}' ({summary})")
-
-        return categorized_aliases
-
-    @staticmethod
-    def _scope_direct_aliases_to_component(
-        direct_aliases: dict[str, dict[str, str]],
-        project_data: dict[str, Any],
-        component_name: str,
-    ) -> dict[str, dict[str, str]]:
-        """Narrow deployment-wide direct aliases to those *component_name* declares.
-
-        Aliases are collected per deployment because secret-sourced ones merge into a
-        single shared secret per service. Direct ones are different: they resolve
-        against the component's OWN env vars (PUBLIC_HOSTNAME from publish-on-web,
-        DATA_PATH from storage). Handing every component the deployment-wide set made
-        a sibling with neither service resolve another component's aliases against an
-        empty context, which raises "Variable references not found in context".
-
-        Args:
-            direct_aliases: service_category -> {alias_name: template}, deployment-wide.
-            project_data: The project file, used to read the component's own aliases.
-            component_name: Component currently being processed.
-
-        Returns:
-            The same structure, containing only aliases this component declares.
-            Empty service categories are dropped.
-        """
-        raw_aliases = next(
-            (
-                component.get("aliases")
-                for component in project_data.get("components", [])
-                if component.get("name") == component_name
-            ),
-            None,
-        )
-        # Decoded rather than read as a mapping: the stored shape is one AGE block, so
-        # membership has to be tested on the decrypted names (RC-106). Without this the
-        # test below is a substring/character test on a ciphertext and every direct
-        # alias silently drops out.
-        own_aliases = decode_component_values(raw_aliases, project_data)
-        if not own_aliases:
-            return {}
-
-        scoped: dict[str, dict[str, str]] = {}
-        for service_category, service_aliases in direct_aliases.items():
-            selected = {name: template for name, template in service_aliases.items() if name in own_aliases}
-            if selected:
-                scoped[service_category] = selected
-        return scoped
-
-    def _resolve_aliases(self, aliases: dict[str, str], context: dict[str, str]) -> dict[str, str]:
-        """
-        Resolve variable references in aliases using the provided context.
-
-        Args:
-            aliases: Dictionary of alias_name -> template
-            context: Dictionary of variable_name -> value for substitution
-
-        Returns:
-            Dictionary of alias_name -> resolved_value
-
-        Raises:
-            ValueError: If circular references detected or unknown variables referenced
-
-        Security:
-            - Never logs resolved values (may contain sensitive data)
-            - Only logs alias names and template patterns for debugging
-        """
-        if not aliases:
-            return {}
-
-        logger.debug(f"Resolving {len(aliases)} aliases with context containing {len(context)} variables")
-
-        # Detect circular references first
-        try:
-            detect_circular_references(aliases)
-        except ValueError as e:
-            logger.error(f"Circular reference detected in aliases: {e}")
-            raise
-
-        resolved: dict[str, str] = {}
-
-        # Resolve each alias
-        for alias_name, alias_template in aliases.items():
-            try:
-                # Perform substitution (this validates that all referenced vars exist)
-                resolved_value = substitute_variables(alias_template, context)
-                resolved[alias_name] = resolved_value
-
-                # Log without exposing the actual value
-                logger.debug(f"Successfully resolved alias: {alias_name}")
-
-            except ValueError as e:
-                logger.error(f"Failed to resolve alias '{alias_name}': {e}")
-                raise ValueError(f"Failed to resolve alias '{alias_name}': {e}") from e
-
-        logger.info(f"Successfully resolved {len(resolved)} aliases")
-        return resolved
+        """Collect the aliases of every component in a deployment, categorised."""
+        return await DeploymentAliases(self).collect_deployment_aliases(deployment_name)
 
     async def _emit_waker_manifests(
         self,
@@ -1667,7 +1317,7 @@ class ProjectManager:
             aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
             if aliases:
                 logger.debug(f"Resolving {len(aliases)} {spec.secret_type} aliases for deployment {deployment_name}")
-                resolved_aliases = self._resolve_aliases(aliases, secret_data)
+                resolved_aliases = resolve_aliases(aliases, secret_data)
                 secret_data.update(resolved_aliases)
                 logger.info(f"Added {len(resolved_aliases)} resolved {spec.secret_type} aliases to deployment secret")
 
@@ -1690,118 +1340,6 @@ class ProjectManager:
         created_files.append(sops_filename)
         logger.info(f"Secret '{spec.secret_name}' will be SOPS encrypted: {sops_filename}")
         logger.debug(f"Successfully created secret manifest: {secret_path}")
-
-    async def _get_project_keycloak_config_for_cluster(self, cluster: str) -> dict[str, Any] | None:
-        """
-        Find Keycloak config entry for a specific cluster.
-
-        Args:
-            cluster: Name of the cluster
-
-        Returns:
-            Keycloak config entry with host/realm/username/password or None if not found
-        """
-
-        project_data = await self.get_contents(record_base=False)
-        # RC-5 B: keycloak admin connections live under the keycloak service config
-        # (relocated from the old project-level config.keycloak). Still matched by realm.
-        keycloak_list = Project(project_data).get("services/keycloak/config/realms") or []
-        if not keycloak_list:
-            return None
-
-        project_name = await self.get_name()
-        expected_realm = generate_project_realm_name(project_name, cluster)
-
-        for entry in keycloak_list:
-            if entry.get("realm") == expected_realm:
-                return entry
-
-        return None
-
-    def _get_keycloak_url_for_cluster(self, cluster: str) -> str:
-        """
-        Get Keycloak URL for cluster from cluster configuration.
-
-        Args:
-            cluster: Name of the cluster
-
-        Returns:
-            Base Keycloak URL (e.g., "https://keycloak.apps.digilab.network")
-        """
-
-        discovery_url = get_keycloak_discovery_url(cluster)
-
-        # Extract base URL from discovery URL
-        if "/.well-known" in discovery_url:
-            base_url = discovery_url.split("/.well-known")[0]
-            # Remove /realms/xxx part to get just the host
-            if "/realms/" in base_url:
-                base_url = base_url.split("/realms/")[0]
-            return base_url
-
-        return discovery_url
-
-    def _generate_storage_env_vars_from_services(self, storage_configs: list[dict[str, Any]]) -> dict[str, str]:
-        """
-        Generate storage environment variables using service definitions.
-
-        Args:
-            storage_configs: List of processed storage configurations
-
-        Returns:
-            Dictionary of environment variables based on service definitions
-        """
-        env_vars = {}
-
-        for storage in storage_configs:
-            mount_path = storage.get("mount-path")
-            storage_type = storage.get("type", "persistent")
-
-            if not mount_path:
-                continue
-
-            # Determine service type based on storage type
-            if storage_type == "persistent":
-                service_type = ServiceType.PERSISTENT_STORAGE
-            elif storage_type == "ephemeral":
-                service_type = ServiceType.TEMP_STORAGE
-            else:
-                raise ValueError(f"Unknown storage type: {storage_type}")
-
-            # Generate env vars using service variable definitions
-            for var_def in ServiceAdapter.get_service_definition(service_type).variables:
-                if var_def.source == "direct":
-                    # For storage services, the value is the mount path
-                    env_vars[var_def.name] = mount_path
-                    logger.debug(f"Generated storage env var: {var_def.name}={mount_path}")
-
-        return env_vars
-
-    def _generate_web_env_vars_from_services(self, hostname: str, use_https: bool = True) -> dict[str, str]:
-        """
-        Generate web environment variables using service definitions.
-
-        Args:
-            hostname: The hostname for the component
-            use_https: Whether to use HTTPS protocol (based on cluster TLS config)
-
-        Returns:
-            Dictionary of environment variables based on service definitions
-        """
-        env_vars = {}
-
-        # Generate env vars using service variable definitions
-        for var_def in ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB).variables:
-            if var_def.source == "direct" and var_def.name == "PUBLIC_HOST":
-                public_url = generate_public_url(hostname, use_https)
-                env_vars[var_def.name] = public_url
-                logger.debug(f"Generated web env var: {var_def.name}={public_url}")
-            elif var_def.source == "direct" and var_def.name == "PUBLIC_HOSTNAME":
-                # Hostname only (no scheme) for apps that reject full URLs in host-name fields
-                env_vars[var_def.name] = hostname
-                logger.debug(f"Generated web env var: {var_def.name}={hostname}")
-
-        return env_vars
 
     async def get_argo_workspace(self) -> GitRepoWorkspace:
         """De werkmap op de argo-applications repo voor dit project, een per taak."""
@@ -3131,233 +2669,19 @@ class ProjectManager:
 
         return deployment_changes
 
-    async def _keep_umbrella_refreshed(self, argo_connector: ArgoConnector, pushed_commit: str | None) -> None:
-        """Prik `user-applications` opnieuw zolang die onze commit nog niet gezien heeft.
-
-        Een refresh is geen opdracht in een wachtrij maar een vlaggetje op de Application:
-        liep er al een reconcile, dan wist die het vlaggetje als hij klaar is, terwijl hij
-        zijn revisie ophaalde voordat wij pushten. Onze wijziging zit er dan niet in en er
-        gebeurt tot de volgende reconcile (op odcn-production `timeout.reconciliation: 15m`)
-        niets meer.
-
-        Het enige harde bewijs is de revisie: `reconciledAt` kan best na onze push liggen
-        terwijl de vergeleken revisie van ervoor is. Zonder bekende commit valt er niets te
-        bewijzen en blijft het bij de eerste refresh, zoals voorheen.
-
-        De lus loopt op het antwoord van de refresh en niet op een tijdklok: die call blijft
-        hangen tot er een reconcile is afgerond, en juist dan is te zien of die de goede
-        revisie had. Zo niet, dan is dat het bewijs dat ons vlaggetje in andermans run is
-        opgegaan en heeft meteen opnieuw prikken zin.
-
-        Bedoeld om naast de wachters te draaien en door de aanroeper geannuleerd te worden.
-        """
-        for poging in range(1, UMBRELLA_REFRESH_MAX_POGINGEN + 1):
-            gestart = time.monotonic()
-            if not await argo_connector.refresh_application("user-applications"):
-                logger.warning(
-                    "Refresh van user-applications leverde niets op; een volgende ronde probeert het opnieuw"
-                )
-            if not pushed_commit:
-                return
-
-            status_data = await argo_connector.get_application_status("user-applications") or {}
-            status = status_data.get("status", {}) or {}
-            revision = status.get("sync", {}).get("revision")
-            self._argo_manager.last_umbrella_revision = revision
-            self._argo_manager.last_umbrella_reconciled_at = status.get("reconciledAt")
-
-            if revision == pushed_commit:
-                logger.info(f"user-applications heeft onze commit {pushed_commit} vergeleken; niet opnieuw verversen")
-                return
-
-            if poging == UMBRELLA_REFRESH_MAX_POGINGEN:
-                break
-
-            umbrella_refresh_lost_total.inc()
-            logger.info(
-                f"user-applications staat nog op revisie {revision or 'onbekend'} in plaats van {pushed_commit}; "
-                "de vorige refresh is verloren gegaan, opnieuw verversen"
-            )
-            # De refresh hierboven wachtte zelf al op een reconcile; kwam hij toch meteen
-            # terug, dan houdt deze ondergrens het een lus in plaats van een storm.
-            rest = UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN - (time.monotonic() - gestart)
-            if rest > 0:
-                await asyncio.sleep(rest)
-
-        logger.warning(
-            f"user-applications staat na {UMBRELLA_REFRESH_MAX_POGINGEN} refreshes nog op revisie "
-            f"{self._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
-            "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
-        )
-
-    @asynccontextmanager
-    async def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AsyncIterator[None]:
-        """Draai `_keep_umbrella_refreshed` naast een wacht en ruim hem daarna op.
-
-        Elke wacht op het BESTAAN van een kind-Application heeft deze bewaker nodig: onze
-        refresh kan opgaan in een reconcile die zijn revisie al had opgehaald, en dan
-        gebeurt er tot de volgende reconcile niets. Eén bewaker per wacht, ook als die wacht
-        op meerdere applicaties tegelijk staat: drie bewakers zouden drie keer tegelijk
-        verversen.
-
-        De generieke ``except`` hoort hier en niet bij de aanroepers: de bewaker is een
-        vangnet en mag de wacht die hij bewaakt nooit meeslepen, ongeacht waarop hij zelf
-        omvalt.
-        """
-        bewaker = asyncio.create_task(
-            self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
-        )
-        try:
-            # De fase wordt hier gemeten en niet in de bewaker zelf: deze wacht is wat de
-            # taak kost, en de bewaker wordt er altijd halverwege afgebroken.
-            with rollout_phase(PHASE_ARGO_UMBRELLA):
-                yield
-        finally:
-            bewaker.cancel()
-            try:
-                await bewaker
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
+    def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AbstractAsyncContextManager[None]:
+        """Run the umbrella refresh watcher alongside a wait; see :class:`ArgoCDSync`."""
+        return ArgoCDSync(self)._umbrella_verversbewaker(argo_connector)
 
     async def wait_for_project_level_application(self, app_name: str) -> None:
-        """Wacht tot het PROJECTNIVEAU van dit project echt gesynchroniseerd is.
-
-        De ServiceAccount van het project komt uit deze applicatie, en de podspec van elke
-        Deployment eronder noemt hem. Daarom staat deze wacht voor het aanmaken van de
-        deployment-applicaties: bestaat hun CR nog niet, dan kan ArgoCD ze ook niet
-        zelfstandig synchroniseren.
-
-        Dezelfde vorm als de infrastructuurapplicatie, die ook op wave 0 staat: aanmaken,
-        wachten tot ArgoCD hem heeft aangemaakt, hem ZELF verversen, en dan wachten op een
-        sync die aantoonbaar NA die verversing komt. Zonder dat laatste stelt een
-        ``Synced`` van voor onze commit de wacht bij een herhaalrun meteen tevreden.
-
-        De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul
-        resources en meldt zich daarmee binnen een seconde Healthy. Zie
-        docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md.
-
-        Args:
-            app_name: Naam van de applicatie van het projectniveau.
-
-        Raises:
-            RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
-            TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
-        """
-        with rollout_phase(PHASE_ARGO_PROJECT_GATE):
-            if await self._project_level_already_applied(app_name):
-                logger.info(
-                    "Projectniveau '%s' staat al Synced en Healthy op onze stand; niet opnieuw verversen", app_name
-                )
-                return
-            await self._await_project_level_application(app_name)
-
-    @staticmethod
-    async def _status_voor_een_overslag(argo_connector: ArgoConnector, app_name: str) -> dict[str, Any]:
-        """De status van een applicatie, voor een BESLISSING om werk over te slaan.
-
-        Zo'n beslissing mag nooit een taak kosten. ArgoCD antwoordt 400 zolang de
-        AppProject van een project nog niet bestaat of de applicatie er nog niet in
-        toegelaten is, en ``get_application_status`` maakt daar een RuntimeError van: dat
-        is precies de situatie waarin er niets te bewijzen valt en het volle werk hoort te
-        lopen. Gemeten op de sandbox, 4 november 2026.
-        """
-        try:
-            return await argo_connector.get_application_status(app_name) or {}
-        except (ArgoTransportError, RuntimeError, OSError) as fout:
-            logger.info("Geen status van '%s' om werk op over te slaan: %s", app_name, fout)
-            return {}
+        """Wait until the project level of this project is really synchronised."""
+        await ArgoCDSync(self).wait_for_project_level_application(app_name)
 
     async def _render_already_proven(
         self, argo_connector: ArgoConnector, app_name: str, reconciled_at: str | None
     ) -> bool:
-        """Of deze applicatie na onze refresh Synced meldde, en haar render dus klopte."""
-        status_data = await self._status_voor_een_overslag(argo_connector, app_name)
-        if (status_data.get("status", {}) or {}).get("sync", {}).get("status") != "Synced":
-            return False
-        return self._argo_manager.status_reflects_refresh(status_data, reconciled_at)
-
-    async def _project_level_already_applied(self, app_name: str) -> bool:
-        """Of ArgoCD het projectniveau al heeft toegepast zoals het nu in git staat.
-
-        Drie dingen moeten kloppen, en elk ervan is bewijs en geen aanname: deze ronde
-        veranderde het projectniveau niet, de applicatie meldt Synced EN Healthy, en de
-        map met de project-level manifests is bij de revisie die ze vergeleek gelijk aan wat
-        er nu in git staat (``path_unchanged_since``). Dan staat de ServiceAccount er, en dat
-        is precies wat deze grendel beschermt. Mist een van de drie, dan loopt de grendel
-        zoals voorheen.
-
-        Zie docs/post-mortems/de-serviceaccount-komt-na-de-deployment.md: een net
-        aangemaakte applicatie meldt zich Healthy met nul resources, dus Healthy alleen is
-        nooit genoeg. De revisie-eis is wat dat geval uitsluit: een nieuwe applicatie heeft
-        nog geen vergeleken revisie.
-        """
-        if self._project_level_manifests_changed or self._project_level_repo is None:
-            return False
-        if self._project_level_path is None:
-            return False
-        connector = self.get_existing_deployment_workspace(self._project_level_repo)
-        if connector is None:
-            return False
-
-        status_data = await self._status_voor_een_overslag(create_argo_connector(), app_name)
-        status = status_data.get("status", {}) or {}
-        sync = status.get("sync", {}) or {}
-        if sync.get("status") != "Synced" or (status.get("health", {}) or {}).get("status") != "Healthy":
-            return False
-        return await connector.path_unchanged_since(str(sync.get("revision") or ""), self._project_level_path)
-
-    async def _await_project_level_application(self, app_name: str) -> None:
-        """De wacht zelf; zie :meth:`wait_for_project_level_application`."""
-        argo_connector = create_argo_connector()
-        loop = asyncio.get_running_loop()
-        einde = loop.time() + ARGOCD_HERSTEL_BUDGET_SECONDEN
-
-        async def _volhouden[T](wat: str, poging: Callable[[], Awaitable[T]]) -> T:
-            """Retry until result or budget exhausted. Empty result means not ready."""
-            while True:
-                uitkomst = await poging()
-                if uitkomst:
-                    return uitkomst
-                over = einde - loop.time()
-                if over <= 0:
-                    raise RuntimeError(
-                        f"{wat} within the {ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget for a recovering ArgoCD"
-                    )
-                logger.warning("%s: opnieuw proberen, %ds van het budget over", wat, int(over))
-                await asyncio.sleep(ARGOCD_HERSTEL_POLL_SECONDEN)
-
-        await _volhouden("Failed to login to ArgoCD", argo_connector.login)
-
-        # De umbrella alleen verversen als de applicatie er nog niet is: zo'n refresh
-        # hertekent alle child-apps (issue #130) en kan minuten duren
-        # (features/argocd-refresh-performance.md). Dezelfde keuze, bron en fail-safe als
-        # bij de deployment-applicaties verderop.
-        exists = await self._kubectl_connector.argocd_application_exists(
-            app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
-        )
-        if exists is not True:
-            async with self._umbrella_verversbewaker(argo_connector):
-                await self._argo_manager.wait_for_application_created(
-                    app_name=app_name,
-                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
-                    poll_interval=1,
-                )
-
-        # Wel altijd DEZE applicatie verversen: zonder een sync die na onze eigen refresh
-        # komt bewijst een `Synced` niets over de commit die we net gepusht hebben.
-        reconciled_at = await _volhouden(
-            f"Failed to refresh ArgoCD project-level application '{app_name}'",
-            lambda: argo_connector.refresh_application(app_name),
-        )
-
-        await self._argo_manager.wait_for_application_synced(
-            app_name=app_name,
-            timeout=PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
-            refreshed_after=reconciled_at,
-        )
-        logger.info(f"Project-level application '{app_name}' is synced; de ServiceAccount staat er")
+        """Whether this application reported Synced after our refresh, so its render held."""
+        return await ArgoCDSync(self)._render_already_proven(argo_connector, app_name, reconciled_at)
 
     async def process_project_from_git(
         self,
@@ -4367,67 +3691,14 @@ class ProjectManager:
         logger.info(f"Successfully processed repository: {repo_config['name']}")
 
     async def _terminate_operation_we_waited_on(self, app_name: str, cluster: str | None) -> None:
-        """Beëindig de operation waarop OPI's eigen wacht net is afgelopen.
-
-        Zonder drempel, anders dan bij de ronde voor de push: die operation is per constructie
-        JONGER dan de drempel, want ``wait_for_application_synced`` start zijn teller pas na de
-        refresh en de render, en ArgoCD begint de operation daarna. Met de standaarddrempel
-        bleef precies de blokkade staan die deze tak moet opruimen (gemeten: 299s oud gaf nul
-        patch-aanroepen). En "nog gewoon bezig" is hier geen mogelijkheid meer: OPI heeft net
-        300s op deze operation gewacht en opgegeven. Dat hij nog aanhangt en nog loopt
-        (``blocks_next_sync``) is daarmee de enige vraag die overblijft.
-
-        Laat staan maakt van een mislukte uitrol ook een blokkade op elke volgende: op 5
-        oktober 2026 kostte dat na de time-out nog 21 minuten zonder enige sync.
-
-        Lukt het beëindigen niet, dan blijft de time-out wel gerapporteerd: de aanroep staat
-        voor ``fail_subtask`` en voor de ``timeout``-uitkomst, en een omgevallen kubectl mag
-        daar geen ``KubectlConnectionError`` van maken. ``terminate_stuck_operation`` vangt die
-        daarom zelf af.
-        """
-        await terminate_stuck_operation(
-            self._kubectl_connector,
-            app_name,
-            get_argo_namespace(cluster or settings.CLUSTER_MANAGER),
-            threshold_seconds=0,
-        )
+        """Terminate the operation that OPI's own wait has just run out on."""
+        await ArgoCDSync(self)._terminate_operation_we_waited_on(app_name, cluster)
 
     async def _clear_blocking_sync_operations(
         self, deployments: list[dict[str, Any]], reset_running_sync: bool = False
     ) -> None:
-        """Beëindig de sync-operations die een volgende sync op deze deployments blokkeren.
-
-        Normaal WEL met de drempel: deze ronde loopt voor elke push en kijkt naar operations
-        die een andere taak of een sweep heeft achtergelaten, dus een uitrol die nog gewoon
-        bezig is blijft staan.
-
-        ``reset_running_sync`` zet de drempel op 0: bij een refresh drukt iemand op reset, en
-        dan is "nog gewoon bezig" geen reden meer om te wachten. Dezelfde afweging als op de
-        time-out-tak (``_terminate_operation_we_waited_on``). De vlag staat bij het endpoint,
-        zodat een interne aanroeper hem niet stilzwijgend erft.
-        """
-        project_name = await self.get_name()
-        if not project_name:
-            return
-        threshold = 0 if reset_running_sync else STUCK_OPERATION_THRESHOLD_SECONDS
-        terminated: list[str] = []
-        for deployment in deployments:
-            dep_name = deployment.get("name")
-            cluster = deployment.get("cluster")
-            if not dep_name or not cluster:
-                continue
-            if await terminate_stuck_operation(
-                self._kubectl_connector,
-                generate_argocd_application_name(project_name, str(dep_name)),
-                get_argo_namespace(str(cluster)),
-                threshold_seconds=threshold,
-            ):
-                terminated.append(str(dep_name))
-        if not terminated:
-            return
-        self._terminated_sync_operations.extend(terminated)
-        # De stap begint en eindigt in een keer, want het werk is al gedaan.
-        self._end_step(self._begin_step(steps.running_sync_terminated(terminated)))
+        """Terminate the sync operations blocking a next sync on these deployments."""
+        await ArgoCDSync(self)._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
 
     async def get_repository_path(self, repository_name: str) -> str | None:
         project_data = await self.get_contents()
@@ -6694,13 +5965,13 @@ class ProjectManager:
 
             # Register storage environment variables using service definitions
             if storage_configs:
-                storage_env_vars = self._generate_storage_env_vars_from_services(processed_storage_configs)
+                storage_env_vars = generate_storage_env_vars_from_services(processed_storage_configs)
                 if storage_env_vars:
                     env_vars.update(storage_env_vars)
 
             # Register publish-on-web environment variables using service definitions
             if publish_on_web and hostname:
-                web_env_vars = self._generate_web_env_vars_from_services(hostname, use_https)
+                web_env_vars = generate_web_env_vars_from_services(hostname, use_https)
                 if web_env_vars:
                     env_vars.update(web_env_vars)
 
@@ -6709,7 +5980,7 @@ class ProjectManager:
             # component's storage and publish-on-web variables, so a sibling without
             # those services would resolve another component's aliases against an
             # empty context and fail.
-            direct_aliases = self._scope_direct_aliases_to_component(
+            direct_aliases = scope_direct_aliases_to_component(
                 self._deployment_aliases.get(deployment_name, {}).get("direct", {}),
                 project_data,
                 component_name,
@@ -6720,7 +5991,7 @@ class ProjectManager:
                         f"Resolving {len(service_aliases)} direct {service_category} aliases for component {component_name}"
                     )
                     # Resolve aliases using current env_vars as context
-                    resolved_direct_aliases = self._resolve_aliases(service_aliases, env_vars)
+                    resolved_direct_aliases = resolve_aliases(service_aliases, env_vars)
                     # Add resolved aliases to env_vars
                     env_vars.update(resolved_direct_aliases)
                     logger.info(
@@ -7357,7 +6628,7 @@ class ProjectManager:
                 )
                 if keycloak_aliases:
                     logger.debug(f"Resolving {len(keycloak_aliases)} keycloak aliases for deployment {deployment_name}")
-                    resolved_aliases = self._resolve_aliases(keycloak_aliases, keycloak_secret_data)
+                    resolved_aliases = resolve_aliases(keycloak_aliases, keycloak_secret_data)
                     keycloak_secret_data.update(resolved_aliases)
                     logger.info(f"Added {len(resolved_aliases)} resolved keycloak aliases to deployment secret")
 
@@ -7398,7 +6669,7 @@ class ProjectManager:
             platform_aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get("platform", {})
             if platform_aliases:
                 logger.debug(f"Resolving {len(platform_aliases)} platform aliases for component {component_name}")
-                resolved_platform_aliases = self._resolve_aliases(platform_aliases, platform_secret_data)
+                resolved_platform_aliases = resolve_aliases(platform_aliases, platform_secret_data)
                 platform_secret_data.update(resolved_platform_aliases)
                 logger.info(
                     f"Added {len(resolved_platform_aliases)} resolved platform aliases to component {component_name}"
@@ -7717,25 +6988,6 @@ class ProjectManager:
         if record_base:
             self.__contents_as_read = copy.deepcopy(data)
         return data
-
-    async def _get_by_json_path(self, json_path: str) -> Any:
-        """
-        Get a value from the project file using JSONPath.
-
-        Args:
-            json_path: JSONPath expression to query the project data
-
-        Returns:
-            The value found at the JSONPath, or None if not found
-        """
-        project_data = await self.get_contents(record_base=False)
-
-        try:
-            jsonpath_expr = compiled_jsonpath(json_path)
-            matches = jsonpath_expr.find(project_data)
-            return matches[0].value if matches else None
-        except Exception as e:
-            raise Exception(f"Error querying JSONPath '{json_path}'") from e
 
     async def upsert_deployment(
         self,

@@ -21,13 +21,14 @@ REALM = "proj-odcn-production"
 
 def _manager(*, existing_credentials: KeycloakSecret | None) -> KeycloakManager:
     project_manager = MagicMock()
-    project_manager._get_project_keycloak_config_for_cluster = AsyncMock(
-        return_value={"realm": REALM, "host": KEYCLOAK_URL}
-    )
-    project_manager._get_keycloak_url_for_cluster = MagicMock(return_value=KEYCLOAK_URL)
     project_manager._get_secret_from_map = MagicMock(return_value=existing_credentials)
     project_manager._add_secret_to_create = MagicMock()
-    return KeycloakManager(project_manager)
+    manager = KeycloakManager(project_manager)
+    manager._get_project_keycloak_config_for_cluster = AsyncMock(  # type: ignore[method-assign]
+        return_value={"realm": REALM, "host": KEYCLOAK_URL}
+    )
+    manager._get_keycloak_url_for_cluster = MagicMock(return_value=KEYCLOAK_URL)  # type: ignore[method-assign]
+    return manager
 
 
 def _existing_credentials() -> KeycloakSecret:

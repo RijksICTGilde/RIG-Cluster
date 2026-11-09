@@ -609,7 +609,11 @@ async def test_een_ontbrekende_platform_client_wordt_niet_aangeraakt() -> None:
 async def _sso_rijk_integratie(config: dict[str, Any]) -> Any:
     """Loop ``_setup_sso_rijk_integration`` af tot aan ``create_deployment_client``."""
     project_manager = MagicMock()
-    project_manager._get_project_keycloak_config_for_cluster = AsyncMock(
+    # Geen opgeslagen credentials, dus de client wordt daadwerkelijk aangemaakt.
+    project_manager._get_secret_from_map = MagicMock(return_value=None)
+
+    manager = KeycloakManager(project_manager)
+    manager._get_project_keycloak_config_for_cluster = AsyncMock(  # type: ignore[method-assign]
         return_value={
             "host": "https://keycloak.example",
             "realm": "mb-docs-odcn-production",
@@ -617,11 +621,7 @@ async def _sso_rijk_integratie(config: dict[str, Any]) -> Any:
             "password": "AGE",
         }
     )
-    project_manager._get_keycloak_url_for_cluster = MagicMock(return_value="https://keycloak.example")
-    # Geen opgeslagen credentials, dus de client wordt daadwerkelijk aangemaakt.
-    project_manager._get_secret_from_map = MagicMock(return_value=None)
-
-    manager = KeycloakManager(project_manager)
+    manager._get_keycloak_url_for_cluster = MagicMock(return_value="https://keycloak.example")  # type: ignore[method-assign]
     for stap in (
         "_ensure_realm_authentication_flow",
         "_ensure_idp_and_platform_client_configuration",

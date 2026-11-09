@@ -239,7 +239,7 @@ class SeaweedfsStorageService(BackupsPageMixin, Service):
                 secret_name=SeaweedFSSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
                 # "minio" and not "seaweedfs": the alias bucket is keyed on the category of
-                # _get_service_category_name, which both services collapse onto because they
+                # get_service_category_name, which both services collapse onto because they
                 # provide the same variables.
                 secret_type="minio",  # noqa: S106  # the name of the key or the secret class, not a secret
                 resolve_aliases=True,

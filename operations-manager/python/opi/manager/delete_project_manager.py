@@ -1609,7 +1609,9 @@ class DeleteProjectManager:
             if deletion_results["success"] or force:
                 stap = self._begin_step(steps.KEYCLOAK_REALM_DELETE)
                 fouten_voor = len(deletion_results["errors"])
-                kc_config = await self.project_manager._get_project_keycloak_config_for_cluster(current_cluster)
+                kc_config = await self.project_manager._keycloak_manager._get_project_keycloak_config_for_cluster(
+                    current_cluster
+                )
                 if kc_config:
                     logger.info(f"Cleaning up project Keycloak realm for cluster {current_cluster}")
                     await self._cleanup_project_keycloak_realm(
@@ -1631,7 +1633,9 @@ class DeleteProjectManager:
                         kc_config={
                             "realm": generate_project_realm_name(project_name, current_cluster),
                             "username": generate_project_admin_username(project_name, current_cluster),
-                            "host": self.project_manager._get_keycloak_url_for_cluster(current_cluster),
+                            "host": self.project_manager._keycloak_manager._get_keycloak_url_for_cluster(
+                                current_cluster
+                            ),
                         },
                         deletion_results=deletion_results,
                         only_if_present=True,

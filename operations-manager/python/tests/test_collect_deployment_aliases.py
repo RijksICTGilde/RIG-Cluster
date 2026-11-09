@@ -11,52 +11,59 @@ import shutil
 import subprocess
 
 import pytest
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project import aliases as aliases_module
+from opi.manager.project.aliases import DeploymentAliases, scope_direct_aliases_to_component
 from opi.services.component_values import encode as encode_component_values
 from opi.utils.age import encrypt_age_content_sync
 
 
-def _pm(component_defs: dict[str, dict]) -> ProjectManager:
-    """A ProjectManager with just the three methods _collect_deployment_aliases uses."""
-    pm = ProjectManager.__new__(ProjectManager)
+@pytest.fixture(autouse=True)
+def _every_alias_is_a_database_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The templates in this file are no platform references, so the real categoriser would
+    refuse them. Patched on the module, because the group calls the module function."""
+    monkeypatch.setattr(aliases_module, "categorize_alias", lambda _name, _template: ("database", "secret"))
 
-    async def get_contents(*, record_base: bool = True) -> dict:
-        # record_base mirrors the real signature: projection helpers such as
-        # _collect_deployment_aliases read without recording a compare-and-swap base.
-        return {"deployments": [{"name": "dep1", "components": [{"reference": n} for n in component_defs]}]}
+
+def _aliases(component_defs: dict[str, dict]) -> DeploymentAliases:
+    """The alias group over a host with just the one method it reads the project file with."""
+
+    class _Host:
+        async def get_contents(self, *, record_base: bool = True) -> dict:
+            # record_base mirrors the real signature: projection helpers such as
+            # collect_deployment_aliases read without recording a compare-and-swap base.
+            return {"deployments": [{"name": "dep1", "components": [{"reference": n} for n in component_defs]}]}
 
     async def get_by_json_path(expr: str) -> dict:
         name = re.search(r"name=='([^']+)'", expr).group(1)
         return component_defs[name]
 
-    pm.get_contents = get_contents  # type: ignore[method-assign]
-    pm._get_by_json_path = get_by_json_path  # type: ignore[method-assign]
-    pm._categorize_alias = lambda _name, _tmpl: ("database", "secret")  # type: ignore[method-assign]
-    return pm
+    group = DeploymentAliases(_Host())
+    group._get_by_json_path = get_by_json_path  # type: ignore[method-assign]
+    return group
 
 
 @pytest.mark.asyncio
 async def test_identical_alias_across_components_is_allowed() -> None:
-    pm = _pm(
+    group = _aliases(
         {
             "a": {"name": "a", "aliases": {"POSTGRES_DB": "{{ db.name }}"}},
             "b": {"name": "b", "aliases": {"POSTGRES_DB": "{{ db.name }}"}},
         }
     )
-    result = await pm._collect_deployment_aliases("dep1")
+    result = await group.collect_deployment_aliases("dep1")
     assert result["secret"]["database"]["POSTGRES_DB"] == "{{ db.name }}"
 
 
 @pytest.mark.asyncio
 async def test_conflicting_alias_across_components_raises() -> None:
-    pm = _pm(
+    group = _aliases(
         {
             "a": {"name": "a", "aliases": {"POSTGRES_DB": "{{ db.name }}"}},
             "b": {"name": "b", "aliases": {"POSTGRES_DB": "{{ db.other }}"}},
         }
     )
     with pytest.raises(ValueError, match="Conflicting alias 'POSTGRES_DB'"):
-        await pm._collect_deployment_aliases("dep1")
+        await group.collect_deployment_aliases("dep1")
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +91,7 @@ DEPLOYMENT_WIDE_DIRECT = {
 
 
 def test_declaring_component_keeps_its_direct_aliases() -> None:
-    scoped = ProjectManager._scope_direct_aliases_to_component(DEPLOYMENT_WIDE_DIRECT, PROJECT_DATA, "headscale")
+    scoped = scope_direct_aliases_to_component(DEPLOYMENT_WIDE_DIRECT, PROJECT_DATA, "headscale")
     assert scoped == DEPLOYMENT_WIDE_DIRECT
 
 
@@ -95,7 +102,7 @@ def test_sibling_without_aliases_gets_none() -> None:
     deployment-wide set to a component with neither publish-on-web nor storage
     resolved them against an empty context and raised.
     """
-    scoped = ProjectManager._scope_direct_aliases_to_component(DEPLOYMENT_WIDE_DIRECT, PROJECT_DATA, "vlam-gateway")
+    scoped = scope_direct_aliases_to_component(DEPLOYMENT_WIDE_DIRECT, PROJECT_DATA, "vlam-gateway")
     assert scoped == {}
 
 
@@ -105,7 +112,7 @@ def test_partial_overlap_keeps_only_declared_aliases() -> None:
         "storage": {"WORKER_PATH": "${DATA_PATH}/w", "OTHER_PATH": "${DATA_PATH}/o"},
         "web": {"OTHER_URL": "https://${PUBLIC_HOSTNAME}"},
     }
-    scoped = ProjectManager._scope_direct_aliases_to_component(direct, project_data, "worker")
+    scoped = scope_direct_aliases_to_component(direct, project_data, "worker")
     # Empty categories are dropped entirely, not left as {}.
     assert scoped == {"storage": {"WORKER_PATH": "${DATA_PATH}/w"}}
 
@@ -154,25 +161,24 @@ ALIASES = {
 }
 
 
-def _pm_with_config(component_defs: dict[str, dict], project: dict) -> ProjectManager:
-    """Like ``_pm``, but the project carries the AGE config a block needs to be read."""
-    pm = ProjectManager.__new__(ProjectManager)
+def _aliases_with_config(component_defs: dict[str, dict], project: dict) -> DeploymentAliases:
+    """Like ``_aliases``, but the project carries the AGE config a block needs to be read."""
 
-    async def get_contents(*, record_base: bool = True) -> dict:
-        return {
-            **project,
-            "components": list(component_defs.values()),
-            "deployments": [{"name": "dep1", "components": [{"reference": n} for n in component_defs]}],
-        }
+    class _Host:
+        async def get_contents(self, *, record_base: bool = True) -> dict:
+            return {
+                **project,
+                "components": list(component_defs.values()),
+                "deployments": [{"name": "dep1", "components": [{"reference": n} for n in component_defs]}],
+            }
 
     async def get_by_json_path(expr: str) -> dict:
         name = re.search(r"name=='([^']+)'", expr).group(1)
         return component_defs[name]
 
-    pm.get_contents = get_contents  # type: ignore[method-assign]
-    pm._get_by_json_path = get_by_json_path  # type: ignore[method-assign]
-    pm._categorize_alias = lambda _name, _tmpl: ("database", "secret")  # type: ignore[method-assign]
-    return pm
+    group = DeploymentAliases(_Host())
+    group._get_by_json_path = get_by_json_path  # type: ignore[method-assign]
+    return group
 
 
 @pytest.mark.skipif(not _HAS_AGE, reason="age/age-keygen binary not available")
@@ -181,12 +187,12 @@ async def test_a_block_and_an_unencrypted_mapping_deploy_the_same_aliases(age_pr
     block = encode_component_values(ALIASES, age_project)
     assert isinstance(block, str), "the fixture must really be one block, or this proves nothing"
 
-    from_block = await _pm_with_config({"a": {"name": "a", "aliases": block}}, age_project)._collect_deployment_aliases(
-        "dep1"
-    )
-    from_mapping = await _pm_with_config(
+    from_block = await _aliases_with_config(
+        {"a": {"name": "a", "aliases": block}}, age_project
+    ).collect_deployment_aliases("dep1")
+    from_mapping = await _aliases_with_config(
         {"a": {"name": "a", "aliases": dict(ALIASES)}}, age_project
-    )._collect_deployment_aliases("dep1")
+    ).collect_deployment_aliases("dep1")
 
     assert from_block["secret"]["database"] == ALIASES
     assert from_block == from_mapping
@@ -199,9 +205,9 @@ async def test_a_per_value_encrypted_mapping_still_deploys(age_project: dict) ->
     public = age_project["config"]["age-public-key"]
     stored = {name: encrypt_age_content_sync(value, public) for name, value in ALIASES.items()}
 
-    result = await _pm_with_config({"a": {"name": "a", "aliases": stored}}, age_project)._collect_deployment_aliases(
-        "dep1"
-    )
+    result = await _aliases_with_config(
+        {"a": {"name": "a", "aliases": stored}}, age_project
+    ).collect_deployment_aliases("dep1")
 
     assert result["secret"]["database"] == ALIASES
 
@@ -216,6 +222,6 @@ def test_scoping_direct_aliases_reads_the_block_and_not_its_ciphertext(age_proje
         "components": [{"name": "a", "aliases": encode_component_values(ALIASES, age_project)}],
     }
 
-    scoped = ProjectManager._scope_direct_aliases_to_component(direct, project_data, "a")
+    scoped = scope_direct_aliases_to_component(direct, project_data, "a")
 
     assert scoped == direct

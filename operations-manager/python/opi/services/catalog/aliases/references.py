@@ -6,7 +6,7 @@ follow from that.
 
 **A reference the platform does not provide is a typo.** The service says so itself
 ("Een onbekende verwijzing is hier een harde fout, anders dan bij een eigen omgevingsvariabele");
-``project_manager._categorize_alias`` enforces it at deploy time, and
+``project.aliases.categorize_alias`` enforces it at deploy time, and
 :func:`validate_alias_value` is that same rule at the moment of writing.
 
 **A reference is not a secret.** The value IS the coupling, so masking it hides exactly
@@ -16,7 +16,7 @@ side show a pointer while it keeps masking a literal -- see
 is not (only) references may carry a literal secret and stays masked.
 
 The known names come from the service definitions, the same source
-``_categorize_alias`` uses, so "known here" and "resolvable at deploy time" cannot
+``categorize_alias`` uses, so "known here" and "resolvable at deploy time" cannot
 drift apart.
 """
 

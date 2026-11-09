@@ -20,7 +20,7 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ArgoManager,
 )
-from opi.manager.project_manager import ProjectManager
+from opi.manager.project.argocd_sync import ArgoCDSync
 
 RECONCILED_AT = "2026-08-19T12:00:00Z"
 
@@ -67,7 +67,7 @@ async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(sleeps: list[float]) -
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
     zelf = _watcher_self()
 
-    await ProjectManager._keep_umbrella_refreshed(zelf, connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(zelf)._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     # Eerste ronde plus twee herhalingen; daarna stopt hij, want de umbrella heeft onze
     # commit vergeleken en nog een refresh zou circa 90 child-apps hertekenen.
@@ -79,7 +79,7 @@ async def test_ververst_opnieuw_tot_de_revisie_de_onze_is(sleeps: list[float]) -
 async def test_ververst_niet_opnieuw_als_de_umbrella_al_bij_is(sleeps: list[float]) -> None:
     connector = FakeArgoConnector(["onze-commit"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert connector.refreshes == 1, "alleen de eerste ronde"
 
@@ -88,7 +88,7 @@ async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[
     """De lus loopt op het antwoord van de refresh; de ondergrens is alleen een rem."""
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert len(sleeps) == connector.refreshes - 1, "alleen tússen twee refreshes wordt gewacht"
     assert all(0 < wachttijd <= UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN for wachttijd in sleeps), (
@@ -100,7 +100,7 @@ async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None
     """Blijft de revisie verkeerd, dan is er iets anders aan de hand dan een verloren wekker."""
     connector = FakeArgoConnector(["oude-revisie"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
 
     assert connector.refreshes == UMBRELLA_REFRESH_MAX_POGINGEN, "niet eindeloos doorprikken"
 
@@ -108,7 +108,7 @@ async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None
 async def test_zonder_bekende_commit_blijft_het_bij_een_refresh(sleeps: list[float]) -> None:
     connector = FakeArgoConnector(["oude-revisie"])
 
-    await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, None)  # type: ignore[arg-type]
+    await ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, None)  # type: ignore[arg-type]
 
     assert connector.refreshes == 1
     assert connector.status_calls == 0, "zonder bewijs niet gokken"
@@ -118,7 +118,7 @@ async def test_drie_wachtende_applicaties_delen_een_bewaker(sleeps: list[float])
     """Eén bewaker naast de wachters, niet één per applicatie."""
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
     watcher = asyncio.create_task(
-        ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
+        ArgoCDSync(_watcher_self())._keep_umbrella_refreshed(connector, "onze-commit")  # type: ignore[arg-type]
     )
 
     async def _wacht_op_applicatie(_naam: str) -> None:

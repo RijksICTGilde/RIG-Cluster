@@ -269,7 +269,7 @@ rechtstreeks YAML.
   hieronder).
 - **Een aliaswaarde moet naar een bestaande platformvariabele verwijzen.** `$DATABASE_SERVER_HOST`
   mag, `$BESTAAT_ECHT_NIET` niet, en een waarde zonder enige verwijzing ook niet. Die regel
-  bestond al (`_categorize_alias`) maar sloeg pas toe bij het uitrollen, zodat een typefout
+  bestond al (`categorize_alias`) maar sloeg pas toe bij het uitrollen, zodat een typefout
   pas zichtbaar werd als de container opkwam (RC-66). Voor een **eigen** env-var geldt hij
   bewust niet: een dollarteken in een wachtwoord is geen typefout. De regel staat in
   `opi/services/catalog/aliases/references.py` en hangt onder

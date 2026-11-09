@@ -78,7 +78,7 @@ def _make_project_manager_mock() -> MagicMock:
     mock_pm.get_contents = AsyncMock()
     mock_pm.get_deployment_by_name = AsyncMock()
     mock_pm.get_deployments = AsyncMock()
-    mock_pm._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
+    mock_pm._keycloak_manager._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
 
     return mock_pm
 
@@ -571,7 +571,7 @@ class TestDeleteProjectOrchestration:
         Keycloak, instead of filling its delete report with failed operations.
         """
         mock_pm = _make_project_manager_mock()
-        mock_pm._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
+        mock_pm._keycloak_manager._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)
 
         deployment = _make_deployment()
         project_data = _make_project_data(deployments=[deployment])

@@ -34,6 +34,7 @@ from opi.manager.argo_manager import (
     PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     ArgoManager,
 )
+from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.utils.naming import generate_argocd_project_application_name
 
 PROJECT_APP = "demo-project"
@@ -280,7 +281,7 @@ def _project_manager(monkeypatch: Any, connector: AsyncMock, *, bestaat_al: bool
     """
     from opi.manager import project_manager as pm_module
 
-    monkeypatch.setattr(pm_module, "create_argo_connector", lambda: connector)
+    monkeypatch.setattr("opi.manager.project.argocd_sync.create_argo_connector", lambda: connector)
 
     manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
     manager._argo_manager = MagicMock()
@@ -297,7 +298,7 @@ def _project_manager(monkeypatch: Any, connector: AsyncMock, *, bestaat_al: bool
     manager._argo_manager.wait_for_application_synced = AsyncMock(return_value=True)
     manager._kubectl_connector = MagicMock()
     manager._kubectl_connector.argocd_application_exists = AsyncMock(return_value=bestaat_al)
-    manager._keep_umbrella_refreshed = AsyncMock(return_value=None)
+    monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", AsyncMock(return_value=None))
     return manager
 
 
@@ -416,7 +417,7 @@ class TestDeGrendelZelf:
 
         await manager.wait_for_project_level_application(PROJECT_APP)
 
-        manager._keep_umbrella_refreshed.assert_not_awaited()
+        ArgoCDSync._keep_umbrella_refreshed.assert_not_awaited()
         manager._argo_manager.wait_for_application_created.assert_not_awaited()
         manager._argo_manager.wait_for_application_synced.assert_awaited_once()
 
@@ -437,7 +438,7 @@ class TestDeGrendelZelf:
         # En die wacht staat in de verversbewaker: zonder hem kan onze refresh opgaan in een
         # reconcile die zijn revisie al had, en wacht deze grendel op een CR die pas bij de
         # volgende reconcile komt. De commit is wat de bewaker een herhaling laat doen.
-        manager._keep_umbrella_refreshed.assert_awaited_once_with(connector, "cafebabe")
+        ArgoCDSync._keep_umbrella_refreshed.assert_awaited_once_with(connector, "cafebabe")
 
     @pytest.mark.asyncio
     async def test_de_wacht_krijgt_de_afgesproken_bovengrens_mee(self, monkeypatch: Any) -> None:
@@ -551,7 +552,9 @@ class TestDeVerversbewaker:
     """
 
     @pytest.mark.asyncio
-    async def test_een_omgevallen_bewaker_sleept_de_wacht_niet_mee(self, caplog: Any) -> None:
+    async def test_een_omgevallen_bewaker_sleept_de_wacht_niet_mee(
+        self, caplog: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from opi.manager import project_manager as pm_module
 
         manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
@@ -561,7 +564,7 @@ class TestDeVerversbewaker:
         async def _valt_om(*_args: Any) -> None:
             raise ValueError("ArgoCD gaf iets terug wat de bewaker niet aankan")
 
-        manager._keep_umbrella_refreshed = _valt_om  # type: ignore[method-assign]
+        monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", _valt_om)
 
         gewacht = False
         with caplog.at_level(logging.WARNING):
@@ -574,7 +577,7 @@ class TestDeVerversbewaker:
         assert "Verversbewaker voor user-applications gestopt" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_de_bewaker_stopt_als_de_wacht_klaar_is(self) -> None:
+    async def test_de_bewaker_stopt_als_de_wacht_klaar_is(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Anders blijft hij de umbrella prikken terwijl er niemand meer op wacht."""
         from opi.manager import project_manager as pm_module
 
@@ -591,7 +594,7 @@ class TestDeVerversbewaker:
                 gestopt.set()
                 raise
 
-        manager._keep_umbrella_refreshed = _blijft_hangen  # type: ignore[method-assign]
+        monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", _blijft_hangen)
 
         async def _wacht() -> None:
             async with manager._umbrella_verversbewaker(AsyncMock()):
@@ -731,7 +734,7 @@ class TestDeGrendelOverslaan:
         connector.login = AsyncMock(return_value=True)
         connector.refresh_application = AsyncMock(return_value="2026-11-04T09:00:00Z")
         connector.get_application_status = AsyncMock(return_value=status)
-        monkeypatch.setattr(pm_module, "create_argo_connector", lambda: connector)
+        monkeypatch.setattr("opi.manager.project.argocd_sync.create_argo_connector", lambda: connector)
 
         manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
         manager._argo_manager = MagicMock()
@@ -739,7 +742,7 @@ class TestDeGrendelOverslaan:
         manager._argo_manager.wait_for_application_synced = AsyncMock(return_value=True)
         manager._kubectl_connector = MagicMock()
         manager._kubectl_connector.argocd_application_exists = AsyncMock(return_value=True)
-        manager._keep_umbrella_refreshed = AsyncMock(return_value=None)
+        monkeypatch.setattr(ArgoCDSync, "_keep_umbrella_refreshed", AsyncMock(return_value=None))
         manager._project_level_manifests_changed = veranderd
         manager._project_level_repo = "main-repo"
         manager._project_level_path = "sandboxed-local/demo/project"

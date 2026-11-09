@@ -8,6 +8,8 @@ import inspect
 import pathlib
 
 import pytest
+from opi.manager.project.aliases import generate_storage_env_vars_from_services, get_service_category_name
+from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
 from tests import project_manager_sources
 
@@ -117,7 +119,7 @@ class TestExistingDeploymentWorkspace:
         manager._project_level_repo = "main-repo"
         manager._project_level_path = "sandboxed-local/demo/project"
 
-        assert await manager._project_level_already_applied("demo-project") is False
+        assert await ArgoCDSync(manager)._project_level_already_applied("demo-project") is False
 
 
 class TestResolveDeploymentFilter:
@@ -193,9 +195,8 @@ class TestMissingFStrings:
 
     def test_storage_type_error_includes_actual_type(self):
         """ValueError for unknown storage type must include the actual type value, not literal '{storage_type}'."""
-        pm = ProjectManager.__new__(ProjectManager)
         with pytest.raises(ValueError, match="bogus_type"):
-            pm._generate_storage_env_vars_from_services([{"mount-path": "/data", "type": "bogus_type"}])
+            generate_storage_env_vars_from_services([{"mount-path": "/data", "type": "bogus_type"}])
 
     def test_no_deployments_warning_includes_project_name(self):
         """Log strings with {var} placeholders must use f-string prefix to interpolate variables."""
@@ -211,10 +212,10 @@ class TestMissingFStrings:
 
 
 class TestServiceCategoryMapping:
-    """Regression tests for _get_service_category_name.
+    """Regression tests for get_service_category_name.
 
     The category map is consumed by alias categorisation
-    (project_manager._categorize_alias). Because RedisVariables / DatabaseVariables
+    (``aliases.categorize_alias``). Because RedisVariables / DatabaseVariables
     are shared between the regular and NAMESPACE_* service definitions, the
     var_to_service lookup ends up keyed by whichever variant comes last in
     SERVICE_DEFINITIONS dict iteration order. If both variants don't collapse
@@ -223,20 +224,16 @@ class TestServiceCategoryMapping:
     """
 
     def test_redis_and_namespace_redis_collapse_to_redis_category(self):
-        from opi.manager.project_manager import ProjectManager
         from opi.services.services_enums import ServiceType
 
-        m = ProjectManager.__new__(ProjectManager)  # bypass __init__
-        assert m._get_service_category_name(ServiceType.REDIS) == "redis"
-        assert m._get_service_category_name(ServiceType.NAMESPACE_REDIS) == "redis"
+        assert get_service_category_name(ServiceType.REDIS) == "redis"
+        assert get_service_category_name(ServiceType.NAMESPACE_REDIS) == "redis"
 
     def test_postgresql_and_namespace_postgresql_collapse_to_database_category(self):
-        from opi.manager.project_manager import ProjectManager
         from opi.services.services_enums import ServiceType
 
-        m = ProjectManager.__new__(ProjectManager)
-        assert m._get_service_category_name(ServiceType.POSTGRESQL_DATABASE) == "database"
-        assert m._get_service_category_name(ServiceType.NAMESPACE_POSTGRESQL_DATABASE) == "database"
+        assert get_service_category_name(ServiceType.POSTGRESQL_DATABASE) == "database"
+        assert get_service_category_name(ServiceType.NAMESPACE_POSTGRESQL_DATABASE) == "database"
 
     def test_minio_and_seaweedfs_collapse_to_minio_category(self):
         """seaweedfs-storage hergebruikt MinIOVariables, dus dezelfde val als redis.
@@ -245,12 +242,10 @@ class TestServiceCategoryMapping:
         "seaweedfs-storage" en verdwijnt hij stil uit het minio-secret, ook bij een
         bestaand project dat seaweedfs niet eens gebruikt.
         """
-        from opi.manager.project_manager import ProjectManager
         from opi.services.services_enums import ServiceType
 
-        m = ProjectManager.__new__(ProjectManager)
-        assert m._get_service_category_name(ServiceType.MINIO_STORAGE) == "minio"
-        assert m._get_service_category_name(ServiceType.SEAWEEDFS_STORAGE) == "minio"
+        assert get_service_category_name(ServiceType.MINIO_STORAGE) == "minio"
+        assert get_service_category_name(ServiceType.SEAWEEDFS_STORAGE) == "minio"
 
 
 def _valid_project_for_save() -> dict:

@@ -31,6 +31,7 @@ from opi.api.task_models import ProcessingStatus
 from opi.api.v2.router import v2_router
 from opi.core import progress_steps
 from opi.core.task_handlers_operations import handle_refresh_deployment, handle_refresh_project
+from opi.manager.project.argocd_sync import ArgoCDSync
 from opi.manager.project_manager import ProjectManager
 from opi.server import app
 from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS
@@ -85,8 +86,8 @@ class TestDeDrempelOpHetRefreshPad:
     async def test_een_jonge_operation_wordt_bij_een_refresh_wel_beeindigd(self, age_seconds: int) -> None:
         manager = _manager(age_seconds)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
+            [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once_with(APP, ARGO_NS)
@@ -98,9 +99,7 @@ class TestDeDrempelOpHetRefreshPad:
         mogelijkheid."""
         manager = _manager(age_seconds)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         manager._kubectl_connector.terminate_argocd_application_operation.assert_not_awaited()
 
@@ -108,9 +107,7 @@ class TestDeDrempelOpHetRefreshPad:
         """Wat RC-250 bouwde blijft staan: op de drempel breekt de gewone push wel af."""
         manager = _manager(STUCK_OPERATION_THRESHOLD_SECONDS)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         manager._kubectl_connector.terminate_argocd_application_operation.assert_awaited_once()
 
@@ -118,8 +115,7 @@ class TestDeDrempelOpHetRefreshPad:
         """De knop zit op het project, dus de grote hamer is de bedoeling."""
         manager = _manager(5)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [
                 {"name": DEPLOYMENT, "cluster": "odcn-production"},
                 {"name": "productie", "cluster": "odcn-production"},
@@ -351,8 +347,8 @@ class TestDeTaakuitkomst:
         manager._begin_step = MagicMock(return_value="stap-1")
         manager._end_step = MagicMock()
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
+            [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
         assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
@@ -365,9 +361,7 @@ class TestDeTaakuitkomst:
         manager._begin_step = MagicMock(return_value="stap-1")
         manager._end_step = MagicMock()
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         assert manager._begin_step.call_args.args[0] == progress_steps.running_sync_terminated([DEPLOYMENT])
         assert manager._terminated_sync_operations == [DEPLOYMENT]
@@ -377,9 +371,7 @@ class TestDeTaakuitkomst:
         manager = _manager(5)
         manager._begin_step = MagicMock(return_value="stap-1")
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}]
-        )
+        await ArgoCDSync(manager)._clear_blocking_sync_operations([{"name": DEPLOYMENT, "cluster": "odcn-production"}])
 
         manager._begin_step.assert_not_called()
         assert manager._terminated_sync_operations == []
@@ -387,8 +379,7 @@ class TestDeTaakuitkomst:
     async def test_de_opruimronde_onthoudt_wat_ze_afbrak(self) -> None:
         manager = _manager(5)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager,
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
             [{"name": DEPLOYMENT, "cluster": "odcn-production"}, {"name": "productie", "cluster": "odcn-production"}],
             True,
         )
@@ -412,8 +403,8 @@ class TestDeTaakuitkomst:
         manager = _manager(5)
         manager._kubectl_connector.terminate_argocd_application_operation = AsyncMock(return_value=False)
 
-        await ProjectManager._clear_blocking_sync_operations(
-            manager, [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
+        await ArgoCDSync(manager)._clear_blocking_sync_operations(
+            [{"name": DEPLOYMENT, "cluster": "odcn-production"}], True
         )
 
         assert manager._terminated_sync_operations == []

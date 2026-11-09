@@ -82,11 +82,9 @@ async def test_a_keycloak_error_on_the_connector_itself_is_retried():
 
 
 def _manager_deleting_one_sso_component() -> tuple[KeycloakManager, dict[str, Any]]:
-    project_manager = MagicMock(
-        get_name=AsyncMock(return_value="demo"),
-        _get_project_keycloak_config_for_cluster=AsyncMock(return_value=None),
-    )
+    project_manager = MagicMock(get_name=AsyncMock(return_value="demo"))
     manager = KeycloakManager(project_manager)
+    manager._get_project_keycloak_config_for_cluster = AsyncMock(return_value=None)  # type: ignore[method-assign]
     manager._get_sso_components_for_deployment = AsyncMock(return_value=["component-1"])
     deployment = {"name": "deployment-1", "cluster": "odcn-production"}
     return manager, deployment

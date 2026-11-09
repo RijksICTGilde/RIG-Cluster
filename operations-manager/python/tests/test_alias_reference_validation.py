@@ -2,7 +2,7 @@
 
 ``{"KAPOT": "$BESTAAT_ECHT_NIET"}`` was accepted, while the service's own description
 says the opposite: "Een onbekende verwijzing is hier een harde fout, anders dan bij een
-eigen omgevingsvariabele." The rule did exist -- in ``_categorize_alias``, at deploy time
+eigen omgevingsvariabele." The rule did exist -- in ``categorize_alias``, at deploy time
 -- so a typo only surfaced when the container came up. It now runs at the moment of
 writing, on both the API and the write path.
 

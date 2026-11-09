@@ -223,6 +223,39 @@ class KeycloakManager:
         """
         self.project_manager = project_manager
 
+    async def _get_project_keycloak_config_for_cluster(self, cluster: str) -> dict[str, Any] | None:
+        """The Keycloak admin entry of this project for *cluster*, or None.
+
+        Matched on the realm name, which is derived from the project and the cluster.
+        """
+
+        project_data = await self.project_manager.get_contents(record_base=False)
+        keycloak_list = Project(project_data).get("services/keycloak/config/realms") or []
+        if not keycloak_list:
+            return None
+
+        project_name = await self.project_manager.get_name()
+        expected_realm = generate_project_realm_name(project_name, cluster)
+
+        for entry in keycloak_list:
+            if entry.get("realm") == expected_realm:
+                return entry
+
+        return None
+
+    def _get_keycloak_url_for_cluster(self, cluster: str) -> str:
+        """The base Keycloak URL for *cluster*, derived from its discovery URL."""
+
+        discovery_url = get_keycloak_discovery_url(cluster)
+
+        if "/.well-known" in discovery_url:
+            base_url = discovery_url.split("/.well-known")[0]
+            if "/realms/" in base_url:
+                base_url = base_url.split("/realms/")[0]
+            return base_url
+
+        return discovery_url
+
     async def create_resources_for_deployment(
         self,
         project_data: dict[str, Any],
@@ -446,7 +479,7 @@ class KeycloakManager:
             return deletion_results
 
         # Try to get project realm for this cluster
-        kc_config = await self.project_manager._get_project_keycloak_config_for_cluster(cluster)
+        kc_config = await self._get_project_keycloak_config_for_cluster(cluster)
 
         # Determine which realm to use (project realm or default for backwards compatibility)
         if kc_config:
@@ -1065,11 +1098,11 @@ class KeycloakManager:
         """
         try:
             # Get project realm config for this cluster
-            kc_config = await self.project_manager._get_project_keycloak_config_for_cluster(cluster)
+            kc_config = await self._get_project_keycloak_config_for_cluster(cluster)
 
             # Determine if we need to create/recreate the realm
             need_to_create_realm = False
-            keycloak_url = self.project_manager._get_keycloak_url_for_cluster(cluster)
+            keycloak_url = self._get_keycloak_url_for_cluster(cluster)
 
             if not kc_config:
                 # No config exists - definitely need to create
@@ -1151,7 +1184,7 @@ class KeycloakManager:
                 logger.info(f"Creating project realm infrastructure for cluster {cluster}...")
                 await self._setup_project_keycloak_realm(project_name, cluster, keycloak_url, config, ingress_hosts)
                 # Reload keycloak config after realm creation
-                kc_config = await self.project_manager._get_project_keycloak_config_for_cluster(cluster)
+                kc_config = await self._get_project_keycloak_config_for_cluster(cluster)
 
                 if not kc_config:
                     raise RuntimeError(f"Failed to create project realm for cluster {cluster}")
