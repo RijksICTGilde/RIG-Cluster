@@ -80,7 +80,10 @@ def _project() -> dict[str, Any]:
     }
 
 
-def _body(services: list[str]) -> dict[str, Any]:
+HEALTH_CHECK_POST = {"scheme": "", "port": "8080", "liveness-path": "/"}
+
+
+def _body(services: list[str], health_check: dict[str, Any] = HEALTH_CHECK_POST) -> dict[str, Any]:
     """Wat de browser post: legacy-vorm config voor de eigen diensten, kale namen voor de rest."""
     return {
         "components": [
@@ -92,7 +95,7 @@ def _body(services: list[str]) -> dict[str, Any]:
                 "path": [{"match": "/", "rewrite": ""}],
                 "_services-config": [
                     {"publish-on-web": {"config": {"tls": "standard"}}},
-                    {"health-check": {"config": {"scheme": "", "port": "8080", "liveness-path": "/"}}},
+                    {"health-check": {"config": dict(health_check)}},
                 ],
             }
         ],
@@ -100,7 +103,9 @@ def _body(services: list[str]) -> dict[str, Any]:
     }
 
 
-async def _round_trip(project: dict[str, Any], posted_services: list[str]) -> list[Any]:
+async def _round_trip(
+    project: dict[str, Any], posted_services: list[str], health_check: dict[str, Any] = HEALTH_CHECK_POST
+) -> list[Any]:
     """De volledige modalweg: init, submit-verwerking, finale merge, apply_modal_edit."""
     project_data = copy.deepcopy(project)
     flow = get_flow(FLOW_ID, **dict(flow_context_from_base(FLOW_ID, project_data)))
@@ -129,7 +134,7 @@ async def _round_trip(project: dict[str, Any], posted_services: list[str]) -> li
             state.base_data[list_key] = items
 
     # modal_wizard_submit_step
-    submitted_data = _pad_sparse_submission(_body(posted_services), flow, SECTION_ID)
+    submitted_data = _pad_sparse_submission(_body(posted_services, health_check), flow, SECTION_ID)
     yaml_data = state.get_merged_data()
     submitted_yaml, errors = await processor.process_json_submission(
         submitted_data, section.editables, yaml_data, edit_mode=True, enforcer_context={"project_name": "ai1-uit"}
@@ -191,6 +196,22 @@ async def test_saved_entries_keep_one_shape() -> None:
         assert not ("reference" in entry and name in entry), f"dubbelvormige entry: {entry}"
     by_name = {service_entry_name(e): e for e in saved if isinstance(e, dict)}
     assert by_name["health-check"]["config"]["liveness-path"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_cleared_service_config_field_leaves_the_file() -> None:
+    """Switching health-check from http to tcp and emptying the paths removes them from the file."""
+    project = _project()
+    component = project["components"][0]
+    component["services"][2] = {
+        "reference": "health-check",
+        "config": {"scheme": "http", "port": 8080, "liveness-path": "/live", "readiness-path": "/ready"},
+    }
+    saved = await _round_trip(
+        project, PRE_EDIT, {"scheme": "tcp", "port": "8080", "liveness-path": "", "readiness-path": ""}
+    )
+    by_name = {service_entry_name(e): e for e in saved if isinstance(e, dict)}
+    assert by_name["health-check"]["config"] == {"scheme": "tcp", "port": 8080}
 
 
 def test_merge_service_lists_normalizes_mismatched_shapes() -> None:
