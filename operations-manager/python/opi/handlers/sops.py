@@ -6,12 +6,13 @@ This module provides functionality for:
 - Interacting with Kubernetes secrets for SOPS keys
 """
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from opi.connectors.kubectl import KubectlExecutionError
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
+from opi.utils.connect_retry import retry_on_connect_error
 
 if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
@@ -22,14 +23,18 @@ logger = logging.getLogger(__name__)
 # service account admin in the namespace) takes ~1s to propagate; the first secret
 # apply then fails with a transient Forbidden. Retry on that race before treating a
 # failure as a real, alert-worthy error.
-_SOPS_STORE_MAX_ATTEMPTS = 4
-_SOPS_STORE_RETRY_DELAY_SECONDS = 1.5
+_SOPS_STORE_BUDGET_SECONDS = 60.0
 
 #: Secret en Role voor het sleutel-secret. De Role gaat mee bij elke verwerking, ook als
 #: het secret al klopt: zonder Role leest de CMP het secret niet en rendert ArgoCD niet.
 SOPS_SECRET_NAME = "sops-age-key"  # noqa: S105  # naam van het secret, geen secret
 CMP_SOPS_ROLE_NAME = "cmp-sops-key-reader"
 CMP_SERVICE_ACCOUNT = "argocd-cmp"
+
+
+def _rbac_still_propagating(error: BaseException) -> bool:
+    """Whether a failed secret apply is the Capsule-RBAC race and not a real refusal."""
+    return isinstance(error, KubectlExecutionError) and "forbidden" in str(error).lower()
 
 
 def format_age_key_file(private_key: str, public_key: str) -> str:
@@ -101,55 +106,38 @@ class SopsHandler:
                 "secret_pairs": {"key": full_key_contents},
             }
 
-            # Retry the apply on the transient Capsule-RBAC race and only log an
-            # error once we have genuinely given up, so a failure that self-heals
-            # within a second does not raise a false alarm.
-            from opi.connectors.kubectl import KubectlExecutionError
+            async def _apply() -> None:
+                await self.kubectl.apply_manifest(template_path, variables, namespace)
 
-            last_error = ""
-            last_error_transient = False
-            stored = False
-            for attempt in range(1, _SOPS_STORE_MAX_ATTEMPTS + 1):
-                try:
-                    await self.kubectl.apply_manifest(template_path, variables, namespace)
-                    self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
-                    self.logger.debug(f"Public key for project: {public_key}")
-                    stored = True
-                    break
-                except KubectlExecutionError as apply_error:
-                    last_error = str(apply_error)
-                    last_error_transient = "forbidden" in last_error.lower()
-                    if attempt < _SOPS_STORE_MAX_ATTEMPTS and last_error_transient:
-                        self.logger.warning(
-                            f"SOPS key not stored yet in namespace {namespace} (Capsule RBAC still "
-                            f"propagating), attempt {attempt}/{_SOPS_STORE_MAX_ATTEMPTS}, retrying in "
-                            f"{_SOPS_STORE_RETRY_DELAY_SECONDS}s"
-                        )
-                        await asyncio.sleep(_SOPS_STORE_RETRY_DELAY_SECONDS)
-                        continue
-                    break
+            try:
+                await retry_on_connect_error(
+                    _apply,
+                    _SOPS_STORE_BUDGET_SECONDS,
+                    f"SOPS key in namespace {namespace}",
+                    retry_on=_rbac_still_propagating,
+                )
+            except KubectlExecutionError as apply_error:
+                # The caller turns this False into its own ERROR and raises, so the
+                # give-up itself stays a warning.
+                self.logger.warning(
+                    f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {apply_error}"
+                )
+                return False
 
-            if stored:
-                # Buiten de lus, zodat een falende Role het secret niet opnieuw laat
-                # schrijven, en met een eigen melding: het secret staat er wel.
-                try:
-                    await self.ensure_cmp_key_reader(namespace)
-                except KubectlExecutionError as role_error:
-                    self.logger.error(
-                        f"SOPS key stored, but failed to apply the CMP key reader role "
-                        f"({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {role_error}"
-                    )
-                    return False
-                return True
+            self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
+            self.logger.debug(f"Public key for project: {public_key}")
 
-            # The caller retries this whole call, so giving up on the transient Capsule-RBAC
-            # race is not yet a failure: only the caller's last round is.
-            message = f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {last_error}"
-            if last_error_transient:
-                self.logger.warning(message)
-            else:
-                self.logger.error(message)
-            return False
+            # Separate, so a failing Role does not make us write the secret again, and with
+            # its own message: the secret is there.
+            try:
+                await self.ensure_cmp_key_reader(namespace)
+            except KubectlExecutionError as role_error:
+                self.logger.error(
+                    f"SOPS key stored, but failed to apply the CMP key reader role "
+                    f"({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {role_error}"
+                )
+                return False
+            return True
 
         except Exception as e:
             self.logger.error(f"Error storing SOPS key in namespace {namespace}: {e}")

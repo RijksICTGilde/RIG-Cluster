@@ -19,14 +19,6 @@ if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
     from opi.core.readiness import ReadinessState
 from keycloak.exceptions import KeycloakError
-from tenacity import (
-    after_log,
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from opi.api.endpoint_util import controleer_handelingen
 from opi.bootstrap.keycloak_setup import setup_keycloak
@@ -53,6 +45,7 @@ from opi.services.project_store import get_project_store
 from opi.services.schema_migration import SCHEMA_VERSIONS
 from opi.services.session_revocation_service import load_revocations
 from opi.services.user_service import get_user_service
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.git_signing import load_git_signing_identity
 
 logger = logging.getLogger(__name__)
@@ -82,101 +75,54 @@ def _run_alembic_migrations() -> None:
     command.upgrade(alembic_cfg, "head")
 
 
-@retry(
-    stop=stop_after_attempt(10),  # Try up to 10 times
-    wait=wait_exponential(multiplier=2, min=4, max=60),  # Exponential backoff: 4s, 8s, 16s, 32s, 60s, 60s...
-    retry=retry_if_exception_type(
-        (
-            httpx.ConnectError,
-            httpx.TimeoutException,
-            httpx.RemoteProtocolError,
-            httpx.ReadTimeout,
-            httpx.ConnectTimeout,
-            httpx.HTTPStatusError,
-            KeycloakError,  # python-keycloak wraps 503/connection errors in its own exception types
-            ConnectionError,
-            OSError,
-        )
-    ),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    after=after_log(logger, logging.INFO),
+#: What a Keycloak that is not up yet answers with. The ordinary "not ready" is NOT in it:
+#: ``connection_works`` swallows a KeycloakError into a False and the probe below then
+#: raises RuntimeError, which is therefore not retried. Measured and left as it was in
+#: tests/test_keycloak_retry_characterisation.py.
+_KEYCLOAK_UNAVAILABLE_ERRORS = (
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    httpx.RemoteProtocolError,
+    httpx.HTTPStatusError,
+    KeycloakError,
+    OSError,
 )
-async def wait_for_keycloak_availability() -> bool:
-    """Retries up to ten times with exponential backoff, for a Keycloak that is not ready yet
-    during application startup.
 
-    Raises when Keycloak is still not available after the last attempt.
-    """
+#: Six minutes, enough for a Keycloak that is still starting on a fresh cluster.
+_KEYCLOAK_WAIT_BUDGET_SECONDS = 360.0
+
+
+async def _keycloak_answers() -> None:
+    """Raises unless Keycloak answers over client credentials or over the admin password."""
     logger.info("Checking Keycloak availability...")
 
-    try:
-        # Prefer OPI's service account; on a fresh cluster that client does not
-        # exist yet (it is created later in setup_keycloak), so fall back to the
-        # admin-password connection just to confirm the server is reachable.
-        keycloak = await create_keycloak_connector()
-        if await keycloak.connection_works():
-            logger.info("Keycloak is available and responding")
-            return True
+    # Prefer OPI's service account; on a fresh cluster that client does not exist yet (it
+    # is created later in setup_keycloak), so fall back to the admin password.
+    keycloak = await create_keycloak_connector()
+    if await keycloak.connection_works():
+        logger.info("Keycloak is available and responding")
+        return
 
-        admin = await create_keycloak_connector(use_client_credentials=False)
-        if await admin.connection_works():
-            logger.info("Keycloak is available and responding (admin-password fallback)")
-            return True
+    admin = await create_keycloak_connector(use_client_credentials=False)
+    if await admin.connection_works():
+        logger.info("Keycloak is available and responding (admin-password fallback)")
+        return
 
-        raise RuntimeError("Keycloak did not respond via client-credentials or admin password")
-
-    except Exception as e:
-        logger.warning(f"Keycloak not yet available: {e}")
-        raise  # This will trigger the retry
+    raise RuntimeError("Keycloak did not respond via client-credentials or admin password")
 
 
-def should_retry_keycloak_error(exception):
+async def wait_for_keycloak_availability() -> bool:
+    """Waits for a Keycloak that is not ready yet during application startup.
+
+    Raises when it is still not available after the budget is spent.
     """
-    Determine if a Keycloak operation should be retried.
-
-    We should NOT retry 404 errors since they are valid responses
-    indicating that a resource doesn't exist.
-    """
-    if isinstance(exception, httpx.HTTPStatusError):
-        # Don't retry 404 (Not Found) - it's a valid response for existence checks
-        if exception.response.status_code == 404:
-            return False
-        # Don't retry client errors (4xx) except for 404 which we already handled
-        if 400 <= exception.response.status_code < 500:
-            return False
-        # Retry server errors (5xx)
-        return exception.response.status_code >= 500
-
-    # Retry network/connection errors
-    return isinstance(
-        exception, httpx.ConnectError | httpx.TimeoutException | httpx.RemoteProtocolError | ConnectionError
+    await retry_on_connect_error(
+        _keycloak_answers,
+        _KEYCLOAK_WAIT_BUDGET_SECONDS,
+        "Keycloak availability",
+        retry_on=_KEYCLOAK_UNAVAILABLE_ERRORS,
     )
-
-
-@retry(
-    stop=stop_after_attempt(5),  # Try up to 5 times for realm/provider operations
-    wait=wait_exponential(multiplier=1, min=2, max=10),  # 2s, 4s, 8s, 10s, 10s
-    retry=should_retry_keycloak_error,
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    after=after_log(logger, logging.INFO),
-)
-async def keycloak_operation_with_retry(operation_func, *args, **kwargs):
-    """Wraps a Keycloak operation against the transient errors that occur even after the
-    service is available, such as a temporary database lock.
-    """
-    logger.debug(f"Executing Keycloak operation: {operation_func.__name__}")
-
-    try:
-        result = await operation_func(*args, **kwargs)
-        logger.debug(f"Keycloak operation {operation_func.__name__} completed successfully")
-        return result
-    except Exception as e:
-        # Check if this is a 404 error (valid response for existence checks)
-        if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 404:
-            logger.debug(f"Keycloak operation {operation_func.__name__} returned 404 (resource not found)")
-        else:
-            logger.warning(f"Keycloak operation {operation_func.__name__} failed, will retry: {e}")
-        raise  # This will trigger the retry (or not, based on our custom retry logic)
+    return True
 
 
 def print_boot_banner():

@@ -12,14 +12,13 @@ import re
 from datetime import UTC
 from typing import Any
 
-from tenacity import retry, stop_after_attempt, wait_fixed
-
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
 from opi.generation.manifests import render_template_source
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.utils.argocd_tracking import TrackedResource, tracked_resource_from_item
+from opi.utils.connect_retry import backoff_delays, retry_on_connect_error
 from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
@@ -34,6 +33,16 @@ logger = logging.getLogger(__name__)
 #: That is not an error the user did anything about -- a pod that never crashed simply has
 #: no earlier log -- so it belongs in the panel as a sentence, not as raw stderr.
 _PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
+
+#: Pause between two probes of the background connection recovery.
+_CONNECTION_PROBE_SECONDS = 30.0
+
+#: What a label failure says when trying again will not help.
+_PERMANENT_LABEL_MARKERS = ("not found", "unable to recognize", "no matches for kind")
+
+#: Budget for the Capsule webhook of a namespace that was just created: its admin
+#: RoleBinding takes about a second to propagate and denies the apply until it has.
+_LABEL_RETRY_SECONDS = 3.0
 
 #: Types left out of the ArgoCD-ownership inventory. Events are never applied by ArgoCD,
 #: so they carry no ownership mark, but a busy namespace holds thousands of them.
@@ -117,6 +126,14 @@ class KubectlConnectionError(Exception):
 
 class KubectlExecutionError(Exception):
     """Exception raised when kubectl command execution fails."""
+
+
+def _label_failure_is_transient(error: BaseException) -> bool:
+    """Whether a failed label apply is worth another attempt."""
+    if not isinstance(error, KubectlExecutionError | KubectlConnectionError):
+        return False
+    message = str(error).lower()
+    return not any(marker in message for marker in _PERMANENT_LABEL_MARKERS)
 
 
 class KubectlConnector:
@@ -226,17 +243,17 @@ class KubectlConnector:
             if KubectlConnector._retry_task is None or KubectlConnector._retry_task.done():
                 KubectlConnector._retry_task = asyncio.create_task(self._connection_retry())
 
-    @retry(stop=stop_after_attempt(999999), wait=wait_fixed(30))  # Retry indefinitely every 30 seconds
-    async def _connection_retry(self):
-        """Background retry task using tenacity."""
-        logger.debug("Retrying kubectl connection...")
-        success = await self._test_connection()
-        if success:
-            logger.info("Kubectl connection restored")
-            return  # Success - stop retrying
-        else:
-            # Raise exception to trigger tenacity retry
-            raise KubectlConnectionError("Connection still failed")
+    async def _connection_retry(self) -> None:
+        """Probe until the connection answers again.
+
+        Endless on purpose: a connector that stops probing refuses every kubectl call for
+        the rest of the pod's life. First and ceiling are equal, so the pause is fixed.
+        """
+        delays = backoff_delays(_CONNECTION_PROBE_SECONDS, _CONNECTION_PROBE_SECONDS)
+        while not await self._test_connection():
+            logger.debug("Retrying kubectl connection...")
+            await asyncio.sleep(next(delays))
+        logger.info("Kubectl connection restored")
 
     async def _run_kubectl_command(
         self,
@@ -1204,22 +1221,19 @@ class KubectlConnector:
         resource_name: str,
         labels: dict[str, str],
         namespace: str | None = None,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
     ) -> bool:
         """
         Apply one or more labels to a specific Kubernetes resource in a single call.
 
-        Includes retry logic to handle transient failures from admission webhooks
-        (e.g., Capsule) that may temporarily deny requests during reconciliation.
+        Retries the transient denial of an admission webhook (Capsule) that is still
+        reconciling a fresh namespace. A failure that trying again will not fix (the
+        resource does not exist, kubectl cannot resolve the kind) is reported at once.
 
         Args:
             resource_type: The type of resource (e.g., 'namespace', 'pod', 'service')
             resource_name: The name of the resource
             labels: The label keys and values to apply
             namespace: The namespace of the resource (not needed for cluster-scoped resources like namespaces)
-            max_retries: Maximum number of retry attempts (default: 3)
-            retry_delay: Delay in seconds between retry attempts (default: 1.0)
 
         Returns:
             True if the labels were applied successfully, False otherwise
@@ -1239,36 +1253,24 @@ class KubectlConnector:
         if namespace and resource_type.lower() != "namespace":
             args.extend(["-n", namespace])
 
-        last_error = ""
-        for attempt in range(1, max_retries + 1):
-            try:
-                stdout, stderr, code = await self._run_kubectl_command(args)
+        async def _label() -> None:
+            _stdout, stderr, code = await self._run_kubectl_command(args)
+            if code != 0:
+                raise KubectlExecutionError(stderr)
 
-                if code == 0:
-                    logger.info(f"Successfully applied labels {beschrijving} to {resource_type}/{resource_name}")
-                    return True
+        try:
+            await retry_on_connect_error(
+                _label,
+                _LABEL_RETRY_SECONDS,
+                f"labels on {resource_type}/{resource_name}",
+                retry_on=_label_failure_is_transient,
+            )
+        except (KubectlExecutionError, KubectlConnectionError) as e:
+            logger.error(f"Failed to apply labels to {resource_type}/{resource_name}: {e}")
+            return False
 
-                last_error = stderr
-                if attempt < max_retries:
-                    logger.warning(
-                        f"Failed to apply labels to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
-                        f"{stderr}. Retrying in {retry_delay}s..."
-                    )
-                    await asyncio.sleep(retry_delay)
-
-            except Exception as e:
-                last_error = str(e)
-                if attempt < max_retries:
-                    logger.warning(
-                        f"Error applying labels to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
-                        f"{e}. Retrying in {retry_delay}s..."
-                    )
-                    await asyncio.sleep(retry_delay)
-
-        logger.error(
-            f"Failed to apply labels to {resource_type}/{resource_name} after {max_retries} attempts: {last_error}"
-        )
-        return False
+        logger.info(f"Successfully applied labels {beschrijving} to {resource_type}/{resource_name}")
+        return True
 
     async def apply_annotation_to_resource(
         self,

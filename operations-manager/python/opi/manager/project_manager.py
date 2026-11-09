@@ -263,11 +263,6 @@ T = TypeVar("T", bound=BaseSecret)
 
 logger = logging.getLogger(__name__)
 
-# How many times upsert_deployment re-reads and re-applies on a concurrent-edit
-# conflict before giving up. Matches the store's own MAX_MUTATION_ATTEMPTS: a handful
-# absorbs the bursts a busy pipeline produces without masking a genuine, persistent clash.
-_UPSERT_CONFLICT_RETRIES = 5
-
 _EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
 
 # ArgoCD reports a CNPG cluster healthy as soon as the pod is Ready, which is before the
@@ -2332,29 +2327,15 @@ class ProjectManager:
                 logger.warning(f"Failed to delete old SOPS secret (continuing anyway): {e}")
 
         if create_sops_secret:
-            max_retries = 10
-            for attempt in range(1, max_retries + 1):
-                result = await self._sops_handler.store_project_sops_key_in_namespace(
-                    namespace, private_key, public_key
+            # The handler owns the retry on the RBAC race; a False is its final answer.
+            if not await self._sops_handler.store_project_sops_key_in_namespace(namespace, private_key, public_key):
+                message = (
+                    f"Failed to create SOPS secret in namespace {namespace}. "
+                    "RBAC permissions may not have propagated for this namespace."
                 )
-                if result:
-                    logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
-                    break
-                if attempt < max_retries:
-                    logger.warning(
-                        f"Failed to create SOPS secret in namespace {namespace} "
-                        f"(attempt {attempt}/{max_retries}), retrying in 1s (RBAC may still be propagating)"
-                    )
-                    await asyncio.sleep(1)
-                else:
-                    # The first ERROR of this sequence: the handler keeps its own give-up on
-                    # WARNING, because this loop was still going to try again.
-                    message = (
-                        f"Failed to create SOPS secret in namespace {namespace} after {max_retries} attempts. "
-                        "RBAC permissions may not have propagated for this namespace."
-                    )
-                    logger.error(message)
-                    raise RuntimeError(message)
+                logger.error(message)
+                raise RuntimeError(message)
+            logger.info(f"Created new SOPS secret for project {project_name} in namespace {namespace}")
         else:
             logger.info(f"Found existing SOPS secret for project {project_name} in namespace {namespace}")
             # Het secret alleen is niet genoeg: zonder deze Role leest de CMP van ArgoCD
@@ -2477,7 +2458,7 @@ class ProjectManager:
                 _select_one,
                 DATABASE_CONNECT_TIMEOUT_SECONDS,
                 f"PostgreSQL at {host}",
-                connect_errors=(OSError,),
+                retry_on=(OSError,),
             )
         except OSError as e:
             summary = self._database_cluster_phase_summary(

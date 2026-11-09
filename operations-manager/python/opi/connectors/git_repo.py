@@ -571,7 +571,7 @@ class GitRepo:
                 operation,
                 budget_seconds=GIT_RETRY_BUDGET_SECONDS,
                 description=f"{description} {self.url}#{self.branch}",
-                connect_errors=(GitRemoteUnavailableError,),
+                retry_on=(GitRemoteUnavailableError,),
             )
         except GitRemoteUnavailableError as error:
             raise GitRemoteUnavailableError(

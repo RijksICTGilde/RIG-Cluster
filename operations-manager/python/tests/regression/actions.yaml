@@ -322,7 +322,7 @@ startup:
         status: exempt
         reason: >-
           de keycloak-tak van de lus komt pas aan de beurt als Keycloak zelf wegvalt, en
-          wait_for_keycloak_availability doet daar tien tenacity-pogingen (zes minuten) over
+          wait_for_keycloak_availability doet daar zes minuten aan pogingen over
           voordat de lus ook maar begint; de storingsmeting gaat daarom over PostgreSQL en de
           mailrelay, dezelfde lus met dezelfde takstructuur
 

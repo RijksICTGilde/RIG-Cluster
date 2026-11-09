@@ -59,7 +59,8 @@ async def connector(monkeypatch):
     monkeypatch.setattr("opi.core.config.settings.GRAFANA_DATASOURCE_UID", "test-uid")
     c = GrafanaPrometheusConnector()
     # Short waits: the real sequence is 5s to 60s, which no test can sit out.
-    c._recovery_delays = (0.01,)
+    c._recovery_first_delay = 0.01
+    c._recovery_max_delay = 0.01
     yield c
     await c.aclose()
     GrafanaPrometheusConnector._instance = None
@@ -107,7 +108,8 @@ async def test_queries_fail_fast_without_a_request(connector):
     backend = Backend()
     attach(connector, backend)
     # Long enough that the recovery task cannot sneak a request into this measurement.
-    connector._recovery_delays = (3600.0,)
+    connector._recovery_first_delay = 3600.0
+    connector._recovery_max_delay = 3600.0
     connector._mark_unavailable("outage")
     seen = len(backend.requests)
 
@@ -193,7 +195,8 @@ async def test_bad_request_does_not_mark_available(connector):
     """A 400 while unavailable keeps the status unavailable: only a 2xx restores it."""
     backend = Backend(status=400)
     attach(connector, backend)
-    connector._recovery_delays = (3600.0,)
+    connector._recovery_first_delay = 3600.0
+    connector._recovery_max_delay = 3600.0
     connector._mark_unavailable("outage")
 
     resp = await connector._request("POST", "/api/ds/query", {})

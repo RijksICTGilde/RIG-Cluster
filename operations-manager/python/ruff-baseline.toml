@@ -142,7 +142,7 @@
 "opi/manager/delete_project_manager.py" = ["ANN401", "B904", "BLE001", "C901", "N806", "PLR0912", "PLR0913", "PLR0915"]
 "opi/manager/invite_manager.py" = ["BLE001", "PLR0913"]
 "opi/manager/job_manager.py" = ["BLE001", "C901", "PLR0913"]
-"opi/manager/keycloak_manager.py" = ["ANN202", "ANN401", "BLE001", "C901", "N806", "PLR0912", "PLR0913", "PLR0915"]
+"opi/manager/keycloak_manager.py" = ["ANN401", "BLE001", "C901", "N806", "PLR0912", "PLR0913", "PLR0915"]
 "opi/manager/mail_manager.py" = ["ANN401", "PLR0913"]
 "opi/manager/minio_manager.py" = ["BLE001", "C901", "PLR0912", "PLR0913", "PLR0915"]
 "opi/manager/project/attachment_mutations.py" = ["C901", "PLR0912", "PLR0913"]

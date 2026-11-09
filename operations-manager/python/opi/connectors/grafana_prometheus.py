@@ -16,15 +16,18 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from opi.core.config import settings
+from opi.utils.connect_retry import backoff_delays
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
-#: Waits between recovery probes; the last one repeats until the backend answers.
-RECOVERY_DELAYS = (5.0, 10.0, 20.0, 40.0, 60.0)
+#: Waits between recovery probes, doubling from the first up to the ceiling and then
+#: repeating that until the backend answers.
+RECOVERY_FIRST_DELAY = 5.0
+RECOVERY_MAX_DELAY = 60.0
 
 
 class GrafanaConnectionError(Exception):
@@ -69,7 +72,8 @@ class GrafanaPrometheusConnector:
     _datasource_type: str
     _client: httpx.AsyncClient
     _recovery_task: asyncio.Task[None] | None
-    _recovery_delays: tuple[float, ...]
+    _recovery_first_delay: float
+    _recovery_max_delay: float
     _unavailable_since: float | None
 
     def __new__(cls) -> GrafanaPrometheusConnector:
@@ -93,7 +97,8 @@ class GrafanaPrometheusConnector:
         # pool per request for as long as Grafana was unreachable.
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0))
         self._recovery_task = None
-        self._recovery_delays = RECOVERY_DELAYS
+        self._recovery_first_delay = RECOVERY_FIRST_DELAY
+        self._recovery_max_delay = RECOVERY_MAX_DELAY
         self._unavailable_since = None
         # Unavailable until a probe says otherwise, so a page right after the boot says
         # "not available" instead of claiming metrics it never fetched.
@@ -161,17 +166,11 @@ class GrafanaPrometheusConnector:
         if immediate and await self._probe():
             return
 
-        for delay in self._backoff():
+        for delay in backoff_delays(self._recovery_first_delay, self._recovery_max_delay):
             await asyncio.sleep(delay)
             # A query may have restored the status while this task was waiting.
             if GrafanaPrometheusConnector.is_connected or await self._probe():
                 return
-
-    def _backoff(self) -> Iterator[float]:
-        """The recovery waits, with the last one repeating forever."""
-        yield from self._recovery_delays
-        while True:
-            yield self._recovery_delays[-1]
 
     async def _probe(self) -> bool:
         """One availability check: find the datasource if needed, then query ``up``."""

@@ -32,7 +32,8 @@ def connector():
         c._datasource_type = "prometheus"
         c._client = AsyncMock(spec=httpx.AsyncClient)
         c._recovery_task = None
-        c._recovery_delays = (0.01,)
+        c._recovery_first_delay = 0.01
+        c._recovery_max_delay = 0.01
         c._unavailable_since = None
         GrafanaPrometheusConnector.is_connected = True
         GrafanaPrometheusConnector._instance = c

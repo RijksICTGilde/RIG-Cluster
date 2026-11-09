@@ -52,7 +52,7 @@ class TestRetryOnOwnExceptionType:
             return "ok"
 
         with patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()) as sleep:
-            assert await retry_on_connect_error(operation, 30, "db", connect_errors=(OSError,)) == "ok"
+            assert await retry_on_connect_error(operation, 30, "db", retry_on=(OSError,)) == "ok"
 
         assert len(attempts) == 3
         assert sleep.await_count == 2
@@ -66,7 +66,7 @@ class TestRetryOnOwnExceptionType:
             patch("opi.utils.connect_retry.asyncio.sleep", new=AsyncMock()),
             pytest.raises(ConnectionRefusedError),
         ):
-            await retry_on_connect_error(operation, 3, "db", connect_errors=(OSError,))
+            await retry_on_connect_error(operation, 3, "db", retry_on=(OSError,))
 
     @pytest.mark.asyncio
     async def test_does_not_retry_another_error(self) -> None:
@@ -77,7 +77,7 @@ class TestRetryOnOwnExceptionType:
             raise ValueError("not a connect failure")
 
         with pytest.raises(ValueError, match="not a connect failure"):
-            await retry_on_connect_error(operation, 30, "db", connect_errors=(OSError,))
+            await retry_on_connect_error(operation, 30, "db", retry_on=(OSError,))
         assert len(attempts) == 1
 
 
@@ -186,39 +186,37 @@ class TestClusterReadyWarning:
 
 
 class TestSopsRetryLogLevels:
-    @pytest.mark.asyncio
-    async def test_transient_rounds_before_a_success_produce_no_error(self, caplog: pytest.LogCaptureFixture) -> None:
+    """The handler owns the retry on the RBAC race, so the caller answers its verdict once."""
+
+    @staticmethod
+    def _manager_whose_handler_answers(answer: bool) -> ProjectManager:
         manager = ProjectManager.__new__(ProjectManager)
         manager._kubectl_connector = MagicMock(
             get_sops_secret_from_namespace=AsyncMock(return_value=None), delete_resource=AsyncMock()
         )
-        manager._sops_handler = MagicMock(
-            store_project_sops_key_in_namespace=AsyncMock(side_effect=[False, False, False, True])
-        )
+        manager._sops_handler = MagicMock(store_project_sops_key_in_namespace=AsyncMock(return_value=answer))
+        return manager
+
+    @pytest.mark.asyncio
+    async def test_a_stored_secret_produces_no_error_and_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        manager = self._manager_whose_handler_answers(True)
 
         with (
             patch("opi.manager.project_manager.get_project_public_key", return_value="age1x"),
             patch("opi.manager.project_manager.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
-            patch("opi.manager.project_manager.asyncio.sleep", new=AsyncMock()),
             caplog.at_level("WARNING"),
         ):
             await manager._ensure_sops_secret_in_namespace("rig-prd-demo", {"name": "demo"})
 
-        assert [r for r in caplog.records if r.levelname == "ERROR"] == []
-        assert len([r for r in caplog.records if r.levelname == "WARNING"]) == 3
+        assert [r for r in caplog.records if r.levelname in ("ERROR", "WARNING")] == []
 
     @pytest.mark.asyncio
-    async def test_ten_failed_rounds_log_one_error_and_raise(self, caplog: pytest.LogCaptureFixture) -> None:
-        manager = ProjectManager.__new__(ProjectManager)
-        manager._kubectl_connector = MagicMock(
-            get_sops_secret_from_namespace=AsyncMock(return_value=None), delete_resource=AsyncMock()
-        )
-        manager._sops_handler = MagicMock(store_project_sops_key_in_namespace=AsyncMock(return_value=False))
+    async def test_a_false_from_the_handler_logs_one_error_and_raises(self, caplog: pytest.LogCaptureFixture) -> None:
+        manager = self._manager_whose_handler_answers(False)
 
         with (
             patch("opi.manager.project_manager.get_project_public_key", return_value="age1x"),
             patch("opi.manager.project_manager.get_decoded_project_private_key", new=AsyncMock(return_value="k")),
-            patch("opi.manager.project_manager.asyncio.sleep", new=AsyncMock()),
             caplog.at_level("WARNING"),
             pytest.raises(RuntimeError),
         ):
@@ -226,4 +224,5 @@ class TestSopsRetryLogLevels:
 
         errors = [r for r in caplog.records if r.levelname == "ERROR"]
         assert len(errors) == 1
-        assert "after 10 attempts" in errors[0].getMessage()
+        assert "RBAC" in errors[0].getMessage()
+        assert manager._sops_handler.store_project_sops_key_in_namespace.await_count == 1

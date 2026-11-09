@@ -78,8 +78,8 @@ Grafana die weg is mag de pod nooit uit de rotatie halen.
 
 Er komt voor dit gedrag geen instelling en geen endpoint bij. De bestaande instellingen
 blijven: `METRICS_BACKEND`, `GRAFANA_URL`, `GRAFANA_TOKEN` en `GRAFANA_DATASOURCE_UID` (leeg
-betekent: zelf opzoeken). De backoff staat als `RECOVERY_DELAYS` in
-`opi/connectors/grafana_prometheus.py`.
+betekent: zelf opzoeken). De backoff staat als `RECOVERY_FIRST_DELAY` en `RECOVERY_MAX_DELAY` in
+`opi/connectors/grafana_prometheus.py`, en verdubbelt van de eerste tot het plafond.
 
 ## De directe PrometheusConnector
 

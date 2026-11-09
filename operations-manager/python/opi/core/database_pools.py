@@ -1,73 +1,51 @@
 """The asyncpg pools of the application, created and closed with its lifecycle."""
 
-import asyncio
 import logging
 
 import asyncpg
-from tenacity import (
-    after_log,
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from opi.core.config import settings
 from opi.core.database_pool import DatabasePool, DatabasePoolError
+from opi.utils.connect_retry import retry_on_connect_error
 
 logger = logging.getLogger(__name__)
 
 #: The ceiling of the main pool (with the SQLAlchemy engine: 10 connections at most).
 MAIN_POOL_MAX_SIZE = 5
 
+#: What a database that does not accept connections raises. PostgresError is in it for the
+#: "starting up" and "too many connections" answers, and so also covers a wrong password,
+#: which is therefore retried just as long (tests/test_database_pool_retry.py).
+_CONNECT_ERRORS = (
+    asyncpg.exceptions.PostgresError,
+    asyncpg.exceptions.InterfaceError,
+    OSError,
+    TimeoutError,
+)
+
+#: Seven minutes, long enough for a CNPG failover and a cluster that is still starting.
+_CONNECT_BUDGET_SECONDS = 420.0
+
 _pools: dict[str, DatabasePool] = {}
 
 
-@retry(
-    stop=stop_after_attempt(12),  # Try up to 12 times (about 8 minutes total)
-    wait=wait_exponential(multiplier=2, min=2, max=60),  # 2s, 4s, 8s, 16s, 32s, 60s, 60s...
-    retry=retry_if_exception_type(
-        (
-            asyncpg.exceptions.PostgresError,
-            asyncpg.exceptions.InterfaceError,
-            asyncpg.exceptions.InvalidAuthorizationSpecificationError,
-            asyncpg.exceptions.ConnectionDoesNotExistError,
-            asyncpg.exceptions.ConnectionFailureError,
-            ConnectionError,
-            OSError,
-            DatabasePoolError,
-            asyncio.TimeoutError,
-        )
-    ),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    after=after_log(logger, logging.INFO),
-)
 async def _initialize_database_pool_with_retry(pool: DatabasePool, name: str) -> None:
     """``name`` only names the pool in the log."""
-    logger.info(f"Attempting to initialize database pool '{name}' (host: {pool.host}:{pool.port})")
-    await pool.initialize()
-    logger.info(f"Successfully initialized database pool '{name}'")
+
+    async def _initialize() -> None:
+        logger.info(f"Attempting to initialize database pool '{name}' (host: {pool.host}:{pool.port})")
+        await pool.initialize()
+        logger.info(f"Successfully initialized database pool '{name}'")
+
+    await retry_on_connect_error(
+        _initialize,
+        _CONNECT_BUDGET_SECONDS,
+        f"database pool '{name}' at {pool.host}:{pool.port}",
+        retry_on=(*_CONNECT_ERRORS, DatabasePoolError),
+    )
 
 
-@retry(
-    stop=stop_after_attempt(12),
-    wait=wait_exponential(multiplier=2, min=2, max=60),
-    retry=retry_if_exception_type(
-        (
-            asyncpg.exceptions.PostgresError,
-            asyncpg.exceptions.InterfaceError,
-            asyncpg.exceptions.ConnectionDoesNotExistError,
-            asyncpg.exceptions.ConnectionFailureError,
-            ConnectionError,
-            OSError,
-            asyncio.TimeoutError,
-        )
-    ),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    after=after_log(logger, logging.INFO),
-)
-async def _ensure_database_exists() -> None:
+async def _create_database_if_missing() -> None:
     """Connects to the default 'postgres' database to check or create our own."""
     database_name = settings.DATABASE_NAME
     logger.info(f"Ensuring database '{database_name}' exists...")
@@ -96,6 +74,15 @@ async def _ensure_database_exists() -> None:
             logger.info(f"Database '{database_name}' already exists")
     finally:
         await conn.close()
+
+
+async def _ensure_database_exists() -> None:
+    await retry_on_connect_error(
+        _create_database_if_missing,
+        _CONNECT_BUDGET_SECONDS,
+        f"database '{settings.DATABASE_NAME}' on {settings.DATABASE_HOST}",
+        retry_on=_CONNECT_ERRORS,
+    )
 
 
 async def _verify_app_role(pool: DatabasePool) -> None:

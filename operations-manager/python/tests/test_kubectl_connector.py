@@ -8,7 +8,12 @@ import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
+from opi.connectors.kubectl import (
+    KubectlConnectionError,
+    KubectlConnector,
+    KubectlExecutionError,
+    create_kubectl_connector,
+)
 from ruamel.yaml import YAML
 
 
@@ -257,11 +262,14 @@ async def test_apply_labels_to_resource_with_no_labels_skips_kubectl(connector):
 
 
 async def test_apply_labels_to_resource_retries_then_succeeds(connector):
-    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+    with (
+        patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd,
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
         mock_run_cmd.side_effect = [("", "conflict", 1), ("", "", 0)]
 
         result = await connector.apply_labels_to_resource(
-            resource_type="namespace", resource_name="x", labels={"a": "b"}, retry_delay=0
+            resource_type="namespace", resource_name="x", labels={"a": "b"}
         )
 
         assert result is True
@@ -269,15 +277,19 @@ async def test_apply_labels_to_resource_retries_then_succeeds(connector):
 
 
 async def test_apply_labels_to_resource_fails_after_exhausting_retries(connector):
-    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+    """A webhook that keeps denying is transient per attempt, so the budget decides."""
+    with (
+        patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd,
+        patch("asyncio.sleep", new=AsyncMock()),
+    ):
         mock_run_cmd.return_value = ("", "Forbidden", 1)
 
         result = await connector.apply_labels_to_resource(
-            resource_type="namespace", resource_name="x", labels={"a": "b"}, max_retries=2, retry_delay=0
+            resource_type="namespace", resource_name="x", labels={"a": "b"}
         )
 
         assert result is False
-        assert mock_run_cmd.call_count == 2
+        assert mock_run_cmd.call_count == 3
 
 
 async def test_apply_labels_to_resource_passes_the_namespace_for_a_namespaced_resource(connector):
@@ -555,3 +567,70 @@ async def test_wait_for_resource_absence_blijft_bij_een_onmeetbare_lezing_tot_de
 
         assert gone is False
         assert exists.await_count == 3
+
+
+async def test_apply_labels_to_resource_does_not_retry_a_resource_that_does_not_exist(connector):
+    """A NotFound never heals, so repeating it only delays the caller's own error."""
+    with (
+        patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd,
+        patch("asyncio.sleep", new=AsyncMock()) as sleep,
+    ):
+        mock_run_cmd.return_value = ("", 'Error from server (NotFound): namespaces "x" not found', 1)
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace", resource_name="x", labels={"a": "b"}
+        )
+
+        assert result is False
+        assert mock_run_cmd.call_count == 1
+        sleep.assert_not_awaited()
+
+
+async def test_apply_labels_to_resource_lets_a_programming_error_through(connector):
+    """A bug in the connector is not a label that could not be applied: it must surface."""
+    with (
+        patch.object(connector, "_run_kubectl_command", new=AsyncMock(side_effect=TypeError("bug"))),
+        patch("asyncio.sleep", new=AsyncMock()),
+        pytest.raises(TypeError, match="bug"),
+    ):
+        await connector.apply_labels_to_resource(resource_type="namespace", resource_name="x", labels={"a": "b"})
+
+
+class TestConnectionGate:
+    """``isConnected`` is class state: one failed probe blocks every connector instance."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_connection_state(self):
+        was_connected = KubectlConnector.isConnected
+        KubectlConnector.isConnected = True
+        yield
+        KubectlConnector.isConnected = was_connected
+
+    async def test_a_command_is_refused_while_the_connection_is_marked_down(self, connector):
+        KubectlConnector.isConnected = False
+
+        with pytest.raises(KubectlConnectionError):
+            await connector._run_kubectl_command(["get", "pods"])
+
+    async def test_a_second_connector_is_blocked_by_the_first_ones_failed_probe(self, connector):
+        other = KubectlConnector()
+        KubectlConnector.isConnected = False
+
+        with pytest.raises(KubectlConnectionError):
+            await other._run_kubectl_command(["get", "pods"])
+
+    async def test_the_background_recovery_keeps_probing_until_one_succeeds(self, connector):
+        delays: list[float] = []
+
+        async def record(seconds: float) -> None:
+            delays.append(seconds)
+
+        probe = AsyncMock(side_effect=[False, False, True])
+        with (
+            patch.object(connector, "_test_connection", new=probe),
+            patch("asyncio.sleep", new=AsyncMock(side_effect=record)),
+        ):
+            await connector._connection_retry()
+
+        assert probe.await_count == 3
+        assert delays == [30.0, 30.0], "a fixed pause between probes"

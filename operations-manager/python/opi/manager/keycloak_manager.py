@@ -27,7 +27,6 @@ from opi.core.cluster_config import (
     get_namespace,
 )
 from opi.core.config import settings
-from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.keycloak.config_model import (
@@ -474,13 +473,9 @@ class KeycloakManager:
                 try:
                     logger.info(f"Attempting to delete Keycloak client for component: {component_name}")
 
-                    # Try to delete the Keycloak client (with retry for robustness)
-                    async def delete_client_operation():
-                        return await keycloak.delete_deployment_client(
-                            deployment_name=deployment_name, project_name=project_name, realm_name=realm_name
-                        )
-
-                    delete_success = await keycloak_operation_with_retry(delete_client_operation)
+                    delete_success = await keycloak.delete_deployment_client(
+                        deployment_name=deployment_name, project_name=project_name, realm_name=realm_name
+                    )
 
                     if delete_success:
                         deletion_results["operations"].append(
