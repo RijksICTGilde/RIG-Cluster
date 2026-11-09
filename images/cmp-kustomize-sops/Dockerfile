@@ -169,7 +169,7 @@ RUN echo "=== Downloaded tools verification ===" && \
     echo "=== Downloader verification complete ==="
 
 # Final image based on ArgoCD
-FROM quay.io/argoproj/argocd:v2.14.21
+FROM quay.io/argoproj/argocd:v3.5.6
 
 # Switch to root to install packages and setup tools
 USER root
