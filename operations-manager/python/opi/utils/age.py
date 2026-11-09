@@ -594,3 +594,17 @@ def decrypt_password_smart_sync(password: str, private_key: str | None, *, log_f
         return decrypted
 
     raise ValueError(f"Unknown encoding type: {encoding_type}")
+
+
+def ensure_base64_age_sync(value: str, private_key: str | None, public_key: str | None) -> str:
+    """``value`` as ``base64+age:`` with ``public_key``. A value already in that form stays exactly as it is.
+
+    For a secret from the environment that ends up in a file: whoever filled it in may have
+    written it ``plain:`` or bare, and a file never knows where it goes next.
+    """
+    form, _ = parse_password_with_prefix(value)
+    if form == "base64+age":
+        return value
+    plain = decrypt_password_smart_sync(value, private_key)
+    encrypted = encrypt_age_content_sync(plain, public_key)
+    return f"{BASE64_AGE_PREFIX}{base64.b64encode(encrypted.encode()).decode()}"
