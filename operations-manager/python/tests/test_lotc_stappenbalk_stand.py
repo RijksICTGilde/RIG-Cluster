@@ -39,7 +39,7 @@ from typing import Any
 
 import pytest
 from lord_of_the_components.extension import ComponentError
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.web.lotc_fixtures import page_data
 from tests.berekende_attribuutwaarden import sjablonen_met_berekende_waarde
 

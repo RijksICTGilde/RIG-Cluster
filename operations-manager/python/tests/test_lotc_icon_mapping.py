@@ -35,11 +35,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.presets.loader import Preset, load_presets
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import ROOS_TO_NLDD_ICONS, to_nldd_icon
-from opi.web.nldd_iconen import nldd_icon_names
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import ROOS_TO_NLDD_ICONS, to_nldd_icon
+from opi.http.render.nldd_iconen import nldd_icon_names
+from opi.http.render.templates_lotc import templates_lotc
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "opi" / "templates_lotc"
 
@@ -97,7 +97,7 @@ def _nldd_vocabulary() -> set[str]:
     Die lijst en de bundel die de browser laadt lopen uiteen, op 0.8.80 met 327 namen
     tegen 271 in de bundel. De 56 namen ertussen bestonden dus op papier en renderden als
     niets, en deze test keurde ze goed. Hoeveel het per versie scheelt en welke kant het
-    op loopt is een meting, en die staat in ``opi/web/nldd_iconen.py``: op 0.8.92 zijn het
+    op loopt is een meting, en die staat in ``opi/http/render/nldd_iconen.py``: op 0.8.92 zijn het
     nog 2 namen die op papier bestaan en niets tekenen.
 
     Gemeten in een browser, met een echte <nldd-icon> en <nldd-button> per naam en de
@@ -105,7 +105,7 @@ def _nldd_vocabulary() -> set[str]:
     37 als een lege plek - waaronder de bewerkknop en de verwijderknop. Deze test was al
     die tijd groen.
 
-    De bron is nu opi/web/nldd_iconen.py: de namen uit de GELEVERDE bestanden, dezelfde
+    De bron is nu opi/http/render/nldd_iconen.py: de namen uit de GELEVERDE bestanden, dezelfde
     plek waar de browser ze vandaan haalt.
     """
     namen = nldd_icon_names()
@@ -232,7 +232,7 @@ def _menu_icons() -> set[str]:
     for is_admin in (False, True):
         service = MagicMock()
         service.is_platform_admin.return_value = is_admin
-        with patch("opi.web.menu.get_user_service", return_value=service):
+        with patch("opi.http.render.menu.get_user_service", return_value=service):
             for user in (None, {"email": "someone@example.com"}):
                 icons.update(item["icon"] for item in get_menu_items(user=user) if item.get("icon"))
     return icons
@@ -267,7 +267,7 @@ def test_een_onbekende_naam_gaat_niet_stil_door(caplog: pytest.LogCaptureFixture
     knop ruimte vrijhoudt voor niets en dat niemand er iets over hoort; zo hebben 37 lege
     plekken het maanden volgehouden.
     """
-    with caplog.at_level(logging.WARNING, logger="opi.web.navigation_lotc"):
+    with caplog.at_level(logging.WARNING, logger="opi.http.render.navigation_lotc"):
         to_nldd_icon("bestaat-echt-niet")
     assert any("bestaat-echt-niet" in bericht for bericht in caplog.messages), (
         "een iconnaam die geen icoon oplevert ging stil door"
@@ -276,7 +276,7 @@ def test_een_onbekende_naam_gaat_niet_stil_door(caplog: pytest.LogCaptureFixture
 
 def test_een_naam_die_wel_bestaat_klaagt_niet(caplog: pytest.LogCaptureFixture) -> None:
     """Bewaak de bewaker: een waarschuwing bij elke naam is net zo nutteloos als geen."""
-    with caplog.at_level(logging.WARNING, logger="opi.web.navigation_lotc"):
+    with caplog.at_level(logging.WARNING, logger="opi.http.render.navigation_lotc"):
         to_nldd_icon("sleutel")
         to_nldd_icon("file-text")
     assert not caplog.messages, f"onterechte waarschuwing: {caplog.messages}"

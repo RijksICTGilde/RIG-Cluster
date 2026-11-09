@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from opi.core.templates_lotc import templates_lotc as echte_templates
-from opi.web.lotc_switch import render
+from opi.http.render.lotc_switch import render
+from opi.http.render.templates_lotc import templates_lotc as echte_templates
 from starlette.requests import Request
 
 
@@ -29,7 +29,7 @@ def _context_van(email: str, *, platform_admin: bool) -> dict[str, Any]:
         return MagicMock()
 
     with (
-        patch("opi.web.lotc_switch.get_user_service", return_value=users),
+        patch("opi.http.render.lotc_switch.get_user_service", return_value=users),
         patch.object(echte_templates, "TemplateResponse", side_effect=_vang),
     ):
         render(_request(email), template="irrelevant.html.j2", context={})

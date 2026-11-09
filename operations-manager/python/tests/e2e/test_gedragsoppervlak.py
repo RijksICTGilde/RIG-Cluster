@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 import pytest
-from opi.web.lotc_switch import project_tab_url
+from opi.http.render.lotc_switch import project_tab_url
 from tests.e2e.conftest import TEST_USER, _sign_session
 from tests.oppervlak import als_lijsten, meet, ontbreekt
 

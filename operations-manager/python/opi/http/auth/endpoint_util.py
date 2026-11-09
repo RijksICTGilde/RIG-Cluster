@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
-from opi.api.principal import (
+from opi.core.actor import set_actor
+from opi.core.audit_trail import capture_fields
+from opi.core.authz.actions import Action, action_of, deployment_of, marking_if_absent_of, weighed_action_of
+from opi.core.authz.engine import RuleError, rule_for
+from opi.core.config import settings
+from opi.http.auth.principal import (
     AccessDenied,
     NotRecognised,
     Principal,
@@ -16,18 +21,13 @@ from opi.api.principal import (
     recognise_principal,
     tel_gebruik,
 )
-from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
-from opi.api.user_token_auth import (
+from opi.http.auth.user_token_auth import (
     REQUIRES_PLATFORM_ADMIN_TOKEN,
     REQUIRES_USER_TOKEN,
     UserTokenError,
     extract_bearer_token,
 )
-from opi.core.actor import set_actor
-from opi.core.audit_trail import capture_fields
-from opi.core.authz.actions import Action, action_of, deployment_of, marking_if_absent_of, weighed_action_of
-from opi.core.authz.engine import RuleError, rule_for
-from opi.core.config import settings
+from opi.http.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
 from opi.manager.run_support import find_deployment
 from opi.services.api_step_up_service import ApiStepUpService, personal_token_credential
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
@@ -116,7 +116,7 @@ async def handhaaf(
     momentopnamen beslissen.
 
     Hoort het token bij een MENS, dan landt die hier op ``request.state.user``. Dat is de
-    plek waar :func:`opi.api.otp_step_up.verify_api_step_up` de eigenaar van het token
+    plek waar :func:`opi.http.auth.otp_step_up.verify_api_step_up` de eigenaar van het token
     leest, zodat een step-up op een ``zad_``-token precies dezelfde weg loopt als op een
     SSO-bearer. Een service account en de oude projectsleutel laten hem leeg, en ketsen
     daar dus af op ``principal-kind-not-allowed``.

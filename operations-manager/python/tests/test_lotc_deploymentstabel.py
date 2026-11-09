@@ -20,8 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.core.templates_lotc import templates_lotc as templates
-from opi.web.lotc_switch import (
+from opi.http.render.lotc_switch import (
     DEPLOYMENT_SORTERINGEN,
     build_deployment_status_column,
     deployment_pagina_adres,
@@ -29,6 +28,7 @@ from opi.web.lotc_switch import (
     filter_lotc_deployments,
     kies_deployment,
 )
+from opi.http.render.templates_lotc import templates_lotc as templates
 from starlette.datastructures import QueryParams
 
 TABEL = "bg/_deployments-lijst.html.j2"

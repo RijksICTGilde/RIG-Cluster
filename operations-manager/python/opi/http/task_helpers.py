@@ -6,8 +6,8 @@ import logging
 from fastapi import HTTPException, Request
 
 from opi.core.actor import ACTOR_UNKNOWN, get_actor
-from opi.core.auth_decorators import get_current_user
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import get_current_user
 
 logger = logging.getLogger(__name__)
 

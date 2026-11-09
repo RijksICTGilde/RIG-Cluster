@@ -8,7 +8,7 @@ weg is, wat er bewust blijft staan en waarom. Gemeten en uitgevoerd in RC-62.
 De LOTC-omgeving laadt drie design systems:
 
 ```python
-DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]   # opi/core/templates_lotc.py
+DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]   # opi/http/render/templates_lotc.py
 ```
 
 `lotc_rvo` staat wel geinstalleerd en definieert 7568 verschillende `.rvo-`-selectors, maar
@@ -154,7 +154,7 @@ Die is weg; de echte schil is `base_lotc.html.j2`.
 ## Wat de opruiming niet raakt
 
 **`opi/templates/`, de ROOS-boom.** Daar staan 603 voorkomens en die horen daar: dat is het
-stijlsysteem dat die templates gebruiken. De schakelaar (`opi/web/lotc_switch.py`) houdt
+stijlsysteem dat die templates gebruiken. De schakelaar (`opi/http/render/lotc_switch.py`) houdt
 beide wegen open met `?layout=roos`. (Sinds RC-67 bestaat die terugvalweg niet meer; de
 oude boom is weg.) Zolang die terugvalweg bestond bleef die boom
 staan zoals hij is.

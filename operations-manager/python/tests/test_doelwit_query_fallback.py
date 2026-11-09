@@ -1,4 +1,4 @@
-"""``_doelwit`` (opi/web/authz.py): de poort leest deployment/component uit de query
+"""``_doelwit`` (opi/http/auth/authz.py): de poort leest deployment/component uit de query
 alleen als de route zich daarvoor VERKLAART met ``@targets_in_query``.
 
 Op de env-vars-componentroute staat de deployment in de query, en de poort moet die
@@ -12,7 +12,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from opi.core.authz.actions import query_targets_of, targets_in_query
-from opi.web.authz import _doelwit
+from opi.http.auth.authz import _doelwit
 
 VERKLAARD = frozenset({"deployment_name"})
 

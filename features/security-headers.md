@@ -56,7 +56,7 @@ object-src 'none'
 beleid woord voor woord gelijk aan het afgedwongen beleid. De middleware
 maakt per verzoek een nonce (`secrets.token_urlsafe(16)`), zet hem op `request.state`, en
 elk eigen `<script>` in de sjablonen draagt hem via `nonce="{{ csp_nonce }}"`. De
-sjablonen komen eraan langs een context_processor (`opi/core/templates_lotc.py`) en, voor
+sjablonen komen eraan langs een context_processor (`opi/http/render/templates_lotc.py`) en, voor
 een fragment dat geen `TemplateResponse` is, langs `render_fragment`.
 
 Het AFGEDWONGEN beleid draagt die nonce met opzet niet: zodra er een nonce in `script-src`

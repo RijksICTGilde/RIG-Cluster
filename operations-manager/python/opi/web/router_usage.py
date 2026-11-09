@@ -12,12 +12,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_cluster_config, get_namespace_prefix
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.render.menu import get_menu_items
 from opi.services.project_store import get_project_store
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 
@@ -251,8 +251,8 @@ async def usage_overview(request: Request) -> Response:
     total_gib = round(sum(m["gib"] for m in month_data), 2)
     total_cost = round(sum(m["cost"] for m in month_data), 2)
 
-    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py.
-    from opi.web.lotc_switch import build_lotc_admin, render
+    # Dezelfde gegevens, twee weergaven; zie opi/http/render/lotc_switch.py.
+    from opi.http.render.lotc_switch import build_lotc_admin, render
 
     return render(
         request,

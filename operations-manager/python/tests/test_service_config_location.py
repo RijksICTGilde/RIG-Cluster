@@ -20,7 +20,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.base import ConfigLayer
 from opi.services.config_location import (
     config_hint_for_value,

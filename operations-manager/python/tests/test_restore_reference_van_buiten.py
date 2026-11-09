@@ -166,7 +166,7 @@ def client() -> TestClient:
 def mock_store() -> Any:
     store = _FakeStore(_project_file())
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.restore_router.get_project_store", return_value=store),
     ):
         yield store

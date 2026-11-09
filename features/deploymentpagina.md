@@ -107,7 +107,7 @@ doorverwijzing die niemand gebruikt is een tweede adres dat onderhouden moet wor
 achtergebleven `?tab=` wordt genegeerd; je krijgt Overzicht.
 
 De adressen komen uit een plek: `PROJECT_TABS` en `project_tab_url()` in
-`opi/web/lotc_switch.py`.
+`opi/http/render/lotc_switch.py`.
 
 ## 4. Een deployment, een blok
 
@@ -142,7 +142,7 @@ De naam staat nu in het **pad**, en de server rendert die ene:
 | een project zonder deployments | het kale tabbladadres, met de melding "Nog geen deployments" |
 
 Welke deployment open staat wordt op **een** plek bepaald: `kies_deployment()` in
-`opi/web/lotc_switch.py`, met het pad voor de oude parameter. De route roept hem aan
+`opi/http/render/lotc_switch.py`, met het pad voor de oude parameter. De route roept hem aan
 voordat er iets ontsleuteld wordt, en `deployment_pagina_adres()` zegt waar de pagina hoort
 te staan.
 

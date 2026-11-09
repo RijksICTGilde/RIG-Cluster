@@ -178,7 +178,7 @@ class TestHetPaneelStaatErOokNaEenGeslaagdeVerwerking:
     """
 
     def _render(self, status: str) -> str:
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         return templates_lotc.get_template("partials/task_progress_fragment.html.j2").render(
             {
@@ -286,7 +286,7 @@ class TestDeLogboeklinkVolgtDePagina:
     }
 
     def _render(self, sjabloon: str) -> str:
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         return templates_lotc.get_template(sjabloon).render(self.CONTEXT)
 

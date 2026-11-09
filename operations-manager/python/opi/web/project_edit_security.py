@@ -1,7 +1,7 @@
 """Wat een formulier wel en niet in het projectbestand mag schrijven.
 
 De rolpoort is hier weg: die loopt sinds RC-392 via ``decide()``, in
-:mod:`opi.web.authz`. Wat hier blijft is de merge van ingediende formuliergegevens op het
+:mod:`opi.http.auth.authz`. Wat hier blijft is de merge van ingediende formuliergegevens op het
 opgeslagen project, met de velden die geen formulier mag zetten.
 """
 

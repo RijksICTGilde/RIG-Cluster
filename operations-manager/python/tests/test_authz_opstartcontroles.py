@@ -13,10 +13,10 @@ from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
-from opi.api.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
 from opi.core.authz.actions import ACTION_ATTR, Action
 from opi.core.authz.engine import ANY, Audience, Grant, Requirement, Role, Rule, RuleError, all_rules, rule
 from opi.core.authz.rules import check_register
+from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
 from opi.server import app
 
 
@@ -56,7 +56,7 @@ def test_een_action_zonder_regel_stopt_de_start() -> None:
     setattr(route, ACTION_ATTR, Action.PROJECT_READ)
 
     with (
-        patch("opi.api.endpoint_util.rule_for", side_effect=RuleError("geen regel")),
+        patch("opi.http.auth.endpoint_util.rule_for", side_effect=RuleError("geen regel")),
         pytest.raises(RuntimeError, match="zonder regel"),
     ):
         controleer_handelingen([_Route(route)])

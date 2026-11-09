@@ -17,7 +17,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from bs4 import BeautifulSoup
 from fastapi import HTTPException
-from opi.core.templates_lotc import templates_lotc
+from opi.http.auth.step_up_dialog import MODAL_TARGET
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.api_token_service import TokenAanvraagGeweigerd
 from opi.services.step_up import STEP_UP_SESSION_KEY
 from opi.web.router_tokens import (
@@ -35,7 +36,6 @@ from opi.web.router_tokens import (
     voeg_service_account_toe_web,
     wijzig_rol_web,
 )
-from opi.web.step_up_dialog import MODAL_TARGET
 
 pytestmark = pytest.mark.asyncio
 
@@ -387,7 +387,7 @@ async def test_de_dialoog_draagt_de_velden_van_het_formulier_mee() -> None:
     dialoog = AsyncMock(return_value="<dialoog>")
     with (
         patch("opi.web.router_tokens.geef_token_uit", AsyncMock()) as mock,
-        patch("opi.web.step_up_dialog.render_step_up_dialog", dialoog),
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", dialoog),
     ):
         verzoek = _verzoek(EMAIL, {"tokennaam": "cli", "dagen": "30"}, step_up=False, htmx=True)
         antwoord = await maak_token_web(verzoek, PROJECT, EMAIL)

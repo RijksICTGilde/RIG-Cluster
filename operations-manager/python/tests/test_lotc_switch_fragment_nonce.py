@@ -1,7 +1,7 @@
 """render_fragment zet de csp-nonce van het VERZOEK in de context.
 
 ``render()`` krijgt die via de context_processor van ``templates_lotc``
-(``opi/core/templates_lotc.py``), maar een los ``env.get_template(...).render()`` loopt
+(``opi/http/render/templates_lotc.py``), maar een los ``env.get_template(...).render()`` loopt
 daar niet langs. Zonder de regel in ``render_fragment`` die dit opvangt, zou elk
 ``nonce="{{ csp_nonce }}"`` in een fragmentsjabloon (bijvoorbeeld
 ``bg/_deployment-metrics.html.j2``) altijd een lege nonce renderen, nooit de echte van het
@@ -10,8 +10,8 @@ verzoek.
 
 from __future__ import annotations
 
-from opi.core.templates_lotc import templates_lotc
-from opi.web.lotc_switch import render_fragment
+from opi.http.render.lotc_switch import render_fragment
+from opi.http.render.templates_lotc import templates_lotc
 from starlette.requests import Request
 
 SJABLOON_MET_NONCE = '<script nonce="{{ csp_nonce }}"></script>'

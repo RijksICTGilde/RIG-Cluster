@@ -19,8 +19,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
+from opi.http.auth.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.services.step_up import StepUpAction
 
 API_KEY = "sleutel-123"
@@ -55,7 +55,7 @@ def _patches(data: dict[str, Any]):
     manager.close = AsyncMock(return_value=None)
     store = MagicMock(get=MagicMock(return_value=record))
     return (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.router.create_project_manager", return_value=manager),
         manager,
     )

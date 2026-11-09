@@ -187,6 +187,12 @@ ignore = [
     "PT009",    # Use pytest.raises
 ]
 
+[tool.ruff.lint.flake8-builtins]
+# opi/http/ is de gedeelde HTTP-laag uit docs/development/coding-rules.md hoofdstuk 5. De
+# naam schaduwt de stdlib `http` niet in de praktijk: Python 3 kent geen impliciete
+# relatieve imports, dus `from http import HTTPStatus` in opi/core/errors.py haalt de stdlib.
+builtins-allowed-modules = ["http"]
+
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "yaml" = { msg = "Gebruik opi.utils.yaml_util; PyYAML leest YAML 1.1 en de rest van OPI 1.2." }
 "ruamel.yaml.YAML" = { msg = "Gebruik een profiel uit opi.utils.yaml_util in plaats van een eigen YAML()." }

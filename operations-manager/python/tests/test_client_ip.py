@@ -22,11 +22,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
-from opi.api import rate_limiter
-from opi.api.endpoint_util import validate_api_token
-from opi.api.rate_limiter import IPRateLimiter
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
+from opi.http import rate_limiter
+from opi.http.auth.endpoint_util import validate_api_token
+from opi.http.rate_limiter import IPRateLimiter
 from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.utils.client_ip import PEER_SCOPE_KEY, client_ip, forwarded_chain
@@ -200,7 +200,7 @@ class TestDoorDeEchteMiddlewarestapel:
 
             # Een geldige sleutel vanaf een ander echt adres blijft werken.
             ander = _app("147.181.15.232")
-            with patch("opi.api.endpoint_util.get_project_store", return_value=_projectstore()):
+            with patch("opi.http.auth.endpoint_util.get_project_store", return_value=_projectstore()):
                 goed = ander.get(
                     "/api/v1/projects/demo",
                     headers=_kop(GESPOOFT, "147.181.15.232", "goede-sleutel"),

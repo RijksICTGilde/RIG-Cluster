@@ -2,7 +2,7 @@
 
 De LOTC-omgeving laadt drie design systems::
 
-    DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]   # opi/core/templates_lotc.py
+    DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]   # opi/http/render/templates_lotc.py
 
 ``lotc_rvo`` staat wel geinstalleerd en definieert 7568 verschillende ``.rvo-``-selectors,
 maar staat niet in die lijst en wordt dus niet geladen. Van de wel geladen pakketten

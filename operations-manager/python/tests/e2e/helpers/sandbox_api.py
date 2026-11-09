@@ -58,7 +58,7 @@ def make_session_cookie(data: dict, *, secret: str, max_age_seconds: int = 28800
     ``cluster.run_psql`` dat doet) en tekent het id met de SECRET_KEY van het cluster.
 
     Een ``user`` in ``data`` krijgt een vers ``login_at``: de guard weigert een sessie
-    zonder inlogtijdstip (opi/core/session_guard.py).
+    zonder inlogtijdstip (opi/http/auth/session_guard.py).
     """
     if gebruiker := data.get("user"):
         data = {**data, "user": {**gebruiker, "login_at": time.time()}}

@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 
 WORTEL = Path(__file__).resolve().parent.parent
 TABS = WORTEL / "opi" / "templates_lotc" / "bg" / "project-tabs.html.j2"

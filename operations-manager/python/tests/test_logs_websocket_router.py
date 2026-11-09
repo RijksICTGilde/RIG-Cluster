@@ -124,7 +124,7 @@ class TestUserExtraction(unittest.TestCase):
 
     def test_get_user_from_session_valid(self):
         """Test user extraction from valid session."""
-        from opi.core.session_guard import valid_session_user
+        from opi.http.auth.session_guard import valid_session_user
 
         session = {"user": {"email": "test@example.com", "name": "Test User", "login_at": time.time()}}
         result = valid_session_user(session)
@@ -134,7 +134,7 @@ class TestUserExtraction(unittest.TestCase):
 
     def test_get_user_from_session_no_user(self):
         """Test user extraction when no user in session."""
-        from opi.core.session_guard import valid_session_user
+        from opi.http.auth.session_guard import valid_session_user
 
         session = {"other_data": "value"}
         result = valid_session_user(session)
@@ -143,7 +143,7 @@ class TestUserExtraction(unittest.TestCase):
 
     def test_get_user_from_session_none(self):
         """Test user extraction from None session."""
-        from opi.core.session_guard import valid_session_user
+        from opi.http.auth.session_guard import valid_session_user
 
         result = valid_session_user(None)
 

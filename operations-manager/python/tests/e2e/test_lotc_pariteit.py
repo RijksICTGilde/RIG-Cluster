@@ -135,7 +135,7 @@ FRAGMENT_CONTEXT = {
 
 
 def _fragment_met_metrics() -> str:
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     return templates_lotc.env.get_template("bg/_dashboard-usage.html.j2").render(**FRAGMENT_CONTEXT)
 
@@ -309,7 +309,7 @@ CANVAS_HEEFT_INKT = """
 
 
 def _metrics_fragment() -> str:
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     class _Deployment:
         def __init__(self) -> None:
@@ -414,7 +414,7 @@ SNAPSHOT = {
 
 
 def _backups_fragment(deployment: str) -> str:
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     return templates_lotc.env.get_template("shared/_backup-snapshots.html.j2").render(
         deployments=[{"name": deployment}],

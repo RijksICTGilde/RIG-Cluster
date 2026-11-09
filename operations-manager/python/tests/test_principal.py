@@ -15,8 +15,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from opi.api import principal as mod
-from opi.api.principal import (
+from opi.core.authz.actions import Action
+from opi.http.auth import principal as mod
+from opi.http.auth.principal import (
     AccessDenied,
     NotRecognised,
     PrincipalKind,
@@ -25,7 +26,6 @@ from opi.api.principal import (
     reset_gebruik,
     tel_gebruik,
 )
-from opi.core.authz.actions import Action
 from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser

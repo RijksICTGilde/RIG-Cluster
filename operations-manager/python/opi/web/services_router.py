@@ -7,12 +7,12 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
 from opi.core.errors import log_render_failure
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.render.menu import get_menu_items
 from opi.services.services import ServiceAdapter
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,9 @@ async def services_overview(request: Request):
             )
 
         # Dezelfde gegevens, twee weergaven. Met ?ui=lotc rendert deze route de
-        # hertekende pagina; zonder blijft alles zoals het was. Zie opi/web/lotc_switch.py
+        # hertekende pagina; zonder blijft alles zoals het was. Zie opi/http/render/lotc_switch.py
         # voor waarom dat een schakelaar is en geen omzetting ineens.
-        from opi.web.lotc_switch import build_lotc_services, render
+        from opi.http.render.lotc_switch import build_lotc_services, render
 
         return render(
             request,

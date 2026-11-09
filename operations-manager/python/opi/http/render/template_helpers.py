@@ -4,7 +4,7 @@ Filters (Dutch dates, an RRULE in words, the name and the definition behind a se
 entry), the paths where templates and static files live, and the content-hashed URL for an
 own static file.
 
-Used by ``opi/core/templates_lotc.py``, and apart from that module because these are plain
+Used by ``opi/http/render/templates_lotc.py``, and apart from that module because these are plain
 functions: the environment leans on the rest of the application through the service
 registry, and these helpers need not drag that along.
 """
@@ -176,7 +176,7 @@ def get_service_definition_for_entry(service: str | dict[str, Any]) -> ServiceDe
     return ServiceAdapter.SERVICE_DEFINITIONS.get(service_type)
 
 
-OPI_DIR = Path(__file__).parent.parent
+OPI_DIR = Path(__file__).parent.parent.parent
 TEMPLATES_DIR = OPI_DIR / "templates_lotc"
 # Service-owned templates live next to their service under services/catalog/<svc>/ and
 # are addressed as "<svc>/<file>". Putting the catalog dir on the search path lets a
@@ -199,7 +199,7 @@ def static_url(path: str) -> str:
     ``static_url("js/wizard.js")`` -> ``/static/js/wizard.js?v=1a2b3c4d``. Because the URL
     changes whenever the contents change, a browser can never serve a stale copy of a
     replaced file: it is a different URL. The ``?v=`` parameter is also what earns the
-    long cache lifetime; see CacheControlledStaticFiles in opi/core/static_files.py.
+    long cache lifetime; see CacheControlledStaticFiles in opi/http/render/static_files.py.
 
     The assets of the component system do NOT pass through here: those are served under
     /static/lotc/ by the package itself, so we do not decide those URLs.

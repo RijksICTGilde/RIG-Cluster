@@ -31,7 +31,7 @@ RC-62 heeft de rvo-klassen uit `opi/templates_lotc/` gehaald en dat was juist. W
 grep over templates niet kan zien: de klassen kwamen daarna alsnog binnen, via een TWEEDE
 renderomgeving.
 
-`render_roos()` (`opi/core/templates_lotc.py`) rendert een sjabloon met de roos-omgeving en
+`render_roos()` (`opi/http/render/templates_lotc.py`) rendert een sjabloon met de roos-omgeving en
 zet het resultaat als HTML in de LOTC-pagina. In de bron van die pagina staat dan geen
 enkele `rvo-`; in wat de gebruiker krijgt stonden er tachtig.
 
@@ -81,7 +81,7 @@ deploymentblok van metrics_scraper, het backupblok en de twee dialogen (job,
 databaseconsole) vielen erbuiten. De twee dialogen kozen hun sjabloon zelfs helemaal niet -
 `jobs.py` en `db_console.py` deden een kale `TemplateResponse` op het roos-sjabloon - dus
 op een NLDD-pagina kwam de dialoog onopgemaakt binnen. Ze gaan nu allebei via
-`opi.web.lotc_switch.render()`.
+`opi.http.render.lotc_switch.render()`.
 
 ### Waarom er niet één gedeeld sjabloon kan zijn
 

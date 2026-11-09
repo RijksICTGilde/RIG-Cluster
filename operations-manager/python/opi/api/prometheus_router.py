@@ -12,7 +12,7 @@ from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.requests import Request
 
-from opi.api.endpoint_util import validate_metrics_scrape_token
+from opi.http.auth.endpoint_util import validate_metrics_scrape_token
 
 logger = logging.getLogger(__name__)
 

@@ -22,10 +22,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import default_marking, deployment_in_body, handhaaf
 from opi.api.router import UpsertDeploymentRequest
 from opi.api.v2.router import upsert_deployment_v2
 from opi.core.authz.actions import Action, action, deployment_from, deployment_of, marking_if_absent
+from opi.http.auth.endpoint_util import default_marking, deployment_in_body, handhaaf
 from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from opi.services.project_roles import build_resource, resource_path
@@ -143,7 +143,7 @@ async def _laat_toe(token: str, deployment_naam: str) -> Request:
     verzoek = _request()
     store = MagicMock()
     store.get.return_value = project
-    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         await handhaaf(
             verzoek,
             token,
@@ -289,9 +289,9 @@ async def _roep_de_upsert_aan(
 
     monkeypatch.setattr("opi.api.v2.router.create_async_task", _taak)
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.v2.router.get_project_store", return_value=store),
-        patch("opi.services.step_up_conditions.get_project_store", return_value=store),
+        patch("opi.http.auth.step_up_conditions.get_project_store", return_value=store),
     ):
         try:
             antwoord = await upsert_deployment_v2(
@@ -372,7 +372,7 @@ async def test_developer_ci_deletes_any_deployment_that_is_not_production(deploy
     request.scope["path_params"] = {"project_name": project.name, "deployment_name": deployment_name}
     store = MagicMock()
     store.get.return_value = project
-    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         if allowed:
             await handhaaf(request, TOKEN_CI, _delete_route, project)
         else:

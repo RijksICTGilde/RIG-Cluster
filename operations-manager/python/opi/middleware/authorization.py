@@ -16,7 +16,7 @@ from starlette.routing import Match
 
 from opi.core.actor import set_actor, user_actor
 from opi.core.logging_redact import redact_invite_key_in_path
-from opi.core.session_guard import drop_refused_session, valid_session_user
+from opi.http.auth.session_guard import drop_refused_session, valid_session_user
 from opi.services.step_up import has_fresh_step_up, step_up_fresh
 from opi.services.user_service import get_user_service
 
@@ -48,7 +48,7 @@ def get_user(request: Request) -> dict[str, Any] | None:
     Extract user information from the session.
 
     A session past its absolute lifetime, or one revoked by a logout elsewhere, counts
-    as unauthenticated (see opi/core/session_guard.py).
+    as unauthenticated (see opi/http/auth/session_guard.py).
 
     Args:
         request: The incoming HTTP request

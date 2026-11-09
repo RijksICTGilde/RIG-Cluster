@@ -32,9 +32,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Request, Upload
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from opi.core.auth_decorators import requires_sso
 from opi.core.authz.actions import Action, action
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
     get_wizard_state,
@@ -42,6 +40,8 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
     save_wizard_state,
 )
+from opi.http.auth.auth_decorators import requires_sso
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services import upload_staging
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE

@@ -12,7 +12,7 @@ een vlag die alleen de LOKALE tak in ``request.session["invite_success"]`` zet.
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 TEMPLATE = "bg/invite-success.html.j2"
 

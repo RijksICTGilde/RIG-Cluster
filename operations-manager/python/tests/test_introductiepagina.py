@@ -17,9 +17,9 @@ hem opent.
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
+from opi.http.render.lotc_switch import build_lotc_introductie
 from opi.services.registry import SERVICE_DEFINITIONS
 from opi.services.services_enums import ServiceKind, ServiceType
-from opi.web.lotc_switch import build_lotc_introductie
 
 if TYPE_CHECKING:
     import pytest

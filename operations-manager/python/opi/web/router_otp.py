@@ -34,14 +34,14 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from joserfc.errors import JoseError
 from starlette.responses import Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.render.lotc_switch import build_lotc_admin, render
+from opi.http.render.menu import get_menu_items
 from opi.services.otp_herlogin_service import OtpHerloginService, herlogin_klopt
 from opi.services.user_otp_service import OtpRegistration, OtpVerification, UserOtpService
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.qr import qr_svg
-from opi.web.lotc_switch import build_lotc_admin, render
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 

@@ -37,9 +37,9 @@ import re
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.bridge import editable_to_form_field
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.minio.visualizers import MINIO_ENABLE_VERSIONING
 from opi.services.catalog.postgresql_database.visualizers import POSTGRESQL_SCHEMAS, SCHEMA_MARKED
 

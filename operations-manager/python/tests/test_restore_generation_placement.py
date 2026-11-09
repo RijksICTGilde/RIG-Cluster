@@ -103,7 +103,7 @@ def mock_manager(project_data: dict[str, Any]) -> Any:
 def mock_store(project_data: dict[str, Any]) -> Any:
     store = _FakeStore(project_data)
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.restore_router.get_project_store", return_value=store),
     ):
         yield store

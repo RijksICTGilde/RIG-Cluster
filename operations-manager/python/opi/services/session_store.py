@@ -7,7 +7,7 @@ volgende lezer direct zichtbaar.
 Het verloop loopt op twee plaatsen: ``expires_at`` hier (het schuivende
 inactiviteitsvenster; ``purge_expired`` ruimt op vanuit de uurlijkse lus van de
 taakwerker) en ``user.login_at`` in de data (de absolute grens, gehandhaafd door
-``opi/core/session_guard.py``).
+``opi/http/auth/session_guard.py``).
 
 De hit-ratio en het aantal sets worden hooguit eens per minuut als INFO gelogd, op
 activiteit: een store zonder verkeer heeft niets te melden.

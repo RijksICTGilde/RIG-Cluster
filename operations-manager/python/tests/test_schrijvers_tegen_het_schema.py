@@ -628,7 +628,7 @@ async def test_het_env_vars_venster_schrijft_geldig(met_deployment: bool) -> Non
     )
     with (
         patch.multiple(
-            "opi.web.authz",
+            "opi.http.auth.authz",
             get_project_store=lambda: SimpleNamespace(
                 get=lambda naam: SimpleNamespace(name=naam, data=project, users=[])
             ),

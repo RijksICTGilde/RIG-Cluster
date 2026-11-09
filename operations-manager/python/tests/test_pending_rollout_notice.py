@@ -11,7 +11,7 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 _SECTION = "bg/_pending-rollout.html.j2"
 _TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "opi" / "templates_lotc"

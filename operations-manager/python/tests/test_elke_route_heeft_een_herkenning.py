@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from opi.api.route_herkenning import WEBSOCKET, RouteHerkenning, route_herkenningen
-from opi.core.auth_decorators import requires_sso
+from opi.http.auth.auth_decorators import requires_sso
 from opi.server import app
 
 #: Routes die bewust zonder herkenning bereikbaar zijn, met de reden. Deze lijst is het punt

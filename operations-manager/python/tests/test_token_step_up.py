@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
+from opi.http.auth.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE, STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.services.api_step_up_service import sso_session_credential
 from opi.services.step_up import StepUpAction
 from opi.services.user_otp_service import OtpStatus, OtpVerification
@@ -97,7 +97,7 @@ def otp() -> Iterator[dict[str, Any]]:
 
     dienst = MagicMock(verify=AsyncMock(side_effect=_verify), status=AsyncMock(return_value=OtpStatus(registered=True)))
     with (
-        patch("opi.api.otp_step_up.UserOtpService", return_value=dienst),
+        patch("opi.http.auth.otp_step_up.UserOtpService", return_value=dienst),
         patch("opi.api.step_up_router.record_step_up_attempt", AsyncMock()),
         patch("opi.services.api_step_up_service.ApiStepUpService.record", AsyncMock(return_value=datetime.now(UTC))),
     ):
@@ -112,7 +112,7 @@ def zonder_factor() -> Iterator[None]:
         status=AsyncMock(return_value=OtpStatus(registered=False)),
     )
     with (
-        patch("opi.api.otp_step_up.UserOtpService", return_value=dienst),
+        patch("opi.http.auth.otp_step_up.UserOtpService", return_value=dienst),
         patch("opi.api.step_up_router.record_step_up_attempt", AsyncMock()),
     ):
         yield

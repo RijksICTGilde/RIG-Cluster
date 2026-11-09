@@ -1350,7 +1350,7 @@ class TestDeAanvraagStaatGoedInDeBestaandeInterface:
         ["admin/approvals/_aanvragen.html.j2", "wizard/partials/approval_items.html.j2"],
     )
     def test_beide_schermen_noemen_de_aanvraag_bij_naam(self, sjabloon: str) -> None:
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
         from opi.web.router_approvals import groepeer_per_dienst
 
         item = self._item()

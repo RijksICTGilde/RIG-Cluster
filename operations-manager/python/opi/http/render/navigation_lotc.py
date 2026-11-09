@@ -12,7 +12,7 @@ Dat is een ontwerpkeuze, geen vertaling, en hij zal nog schuiven. Daarom staat h
 hier los van de templates: wie de indeling wil veranderen, verandert GROUPS en raakt
 geen enkel template aan.
 
-De bron van de items blijft opi/web/menu.py. Dat is bewust: daar zitten de links en
+De bron van de items blijft opi/http/render/menu.py. Dat is bewust: daar zitten de links en
 de rolafhankelijkheid (welke items een beheerder wel ziet en een gebruiker niet), en
 die logica mag niet verdubbelen. Dit bestand herschikt alleen wat daar uit komt.
 """
@@ -20,8 +20,8 @@ die logica mag niet verdubbelen. Dit bestand herschikt alleen wat daar uit komt.
 import logging
 from typing import Any
 
-from opi.web.menu import get_menu_items
-from opi.web.nldd_iconen import nldd_icon_names
+from opi.http.render.menu import get_menu_items
+from opi.http.render.nldd_iconen import nldd_icon_names
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ def get_navigation(user: dict[str, Any] | None, current_path: str = "") -> dict[
     """Deel de menu-items op in een hulpbalk en een gegroepeerde zijkolom.
 
     Args:
-        user: de gebruiker uit de sessie, zoals opi/web/menu.py hem verwacht.
+        user: de gebruiker uit de sessie, zoals opi/http/render/menu.py hem verwacht.
         current_path: het pad van de huidige pagina, voor de actieve staat.
 
     Returns:

@@ -3,8 +3,8 @@
 # Authenticatie en autorisatie
 /operations-manager/python/opi/middleware/ @uittenbroekrobbert
 /operations-manager/python/opi/api/auth_routes.py @uittenbroekrobbert
-/operations-manager/python/opi/api/user_token_auth.py @uittenbroekrobbert
-/operations-manager/python/opi/core/auth_decorators.py @uittenbroekrobbert
+/operations-manager/python/opi/http/auth/user_token_auth.py @uittenbroekrobbert
+/operations-manager/python/opi/http/auth/auth_decorators.py @uittenbroekrobbert
 /operations-manager/python/opi/services/project_authorization.py @uittenbroekrobbert
 /operations-manager/python/opi/utils/api_keys.py @uittenbroekrobbert
 /operations-manager/python/opi/configs/keycloak/bootstrap.yaml @uittenbroekrobbert
@@ -12,7 +12,7 @@
 
 # Sessie en CSRF
 /operations-manager/python/opi/core/secret_key.py @uittenbroekrobbert
-/operations-manager/python/opi/core/session_guard.py @uittenbroekrobbert
+/operations-manager/python/opi/http/auth/session_guard.py @uittenbroekrobbert
 /operations-manager/python/opi/services/session_revocation_service.py @uittenbroekrobbert
 /operations-manager/python/opi/utils/csrf.py @uittenbroekrobbert
 

@@ -24,9 +24,9 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from opi.core.auth_decorators import get_current_user
 from opi.core.config import settings
 from opi.forms.wizard.state import WizardState
+from opi.http.auth.auth_decorators import get_current_user
 
 if TYPE_CHECKING:
     from starlette.requests import Request

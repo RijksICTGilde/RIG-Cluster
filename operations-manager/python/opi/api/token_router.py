@@ -16,7 +16,7 @@ meer op te halen; wie hem kwijt is roteert het token.
 Elke schrijvende handeling hier vraagt daarbovenop een verse tweede factor (RC-387): wie een
 token uitgeeft, roteert, intrekt of een rol verandert, geeft of neemt een bewijsmiddel. De
 aanroeper activeert die met ``POST /api/v2/step-up``, getoetst tegen de eigenaar van het token;
-``opi.api.otp_step_up`` beschrijft de weigering. De leesroute vraagt er geen: die verandert niets.
+``opi.http.auth.otp_step_up`` beschrijft de weigering. De leesroute vraagt er geen: die verandert niets.
 """
 
 from __future__ import annotations
@@ -28,9 +28,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from opi.api.params import ProjectNamePath
-from opi.api.user_token_auth import validate_user_token
-from opi.core.auth_decorators import get_current_user, requires_step_up
 from opi.core.authz.actions import Action, action
+from opi.http.auth.auth_decorators import get_current_user, requires_step_up
+from opi.http.auth.step_up_conditions import vraagt_altijd_step_up
+from opi.http.auth.user_token_auth import validate_user_token
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
     TokenAanvraagGeweigerd,
@@ -44,7 +45,6 @@ from opi.services.api_token_service import (
 )
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.step_up import StepUpAction
-from opi.services.step_up_conditions import vraagt_altijd_step_up
 
 logger = logging.getLogger(__name__)
 

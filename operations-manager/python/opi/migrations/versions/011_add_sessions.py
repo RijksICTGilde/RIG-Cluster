@@ -3,7 +3,7 @@
 Vanaf RC-390 draagt de sessiecookie alleen een ondertekend id; de inhoud woont hier, dus
 de cookie kan niet meer groeien. ``expires_at`` is het schuivende venster van de
 inactiviteitsgrens (``SESSION_MAX_AGE_SECONDS``); de absolute grens zit in de data
-(``user.login_at``, ``opi/core/session_guard.py``). De uurlijkse lus van de taakwerker
+(``user.login_at``, ``opi/http/auth/session_guard.py``). De uurlijkse lus van de taakwerker
 ruimt verlopen rijen op (``SessionStore.purge_expired``).
 
 Revision ID: 011

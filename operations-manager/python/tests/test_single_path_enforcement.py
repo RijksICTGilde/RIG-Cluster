@@ -3,7 +3,7 @@
 The project file has exactly one validated save path:
 ``ProjectManager.save_and_commit_project`` (schema + structural validation,
 canonical dumper, commit + push, cache refresh). No mutation handler in the
-API/web/core/service layers may persist project YAML to git directly -- doing so
+API/web/core/service/http layers may persist project YAML to git directly -- doing so
 re-opens the validation-bypass gap this consolidation closed (an API call could
 commit a malformed or structurally broken project file to ``zad-projects``).
 
@@ -25,7 +25,7 @@ from opi.services.project_store import GitProjectStore
 # Directories whose handlers must route every project-file write through
 # ProjectManager.save_and_commit_project (the central validated save).
 _PYTHON_ROOT = Path(__file__).resolve().parents[1]
-_SCANNED_DIRS = ["opi/api", "opi/web", "opi/core", "opi/services"]
+_SCANNED_DIRS = ["opi/api", "opi/web", "opi/core", "opi/services", "opi/http"]
 
 # Substrings that indicate a project-YAML write that skips the central save.
 _FORBIDDEN_PATTERNS = (

@@ -566,7 +566,7 @@ Meer dan het lijkt. `features/federation-routing.md` beschrijft precies dit, met
 | routeringslaag | `opi/runtime/tasks/federation_service.py` | 228 |
 | HTTP-client naar een peer | `opi/connectors/opi.py` | 132 |
 | peers/health-endpoints | `opi/api/federation_router.py` | 74 |
-| inhaakpunt in de taakketen | `opi/core/task_helpers.py:58-61` (aanmaken), `:110-112` en `opi/api/task_router.py:166-168` (status) | — |
+| inhaakpunt in de taakketen | `opi/http/task_helpers.py:58-61` (aanmaken), `:110-112` en `opi/api/task_router.py:166-168` (status) | — |
 
 `FEDERATION_ROLE` is `standalone` | `master` | `slave`; default `standalone`, en dan bestaat de
 laag niet (`opi/server.py:250-255` bouwt de service alleen als er peers zijn). Een master leest

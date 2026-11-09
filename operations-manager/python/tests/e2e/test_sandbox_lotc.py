@@ -10,7 +10,7 @@ Draait alleen met E2E_BASE_URL gezet; zonder slaan deze tests over.
 """
 
 import pytest
-from opi.core.static_files import LOTC_VERSIONED_PATH
+from opi.http.render.static_files import LOTC_VERSIONED_PATH
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 

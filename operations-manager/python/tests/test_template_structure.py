@@ -16,7 +16,7 @@ hoger getal dan de werkelijkheid, dan faalt de test met het verzoek het te verla
 
 import re
 
-from opi.core.template_helpers import STATIC_DIR, TEMPLATES_DIR
+from opi.http.render.template_helpers import STATIC_DIR, TEMPLATES_DIR
 
 INLINE_STYLE = re.compile(r'\bstyle="')
 STYLE_BLOCK = re.compile(r"<style[\s>]")

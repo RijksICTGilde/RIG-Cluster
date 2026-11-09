@@ -39,7 +39,7 @@ Een project heeft zelf geen markering (zie [otap-markering.md](otap-markering.md
 Die regels staan op een plek, in `requires_production_step_up`
 (`opi/services/step_up.py`); een route verklaart met `@requires_step_up(...)` dat ze eronder
 valt, met een conditie die het doelwit weegt of met `vraagt_altijd_step_up`
-(`opi/services/step_up_conditions.py`) als de handeling er altijd een vraagt. Welke routes
+(`opi/http/auth/step_up_conditions.py`) als de handeling er altijd een vraagt. Welke routes
 dat zijn houdt `tests/test_step_up_routes.py` vast.
 
 Nog NIET: een backup in productie verwijderen. Dat is de volgende kandidaat, met hetzelfde
@@ -97,7 +97,7 @@ Zolang je een verse step-up hebt, toont het accountmenu rechtsboven een groen sc
 (`shield-check-mark`) in plaats van het gewone persoonsicoon, en bovenaan het uitklapmenu staat
 "Verhoogde rechten tot 14:32" (uitgeschakeld, alleen ter informatie). Het item heeft ook een
 toegankelijk label, want kleur alleen is niet genoeg. Het eindtijdstip komt uit
-`step_up_until()` in `opi/services/step_up.py`, `render()` in `opi/web/lotc_switch.py` zet het als
+`step_up_until()` in `opi/services/step_up.py`, `render()` in `opi/http/render/lotc_switch.py` zet het als
 `verhoogd_tot` in elke pagina, en de kleur staat in `static/css/lotc-app.css` (`.menu-verhoogd`).
 
 Er is bewust geen timer: de pagina bepaalt dit bij het laden. Verloopt het venster terwijl je op
@@ -386,11 +386,11 @@ merkt er niets van. Wat je wel nodig hebt is de platformsleutel
 | `opi/web/router_otp.py` | `/account/otp` en de drie stappen eronder |
 | `opi/web/router_user_admin.py` | `POST /admin/users/<id>/otp-reset` |
 | `opi/services/step_up.py` | wanneer een handeling een step-up vraagt, en of er een verse is |
-| `opi/services/step_up_conditions.py` | de condities die een route bij `@requires_step_up` noemt |
-| `opi/core/auth_decorators.py` | de decorator `requires_step_up` |
+| `opi/http/auth/step_up_conditions.py` | de condities die een route bij `@requires_step_up` noemt |
+| `opi/http/auth/auth_decorators.py` | de decorator `requires_step_up` |
 | `opi/web/router_step_up.py` | `POST /step-up` |
-| `opi/web/step_up_dialog.py` | de dialoog en de herhaling erna |
-| `opi/api/otp_step_up.py` | de OTP-headers bij een API-aanroep |
+| `opi/http/auth/step_up_dialog.py` | de dialoog en de herhaling erna |
+| `opi/http/auth/otp_step_up.py` | de OTP-headers bij een API-aanroep |
 
 ## Afhankelijkheden
 

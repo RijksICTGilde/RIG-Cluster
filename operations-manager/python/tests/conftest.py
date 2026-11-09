@@ -7,7 +7,7 @@ This module provides common fixtures used across unit and integration tests.
 import os
 
 # Voor elke import van opi: setup_components leest LOTC_STRICT tijdens het importeren van
-# opi.core.templates_lotc, dus na die import zetten doet niets meer. Strict weigert een
+# opi.http.render.templates_lotc, dus na die import zetten doet niets meer. Strict weigert een
 # onbekende attribuutWAARDE in plaats van hem stil te renderen, en staat daarom in de
 # tests en in CI en niet in de productie-image.
 os.environ.setdefault("LOTC_STRICT", "1")
@@ -189,7 +189,7 @@ def mock_project_service() -> Any:
     # Patch in both locations: endpoint_util (for auth) and logs_router (for usage)
     mock_service = MockProjectStore()
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.logs_router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
@@ -217,7 +217,7 @@ def mock_settings() -> Any:
         # het waar-achtig is, en een kale MagicMock is dat. Starlette weigerde die header
         # met een TypeError, waardoor /health onder deze fixture niet te meten was.
         mock_settings.SECURITY_PROOF_TOKEN = ""
-        # Ook echte ints, om dezelfde reden: opi/api/rate_limiter.py rekent bij import met
+        # Ook echte ints, om dezelfde reden: opi/http/rate_limiter.py rekent bij import met
         # deze waarden om zijn emmers te bouwen, en retry_after_seconds vergelijkt met de
         # max. Een kale MagicMock gaf een TypeError bij de import van de module, en dan
         # viel elke test die create_app() bouwt om op de fixture.
@@ -426,7 +426,7 @@ def reset_rate_limiters() -> Any:
     de mislukte authenticatiepogingen van de vorige mee en krijgt hij een 429 waar hij een
     401 toetst. Het aantal tests dat met een foute sleutel klopt ligt boven de grens.
     """
-    from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY
+    from opi.http.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY
 
     limiters = (AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY, API_FLOOD_LIMITER)
 
@@ -996,8 +996,8 @@ def platformbeheerder_token() -> Iterator[dict[str, Any]]:
         return claims if token == "beheerder-token" else {**claims, "email": "iemand@example.test"}
 
     with (
-        patch("opi.api.user_token_auth.verify_user_token", AsyncMock(side_effect=_claims_van)),
-        patch("opi.api.user_token_auth.get_user_service") as get_service,
+        patch("opi.http.auth.user_token_auth.verify_user_token", AsyncMock(side_effect=_claims_van)),
+        patch("opi.http.auth.user_token_auth.get_user_service") as get_service,
     ):
         get_service.return_value.is_email_allowed.return_value = True
         get_service.return_value.is_platform_admin.side_effect = lambda email: email == PLATFORMBEHEERDER_EMAIL
@@ -1033,7 +1033,7 @@ def verse_otp() -> Iterator[dict[str, Any]]:
         status=AsyncMock(return_value=OtpStatus(registered=True)),
     )
     with (
-        patch("opi.api.otp_step_up.UserOtpService", return_value=service),
+        patch("opi.http.auth.otp_step_up.UserOtpService", return_value=service),
         patch("opi.services.api_step_up_service.ApiStepUpService.is_fresh", AsyncMock(return_value=True)),
     ):
         yield {"headers": {}, "code": OTP_CODE}

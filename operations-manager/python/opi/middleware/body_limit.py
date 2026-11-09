@@ -13,15 +13,15 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from opi.api.endpoint_util import image_push_refusal
 from opi.api.image_router import push_image
-from opi.api.rate_limiter import (
+from opi.core.audit_trail import begin_trail
+from opi.core.config import settings
+from opi.http.auth.endpoint_util import image_push_refusal
+from opi.http.rate_limiter import (
     FLOOD_COUNTED_IN_SCOPE,
     refuse_when_flood_limit_reached,
     refuse_when_key_failures_exhausted,
 )
-from opi.core.audit_trail import begin_trail
-from opi.core.config import settings
 from opi.middleware.audit import zet_rijen_in_de_wachtrij
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.utils.uploads import SLOT_HELD_IN_SCOPE, upload_slot

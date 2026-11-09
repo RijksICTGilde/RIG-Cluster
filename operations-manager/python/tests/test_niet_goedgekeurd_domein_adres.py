@@ -233,7 +233,7 @@ def api(mock_settings: Any, request: pytest.FixtureRequest) -> Iterator[TestClie
 
     app: FastAPI = create_app()
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
         patch("opi.api.v2.router.get_project_store", return_value=store),
         patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=CLUSTERPOSTFIX),
         patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=True),

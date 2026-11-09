@@ -16,10 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import handhaaf
 from opi.core.actor import Actor, ActorKind, get_actor, service_account_actor, user_actor
 from opi.core.audit_trail import MAX_FIELD_VALUE, begin_trail, capture_fields, record_commit, record_task, trail
-from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action, action_of, audit_fields_of
 from opi.core.authz.engine import (
     ANY,
@@ -33,6 +31,9 @@ from opi.core.authz.engine import (
     all_rules,
     rule_for,
 )
+from opi.http.auth.auth_decorators import requires_step_up
+from opi.http.auth.authz import enforce_route_action
+from opi.http.auth.endpoint_util import handhaaf
 from opi.middleware.audit import AuditMiddleware, _schrijvers
 from opi.server import app
 from opi.services.members import MemberKind
@@ -40,7 +41,6 @@ from opi.services.project_leden import hash_van, vervaldatum
 from opi.services.project_service import ProjectSummary, ProjectToken, ProjectUser
 from opi.services.step_up import StepUpAction
 from opi.utils.client_ip import PEER_SCOPE_KEY
-from opi.web.authz import enforce_route_action
 from starlette.requests import Request
 
 GEBRUIKER = user_actor("beheerder@rijksoverheid.nl")
@@ -486,7 +486,7 @@ async def test_een_geweigerde_api_aanroep_draagt_de_actor() -> None:
     async def route(project_name: str) -> None: ...
 
     with (
-        patch("opi.api.principal.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.principal.get_user_service", return_value=gebruikers),
         pytest.raises(HTTPException) as fout,
     ):
         await handhaaf(verzoek, token, route, project)
@@ -642,7 +642,10 @@ async def test_de_poort_leest_het_formulier_pas_na_het_toelaten() -> None:
     verzoek = Request(scope)
     begin_trail()
 
-    with patch("opi.web.authz.authorize", side_effect=HTTPException(status_code=403)), pytest.raises(HTTPException):
+    with (
+        patch("opi.http.auth.authz.authorize", side_effect=HTTPException(status_code=403)),
+        pytest.raises(HTTPException),
+    ):
         await enforce_route_action(verzoek)
 
     assert trail().fields == {}

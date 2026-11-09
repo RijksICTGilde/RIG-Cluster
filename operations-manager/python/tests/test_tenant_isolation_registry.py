@@ -60,7 +60,7 @@ def two_projects():
     projects = {PROJECT_A: _project(PROJECT_A, KEY_A), PROJECT_B: _project(PROJECT_B, KEY_B)}
     store = MagicMock()
     store.get.side_effect = projects.get
-    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         yield store
 
 
@@ -156,7 +156,7 @@ class TestPushOwnership:
         """
         store = MagicMock()
         store.get.side_effect = {"PROJECT-A": _project(PROJECT_A, KEY_A)}.get
-        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
             response = _push(client, "PROJECT-A", KEY_A)
 
         assert response.status_code == 200

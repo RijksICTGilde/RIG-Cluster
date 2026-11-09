@@ -1,5 +1,5 @@
 """
-Tests for opi.api.endpoint_util module.
+Tests for opi.http.auth.endpoint_util module.
 
 Tests parse_ports and validate_api_token.
 """
@@ -11,7 +11,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.endpoint_util import (
+from opi.api.image_router import push_image
+from opi.core.actor import get_actor, project_api_key_actor
+from opi.core.authz.actions import Action, action
+from opi.core.authz.engine import Cause
+from opi.http.auth.endpoint_util import (
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
     image_push_refusal,
@@ -19,10 +23,6 @@ from opi.api.endpoint_util import (
     validate_api_token,
     validate_metrics_scrape_token,
 )
-from opi.api.image_router import push_image
-from opi.core.actor import get_actor, project_api_key_actor
-from opi.core.authz.actions import Action, action
-from opi.core.authz.engine import Cause
 from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
 from starlette.requests import Request
@@ -115,7 +115,7 @@ class TestValidateApiToken:
         mock_service.get.return_value = mock_project
 
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="test-project")
@@ -143,7 +143,7 @@ class TestValidateApiToken:
         mock_service.get.return_value = mock_project
 
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="test-project")
@@ -169,7 +169,7 @@ class TestValidateApiToken:
         mock_service = MagicMock()
         mock_service.get.return_value = mock_project
 
-        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service):
             result = await dummy_route(request=mock_request, project_name="test-project")
 
         assert result == {"project": "test-project"}
@@ -193,7 +193,7 @@ class TestValidateApiToken:
         mock_service = MagicMock()
         mock_service.get.return_value = mock_project
 
-        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service):
             result = await dummy_route(request=mock_request, project_name="test-project")
 
         assert result == {"actor": project_api_key_actor("test-project")}
@@ -215,7 +215,7 @@ class TestValidateApiToken:
         mock_service.get.return_value = None
 
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="nonexistent")
@@ -262,7 +262,7 @@ class TestImagePushRefusal:
     async def _weigering(self, presented: str | None, project_name: str, project: Any) -> HTTPException | None:
         store = MagicMock()
         store.get.return_value = project
-        with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
             return await image_push_refusal(self._request(), presented, project_name, push_image)
 
     @pytest.mark.asyncio

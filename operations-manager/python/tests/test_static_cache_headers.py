@@ -5,9 +5,9 @@ import re
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.core.static_files import IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL, CacheControlledStaticFiles
-from opi.core.template_helpers import STATIC_DIR, static_url
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.static_files import IMMUTABLE_CACHE_CONTROL, REVALIDATE_CACHE_CONTROL, CacheControlledStaticFiles
+from opi.http.render.template_helpers import STATIC_DIR, static_url
+from opi.http.render.templates_lotc import templates_lotc
 
 
 @pytest.fixture

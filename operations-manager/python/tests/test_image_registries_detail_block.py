@@ -12,7 +12,7 @@ import opi.services.catalog.image_registries.web as web
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.naming import organization_name

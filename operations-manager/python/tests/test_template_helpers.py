@@ -1,5 +1,5 @@
 """
-Tests for the opi.core.template_helpers module.
+Tests for the opi.http.render.template_helpers module.
 
 Tests format_dutch_date and get_service_name utility functions.
 """
@@ -7,7 +7,7 @@ Tests format_dutch_date and get_service_name utility functions.
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
-from opi.core.template_helpers import cluster_tag, format_dutch_date, get_service_name, shorten_image_digest
+from opi.http.render.template_helpers import cluster_tag, format_dutch_date, get_service_name, shorten_image_digest
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient

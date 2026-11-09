@@ -39,7 +39,7 @@ def otp_factor() -> object:
         verify=AsyncMock(return_value=OtpVerification.OK),
     )
     with (
-        patch("opi.web.step_up_dialog.UserOtpService", return_value=dienst),
+        patch("opi.http.auth.step_up_dialog.UserOtpService", return_value=dienst),
         patch("opi.web.router_step_up.UserOtpService", return_value=dienst),
     ):
         yield

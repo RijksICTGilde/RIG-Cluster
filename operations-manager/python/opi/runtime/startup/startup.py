@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from opi.core.readiness import ReadinessState
 from keycloak.exceptions import KeycloakError
 
-from opi.api.endpoint_util import controleer_handelingen
 from opi.connectors.git_repo import warm_platform_repos
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
@@ -32,6 +31,7 @@ from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespac
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.version import set_running_image
+from opi.http.auth.endpoint_util import controleer_handelingen
 from opi.manager.bootstrap.keycloak_setup import setup_keycloak
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
@@ -498,7 +498,7 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
             logger.warning(f"Could not load platform users from database: {e}")
 
         # Which sessions are revoked, in memory: the per-request check reads there
-        # (opi/core/session_guard.py). If this goes wrong, that check is quietly off, so the
+        # (opi/http/auth/session_guard.py). If this goes wrong, that check is quietly off, so the
         # error should stop the startup.
         await load_revocations()
 

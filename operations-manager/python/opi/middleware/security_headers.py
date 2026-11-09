@@ -29,14 +29,6 @@ if TYPE_CHECKING:
     from starlette.responses import Response
 
 
-def csp_nonce(request: Request) -> str:
-    """De CSP-nonce van dit verzoek (standaardwaarde: leeg).
-
-    (Test-request zonder state? Dat is okay; het Report-Only-beleid meet zonder nonce.)
-    """
-    return getattr(getattr(request, "state", None), "csp_nonce", "")
-
-
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security response headers to every HTTP response."""
 
@@ -84,7 +76,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return "; ".join(parts)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        # Voor call_next, want de sjablonen lezen hem tijdens het renderen (csp_nonce()).
+        # Voor call_next, want de sjablonen lezen hem tijdens het renderen
+        # (``csp_nonce()`` in opi/http/render/templates_lotc.py).
         nonce = secrets.token_urlsafe(16)
         request.state.csp_nonce = nonce
 

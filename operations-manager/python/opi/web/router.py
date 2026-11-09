@@ -12,13 +12,33 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import current_reference, log_render_failure, reference_for, with_reference
-from opi.core.templates_lotc import templates_lotc
+from opi.http.auth.auth_decorators import get_current_user, requires_sso, requires_step_up
+from opi.http.auth.authz import enforce_route_action, may
+from opi.http.render.lotc_switch import (
+    STANDAARD_TAB,
+    TABS_MET_DEPLOYMENT,
+    TABS_MET_VOORWAARDE,
+    audit_pagina,
+    build_deployment_status_column,
+    build_lotc_dashboard,
+    build_lotc_introductie,
+    build_lotc_project_details,
+    build_lotc_projects,
+    deployment_pagina_adres,
+    kies_deployment,
+    project_tab_url,
+    render,
+    render_fragment,
+    tab_from_path,
+)
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import get_navigation
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.api_token_service import is_projectbeheerder
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
@@ -54,26 +74,6 @@ from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.url_paths import local_redirect_path
 from opi.utils.yaml_util import load_yaml_from_string
-from opi.web.authz import enforce_route_action, may
-from opi.web.lotc_switch import (
-    STANDAARD_TAB,
-    TABS_MET_DEPLOYMENT,
-    TABS_MET_VOORWAARDE,
-    audit_pagina,
-    build_deployment_status_column,
-    build_lotc_dashboard,
-    build_lotc_introductie,
-    build_lotc_project_details,
-    build_lotc_projects,
-    deployment_pagina_adres,
-    kies_deployment,
-    project_tab_url,
-    render,
-    render_fragment,
-    tab_from_path,
-)
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import get_navigation
 from opi.web.project_actions import build_project_action
 from opi.web.security_policy import security_policy_html
 from opi.web.stap_labels import stap_label
@@ -103,7 +103,7 @@ logger = logging.getLogger(__name__)
 _background_tasks: set[asyncio.Task[None]] = set()
 
 #: De poort van het portaal: elke route met een projectrecht loopt erlangs, zonder dat
-#: een handler eraan hoeft te denken. Zie opi/web/authz.py.
+#: een handler eraan hoeft te denken. Zie opi/http/auth/authz.py.
 web_router = APIRouter(dependencies=[Depends(enforce_route_action)])
 
 #: Proef- en testpagina's. Ze hangen aan een eigen router omdat opi/server.py ze alleen
@@ -295,7 +295,7 @@ async def permission_denied(request: Request) -> HTMLResponse:
     user_email = user.get("email", "unknown") if user else "anonymous"
     logger.warning(f"Permission denied page accessed by: {user_email}")
 
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return render(
         request,
@@ -360,13 +360,13 @@ async def project_progress_page(request: Request, task_id: str):
     Reads task state from the V2 async task service (database-backed).
     """
     try:
-        from opi.core.task_helpers import get_task_service
+        from opi.http.task_helpers import get_task_service
 
         task_service = get_task_service(request)
         task = await task_service.get_task(task_id)
         user = get_current_user(request)
 
-        from opi.web.navigation_lotc import get_navigation
+        from opi.http.render.navigation_lotc import get_navigation
 
         if not task:
             return render(
@@ -418,7 +418,7 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
     button. The page has no project name in its path, so the task supplies it and the
     same access rule applies as on the project-scoped fragment route.
     """
-    from opi.core.task_helpers import get_task_service
+    from opi.http.task_helpers import get_task_service
 
     task_service = get_task_service(request)
     task = await task_service.get_task(task_id)
@@ -757,7 +757,7 @@ async def project_action_confirm(
 async def test_hero(request: Request):
     """Test route for hero component."""
     try:
-        from opi.web.navigation_lotc import get_navigation
+        from opi.http.render.navigation_lotc import get_navigation
 
         user = get_current_user(request)
         return templates_lotc.TemplateResponse(
@@ -2824,7 +2824,7 @@ async def actions_pagina(request: Request):
 def _wegwijzer(request: Request, roos: str, lotc: str, pad: str, **context: object):
     """Een pagina zonder projectgegevens: de schil, zijn navigatie en wat ``context`` meegeeft."""
     user = get_current_user(request)
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return render(
         request,
@@ -2850,7 +2850,7 @@ async def account_pagina(request: Request):
     is, en staat daarom op deze pagina (RC-329).
     """
     user = get_current_user(request)
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     otp_status = await UserOtpService().status(str(user.get("email", "")).lower())
 
@@ -2885,7 +2885,7 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
     site. Een waarde die met ``//`` begint is geen relatief pad maar een ander domein, en
     dat zou van deze route een open doorverwijzing maken.
     """
-    from opi.web.lotc_switch import SCHEME_COOKIE, SCHEMES
+    from opi.http.render.lotc_switch import SCHEME_COOKIE, SCHEMES
 
     bestemming = local_redirect_path(terug)
     antwoord = RedirectResponse(url=bestemming, status_code=303)
@@ -2934,7 +2934,7 @@ async def security_policy(request: Request) -> HTMLResponse:
 async def test_template_variables(request: Request):
     """Test route for debugging Jinja variables in componenttags."""
     try:
-        from opi.web.navigation_lotc import get_navigation
+        from opi.http.render.navigation_lotc import get_navigation
 
         user = get_current_user(request)
         return templates_lotc.TemplateResponse(
@@ -3224,7 +3224,7 @@ async def task_progress_fragment(request: Request, project_name: str, task_id: s
     Reads task state from the V2 async task service (database-backed)
     and renders an HTML fragment for HTMX polling.
     """
-    from opi.core.task_helpers import get_task_service
+    from opi.http.task_helpers import get_task_service
 
     task_service = get_task_service(request)
     task = await _require_task_of_project(request, task_service, project_name, task_id)

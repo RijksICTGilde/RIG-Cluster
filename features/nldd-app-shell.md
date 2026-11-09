@@ -19,7 +19,7 @@ nldd-shell
 
 De kopbalk is die van de Fundament-console: een `nldd-toolbar` in plaats van `nldd-top-navigation-bar`, omdat die laatste altijd het Rijkswapen tekent. Links staat het ZAD-logo (`static/img/zad-logo.png`, hetzelfde huisje als de favicon) met de naam, rechts een avatarknop met Profiel, Weergave (submenu Systeem, Licht, Donker) en Uitloggen. Bij verhoogde rechten wordt de avatar een groen schild en staat de eindtijd bovenin het menu. De beheeritems staan alleen in de zijbalk.
 
-De menustructuur komt ongewijzigd uit `opi/web/navigation_lotc.py`, met onze iconen via `to_nldd_icon`. De inhoud van pagina's (tabs, kaarten, formulieren) is niet veranderd.
+De menustructuur komt ongewijzigd uit `opi/http/render/navigation_lotc.py`, met onze iconen via `to_nldd_icon`. De inhoud van pagina's (tabs, kaarten, formulieren) is niet veranderd.
 
 De voettekst is `nldd-page-footer` met alleen de legal bar: links de versie (met link naar de commit), rechts Beveiliging. "Over het platform" (`/about`) is opgegaan in de introductie en verwijst daar permanent naartoe. De hoofdrij met link-kolommen blijft leeg, want die zou herhalen wat de zijbalk al heeft.
 

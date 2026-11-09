@@ -11,8 +11,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from opi.api import endpoint_util
 from opi.api.route_herkenning import route_herkenningen
+from opi.http.auth import endpoint_util
 from opi.server import app
 
 #: De routes die de master-sleutel afschermde en nu het token van een platformbeheerder vragen.

@@ -28,8 +28,8 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-from opi.api.endpoint_util import handhaaf
 from opi.core.authz.actions import Action, action
+from opi.http.auth.endpoint_util import handhaaf
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
 from opi.services.catalog.sleep_mode.flow import DeploymentNotFoundError, InvalidWakeTokenError, WakeTimeoutError

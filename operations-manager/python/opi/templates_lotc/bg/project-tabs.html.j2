@@ -25,7 +25,7 @@
   Het pad en niet ?tab=: een querystring leest als een filter op een pagina, terwijl een
   tabblad een andere pagina over hetzelfde project is. De oude vorm is weg en verwijst ook
   niet door; hij heeft nooit buiten deze applicatie geleefd. De adressen staan in
-  opi/web/lotc_switch.py (PROJECT_TABS, project_tab_url).
+  opi/http/render/lotc_switch.py (PROJECT_TABS, project_tab_url).
 
   De balken voor CPU en geheugen waren eigen div's met een breedte in een style-attribuut
   (usage-bar__fill). Dat is nu c-progress-bar: hetzelfde beeld, met de toegankelijkheid die
@@ -846,7 +846,7 @@
            zodra een dienst hier iets anders neerzet, klopt die naam niet meer. De HAAK is
            wat het tabblad draagt, dus de naam noemt de diensten. Services ernaast gaat over
            BEHEER (welke dienst staat aan, hoe is hij gebonden, waar zet je hem uit); dit
-           toont wat een dienst OVER ZICHZELF te melden heeft. Zie opi/web/lotc_switch.py
+           toont wat een dienst OVER ZICHZELF te melden heeft. Zie opi/http/render/lotc_switch.py
            (PROJECT_TABS) voor de naam en features/services-info-tabblad.md.
 
            De lus noemt GEEN dienst met naam: elke dienst levert zijn blok via

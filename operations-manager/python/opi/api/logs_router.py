@@ -18,13 +18,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import reference_for, with_reference
+from opi.http.auth.endpoint_util import validate_api_token
 from opi.middleware.authorization import get_user
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.project import Project

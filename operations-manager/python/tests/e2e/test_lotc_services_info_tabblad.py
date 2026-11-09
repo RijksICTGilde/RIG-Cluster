@@ -18,8 +18,8 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.http.render.lotc_switch import project_tab_url
 from opi.utils.totp import totp_now
-from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page

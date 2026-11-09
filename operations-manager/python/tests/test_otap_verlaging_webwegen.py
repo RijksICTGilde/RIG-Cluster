@@ -73,8 +73,8 @@ def _patch_markeringsrecht(stored: dict[str, Any]):
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = True
     return (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     )
 
 

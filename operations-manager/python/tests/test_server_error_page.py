@@ -220,7 +220,7 @@ class TestDeStoringZelf:
         # deze twee valt het verzoek op een 404 en meet de test de foutpagina niet.
         from unittest.mock import MagicMock
 
-        from opi.web import authz
+        from opi.http.auth import authz
 
         project = MagicMock()
         project.name = "dd-mco"

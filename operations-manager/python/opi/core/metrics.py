@@ -166,7 +166,7 @@ class OPICollector(Collector):
             labels=["project", "credential"],
         )
         try:
-            from opi.api.principal import gebruik_per_project
+            from opi.http.auth.principal import gebruik_per_project
 
             for (project, kind), count in gebruik_per_project().items():
                 credentials.add_metric([project, kind], count)

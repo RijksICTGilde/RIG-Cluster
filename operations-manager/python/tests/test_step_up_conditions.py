@@ -1,6 +1,6 @@
 """De condities waarmee een route zich voor een step-up aanmeldt (RC-332).
 
-Dekt ``opi/services/step_up_conditions.py``: de conditie leest de projectstore en krijgt
+Dekt ``opi/http/auth/step_up_conditions.py``: de conditie leest de projectstore en krijgt
 een lege projectdata voor wie er niet bij mag, zodat de dialoog niets verklapt over een
 project waar je geen lid van bent.
 """
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from opi.services import step_up_conditions as conditions
+from opi.http.auth import step_up_conditions as conditions
 
 OWNER = "eigenaar@example.org"
 VREEMDE = "vreemde@example.org"

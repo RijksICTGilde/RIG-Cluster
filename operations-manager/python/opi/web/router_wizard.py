@@ -13,9 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.path import resolve_path
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import (
@@ -42,6 +40,12 @@ from opi.forms.wizard.session import (
     save_wizard_state,
 )
 from opi.forms.wizard.state import CLEARED_FIELD
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.auth.authz import authorize, authorized_project
+from opi.http.render.lotc_switch import render
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
@@ -60,10 +64,6 @@ from opi.services.step_up import (
 )
 from opi.utils.csrf import reject_misfired_form_get
 from opi.utils.yaml_util import dump_yaml_to_string
-from opi.web.authz import authorize, authorized_project
-from opi.web.lotc_switch import render
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -1323,7 +1323,7 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
         # en zonder marges. Vandaar de splitsing: dezelfde inhoud, twee omhulsels.
         if request.headers.get("HX-Request"):
             return HTMLResponse(markup)
-        from opi.web.navigation_lotc import get_menu_items, get_navigation
+        from opi.http.render.navigation_lotc import get_menu_items, get_navigation
 
         user = request.session.get("user")
         return templates_lotc.TemplateResponse(
@@ -2744,7 +2744,7 @@ async def _start_project_creation(
     yaml_content = dump_yaml_to_string(data)
 
     # Create V2 async task — the task worker handles git commit + processing
-    from opi.core.task_helpers import create_async_task
+    from opi.http.task_helpers import create_async_task
 
     task = await create_async_task(
         request=request,

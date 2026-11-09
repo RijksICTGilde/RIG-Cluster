@@ -7,11 +7,11 @@ import logging
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from opi.api.router import IPRateLimiter
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.rate_limiter import IPRateLimiter
 from opi.services.catalog.publish_on_web.subdomain import (
     validate_base_domain,
     validate_subdomain_for_domain,

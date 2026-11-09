@@ -47,7 +47,7 @@ def render(request: Request, *, template: str, context: dict[str, Any], status_c
     templateomgeving leunt op de formulierlaag, en die wordt door de routes geimporteerd
     die deze module gebruiken.
     """
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     # Voor het accountmenu: een pagina zonder sessie (een foutpagina) heeft geen step-up.
     verhoogd_tot = step_up_until(request) if "session" in request.scope else None
@@ -76,8 +76,7 @@ def render_fragment(request: Request, *, template: str, context: dict[str, Any])
     ``request`` levert de CSP-nonce; een TemplateResponse krijgt die uit de
     context_processor, een losse render niet.
     """
-    from opi.core.templates_lotc import templates_lotc
-    from opi.middleware.security_headers import csp_nonce
+    from opi.http.render.templates_lotc import csp_nonce, templates_lotc
 
     return templates_lotc.env.get_template(template).render({**context, "csp_nonce": csp_nonce(request)})
 
@@ -92,7 +91,7 @@ def build_lotc_services(
     gegevens op zoals altijd, uit de registry, en hier worden ze alleen in de vorm gezet
     die het nieuwe sjabloon leest. Er komt geen tweede bron bij.
     """
-    from opi.web.navigation_lotc import get_navigation, to_nldd_icon
+    from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
 
     # Elke dienst die de route aanlevert komt op de pagina, ook de dienst met
     # ``hidden=True``. Die vlag betekent "niet aanbieden in de WIZARD"
@@ -168,9 +167,9 @@ def build_lotc_introductie(user: dict[str, Any] | None) -> dict[str, Any]:
     de pagina iets anders belooft dan de dienst zelf zegt, en dat is precies de fout die
     deze functie moet voorkomen.
     """
+    from opi.http.render.navigation_lotc import get_navigation, to_nldd_icon
     from opi.services.registry import SERVICE_DEFINITIONS, get_service
     from opi.services.services_enums import ServiceKind
-    from opi.web.navigation_lotc import get_navigation, to_nldd_icon
 
     zelf: list[dict[str, str]] = []
     achtergrond: list[dict[str, str]] = []
@@ -204,7 +203,7 @@ def build_lotc_dashboard(*, user: dict[str, Any] | None, **_ongebruikt: Any) -> 
     dezelfde gegevens opleveren, en dan gaat de nieuwe pagina iets anders tonen dan de
     bestaande zodra er een veld bijkomt.
     """
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return {"navigation": get_navigation(user, current_path="/dashboard")}
 
@@ -221,7 +220,7 @@ def build_lotc_admin(*, user: dict[str, Any] | None, current_path: str) -> dict[
     ``current_path`` bepaalt welk item in de zijkolom actief is en verschilt dus wel per
     pagina.
     """
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return {"navigation": get_navigation(user, current_path=current_path)}
 
@@ -345,7 +344,7 @@ def build_lotc_projects(
     JavaScript, is een gefilterde lijst deelbaar als URL, en blijft de telling onder de
     tabel kloppen met wat er staat.
     """
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     return {
         "navigation": get_navigation(user, current_path="/projects"),
@@ -758,7 +757,7 @@ def build_lotc_project_details(
     DIT project niets te tonen hebben; ze blijven uit de balk. De route bepaalt dat, want
     daar is bekend wat de diensten leveren.
     """
-    from opi.web.navigation_lotc import get_navigation
+    from opi.http.render.navigation_lotc import get_navigation
 
     active_tab = tab_from_path(request.url.path)
     return {

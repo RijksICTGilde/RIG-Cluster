@@ -51,7 +51,7 @@ from pathlib import Path
 
 import lotc_nldd
 import opi
-from opi.web.nldd_iconen import _dist_map
+from opi.http.render.nldd_iconen import _dist_map
 
 PYTHON_DIR = Path(opi.__file__).parent.parent
 STATIC_CSS = PYTHON_DIR / "static" / "css"
@@ -89,7 +89,7 @@ def _componentbestanden() -> list[Path]:
     """De handgeschreven componenten: hun opmaak staat in het sjabloon of in een .css.
 
     De lijst hieronder is de kern plus de design systems die dit portaal aanzet
-    (``DESIGN_SYSTEMS`` in opi/core/templates_lotc.py). ``lotc_rvo`` is wel geinstalleerd
+    (``DESIGN_SYSTEMS`` in opi/http/render/templates_lotc.py). ``lotc_rvo`` is wel geinstalleerd
     maar staat daar niet bij, dus geen pagina haalt zijn stijlbladen op en een terugval
     daarin kan hier niets onleesbaar maken. Neem het niet alsnog mee: gemeten levert dat
     alleen ``--utrecht-focus-inverse-outline-color`` en

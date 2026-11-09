@@ -41,9 +41,9 @@ een teruggegeven waarde       een hulpfunctie die een ``dict`` oplevert die verd
 ============================  =======================================================
 
 Wat de sweep NIET ziet, en dus niet belooft: een waarde die via een attribuut of een
-buitenstaand object weglekt, iets dat eerst ``opi/web``/``opi/api`` verlaat (de
-managerlaag valt buiten de gemeten mappen), en een uitzondering die als gegeven wordt
-opgeslagen en pas bij een later verzoek wordt getoond.
+buitenstaand object weglekt, iets dat eerst ``opi/web``/``opi/api``/``opi/http``
+verlaat (de managerlaag valt buiten de gemeten mappen), en een uitzondering die als
+gegeven wordt opgeslagen en pas bij een later verzoek wordt getoond.
 
 De besmetting reist mee de handler UIT. ``ctx["usage_error"] = str(e)`` stond in het
 except-blok en de ``render`` die ``ctx`` uittekende stond eronder, buiten de ``try``:
@@ -60,7 +60,7 @@ from pathlib import Path
 import pytest
 
 #: De mappen die een antwoord aan een aanroeper opstellen.
-GEMETEN_MAPPEN = ("opi/web", "opi/api")
+GEMETEN_MAPPEN = ("opi/web", "opi/api", "opi/http")
 
 #: Vangsten waarvan de inhoud onbekend is.
 BREDE_VANGSTEN = frozenset({"Exception", "BaseException"})

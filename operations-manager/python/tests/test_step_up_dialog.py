@@ -1,6 +1,6 @@
 """De dialoog waarmee het portaal om een verse step-up vraagt (RC-332).
 
-Dekt ``opi/web/step_up_dialog.py``: de context die naar het fragment gaat, en de
+Dekt ``opi/http/auth/step_up_dialog.py``: de context die naar het fragment gaat, en de
 HX-headers die het antwoord in de gedeelde modal zetten.
 """
 
@@ -10,8 +10,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opi.http.auth.step_up_dialog import (
+    MODAL_TARGET,
+    render_step_up_dialog,
+    render_step_up_repeat,
+    step_up_dialog_response,
+)
 from opi.services.user_otp_service import OtpStatus
-from opi.web.step_up_dialog import MODAL_TARGET, render_step_up_dialog, render_step_up_repeat, step_up_dialog_response
 
 EMAIL = "Eigenaar@Example.ORG"
 
@@ -32,7 +37,7 @@ async def test_render_step_up_dialog_vraagt_de_status_op_voor_het_lagere_e_maila
     status = OtpStatus(registered=True, confirmed_at=None)
     with (
         patch("opi.services.user_otp_service.UserOtpService.status", new=AsyncMock(return_value=status)) as mocked,
-        patch("opi.web.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
+        patch("opi.http.render.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
         html = await render_step_up_dialog(
             _request(), vervolg="/projects/delete/demo", handeling="dit project te verwijderen", code_fout="oeps"
@@ -53,7 +58,7 @@ async def test_render_step_up_dialog_zonder_factor_meldt_niet_geregistreerd() ->
     status = OtpStatus(registered=False, confirmed_at=None)
     with (
         patch("opi.services.user_otp_service.UserOtpService.status", new=AsyncMock(return_value=status)),
-        patch("opi.web.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
+        patch("opi.http.render.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
         await render_step_up_dialog(_request(), vervolg="/x", handeling="iets")
 
@@ -62,7 +67,7 @@ async def test_render_step_up_dialog_zonder_factor_meldt_niet_geregistreerd() ->
 
 
 def test_render_step_up_repeat_wijst_naar_het_vervolg() -> None:
-    with patch("opi.web.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
+    with patch("opi.http.render.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
         html = render_step_up_repeat(_request(), vervolg="/projects/delete/demo")
 
     assert html == "<herhaal/>"
@@ -73,7 +78,7 @@ def test_render_step_up_repeat_wijst_naar_het_vervolg() -> None:
 
 def test_render_step_up_repeat_geeft_het_wizard_token_mee() -> None:
     """De herhaling post bodyloos, dus het token moet als body-waarde mee."""
-    with patch("opi.web.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
+    with patch("opi.http.render.lotc_switch.render_fragment", return_value="<herhaal/>") as render:
         render_step_up_repeat(_request(), vervolg="/projects/demo/x/confirm", vervolg_token="wt-123")
 
     assert render.call_args.kwargs["context"]["vals"] == '{"_wizard_token": "wt-123"}'
@@ -84,7 +89,7 @@ async def test_render_step_up_dialog_geeft_het_wizard_token_mee() -> None:
     status = OtpStatus(registered=True, confirmed_at=None)
     with (
         patch("opi.services.user_otp_service.UserOtpService.status", new=AsyncMock(return_value=status)),
-        patch("opi.web.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
+        patch("opi.http.render.lotc_switch.render_fragment", return_value="<dialoog/>") as render,
     ):
         await render_step_up_dialog(_request(), vervolg="/x", handeling="iets", vervolg_token="wt-123")
 
@@ -103,7 +108,7 @@ def _render_dialoog(*, geregistreerd: bool) -> str:
     bruikbare dialoog oplevert. Een componenttag die niet bestaat valt hier om met
     ComponentError, en een veld dat uit het sjabloon verdwijnt haalt de assert niet.
     """
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     return templates_lotc.env.get_template("bg/_step-up.html.j2").render(
         {

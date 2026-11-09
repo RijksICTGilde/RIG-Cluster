@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.deployment_state import collect_deployment_state
 from opi.services.services import ServiceAdapter
 

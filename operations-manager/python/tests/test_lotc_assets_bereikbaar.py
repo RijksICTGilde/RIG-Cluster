@@ -21,8 +21,8 @@ from __future__ import annotations
 import re
 
 from lord_of_the_components.design_system import discover_design_systems
-from opi.core.static_files import LOTC_VERSIONED_PATH
-from opi.core.templates_lotc import DESIGN_SYSTEMS, resolve_lotc_static, templates_lotc
+from opi.http.render.static_files import LOTC_VERSIONED_PATH
+from opi.http.render.templates_lotc import DESIGN_SYSTEMS, resolve_lotc_static, templates_lotc
 from tests.e2e.test_sandbox_lotc import STATIC_ASSETS
 
 #: Wat een gerenderde pagina in haar <head> ophaalt, met het /static/lotc/-voorvoegsel.

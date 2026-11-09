@@ -12,7 +12,7 @@ bedoeling: de aanroep met shell=True hoort hier juist te staan.
 import subprocess
 
 from fastapi import APIRouter, Request
-from opi.core.auth_decorators import requires_sso
+from opi.http.auth.auth_decorators import requires_sso
 
 router = APIRouter()
 

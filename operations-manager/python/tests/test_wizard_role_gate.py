@@ -27,9 +27,9 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
+from opi.http.auth.authz import authorize
 from opi.services.project_service import ProjectService, ProjectUser
 from opi.services.user_service import get_user_service
-from opi.web.authz import authorize
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS, apply_form_data_to_project
 from opi.web.router_wizard import _save_existing_project
 
@@ -201,7 +201,7 @@ async def test_owner_save_rejects_immutable_field_in_payload(project_service: Pr
     }
     captured: dict[str, Any] = {}
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
         _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
@@ -223,7 +223,7 @@ async def test_owner_save_rejects_clusters_in_payload(project_service: ProjectSe
     }
     captured: dict[str, Any] = {}
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
         _patch_project_manager(captured),
         pytest.raises(HTTPException) as exc,
     ):
@@ -249,7 +249,7 @@ async def test_developer_kan_zichzelf_geen_admin_maken_via_de_wizard(project_ser
         ],
     }
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
         pytest.raises(HTTPException) as exc,
@@ -275,7 +275,7 @@ async def test_developer_save_zonder_ledenwijziging_vraagt_geen_member_manage(
     payload = {"display-name": "Nieuwe titel"}
 
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": DEVELOPER_EMAIL}),
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
@@ -290,7 +290,7 @@ async def test_developer_save_zonder_ledenwijziging_vraagt_geen_member_manage(
 async def test_owner_save_can_update_users_and_config(project_service: ProjectService) -> None:
     """Admin/owner CAN edit users and config via the legitimate flows.
 
-    Role-based access is enforced by ``authorize`` (opi/web/authz.py);
+    Role-based access is enforced by ``authorize`` (opi/http/auth/authz.py);
     once you are admin/owner there is no separate field-level lock on
     these. Field-level RBAC for finer-grained restrictions is tracked
     in ``features/futures/form-field-rbac.md``.
@@ -306,7 +306,7 @@ async def test_owner_save_can_update_users_and_config(project_service: ProjectSe
         "config": {"age-public-key": "age1publicpublicpublic"},
     }
     with (
-        patch("opi.web.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
+        patch("opi.http.auth.authz.get_current_user", return_value={"email": OWNER_EMAIL}),
         _patch_project_manager(captured),
         patch("opi.web.router_wizard.clear_wizard_state"),
     ):
@@ -361,7 +361,7 @@ async def test_wizard_edit_page_leest_het_project_dat_de_poort_al_toeliet(
     Draait de echte handler, niet alleen de poort: een vergeten of verkeerd bedrade
     ``authorized_project`` in de body zou hier een 500 of een verkeerd project geven.
     """
-    from opi.web.authz import enforce_route_action
+    from opi.http.auth.authz import enforce_route_action
     from opi.web.router_wizard import wizard_edit_page
 
     request = _route_request(OWNER_EMAIL, wizard_edit_page)
@@ -379,7 +379,7 @@ async def test_wizard_edit_page_poort_weigert_een_lid(project_service: ProjectSe
     echte router-dependency: een lid komt de route niet meer in, ook al roept
     ``wizard_edit_page`` zelf geen ``authorize`` meer aan.
     """
-    from opi.web.authz import enforce_route_action
+    from opi.http.auth.authz import enforce_route_action
     from opi.web.router_wizard import wizard_edit_page
 
     with pytest.raises(HTTPException) as exc:
@@ -765,7 +765,7 @@ async def test_handle_backup_restore_submit_gates_restore() -> None:
 
     sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
     with (
-        patch("opi.core.task_helpers.get_task_service", return_value=MagicMock()),
+        patch("opi.http.task_helpers.get_task_service", return_value=MagicMock()),
         patch("opi.web.router_detail_edit.require_action", side_effect=sentinel) as gate,
         pytest.raises(HTTPException) as exc,
     ):
@@ -798,7 +798,7 @@ async def test_handle_backup_restore_submit_skips_gate_for_backup() -> None:
     task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
 
     with (
-        patch("opi.core.task_helpers.get_task_service", return_value=task_service),
+        patch("opi.http.task_helpers.get_task_service", return_value=task_service),
         patch(
             "opi.web.router_detail_edit.authorize",
             side_effect=AssertionError("operate-gate must not run for a backup"),

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 
 PROJECT = {
     "name": "proef",

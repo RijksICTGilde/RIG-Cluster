@@ -11,12 +11,12 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
-from opi.web.lotc_switch import render
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import get_navigation
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.render.lotc_switch import render
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import get_navigation
 
 logger = logging.getLogger(__name__)
 

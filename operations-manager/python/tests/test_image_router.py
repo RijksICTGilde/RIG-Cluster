@@ -53,7 +53,7 @@ def mock_project_service():
     project = _make_mock_project()
     mock_service = MagicMock()
     mock_service.get.return_value = project
-    with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service):
         yield mock_service
 
 
@@ -91,7 +91,7 @@ class TestAuthentication:
     def test_invalid_api_key(self, client):
         mock_service = MagicMock()
         mock_service.get.return_value = _make_mock_project(api_key="correct-key")
-        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+        with patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service):
             response = client.post(
                 "/api/v1/projects/test-project/images/push?image_name=app&tag=v1",
                 headers={"X-API-Key": "wrong-key"},

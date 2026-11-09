@@ -22,11 +22,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.errors import log_render_failure
-from opi.core.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.http.render.navigation_lotc import get_navigation
+from opi.http.render.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.web.lotc_fixtures import page_data
 from opi.web.lotc_form_preview import EXAMPLE_FIELDS
-from opi.web.navigation_lotc import get_navigation
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ PREVIEWABLE_PAGES = _previewable_pages()
 def _context(request: Request, **extra: object) -> dict[str, object]:
     """Basiscontext voor een LOTC-pagina.
 
-    Dezelfde menu-items als de roos-schil: opi/web/menu.py blijft de ene bron voor
+    Dezelfde menu-items als de roos-schil: opi/http/render/menu.py blijft de ene bron voor
     welke links er zijn en wie ze mag zien. navigation_lotc herschikt ze alleen naar
     de bg-opzet, zodat de omzetting over weergave gaat en niet over inhoud.
     """

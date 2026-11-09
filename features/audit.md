@@ -60,7 +60,7 @@ Eén rij per BESLISSING, niet per verzoek: een upsert met `cloneFrom` weegt eers
 de audit. Een toegestane leesactie levert geen rij, een geweigerde leesactie wel.
 
 Omgekeerd levert één handeling ook één rij: de poort beslist en de handler leest alleen
-wat zij toeliet, via `authorized_project(request)` (`opi/web/authz.py`). Een handler die
+wat zij toeliet, via `authorized_project(request)` (`opi/http/auth/authz.py`). Een handler die
 in zijn body nog eens `authorize` aanroept met de action van zijn EIGEN route zou een
 tweede antwoord op dezelfde vraag geven, en dus een tweede rij;
 `tests/test_een_beslissing_per_handeling.py` loopt `opi/web` af en faalt daarop. Een

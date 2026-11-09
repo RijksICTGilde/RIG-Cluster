@@ -16,7 +16,7 @@ import re
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.catalog.base import DeploymentPageContext
 from opi.services.catalog.shared.backups import collect_backups_sections
 from opi.services.registry import collect_deployment_page_sections

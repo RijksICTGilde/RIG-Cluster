@@ -90,7 +90,9 @@ def _contextwaarden(context: dict[str, Any]) -> list[str]:
 
 async def _pagina(monkeypatch: pytest.MonkeyPatch, rol: str) -> tuple[dict[str, Any], str, str]:
     """Rendert de detailpagina voor een lid met deze rol: (context, html, private key)."""
-    from opi.web import authz, lotc_switch, router
+    from opi.http.auth import authz
+    from opi.http.render import lotc_switch
+    from opi.web import router
 
     _, globale_publiek = generate_age_key_pair()
     data, project_prive = await _projectbestand(globale_publiek)

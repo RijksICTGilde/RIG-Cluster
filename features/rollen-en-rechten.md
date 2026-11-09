@@ -89,9 +89,9 @@ er iets mee kan.
 
 ## Waar het wordt afgedwongen
 
-- **API**: `opi/api/principal.py` bouwt de principal uit het bewijsmiddel en roept
+- **API**: `opi/http/auth/principal.py` bouwt de principal uit het bewijsmiddel en roept
   `decide()` aan.
-- **Portaal**: `opi/web/authz.py`. `enforce_route_action` hangt als dependency op de
+- **Portaal**: `opi/http/auth/authz.py`. `enforce_route_action` hangt als dependency op de
   web-router, leest de action van de route en beslist; een handler kan de poort dus niet
   vergeten. `authorize(...)` is dezelfde beslissing voor een handler die het project en
   het e-mailadres nodig heeft.
@@ -173,7 +173,7 @@ productieregel met één klik.
 
 Een body kan een ANDER doelwit noemen dan het pad of `@deployment_from`. Dan toetst de
 route die tweede handeling zelf, met `eis_handeling(request, project, action,
-deployment=...)` (`opi/api/endpoint_util.py`), op de principal die de poort al herkende.
+deployment=...)` (`opi/http/auth/endpoint_util.py`), op de principal die de poort al herkende.
 Op `:upsert-deployment` zijn dat er vijf:
 
 | veld in de body | handeling | gewogen tegen |

@@ -95,7 +95,7 @@ def factor_ingericht() -> object:
     OTP-dienst zelf staat in ``tests/test_user_otp_service.py``.
     """
     dienst = MagicMock(status=AsyncMock(return_value=OtpStatus(registered=True)))
-    with patch("opi.web.step_up_dialog.UserOtpService", return_value=dienst):
+    with patch("opi.http.auth.step_up_dialog.UserOtpService", return_value=dienst):
         yield
 
 

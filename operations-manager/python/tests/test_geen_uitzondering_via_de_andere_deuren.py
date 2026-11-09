@@ -32,9 +32,9 @@ from opi.core import errors
 from opi.core.config import settings
 from opi.core.errors import current_reference
 from opi.core.flow_id import set_flow_id
+from opi.http.auth import authz
 from opi.middleware import authorization
 from opi.server import create_app
-from opi.web import authz
 from opi.web import router as webrouter
 
 #: De uitzondering zoals hij binnenkwam: de storing uit de melding, en de vorm die
@@ -196,7 +196,7 @@ class TestDeLijstregelDeur:
         app = FastAPI()
         app.include_router(logs_router)
         with (
-            patch("opi.api.endpoint_util.get_project_store", return_value=store),
+            patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
             patch("opi.api.logs_router.get_project_store", return_value=store),
             patch("opi.api.logs_router.KubectlConnector", return_value=kubectl),
             patch("opi.api.logs_router.get_prefixed_namespace", side_effect=lambda cluster, ns: f"rig-{ns}"),

@@ -20,7 +20,6 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
@@ -36,6 +35,10 @@ from opi.forms.wizard.session import (
     load_modal_state_for,
     save_modal_state_by_token,
 )
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.render.lotc_switch import render_fragment
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.services.approvals import collect_approval_items
 from opi.services.catalog.publish_on_web.subdomain import DOMAIN_ITEM_TYPES, find_deployments_for_domain_item
 from opi.services.project_schema import ProjectIntegrityError, ProjectSchemaError
@@ -43,9 +46,6 @@ from opi.services.project_store import ConflictError, get_project_store
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.yaml_util import dump_yaml_to_string
-from opi.web.lotc_switch import render_fragment
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import to_nldd_icon
 from opi.web.router_wizard import _apply_literal_scalars
 
 logger = logging.getLogger(__name__)
@@ -282,7 +282,7 @@ async def list_subdomains(request: Request) -> Response:
     # Filteren gebeurt HIER en niet in de browser: dan werkt het ook zonder JavaScript, is
     # een gefilterde lijst deelbaar als URL, en staat de gekozen waarde na een swap nog
     # steeds in de keuzelijst omdat de server hem meerendert. Zelfde opzet als het zoeken
-    # en sorteren op /projects (opi/web/lotc_switch.py).
+    # en sorteren op /projects (opi/http/render/lotc_switch.py).
     status = (request.query_params.get("status") or "").strip()
     # Filteren op ITEMS, daarna pas groeperen: de teller onderaan telt aanvragen en geen
     # groepen, en een groep die na het filteren leeg is hoort er niet te staan.
@@ -291,10 +291,10 @@ async def list_subdomains(request: Request) -> Response:
         for project in filter_op_status(alle_projecten, status)
     ]
 
-    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py. Alleen de LIJST gaat
+    # Dezelfde gegevens, twee weergaven; zie opi/http/render/lotc_switch.py. Alleen de LIJST gaat
     # mee: het beoordelingsvenster erin haalt zijn inhoud op bij de modal-wizard hieronder,
     # en die blijft roos renderen zolang de wizard zelf niet om is.
-    from opi.web.lotc_switch import build_lotc_admin, render
+    from opi.http.render.lotc_switch import build_lotc_admin, render
 
     return render(
         request,
@@ -531,7 +531,7 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
     # Trigger full project processing
     yaml_content = dump_yaml_to_string(existing_data)
 
-    from opi.core.task_helpers import create_async_task
+    from opi.http.task_helpers import create_async_task
 
     task = await create_async_task(
         request=request,

@@ -13,11 +13,11 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
+from opi.http.auth.endpoint_util import validate_api_token
 from opi.manager.project_manager import ProjectManager
 from opi.utils.uploads import spill_capped, upload_slot
 

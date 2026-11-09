@@ -577,7 +577,7 @@ class TestDeSchrijfwegenVanHetFormulier:
             return {"task_id": "t1"}
 
         with (
-            patch("opi.core.task_helpers.create_async_task", new=_create_async_task),
+            patch("opi.http.task_helpers.create_async_task", new=_create_async_task),
             patch("opi.web.router_wizard.clear_wizard_state"),
         ):
             await _start_project_creation(MagicMock(), self._nieuw_project({ACL_KEY_PREFIX_FIELD: False}))
@@ -597,7 +597,7 @@ class TestDeSchrijfwegenVanHetFormulier:
             return {"task_id": "t1"}
 
         with (
-            patch("opi.core.task_helpers.create_async_task", new=_create_async_task),
+            patch("opi.http.task_helpers.create_async_task", new=_create_async_task),
             patch("opi.web.router_wizard.clear_wizard_state"),
         ):
             await _start_project_creation(MagicMock(), self._nieuw_project({ACL_KEY_PREFIX_FIELD: True}))

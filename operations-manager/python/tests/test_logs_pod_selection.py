@@ -135,7 +135,7 @@ async def test_resolve_returns_none_for_a_deployment_on_another_cluster():
 
 def _request(email: str | None) -> MagicMock:
     """Een verzoek met (of zonder) sessie. ``login_at`` hoort erbij: zonder inlogtijdstip
-    is een sessie voorbij haar absolute levensduur (opi/core/session_guard.py)."""
+    is een sessie voorbij haar absolute levensduur (opi/http/auth/session_guard.py)."""
     request = MagicMock()
     request.session = {"user": {"email": email, "login_at": time.time()}} if email else {}
     return request

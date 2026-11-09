@@ -30,8 +30,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.template_helpers import get_service_definition_for_entry
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.template_helpers import get_service_definition_for_entry
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.services import ServiceAdapter
 from opi.services.services_enums import ServiceType
 from opi.web.lotc_fixtures import page_data

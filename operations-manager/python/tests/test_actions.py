@@ -19,11 +19,11 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
-from opi.api.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
-from opi.api.user_token_auth import REQUIRES_USER_TOKEN
-from opi.core.auth_decorators import REQUIRES_STEP_UP
 from opi.core.authz.actions import ACTION_ATTR, Action, action, action_of
 from opi.core.authz.engine import Principal, PrincipalKind, Resource, Role, RuleError, all_rules, decide, rule_for
+from opi.http.auth.auth_decorators import REQUIRES_STEP_UP
+from opi.http.auth.endpoint_util import REQUIRES_PROJECT_NAME, controleer_handelingen
+from opi.http.auth.user_token_auth import REQUIRES_USER_TOKEN
 from opi.server import app
 from opi.services.project_roles import roles_from_value
 from opi.services.step_up import StepUpAction

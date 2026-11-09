@@ -32,8 +32,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import requires_sso
 from opi.core.authz.actions import Action, action
+from opi.http.auth.auth_decorators import requires_sso
 from opi.services.catalog.base import DeploymentPageContext, DetailPageSection
 
 logger = logging.getLogger(__name__)
@@ -145,14 +145,14 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     Deployments share a namespace, so this lists each namespace once (cached) and
     fans the results back out to the per-deployment blocks via hx-swap-oob.
     """
-    from opi.core.auth_decorators import get_current_user
     from opi.core.cluster_config import get_prefixed_namespace
     from opi.core.config import settings
+    from opi.http.auth.auth_decorators import get_current_user
+    from opi.http.auth.authz import may_on_any_deployment
+    from opi.http.render.lotc_switch import render
     from opi.manager.backup import BackupManager
     from opi.services.project_authorization import is_user_authorized_for_project
     from opi.services.project_store import get_project_store
-    from opi.web.authz import may_on_any_deployment
-    from opi.web.lotc_switch import render
 
     user = get_current_user(request) or {}
     user_email = user.get("email", "").lower()

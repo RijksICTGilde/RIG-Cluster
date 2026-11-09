@@ -168,8 +168,8 @@ reden staat erbij.
 
 Vier dingen, en niets anders in OPI hangt ervan af:
 
-1. de regel `"kaart"` in `PROJECT_TABS` (`opi/web/lotc_switch.py`) en de regel
-   `"Platform"` in `opi/web/menu.py` plus `opi/web/navigation_lotc.py`;
+1. de regel `"kaart"` in `PROJECT_TABS` (`opi/http/render/lotc_switch.py`) en de regel
+   `"Platform"` in `opi/http/render/menu.py` plus `opi/http/render/navigation_lotc.py`;
 2. de routes `/projects/{p}/kaart(.json)` en `/platform(.json)` in `opi/web/router.py`,
    de tak in `bg/project-tabs.html.j2` en `bg/platform.html.j2`;
 3. het pakket `opi/services/zad_map/` en `opi/tools/zad_map_platform.py`;

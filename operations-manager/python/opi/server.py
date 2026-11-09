@@ -21,7 +21,6 @@ from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
-from opi.api.otp_step_up import STEP_UP_403_RESPONSE, StepUpProblem
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
@@ -29,11 +28,9 @@ from opi.api.router import api_router
 from opi.api.step_up_router import step_up_api_router
 from opi.api.task_router import task_router
 from opi.api.token_router import token_router
-from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
 from opi.connectors.prometheus import close_metrics_connector
-from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, SECURITY_PROOF_HEADER, VERSION, settings
 from opi.core.database_pools import close_database_pools
@@ -49,7 +46,11 @@ from opi.core.errors import (
     with_reference,
 )
 from opi.core.logging_redact import redact_invite_key_in_path
-from opi.core.static_files import CacheControlledStaticFiles, lotc_cache_control
+from opi.http.auth.auth_decorators import REQUIRES_STEP_UP, requires_sso
+from opi.http.auth.otp_step_up import STEP_UP_403_RESPONSE, StepUpProblem
+from opi.http.auth.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
+from opi.http.render.lotc_switch import render
+from opi.http.render.static_files import CacheControlledStaticFiles, lotc_cache_control
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.body_limit import BodyLimitMiddleware
@@ -61,7 +62,6 @@ from opi.runtime.periodic.git_monitor import start_git_monitoring, stop_git_moni
 from opi.runtime.startup.startup import run_startup_tasks, warm_connector_singletons
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
-from opi.web.lotc_switch import render
 from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
@@ -860,7 +860,7 @@ def create_app() -> FastAPI:
     # De assets van het componentensysteem liggen verspreid over meerdere geinstalleerde
     # pakketten (de kern plus elk design system), vandaar een route met meerdere wortels
     # in plaats van een mount.
-    from opi.core.templates_lotc import resolve_lotc_static
+    from opi.http.render.templates_lotc import resolve_lotc_static
     from opi.web.lotc_router import router as lotc_web_router
 
     # De proefopstelling en testpagina's tonen fixture-data zonder SSO, dus alleen lokaal

@@ -14,16 +14,16 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from opi.core.auth_decorators import ELEVATE_PATH, elevate_url, get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.logging_redact import sanitize_for_log
+from opi.http.auth.auth_decorators import ELEVATE_PATH, elevate_url, get_current_user, requires_sso
+from opi.http.auth.step_up_dialog import lees_vervolg_velden, render_step_up_dialog, render_step_up_repeat
+from opi.http.render.lotc_switch import render_fragment
 from opi.services.audit import record_step_up_attempt
 from opi.services.step_up import STEP_UP_WINDOW, clear_step_up, record_step_up, step_up_until
 from opi.services.user_otp_service import OtpVerification, UserOtpService
 from opi.utils.client_ip import client_ip
 from opi.utils.url_paths import local_redirect_path
-from opi.web.lotc_switch import render_fragment
-from opi.web.step_up_dialog import lees_vervolg_velden, render_step_up_dialog, render_step_up_repeat
 
 logger = logging.getLogger(__name__)
 

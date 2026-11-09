@@ -24,8 +24,8 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     _extract_services,
 )
+from opi.http.auth.authz import authorize
 from opi.services.project_service import ProjectUser
-from opi.web.authz import authorize
 from opi.web.router_detail_edit import (
     _determine_flow_action,
     _get_edit_section,
@@ -342,7 +342,7 @@ def _mock_project_service(project: MockProjectInfo | None = None, user_roles: li
 
 
 class TestAuthorizeProjectEdit:
-    """De poort op het projectbestand, sinds RC-392 via decide() in opi/web/authz.py."""
+    """De poort op het projectbestand, sinds RC-392 via decide() in opi/http/auth/authz.py."""
 
     @staticmethod
     def _project(user_roles: list[str] | None = None) -> Any:
@@ -360,8 +360,8 @@ class TestAuthorizeProjectEdit:
         gebruikers = MagicMock()
         gebruikers.is_platform_admin.return_value = False
         return (
-            patch("opi.web.authz.get_project_store", return_value=store),
-            patch("opi.web.authz.get_user_service", return_value=gebruikers),
+            patch("opi.http.auth.authz.get_project_store", return_value=store),
+            patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         )
 
     @staticmethod
@@ -421,7 +421,7 @@ async def _sequence_action(request: Any, project_name: str, section_id: str) -> 
     ``sequence_action`` weegt sinds RC-398 niets meer zelf: hij leest het project uit de
     beslissing van ``enforce_route_action``.
     """
-    from opi.web.authz import enforce_route_action
+    from opi.http.auth.authz import enforce_route_action
     from opi.web.router_detail_edit import sequence_action
 
     request.scope = {"route": SimpleNamespace(endpoint=sequence_action)}
@@ -456,8 +456,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.authz.get_project_store", return_value=svc),
-            patch("opi.web.authz.get_user_service", return_value=_platformdienst()),
+            patch("opi.http.auth.authz.get_project_store", return_value=svc),
+            patch("opi.http.auth.authz.get_user_service", return_value=_platformdienst()),
         ):
             response = await _sequence_action(request, "test-project", "team-edit")
             assert response.status_code == 200
@@ -481,8 +481,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.authz.get_project_store", return_value=svc),
-            patch("opi.web.authz.get_user_service", return_value=_platformdienst()),
+            patch("opi.http.auth.authz.get_project_store", return_value=svc),
+            patch("opi.http.auth.authz.get_user_service", return_value=_platformdienst()),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await _sequence_action(request, "test-project", "team-edit")
@@ -503,8 +503,8 @@ class TestSequenceActionEndpoint:
         )
 
         with (
-            patch("opi.web.authz.get_project_store", return_value=svc),
-            patch("opi.web.authz.get_user_service", return_value=_platformdienst(is_admin=False)),
+            patch("opi.http.auth.authz.get_project_store", return_value=svc),
+            patch("opi.http.auth.authz.get_user_service", return_value=_platformdienst(is_admin=False)),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await _sequence_action(request, "test-project", "team-edit")

@@ -11,13 +11,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ProjectNamePath
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.http.auth.endpoint_util import validate_api_token
 from opi.manager.project_manager import ProjectManager
 from opi.services.metrics_queries import pod_restarts
 from opi.services.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler

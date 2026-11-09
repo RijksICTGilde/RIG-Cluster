@@ -408,7 +408,7 @@ def render_preset_cards(
     Het kaarttemplate rendert in de templateomgeving. Die import staat binnenin om een
     kringloop te vermijden: de omgeving leunt via de dienstenregistry op deze pakketmap.
     """
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     if not presets:
         return ""

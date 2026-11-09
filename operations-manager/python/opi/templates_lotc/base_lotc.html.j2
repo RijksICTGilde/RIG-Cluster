@@ -2,7 +2,7 @@
   Basistemplate voor de LOTC-bouwlijn, in de opzet van bg.rijks.app.
 
   De tegenhanger van templates/base.html.j2, maar gerenderd door de LOTC-omgeving
-  (opi/core/templates_lotc.py) in plaats van door jinja-roos. Zolang de omzetting
+  (opi/http/render/templates_lotc.py) in plaats van door jinja-roos. Zolang de omzetting
   loopt bestaan beide schillen naast elkaar; deze verdwijnt niet, de andere wel.
 
   De grens tussen de twee systemen loopt per overervingsketen: een pagina die dit
@@ -18,7 +18,7 @@
   markup van de schil hier bij elkaar.
 
   Dat is geen verlies aan compartimentering, want de markup is niet waar de keuzes
-  zitten. De INDELING staat in opi/web/navigation_lotc.py: welke items in de hulpbalk
+  zitten. De INDELING staat in opi/http/render/navigation_lotc.py: welke items in de hulpbalk
   horen en welke in de zijkolom, hoe ze gegroepeerd zijn, en hoe onze ROOS-iconen op
   de NLDD-woordenschat afbeelden. Wie de opzet wil verschuiven - en dat gaat gebeuren,
   bg.rijks.app is ons voorbeeld en nog in beweging - verandert dat bestand en raakt
@@ -40,7 +40,7 @@
    de routes die hun context zelf samenstellen. #}
 {% set gebruikersnaam = (navigation.utility | selectattr('link', 'equalto', '/account') | map(attribute='label') | first) | default('Account', true) %}
 {# IS ER EIGENLIJK IEMAND INGELOGD? get_menu_items() zet /account en /auth/logout alleen in
-   de hulpbalk als er een gebruiker is, en anders "Inloggen" (opi/web/menu.py). De schil
+   de hulpbalk als er een gebruiker is, en anders "Inloggen" (opi/http/render/menu.py). De schil
    negeerde dat en tekende het accountmenu altijd, dus kreeg een ANONIEME bezoeker
    rechtsboven "Account" met daarin "Profiel" en "Uitloggen" - drie bestemmingen die hem
    alle drie op het inlogscherm zetten, terwijl de weg die hij zoekt (inloggen) er niet

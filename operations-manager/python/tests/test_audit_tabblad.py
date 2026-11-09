@@ -22,13 +22,8 @@ import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.db import session_scope
-from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
-from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
-from opi.services.members import MemberKind
-from opi.services.persistence.notification_events import NotificationEvent
-from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import enforce_route_action, may
-from opi.web.lotc_switch import (
+from opi.http.auth.authz import enforce_route_action, may
+from opi.http.render.lotc_switch import (
     AUDIT_QUERY_MAX,
     PROJECT_TABS,
     AuditFilters,
@@ -41,6 +36,11 @@ from opi.web.lotc_switch import (
     project_tab_url,
     tab_from_path,
 )
+from opi.services import audit, persistence  # noqa: F401  -- registreert de ORM-modellen
+from opi.services.audit import LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT
+from opi.services.members import MemberKind
+from opi.services.persistence.notification_events import NotificationEvent
+from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web.router import project_audit
 
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -82,8 +82,8 @@ async def _poort(email: str, project_name: str, bestaand: str = "demo", query: d
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     ):
         await enforce_route_action(_request(email, project_name, query))
 
@@ -122,8 +122,8 @@ async def test_een_developer_krijgt_403_en_ziet_het_tabblad_niet() -> None:
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     ):
         assert may(_request(BOUWER, "demo"), action=Action.AUDIT_READ, project_name="demo") is False
         assert may(_request(BEHEERDER, "demo"), action=Action.AUDIT_READ, project_name="demo") is True
@@ -145,8 +145,8 @@ async def test_een_admin_van_project_a_krijgt_403_op_project_b() -> None:
 
     store.get.side_effect = _ander
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         pytest.raises(HTTPException) as fout,
     ):
         await enforce_route_action(_request(BEHEERDER, "ander", {"project": "demo"}))
@@ -212,7 +212,7 @@ def test_een_weigering_draagt_zijn_reden() -> None:
 
 
 def _commit_url(*, server: str, web: str = "") -> str:
-    with patch("opi.web.lotc_switch.settings") as instellingen:
+    with patch("opi.http.render.lotc_switch.settings") as instellingen:
         instellingen.GIT_PROJECTS_SERVER_URL = server
         instellingen.GIT_PROJECTS_WEB_URL = web
         [rij] = build_lotc_audit([_rij()])

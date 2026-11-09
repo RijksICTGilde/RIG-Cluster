@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import ClusterPath, NamespacePath, ProjectNamePath, ResourceNamePath
 from opi.connectors.kubectl import create_kubectl_connector
@@ -15,6 +14,7 @@ from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.errors import ErrorCategory, reference_for, with_reference
+from opi.http.auth.endpoint_util import validate_api_token
 from opi.services.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,

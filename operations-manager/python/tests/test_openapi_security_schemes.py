@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.api.user_token_auth import REQUIRES_USER_TOKEN
+from opi.http.auth.user_token_auth import REQUIRES_USER_TOKEN
 from opi.server import app
 
 #: De twee endpoints die vandaag een bearertoken willen. Ze staan hier voluit omdat ze het

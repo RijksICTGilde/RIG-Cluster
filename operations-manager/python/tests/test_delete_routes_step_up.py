@@ -1,12 +1,12 @@
 """De drie verwijderroutes in het portaal, met en zonder een verse step-up (RC-332).
 
-Dit is waar :func:`opi.core.auth_decorators.requires_step_up` en het regelregister
+Dit is waar :func:`opi.http.auth.auth_decorators.requires_step_up` en het regelregister
 elkaar raken op de echte routes uit de tabel in het plan: zonder step-up weigert een
 verwijdering in productie en gebeurt er niets, met een verse step-up gaat ze door. Een
 deployment buiten productie heeft geen step-up nodig.
 
 Elke test loopt de HELE keten door, want de step-up komt sinds RC-392 niet meer uit een
-eigen conditie op de route: :func:`opi.web.authz.enforce_route_action` beslist en zet de
+eigen conditie op de route: :func:`opi.http.auth.authz.enforce_route_action` beslist en zet de
 uitkomst op het verzoek, en de decorator leest daaruit of er een tweede factor bij hoort.
 Een test die alleen de handler aanroept zou die overdracht overslaan.
 """
@@ -20,10 +20,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.http.auth.authz import enforce_route_action
 from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.step_up import STEP_UP_SESSION_KEY
-from opi.web.authz import enforce_route_action
 from opi.web.router import delete_component_web, delete_deployment_web, delete_project_web
 
 OWNER = "eigenaar@example.org"
@@ -71,8 +71,8 @@ async def _run(endpoint: Any, path_params: dict[str, str], data: dict[str, Any],
     gebruikers.is_platform_admin.return_value = False
     request = _request(endpoint, path_params, verse_step_up=verse_step_up)
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         patch("opi.web.router.get_project_store", return_value=store),
         patch("opi.web.router.is_user_authorized_for_project", return_value=True),
         patch("opi.web.router.create_task_and_render_progress", new=AsyncMock(return_value="getaakt")) as create_task,

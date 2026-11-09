@@ -47,7 +47,7 @@ knop drukt of de HTML LEEST merkt het - en dat is precies wat hieronder gebeurt.
 import re
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 # Elk sjabloon dat een JSON-waarde in een attribuut zet, met de context die het nodig
 # heeft. Komt er een bij, dan hoort hij hier.

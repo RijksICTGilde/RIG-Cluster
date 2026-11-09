@@ -30,7 +30,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 CATALOG_DIR = Path(__file__).resolve().parents[1] / "opi" / "services" / "catalog"
 
@@ -301,7 +301,9 @@ def test_de_dialoogroutes_gaan_langs_de_gedeelde_render() -> None:
     """
     for module in ("jobs", "db_console"):
         bron = (CATALOG_DIR / "shared" / f"{module}.py").read_text()
-        assert "templates_lotc" not in bron, f"{module}.py rendert rechtstreeks; ga via opi.web.lotc_switch.render()"
+        assert "templates_lotc" not in bron, (
+            f"{module}.py rendert rechtstreeks; ga via opi.http.render.lotc_switch.render()"
+        )
         assert "template=_MODAL_TEMPLATE" in bron, f"{module}.py geeft geen sjabloon mee aan render()"
 
 

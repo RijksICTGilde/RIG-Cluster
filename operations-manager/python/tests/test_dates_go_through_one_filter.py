@@ -17,7 +17,7 @@ import pathlib
 import re
 
 import opi
-from opi.core.template_helpers import format_dutch_date
+from opi.http.render.template_helpers import format_dutch_date
 
 _TEMPLATES = pathlib.Path(opi.__file__).parent / "templates_lotc"
 

@@ -22,7 +22,7 @@ import re
 
 import opi
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.help_text import (
     help_file,
     is_markdown_help,

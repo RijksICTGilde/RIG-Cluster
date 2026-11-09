@@ -6,6 +6,7 @@ the visual theme, or the input fields do not resolve.
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import markupsafe
 from fastapi.templating import Jinja2Templates
@@ -13,7 +14,10 @@ from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
 
 from opi.core.config import BUILD_DATE, VERSION, settings
-from opi.core.template_helpers import (
+from opi.core.version import get_version_info
+from opi.forms.lotc_attrs import attr_escape, field_attrs
+from opi.http.auth.authz import template_can as _template_can
+from opi.http.render.template_helpers import (
     CATALOG_DIR,
     cluster_tag,
     format_dutch_date,
@@ -24,17 +28,24 @@ from opi.core.template_helpers import (
     shorten_image_digest,
     static_url,
 )
-from opi.core.version import get_version_info
-from opi.forms.lotc_attrs import attr_escape, field_attrs
-from opi.middleware.security_headers import csp_nonce
 from opi.services.catalog.aliases.overview import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
 from opi.services.project_environment import environment_label
 from opi.services.registry import deployment_action_key
-from opi.web.authz import template_can as _template_can
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
+
+
+def csp_nonce(request: Request) -> str:
+    """De CSP-nonce van dit verzoek (standaardwaarde: leeg).
+
+    (Test-request zonder state? Dat is okay; het Report-Only-beleid meet zonder nonce.)
+    """
+    return getattr(getattr(request, "state", None), "csp_nonce", "")
 
 
 def _to_nldd_icon(name: str | None) -> str | None:
@@ -48,7 +59,7 @@ def _to_nldd_icon(name: str | None) -> str | None:
     without an icon gives ''). Without this line such a place would translate an empty name
     and warn about nothing.
     """
-    from opi.web.navigation_lotc import to_nldd_icon
+    from opi.http.render.navigation_lotc import to_nldd_icon
 
     if not name:
         return name
@@ -59,7 +70,7 @@ def _to_nldd_icon(name: str | None) -> str | None:
 # lotc-forms belongs last; see the module docstring.
 DESIGN_SYSTEMS = ["lotc-layout", "nldd", "lotc-forms"]
 
-TEMPLATES_LOTC_DIR = Path(__file__).parent.parent / "templates_lotc"
+TEMPLATES_LOTC_DIR = Path(__file__).parent.parent.parent / "templates_lotc"
 
 # A separate Jinja2Templates, with a loader of its own. setup_components hangs the LOTC
 # component templates on loader.searchpath, so this has to stay a FileSystemLoader.

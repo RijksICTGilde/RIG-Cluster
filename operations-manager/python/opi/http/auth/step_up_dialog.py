@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user
+from opi.http.auth.auth_decorators import get_current_user
 from opi.services.step_up import STEP_UP_WINDOW
 from opi.services.user_otp_service import UserOtpService
 
@@ -27,7 +27,7 @@ MODAL_TARGET = "#edit-section-inner"
 
 
 def _fragment(request: Request, template: str, context: dict) -> str:
-    from opi.web.lotc_switch import render_fragment
+    from opi.http.render.lotc_switch import render_fragment
 
     return render_fragment(request, template=template, context={"request": request, **context})
 

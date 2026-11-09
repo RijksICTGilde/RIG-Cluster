@@ -66,7 +66,7 @@ def client(mock_settings: Any) -> TestClient:
     )
     mock_service.get = lambda name: stored if name == PROJECT else None
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.v2.router.get_project_store", return_value=mock_service),
     ):
         app: FastAPI = create_app()

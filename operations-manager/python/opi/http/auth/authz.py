@@ -25,7 +25,6 @@ from starlette.requests import Request  # noqa: TC002 -- FastAPI leest de depend
 
 from opi.core.actor import user_actor
 from opi.core.audit_trail import capture_fields
-from opi.core.auth_decorators import get_current_user
 from opi.core.authz.actions import Action, action_of, query_targets_of
 from opi.core.authz.engine import (
     Audience,
@@ -36,6 +35,7 @@ from opi.core.authz.engine import (
     record_decision,
     rule_for,
 )
+from opi.http.auth.auth_decorators import get_current_user
 from opi.manager.clone_validation import new_or_changed_clone_sources
 from opi.services.project_leden import lid_met_naam
 from opi.services.project_roles import PLATFORM_ADMIN_ROLES, build_resource, member_roles, resource_path

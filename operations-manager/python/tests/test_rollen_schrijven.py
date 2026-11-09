@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from opi.core.authz.actions import Action
 from opi.core.authz.engine import ROLE_LABELS, Role
 from opi.forms.wizard.leden import LedenlijstGeweigerd, bewaak_ledenlijst
+from opi.http.auth.authz import authorize, may
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
     TokenAanvraagGeweigerd,
@@ -27,7 +28,6 @@ from opi.services.api_token_service import (
 )
 from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
-from opi.web.authz import authorize, may
 
 PROJECT = "bouwput"
 BEHEERDER = "beheerder@rijksoverheid.nl"
@@ -61,8 +61,8 @@ def _patches() -> tuple[Any, Any]:
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = False
     return (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     )
 
 

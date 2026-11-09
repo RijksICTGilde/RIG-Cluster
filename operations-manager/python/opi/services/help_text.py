@@ -34,8 +34,8 @@ import re
 from typing import TYPE_CHECKING
 
 import opi
+from opi.http.render.navigation_lotc import to_nldd_icon
 from opi.services.services import ServiceAdapter
-from opi.web.navigation_lotc import to_nldd_icon
 
 if TYPE_CHECKING:
     from opi.services.services_enums import ServiceType
@@ -256,7 +256,7 @@ def render_service_help(help_template: str) -> str:
     definition = owner[1] if owner else None
     # De imports staan binnenin om een kringloop te vermijden: de templateomgeving leunt
     # op de dienstenregistry, en die brengt de dienstpakketten mee die deze module lezen.
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.services.registry import get_service
 
     markup = markdown_to_components(

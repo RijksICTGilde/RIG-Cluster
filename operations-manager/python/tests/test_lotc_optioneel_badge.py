@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.invite.visualizers import INVITE_REALM_ROLE_ITEM
 from opi.services.catalog.keycloak.visualizers import (
     KEYCLOAK_CLIENT_REDIRECT_URI,

@@ -10,21 +10,21 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
 from opi.forms.i18n import get_default_nl_translator
 from opi.forms.renderer import FormRenderer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso, requires_step_up
+from opi.http.auth.step_up_conditions import vraagt_altijd_step_up
+from opi.http.render.menu import get_menu_items
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.step_up import StepUpAction
-from opi.services.step_up_conditions import vraagt_altijd_step_up
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def _user_form_response(
     staat: op de pagina, of in de dialoog als het daar na de step-up terechtkwam. Een hele
     pagina past in die dialoog niet.
     """
-    from opi.web.lotc_switch import build_lotc_admin, render, render_fragment
+    from opi.http.render.lotc_switch import build_lotc_admin, render, render_fragment
 
     velden = {
         "request": request,
@@ -151,8 +151,8 @@ async def list_users(request: Request) -> Response:
 
     success_message = request.query_params.get("success")
 
-    # Dezelfde gegevens, twee weergaven; zie opi/web/lotc_switch.py.
-    from opi.web.lotc_switch import build_lotc_admin, render
+    # Dezelfde gegevens, twee weergaven; zie opi/http/render/lotc_switch.py.
+    from opi.http.render.lotc_switch import build_lotc_admin, render
 
     return render(
         request,

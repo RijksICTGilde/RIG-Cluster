@@ -34,8 +34,8 @@ import pathlib
 import re
 
 from lord_of_the_components.extension import ComponentError
-from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.template_helpers import CATALOG_DIR, TEMPLATES_DIR
+from opi.http.render.templates_lotc import templates_lotc
 
 #: Een ``@``-afhandelaar die zijn hele waarde uit een variabele haalt: ``@click="{{ x }}"``.
 KLIK_UIT_VARIABELE = re.compile(r'@([a-z]+)\s*=\s*"\{\{\s*([^}]+?)\s*\}\}"')

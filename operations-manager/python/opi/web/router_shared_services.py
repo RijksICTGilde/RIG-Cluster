@@ -19,8 +19,10 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import require_platform_admin, requires_sso
 from opi.core.authz.actions import Action, action
+from opi.http.auth.auth_decorators import require_platform_admin, requires_sso
+from opi.http.render.lotc_switch import build_lotc_admin, render
+from opi.http.render.menu import get_menu_items
 from opi.services.gedeelde_diensten import (
     DREMPELS,
     ONGEMETEN_DIENSTEN,
@@ -29,8 +31,6 @@ from opi.services.gedeelde_diensten import (
     haal_opslag,
     haal_resources,
 )
-from opi.web.lotc_switch import build_lotc_admin, render
-from opi.web.menu import get_menu_items
 
 logger = logging.getLogger(__name__)
 

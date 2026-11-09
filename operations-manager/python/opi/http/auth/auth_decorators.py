@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
+from opi.core.audit_trail import fields_from_form
 from opi.services.step_up import StepUpAction, has_fresh_step_up, is_elevated_admin, log_step_up_refusal
 
 if TYPE_CHECKING:
@@ -146,7 +147,7 @@ def requires_step_up(
             )
 
             if request.url.path.startswith("/api/"):
-                from opi.api.otp_step_up import step_up_problem_response, verify_api_step_up
+                from opi.http.auth.otp_step_up import step_up_problem_response, verify_api_step_up
 
                 problem = await verify_api_step_up(request, project_name=project_name, actie=action, doelwit=target)
                 if problem is not None:
@@ -179,30 +180,6 @@ def requires_step_up(
     return decorator
 
 
-async def fields_from_form(request: Request, names: tuple[str, ...]) -> dict[str, str]:
-    """The named fields out of the form of this request.
-
-    Two readers: the step-up repeat below, and the audit, which reads the fields the route
-    names with ``audit_fields=`` (``opi/core/audit_trail.py``). Those two lists are
-    independent: ``fields`` is there to let the dialog repeat the form and therefore also
-    names a free text field, and that does not belong in a row that stays for a year.
-
-    A field that was filled more than once (a multiple choice, such as the roles of a
-    member) travels as a comma list: the dialog repeats it as a hidden field, and the route
-    that reads it splits on it again.
-    """
-    if not names:
-        return {}
-    form = await request.form()
-    getlist = getattr(form, "getlist", None)
-    found: dict[str, str] = {}
-    for name in names:
-        values = getlist(name) if getlist is not None else ([form[name]] if name in form else [])
-        if values:
-            found[name] = ",".join(str(value) for value in values)
-    return found
-
-
 async def _step_up_refusal(
     request: Request, action_phrase: str, text: str, *, fields: dict[str, str] | None = None, method: str = "POST"
 ) -> Any:
@@ -212,7 +189,7 @@ async def _step_up_refusal(
     cycle, because the web layer leans on this file itself. ``method`` is the one of this
     request, so the repeat after a valid code uses the same method.
     """
-    from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
+    from opi.http.auth.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
     if request.headers.get("HX-Request"):
         html = await render_step_up_dialog(

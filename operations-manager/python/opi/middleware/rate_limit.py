@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from opi.api.rate_limiter import (
+from opi.http.rate_limiter import (
     API_FLOOD_LIMITER,
     FLOOD_COUNTED_IN_SCOPE,
     IPRateLimiter,

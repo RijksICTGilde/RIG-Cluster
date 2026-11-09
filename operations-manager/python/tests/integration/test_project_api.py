@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 def mock_auth_project_service() -> Any:
     """Mock project service for authentication."""
-    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+    with patch("opi.http.auth.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
 
         test_project = ProjectSummary(
@@ -602,7 +602,7 @@ class TestDeleteProjectEndpoint:
         meet is wat de handler daarna doet, dus de step-up is hier voldaan verklaard;
         dat hij ECHT afgedwongen wordt staat in ``tests/test_api_delete_project_step_up.py``.
         """
-        with patch("opi.api.otp_step_up.verify_api_step_up", AsyncMock(return_value=None)):
+        with patch("opi.http.auth.otp_step_up.verify_api_step_up", AsyncMock(return_value=None)):
             yield
 
     def test_delete_project_success(

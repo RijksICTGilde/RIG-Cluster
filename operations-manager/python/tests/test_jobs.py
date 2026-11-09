@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
+from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.job_manager import ANNOT_COMMAND, ANNOT_IMAGE, JobError, JobManager, JobRun
 from opi.manager.run_support import ANNOT_EXPIRES, ANNOT_OPENED_BY, LABEL_RUN, LABEL_RUN_DEPLOYMENT
 from opi.services.catalog.image_registries.naming import organization_name

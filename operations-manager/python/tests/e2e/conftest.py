@@ -75,7 +75,7 @@ def _sign_session(data: dict, secret: str = SECRET_KEY) -> str:
     Sinds RC-390 draagt de cookie geen inhoud meer maar een id; de inhoud woont in de
     store die de testserver aansluit. De sessiegebruiker krijgt een vers ``login_at``:
     een sessie zonder inlogtijdstip is voorbij haar absolute levensduur en wordt
-    geweigerd (opi/core/session_guard.py).
+    geweigerd (opi/http/auth/session_guard.py).
     """
     user = data.get("user")
     if user is not None:

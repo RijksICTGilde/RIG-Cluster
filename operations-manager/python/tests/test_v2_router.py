@@ -99,7 +99,7 @@ def mock_auth_project_service() -> Any:
     mock_service.get = get_project
 
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.task_router.get_project_store", return_value=mock_service),
         patch("opi.api.v2.router.get_project_store", return_value=mock_service),
     ):
@@ -1528,7 +1528,7 @@ def _client_for_project(mock_task_service: AsyncMock, project_data: dict[str, An
     mock_service.get = lambda name: project if name == "test-project" else None
 
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.v2.router.get_project_store", return_value=mock_service),
     ):
         app: FastAPI = create_app()

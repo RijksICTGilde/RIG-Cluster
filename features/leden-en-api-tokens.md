@@ -75,7 +75,7 @@ zijn tokens, zonder dat er iets ingetrokken hoeft te worden.
 
 ### Wat een service account nooit mag
 
-`HUMAN_REQUIRED` (`opi/api/principal.py`) zijn de handelingen die een geverifieerde MENS
+`HUMAN_REQUIRED` (`opi/http/auth/principal.py`) zijn de handelingen die een geverifieerde MENS
 vragen, ongeacht het doelwit. Vandaag staat daar `token.manage` in: wie een token kan
 maken kan zijn eigen bewijsmiddel vermenigvuldigen, en dat hoort geen pijplijn te kunnen.
 Een service account krijgt daarop altijd een 403 met `cause: principal-kind-not-allowed`:
@@ -86,7 +86,7 @@ een eigen reden en niet "te weinig rechten", want zijn rol klopt en zijn SOORT n
 Een handeling die productie raakt vraagt een VERSE 2-factor (RC-332), en met een
 `zad_`-token loopt dat langs dezelfde weg als met een SSO-bearer. Het handhavingspunt zet
 de eigenaar van een persoonlijk token op `request.state.user`, en dat is precies waar
-`opi/api/otp_step_up.py` de persoon leest tegen wie de code getoetst wordt. Een code van
+`opi/http/auth/otp_step_up.py` de persoon leest tegen wie de code getoetst wordt. Een code van
 iemand anders aan een aanroep hangen kan dus niet.
 
 Een persoonlijk token activeert zijn step-up met `POST /api/v2/projects/{project}/step-up` en
@@ -165,7 +165,7 @@ FastAPI als endpoint registreert.
 
 ## Het handhavingspunt
 
-`opi/api/principal.py` vertaalt elk binnenkomend bewijsmiddel naar een principaal en
+`opi/http/auth/principal.py` vertaalt elk binnenkomend bewijsmiddel naar een principaal en
 beslist een keer:
 
 1. hash de gepresenteerde `X-API-Key` en zoek hem bij de tokens van de leden van het

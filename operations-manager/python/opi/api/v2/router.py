@@ -16,15 +16,6 @@ from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
-from opi.api.endpoint_util import (
-    default_marking,
-    deployment_in_body,
-    eis_doelwitten_uit_de_upsertbody,
-    eis_handeling,
-    image_only_upsert,
-    marking_in_body,
-    validate_api_token,
-)
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
 from opi.api.router import (
     AddComponentRequest,
@@ -57,7 +48,6 @@ from opi.api.task_models import (
     UpdateImageResult,
     UpsertDeploymentResult,
 )
-from opi.api.user_token_auth import validate_platform_admin_token, validate_user_token
 from opi.api.v2.models import (
     ApprovalNoticeResponse,
     AsyncTaskAcceptedResponse,
@@ -99,7 +89,6 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.core.auth_decorators import get_current_user, requires_step_up
 from opi.core.authz.actions import Action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.authz.actions import action as action_marker
 from opi.core.authz.engine import Role
@@ -111,7 +100,19 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.core.logging_redact import sanitize_for_log
-from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
+from opi.http.auth.auth_decorators import get_current_user, requires_step_up
+from opi.http.auth.endpoint_util import (
+    default_marking,
+    deployment_in_body,
+    eis_doelwitten_uit_de_upsertbody,
+    eis_handeling,
+    image_only_upsert,
+    marking_in_body,
+    validate_api_token,
+)
+from opi.http.auth.step_up_conditions import deployment_environment_change, vraagt_altijd_step_up
+from opi.http.auth.user_token_auth import validate_platform_admin_token, validate_user_token
+from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.project_validation import validate_component_references
 from opi.services.approvals import collect_deployment_approval_notices
 from opi.services.argocd_operation import read_sync_operation
@@ -175,7 +176,6 @@ from opi.services.services import (
 )
 from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 from opi.services.step_up import StepUpAction
-from opi.services.step_up_conditions import deployment_environment_change, vraagt_altijd_step_up
 from opi.services.tasks.task_rollout import NON_DEFERRABLE_REASONS
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.client_ip import client_ip
@@ -690,7 +690,7 @@ async def check_subdomain_availability_v2(
     Hij stond er eerder niet in, en dat maakte het endpoint onbereikbaar:
     ``validate_api_token`` legitimeert de sleutel tegen een project en las die naam uit de
     routeparameters, dus zonder ``project_name`` was elk antwoord een 401. Zie
-    ``opi/api/endpoint_util.py``. De afscherming zelf is geen formaliteit -- zonder sleutel
+    ``opi/http/auth/endpoint_util.py``. De afscherming zelf is geen formaliteit -- zonder sleutel
     is dit een middel om subdomeinen af te tasten.
 
     Beperkt tot 30 aanvragen per minuut per client.

@@ -532,7 +532,7 @@ async def test_a_deployment_outside_the_match_is_slept_like_any_other(
 
 def test_fragment_renders_every_step_of_a_long_running_task() -> None:
     """A busy project produces many steps; the polled fragment must show them all."""
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.web.router import _build_task_hierarchy
 
     subtasks: list[dict] = []

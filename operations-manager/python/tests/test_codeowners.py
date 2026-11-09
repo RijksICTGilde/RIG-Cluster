@@ -17,7 +17,7 @@ SECURITY = REPO_ROOT / "SECURITY.md"
 GEVOELIGE_BESTANDEN = [
     "operations-manager/python/opi/middleware/authorization.py",
     "operations-manager/python/opi/middleware/security_headers.py",
-    "operations-manager/python/opi/api/user_token_auth.py",
+    "operations-manager/python/opi/http/auth/user_token_auth.py",
     "operations-manager/python/opi/services/project_authorization.py",
     "operations-manager/python/opi/utils/api_keys.py",
     "operations-manager/python/opi/utils/age.py",

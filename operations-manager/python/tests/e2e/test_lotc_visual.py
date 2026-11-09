@@ -33,7 +33,7 @@ missen.
 from typing import TYPE_CHECKING
 
 import pytest
-from opi.web.lotc_switch import project_tab_url
+from opi.http.render.lotc_switch import project_tab_url
 from playwright.sync_api import expect
 
 if TYPE_CHECKING:

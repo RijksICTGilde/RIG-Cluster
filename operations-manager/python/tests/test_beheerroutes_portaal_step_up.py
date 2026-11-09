@@ -143,7 +143,7 @@ async def test_de_dialoog_herhaalt_de_ingevulde_velden(route: str) -> None:
     """Zonder die velden zou de gebruiker zijn formulier na de code opnieuw moeten typen."""
     dialoog = AsyncMock(return_value="<div>dialoog</div>")
 
-    with patch("opi.web.step_up_dialog.render_step_up_dialog", dialoog):
+    with patch("opi.http.auth.step_up_dialog.render_step_up_dialog", dialoog):
         antwoord = await _roep(route, _verzoek(verse_step_up=False, htmx=True), _beheerdienst(), _otp_dienst())
 
     assert antwoord.status_code == 200
@@ -227,7 +227,7 @@ async def test_zonder_htmx_komt_de_beheerder_bij_een_invulbaar_codeveld(
 
 def test_de_twee_leesroutes_vragen_geen_step_up() -> None:
     """Een formulier tonen is geen wijziging; de API doet dat voor zijn leesroutes ook niet."""
-    from opi.core.auth_decorators import REQUIRES_STEP_UP
+    from opi.http.auth.auth_decorators import REQUIRES_STEP_UP
 
     for route in ("list_users", "create_user_form", "edit_user_form"):
         handler = getattr(router_user_admin, route)
@@ -237,6 +237,6 @@ def test_de_twee_leesroutes_vragen_geen_step_up() -> None:
 @pytest.mark.parametrize(("route", "actie", "_dienstaanroep"), ROUTES)
 def test_elke_wijzigende_route_is_gemarkeerd(route: str, actie: StepUpAction, _dienstaanroep: str | None) -> None:
     """De markering die ``custom_openapi`` en ``test_step_up_routes.py`` lezen."""
-    from opi.core.auth_decorators import REQUIRES_STEP_UP
+    from opi.http.auth.auth_decorators import REQUIRES_STEP_UP
 
     assert getattr(getattr(router_user_admin, route), REQUIRES_STEP_UP) is actie

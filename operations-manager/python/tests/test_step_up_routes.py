@@ -18,8 +18,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from opi.api.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE
-from opi.core.auth_decorators import REQUIRES_STEP_UP
+from opi.http.auth.auth_decorators import REQUIRES_STEP_UP
+from opi.http.auth.otp_step_up import STEP_UP_PROBLEM_MEDIA_TYPE
 from opi.server import create_app
 from opi.services.step_up import StepUpAction
 

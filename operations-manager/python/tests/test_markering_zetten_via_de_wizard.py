@@ -74,8 +74,8 @@ async def _opslaan(email: str, *, na: dict[str, Any], verse_step_up: bool = Fals
     gebruikers.is_platform_admin.return_value = False
 
     with (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
         patch("opi.manager.project_manager.ProjectManager", return_value=manager),
         patch("opi.web.project_edit_security.apply_form_data_to_project", return_value=copy.deepcopy(na)),
         patch("opi.web.router_wizard.ServiceAdapter"),

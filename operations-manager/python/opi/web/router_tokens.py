@@ -26,10 +26,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.core.authz.actions import Action, action
 from opi.core.authz.engine import ROLE_DESCRIPTIONS, Role, role_label
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import get_current_user, requires_sso, requires_step_up
+from opi.http.render.lotc_switch import project_tab_url
 from opi.services.api_token_service import (
     STANDAARD_ROLLEN,
     TokenAanvraagGeweigerd,
@@ -43,7 +44,6 @@ from opi.services.api_token_service import (
 )
 from opi.services.members import MemberKind
 from opi.services.step_up import StepUpAction
-from opi.web.lotc_switch import project_tab_url
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def _terug(request: Request, project_name: str) -> Response:
 async def _velden(request: Request) -> dict[str, str]:
     """Het formulier als vlakke dict; een meerkeuze wordt een kommalijst.
 
-    Dezelfde vorm als de step-up-herhaling teruggeeft (``fields_from_form`` in auth_decorators),
+    Dezelfde vorm als de step-up-herhaling teruggeeft (``fields_from_form`` in audit_trail),
     zodat een route niet hoeft te weten of hij het formulier of de herhaling leest.
     """
     formulier = await request.form()

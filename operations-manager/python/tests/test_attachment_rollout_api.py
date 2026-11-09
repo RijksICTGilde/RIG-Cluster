@@ -45,7 +45,7 @@ def _authorised_project():
     project.api_key = "test-key"
     store = MagicMock()
     store.get.return_value = project
-    with patch("opi.api.endpoint_util.get_project_store", return_value=store):
+    with patch("opi.http.auth.endpoint_util.get_project_store", return_value=store):
         yield store
 
 

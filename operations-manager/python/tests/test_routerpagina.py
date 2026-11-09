@@ -30,7 +30,7 @@ from opi.core.dns_config import (
     ROUTER_IPV6,
     SANDBOX_ROUTER_HOSTNAME,
 )
-from opi.web.menu import get_menu_items
+from opi.http.render.menu import get_menu_items
 from opi.web.router import eigen_domein
 
 if TYPE_CHECKING:

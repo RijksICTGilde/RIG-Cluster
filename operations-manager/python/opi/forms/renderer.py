@@ -916,7 +916,7 @@ class FormRenderer:
 
         # Template partial
         if isinstance(element, TemplatePartial):
-            from opi.core.templates_lotc import templates_lotc
+            from opi.http.render.templates_lotc import templates_lotc
 
             tmpl = templates_lotc.env.get_template(element.template)
             # flow_id erbij: een partial met eigen endpoints moet weten in WELKE wizard hij
@@ -926,7 +926,7 @@ class FormRenderer:
 
         # Display block (server-rendered via HTMX)
         if isinstance(element, DisplayBlock):
-            from opi.core.templates_lotc import templates_lotc
+            from opi.http.render.templates_lotc import templates_lotc
 
             context = element.compute(yaml_data or {}, element.context)
             tmpl = templates_lotc.env.get_template(element.template)

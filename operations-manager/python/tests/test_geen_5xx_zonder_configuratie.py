@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import opi.api.endpoint_util as endpoint_util
+import opi.http.auth.endpoint_util as endpoint_util
 import pytest
 from opi.api.route_herkenning import MARKERINGEN, route_herkenningen
 from opi.server import app

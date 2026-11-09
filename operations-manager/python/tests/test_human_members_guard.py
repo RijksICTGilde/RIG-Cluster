@@ -31,7 +31,7 @@ LEZER = re.compile(r"""\.users\b|\[["']users["']\]|\.get\(\s*["']users["']""")
 #: account gewoon mee. Een bestand dat hier niet in staat en de lijst wel kaal leest is een
 #: nieuwe lezer die nog moet kiezen.
 BEKENDE_LEZERS: dict[str, str] = {
-    "api/principal.py": "zoekt een token bij een lid; beide soorten dragen tokens",
+    "http/auth/principal.py": "zoekt een token bij een lid; beide soorten dragen tokens",
     "core/authz/actions.py": "de naam van de action platform.users, geen ledenlijst",
     "services/members.py": "vergelijkt de leden en hun rollen voor en na een opslag; beide soorten",
     "manager/bootstrap/keycloak_setup.py": "de users van een Keycloak-sjabloon, niet van een project",
@@ -53,7 +53,7 @@ BEKENDE_LEZERS: dict[str, str] = {
     "services/user_otp_service.py": "de ORM-tabel users; OTP hangt aan een mens, niet aan een project",
     "services/project_utils.py": "schrijft de ledenlijst bij het aanmaken",
     "web/lotc_fixtures.py": "voorbeelddata voor de componentengalerij",
-    "web/lotc_switch.py": "de ledenlijst op het scherm",
+    "http/render/lotc_switch.py": "de ledenlijst op het scherm",
 }
 
 #: De plekken waar iets met een PERSOON gebeurt: mail, inlog, console. Die MOETEN de filter

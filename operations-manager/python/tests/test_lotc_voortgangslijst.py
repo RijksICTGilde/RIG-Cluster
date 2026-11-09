@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 #: De sjablonen die de takenlijst tonen. Alle vier via dezelfde macro.
 SJABLONEN = [

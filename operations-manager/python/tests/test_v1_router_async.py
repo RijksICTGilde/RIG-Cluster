@@ -49,7 +49,7 @@ def mock_task_service() -> AsyncMock:
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
-    with patch("opi.api.endpoint_util.get_project_store") as mock_get_service:
+    with patch("opi.http.auth.endpoint_util.get_project_store") as mock_get_service:
         mock_service = MagicMock(spec=GitProjectStore)
         test_project = ProjectSummary(
             name="test-project",

@@ -18,7 +18,7 @@ maar een gevolg van het herontwerp.
 
 from __future__ import annotations
 
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services.catalog.sleep_mode.state import STATE_SLEEPING, STATE_WAKING, SleepState, write
 from opi.services.deployment_state import collect_deployment_state
 

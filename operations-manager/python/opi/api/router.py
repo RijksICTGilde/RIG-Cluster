@@ -6,18 +6,8 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
-from opi.api.endpoint_util import (
-    default_marking,
-    deployment_in_body,
-    eis_doelwitten_uit_de_upsertbody,
-    eis_handeling,
-    image_only_upsert,
-    marking_in_body,
-    validate_api_token,
-)
 from opi.api.openapi_choices import CHOICES_PROVIDER_KEY
 from opi.api.params import DeploymentNamePath, ProjectNamePath
-from opi.api.rate_limiter import IPRateLimiter
 from opi.api.validation import (
     ADD_COMPONENT_TO_DEPLOYMENT_VALIDATORS,
     ADD_COMPONENT_VALIDATORS,
@@ -27,12 +17,23 @@ from opi.api.validation import (
     UPSERT_DEPLOYMENT_VALIDATORS,
     validate_api_payload,
 )
-from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.logging_redact import sanitize_for_log
-from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
+from opi.http.auth.auth_decorators import requires_step_up
+from opi.http.auth.endpoint_util import (
+    default_marking,
+    deployment_in_body,
+    eis_doelwitten_uit_de_upsertbody,
+    eis_handeling,
+    image_only_upsert,
+    marking_in_body,
+    validate_api_token,
+)
+from opi.http.auth.step_up_conditions import deployment_environment_change
+from opi.http.rate_limiter import IPRateLimiter
+from opi.http.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.runtime.tasks.task_handlers_operations import terminated_sync_fields
@@ -55,7 +56,6 @@ from opi.services.project_utils import (
     normalize_container_image,
 )
 from opi.services.step_up import StepUpAction
-from opi.services.step_up_conditions import deployment_environment_change
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name

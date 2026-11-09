@@ -21,8 +21,8 @@ from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 from itsdangerous import TimestampSigner
 from opi.api.logs_websocket_router import logs_websocket_router
-from opi.core.auth_decorators import requires_sso
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import requires_sso
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.server_side_session import ServerSideSessionMiddleware
 from starlette.websockets import WebSocketDisconnect

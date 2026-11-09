@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from opi.core.dns_config import DEFAULT_ROUTER_HOSTNAME, router_addresses_for
+from opi.http.render.lotc_switch import PROJECT_TABS
 from opi.services.catalog.approval import SERVICE_USE_SUBJECT
 from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.project_file_handler import extract_attachment_catalog, extract_attachment_usage
@@ -35,7 +36,6 @@ from opi.services.services import ServiceAdapter
 from opi.services.user_otp_service import OtpStatus
 from opi.utils.qr import qr_svg
 from opi.utils.yaml_util import load_yaml_safe
-from opi.web.lotc_switch import PROJECT_TABS
 from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
 from opi.web.security_policy import security_policy_html
 
@@ -257,7 +257,7 @@ def page_data(slug: str) -> dict[str, Any]:
         # bovendien geen cluster nodig - hij komt uit de code.
         # Zonder de ``navigation`` die daar ook uit komt: _context() in lotc_router zet die
         # zelf, met de voorbeeldgebruiker, en ``**extra`` zou hem daar overheen schrijven.
-        from opi.web.lotc_switch import build_lotc_introductie
+        from opi.http.render.lotc_switch import build_lotc_introductie
 
         catalogus = build_lotc_introductie(None)
         return {sleutel: waarde for sleutel, waarde in catalogus.items() if sleutel != "navigation"}
@@ -295,7 +295,7 @@ def page_data(slug: str) -> dict[str, Any]:
                 },
             ],
             "projects": projects,
-            # Dezelfde vorm als de echte route levert (opi/web/lotc_switch.py). Een
+            # Dezelfde vorm als de echte route levert (opi/http/render/lotc_switch.py). Een
             # proefopstelling die een ANDERE vorm voedt dan de applicatie zou het
             # sjabloon laten werken op iets dat in productie nooit voorkomt.
             "health": [{"label": "Healthy", "count": len(projects)}],
@@ -360,7 +360,7 @@ def page_data(slug: str) -> dict[str, Any]:
         from opi.forms.visualizers.flows import get_flow
         from opi.forms.wizard.resolver import get_section_metadata, resolve_active_sections
         from opi.forms.wizard.state import WizardState
-        from opi.web.navigation_lotc import to_nldd_icon
+        from opi.http.render.navigation_lotc import to_nldd_icon
         from opi.web.router_wizard import _render_step_html
 
         flow = get_flow("create-project")
@@ -628,8 +628,8 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Bewust de registry en geen eigen lijst: een tweede lijst ernaast gaat vroeg of laat
     afwijken van wat de applicatie werkelijk aanbiedt.
     """
+    from opi.http.render.navigation_lotc import to_nldd_icon
     from opi.services.services import ServiceAdapter
-    from opi.web.navigation_lotc import to_nldd_icon
 
     used_by: dict[str, list[str]] = {}
     for project in projects:

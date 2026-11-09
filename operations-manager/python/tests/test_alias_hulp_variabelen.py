@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.catalog.aliases.overview import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference
 from opi.services.catalog.aliases.visualizers import COMPONENT_ALIASES

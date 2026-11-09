@@ -480,7 +480,7 @@ class TestResourceSjabloon:
     SJABLOON = "bg/_gedeelde-diensten-resources.html.j2"
 
     def _render(self, blok: Any) -> str:
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         html = templates_lotc.env.get_template(self.SJABLOON).render({"blok": blok})
         assert "<c-" not in html, "onvervangen componenttag"

@@ -7,7 +7,7 @@
    met de reden erbij, zodat de volgende niet opnieuw hoeft te zoeken.
 
    Drie blokken zijn weggehaald omdat ze op ROOS-markup sloegen, en ROOS is er niet meer:
-   ``lotc_rvo`` staat niet in DESIGN_SYSTEMS (opi/core/templates_lotc.py), dus geen enkel
+   ``lotc_rvo`` staat niet in DESIGN_SYSTEMS (opi/http/render/templates_lotc.py), dus geen enkel
    component rendert nog een rvo- of utrecht-klasse. Het ging om:
 
    - ``.rvo-footer__column-title`` - de voettekst is nu <nldd-page-footer>.

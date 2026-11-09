@@ -177,5 +177,5 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 | `opi/manager/project_manager.py` | Wired deletion + service removal into `process_project_from_git()` |
 | `opi/jobs/reconciliation.py` | Reconciliation job with backup purge support |
 | `opi/api/admin_router.py` | Admin API endpoints for cleanup and reconciliation |
-| `opi/api/user_token_auth.py` | `validate_platform_admin_token` decorator |
+| `opi/http/auth/user_token_auth.py` | `validate_platform_admin_token` decorator |
 | `opi/core/config.py` | `DELETION_GRACE_PERIOD_DAYS` setting |

@@ -22,7 +22,6 @@ import contextvars
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from opi.core.auth_decorators import fields_from_form
 from opi.core.authz.actions import audit_fields_of
 
 if TYPE_CHECKING:
@@ -76,6 +75,30 @@ def record_task(task_id: uuid.UUID) -> None:
     trail_now = _trail.get()
     if trail_now is not None and trail_now.task_id is None:
         trail_now.task_id = task_id
+
+
+async def fields_from_form(request: Request, names: tuple[str, ...]) -> dict[str, str]:
+    """The named fields out of the form of this request.
+
+    Two readers: the audit below, which reads the fields the route names with
+    ``audit_fields=``, and the step-up repeat in ``opi/http/auth/auth_decorators.py``. Those
+    two lists are independent: ``fields`` is there to let the dialog repeat the form and therefore also
+    names a free text field, and that does not belong in a row that stays for a year.
+
+    A field that was filled more than once (a multiple choice, such as the roles of a
+    member) travels as a comma list: the dialog repeats it as a hidden field, and the route
+    that reads it splits on it again.
+    """
+    if not names:
+        return {}
+    form = await request.form()
+    getlist = getattr(form, "getlist", None)
+    found: dict[str, str] = {}
+    for name in names:
+        values = getlist(name) if getlist is not None else ([form[name]] if name in form else [])
+        if values:
+            found[name] = ",".join(str(value) for value in values)
+    return found
 
 
 async def capture_fields(request: Request, endpoint: Any) -> None:

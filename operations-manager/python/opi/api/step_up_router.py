@@ -8,11 +8,11 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from opi.api.endpoint_util import validate_api_token
-from opi.api.otp_step_up import STEP_UP_403_RESPONSE, STEP_UP_PATH, step_up_problem_response, verify_step_up_code
 from opi.api.params import ProjectNamePath
-from opi.api.user_token_auth import validate_user_token
 from opi.core.authz.actions import Action, action
+from opi.http.auth.endpoint_util import validate_api_token
+from opi.http.auth.otp_step_up import STEP_UP_403_RESPONSE, STEP_UP_PATH, step_up_problem_response, verify_step_up_code
+from opi.http.auth.user_token_auth import validate_user_token
 from opi.services.api_step_up_service import ApiStepUpService
 from opi.services.audit import record_step_up_attempt
 from opi.utils.client_ip import client_ip

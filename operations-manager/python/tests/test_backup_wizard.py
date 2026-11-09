@@ -592,7 +592,7 @@ class TestRestoreTargetTemplate:
 
     @pytest.fixture
     def templates(self):
-        from opi.core.templates_lotc import templates_lotc
+        from opi.http.render.templates_lotc import templates_lotc
 
         return templates_lotc
 

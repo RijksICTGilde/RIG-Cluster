@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from opi.core.templates_lotc import CATALOG_DIR, TEMPLATES_LOTC_DIR
+from opi.http.render.templates_lotc import CATALOG_DIR, TEMPLATES_LOTC_DIR
 
 #: Onze eigen sjabloonwortels, precies de twee die de env naast de componenten van LOTC
 #: zelf kent. Die van LOTC staan er bewust niet bij: die DEFINIEREN de componenten, ze

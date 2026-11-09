@@ -29,8 +29,8 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from opi.http.render.lotc_switch import project_tab_url
 from opi.services.project_service import get_project_service
-from opi.web.lotc_switch import project_tab_url
 from tests.e2e.helpers.edit_modal import EditModalHelper
 from tests.e2e.helpers.htmx import wait_for_htmx_quiet
 from tests.e2e.helpers.service_config import modal_advance_to_field

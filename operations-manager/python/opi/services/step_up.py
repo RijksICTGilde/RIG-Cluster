@@ -7,7 +7,7 @@ too. And so do the environment variables of a component, which can hold secrets.
 
 This is WHEN an action asks for one, and whether there is a fresh one. How the portal asks
 for it is in ``opi/web/router_step_up.py``; how an action imposes it is in
-:func:`opi.core.auth_decorators.requires_step_up`.
+:func:`opi.http.auth.auth_decorators.requires_step_up`.
 
 The window does not slide along: an action READS the stamp and never sets it again, so the
 window after the code really lasts as long as configured.

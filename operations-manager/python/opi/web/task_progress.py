@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 from fastapi.responses import HTMLResponse
 
-from opi.core.task_helpers import create_async_task
-from opi.web.lotc_switch import render_fragment
+from opi.http.render.lotc_switch import render_fragment
+from opi.http.task_helpers import create_async_task
 
 if TYPE_CHECKING:
     from fastapi import Request

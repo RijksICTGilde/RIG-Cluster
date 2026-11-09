@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.web.lotc_switch import PROJECT_TABS, TABS_MET_DEPLOYMENT, project_tab_url, tab_from_path
+from opi.http.render.lotc_switch import PROJECT_TABS, TABS_MET_DEPLOYMENT, project_tab_url, tab_from_path
 from opi.web.router import web_router
 
 WORTEL = Path(__file__).resolve().parent.parent

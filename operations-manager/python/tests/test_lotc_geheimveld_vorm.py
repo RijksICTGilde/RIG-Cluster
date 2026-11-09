@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 from bs4 import BeautifulSoup
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 REPO = Path(__file__).resolve().parent.parent
 

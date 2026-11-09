@@ -7,10 +7,6 @@
     "opi/api/backup_router.py": {
       "dutch-comments": 2
     },
-    "opi/api/endpoint_util.py": {
-      "dutch-identifiers": 13,
-      "dutch-comments": 39
-    },
     "opi/api/federation_router.py": {
       "dutch-comments": 5
     },
@@ -29,17 +25,6 @@
     "opi/api/openapi_choices.py": {
       "dutch-identifiers": 1,
       "dutch-comments": 27
-    },
-    "opi/api/otp_step_up.py": {
-      "dutch-identifiers": 3,
-      "dutch-comments": 17
-    },
-    "opi/api/principal.py": {
-      "dutch-identifiers": 5,
-      "dutch-comments": 22
-    },
-    "opi/api/rate_limiter.py": {
-      "dutch-comments": 78
     },
     "opi/api/resource_router.py": {
       "dutch-comments": 2
@@ -68,9 +53,6 @@
     "opi/api/token_router.py": {
       "dutch-identifiers": 18,
       "dutch-comments": 14
-    },
-    "opi/api/user_token_auth.py": {
-      "dutch-comments": 2
     },
     "opi/api/v2/models.py": {
       "dutch-comments": 23
@@ -264,6 +246,54 @@
       "dutch-identifiers": 2,
       "dutch-comments": 21
     },
+    "opi/http/auth/authz.py": {
+      "dutch-identifiers": 11,
+      "dutch-comments": 22
+    },
+    "opi/http/auth/endpoint_util.py": {
+      "dutch-identifiers": 13,
+      "dutch-comments": 39
+    },
+    "opi/http/auth/otp_step_up.py": {
+      "dutch-identifiers": 3,
+      "dutch-comments": 17
+    },
+    "opi/http/auth/principal.py": {
+      "dutch-identifiers": 5,
+      "dutch-comments": 22
+    },
+    "opi/http/auth/step_up_conditions.py": {
+      "dutch-identifiers": 2,
+      "dutch-comments": 4
+    },
+    "opi/http/auth/step_up_dialog.py": {
+      "dutch-identifiers": 8,
+      "dutch-comments": 7
+    },
+    "opi/http/auth/user_token_auth.py": {
+      "dutch-comments": 2
+    },
+    "opi/http/rate_limiter.py": {
+      "dutch-comments": 78
+    },
+    "opi/http/render/lotc_switch.py": {
+      "dutch-identifiers": 34,
+      "dutch-comments": 173,
+      "comment-heavy-functions": 1
+    },
+    "opi/http/render/menu.py": {
+      "dutch-comments": 9
+    },
+    "opi/http/render/navigation_lotc.py": {
+      "dutch-comments": 47
+    },
+    "opi/http/render/nldd_iconen.py": {
+      "dutch-identifiers": 4,
+      "dutch-comments": 8
+    },
+    "opi/http/render/templates_lotc.py": {
+      "dutch-comments": 1
+    },
     "opi/jobs/reconciliation.py": {
       "dutch-identifiers": 4,
       "dutch-comments": 8
@@ -364,7 +394,7 @@
       "dutch-comments": 6
     },
     "opi/middleware/security_headers.py": {
-      "dutch-comments": 8
+      "dutch-comments": 7
     },
     "opi/middleware/server_side_session.py": {
       "dutch-comments": 17
@@ -522,10 +552,6 @@
     "opi/services/session_store.py": {
       "dutch-comments": 15
     },
-    "opi/services/step_up_conditions.py": {
-      "dutch-identifiers": 2,
-      "dutch-comments": 4
-    },
     "opi/services/tasks/async_task_service.py": {
       "dutch-comments": 2
     },
@@ -573,10 +599,6 @@
     "opi/tools/zad_map_platform.py": {
       "dutch-comments": 16
     },
-    "opi/web/authz.py": {
-      "dutch-identifiers": 11,
-      "dutch-comments": 22
-    },
     "opi/web/lotc_fixtures.py": {
       "dutch-identifiers": 4,
       "dutch-comments": 113
@@ -588,23 +610,8 @@
       "dutch-identifiers": 1,
       "dutch-comments": 26
     },
-    "opi/web/lotc_switch.py": {
-      "dutch-identifiers": 34,
-      "dutch-comments": 173,
-      "comment-heavy-functions": 1
-    },
-    "opi/web/menu.py": {
-      "dutch-comments": 9
-    },
     "opi/web/metrics_explorer_router.py": {
       "dutch-comments": 4
-    },
-    "opi/web/navigation_lotc.py": {
-      "dutch-comments": 47
-    },
-    "opi/web/nldd_iconen.py": {
-      "dutch-identifiers": 4,
-      "dutch-comments": 8
     },
     "opi/web/project_actions.py": {
       "dutch-comments": 4,
@@ -677,10 +684,6 @@
     "opi/web/stap_labels.py": {
       "dutch-identifiers": 4,
       "dutch-comments": 5
-    },
-    "opi/web/step_up_dialog.py": {
-      "dutch-identifiers": 8,
-      "dutch-comments": 7
     },
     "opi/web/task_progress.py": {
       "dutch-comments": 1

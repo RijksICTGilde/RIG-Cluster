@@ -6,16 +6,16 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from opi.api.endpoint_util import validate_api_token
 from opi.api.enums import OperationStatus
 from opi.api.params import DeploymentNamePath, ProjectNamePath
-from opi.api.user_token_auth import validate_platform_admin_token
 from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
 from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.http.auth.endpoint_util import validate_api_token
+from opi.http.auth.user_token_auth import validate_platform_admin_token
 from opi.manager.backup import (
     BackupResult,
     BucketBackupResult,

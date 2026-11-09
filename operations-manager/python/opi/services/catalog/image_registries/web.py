@@ -16,15 +16,15 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.connectors.kubectl import KubectlConnector
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.cluster_config import get_image_registries_config, get_prefixed_namespace
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.render.lotc_switch import render
 from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY, project_registries
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_store import get_project_store
-from opi.web.lotc_switch import render
 
 logger = logging.getLogger(__name__)
 

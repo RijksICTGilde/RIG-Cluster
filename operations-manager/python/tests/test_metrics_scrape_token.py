@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import opi.api.endpoint_util as endpoint_util
+import opi.http.auth.endpoint_util as endpoint_util
 import pytest
 
 if TYPE_CHECKING:

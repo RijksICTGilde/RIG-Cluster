@@ -36,7 +36,7 @@ from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_co
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.core.session_guard import valid_session_user
+from opi.http.auth.session_guard import valid_session_user
 from opi.manager.run_support import LABEL_RUN
 from opi.services.project import Project
 from opi.services.project_authorization import (

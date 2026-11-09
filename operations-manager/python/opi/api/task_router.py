@@ -7,15 +7,15 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from opi.api.endpoint_util import handhaaf
 from opi.api.task_models import TaskResponse, task_response_from_dict
-from opi.api.user_token_auth import (
+from opi.core.authz.actions import Action, action
+from opi.http.auth.endpoint_util import handhaaf
+from opi.http.auth.user_token_auth import (
     UserTokenError,
     authorize_claims,
     extract_bearer_token,
     verify_user_token,
 )
-from opi.core.authz.actions import Action, action
 from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)

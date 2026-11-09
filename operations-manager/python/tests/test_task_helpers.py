@@ -1,5 +1,5 @@
 """
-Unit tests for opi.core.task_helpers.
+Unit tests for opi.http.task_helpers.
 
 Tests cover:
 - create_async_task: local and federation routing
@@ -14,7 +14,7 @@ import pytest
 from fastapi import HTTPException
 from opi.core.actor import Actor, ActorKind
 from opi.core.actor import actor as actor_contextvar
-from opi.core.task_helpers import (
+from opi.http.task_helpers import (
     build_accepted_response,
     create_async_task,
     get_task_service,
@@ -168,7 +168,7 @@ class TestCreateAsyncTask:
         request.app.state.federation_service = None
         request.state.user = {"email": "dev@example.com"}
 
-        with patch("opi.core.task_helpers.settings") as mock_settings:
+        with patch("opi.http.task_helpers.settings") as mock_settings:
             mock_settings.CLUSTER_MANAGER = "local"
             result = await create_async_task(
                 request=request,
@@ -246,7 +246,7 @@ class TestCreateAsyncTask:
         request.app.state.task_service = mock_service
         request.app.state.federation_service = None
 
-        with patch("opi.core.task_helpers.settings") as mock_settings:
+        with patch("opi.http.task_helpers.settings") as mock_settings:
             mock_settings.CLUSTER_MANAGER = "local"
             await create_async_task(
                 request=request,

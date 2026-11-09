@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import pytest
-from opi.web.lotc_switch import filter_lotc_projects, laatst_bewerkt, lotc_project_rows, relatieve_tijd
+from opi.http.render.lotc_switch import filter_lotc_projects, laatst_bewerkt, lotc_project_rows, relatieve_tijd
 
 NU = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 

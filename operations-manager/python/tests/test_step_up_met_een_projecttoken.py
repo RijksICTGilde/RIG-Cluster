@@ -29,9 +29,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.api.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.api.router import delete_project
 from opi.api.step_up_router import StepUpRequest, StepUpWindow, activate_token_step_up, end_token_step_up
+from opi.http.auth.otp_step_up import STEP_UP_PROBLEM_TYPE, StepUpCause
 from opi.services.api_step_up_service import personal_token_credential
 from opi.services.members import MemberKind
 from opi.services.project_leden import hash_van
@@ -101,9 +101,9 @@ def _patches(project: ProjectSummary):
     manager.delete_project = AsyncMock(return_value={"success": True})
     manager.close = AsyncMock(return_value=None)
     return (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
-        patch("opi.services.step_up_conditions.get_project_store", return_value=store),
-        patch("opi.services.step_up_conditions.is_user_authorized_for_project", return_value=True),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.step_up_conditions.get_project_store", return_value=store),
+        patch("opi.http.auth.step_up_conditions.is_user_authorized_for_project", return_value=True),
         patch("opi.api.router.create_project_manager", return_value=manager),
         manager,
     )
@@ -116,7 +116,10 @@ async def _verwijder(headers: dict[str, str], *, project: ProjectSummary, fresh:
         p2,
         p3,
         p4,
-        patch("opi.api.endpoint_util.ApiStepUpService", return_value=MagicMock(is_fresh=AsyncMock(return_value=fresh))),
+        patch(
+            "opi.http.auth.endpoint_util.ApiStepUpService",
+            return_value=MagicMock(is_fresh=AsyncMock(return_value=fresh)),
+        ),
     ):
         antwoord = await delete_project(
             request=_verzoek(headers),
@@ -181,11 +184,11 @@ async def _activate(headers: dict[str, str], *, verification: OtpVerification = 
     )
     store = MagicMock(get=MagicMock(return_value=project))
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.endpoint_util.ApiStepUpService", return_value=service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.ApiStepUpService", return_value=service),
         patch("opi.api.step_up_router.ApiStepUpService", return_value=service),
         patch("opi.api.step_up_router.record_step_up_attempt", AsyncMock()),
-        patch("opi.api.otp_step_up.UserOtpService", return_value=otp),
+        patch("opi.http.auth.otp_step_up.UserOtpService", return_value=otp),
     ):
         response = await activate_token_step_up(
             request=_verzoek(headers), project_name="demo", body=StepUpRequest(code="123456")
@@ -226,8 +229,8 @@ async def _end(headers: dict[str, str]) -> tuple[Any, Any]:
     service = MagicMock(is_fresh=AsyncMock(return_value=False), clear=AsyncMock())
     store = MagicMock(get=MagicMock(return_value=project))
     with (
-        patch("opi.api.endpoint_util.get_project_store", return_value=store),
-        patch("opi.api.endpoint_util.ApiStepUpService", return_value=service),
+        patch("opi.http.auth.endpoint_util.get_project_store", return_value=store),
+        patch("opi.http.auth.endpoint_util.ApiStepUpService", return_value=service),
         patch("opi.api.step_up_router.ApiStepUpService", return_value=service),
     ):
         response = await end_token_step_up(request=_verzoek(headers), project_name="demo")

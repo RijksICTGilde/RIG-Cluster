@@ -199,7 +199,7 @@ async def terminate_stuck_operation(
 def format_duration(seconds: int | None) -> str:
     """Een looptijd als '45 seconden', '19 minuten', '2 uur', of 'onbekend lang'.
 
-    Naar BENEDEN afgerond, zoals ``relatieve_tijd`` in ``opi/web/lotc_switch.py``: 119 minuten
+    Naar BENEDEN afgerond, zoals ``relatieve_tijd`` in ``opi/http/render/lotc_switch.py``: 119 minuten
     leest als '1 uur' en niet als '2 uur'. Een duur en geen klok, want ArgoCD rapporteert in
     UTC en OPI's eigen regels in CEST. Een negatieve duur komt daar ook vandaan, bij
     klokverschil tussen de twee, en leest als '0 seconden' in plaats van als een onmogelijk

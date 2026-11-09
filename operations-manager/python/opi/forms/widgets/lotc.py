@@ -14,8 +14,8 @@ bestand overbleef is de gedeelde veldvoorbereiding in ``fields.py``.
 
 import markupsafe
 
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.widgets.fields import FieldWidgetAdapter
+from opi.http.render.templates_lotc import templates_lotc
 
 
 class LOTCWidgetAdapter(FieldWidgetAdapter):

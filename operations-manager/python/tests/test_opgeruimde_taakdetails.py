@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.runtime.tasks.persistent_task_progress import PersistentTaskProgressManager
 from opi.web.router import _progress_page_context, _v2_task_to_template_context
 from opi.web.router_tasks import _normalize_task

@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 from opi.core.authz.actions import Action
+from opi.http.auth.authz import authorize, may
 from opi.services.project_service import ProjectService, ProjectUser, get_project_service
 from opi.services.user_service import get_user_service
-from opi.web.authz import authorize, may
 
 PROJECT_NAME = "operate-target"
 MEMBER_EMAIL = "member@example.com"

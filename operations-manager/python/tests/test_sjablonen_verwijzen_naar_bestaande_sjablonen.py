@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 from jinja2 import TemplateNotFound
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 
 #: ``extends``/``include``/``import``/``from`` met een naam die letterlijk in het sjabloon
 #: staat. Een naam die uit een expressie komt matcht bewust niet: daar kan deze poort

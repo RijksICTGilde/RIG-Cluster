@@ -11,11 +11,11 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from starlette.routing import WebSocketRoute
 
-from opi.api.endpoint_util import (
+from opi.http.auth.endpoint_util import (
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
 )
-from opi.api.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
+from opi.http.auth.user_token_auth import REQUIRES_PLATFORM_ADMIN_TOKEN, REQUIRES_USER_TOKEN
 
 if TYPE_CHECKING:
     from fastapi import FastAPI

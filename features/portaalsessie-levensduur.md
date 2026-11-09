@@ -33,7 +33,7 @@ browser niet af. In die gevallen blijven de 8 en 12 uur de grens, precies zoals 
 ## Hoe het werkt
 
 Bij het inloggen zet `/auth/callback` het tijdstip in de sessie als `login_at`. Elk verzoek
-loopt daarna langs `valid_session_user` in `opi/core/session_guard.py`. Die weigert een
+loopt daarna langs `valid_session_user` in `opi/http/auth/session_guard.py`. Die weigert een
 sessie die geen `login_at` draagt, die ouder is dan de absolute levensduur, of waarvan
 `login_at` voor het intrekkingsmoment van die gebruiker ligt. Een geweigerde sessie wordt
 ook in de browser weggegooid, zodat dezelfde cookie niet elk verzoek opnieuw wordt
@@ -71,7 +71,7 @@ op het moment van de uitrol is ingelogd, logt een keer opnieuw in. Kondig dat aa
 
 ## Belangrijkste bestanden
 
-- `opi/core/session_guard.py` - de controle, gedeeld door de middleware en de WebSocket
+- `opi/http/auth/session_guard.py` - de controle, gedeeld door de middleware en de WebSocket
 - `opi/core/config.py` - `SESSION_MAX_AGE_SECONDS`, `SESSION_ABSOLUTE_MAX_SECONDS`
 - `opi/api/auth_routes.py` - `login_at` bij het inloggen, intrekken bij het uitloggen
 - `opi/services/session_revocation_service.py` - intrekken en inlezen

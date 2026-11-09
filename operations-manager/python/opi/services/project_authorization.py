@@ -30,7 +30,7 @@ def get_project_users(project_name: str) -> list[ProjectUser] | None:
 
     Alleen de mensen: deze twee functies beantwoorden "mag deze aanmelding dit project
     openen", en een service account meldt zich nergens aan. Wat een service account mag
-    loopt langs :mod:`opi.api.principal`, dat de hele ledenlijst leest.
+    loopt langs :mod:`opi.http.auth.principal`, dat de hele ledenlijst leest.
     """
     project = get_project_store().get(project_name)
     if project is None:
@@ -72,7 +72,7 @@ def get_user_roles_for_project(project_name: str, user_email: str) -> list[str]:
     """De rollen van deze gebruiker op dit project; een platformbeheerder krijgt die van B6.
 
     Leeg betekent "geen rol hier". Voor een beslissing: gebruik
-    :func:`opi.web.authz.authorize`; dit is de lezing die een pagina in zijn context zet.
+    :func:`opi.http.auth.authz.authorize`; dit is de lezing die een pagina in zijn context zet.
     """
     if is_elevated_admin(get_user_service(), user_email):
         return sorted(rol.value for rol in PLATFORM_ADMIN_ROLES)

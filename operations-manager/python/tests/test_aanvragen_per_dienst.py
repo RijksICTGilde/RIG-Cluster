@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from opi.core.templates_lotc import templates_lotc
+from opi.http.render.templates_lotc import templates_lotc
 from opi.services.approvals import collect_approval_items
 from opi.web.lotc_fixtures import page_data
 from opi.web.router_approvals import APPROVAL_STATUSSEN, filter_op_status, groepeer_per_dienst
@@ -251,7 +251,7 @@ def test_de_domeinnamen_zijn_uit_de_broncode_verdwenen(titel: str) -> None:
     ZONDER HOOFDLETTER vergeleken, en ook over de stijlbladen: de eerste vorm van deze
     poort keek alleen naar "Domeinbeheer" met een hoofdletter in .py en .j2, en liet
     daarmee twee achterblijvers staan die allebei in een commentaar zonder hoofdletter
-    stonden (opi/web/lotc_switch.py en static/css/admin-approvals.css).
+    stonden (opi/http/render/lotc_switch.py en static/css/admin-approvals.css).
     """
     from pathlib import Path
 

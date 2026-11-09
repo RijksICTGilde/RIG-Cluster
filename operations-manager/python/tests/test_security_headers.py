@@ -187,7 +187,7 @@ class TestCspNonce:
     def client(self):
         from fastapi import FastAPI
         from fastapi.responses import PlainTextResponse
-        from opi.middleware.security_headers import csp_nonce
+        from opi.http.render.templates_lotc import csp_nonce
 
         app = FastAPI()
         app.add_middleware(SecurityHeadersMiddleware)

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from opi.core.template_helpers import format_dutch_date
+from opi.http.render.template_helpers import format_dutch_date
 from opi.services.step_up import STEP_UP_SESSION_KEY, STEP_UP_WINDOW, has_fresh_step_up, step_up_until
 
 

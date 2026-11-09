@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
-from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
+from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.db_console_manager import (
     DbConsoleManager,
     DbConsoleSession,

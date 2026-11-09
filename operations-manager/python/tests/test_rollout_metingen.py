@@ -19,7 +19,7 @@ from opi.core.metrics import (
     rollout_phase_seconds,
     set_rollout_task_type,
 )
-from opi.core.template_helpers import format_step_duration
+from opi.http.render.template_helpers import format_step_duration
 from opi.web.router import _build_task_hierarchy, _step_duration_seconds, _total_duration_seconds
 
 

@@ -22,14 +22,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.auth.authz import may
+from opi.http.render.lotc_switch import render
 from opi.manager.job_manager import JobError, get_job_manager
 from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind
-from opi.web.authz import may
-from opi.web.lotc_switch import render
 
 logger = logging.getLogger(__name__)
 

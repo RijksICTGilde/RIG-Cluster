@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
-from opi.core.templates_lotc import templates_lotc as templates
+from opi.http.render.templates_lotc import templates_lotc as templates
 from opi.services import resource_tuning_service
 from opi.services.resource_tuning_service import observe_recent_oom_kills
 from opi.web.router import oom_status_fragment

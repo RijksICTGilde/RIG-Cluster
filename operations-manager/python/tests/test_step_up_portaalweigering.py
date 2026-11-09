@@ -16,7 +16,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from opi.core.auth_decorators import requires_step_up
+from opi.http.auth.auth_decorators import requires_step_up
 from opi.services.step_up import STEP_UP_SESSION_KEY, StepUpAction
 
 OWNER_EMAIL = "eigenaar@example.org"
@@ -57,8 +57,8 @@ def _markeringsrecht():
     gebruikers = MagicMock()
     gebruikers.is_platform_admin.return_value = True
     return (
-        patch("opi.web.authz.get_project_store", return_value=store),
-        patch("opi.web.authz.get_user_service", return_value=gebruikers),
+        patch("opi.http.auth.authz.get_project_store", return_value=store),
+        patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
     )
 
 
@@ -292,7 +292,7 @@ async def test_decorator_meldt_een_gebruikte_step_up_als_info(caplog: pytest.Log
     async def route(request: Any, project_name: str) -> str:
         return "uitgevoerd"
 
-    with caplog.at_level("INFO", logger="opi.core.auth_decorators"):
+    with caplog.at_level("INFO", logger="opi.http.auth.auth_decorators"):
         assert await route(_request(verse_step_up=True), project_name="demo") == "uitgevoerd"
 
     meldingen = [record.getMessage() for record in caplog.records]
@@ -311,9 +311,9 @@ def _render_herhaal(vervolg_token: str, velden: dict[str, str] | None = None) ->
     de velden van de handeling gaan langs dezelfde weg mee.
     """
     from jinja2 import Environment, FileSystemLoader
-    from opi.web.step_up_dialog import _vals
+    from opi.http.auth.step_up_dialog import _vals
 
-    # autoescape=True zoals in productie (opi/core/templates_lotc.py:82). select_autoescape
+    # autoescape=True zoals in productie (opi/http/render/templates_lotc.py:82). select_autoescape
     # kijkt naar de extensie en kent .j2 niet, dus dat gaf hier een escape-loze render.
     env = Environment(loader=FileSystemLoader("opi/templates_lotc"), autoescape=True)
     template = env.get_template("bg/_step-up-herhalen.html.j2")

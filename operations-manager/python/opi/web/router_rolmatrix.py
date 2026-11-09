@@ -14,12 +14,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from starlette.responses import Response
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.authz.matrix import columns, other_rules, sections
-from opi.web.lotc_switch import render
-from opi.web.menu import get_menu_items
-from opi.web.navigation_lotc import get_navigation
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.render.lotc_switch import render
+from opi.http.render.menu import get_menu_items
+from opi.http.render.navigation_lotc import get_navigation
 
 rolmatrix_router = APIRouter(prefix="/rollen", tags=["rolmatrix"])
 

@@ -12,8 +12,8 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import requires_sso
 from opi.core.authz.actions import Action, action
+from opi.http.auth.auth_decorators import requires_sso
 from opi.services.runs_service import get_runs_service
 from opi.web.stap_labels import stap_label
 
@@ -142,7 +142,7 @@ async def project_tasks(request: Request, project_name: str) -> HTMLResponse:
 
     # Het fragment volgt dezelfde keuze als de pagina eromheen; anders verschijnt er na
     # de eerste poll roos-markup in een NLDD-pagina.
-    from opi.web.lotc_switch import render
+    from opi.http.render.lotc_switch import render
 
     return render(
         request,

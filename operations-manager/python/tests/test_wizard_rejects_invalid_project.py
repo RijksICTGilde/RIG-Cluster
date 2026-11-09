@@ -106,7 +106,7 @@ async def test_create_rejects_invalid_project_before_any_task_is_created() -> No
 
     try:
         with (
-            patch("opi.core.task_helpers.create_async_task", create_task),
+            patch("opi.http.task_helpers.create_async_task", create_task),
             pytest.raises(ProjectSchemaError) as exc,
         ):
             await _start_project_creation(_request_for(OWNER_EMAIL), _project_with_empty_command())
@@ -129,7 +129,7 @@ async def test_create_clears_the_session_only_after_the_task_exists() -> None:
         return {"task_id": "task-1"}
 
     with (
-        patch("opi.core.task_helpers.create_async_task", _create),
+        patch("opi.http.task_helpers.create_async_task", _create),
         patch("opi.web.router_wizard.clear_wizard_state", lambda _request: calls.append("clear_wizard_state")),
     ):
         response = await _start_project_creation(_request_for(OWNER_EMAIL), _valid_project())
@@ -147,7 +147,7 @@ async def test_create_keeps_the_session_when_the_task_cannot_be_created() -> Non
         raise RuntimeError("task service unavailable")
 
     try:
-        with patch("opi.core.task_helpers.create_async_task", _boom), pytest.raises(RuntimeError):
+        with patch("opi.http.task_helpers.create_async_task", _boom), pytest.raises(RuntimeError):
             await _start_project_creation(_request_for(OWNER_EMAIL), _valid_project())
     finally:
         patch.stopall()
@@ -347,8 +347,8 @@ def test_a_field_message_cannot_execute_in_the_second_render(payload: str) -> No
     special characters -- and several validators quote the rejected value in their
     message, so a value typed into the form would otherwise be executed server-side.
     """
-    from opi.core.templates_lotc import templates_lotc
     from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.web.router_wizard import _render_step_html
 
     html = _render_step_html(
@@ -374,8 +374,8 @@ async def test_a_rejected_save_marks_the_field_and_puts_the_text_where_it_is_saf
     """
     from unittest.mock import MagicMock
 
-    from opi.core.templates_lotc import templates_lotc
     from opi.forms.editables.processor import EditableFormProcessor
+    from opi.http.render.templates_lotc import templates_lotc
     from opi.web.router_wizard import SCHEMA_FIELD_MARKER, _do_submit
 
     payload = "geheim-{{ 7*7 }}"

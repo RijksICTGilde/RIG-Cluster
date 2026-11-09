@@ -28,7 +28,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from authlib.jose import JsonWebKey, jwt
-from opi.api.user_token_auth import get_metadata_cache
+from opi.http.auth.user_token_auth import get_metadata_cache
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
 AUDIENCE = "zad-api"
@@ -68,10 +68,10 @@ def realm() -> Any:
 
     metadata = {"issuer": ISSUER, "jwks_uri": f"{ISSUER}/protocol/openid-connect/certs"}
     with (
-        patch("opi.api.user_token_auth.fetch_oidc_metadata", AsyncMock(return_value=metadata)),
-        patch("opi.api.user_token_auth.fetch_jwks", AsyncMock(return_value={"keys": [public]})),
-        patch("opi.api.user_token_auth.settings") as mock_settings,
-        patch("opi.api.user_token_auth.get_user_service") as get_service,
+        patch("opi.http.auth.user_token_auth.fetch_oidc_metadata", AsyncMock(return_value=metadata)),
+        patch("opi.http.auth.user_token_auth.fetch_jwks", AsyncMock(return_value={"keys": [public]})),
+        patch("opi.http.auth.user_token_auth.settings") as mock_settings,
+        patch("opi.http.auth.user_token_auth.get_user_service") as get_service,
     ):
         mock_settings.OIDC_DISCOVERY_URL = f"{ISSUER}/.well-known/openid-configuration"
         mock_settings.CLI_TOKEN_AUDIENCE = AUDIENCE

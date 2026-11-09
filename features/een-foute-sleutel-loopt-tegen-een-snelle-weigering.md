@@ -12,7 +12,7 @@ Er zitten nu twee lagen in, die elkaar niet vervangen:
 
 | laag | wat hij tegenhoudt | waar |
 |---|---|---|
-| faalteller | het raden van een sleutel | `opi/api/rate_limiter.py`, aangeroepen uit `opi/api/endpoint_util.py` en uit `opi/middleware/body_limit.py` |
+| faalteller | het raden van een sleutel | `opi/http/rate_limiter.py`, aangeroepen uit `opi/http/auth/endpoint_util.py` en uit `opi/middleware/body_limit.py` |
 | grove API-grens | een stortvloed van goed gevormde verzoeken | `opi/middleware/rate_limit.py` |
 
 Beide weigeren meteen met een **429 en een `Retry-After`**, nooit met een vertraging. Een

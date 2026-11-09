@@ -40,11 +40,11 @@ import pytest
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
 from opi.api.image_router import image_router
-from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
 from opi.core.authz.engine import Cause
 from opi.core.config import settings
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
+from opi.http.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_KEY, FLOOD_COUNTED_IN_SCOPE
 from opi.middleware.body_limit import (
     BodyLimitMiddleware,
     attachment_body_limit,
@@ -627,7 +627,7 @@ def push_stack(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestCli
     project = SimpleNamespace(name="test-project", api_key="de-juiste-sleutel", users=[])
     store = MagicMock()
     store.get.return_value = project
-    monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)
+    monkeypatch.setattr("opi.http.auth.endpoint_util.get_project_store", lambda: store)
 
     connector = MagicMock()
     connector.validate_push_target = MagicMock()
@@ -645,7 +645,7 @@ def test_een_push_zonder_sleutel_leest_geen_body(
 ) -> None:
     client, teller = push_stack
 
-    with caplog.at_level("WARNING", logger="opi.api.endpoint_util"):
+    with caplog.at_level("WARNING", logger="opi.http.auth.endpoint_util"):
         response = client.post(PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)})
 
     assert response.status_code == 401
@@ -660,7 +660,7 @@ def test_een_push_met_een_verkeerde_sleutel_leest_geen_body(
     """Een sleutel die niet bij het project in het pad hoort komt even ver als geen sleutel."""
     client, teller = push_stack
 
-    with caplog.at_level("WARNING", logger="opi.api.endpoint_util"):
+    with caplog.at_level("WARNING", logger="opi.http.auth.endpoint_util"):
         response = client.post(
             PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "de-sleutel-van-een-ander"}
         )
@@ -789,7 +789,7 @@ def push_met_rol(
     def bouw(rol: str) -> tuple[TestClient, _TeltOntvangen]:
         store = MagicMock()
         store.get.return_value = _project_met_rol(rol)
-        monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)
+        monkeypatch.setattr("opi.http.auth.endpoint_util.get_project_store", lambda: store)
         app = FastAPI()
         app.include_router(image_router)
         teller = _TeltOntvangen(app)

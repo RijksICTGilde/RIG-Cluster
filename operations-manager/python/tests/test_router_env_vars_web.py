@@ -19,12 +19,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from opi.http.auth.authz import enforce_route_action
+from opi.http.auth.step_up_dialog import MODAL_TARGET
 from opi.services.project_service import ProjectUser
 from opi.services.project_store import ConflictError
 from opi.services.step_up import STEP_UP_SESSION_KEY, STEP_UP_WINDOW
-from opi.web.authz import enforce_route_action
 from opi.web.router_env_vars import save_env_vars, show_env_vars_window
-from opi.web.step_up_dialog import MODAL_TARGET
 
 pytestmark = pytest.mark.asyncio
 
@@ -97,11 +97,11 @@ async def _poort(request: Any, endpoint: Any, component: str, deployment: str | 
 def _access_patch():
     """De rolpoort staat open; de store levert het vaste project.
 
-    Sinds RC-392 beslist ``opi.web.authz``, dus daar staan de twee lezingen die de poort
+    Sinds RC-392 beslist ``opi.http.auth.authz``, dus daar staan de twee lezingen die de poort
     voedt: het projectbestand en of de aanroeper platformbeheerder is.
     """
     return patch.multiple(
-        "opi.web.authz",
+        "opi.http.auth.authz",
         get_project_store=lambda: SimpleNamespace(
             get=lambda _name: SimpleNamespace(name=PROJECT, data=PROJECT_DATA, users=[])
         ),
@@ -115,7 +115,7 @@ def _access_patch():
 async def test_opening_without_step_up_returns_the_dialog_and_no_value() -> None:
     with (
         _access_patch(),
-        patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")) as dialoog,
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")) as dialoog,
     ):
         antwoord = await _venster(_request(step_up=False), "web")
 
@@ -129,7 +129,7 @@ async def test_opening_without_step_up_returns_the_dialog_and_no_value() -> None
 async def test_opening_with_an_expired_step_up_returns_the_dialog_again() -> None:
     with (
         _access_patch(),
-        patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")) as dialoog,
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")) as dialoog,
     ):
         antwoord = await _venster(_request(oud=True), "web")
 
@@ -140,7 +140,7 @@ async def test_opening_with_an_expired_step_up_returns_the_dialog_again() -> Non
 async def test_saving_without_step_up_writes_nothing() -> None:
     with (
         _access_patch(),
-        patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")),
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")),
         patch("opi.web.router_env_vars.ProjectManager") as pm,
     ):
         await _opslaan(_request({"vars": "A=1"}, step_up=False), "web")
@@ -151,7 +151,7 @@ async def test_saving_without_step_up_writes_nothing() -> None:
 async def test_saving_with_an_expired_step_up_writes_nothing() -> None:
     with (
         _access_patch(),
-        patch("opi.web.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")),
+        patch("opi.http.auth.step_up_dialog.render_step_up_dialog", AsyncMock(return_value="<dialoog>")),
         patch("opi.web.router_env_vars.ProjectManager") as pm,
     ):
         await _opslaan(_request({"vars": "A=1"}, oud=True), "web")
@@ -230,7 +230,7 @@ async def test_an_unknown_component_is_a_404() -> None:
 async def test_a_reader_without_the_edit_role_gets_a_403() -> None:
     with (
         patch.multiple(
-            "opi.web.authz",
+            "opi.http.auth.authz",
             get_project_store=lambda: SimpleNamespace(
                 get=lambda _name: SimpleNamespace(
                     name=PROJECT, data=PROJECT_DATA, users=[ProjectUser(email=EMAIL, roles=["viewer"])]
@@ -258,7 +258,7 @@ async def test_een_developer_mag_een_productiecomponent_niet_openen_via_de_query
     ]
     with (
         patch.multiple(
-            "opi.web.authz",
+            "opi.http.auth.authz",
             get_project_store=lambda: SimpleNamespace(
                 get=lambda _name: SimpleNamespace(
                     name=PROJECT, data=data, users=[ProjectUser(email=EMAIL, roles=["developer"])]
@@ -496,7 +496,7 @@ async def test_a_git_conflict_on_save_rerenders_the_window_and_changes_nothing()
 
 def test_the_repeat_of_a_get_action_is_a_get() -> None:
     """Na de code post de dialoog; het venster dat erachter zit is een GET (RC-388)."""
-    from opi.core.templates_lotc import templates_lotc
+    from opi.http.render.templates_lotc import templates_lotc
 
     html = templates_lotc.env.get_template("bg/_step-up-herhalen.html.j2").render(
         request=SimpleNamespace(state=SimpleNamespace(csrf_token="csrf")),

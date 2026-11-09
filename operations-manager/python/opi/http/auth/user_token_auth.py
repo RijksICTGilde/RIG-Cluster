@@ -31,11 +31,11 @@ from authlib.jose.errors import JoseError
 from fastapi import HTTPException
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
 
-from opi.api.otp_step_up import step_up_problem_response, verify_api_step_up
 from opi.connectors.keycloak import fetch_jwks, fetch_oidc_metadata
 from opi.core.actor import set_actor, user_actor
-from opi.core.auth_decorators import REQUIRES_STEP_UP
 from opi.core.config import settings
+from opi.http.auth.auth_decorators import REQUIRES_STEP_UP
+from opi.http.auth.otp_step_up import step_up_problem_response, verify_api_step_up
 from opi.services.api_step_up_service import ApiStepUpService, sso_session_credential
 from opi.services.step_up import StepUpAction, step_up_fresh
 from opi.services.user_service import get_user_service

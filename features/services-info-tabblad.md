@@ -76,7 +76,7 @@ iemand anders, en een bijlage is het materiaal waarmee je component ergens bij k
 blijft ook staan als de vierde dienst zich meldt - een MinIO-endpoint met sleutel, een
 databaseverbinding - want dat is hetzelfde soort gegeven.
 
-De naam staat bij de tabbladen zelf, in `opi/web/lotc_switch.py` (`PROJECT_TABS`).
+De naam staat bij de tabbladen zelf, in `opi/http/render/lotc_switch.py` (`PROJECT_TABS`).
 
 ## Geen leeg tabblad
 
@@ -86,7 +86,7 @@ waargemaakt wordt.
 
 Wie er via een gedeelde link toch op uitkomt, wordt naar Overzicht verwezen (302) in
 plaats van op een lege pagina te belanden. De regel staat op een plek
-(`TABS_MET_VOORWAARDE` in `opi/web/lotc_switch.py`), zodat de tabbalk en de route hetzelfde
+(`TABS_MET_VOORWAARDE` in `opi/http/render/lotc_switch.py`), zodat de tabbalk en de route hetzelfde
 zeggen.
 
 ## Generiek, geen dienstnamen in het sjabloon

@@ -24,11 +24,11 @@ from fastapi import HTTPException
 from opi.core.audit_trail import begin_trail, record_task, trail
 from opi.core.authz.actions import Action
 from opi.forms.wizard import session
+from opi.http.auth.authz import enforce_route_action
 from opi.middleware.audit import _hoort_in_de_audit
 from opi.services.members import MemberKind
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.web import router_detail_edit
-from opi.web.authz import enforce_route_action
 from starlette.requests import Request
 
 if TYPE_CHECKING:
@@ -124,8 +124,8 @@ class _Environment:
         gebruikers = MagicMock()
         gebruikers.is_platform_admin.return_value = False
         self._patches = [
-            patch("opi.web.authz.get_project_store", return_value=store),
-            patch("opi.web.authz.get_user_service", return_value=gebruikers),
+            patch("opi.http.auth.authz.get_project_store", return_value=store),
+            patch("opi.http.auth.authz.get_user_service", return_value=gebruikers),
             patch.object(router_detail_edit, "get_project_store", return_value=store),
             patch.object(router_detail_edit, "_render_section_html", return_value=""),
             patch.object(router_detail_edit, "_render_modal_step", return_value=""),
@@ -191,7 +191,7 @@ async def test_a_whole_restore_wizard_writes_one_restore_run_row() -> None:
             query={"_wizard_token": token},
             body={},
         )
-        with patch("opi.core.task_helpers.get_task_service", return_value=tasks):
+        with patch("opi.http.task_helpers.get_task_service", return_value=tasks):
             await _call(confirmed, router_detail_edit.modal_wizard_confirm, "modal-restore")
             spoor = trail()
 

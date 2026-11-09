@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from opi.web.lotc_switch import (
+from opi.http.render.lotc_switch import (
     PROJECT_TABS,
     STANDAARD_TAB,
     TABS_MET_DEPLOYMENT,

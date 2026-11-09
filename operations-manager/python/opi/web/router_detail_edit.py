@@ -16,10 +16,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
-from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.service_path import smart_get_value, smart_set_value
 from opi.forms.i18n import get_default_nl_translator
@@ -53,6 +51,18 @@ from opi.forms.wizard.session import (
     load_modal_state_for,
     save_modal_state_by_token,
 )
+from opi.http.auth.auth_decorators import get_current_user, requires_sso
+from opi.http.auth.authz import (
+    authorize,
+    authorized_project,
+    require_action,
+    require_clone_source_access,
+    require_on_any_deployment,
+)
+from opi.http.auth.step_up_dialog import render_step_up_dialog, step_up_dialog_response
+from opi.http.render.lotc_switch import render_fragment
+from opi.http.render.navigation_lotc import to_nldd_icon
+from opi.http.render.templates_lotc import templates_lotc
 from opi.manager.clone_validation import build_restore_target_deployment
 from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
@@ -69,15 +79,6 @@ from opi.services.step_up import (
 )
 from opi.utils.csrf import reject_misfired_form_get
 from opi.utils.yaml_util import dump_yaml_to_string
-from opi.web.authz import (
-    authorize,
-    authorized_project,
-    require_action,
-    require_clone_source_access,
-    require_on_any_deployment,
-)
-from opi.web.lotc_switch import render_fragment
-from opi.web.navigation_lotc import to_nldd_icon
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
@@ -86,7 +87,6 @@ from opi.web.router_wizard import (
     flow_uit_pad,
 )
 from opi.web.router_wizard_attachments import REPLACE_TARGET_KEY
-from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -643,7 +643,7 @@ async def _start_deployment(
 
     project_file_already_saved tells the task not to rewrite: the modal already saved.
     """
-    from opi.core.task_helpers import create_async_task
+    from opi.http.task_helpers import create_async_task
 
     yaml_content = dump_yaml_to_string(result_yaml)
 
@@ -1806,7 +1806,7 @@ async def _handle_backup_restore_submit(
 ) -> HTMLResponse:
     """Handle backup/restore wizard submission via the async task queue."""
     from opi.core.config import settings
-    from opi.core.task_helpers import get_task_service
+    from opi.http.task_helpers import get_task_service
     from opi.services.tasks.async_task_service import TaskType
 
     merged_data = state.get_merged_data()
@@ -1936,7 +1936,7 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
     alone is not enough: the task has to be this project's and this user's to follow,
     the same gate the task-progress fragment uses.
     """
-    from opi.core.task_helpers import get_task_service
+    from opi.http.task_helpers import get_task_service
     from opi.web.router import _require_task_of_project, _v2_task_to_template_context
 
     task_service = get_task_service(request)

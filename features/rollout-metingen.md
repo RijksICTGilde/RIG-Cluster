@@ -27,7 +27,7 @@ stonden op 0,0 of 0,1 s, en dat maakte de lijst lang en rommelig. Na afloop staa
 totale duur onder de lijst, "Klaar in 17,3 s" (`_total_duration_seconds` in
 `opi/web/router.py`). Voor de duur per fase zijn het histogram en de bank hieronder er.
 
-De opmaak staat in `format_step_duration` (`opi/core/template_helpers.py`), beschikbaar als
+De opmaak staat in `format_step_duration` (`opi/http/render/template_helpers.py`), beschikbaar als
 het Jinja-filter `stapduur`. Onder een minuut met een decimaal ("12,5 s"), daarboven in
 minuten ("3 min 5 s").
 

@@ -22,12 +22,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from opi.api.principal import NotRecognised, recognise_principal
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import get_flow
 from opi.forms.wizard.leden import leden_voor_formulier, zet_verborgen_leden_terug
 from opi.forms.wizard.save import apply_modal_edit
 from opi.forms.wizard.state import WizardState
+from opi.http.auth.principal import NotRecognised, recognise_principal
 from opi.services.project_leden import hash_van
 from opi.services.project_service import get_project_service
 from opi.services.user_service import get_user_service
