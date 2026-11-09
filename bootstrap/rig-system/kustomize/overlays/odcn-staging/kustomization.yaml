@@ -55,3 +55,15 @@ patches:
       - op: replace
         path: /spec/repo/sidecarContainers/1/securityContext/runAsUser
         value: 1003110000
+  # One CPU per sidecar instead of the two from cmp-odcn: two would leave the rig-staging
+  # quota (32) no room for the extra pod of a rollout.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: replace
+        path: /spec/repo/sidecarContainers/0/resources/limits/cpu
+        value: "1"
+      - op: replace
+        path: /spec/repo/sidecarContainers/1/resources/limits/cpu
+        value: "1"

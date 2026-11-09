@@ -73,11 +73,13 @@ patches:
       kind: ArgoCD
       name: argocd
     patch: |-
+      # Two CPUs: a cold helmfile render (mb-docs) took over two minutes on 500m and hit
+      # ARGOCD_EXEC_TIMEOUT. odcn-staging sets one, its tenant quota has no room for two.
       - op: add
         path: /spec/repo/sidecarContainers/0/resources
         value:
           limits:
-            cpu: 500m
+            cpu: "2"
             memory: 1Gi
           requests:
             cpu: 100m
@@ -132,7 +134,7 @@ patches:
         path: /spec/repo/sidecarContainers/1/resources
         value:
           limits:
-            cpu: 500m
+            cpu: "2"
             memory: 1Gi
           requests:
             cpu: 100m
