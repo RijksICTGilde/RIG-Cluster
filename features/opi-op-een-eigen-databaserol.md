@@ -86,7 +86,7 @@ ontwikkelomgeving (`local`, `sandboxed-local`) is het een WARNING, zodat
 | `DATABASE_APP_USER` | `operations_manager` | De rol waarmee OPI zijn eigen database opent |
 | `DATABASE_APP_PASSWORD` | geen | Het wachtwoord van die rol; leeg is een fout, geen terugval |
 
-`DATABASE_APP_PASSWORD` staat in de denylist van `opi/utils/subprocess_env.py`, dus een
+`DATABASE_APP_PASSWORD` staat in de denylist van `opi/core/subprocess_env.py`, dus een
 subproces dat OPI start erft hem niet.
 
 ## Uitrolvolgorde

@@ -7,7 +7,7 @@ does so while it initialises.
 import logging
 import os
 
-from opi.utils.logging_config import setup_logging
+from opi.core.logging_config import setup_logging
 
 
 def initialize_logging() -> None:

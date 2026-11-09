@@ -23,7 +23,7 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_namespace
 from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.utils.naming import extract_domain_from_url
 from opi.utils.yaml_util import load_yaml_safe
 
@@ -102,7 +102,7 @@ class KeycloakSetup:
                 logger.info("Using default bootstrap configuration (production mode)")
 
             # Step 1: Execute bootstrap (creates rig-platform realm)
-            yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / yaml_filename
+            yaml_path = Path(__file__).parent.parent.parent / "configs" / "keycloak" / yaml_filename
             handler = KeycloakYamlHandler(self.keycloak)
             await handler.execute_config(yaml_path, context)
             logger.info("Bootstrap realm setup completed")
@@ -179,7 +179,7 @@ class KeycloakSetup:
         dus hij krijgt deze bescherming niet via create_realm. Faalt dit, gaat de bootstrap door.
         """
         keycloak = self.keycloak or await create_keycloak_connector()
-        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / "master-realm.yaml"
+        yaml_path = Path(__file__).parent.parent.parent / "configs" / "keycloak" / "master-realm.yaml"
         context = {
             "realm_name": "master",
             "events_expiration_seconds": settings.KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS * SECONDS_PER_DAY,
@@ -252,7 +252,7 @@ class KeycloakSetup:
         else:
             project_filename = "operations-manager.yaml"
 
-        project_file = Path(__file__).parent.parent / "configs" / "projects" / project_filename
+        project_file = Path(__file__).parent.parent.parent / "configs" / "projects" / project_filename
         logger.info(f"Setting up OPI realm from project file: {project_filename}")
 
         # Read bundled project file
@@ -283,7 +283,7 @@ class KeycloakSetup:
         context.update(keycloak_config.get("variables", {}))
 
         # Execute YAML template (creates realm, IDP, client scopes, invite client)
-        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
+        yaml_path = Path(__file__).parent.parent.parent / "configs" / "keycloak" / f"{template_name}.yaml"
         keycloak = self.keycloak or await create_keycloak_connector()
         handler = KeycloakYamlHandler(keycloak)
         await handler.execute_config(yaml_path, context)
@@ -415,7 +415,7 @@ class KeycloakSetup:
 
                 # Get the template path for generic secret
                 template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
+                    os.path.dirname(__file__), "..", "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
                 )
 
                 # Prepare the values for the secret

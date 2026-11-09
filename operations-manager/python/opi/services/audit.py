@@ -24,6 +24,7 @@ from opi.core.authz.actions import Action
 from opi.core.config import settings
 from opi.core.db import session_scope
 from opi.core.flow_id import get_flow_id
+from opi.core.logging_redact import sanitize_for_log
 from opi.services.persistence.notification_events import NotificationEvent
 
 if TYPE_CHECKING:
@@ -184,10 +185,7 @@ async def record_action(
         # het verzoek zelf moet doorgaan. De teller maakt dat het niet stil gebeurt.
         global _write_failures
         _write_failures += 1
-        # Lokale import: services mogen opi.api.router niet op moduleniveau binnenhalen.
         # Gefilterd: action en subject komen van de aanroeper, dus saniteren voorkomt dubbele logregels.
-        from opi.api.router import sanitize_for_log
-
         logger.exception(
             "Audit write failed (action=%s, subject=%s)",
             sanitize_for_log(action),

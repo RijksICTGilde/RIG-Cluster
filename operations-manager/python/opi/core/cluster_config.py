@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from opi.core.config import settings
-from opi.utils.subprocess_env import child_env
+from opi.core.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 

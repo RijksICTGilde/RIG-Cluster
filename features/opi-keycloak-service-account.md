@@ -180,7 +180,7 @@ blijft om zijn eigen reden staan, zie het commentaar in `keycloak.py`.
 
 - `opi/core/config.py` - `KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS`.
 - `opi/connectors/keycloak.py` - client-credentials mode in `KeycloakConnector.__init__`, factory selection, `connection_works()`, `ensure_master_service_account_client()`.
-- `opi/bootstrap/keycloak_setup.py` - `ensure_master_admin_service_account()` (first-boot self-bootstrap),
+- `opi/manager/bootstrap/keycloak_setup.py` - `ensure_master_admin_service_account()` (first-boot self-bootstrap),
   `ensure_master_realm_hardening()` (de stand van de master-realm, bij elke start).
 - `opi/configs/keycloak/master-realm.yaml` - die stand; `KeycloakYamlHandler.ensure_realm_hardening()` zet hem.
 - `opi/runtime/startup/startup.py` - availability probe falls back to admin password before the client exists.

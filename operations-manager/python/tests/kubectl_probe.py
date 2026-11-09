@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
-from opi.utils.subprocess_env import child_env
+from opi.core.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

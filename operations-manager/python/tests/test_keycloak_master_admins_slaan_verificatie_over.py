@@ -29,8 +29,8 @@ OPI = Path(__file__).resolve().parents[1] / "opi"
 #: (bij het inrichten en bij de OTP-retrofit) en een set zou het verlies van een van de
 #: twee niet zien.
 VERWACHTE_UITZONDERINGEN = {
-    ("bootstrap/keycloak_setup.py", "master"): 1,
-    ("bootstrap/keycloak_setup.py", "operations-manager"): 1,
+    ("manager/bootstrap/keycloak_setup.py", "master"): 1,
+    ("manager/bootstrap/keycloak_setup.py", "operations-manager"): 1,
     ("manager/keycloak_manager.py", "master"): 2,
 }
 

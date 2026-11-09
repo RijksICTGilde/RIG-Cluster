@@ -98,7 +98,7 @@ Mode `0440` met `fsGroup: 1001`, niet `0400`: kubelet geeft bestanden in een sec
 aan root, en de groep is het enige wat met `fsGroup` naar de uid van OPI te brengen is.
 
 **Geef een kindproces zijn omgeving met `child_env()`, nooit met `os.environ`.**
-`child_env()` (`opi/utils/subprocess_env.py`) weert alles met prefix `SOPS_AGE_` plus elke
+`child_env()` (`opi/core/subprocess_env.py`) weert alles met prefix `SOPS_AGE_` plus elke
 naam uit de env-bronnen van het deployment: elke `secretKeyRef` en elk secret achter een
 `envFrom`, dat laatste zowel uit `base/deployment.yaml` als uit de patches van de overlays
 (productie zet er met een inline JSON-patch in `kustomization.yaml` een derde bij,

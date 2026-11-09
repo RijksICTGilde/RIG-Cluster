@@ -24,9 +24,9 @@ from opi.connectors.http import client_session
 from opi.connectors.minio_mc import MinioExecutionError, create_minio_connector
 from opi.core.cluster_config import get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
+from opi.core.subprocess_env import child_env
 from opi.utils.naming import validate_bucket_name, validate_object_store_username, validate_policy_name
 from opi.utils.s3_policy import ALL_BUCKET_PERMISSIONS, bucket_access_policy
-from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 

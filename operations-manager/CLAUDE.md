@@ -40,6 +40,7 @@ opi/
 |   +-- metrics_explorer.py #  Prometheus metrics UI
 |
 |-- manager/               # Business logic orchestration
+|   |-- bootstrap/         #   Keycloak bootstrap during cluster init
 |   |-- project_manager.py #   Primary orchestrator (large file)
 |   |-- argo_manager.py    #   ArgoCD application lifecycle
 |   |-- database_manager.py #  PostgreSQL schema/user management
@@ -89,10 +90,6 @@ opi/
 |   |-- schema_migration.py #  Database schema migrations
 |   +-- oom_watcher.py     #   OOM kill detection for auto-tuning
 |
-|-- handlers/              # Request processing
-|   |-- project_file_handler.py # Project file CRUD
-|   +-- sops.py            #   SOPS-specific handling
-|
 |-- middleware/            # HTTP middleware
 |   |-- authorization.py   #   RBAC and user isolation
 |   |-- csrf.py            #   CSRF protection
@@ -102,15 +99,13 @@ opi/
 |   |-- age.py             #   AGE encryption/decryption
 |   |-- sops.py            #   SOPS file operations
 |   |-- naming.py          #   Naming conventions (large file)
-|   |-- secrets.py         #   Secret generation/management
 |   +-- env_vars.py        #   Environment variable handling
 |
 |-- templates/             # Jinja2 HTML templates for web UI
 |-- jobs/                  # Background job scheduling
 |-- migrations/            # Alembic database migrations
 |-- locale/                # i18n translations
-|-- configs/               # Configuration presets
-+-- bootstrap/             # Keycloak bootstrap during cluster init
++-- configs/               # Configuration presets
 ```
 
 Manifest templates (Jinja2 for K8s YAML generation) are at: `operations-manager/python/manifests/*.yaml.jinja`

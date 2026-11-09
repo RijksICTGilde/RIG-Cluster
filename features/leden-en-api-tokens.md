@@ -279,7 +279,7 @@ naast de naam, en toont de formulieren om een token uit te geven of te roteren d
 Bij de andere leden zitten die in een accordion.
 
 Logt er ergens toch een token mee, dan maskeert `SecretRedactionFilter`
-(`opi/utils/logging_redact.py`) de vorm `zad_` plus 40 of meer url-veilige tekens. Vandaag
+(`opi/core/logging_redact.py`) de vorm `zad_` plus 40 of meer url-veilige tekens. Vandaag
 logt niets de waarde; dit is het vangnet voor de volgende logregel die hem meeneemt.
 
 ## De migratie van de projectsleutel

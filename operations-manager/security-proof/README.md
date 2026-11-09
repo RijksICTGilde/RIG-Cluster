@@ -122,7 +122,7 @@ als de gate** draait: zonder opvang gaat zijn log naar de stdout van de gate en 
 niet meer per proef te scheiden. Elke proef markeert daarom zijn eigen venster in het logboek
 (`pytest_runtest_logstart`/`logfinish` in `security_tests/conftest.py`), en het rapport leest
 per bevinding alleen de regels uit dat venster. Elke regel gaat door
-`opi/utils/logging_redact.py`, dus een sleutel, een wachtwoord of een uitnodigingssleutel in
+`opi/core/logging_redact.py`, dus een sleutel, een wachtwoord of een uitnodigingssleutel in
 een logregel staat gemaskeerd in het rapport.
 
 Het pad van een verzoek komt van buiten, dus het logboek houdt het op een regel: de twee

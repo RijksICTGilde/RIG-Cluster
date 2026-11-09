@@ -36,7 +36,6 @@ from opi.api.router import (
     UpdateComponentRequest,
     UpdateImageRequest,
     UpsertDeploymentRequest,
-    sanitize_for_log,
     subdomain_check_rate_limiter,
 )
 from opi.api.task_models import (
@@ -111,6 +110,7 @@ from opi.core.cluster_config import (
     supports_custom_domain_certificates,
 )
 from opi.core.config import settings
+from opi.core.logging_redact import sanitize_for_log
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.project_validation import validate_component_references
 from opi.services.approvals import collect_deployment_approval_notices

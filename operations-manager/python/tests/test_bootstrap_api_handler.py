@@ -7,7 +7,7 @@ touches it, so the YAML-loading migration to ``load_yaml_safe`` ran untested.
 from pathlib import Path
 
 import pytest
-from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
+from opi.manager.bootstrap.bootstrap_api_handler import BootstrapApiHandler
 
 
 class TestLoadYaml:

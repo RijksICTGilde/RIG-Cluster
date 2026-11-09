@@ -2,10 +2,10 @@
 
 import logging
 
-from opi.bootstrap.keycloak_setup import extract_realm_from_discovery_url
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.config import settings
+from opi.manager.bootstrap.keycloak_setup import extract_realm_from_discovery_url
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ async def ensure_keycloak_credentials() -> bool:
 
     # Phase 2: Get or create credentials using existing Keycloak setup logic
     try:
-        from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
+        from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
 
         keycloak_setup = KeycloakSetup()
 

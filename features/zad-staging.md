@@ -129,7 +129,7 @@ Een wijziging aan de bootstrap-laag zelf (deze Applications, de AppProjects) gaa
 | wat | waar |
 |---|---|
 | clusterconfiguratie | `operations-manager/python/opi/core/cluster_config.py`, sleutel `odcn-staging` |
-| Keycloak-stand | `opi/bootstrap/keycloak_setup.py`, `KEYCLOAK_BOOTSTRAP_CONFIG=staging` |
+| Keycloak-stand | `opi/manager/bootstrap/keycloak_setup.py`, `KEYCLOAK_BOOTSTRAP_CONFIG=staging` |
 | Taskfile-omgeving | `.env-taskfile-odcn-staging` |
 | clusterlijst | `infrastructure/bootstrap/clusters/odcn-staging` |
 | componenten | `infrastructure/bootstrap/infrastructure/*/overlays/odcn-staging` |

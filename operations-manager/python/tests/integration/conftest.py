@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from opi.bootstrap.keycloak_setup import KeycloakSetup
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.core.config import settings
 from opi.manager.argo_manager import ArgoManager
+from opi.manager.bootstrap.keycloak_setup import KeycloakSetup
 from opi.manager.project_manager import ProjectManager
 from tests.integration import argocd_live, forgejo_live, keycloak_image, kubernetes_live
 

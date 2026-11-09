@@ -32,7 +32,6 @@ import asyncpg
 import httpx
 import pytest
 import pytest_asyncio
-from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
 from opi.connectors.git_repo import GitCredentials, get_git_repo, reset_git_repos
 from opi.connectors.mail import MAIL_LIMITER_PREFIX, MAIL_SENDER_NAME_PREFIX
 from opi.core import readiness as readiness_module
@@ -40,6 +39,7 @@ from opi.core.cluster_config import namespace_labels
 from opi.core.config import settings
 from opi.core.database_pools import close_database_pools
 from opi.core.readiness import get_readiness_state
+from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
 from opi.runtime.startup.startup import check_minio_availability, run_startup_tasks
 from opi.server import create_app, lifespan
 from opi.services import project_store as project_store_module

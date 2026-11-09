@@ -18,9 +18,9 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
 from opi.connectors.keycloak import RealmType
 from opi.core.config import settings
+from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
 from tests.integration.keycloak_image import (
     SERVICE_ACCOUNT_SECRET,
     TIMEOUT,
@@ -1258,7 +1258,7 @@ class TestBootstrapFlow:
             async def apply_manifest(self, path: str) -> None:
                 applied.append(path)
 
-        monkeypatch.setattr("opi.bootstrap.keycloak_setup.KubectlConnector", FakeKubectl)
+        monkeypatch.setattr("opi.manager.bootstrap.keycloak_setup.KubectlConnector", FakeKubectl)
         monkeypatch.setattr(settings, "KEYCLOAK_BOOTSTRAP_CONFIG", "local")
         monkeypatch.setattr(settings, "KEYCLOAK_DEFAULT_REALM", "rig-platform")
         monkeypatch.setattr(settings, "KEYCLOAK_ENFORCE_MASTER_OTP", False)

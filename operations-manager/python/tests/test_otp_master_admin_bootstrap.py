@@ -14,7 +14,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.bootstrap.keycloak_setup import KeycloakSetup
+from opi.manager.bootstrap.keycloak_setup import KeycloakSetup
 
 
 def _setup(existing_user: dict | None = None) -> tuple[KeycloakSetup, MagicMock]:
@@ -34,7 +34,7 @@ def _settings(**overrides):
         "KEYCLOAK_OTP_ADMIN_TOTP_SECRET": "SEED",
     }
     values.update(overrides)
-    return patch.multiple("opi.bootstrap.keycloak_setup.settings", **values)
+    return patch.multiple("opi.manager.bootstrap.keycloak_setup.settings", **values)
 
 
 async def test_the_admin_is_created_with_its_otp_credential() -> None:

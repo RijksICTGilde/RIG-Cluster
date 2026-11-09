@@ -7,7 +7,7 @@ data:
   .env: |
     CLUSTER_MANAGER=odcn-staging
     # Upstream-IdP zoals de sandbox, maar geen lokale beheerder in het OPI-realm: staging
-    # is een pentestomgeving. Zie opi/bootstrap/keycloak_setup.py.
+    # is een pentestomgeving. Zie opi/manager/bootstrap/keycloak_setup.py.
     KEYCLOAK_BOOTSTRAP_CONFIG=staging
 
     # De wachtwoorden van de drie git-repos staan niet hier maar in het env-secret uit

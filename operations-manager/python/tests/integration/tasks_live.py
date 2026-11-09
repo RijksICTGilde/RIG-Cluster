@@ -44,10 +44,10 @@ import uvicorn
 import yaml
 from itsdangerous import TimestampSigner
 from opi.api.router import SelfServiceComponent, SelfServiceProjectRequest
-from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
 from opi.core.cluster_config import CLUSTER_CONFIG, get_prefixed_namespace
 from opi.core.config import settings
 from opi.manager.backup import BackupManager, group_snapshots_into_runs
+from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME
 from opi.server import create_app
 from opi.services.catalog.sleep_mode.manifests import WAKER_ROLE_LABEL
 from opi.services.project_file_handler import ProjectFileHandler

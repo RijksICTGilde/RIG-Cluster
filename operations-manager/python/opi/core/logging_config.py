@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from opi.core.flow_id import get_flow_id
-from opi.utils.logging_redact import SecretRedactionFilter, redact_invite_key_in_path
+from opi.core.logging_redact import SecretRedactionFilter, redact_invite_key_in_path
 
 # Replace the default LogRecord factory so that every record carries flow_id, whichever
 # logger, handler or third-party library created it.

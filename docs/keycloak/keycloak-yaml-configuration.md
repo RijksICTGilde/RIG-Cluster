@@ -19,7 +19,7 @@ This hybrid approach allows you to:
 
 ## Architecture
 
-### YAML Handler (`opi/handlers/keycloak_yaml_handler.py`)
+### YAML Handler (`opi/manager/bootstrap/keycloak_yaml_handler.py`)
 
 Processes YAML configurations and executes them via the Keycloak connector. The handler:
 - Resolves variables using Jinja2-style `{{ variable }}` syntax
@@ -382,7 +382,7 @@ operations-manager/python/opi/configs/keycloak/
 
 ```python
 from pathlib import Path
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.connectors.keycloak import create_keycloak_connector
 
 # Create connector
@@ -450,7 +450,7 @@ The Keycloak connector provides methods for all operations:
 - `create_realm_role()` - Create realm roles
 - `create_group()` - Create groups
 
-### Handler Processing (`opi/handlers/keycloak_yaml_handler.py`)
+### Handler Processing (`opi/manager/bootstrap/keycloak_yaml_handler.py`)
 
 The handler processes each section:
 

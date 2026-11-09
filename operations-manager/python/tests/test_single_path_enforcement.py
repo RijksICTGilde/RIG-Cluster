@@ -228,7 +228,7 @@ def _scan_for_direct_cache_access() -> list[str]:
     direct write can leave the cache disagreeing with what is actually in git.
     """
     violations: list[str] = []
-    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/web", "opi/handlers", "opi/middleware", "opi/forms"]:
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/web", "opi/middleware", "opi/forms"]:
         directory = _PYTHON_ROOT / rel_dir
         if not directory.exists():
             continue
@@ -283,7 +283,7 @@ def test_no_one_injects_a_projects_connector_into_project_manager() -> None:
     create failed with "Project file not found at HEAD".
     """
     violations: list[str] = []
-    for rel_dir in [*_SCANNED_DIRS, "opi/manager", "opi/handlers"]:
+    for rel_dir in [*_SCANNED_DIRS, "opi/manager"]:
         for py_file in (_PYTHON_ROOT / rel_dir).rglob("*.py"):
             rel_path = py_file.relative_to(_PYTHON_ROOT).as_posix()
             if rel_path == "opi/manager/project_manager.py":

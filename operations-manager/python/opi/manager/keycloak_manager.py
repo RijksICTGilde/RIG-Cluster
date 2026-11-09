@@ -26,7 +26,7 @@ from opi.core.cluster_config import (
     get_namespace,
 )
 from opi.core.config import settings
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.keycloak.config_model import (
     LEGACY_ACCOUNT_LINK,

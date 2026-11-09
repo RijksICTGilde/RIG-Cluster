@@ -15,11 +15,11 @@ from typing import Any
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
+from opi.core.subprocess_env import child_env
 from opi.generation.manifests import render_template_source
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.utils.argocd_tracking import TrackedResource, tracked_resource_from_item
 from opi.utils.connect_retry import backoff_delays, retry_on_connect_error
-from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 

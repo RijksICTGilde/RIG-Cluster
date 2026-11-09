@@ -16,11 +16,11 @@ from urllib.parse import ParseResult, urlparse, urlunparse
 from opi.core.actor import Actor, get_actor
 from opi.core.config import settings
 from opi.core.metrics import PHASE_GIT_PREPARE, PHASE_GIT_PUSH, rollout_phase
+from opi.core.subprocess_env import child_env
 from opi.generation.manifests import CMP_ENV_NAME, CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
-from opi.utils.subprocess_env import child_env
 from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 if TYPE_CHECKING:

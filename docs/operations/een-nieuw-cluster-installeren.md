@@ -633,7 +633,7 @@ Alles hieronder gaat vandaag over een **directe verbinding** en niet via federat
 | verbinding | waar | binnen één cluster | cross-cluster |
 |---|---|---|---|
 | `kubectl` naar de API-server | `opi/connectors/kubectl.py` | werkt (OPI zit in het cluster) | **kan niet** — geen mechanisme |
-| chisel-tunnels voor databases en MinIO | `opi/connectors/chisel_connector.py`, `opi/utils/chisel_helper.py` | werkt | zie hieronder |
+| chisel-tunnels voor databases en MinIO | `opi/connectors/chisel_connector.py`, `opi/manager/chisel_helper.py` | werkt | zie hieronder |
 | Keycloak-beheer (realms, clients) | Keycloak-connector | werkt als Keycloak bereikbaar is | hangt aan vraag 3.6-23 |
 | database-kloon tussen omgevingen | `opi/manager/database_manager.py`, `opi/manager/clone_validation.py` | werkt | **moet nog** |
 | MinIO-kopie | `opi/manager/minio_manager.py` | werkt | **moet nog** |

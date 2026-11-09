@@ -14,7 +14,7 @@ import pathlib
 import pytest
 import yaml
 from opi.core.config import _get_settings, load_sops_age_key_content, parse_sops_age_key_content
-from opi.utils.subprocess_env import PLATFORM_SECRET_NAMES, PLATFORM_SECRET_PREFIXES, child_env
+from opi.core.subprocess_env import PLATFORM_SECRET_NAMES, PLATFORM_SECRET_PREFIXES, child_env
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 KUSTOMIZE_ROOT = REPO_ROOT / "bootstrap/rig-system/kustomize/operations-manager"
@@ -30,7 +30,7 @@ ENV_SOURCE_MANIFESTS = {
     "operations-manager-env-secrets": KUSTOMIZE_ROOT / "overlays/odcn-production/operations-manager-env-secrets.yaml",
 }
 # Dit secret staat niet in git: OPI schrijft het zelf bij het opstarten
-# (opi/bootstrap/keycloak_setup.py, _update_operations_secret), met deze sleutels.
+# (opi/manager/bootstrap/keycloak_setup.py, _update_operations_secret), met deze sleutels.
 OPI_WRITTEN_ENV_SOURCES = {
     "operations-manager-keycloak": {
         "OIDC_CLIENT_ID",

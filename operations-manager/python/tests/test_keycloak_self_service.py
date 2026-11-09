@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from keycloak.exceptions import KeycloakError
 from opi.connectors.keycloak import KeycloakConnector
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 
 BLUEPRINT_DIR = Path(__file__).parent.parent / "opi" / "configs" / "keycloak"
 
@@ -391,7 +391,7 @@ def test_elk_blueprint_noemt_elk_gelezen_realmveld() -> None:
     toenmalige vier velden van ``sso-support`` en kreeg zo stil ``verifyEmail: true`` op de
     realm van ZAD zelf; sinds die blauwdruk ze zelf noemt, doet hij hier gewoon mee.
     """
-    from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
+    from opi.manager.bootstrap.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
     from ruamel.yaml import YAML
 
     # master-realm.yaml doet niet mee: die realm maakt Keycloak zelf, hij komt nooit langs
@@ -492,7 +492,7 @@ async def test_de_smtpserver_noemt_geen_enkele_bestemming() -> None:
     "Please provide a valid address" en een SEND_VERIFY_EMAIL_ERROR. Komt hier ooit een host
     bij, dan is dat stil weg.
     """
-    from opi.handlers.keycloak_yaml_handler import _SMTP_CONNECTION_KEYS
+    from opi.manager.bootstrap.keycloak_yaml_handler import _SMTP_CONNECTION_KEYS
 
     geschreven = KeycloakYamlHandler._smtp_server_settings()
 

@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.keycloak_manager import KeycloakManager
 
 

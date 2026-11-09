@@ -10,8 +10,8 @@ from pydantic_settings import BaseSettings
 
 # Initialize logging early to ensure it's available during config loading
 from opi.core.early_logging import initialize_logging  # noqa: F401 (side-effect import)
+from opi.core.logging_config import setup_logging
 from opi.core.secret_key import generate_secret_key, validate_secret_key
-from opi.utils.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 

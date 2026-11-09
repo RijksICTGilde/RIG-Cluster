@@ -15,10 +15,10 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.core.actor import set_actor, user_actor
+from opi.core.logging_redact import redact_invite_key_in_path
 from opi.core.session_guard import drop_refused_session, valid_session_user
 from opi.services.step_up import has_fresh_step_up, step_up_fresh
 from opi.services.user_service import get_user_service
-from opi.utils.logging_redact import redact_invite_key_in_path
 
 if typing.TYPE_CHECKING:
     from fastapi import FastAPI

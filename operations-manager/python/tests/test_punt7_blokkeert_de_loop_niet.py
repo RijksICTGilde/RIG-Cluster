@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from opi.connectors.prometheus import PrometheusConnector
 from opi.core.cluster_config import _ca_hash_cache, _compute_ca_hash
+from opi.manager.chisel_helper import chisel_tunnel
 from opi.services.metrics_queries import TimeWindow, deployment_pod_prefixes, timeseries_per_workload
-from opi.utils.chisel_helper import chisel_tunnel
 from tests.loop_meeloper import meeloper
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ async def test_het_opzetten_van_een_chisel_tunnel_blokkeert_de_loop_niet() -> No
 
     config = {"server-url": "https://chisel.example.org", "username": "u", "password": "plain:w"}
 
-    with patch("opi.utils.chisel_helper.ChiselConnector", MagicMock(return_value=verbinding)):
+    with patch("opi.manager.chisel_helper.ChiselConnector", MagicMock(return_value=verbinding)):
         async with meeloper() as meting:
             async with chisel_tunnel(config, "postgres.svc", 5432) as endpoint:
                 assert endpoint["port"] == 15432

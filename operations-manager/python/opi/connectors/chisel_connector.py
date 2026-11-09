@@ -12,7 +12,7 @@ import time
 from contextlib import contextmanager
 from typing import TypedDict
 
-from opi.utils.subprocess_env import child_env
+from opi.core.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 

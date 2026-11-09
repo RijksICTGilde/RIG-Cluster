@@ -16,8 +16,8 @@ from typing import Any, ClassVar
 import asyncpg
 
 from opi.core.config import settings
+from opi.core.subprocess_env import child_env
 from opi.utils.patterns import POSTGRES_CLONEABLE_SCHEMA, POSTGRES_IDENTIFIER
-from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 

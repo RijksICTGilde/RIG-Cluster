@@ -52,7 +52,6 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # A Bearer token in free text. At least 20 characters, otherwise this also catches a
     # sentence such as "Bearer authentication failed for route".
     (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]{20,}=*"), rf"\1{_REDACTED}"),
-    # password=value, as in a URL, a command line or an env dump.
     (re.compile(r"(?i)(password\s*=\s*)[^\s,;&'\"]+"), rf"\1{_REDACTED}"),
     # "password": "value" in JSON. The key has to be quoted, otherwise this also catches
     # "Failed to decrypt registry password: <error>".
@@ -60,21 +59,40 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # PASSWORD 'value' from SQL: CREATE ROLE, ALTER ROLE and ALTER USER write the password
     # that way, and ENCRYPTED PASSWORD falls under the same pattern. The optional = covers
     # password='value', which the pattern above leaves alone because the value is quoted.
-    # Dollar quoting is not here: that shape does not occur in this codebase.
     # The two quantifiers are possessive (``*+``): with a plain ``*`` this pattern is
     # quadratic on "password" followed by a long run of whitespace with no ``'`` after it,
     # and this filter runs synchronously on the event loop. Whitespace, ``=`` and ``'``
     # exclude one another, so backtracking can never produce a match here.
     (re.compile(r"(?i)(password\s*+=?\s*+)'[^']*'"), rf"\1'{_REDACTED}'"),
-    # An AGE private key, wherever it sits in the record.
     (re.compile(r"AGE-SECRET-KEY-1[0-9A-Z]+"), f"AGE-SECRET-KEY-{_REDACTED}"),
-    # An API token (RC-322): ``zad_`` plus 43 url-safe characters. The prefix makes the shape
-    # recognisable on its own, so this net also works where the token is NOT in a known
-    # header. Nothing logs the value today; this is here for the next log record that takes
-    # it along by accident. The 40 is below the 43 of ``secrets.token_urlsafe(32)``, so a
-    # truncated value falls in as well.
+    # An API token (RC-322): ``zad_`` plus 43 url-safe characters. The 40 is below the 43
+    # of ``secrets.token_urlsafe(32)``, so a truncated value falls in as well.
     (re.compile(r"zad_[A-Za-z0-9_-]{40,}"), f"zad_{_REDACTED}"),
 )
+
+
+def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
+    """Sanitize a value for safe inclusion in log messages.
+
+    Prevents log injection attacks by:
+    - Truncating to max_length
+    - Removing newlines and carriage returns
+    - Removing other control characters
+
+    Args:
+        value: The value to sanitize
+        max_length: Maximum length of the sanitized value (default: 64)
+
+    Returns:
+        Sanitized string safe for logging
+    """
+    if not value:
+        return ""
+    # Truncate, remove newlines/carriage returns, and strip control characters
+    sanitized = value[:max_length].replace("\n", "").replace("\r", "")
+    # Remove other ASCII control characters (0x00-0x1F except tab, 0x7F)
+    sanitized = "".join(c for c in sanitized if ord(c) >= 32 or c == "\t")
+    return sanitized
 
 
 def redact_sensitive_headers(headers: dict[str, str]) -> dict[str, str]:

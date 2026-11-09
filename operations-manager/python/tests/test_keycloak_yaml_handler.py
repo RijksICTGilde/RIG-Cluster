@@ -1,6 +1,6 @@
 """Unit tests for KeycloakYamlHandler helpers."""
 
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 
 
 class TestBuildClientDataFromYaml:

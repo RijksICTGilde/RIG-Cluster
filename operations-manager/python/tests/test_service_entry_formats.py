@@ -141,7 +141,7 @@ class TestConfiguredServiceReaders:
             assert MinioManager._get_minio_service_config(None, project, "dep") == cfg
 
     def test_bootstrap_keycloak_config_read_in_every_format(self) -> None:
-        from opi.bootstrap.keycloak_setup import KeycloakSetup
+        from opi.manager.bootstrap.keycloak_setup import KeycloakSetup
 
         cfg = {"template": "algoritmeregister", "restrict_access": {"enabled": True}}
         for entry in _formats(ServiceType.KEYCLOAK.value, config=cfg):
@@ -216,7 +216,7 @@ class TestFilterEmptyServiceEntries:
 _FORBIDDEN_RAW_READS = [
     ("opi/manager/minio_manager.py", "next(iter(service.keys()))"),
     ("opi/manager/redis_manager.py", "next(iter(service.keys()))"),
-    ("opi/bootstrap/keycloak_setup.py", '"keycloak" in service'),
+    ("opi/manager/bootstrap/keycloak_setup.py", '"keycloak" in service'),
     ("opi/services/project_file_handler.py", "next(iter(service.keys()))"),
 ]
 

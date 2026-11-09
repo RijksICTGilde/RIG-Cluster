@@ -22,7 +22,7 @@ GEVOELIGE_BESTANDEN = [
     "operations-manager/python/opi/utils/api_keys.py",
     "operations-manager/python/opi/utils/age.py",
     "operations-manager/python/opi/utils/sops.py",
-    "operations-manager/python/opi/utils/logging_redact.py",
+    "operations-manager/python/opi/core/logging_redact.py",
     "operations-manager/python/opi/core/actor.py",
     "operations-manager/python/opi/utils/git_signing.py",
     "operations-manager/python/manifests/deployment.yaml.jinja",

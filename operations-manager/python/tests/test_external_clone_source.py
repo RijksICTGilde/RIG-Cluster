@@ -548,7 +548,7 @@ def _wrapper_self(database_manager: Any, minio_manager: Any) -> Any:
 def chisel_connector() -> Iterator[MagicMock]:
     connector = MagicMock()
     connector.get_local_endpoint.return_value = {"host": "localhost", "port": 15432}
-    with patch("opi.utils.chisel_helper.ChiselConnector", return_value=connector):
+    with patch("opi.manager.chisel_helper.ChiselConnector", return_value=connector):
         yield connector
 
 

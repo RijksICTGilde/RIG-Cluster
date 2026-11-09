@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from opi.handlers.bootstrap_api_handler import BootstrapApiHandler
+from opi.manager.bootstrap.bootstrap_api_handler import BootstrapApiHandler
 from opi.services import ServiceType
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project

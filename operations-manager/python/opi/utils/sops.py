@@ -6,7 +6,7 @@ import os
 import subprocess
 from typing import NamedTuple
 
-from opi.utils.subprocess_env import child_env
+from opi.core.subprocess_env import child_env
 from opi.utils.yaml_util import YAMLError, load_yaml_safe
 
 logger = logging.getLogger(__name__)

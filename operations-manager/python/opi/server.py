@@ -48,6 +48,7 @@ from opi.core.errors import (
     status_phrase,
     with_reference,
 )
+from opi.core.logging_redact import redact_invite_key_in_path
 from opi.core.static_files import CacheControlledStaticFiles, lotc_cache_control
 from opi.middleware.audit import AuditMiddleware
 from opi.middleware.authorization import AuthorizationMiddleware
@@ -60,7 +61,6 @@ from opi.runtime.periodic.git_monitor import start_git_monitoring, stop_git_moni
 from opi.runtime.startup.startup import run_startup_tasks, warm_connector_singletons
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
-from opi.utils.logging_redact import redact_invite_key_in_path
 from opi.web.lotc_switch import render
 from opi.web.router import dev_router, web_router
 

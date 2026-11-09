@@ -1585,7 +1585,7 @@ class MinioManager:
         Internal method that handles tunnel setup/teardown and delegates the actual
         clone operation to the direct clone implementation.
         """
-        from opi.utils.chisel_helper import chisel_tunnel
+        from opi.manager.chisel_helper import chisel_tunnel
 
         logger.info(
             f"Starting MinIO clone via Chisel tunnel: {project_name}/{deployment_name} "

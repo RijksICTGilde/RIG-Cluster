@@ -14,9 +14,9 @@ import logging
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from opi.api.router import sanitize_for_log
 from opi.core.auth_decorators import ELEVATE_PATH, elevate_url, get_current_user, requires_sso
 from opi.core.authz.actions import Action, action
+from opi.core.logging_redact import sanitize_for_log
 from opi.services.audit import record_step_up_attempt
 from opi.services.step_up import STEP_UP_WINDOW, clear_step_up, record_step_up, step_up_until
 from opi.services.user_otp_service import OtpVerification, UserOtpService

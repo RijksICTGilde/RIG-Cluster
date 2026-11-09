@@ -20,6 +20,7 @@ from starlette.responses import Response
 
 from opi.api.router import IPRateLimiter
 from opi.core.config import settings
+from opi.core.logging_redact import fingerprint_for_log, redact_invite_key_in_path
 from opi.manager.invite_manager import (
     InviteAuthMethodError,
     InviteDomainError,
@@ -30,7 +31,6 @@ from opi.manager.invite_manager import (
 from opi.services.catalog.invite.destination import resolve_invite_url
 from opi.services.project_file_handler import ProjectFileHandler
 from opi.services.project_store import get_project_store
-from opi.utils.logging_redact import fingerprint_for_log, redact_invite_key_in_path
 from opi.utils.naming import generate_project_realm_name
 from opi.web.lotc_switch import render
 

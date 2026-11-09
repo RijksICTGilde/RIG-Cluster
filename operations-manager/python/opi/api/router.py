@@ -31,6 +31,7 @@ from opi.core.auth_decorators import requires_step_up
 from opi.core.authz.actions import Action, action, deployment_from, marking_if_absent, weighed_action_from
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
+from opi.core.logging_redact import sanitize_for_log
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
@@ -62,30 +63,6 @@ from opi.utils.project_names import validate_project_name
 from opi.utils.yaml_util import load_yaml_from_string
 
 logger = logging.getLogger(__name__)
-
-
-def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
-    """Sanitize a value for safe inclusion in log messages.
-
-    Prevents log injection attacks by:
-    - Truncating to max_length
-    - Removing newlines and carriage returns
-    - Removing other control characters
-
-    Args:
-        value: The value to sanitize
-        max_length: Maximum length of the sanitized value (default: 64)
-
-    Returns:
-        Sanitized string safe for logging
-    """
-    if not value:
-        return ""
-    # Truncate, remove newlines/carriage returns, and strip control characters
-    sanitized = value[:max_length].replace("\n", "").replace("\r", "")
-    # Remove other ASCII control characters (0x00-0x1F except tab, 0x7F)
-    sanitized = "".join(c for c in sanitized if ord(c) >= 32 or c == "\t")
-    return sanitized
 
 
 # Global rate limiter instance for subdomain checks (30 requests/minute per IP)

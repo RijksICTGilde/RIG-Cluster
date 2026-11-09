@@ -5,7 +5,7 @@ De sandbox draait in ``proef.main()`` in hetzelfde proces als de gate, dus zijn 
 zonder opvang naar de stdout van de gate en is daarna niet meer per proef te scheiden. Deze
 module zet er een eigen handler op, laat de proeven hun eigen venster in het logboek
 markeren, en leest de regels terug voor het rapport. Elke regel gaat door
-``opi.utils.logging_redact``, want een OPI-logregel kan een sleutel of een wachtwoord dragen.
+``opi.core.logging_redact``, want een OPI-logregel kan een sleutel of een wachtwoord dragen.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from opi.utils.logging_redact import SecretRedactionFilter, redact_invite_key_in_path, redact_text
+from opi.core.logging_redact import SecretRedactionFilter, redact_invite_key_in_path, redact_text
 
 from security_tests.doel import OPILOG
 

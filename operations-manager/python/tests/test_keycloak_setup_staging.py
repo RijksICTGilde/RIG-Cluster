@@ -7,7 +7,7 @@ bekend wachtwoord aan; die mag op staging niet bestaan.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.bootstrap.keycloak_setup import KeycloakSetup
+from opi.manager.bootstrap.keycloak_setup import KeycloakSetup
 
 
 async def _users_created(bootstrap_config: str) -> list[str]:
@@ -18,9 +18,9 @@ async def _users_created(bootstrap_config: str) -> list[str]:
     setup.keycloak = MagicMock()
     setup.keycloak.create_user = AsyncMock()
     with (
-        patch("opi.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
-        patch("opi.bootstrap.keycloak_setup.settings.KEYCLOAK_BOOTSTRAP_CONFIG", bootstrap_config),
-        patch("opi.bootstrap.keycloak_setup.settings.OWN_DOMAIN", "zad.staging.rijksapp.dev"),
+        patch("opi.manager.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
+        patch("opi.manager.bootstrap.keycloak_setup.settings.KEYCLOAK_BOOTSTRAP_CONFIG", bootstrap_config),
+        patch("opi.manager.bootstrap.keycloak_setup.settings.OWN_DOMAIN", "zad.staging.rijksapp.dev"),
     ):
         await setup.setup_operations_realm()
     return [aanroep.kwargs["username"] for aanroep in setup.keycloak.create_user.await_args_list]

@@ -80,9 +80,6 @@
       "dutch-comments": 74,
       "comment-heavy-functions": 1
     },
-    "opi/bootstrap/keycloak_setup.py": {
-      "dutch-comments": 8
-    },
     "opi/connectors/argo.py": {
       "dutch-identifiers": 6,
       "dutch-comments": 21
@@ -267,10 +264,6 @@
       "dutch-identifiers": 2,
       "dutch-comments": 21
     },
-    "opi/handlers/keycloak_yaml_handler.py": {
-      "dutch-identifiers": 8,
-      "dutch-comments": 17
-    },
     "opi/jobs/reconciliation.py": {
       "dutch-identifiers": 4,
       "dutch-comments": 8
@@ -298,6 +291,13 @@
     },
     "opi/manager/backup/runs.py": {
       "dutch-comments": 4
+    },
+    "opi/manager/bootstrap/keycloak_setup.py": {
+      "dutch-comments": 8
+    },
+    "opi/manager/bootstrap/keycloak_yaml_handler.py": {
+      "dutch-identifiers": 8,
+      "dutch-comments": 17
     },
     "opi/manager/clone_validation.py": {
       "dutch-comments": 2

@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from opi.utils.logging_redact import redact_text
+from opi.core.logging_redact import redact_text
 
 if TYPE_CHECKING:
     from opi.services.tasks.async_task_service import AsyncTaskService

@@ -218,7 +218,7 @@ zetten.
 Buiten de uitnodigingen om bestaat nog een portaalweg, en die stuurt niet eens een
 bevestigingsmail. Een keycloak-template mag een `users:`-sectie hebben, en `_process_users` maakt
 die gebruikers met `create_user` zonder `skip_email_verification` in het projectrealm aan, met
-het adres en de realm-rollen uit de template (`opi/handlers/keycloak_yaml_handler.py:1352`, zie
+het adres en de realm-rollen uit de template (`opi/manager/bootstrap/keycloak_yaml_handler.py:1352`, zie
 `opi/configs/keycloak/algoritmeregister-demo-users.yaml`). Het account staat daarmee op onbevestigd en
 draagt `VERIFY_EMAIL`, en `send_verify_email` staat in heel `opi/` alleen op de uitnodigingsweg
 (`opi/manager/invite_manager.py:443`), dus hier zet niets de vlag ooit om. Welke template draait

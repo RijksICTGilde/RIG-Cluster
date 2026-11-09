@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from keycloak.exceptions import KeycloakError
-from opi.bootstrap.keycloak_setup import KeycloakSetup
 from opi.connectors.keycloak import (
     CONFIGURE_TOTP,
     DEFAULT_BROWSER_FLOW,
@@ -28,7 +27,8 @@ from opi.connectors.keycloak import (
     role_gate_flow_alias,
 )
 from opi.core.config import settings
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_setup import KeycloakSetup
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.invite_manager import InviteManager
 from opi.manager.keycloak_manager import BROWSER_FLOW_BY_TEMPLATE, KeycloakManager
 from opi.services.catalog.keycloak.templates import (
@@ -450,7 +450,7 @@ async def test_de_master_realm_krijgt_de_verplichte_otp_flow() -> None:
     keycloak = AsyncMock()
     keycloak.ensure_configure_totp_required.return_value = ["beheerder"]
 
-    with patch("opi.bootstrap.keycloak_setup.settings.KEYCLOAK_ENFORCE_MASTER_OTP", True):
+    with patch("opi.manager.bootstrap.keycloak_setup.settings.KEYCLOAK_ENFORCE_MASTER_OTP", True):
         await _setup(keycloak).ensure_master_otp()
 
     keycloak.ensure_required_otp_browser_flow.assert_awaited_once_with("master", REQUIRED_OTP_BROWSER_FLOW)
@@ -486,7 +486,7 @@ async def test_de_instelling_uit_laat_de_master_realm_ongemoeid() -> None:
     """De weg terug bij een uitrolprobleem op de beheerconsole, zonder codewijziging."""
     keycloak = AsyncMock()
 
-    with patch("opi.bootstrap.keycloak_setup.settings.KEYCLOAK_ENFORCE_MASTER_OTP", False):
+    with patch("opi.manager.bootstrap.keycloak_setup.settings.KEYCLOAK_ENFORCE_MASTER_OTP", False):
         await _setup(keycloak).ensure_master_otp()
 
     keycloak.ensure_required_otp_browser_flow.assert_not_awaited()
@@ -499,7 +499,7 @@ async def test_een_mislukte_otp_stap_laat_de_bootstrap_doorgaan() -> None:
     keycloak = AsyncMock()
     keycloak.ensure_required_otp_browser_flow.side_effect = KeycloakError("boem")
 
-    with patch("opi.bootstrap.keycloak_setup.settings.KEYCLOAK_ENFORCE_MASTER_OTP", True):
+    with patch("opi.manager.bootstrap.keycloak_setup.settings.KEYCLOAK_ENFORCE_MASTER_OTP", True):
         await _setup(keycloak).ensure_master_otp()
 
     keycloak.ensure_browser_flow.assert_not_awaited()
@@ -524,8 +524,8 @@ async def test_de_bootstrap_zet_de_master_otp_na_het_harden() -> None:
         ),
         patch.object(KeycloakSetup, "setup_operations_realm", new=AsyncMock()),
         patch.object(KeycloakSetup, "setup_operations_client", new=AsyncMock(return_value=True)),
-        patch("opi.bootstrap.keycloak_setup.create_keycloak_connector", new=AsyncMock()),
-        patch("opi.bootstrap.keycloak_setup.KubectlConnector", MagicMock()),
+        patch("opi.manager.bootstrap.keycloak_setup.create_keycloak_connector", new=AsyncMock()),
+        patch("opi.manager.bootstrap.keycloak_setup.KubectlConnector", MagicMock()),
         patch.object(KeycloakYamlHandler, "execute_config", new=AsyncMock()),
     ):
         assert await setup.setup_all() is True

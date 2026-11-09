@@ -35,7 +35,7 @@
 /aanvalsproef/uitzonderingen.yaml @uittenbroekrobbert
 
 # Wat er in logs en in commits terechtkomt
-/operations-manager/python/opi/utils/logging_redact.py @uittenbroekrobbert
+/operations-manager/python/opi/core/logging_redact.py @uittenbroekrobbert
 /operations-manager/python/opi/core/actor.py @uittenbroekrobbert
 /operations-manager/python/opi/utils/git_signing.py @uittenbroekrobbert
 

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import yaml
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.keycloak_manager import build_project_realm_context
 
 TEMPLATE_DIR = Path(__file__).parent.parent / "opi" / "configs" / "keycloak"
@@ -116,7 +116,7 @@ def test_operations_manager_blueprint_extends_a_shared_one_and_adds_the_cli_clie
     # the base says about it EXCEPT the four fields this blueprint decides for itself.
     # Inheriting those silently gave the ZAD realm verifyEmail: true (RC-159, review r7);
     # see the comment in operations-manager-realm.yaml for why it verifies nothing.
-    from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
+    from opi.manager.bootstrap.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
 
     base = handler._load_yaml(TEMPLATE_DIR / "sso-support.yaml")
     assert len(resolved["realms"]) == len(base["realms"]) == 1

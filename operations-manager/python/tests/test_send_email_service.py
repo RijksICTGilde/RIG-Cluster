@@ -54,7 +54,7 @@ from opi.core.cluster_config import (
     get_mail_relay_port,
 )
 from opi.core.config import settings
-from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
+from opi.manager.bootstrap.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.manager.mail_manager import MailAccountNameError, MailManager
 from opi.manager.project_validation import ProjectIntegrityError, validate_approval_decisions
 from opi.services.catalog.approval import ApproverScope

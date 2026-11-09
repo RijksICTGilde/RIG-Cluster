@@ -17,7 +17,7 @@ Twee kanten, die beide mee moeten:
    mee. Authlib bewaart dan de verifier in de sessie en zet `code_challenge` en
    `code_challenge_method` in de authorize-redirect.
 2. **De kant van Keycloak.** `KeycloakSetup.setup_operations_client`
-   (`opi/bootstrap/keycloak_setup.py`) maakt de client `rig-platform-operations-manager`
+   (`opi/manager/bootstrap/keycloak_setup.py`) maakt de client `rig-platform-operations-manager`
    met `require_pkce=True`. `create_deployment_client` zet dan
    `pkce.code.challenge.method: S256` in `expected_attributes`, en omdat die verzameling ook
    in de 409-tak wordt vergeleken en bijgewerkt, krijgt een client die er al was het

@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 from keycloak.exceptions import KeycloakError
 
 from opi.api.endpoint_util import controleer_handelingen
-from opi.bootstrap.keycloak_setup import setup_keycloak
 from opi.connectors.git_repo import warm_platform_repos
 from opi.connectors.keycloak import create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError, create_kubectl_connector
@@ -33,6 +32,7 @@ from opi.core.cluster_config import get_prefixed_namespace, is_platform_namespac
 from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.version import set_running_image
+from opi.manager.bootstrap.keycloak_setup import setup_keycloak
 from opi.manager.project_manager import ProjectManager
 from opi.runtime.periodic.caa_reconciler import reconcile_caa_records
 from opi.runtime.periodic.no_mail_reconciler import reconcile_no_mail_records

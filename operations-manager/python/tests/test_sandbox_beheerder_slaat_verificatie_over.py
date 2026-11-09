@@ -13,7 +13,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
+from opi.manager.bootstrap.keycloak_setup import OPERATIONS_REALM_NAME, KeycloakSetup
 
 
 async def _run(bootstrap_config: str) -> MagicMock:
@@ -26,8 +26,8 @@ async def _run(bootstrap_config: str) -> MagicMock:
     handler.execute_config = AsyncMock()
 
     with (
-        patch.multiple("opi.bootstrap.keycloak_setup.settings", KEYCLOAK_BOOTSTRAP_CONFIG=bootstrap_config),
-        patch("opi.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
+        patch.multiple("opi.manager.bootstrap.keycloak_setup.settings", KEYCLOAK_BOOTSTRAP_CONFIG=bootstrap_config),
+        patch("opi.manager.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
     ):
         await setup.setup_operations_realm()
 
@@ -61,8 +61,8 @@ async def test_een_gebruiker_zonder_wachtwoord_is_een_fout() -> None:
     config = {"template": "operations-manager-realm", "variables": {}, "users": [{"username": "admin"}]}
 
     with (
-        patch.multiple("opi.bootstrap.keycloak_setup.settings", KEYCLOAK_BOOTSTRAP_CONFIG="sandbox"),
-        patch("opi.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
+        patch.multiple("opi.manager.bootstrap.keycloak_setup.settings", KEYCLOAK_BOOTSTRAP_CONFIG="sandbox"),
+        patch("opi.manager.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
         patch.object(KeycloakSetup, "_extract_keycloak_service_config", return_value=config),
         pytest.raises(ValueError, match="no password credential"),
     ):

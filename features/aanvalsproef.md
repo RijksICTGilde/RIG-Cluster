@@ -84,7 +84,7 @@ hem na te doen.
 
 Het rapport noemt per bevinding niet alleen de assertie, maar ook waarom OPI zwichtte: de
 route, de traceback en de logregels eromheen uit `.proef/opi.log`, geredigeerd volgens
-`opi/utils/logging_redact.py`. Elke `Exception in ASGI application` krijgt een uitspraak mee
+`opi/core/logging_redact.py`. Elke `Exception in ASGI application` krijgt een uitspraak mee
 (bevinding, of de verwachte uitkomst van een wegwerp-sandbox zonder database), en een proef die
 zelf omvalt staat erin met zijn exitcode en de laatste logregels.
 

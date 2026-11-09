@@ -17,9 +17,9 @@ from typing import Any, ClassVar
 from urllib.parse import quote
 
 from opi.core.config import settings
+from opi.core.subprocess_env import child_env
 from opi.utils.naming import validate_bucket_name, validate_object_store_username, validate_policy_name
 from opi.utils.s3_policy import bucket_access_policy
-from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
