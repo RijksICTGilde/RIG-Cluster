@@ -175,6 +175,8 @@ Read `docs/development/` before changing a subsystem it covers - it holds the co
 the step-by-step, and saves you reverse-engineering them. Start with `docs/development/README.md`,
 which also states which folder is for what (`docs/development/` vs `features/` vs the rest of `docs/`).
 
+- `docs/operations/uitrollen.md` - hoe een release op de sandbox, staging en productie komt:
+  publiceren, pinnen, deployen, de CMP-sidecar, en de kubectl-context per cluster.
 - `docs/development/services.md` - the service system: what a service owns, how config, forms,
   provisioning, manifests and approvals hook in, and how to add one.
 
