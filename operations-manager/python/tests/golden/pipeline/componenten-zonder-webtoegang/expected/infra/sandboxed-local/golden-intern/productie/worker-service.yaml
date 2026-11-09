@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "productie-worker"
+  namespace: "rig-golden-intern"
+  labels:
+    app: "productie-worker"
+    project: "golden-intern"
+spec:
+  selector:
+    app: "productie-worker"
+    component: application
+  ports:
+    - port: 9000
+      targetPort: 9000
+      protocol: TCP
+      name: http
+  type: ClusterIP

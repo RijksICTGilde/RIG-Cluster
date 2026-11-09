@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "odcn-name-frontend"
+  namespace: "rig-prd-example-project"
+  labels:
+    app: "odcn-name-frontend"
+    deployment: "odcn-name"
+    project: "example-project"
+    component: application
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  revisionHistoryLimit: 3
+  # Cap how long Kubernetes reports a stalled rollout as "Progressing" before
+  # flipping it to ProgressDeadlineExceeded (default is 600s). ArgoCD's health
+  # gate waits out this window, so a broken rollout (e.g. ImagePullBackOff) would
+  # otherwise hang the sync for 10 minutes. 300s leaves room for genuinely slow
+  # starts while failing visibly faster.
+  progressDeadlineSeconds: 300
+  selector:
+    matchLabels:
+      app: "odcn-name-frontend"
+      component: application
+  template:
+    metadata:
+      labels:
+        app: "odcn-name-frontend"
+        deployment: "odcn-name"
+        project: "example-project"
+        component: application
+        network-policy: allow-db-access
+    spec:
+      # De eigen serviceaccount van het project, zonder pull-secrets; deze pod draagt
+      # hieronder alleen wat hij zelf nodig heeft.
+      serviceAccountName: "example-project-sa"
+      # yaml_scalar: tweede slot naast SECRET_NAME_PATTERN, voor een secretnaam die
+      # binnendoor reist (een bestaand projectbestand, de migratie 2.8 -> 2.9).
+      imagePullSecrets:
+        - name: "dockerhub-rig-robot-pull-secret"
+      # Pod-level security context (OpenShift compatible)
+      securityContext:
+        # For OpenShift, let SCCs assign user/group IDs automatically.
+        # Per-component security overrides are intentionally ignored here:
+        # SCC admission injects a UID per namespace and would conflict.
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: "rcr.rijksapps.nl/dockerhub-rig/tutum/hello-world"
+          imagePullPolicy: "Always"
+          ports:
+            - containerPort: 8080
+              name: http
+          # Container-level security context (OpenShift compatible)
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          env:
+            - name: "DATA_PATH"
+              value: "/data"
+            - name: "TEMP_PATH"
+              value: "/tmp"
+            - name: "PUBLIC_HOST"
+              value: "https://frontend-odcn-name-example-project.rig.prd1.gn2.quattro.rijksapps.nl"
+            - name: "PUBLIC_HOSTNAME"
+              value: "frontend-odcn-name-example-project.rig.prd1.gn2.quattro.rijksapps.nl"
+          envFrom:
+            - secretRef:
+                name: "odcn-name-frontend-platform"
+          volumeMounts:
+            - name: "data"
+              mountPath: "/data"
+            - name: "tmp"
+              mountPath: "/tmp"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          startupProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 36  # 5 + (36 × 5) = 185 seconds max startup time
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: "data"
+          persistentVolumeClaim:
+            claimName: "odcn-name-frontend-data-pvc"
+        - name: "tmp"
+          emptyDir:
+            sizeLimit: "2Gi"

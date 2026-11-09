@@ -91,6 +91,7 @@ from opi.generation.manifests import (
     CMP_ENV_PLAINTEXT_FILENAME,
     CONFIG_HASH_IGNORE_LABEL_KEY,
     CONFIG_HASH_IGNORE_LABEL_VALUE,
+    MANIFEST_TEMPLATES_DIR,
     ManifestGenerator,
     cmp_env_rejection,
 )
@@ -1574,7 +1575,7 @@ class ProjectManager:
             port=service_port,
             generated_at=generated_at,
         )
-        deployment_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "deployment.yaml.jinja")
+        deployment_template = os.path.join(MANIFEST_TEMPLATES_DIR, "deployment.yaml.jinja")
         deployment_manifest_name = generate_manifest_name(component_name, "waker-deployment")
         self._manifest_generator.create_manifest_file(
             template_path=deployment_template,
@@ -1596,7 +1597,7 @@ class ProjectManager:
             cluster=cluster,
             port=service_port,
         )
-        configmap_template = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "configmap.yaml.jinja")
+        configmap_template = os.path.join(MANIFEST_TEMPLATES_DIR, "configmap.yaml.jinja")
         configmap_manifest_name = generate_manifest_name(component_name, "waker-config")
         self._manifest_generator.create_manifest_file(
             template_path=configmap_template,
@@ -1609,9 +1610,7 @@ class ProjectManager:
 
         # Waker token Secret (SOPS), from the deployment's stored wake token
         plain_token = await sleep_token.decrypt(current.wake_token, project_data)
-        secret_template = os.path.join(
-            os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
-        )
+        secret_template = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
         await self._write_secret_file(
             SecretFileSpec(
                 secret_name=sleep_manifests.waker_token_secret_name(unique_name),
@@ -1929,6 +1928,10 @@ class ProjectManager:
             self.__deployment_workspaces_by_remote[remote] = workspace
         self.__deployment_workspaces[name] = workspace
         return workspace
+
+    def get_existing_deployment_workspace(self, name: str) -> GitRepoWorkspace | None:
+        """The workspace already opened under this name, or None; opens nothing itself."""
+        return self.__deployment_workspaces.get(name)
 
     async def materialize_cluster_tree(self, repo_config: dict[str, str]) -> str | None:
         """De ``{cluster}/``-boom van de deployments-repo in een wegwerpmap, alleen om te lezen.
@@ -3310,7 +3313,7 @@ class ProjectManager:
             return False
         if self._project_level_path is None:
             return False
-        connector = self.__deployment_workspaces.get(self._project_level_repo)
+        connector = self.get_existing_deployment_workspace(self._project_level_repo)
         if connector is None:
             return False
 
@@ -4576,13 +4579,12 @@ class ProjectManager:
             cluster=cluster_name,
             namespace=namespace,
         )
-        template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
 
         created_files: list[str] = []
         for service in project_manifest_services():
             for spec in service.contribute_project_manifests(ctx):
                 self._manifest_generator.create_manifest_file(
-                    template_path=os.path.join(template_dir, spec.template_path),
+                    template_path=os.path.join(MANIFEST_TEMPLATES_DIR, spec.template_path),
                     values=spec.values,
                     output_dir=target_path,
                     output_filename=spec.filename,
@@ -5061,7 +5063,7 @@ class ProjectManager:
         output_dir: str,
     ) -> str:
         """NetworkPolicy voor de HTTP-01-solver van cert-manager op poort 8089 vanaf de router."""
-        template_path = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja")
+        template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "network-policy.yaml.jinja")
         manifest_name = generate_network_policy_manifest_name("acme-http", deployment_name)
         path = self._manifest_generator.create_manifest_file(
             template_path=template_path,
@@ -5104,7 +5106,6 @@ class ProjectManager:
             return []
 
         os.makedirs(output_dir, exist_ok=True)
-        template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
         baseline_values = {
             "name": generate_network_policy_name("unlabeled-baseline"),
             "namespace": namespace,
@@ -5142,7 +5143,7 @@ class ProjectManager:
         created_files = []
         for filename, template_name, values in specs:
             self._manifest_generator.create_manifest_file(
-                template_path=os.path.join(template_dir, template_name),
+                template_path=os.path.join(MANIFEST_TEMPLATES_DIR, template_name),
                 values=values,
                 output_dir=output_dir,
                 output_filename=filename,
@@ -5281,9 +5282,7 @@ class ProjectManager:
             contact_email = project_contact_email or cluster_contact_email
 
             if contact_email:
-                issuer_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
-                )
+                issuer_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "issuer-letsencrypt.yaml.jinja")
 
                 issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
                 issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
@@ -5724,9 +5723,7 @@ class ProjectManager:
             contact_email = project_contact_email or cluster_contact_email
 
             if contact_email:
-                issuer_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
-                )
+                issuer_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "issuer-letsencrypt.yaml.jinja")
 
                 issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
                 issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
@@ -5838,9 +5835,7 @@ class ProjectManager:
         """
         created_files: list[str] = []
 
-        secret_template_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
-        )
+        secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
 
         # Create Keycloak/SSO secret if available
         keycloak_secret = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
@@ -6967,9 +6962,7 @@ class ProjectManager:
                     sidecar_output_dir = os.path.join(working_dir, project_name, deployment_name)
 
                 for sidecar_name in variables["sidecars"]:
-                    sidecar_template_path = os.path.join(
-                        os.path.dirname(__file__), "..", "..", "manifests", f"sidecar-{sidecar_name}.yaml.jinja"
-                    )
+                    sidecar_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, f"sidecar-{sidecar_name}.yaml.jinja")
                     configmap_variables = variables.copy()
                     configmap_variables["section"] = "configmap"
                     configmap_manifest_name = generate_manifest_name(component_name, f"{sidecar_name}-configmap")
@@ -7019,7 +7012,7 @@ class ProjectManager:
                 full_output_dir = os.path.join(working_dir, project_name, deployment_name)
 
             for manifest_file in manifests:
-                manifest_path = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", manifest_file)
+                manifest_path = os.path.join(MANIFEST_TEMPLATES_DIR, manifest_file)
 
                 if not os.path.exists(manifest_path):
                     logger.warning(f"Manifest file not found: {manifest_path}")
@@ -7096,10 +7089,7 @@ class ProjectManager:
                                     )
                                     self._manifest_generator.create_manifest_file(
                                         template_path=os.path.join(
-                                            os.path.dirname(__file__),
-                                            "..",
-                                            "..",
-                                            "manifests",
+                                            MANIFEST_TEMPLATES_DIR,
                                             "binary-secret.yaml.to-sops.jinja",
                                         ),
                                         values={
@@ -7387,9 +7377,7 @@ class ProjectManager:
                 created_files.extend(created_pvc_files)
 
             # Create separate secret manifests for SSO and user secrets
-            secret_template_path = os.path.join(
-                os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
-            )
+            secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "generic-secret.yaml.to-sops.jinja")
 
             # Create SSO secret if Keycloak credentials are available in secrets map
             keycloak_credentials = self._get_secret_from_map(deployment_name, "keycloak", KeycloakSecret)
@@ -7511,9 +7499,7 @@ class ProjectManager:
             # Create binary secrets for file-mode attachments (one per attachment id per deployment).
             # Keyed by secret name so duplicate references across components stay idempotent.
             if attachment_file_secrets:
-                binary_secret_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "binary-secret.yaml.to-sops.jinja"
-                )
+                binary_secret_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "binary-secret.yaml.to-sops.jinja")
                 for secret_name, data_pairs in attachment_file_secrets.items():
                     attachment_secret_vars = {
                         "name": secret_name,
@@ -7547,9 +7533,7 @@ class ProjectManager:
                     contact_email = project_contact_email or cluster_contact_email
 
                     if contact_email:
-                        issuer_template_path = os.path.join(
-                            os.path.dirname(__file__), "..", "..", "manifests", "issuer-letsencrypt.yaml.jinja"
-                        )
+                        issuer_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "issuer-letsencrypt.yaml.jinja")
 
                         issuer_name_generated = generate_issuer_name(base_domain, issuer_config, deployment_name)
                         issuer_secret_name = generate_issuer_secret_name(base_domain, issuer_config, deployment_name)
@@ -7620,9 +7604,7 @@ class ProjectManager:
             deployment_output_dir = os.path.join(working_dir, target_dir)
         else:
             deployment_output_dir = os.path.join(working_dir, project_name, deployment_name)
-        baseline_template_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "manifests", "tenant-baseline-network-policy.yaml.jinja"
-        )
+        baseline_template_path = os.path.join(MANIFEST_TEMPLATES_DIR, "tenant-baseline-network-policy.yaml.jinja")
         baseline_manifest_name = generate_network_policy_manifest_name(f"{deployment_name}-tenant-baseline").replace(
             ".yaml", ""
         )
@@ -7668,11 +7650,10 @@ class ProjectManager:
             cluster=cluster,
             namespace=namespace,
         )
-        service_manifest_template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
         for service in deployment_manifest_services():
             for spec in service.contribute_deployment_manifests(deployment_manifest_ctx):
                 self._manifest_generator.create_manifest_file(
-                    template_path=os.path.join(service_manifest_template_dir, spec.template_path),
+                    template_path=os.path.join(MANIFEST_TEMPLATES_DIR, spec.template_path),
                     values=spec.values,
                     output_dir=deployment_output_dir,
                     output_filename=spec.filename,

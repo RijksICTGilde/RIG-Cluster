@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: "second-name-frontend-data-pvc"
+  namespace: "rig-example-project"
+  annotations:
+    argocd.argoproj.io/sync-options: Replace=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: csi-hostpath-sc
+  resources:
+    requests:
+      storage: "10Gi"

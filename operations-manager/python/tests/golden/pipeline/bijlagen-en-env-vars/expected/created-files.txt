@@ -1,0 +1,7 @@
+web-deployment.yaml
+web-service.yaml
+web-ingress.yaml
+web-platform-secret.yaml
+web-user-secret.to-sops.yaml
+productie-attch-tls-identity-attachment-secret.to-sops.yaml
+productie-tenant-baseline-network-policy.yaml

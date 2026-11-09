@@ -1,0 +1,53 @@
+schema-version: '2.17'
+name: golden-helm
+display-name: Golden helm
+description: Een deployment uit een helm-chart met databasegegevens in zijn values
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-helm.git
+    branch: main
+    path: infra
+
+helm-charts:
+  - name: webapp
+    source-type: git-clone
+    git-url: https://example.test/charts.git
+    git-ref: main
+    chart-path: helm
+    helm-values:
+      replicaCount: 1
+      image:
+        repository: nginx
+        tag: '1.27'
+      database:
+        host: $DATABASE_SERVER_HOST
+        port: $DATABASE_SERVER_PORT
+        name: $DATABASE_DB
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-helm
+    repository: main-repo
+    services:
+      - reference: publish-on-web
+        config:
+          subdomain: app
+          base-domain: voorbeeld.nl
+          issuer: letsencrypt
+    helm-charts:
+      - reference: webapp
+        release-name: webapp
+        helm-values:
+          replicaCount: 2

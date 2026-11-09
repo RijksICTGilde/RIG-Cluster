@@ -1,0 +1,8 @@
+replicaCount: 2
+image:
+  repository: nginx
+  tag: '1.27'
+database:
+  host: rig-db-rw.rig-db
+  port: 5432
+  name: golden_helm

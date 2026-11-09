@@ -15,7 +15,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.manager.argo_manager import ArgoManager
+from opi.manager.argo_manager import (
+    UMBRELLA_REFRESH_MAX_POGINGEN,
+    UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
+    ArgoManager,
+)
 from opi.manager.project_manager import ProjectManager
 
 RECONCILED_AT = "2026-08-19T12:00:00Z"
@@ -82,8 +86,6 @@ async def test_ververst_niet_opnieuw_als_de_umbrella_al_bij_is(sleeps: list[floa
 
 async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[float]) -> None:
     """De lus loopt op het antwoord van de refresh; de ondergrens is alleen een rem."""
-    from opi.manager.project_manager import UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN
-
     connector = FakeArgoConnector(["oude-revisie", "oude-revisie", "onze-commit"])
 
     await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]
@@ -96,8 +98,6 @@ async def test_wacht_hoogstens_de_ondergrens_tussen_twee_refreshes(sleeps: list[
 
 async def test_stopt_na_het_maximum_aantal_pogingen(sleeps: list[float]) -> None:
     """Blijft de revisie verkeerd, dan is er iets anders aan de hand dan een verloren wekker."""
-    from opi.manager.project_manager import UMBRELLA_REFRESH_MAX_POGINGEN
-
     connector = FakeArgoConnector(["oude-revisie"])
 
     await ProjectManager._keep_umbrella_refreshed(_watcher_self(), connector, "onze-commit")  # type: ignore[arg-type]

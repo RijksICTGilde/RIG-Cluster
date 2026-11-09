@@ -1,0 +1,60 @@
+schema-version: '2.17'
+name: golden-bijlagen
+display-name: Golden bijlagen
+description: Eigen omgevingsvariabelen en bijlagen als bestand en als variabele
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+  - attachments:
+      data:
+        - id: tls-identity
+          filename: keystore.p12
+          content: ENCRYPT:a2V5c3RvcmUtaW5ob3Vk
+        - id: cabundle
+          filename: ca.pem
+          content: ENCRYPT:Y2EtYnVuZGVsLWluaG91ZA==
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-bijlagen.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: []
+    user-env-vars: ENCRYPT:LOG_LEVEL=debug
+    services:
+      - publish-on-web
+      - reference: attachments
+        config:
+          - reference: tls-identity
+            provide-as: file
+            path: /etc/tls/keystore.p12
+          - reference: cabundle
+            provide-as: env-var
+            env-name: CA_BUNDLE
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-bijlagen
+    repository: main-repo
+    components:
+      - reference: web
+        image: nginx:1.27
+        env-vars:
+          FEATURE_FLAG: aan

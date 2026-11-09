@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+generators:
+- decrypt-sops.yaml
+kind: Kustomization
+namespace: rig-golden-helm
+resources:
+- issuer-letsencrypt-voorbeeld-nl-productie.yaml
+- acme-http-productie-network-policy.yaml
+helmCharts:
+- name: webapp
+  releaseName: webapp
+  namespace: rig-golden-helm
+  valuesFile: productie-webapp-helm-values.sops.yaml
+  repo: file://./charts/webapp

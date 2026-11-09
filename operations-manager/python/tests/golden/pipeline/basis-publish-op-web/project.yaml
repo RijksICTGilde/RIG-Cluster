@@ -1,0 +1,49 @@
+schema-version: '2.17'
+name: golden-basis
+display-name: Golden basis
+description: Een component met publish-on-web op twee paden
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-basis.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443, 80]
+    path:
+      - match: /
+      - match: /api
+        rewrite: /
+    uses-components: []
+    resources:
+      cpu: '500m'
+      requests:
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    services:
+      - publish-on-web
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-basis
+    repository: main-repo
+    components:
+      - reference: web
+        image: nginx:1.27

@@ -1,0 +1,56 @@
+schema-version: '2.17'
+name: golden-intern
+display-name: Golden intern
+description: Een webcomponent en een worker zonder eigen webadres
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-intern.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: [worker]
+    services:
+      - publish-on-web
+  - name: worker
+    type: single
+    ports:
+      inbound: [9000]
+      outbound: [443]
+    uses-components: []
+    resources:
+      cpu: '250m'
+      requests:
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-intern
+    repository: main-repo
+    components:
+      - reference: web
+        image: nginx:1.27
+      - reference: worker
+        image: python:3.14-slim
+        imagePullPolicy: Always

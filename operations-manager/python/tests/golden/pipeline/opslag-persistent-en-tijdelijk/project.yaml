@@ -1,0 +1,53 @@
+schema-version: '2.17'
+name: golden-opslag
+display-name: Golden opslag
+description: Een component met persistente en tijdelijke opslag
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: beheerder@rijksoverheid.nl
+    roles: [admin]
+
+services:
+  - publish-on-web
+  - persistent-storage
+  - temp-storage
+
+repositories:
+  - name: main-repo
+    url: https://git.example/golden-opslag.git
+    branch: main
+    path: infra
+
+components:
+  - name: web
+    type: single
+    ports:
+      inbound: [8080]
+      outbound: [443]
+    path:
+      - match: /
+    uses-components: []
+    services:
+      - publish-on-web
+      - reference: persistent-storage
+        config:
+          - name: data
+            size: 2Gi
+            mount-path: /data
+      - reference: temp-storage
+        config:
+          - name: tmp
+            size: 500Mi
+            mount-path: /tmp/werk
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: golden-opslag
+    repository: main-repo
+    components:
+      - reference: web
+        image: nginx:1.27

@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: letsencrypt-voorbeeld-nl-productie
+spec:
+  acme:
+    email: rig-platform@rijksoverheid.nl
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-voorbeeld-nl-productie-key
+    solvers:
+    - http01:
+        ingress:
+          serviceType: ClusterIP
+          ingressTemplate:
+            metadata:
+              annotations:
+                haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"

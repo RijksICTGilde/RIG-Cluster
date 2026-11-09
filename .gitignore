@@ -37,6 +37,9 @@ secrets-overview-*.yaml
 # *.sops.yaml. Final backstop so a failed/aborted SOPS run can never leak
 # plaintext secrets into a GitOps repo.
 *.to-sops.yaml
+# The golden pipeline fixtures commit this plaintext stage on purpose: it is what
+# create_application_manifests writes byte-for-byte, with test-only fixture values.
+!/operations-manager/python/tests/golden/**/*.to-sops.yaml
 /bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/operations-manager-env-secrets.yaml
 /output.yaml
 /operations-manager/python/.env.my-machine

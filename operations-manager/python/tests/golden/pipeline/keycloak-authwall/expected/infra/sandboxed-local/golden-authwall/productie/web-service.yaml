@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "productie-web"
+  namespace: "rig-golden-authwall"
+  labels:
+    app: "productie-web"
+    project: "golden-authwall"
+spec:
+  selector:
+    app: "productie-web"
+    component: application
+  ports:
+    - port: 4180
+      targetPort: 4180
+      protocol: TCP
+      name: http
+  type: ClusterIP

@@ -1,0 +1,12 @@
+web-deployment.yaml
+web-service.yaml
+web-ingress.yaml
+web-ingress-bare-domain.yaml
+web-platform-secret.yaml
+issuer-letsencrypt-voorbeeld-nl-productie.yaml
+acme-http-productie-network-policy.yaml
+api-deployment.yaml
+api-service.yaml
+api-ingress.yaml
+api-platform-secret.yaml
+productie-tenant-baseline-network-policy.yaml

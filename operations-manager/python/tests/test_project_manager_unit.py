@@ -3,10 +3,13 @@
 Focuses on: async correctness, command construction, edge cases in deployment processing.
 """
 
+import ast
 import inspect
+import pathlib
 
 import pytest
 from opi.manager.project_manager import ProjectManager
+from tests import project_manager_sources
 
 
 class TestLooksLikeRenderFailure:
@@ -45,24 +48,76 @@ class TestAsyncCorrectness:
     """All calls to async functions must use await - missing await silently returns a coroutine object."""
 
     def test_decrypt_age_content_calls_are_awaited(self):
-        """Every call to decrypt_age_content in project_manager must be awaited.
+        """Every call to decrypt_age_content must be awaited, in project_manager and in the
+        groups split out of it.
 
         Missing await causes the coroutine to be stringified as '<coroutine object ...>'
         instead of the actual decrypted value.
         """
-        source = inspect.getsource(ProjectManager)
+        for path, source in project_manager_sources.sources():
+            for i, line in enumerate(source.split("\n"), 1):
+                stripped = line.strip()
+                if "decrypt_age_content(" in stripped and not stripped.startswith("#"):
+                    # Skip import lines
+                    if "import" in stripped:
+                        continue
+                    assert "await" in stripped, (
+                        f"{path.name} line {i}: decrypt_age_content() is async but called without await: {stripped}"
+                    )
 
-        # Find all lines with decrypt_age_content calls
-        lines = source.split("\n")
-        for i, line in enumerate(lines, 1):
-            stripped = line.strip()
-            if "decrypt_age_content(" in stripped and not stripped.startswith("#"):
-                # Skip import lines
-                if "import" in stripped:
+
+class TestTestsImportNamesWhereTheyLive:
+    """No test may import a name from ``project_manager`` that only passes through it.
+
+    ``project_manager`` imports plenty from elsewhere, and a test that takes such a name from
+    there breaks the day the import goes. The name has a home module; the test imports it
+    from that home.
+    """
+
+    def test_no_test_borrows_a_name_from_project_manager(self):
+        defined = project_manager_sources.defined_in_project_manager()
+        elsewhere = project_manager_sources.borrowed_by_project_manager()
+
+        borrowed: list[str] = []
+        for path in sorted(pathlib.Path(__file__).parent.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.module != "opi.manager.project_manager":
                     continue
-                assert "await" in stripped, (
-                    f"Line {i}: decrypt_age_content() is async but called without await: {stripped}"
-                )
+                for alias in node.names:
+                    if alias.name not in defined:
+                        home = elsewhere.get(alias.name, "an unknown module")
+                        borrowed.append(f"{path.name} imports {alias.name}, which lives in {home}")
+
+        assert borrowed == []
+
+
+class TestExistingDeploymentWorkspace:
+    """The accessor that reaches the already-opened workspaces without name mangling.
+
+    ``_project_level_already_applied`` needs that map. Reading it as ``self.__deployment_workspaces``
+    only works inside ``ProjectManager``: from another class the mangled name is a different
+    attribute, and on a MagicMock host it silently answers with a mock.
+    """
+
+    def test_returns_the_opened_workspace_and_none_for_an_unknown_name(self):
+        manager = ProjectManager.__new__(ProjectManager)
+        workspace = object()
+        manager._ProjectManager__deployment_workspaces = {"main-repo": workspace}
+
+        assert manager.get_existing_deployment_workspace("main-repo") is workspace
+        assert manager.get_existing_deployment_workspace("other-repo") is None
+
+    @pytest.mark.asyncio
+    async def test_already_applied_is_false_without_an_opened_workspace(self):
+        """Without a workspace there is nothing to compare the applied revision against."""
+        manager = ProjectManager.__new__(ProjectManager)
+        manager._ProjectManager__deployment_workspaces = {}
+        manager._project_level_manifests_changed = False
+        manager._project_level_repo = "main-repo"
+        manager._project_level_path = "sandboxed-local/demo/project"
+
+        assert await manager._project_level_already_applied("demo-project") is False
 
 
 class TestResolveDeploymentFilter:

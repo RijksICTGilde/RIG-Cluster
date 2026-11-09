@@ -6,16 +6,16 @@ right after that signal, and the task failed permanently. These tests pin the wa
 sits in between, and the warning for a cluster the operator itself cannot reach.
 """
 
-import inspect
+import ast
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core import progress_steps
-from opi.manager import project_manager as project_manager_module
 from opi.manager.project_manager import DATABASE_CONNECT_TIMEOUT_SECONDS, ProjectManager
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.utils.connect_retry import retry_on_connect_error
+from tests import project_manager_sources
 
 HOST = "demo-db-rw.rig-prd-demo-infrastructure.svc.cluster.local"
 
@@ -121,14 +121,22 @@ class TestWaitUntilDatabaseAcceptsConnections:
         assert isinstance(fout.value.__cause__, ConnectionRefusedError)
 
     def test_only_the_dedicated_path_waits(self) -> None:
-        """The shared rig-db never reaches this wait: it only lives in the dedicated flow."""
-        source = inspect.getsource(project_manager_module)
-        aanroepen = source.count("_wait_until_database_accepts_connections(")
-        definitie_en_aanroep = 2  # the method itself plus the single call site
-        assert aanroepen == definitie_en_aanroep
-        assert "_wait_until_database_accepts_connections" in inspect.getsource(
-            ProjectManager._create_infrastructure_resources
-        )
+        """The shared rig-db never reaches this wait: it only lives in the dedicated flow.
+
+        Measured over every project-manager source, so moving the wait into
+        ``opi/manager/project/`` cannot take the guard with it. A one-line delegation that
+        keeps the name is not a second call site.
+        """
+        waiter = "_wait_until_database_accepts_connections"
+        callers: set[str] = set()
+        for _, tree in project_manager_sources.trees():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) or node.name == waiter:
+                    continue
+                if f"{waiter}(" in ast.unparse(node):
+                    callers.add(node.name)
+
+        assert callers == {"_create_infrastructure_resources"}
         assert not project_uses_dedicated_postgres({"services": ["postgresql-database"]})
 
 

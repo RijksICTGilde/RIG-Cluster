@@ -3544,6 +3544,13 @@ tasks:
       - uv run python ../../scripts/lint_baseline.py --check
     silent: true
 
+  golden-pipeline-baseline:
+    desc: "Leg de golden-uitvoer van de manifestpipeline opnieuw vast; lees de diff regel voor regel"
+    dir: operations-manager/python
+    cmds:
+      - UPDATE_GOLDEN=1 uv run pytest tests/test_golden_pipeline_manifests.py -q
+    silent: true
+
   code-conventions:
     desc: "Toets taal en commentaardichtheid tegen scripts/code-conventions-baseline.json"
     cmds:

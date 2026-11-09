@@ -24,6 +24,10 @@ from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 
+#: Absolute directory of the Jinja manifest templates, derived from this file and so
+#: independent of the cwd and of the caller's depth. ``render_template`` resolves via settings.
+MANIFEST_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
+
 #: Label the platform puts on a Secret or ConfigMap that must stay OUT of the config-hash
 #: the ArgoCD CMP plugin injects as ``checksum/config`` on every pod template.
 #:

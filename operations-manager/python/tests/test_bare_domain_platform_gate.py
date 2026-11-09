@@ -15,7 +15,6 @@ hele regel omdat hij achter ``if not domain_format: return`` stond.
 """
 
 import ast
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -27,10 +26,10 @@ from opi.connectors.subdomain import (
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError, FieldWarning
 from opi.forms.editables.hooks import DomainRequestHook
-from opi.manager import project_manager
 from opi.manager.project_validation import validate_project_structure
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.utils.naming import get_deployment_hostnames
+from tests import project_manager_sources
 
 #: Waar de meldingen over het kale domein horen te landen: bij het vinkje zelf.
 _BARE_FIELD = domain_setting_path(DomainSetting.BARE_DOMAIN_COMPONENT, 0)
@@ -344,10 +343,9 @@ class TestBeidePublicatiepuntenHangenAanDeGoedkeuring:
     @staticmethod
     def _guards(marker: str) -> list[str]:
         """De ``if``-voorwaarden die een blok met ``marker`` erin bewaken."""
-        bron = Path(project_manager.__file__).read_text()
-        boom = ast.parse(bron)
         return [
             ast.unparse(knoop.test)
+            for _, boom in project_manager_sources.trees()
             for knoop in ast.walk(boom)
             if isinstance(knoop, ast.If) and marker in ast.unparse(knoop.body)
         ]
